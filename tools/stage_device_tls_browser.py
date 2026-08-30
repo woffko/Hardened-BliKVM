@@ -48,6 +48,9 @@ RUN_KEYS = {
     "broker_stopped",
     "bundle_sha256",
     "credential_isolation",
+    "control_broker_stopped",
+    "control_denials",
+    "control_no_backend",
     "nginx_config",
     "nginx_stopped",
     "payload_checksums",
@@ -95,6 +98,9 @@ class TlsPaths:
     credentials: str
     broker_binary: str
     broker_socket: str
+    control_binary: str
+    control_runtime: str
+    control_socket: str
     video_binary: str
     video_runtime: str
     video_socket: str
@@ -167,6 +173,9 @@ def tls_paths(bundle_sha256: str, run_id: str) -> TlsPaths:
         credentials=f"{root}/credentials",
         broker_binary=f"{stage.payload}/libexec/bli-kvm-platform-broker",
         broker_socket="/run/hardened-blikvm/platform-broker.sock",
+        control_binary=f"{stage.payload}/libexec/bli-kvm-control-broker",
+        control_runtime=f"{root}/control-runtime",
+        control_socket=f"{root}/control-runtime/control.sock",
         video_binary=f"{stage.payload}/libexec/bli-kvm-video-proxy",
         video_runtime=f"{root}/video-runtime",
         video_socket=f"{root}/video-runtime/mjpeg.sock",
@@ -207,6 +216,57 @@ stop_child() {
   fi
   wait "$child_pid" 2>/dev/null || true
 }
+""".strip()
+
+CONTROL_PROBE = r"""
+import json
+import socket
+import struct
+import sys
+
+socket_path = sys.argv[1]
+requests = [
+    ("hid", {"type": "hid", "report": {"mode": "keyboard", "data": [0] * 8}}),
+    ("atx", {"type": "atx", "action": "power_short"}),
+    ("media", {"type": "virtual_media", "command": {"action": "set_connected", "connected": False}}),
+]
+
+def read_exact(stream, length):
+    value = b""
+    while len(value) < length:
+        chunk = stream.recv(length - len(value))
+        if not chunk:
+            raise RuntimeError("short control response")
+        value += chunk
+    return value
+
+for request_id, (name, request) in enumerate(requests, 1):
+    operation_id = f"{request_id:032x}"
+    envelope = {
+        "schemaVersion": 1,
+        "requestId": request_id,
+        "operationId": operation_id,
+        "request": request,
+    }
+    payload = json.dumps(envelope, separators=(",", ":")).encode("ascii")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.settimeout(3)
+        stream.connect(socket_path)
+        stream.sendall(struct.pack(">I", len(payload)) + payload)
+        stream.shutdown(socket.SHUT_WR)
+        length = struct.unpack(">I", read_exact(stream, 4))[0]
+        if length > 4096:
+            raise RuntimeError("oversized control response")
+        response = json.loads(read_exact(stream, length))
+    expected = {
+        "schemaVersion": 1,
+        "requestId": request_id,
+        "operationId": operation_id,
+        "response": {"type": "rejected", "code": "capability_disabled"},
+    }
+    if response != expected:
+        raise RuntimeError("unexpected control response")
+    print(f"{name}=capability_disabled")
 """.strip()
 
 
@@ -324,7 +384,7 @@ ustreamer_mode=$(stat -c '%a' /run/kvmd/ustreamer.sock)
 ustreamer_group=$(stat -c '%G' /run/kvmd/ustreamer.sock)
 [ "$ustreamer_mode" = 660 ]
 [ "$ustreamer_group" = kvmd ]
-for tool in awk cat chmod chown curl df env findmnt getent grep head mkdir mv openssl readlink rm sed setpriv sha256sum sleep stat systemctl tail tar tr; do
+for tool in awk base64 cat chmod chown curl df env findmnt getent grep head mkdir mv openssl python3 readlink rm sed setpriv sha256sum sleep stat systemctl tail tar tr wc; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
 [ -x "$nginx_binary" ]
@@ -363,6 +423,9 @@ def build_remote_script(
     nginx_b64 = base64.b64encode(
         render_test_nginx(paths, bind_port).encode("utf-8")
     ).decode("ascii")
+    control_probe_b64 = base64.b64encode(CONTROL_PROBE.encode("utf-8")).decode(
+        "ascii"
+    )
     values = _assignments(
         {
             "stage_root": paths.stage.root,
@@ -376,6 +439,9 @@ def build_remote_script(
             "broker": paths.broker_binary,
             "credentials": paths.credentials,
             "broker_socket": paths.broker_socket,
+            "control": paths.control_binary,
+            "control_runtime": paths.control_runtime,
+            "control_socket": paths.control_socket,
             "video": paths.video_binary,
             "video_runtime": paths.video_runtime,
             "video_socket": paths.video_socket,
@@ -391,6 +457,7 @@ def build_remote_script(
             "browser_done": paths.browser_done,
             "browser_result": paths.browser_result,
             "nginx_b64": nginx_b64,
+            "control_probe_b64": control_probe_b64,
         }
     )
     body = r"""
@@ -400,6 +467,7 @@ umask 077
 phase=validate-stage
 run_succeeded=no
 broker_pid=
+control_pid=
 video_pid=
 server_pid=
 nginx_pid=
@@ -413,7 +481,7 @@ owned_runtime() {
 emergency_cleanup() {
   set +e
   safe=yes
-  for pair in "$nginx_pid:$nginx_binary" "$server_pid:$server" "$video_pid:$video" "$broker_pid:$broker"; do
+  for pair in "$nginx_pid:$nginx_binary" "$server_pid:$server" "$video_pid:$video" "$control_pid:$control" "$broker_pid:$broker"; do
     child_pid=${pair%%:*}
     child_exe=${pair#*:}
     [ -n "$child_pid" ] || continue
@@ -456,6 +524,7 @@ mkdir -m 755 "$payload"
 tar -xzf "$archive" --strip-components=1 --no-same-owner -C "$payload"
 (cd "$payload" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
 [ -x "$video" ]
+[ -x "$control" ]
 daemon_uid=$(getent passwd daemon | head -n 1 | awk -F: '{print $3}')
 nobody_uid=$(getent passwd nobody | head -n 1 | awk -F: '{print $3}')
 nobody_gid=$(getent passwd nobody | head -n 1 | awk -F: '{print $4}')
@@ -470,6 +539,7 @@ chmod 600 "$runtime_marker"
 mkdir -m 750 "$runtime_root"
 chown "$daemon_uid:$nobody_gid" "$runtime_root"
 : > "$stage_root/broker.log"
+: > "$stage_root/control.log"
 : > "$stage_root/video.log"
 : > "$stage_root/server.log"
 : > "$stage_root/nginx.log"
@@ -483,6 +553,32 @@ printf '%s\n' "$broker_pid" > "$stage_root/broker.pid"
 count=0
 while [ "$count" -lt 60 ] && [ ! -S "$broker_socket" ]; do process_active "$broker_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
 [ -S "$broker_socket" ]
+phase=start-control-denial
+mkdir -m 750 "$control_runtime"
+chown "$www_uid:$nobody_gid" "$control_runtime"
+setpriv --reuid="$www_uid" --regid="$nobody_gid" --clear-groups --bounding-set=-all --no-new-privs \
+  env -i PATH=/usr/bin:/bin HOME=/nonexistent TMPDIR=/tmp BLI_KVM_CONTROL_SOCKET="$control_socket" \
+  "$control" > "$stage_root/control.log" 2>&1 < /dev/null &
+control_pid=$!
+printf '%s\n' "$control_pid" > "$stage_root/control.pid"
+count=0
+while [ "$count" -lt 60 ] && [ ! -S "$control_socket" ]; do process_active "$control_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
+[ -S "$control_socket" ]
+[ "$(stat -c '%a' "$control_socket")" = 660 ]
+[ "$(awk '/^CapEff:/ {print $2}' "/proc/$control_pid/status")" = 0000000000000000 ]
+[ "$(awk '/^CapBnd:/ {print $2}' "/proc/$control_pid/status")" = 0000000000000000 ]
+[ "$(awk '/^NoNewPrivs:/ {print $2}' "/proc/$control_pid/status")" = 1 ]
+case " $(awk '/^Groups:/ {$1=""; print}' "/proc/$control_pid/status") " in *" $kvmd_gid "*) exit 1 ;; esac
+if tr '\0' '\n' < "/proc/$control_pid/environ" | grep -Eq '^(CREDENTIALS_DIRECTORY|KVMD_)='; then exit 1; fi
+printf '%s' "$control_probe_b64" | base64 -d > "$stage_root/control-probe.py"
+chown "$nobody_uid:$nobody_gid" "$stage_root/control-probe.py"
+chmod 500 "$stage_root/control-probe.py"
+setpriv --reuid="$nobody_uid" --regid="$nobody_gid" --clear-groups --bounding-set=-all --no-new-privs \
+  python3 "$stage_root/control-probe.py" "$control_socket" > "$stage_root/control.result"
+[ "$(sed -n '1p' "$stage_root/control.result")" = hid=capability_disabled ]
+[ "$(sed -n '2p' "$stage_root/control.result")" = atx=capability_disabled ]
+[ "$(sed -n '3p' "$stage_root/control.result")" = media=capability_disabled ]
+[ "$(wc -l < "$stage_root/control.result" | tr -d ' ')" = 3 ]
 phase=start-video
 mkdir -m 750 "$video_runtime"
 chown "$www_uid:$nobody_gid" "$video_runtime"
@@ -550,6 +646,7 @@ phase=wait-browser
 count=0
 while [ "$count" -lt 240 ] && [ ! -f "$browser_done" ]; do
   process_active "$broker_pid" || exit 1
+  process_active "$control_pid" || exit 1
   process_active "$video_pid" || exit 1
   process_active "$server_pid" || exit 1
   process_active "$nginx_pid" || exit 1
@@ -565,6 +662,8 @@ stop_child "$server_pid" "$server"
 server_pid=
 stop_child "$video_pid" "$video"
 video_pid=
+stop_child "$control_pid" "$control"
+control_pid=
 stop_child "$broker_pid" "$broker"
 broker_pid=
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
@@ -588,6 +687,9 @@ emit tls13 passed
 emit nginx_stopped yes
 emit server_stopped yes
 emit video_proxy_stopped yes
+emit control_broker_stopped yes
+emit control_denials verified
+emit control_no_backend verified
 emit broker_stopped yes
 emit stage_removed yes
 emit rootfs_mode_after_run "$rootfs_mode"
@@ -630,6 +732,7 @@ def build_cleanup_script(paths: TlsPaths) -> str:
             "run_id": paths.stage.run_id,
             "server": paths.stage.server,
             "broker": paths.broker_binary,
+            "control": paths.control_binary,
             "video": paths.video_binary,
             "nginx_binary": paths.nginx_binary,
         }
@@ -640,7 +743,7 @@ emit() { printf '%s=%s\n' "$1" "$2"; }
 if [ -e "$stage_root" ]; then
   [ -f "$stage_marker" ]
   [ "$(cat "$stage_marker" 2>/dev/null || true)" = "$run_id" ]
-  for item in "nginx.pid:$nginx_binary" "server.pid:$server" "video.pid:$video" "broker.pid:$broker"; do
+  for item in "nginx.pid:$nginx_binary" "server.pid:$server" "video.pid:$video" "control.pid:$control" "broker.pid:$broker"; do
     pid_file="$stage_root/${item%%:*}"
     expected=${item#*:}
     [ -f "$pid_file" ] || continue
@@ -881,6 +984,8 @@ def validate_remote(facts: dict[str, str], bundle_sha256: str) -> None:
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
         "credential_isolation": "verified",
+        "control_denials": "verified",
+        "control_no_backend": "verified",
         "nginx_config": "verified",
         "tls_loopback": "yes",
         "tls12": "passed",
@@ -888,6 +993,7 @@ def validate_remote(facts: dict[str, str], bundle_sha256: str) -> None:
         "nginx_stopped": "yes",
         "server_stopped": "yes",
         "video_proxy_stopped": "yes",
+        "control_broker_stopped": "yes",
         "broker_stopped": "yes",
         "stage_removed": "yes",
         "rootfs_mode_after_run": "rw",
@@ -1115,6 +1221,7 @@ def execute(options: Options) -> int:
                 "browserTransport": "strict-host-key-ssh-forward",
                 "certificate": "ephemeral-self-signed",
                 "kvmdAccess": "read-only-inventory",
+                "controlBroker": "denial-only-no-backend",
                 "physicalActionsInvoked": False,
                 "persistentPathsChanged": False,
             },

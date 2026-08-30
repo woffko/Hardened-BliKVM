@@ -22,6 +22,8 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             paths.ready,
             paths.browser_done,
             paths.browser_result,
+            paths.control_runtime,
+            paths.control_socket,
             paths.video_runtime,
             paths.video_socket,
         ):
@@ -44,6 +46,18 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn("BLI_KVM_USTREAMER_SOCKET=/run/kvmd/ustreamer.sock", remote)
         self.assertIn('BLI_KVM_VIDEO_SOCKET="$video_socket"', remote)
         self.assertIn('video.pid:$video', cleanup)
+
+    def test_remote_gate_denies_all_control_families_without_backend(self) -> None:
+        paths = self._paths()
+        bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
+        remote = tls.build_remote_script(paths, bundle, 18081)
+        cleanup = tls.build_cleanup_script(paths)
+        self.assertIn("phase=start-control-denial", remote)
+        self.assertIn("hid=capability_disabled", remote)
+        self.assertIn("atx=capability_disabled", remote)
+        self.assertIn("media=capability_disabled", remote)
+        self.assertNotIn("/run/kvmd", tls.CONTROL_PROBE)
+        self.assertIn('control.pid:$control', cleanup)
 
     def test_generated_remote_scripts_are_valid_posix_shell(self) -> None:
         paths = self._paths()
