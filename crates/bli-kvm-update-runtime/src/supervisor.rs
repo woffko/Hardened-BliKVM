@@ -27,6 +27,7 @@ pub struct SupervisorActivation {
 pub struct SupervisorRecovery {
     pub manager: RecoveryOutcome,
     pub challenge: ChallengeReconciliation,
+    pub abandoned_staging_removed: usize,
 }
 
 #[derive(Debug)]
@@ -151,6 +152,7 @@ impl UpdateSupervisor {
     }
 
     pub fn watchdog_once(&self) -> Result<SupervisorRecovery, UpdateRuntimeError> {
+        let abandoned_staging_removed = self.manager.cleanup_abandoned_staging()?.removed;
         let clock = self.kernel.snapshot()?;
         let initial = self.manager.recover(clock)?;
         let status = self.manager.status()?;
@@ -163,6 +165,7 @@ impl UpdateSupervisor {
                 return Ok(SupervisorRecovery {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMissing,
+                    abandoned_staging_removed,
                 });
             }
             (Some(_), Ok(Some(challenge))) => {
@@ -171,6 +174,7 @@ impl UpdateSupervisor {
                 return Ok(SupervisorRecovery {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMismatch,
+                    abandoned_staging_removed,
                 });
             }
             (Some(_), Err(UpdateRuntimeError::InvalidChallengeState)) => {
@@ -179,6 +183,7 @@ impl UpdateSupervisor {
                 return Ok(SupervisorRecovery {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMismatch,
+                    abandoned_staging_removed,
                 });
             }
             (Some(_), Err(error)) => return Err(error),
@@ -196,6 +201,7 @@ impl UpdateSupervisor {
         Ok(SupervisorRecovery {
             manager: initial,
             challenge,
+            abandoned_staging_removed,
         })
     }
 }

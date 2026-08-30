@@ -29,6 +29,8 @@ pub const SLOT_MANIFEST_PATH: &str = ".hardened-blikvm/manifest.json";
 pub const SLOT_SIGNATURE_PATH: &str = ".hardened-blikvm/manifest.sig";
 
 const SLOT_RECEIPT_SCHEMA_VERSION: u32 = 1;
+const STAGING_MARKER_SCHEMA_VERSION: u32 = 1;
+const STAGING_MARKER_PURPOSE: &str = "hardened-blikvm-application-staging";
 const MAX_SLOT_RECEIPT_BYTES: u64 = 4 * 1024;
 const MAX_TREE_ENTRIES: usize = MAX_PAYLOAD_FILES * 2 + 16;
 
@@ -48,6 +50,11 @@ pub struct StagedApplication {
     pub payload_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StagingCleanup {
+    pub removed: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SlotReceipt {
@@ -57,12 +64,21 @@ struct SlotReceipt {
     payload_bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StagingMarker {
+    schema_version: u32,
+    purpose: String,
+}
+
 #[derive(Debug, Error)]
 pub enum ApplicationStageError {
     #[error("application slot root path is invalid")]
     InvalidRoot,
     #[error("application slot root is unsafe")]
     UnsafeRoot,
+    #[error("another application stager owns the slot-root lock")]
+    StagerBusy,
     #[error("application slot identifier is invalid")]
     InvalidSlotId,
     #[error("application source path is invalid")]
@@ -81,6 +97,8 @@ pub enum ApplicationStageError {
     ExtractionMismatch,
     #[error("an existing application slot is unsafe or corrupt")]
     UnsafeExistingSlot,
+    #[error("an abandoned application staging tree is unsafe")]
+    UnsafeAbandonedStaging,
     #[error("an application slot conflicts with the verified bundle")]
     SlotConflict,
     #[error("atomic no-replace slot publication is unavailable")]
@@ -117,6 +135,12 @@ impl ApplicationSlotStager {
         if identity_from_metadata(&root_directory.metadata()?) != identity {
             return Err(ApplicationStageError::UnsafeRoot);
         }
+        // SAFETY: flock observes only the valid owned directory descriptor.
+        let lock_result =
+            unsafe { libc::flock(root_directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if lock_result != 0 {
+            return Err(ApplicationStageError::StagerBusy);
+        }
         Ok(Self {
             root,
             root_directory,
@@ -149,6 +173,7 @@ impl ApplicationSlotStager {
         fs::set_permissions(staging.path(), Permissions::from_mode(0o700))?;
         self.validate_root()?;
         validate_staging_parent(staging.path(), self.identity)?;
+        create_staging_marker(staging.path())?;
 
         create_payload_directories(staging.path(), &verified.manifest)?;
         let proof = extract_verified_archive(&mut snapshot, staging.path(), &verified)?;
@@ -212,6 +237,33 @@ impl ApplicationSlotStager {
             StageDisposition::Published,
             verified,
         ))
+    }
+
+    pub fn cleanup_abandoned_staging(&self) -> Result<StagingCleanup, ApplicationStageError> {
+        self.validate_root()?;
+        let mut removed = 0_usize;
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .to_str()
+                .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?
+                .to_string();
+            if !name.starts_with(".staging-") {
+                continue;
+            }
+            if !valid_staging_name(&name) {
+                return Err(ApplicationStageError::UnsafeAbandonedStaging);
+            }
+            let path = entry.path();
+            validate_abandoned_staging_tree(&path, self.identity)?;
+            make_tree_owner_writable(&path)
+                .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+            fs::remove_dir_all(&path)?;
+            self.root_directory.sync_all()?;
+            removed = removed.saturating_add(1);
+        }
+        Ok(StagingCleanup { removed })
     }
 
     pub fn inspect_slot(
@@ -679,16 +731,63 @@ fn write_slot_metadata(
     proof: &ArchiveProof,
 ) -> Result<(), ApplicationStageError> {
     let metadata_directory = root.join(SLOT_METADATA_DIRECTORY);
-    fs::create_dir(&metadata_directory)?;
-    fs::set_permissions(&metadata_directory, Permissions::from_mode(0o700))?;
+    validate_staging_marker(root)?;
     let receipt_bytes =
         serde_json::to_vec(receipt).map_err(|_| ApplicationStageError::Serialization)?;
     if receipt_bytes.len() as u64 > MAX_SLOT_RECEIPT_BYTES {
         return Err(ApplicationStageError::Serialization);
     }
-    write_new_file(&root.join(SLOT_RECEIPT_PATH), &receipt_bytes)?;
     write_new_file(&root.join(SLOT_MANIFEST_PATH), &proof.manifest_bytes)?;
     write_new_file(&root.join(SLOT_SIGNATURE_PATH), &proof.signature_bytes)?;
+    replace_private_file(&root.join(SLOT_RECEIPT_PATH), &receipt_bytes)?;
+    File::open(metadata_directory)?.sync_all()?;
+    Ok(())
+}
+
+fn create_staging_marker(root: &Path) -> Result<(), ApplicationStageError> {
+    let metadata_directory = root.join(SLOT_METADATA_DIRECTORY);
+    fs::create_dir(&metadata_directory)?;
+    fs::set_permissions(&metadata_directory, Permissions::from_mode(0o700))?;
+    let marker = StagingMarker {
+        schema_version: STAGING_MARKER_SCHEMA_VERSION,
+        purpose: STAGING_MARKER_PURPOSE.to_string(),
+    };
+    let bytes = serde_json::to_vec(&marker).map_err(|_| ApplicationStageError::Serialization)?;
+    write_new_file(&root.join(SLOT_RECEIPT_PATH), &bytes)?;
+    File::open(&metadata_directory)?.sync_all()?;
+    File::open(root)?.sync_all()?;
+    Ok(())
+}
+
+fn validate_staging_marker(root: &Path) -> Result<(), ApplicationStageError> {
+    let path = root.join(SLOT_RECEIPT_PATH);
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.len() == 0
+        || metadata.len() > MAX_SLOT_RECEIPT_BYTES
+    {
+        return Err(ApplicationStageError::UnsafeAbandonedStaging);
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_SLOT_RECEIPT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    let marker: StagingMarker = serde_json::from_slice(&bytes)
+        .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+    if marker
+        != (StagingMarker {
+            schema_version: STAGING_MARKER_SCHEMA_VERSION,
+            purpose: STAGING_MARKER_PURPOSE.to_string(),
+        })
+    {
+        return Err(ApplicationStageError::UnsafeAbandonedStaging);
+    }
     Ok(())
 }
 
@@ -702,6 +801,22 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), ApplicationStageError
     file.write_all(bytes)?;
     file.flush()?;
     file.sync_all()?;
+    Ok(())
+}
+
+fn replace_private_file(path: &Path, bytes: &[u8]) -> Result<(), ApplicationStageError> {
+    let parent = path
+        .parent()
+        .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
+    temporary.write_all(bytes)?;
+    temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .map_err(|error| ApplicationStageError::Io(error.error))?;
+    File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -785,6 +900,145 @@ fn make_tree_owner_writable(path: &Path) -> io::Result<()> {
         fs::set_permissions(path, Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+fn valid_staging_name(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix(".staging-") else {
+        return false;
+    };
+    (6..=32).contains(&suffix.len()) && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn validate_abandoned_staging_tree(
+    root: &Path,
+    identity: RootIdentity,
+) -> Result<(), ApplicationStageError> {
+    let metadata =
+        fs::symlink_metadata(root).map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.dev() != identity.device
+        || metadata.uid() != identity.owner
+        || metadata.permissions().mode() & 0o7000 != 0
+    {
+        return Err(ApplicationStageError::UnsafeAbandonedStaging);
+    }
+    validate_abandoned_receipt(root, identity)?;
+    let mut entries = 0_usize;
+    let mut bytes = 0_u64;
+    inspect_abandoned_directory(root, root, identity, &mut entries, &mut bytes)?;
+    Ok(())
+}
+
+fn validate_abandoned_receipt(
+    root: &Path,
+    identity: RootIdentity,
+) -> Result<(), ApplicationStageError> {
+    let path = root.join(SLOT_RECEIPT_PATH);
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+    if !metadata.is_file()
+        || metadata.dev() != identity.device
+        || metadata.uid() != identity.owner
+        || metadata.nlink() != 1
+        || !matches!(metadata.permissions().mode() & 0o7777, 0o400 | 0o600)
+        || metadata.len() == 0
+        || metadata.len() > MAX_SLOT_RECEIPT_BYTES
+    {
+        return Err(ApplicationStageError::UnsafeAbandonedStaging);
+    }
+    let mut content = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_SLOT_RECEIPT_BYTES + 1)
+        .read_to_end(&mut content)?;
+    if let Ok(marker) = serde_json::from_slice::<StagingMarker>(&content) {
+        if marker
+            == (StagingMarker {
+                schema_version: STAGING_MARKER_SCHEMA_VERSION,
+                purpose: STAGING_MARKER_PURPOSE.to_string(),
+            })
+        {
+            return Ok(());
+        }
+    }
+    let receipt: SlotReceipt = serde_json::from_slice(&content)
+        .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+    if receipt.schema_version != SLOT_RECEIPT_SCHEMA_VERSION
+        || !valid_slot_id(&receipt.slot_id)
+        || !valid_sha256_text(&receipt.manifest_sha256)
+        || receipt.payload_bytes == 0
+        || receipt.payload_bytes > MAX_PAYLOAD_BYTES
+    {
+        return Err(ApplicationStageError::UnsafeAbandonedStaging);
+    }
+    Ok(())
+}
+
+fn inspect_abandoned_directory(
+    staging_root: &Path,
+    directory: &Path,
+    identity: RootIdentity,
+    entries: &mut usize,
+    bytes: &mut u64,
+) -> Result<(), ApplicationStageError> {
+    for entry in
+        fs::read_dir(directory).map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?
+    {
+        let entry = entry.map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+        *entries = entries.saturating_add(1);
+        if *entries > MAX_TREE_ENTRIES {
+            return Err(ApplicationStageError::UnsafeAbandonedStaging);
+        }
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(staging_root)
+            .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+        let top_level = relative
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+            .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?;
+        if !matches!(
+            top_level,
+            "bin" | "libexec" | "share" | SLOT_METADATA_DIRECTORY
+        ) {
+            return Err(ApplicationStageError::UnsafeAbandonedStaging);
+        }
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|_| ApplicationStageError::UnsafeAbandonedStaging)?;
+        if metadata.dev() != identity.device
+            || metadata.uid() != identity.owner
+            || metadata.permissions().mode() & 0o7000 != 0
+        {
+            return Err(ApplicationStageError::UnsafeAbandonedStaging);
+        }
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            inspect_abandoned_directory(staging_root, &path, identity, entries, bytes)?;
+        } else if metadata.is_file() && metadata.nlink() == 1 {
+            *bytes = bytes
+                .checked_add(metadata.len())
+                .ok_or(ApplicationStageError::UnsafeAbandonedStaging)?;
+            if *bytes > MAX_PAYLOAD_BYTES + 1024 * 1024 {
+                return Err(ApplicationStageError::UnsafeAbandonedStaging);
+            }
+        } else {
+            return Err(ApplicationStageError::UnsafeAbandonedStaging);
+        }
+    }
+    Ok(())
+}
+
+fn valid_sha256_text(value: &str) -> bool {
+    value.len() == 64
+        && !value.bytes().all(|byte| byte == b'0')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn validate_published_slot(
@@ -1090,4 +1344,68 @@ fn hex_lower(bytes: &[u8]) -> String {
         value.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     value
+}
+
+#[cfg(test)]
+mod staging_cleanup_tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    #[test]
+    fn slot_root_lock_excludes_concurrent_staging_and_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let _first = ApplicationSlotStager::open(root.path()).unwrap();
+        assert!(matches!(
+            ApplicationSlotStager::open(root.path()),
+            Err(ApplicationStageError::StagerBusy)
+        ));
+    }
+
+    #[test]
+    fn removes_marker_owned_partial_and_readonly_staging_trees() {
+        let root = tempfile::tempdir().unwrap();
+        let stager = ApplicationSlotStager::open(root.path()).unwrap();
+        let abandoned = root.path().join(".staging-Abc123");
+        fs::create_dir(&abandoned).unwrap();
+        fs::set_permissions(&abandoned, Permissions::from_mode(0o700)).unwrap();
+        create_staging_marker(&abandoned).unwrap();
+        let bin = abandoned.join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("partial"), b"partial").unwrap();
+        fs::set_permissions(bin.join("partial"), Permissions::from_mode(0o400)).unwrap();
+        fs::set_permissions(&bin, Permissions::from_mode(0o500)).unwrap();
+        fs::set_permissions(&abandoned, Permissions::from_mode(0o500)).unwrap();
+
+        assert_eq!(
+            stager.cleanup_abandoned_staging().unwrap(),
+            StagingCleanup { removed: 1 }
+        );
+        assert!(!abandoned.exists());
+        assert_eq!(
+            stager.cleanup_abandoned_staging().unwrap(),
+            StagingCleanup { removed: 0 }
+        );
+    }
+
+    #[test]
+    fn refuses_links_and_preserves_external_content() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("preserve");
+        fs::write(&outside_file, b"preserve").unwrap();
+        let stager = ApplicationSlotStager::open(root.path()).unwrap();
+        let abandoned = root.path().join(".staging-Def456");
+        fs::create_dir(&abandoned).unwrap();
+        fs::set_permissions(&abandoned, Permissions::from_mode(0o700)).unwrap();
+        create_staging_marker(&abandoned).unwrap();
+        symlink(&outside_file, abandoned.join("share")).unwrap();
+
+        assert!(matches!(
+            stager.cleanup_abandoned_staging(),
+            Err(ApplicationStageError::UnsafeAbandonedStaging)
+        ));
+        assert_eq!(fs::read(outside_file).unwrap(), b"preserve");
+        assert!(abandoned.exists());
+    }
 }

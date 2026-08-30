@@ -98,6 +98,18 @@ idempotent `AlreadyPresent` result is returned. A corrupt or conflicting slot
 is never repaired or replaced implicitly. The same full validation is exposed
 for standalone inspection without retaining the original source archive.
 
+The slot root is held under a non-blocking exclusive `flock` for every staging,
+inspection-manager, or cleanup process. A fresh `.staging-...` directory gets
+a private structured receipt before extraction begins. That marker is
+atomically replaced by the final slot receipt only after the complete verified
+tree and retained signature proof exist. `stage` and `watchdog-once` remove
+abandoned trees only when the direct child name, owner, filesystem, marker or
+final receipt, entry types, link counts, size limits, and allowed top-level
+paths all match. Read-only partial trees are made owner-writable only after
+this validation and are then deleted with parent fsync. Symlinks, hardlinks,
+foreign ownership, special files, malformed names, missing markers, and
+unbounded trees are hard stops rather than cleanup candidates.
+
 ## Current implementation boundary
 
 `bli-kvm-update-verifier` verifies archive metadata, signature, manifest shape,
@@ -111,12 +123,15 @@ and immutable no-replace slot publication. Its tests cover exact staging,
 idempotency, corrupt-slot refusal, wrong signatures, payload tamper, oversized
 input, writable or symlink sources, unsafe roots, read-only modes, proof
 retention, standalone inspection, invalid slot IDs, and residue-free covered
-prepublication failures.
+prepublication failures. Cleanup tests additionally cover exclusive root
+locking, marker-owned read-only crash residue, idempotent cleanup, and symlink
+escape refusal.
 
-The stager is a library and is not connected to the network server, systemd,
-or the H616 device. The separate activation state machine is defined in
-`application-activation-v1.md`; it remains an unwired library as well.
-Clock/boot acquisition, process health credentials, systemd/watchdog wiring,
-abandoned staging recovery after process or power loss, slot garbage
-collection, key rotation, channel metadata, and system-image updates are
-separate gates and remain unavailable.
+The stager is exposed only through the local supervisor's fixed `stage`
+command; it is not connected to the network server or GUI. That command and
+the activation state machine in `application-activation-v1.md` passed an
+isolated H616 gate, while packaged production units remain uninstalled.
+Reference-aware slot garbage collection, real candidate-process orchestration,
+production key rotation, channel metadata, and system-image updates remain
+separate gates. Unmarked residue from the tiny mkdir-before-marker crash window
+intentionally requires manual review.

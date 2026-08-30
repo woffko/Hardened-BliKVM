@@ -4,7 +4,9 @@ mod pointer;
 
 use std::{collections::BTreeMap, io, path::PathBuf};
 
-use bli_kvm_update_stager::{ApplicationSlotStager, ApplicationStageError, StagedApplication};
+use bli_kvm_update_stager::{
+    ApplicationSlotStager, ApplicationStageError, StagedApplication, StagingCleanup,
+};
 use bli_kvm_update_verifier::ApplicationTrustRoot;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -204,9 +206,9 @@ impl ApplicationUpdateManager {
         }
         let slot_root = slot_root.into();
         let state_root = state_root.into();
+        let state = StateStore::open(state_root)?;
         let stager = ApplicationSlotStager::open(slot_root.clone())?;
         let pointer = PointerStore::open(slot_root)?;
-        let state = StateStore::open(state_root)?;
         if pointer.root_path().starts_with(state.root_path())
             || state.root_path().starts_with(pointer.root_path())
             || stager.root_path().starts_with(state.root_path())
@@ -244,6 +246,10 @@ impl ApplicationUpdateManager {
 
     pub fn health_timeout_ms(&self) -> u64 {
         self.health_timeout_ms
+    }
+
+    pub fn cleanup_abandoned_staging(&self) -> Result<StagingCleanup, UpdateManagerError> {
+        Ok(self.stager.cleanup_abandoned_staging()?)
     }
 
     pub fn status(&self) -> Result<ManagerStatus, UpdateManagerError> {

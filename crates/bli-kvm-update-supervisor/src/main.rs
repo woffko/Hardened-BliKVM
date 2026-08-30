@@ -73,8 +73,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
     let config = load_config(&config_path)?;
     let receipt = match command {
         CliCommand::Stage(source) => {
-            let staged =
-                ApplicationSlotStager::open(config.slot_root)?.stage(source, &config.trust_root)?;
+            let stager = ApplicationSlotStager::open(config.slot_root)?;
+            let abandoned_staging_removed = stager.cleanup_abandoned_staging()?.removed;
+            let staged = stager.stage(source, &config.trust_root)?;
             json!({
                 "command": "stage",
                 "result": match staged.disposition {
@@ -86,6 +87,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                 "sequence": staged.manifest.sequence,
                 "manifestSha256": staged.manifest_sha256,
                 "payloadBytes": staged.payload_bytes,
+                "abandonedStagingRemoved": abandoned_staging_removed,
             })
         }
         command => {
@@ -278,6 +280,7 @@ fn watchdog_receipt(recovery: SupervisorRecovery) -> Value {
         "command": "watchdog_once",
         "manager": manager,
         "challenge": challenge_reconciliation(recovery.challenge),
+        "abandonedStagingRemoved": recovery.abandoned_staging_removed,
     })
 }
 

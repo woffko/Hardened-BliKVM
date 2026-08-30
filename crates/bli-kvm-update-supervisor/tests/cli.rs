@@ -56,6 +56,7 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     assert!(staged1.status.success(), "{:?}", staged1.stderr);
     let staged1 = json_output(&staged1);
     assert_eq!(staged1["result"], "published");
+    assert_eq!(staged1["abandonedStagingRemoved"], 0);
     let slot1 = staged1["slotId"].as_str().unwrap().to_string();
     let staged2 = command(binary, &config, &["stage", source2.to_str().unwrap()])
         .output()

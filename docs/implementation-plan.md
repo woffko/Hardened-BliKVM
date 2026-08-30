@@ -180,6 +180,12 @@ slots, confirmation, floor enforcement, downgrade and wrong-token rejection,
 lost-token rollback, transient systemd sandboxing, and complete `/tmp` cleanup.
 Details and remaining production-process gates are recorded in
 `baselines/device-update-supervisor.md`.
+
+Checkpoint: staging now holds an exclusive slot-root lock and writes a durable
+structured marker before extraction. Local `stage` and watchdog paths clean
+only marker-owned bounded residue after link/owner/device/type validation;
+read-only partial trees and symlink-escape refusal are tested. Reference-aware
+transactional slot garbage collection remains the next update-storage slice.
 Two clean AArch64 builds at source commit `1a88542` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in
