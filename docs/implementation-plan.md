@@ -161,6 +161,9 @@ explicit-failure, corrupt-target, and pointer-mismatch states. It remains
 unwired; systemd process orchestration, kernel clock acquisition, one-use
 health credentials, watchdog scheduling, live interruption, and staging/slot
 cleanup remain open.
+Two clean AArch64 builds at source commit `fdaf418` produced byte-identical
+linked payloads, manager object code, and prototype archives; exact hashes are
+recorded in `baselines/application-update-manager.md`.
 
 ## Phase 7: Release acceptance
 
