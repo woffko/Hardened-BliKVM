@@ -116,6 +116,23 @@ timer and Unix confirmation socket run under a distinct update identity with
 no network or device authority. There is deliberately no network activation
 socket and no production signing key or enabled configuration in the bundle.
 
+Supervisor stderr remains deliberately generic. When a runtime operation
+reaches the manager and fails, the local exit status identifies only the fixed
+error variant and carries no slot ID, path, token, key, or journal contents:
+
+| Code | Manager error |
+| ---: | --- |
+| 60-65 | invalid/unsafe slot or state roots, overlapping roots, or different filesystems |
+| 66 | `ManagerBusy` |
+| 67-70 | unsafe/invalid/oversized journal or concurrent journal change |
+| 71-74 | initialization, pointer, or slot-ID state error |
+| 75-78 | generation/history exhaustion or invalid clock/operation material |
+| 79-81 | operation conflict, pending activation, or required recovery |
+| 82-86 | system/anti-rollback policy, confirmation/proof mismatch, or invalid retention |
+| 87 | nested `StagerBusy` |
+| 88 | another nested stager/proof error |
+| 89 | manager I/O error |
+
 The supervisor also passed an isolated native H616 gate covering staging,
 confirmation, floor enforcement, downgrade rejection, lost-token rollback,
 cleanup, and a transient systemd sandbox. The packaged socket/timer remain

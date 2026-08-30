@@ -73,7 +73,7 @@ impl SupervisorCliError {
             Self::UnsafeConfigFile => 11,
             Self::InvalidConfig => 12,
             Self::Manager(_) => 20,
-            Self::Runtime(UpdateRuntimeError::Manager(_)) => 31,
+            Self::Runtime(UpdateRuntimeError::Manager(error)) => manager_runtime_exit_code(error),
             Self::Runtime(UpdateRuntimeError::InvalidHealthResponseLength) => 32,
             Self::Runtime(UpdateRuntimeError::ChallengeMissing) => 33,
             Self::Runtime(UpdateRuntimeError::OperationMismatch) => 34,
@@ -85,6 +85,41 @@ impl SupervisorCliError {
             Self::Io(_) => 50,
             Self::Json(_) => 51,
         }
+    }
+}
+
+fn manager_runtime_exit_code(error: &UpdateManagerError) -> u8 {
+    match error {
+        UpdateManagerError::InvalidSlotRoot => 60,
+        UpdateManagerError::UnsafeSlotRoot => 61,
+        UpdateManagerError::InvalidStateRoot => 62,
+        UpdateManagerError::UnsafeStateRoot => 63,
+        UpdateManagerError::OverlappingRoots => 64,
+        UpdateManagerError::DifferentFilesystems => 65,
+        UpdateManagerError::ManagerBusy => 66,
+        UpdateManagerError::UnsafeJournal => 67,
+        UpdateManagerError::InvalidJournal => 68,
+        UpdateManagerError::JournalTooLarge => 69,
+        UpdateManagerError::ConcurrentStateChange => 70,
+        UpdateManagerError::NotInitialized => 71,
+        UpdateManagerError::AlreadyInitialized => 72,
+        UpdateManagerError::UnsafePointer => 73,
+        UpdateManagerError::InvalidSlotId => 74,
+        UpdateManagerError::GenerationExhausted => 75,
+        UpdateManagerError::HistoryFull => 76,
+        UpdateManagerError::InvalidClock => 77,
+        UpdateManagerError::InvalidOperation => 78,
+        UpdateManagerError::OperationConflict => 79,
+        UpdateManagerError::PendingActivation => 80,
+        UpdateManagerError::RecoveryRequired => 81,
+        UpdateManagerError::MinimumSystemSequence => 82,
+        UpdateManagerError::AntiRollback => 83,
+        UpdateManagerError::ConfirmationMismatch => 84,
+        UpdateManagerError::SlotProofMismatch => 85,
+        UpdateManagerError::InvalidRetention => 86,
+        UpdateManagerError::Stager(ApplicationStageError::StagerBusy) => 87,
+        UpdateManagerError::Stager(_) => 88,
+        UpdateManagerError::Io(_) => 89,
     }
 }
 
@@ -455,5 +490,30 @@ mod tests {
             SupervisorCliError::Runtime(UpdateRuntimeError::ChallengeMissing).exit_code(),
             33
         );
+        assert_eq!(
+            SupervisorCliError::Runtime(UpdateRuntimeError::Manager(
+                UpdateManagerError::ManagerBusy,
+            ))
+            .exit_code(),
+            66
+        );
+        assert_eq!(
+            SupervisorCliError::Runtime(UpdateRuntimeError::Manager(
+                UpdateManagerError::ConfirmationMismatch,
+            ))
+            .exit_code(),
+            84
+        );
+        assert_eq!(
+            SupervisorCliError::Runtime(UpdateRuntimeError::Manager(
+                UpdateManagerError::SlotProofMismatch,
+            ))
+            .exit_code(),
+            85
+        );
+        let nested_stager_busy = SupervisorCliError::Runtime(UpdateRuntimeError::Manager(
+            UpdateManagerError::Stager(ApplicationStageError::StagerBusy),
+        ));
+        assert_eq!(nested_stager_busy.exit_code(), 87);
     }
 }
