@@ -25,13 +25,15 @@ release.
 ## Verified checkpoint
 
 On 2026-08-30, two independent output directories produced byte-identical
-3,224,922-byte archives after the zero-warning frontend cleanup:
+3,224,522-byte commit-bound archives after the zero-warning and strict
+same-origin frontend cleanup:
 
-`794bfb9047eb7619715ea803590ad1c12f83bd4e1922d584cbf2f3e7df5da68a`
+`5d4ef5f3a2c23df594da1d20c98ffc9b35027e67c4bd607adc3d6c0082a3b5bb`
 
 Independent extraction verified every `SHA256SUMS` entry, numeric root archive
 ownership, 0755 binaries/directories, 0644 web/docs/manifest files, absence of
 symlinks, legacy/MSW assets, host paths, private markers, and test-network
-placeholders. The manifest still states `sourceState` as uncommitted and both
-acceptance booleans as false; the hash is therefore a development checkpoint,
-not a release identifier.
+placeholders. The manifest binds the archive to source commit
+`0a6082b42778b77ac690ceef292238b90bc9d730`, while both acceptance booleans
+remain false; the hash is therefore a development checkpoint, not a release
+identifier.
