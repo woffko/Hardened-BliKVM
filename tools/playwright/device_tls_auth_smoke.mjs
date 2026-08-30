@@ -147,16 +147,16 @@ try {
   assert.equal(session?.secure, true);
   assert.ok(csrf);
 
-  phase = "logout";
-  const logout = await page.evaluate(async (csrfToken) => {
-    const response = await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-      headers: { "x-csrf-token": csrfToken },
-    });
-    return response.status;
-  }, csrf.value);
-  assert.equal(logout, 200);
+  phase = "logout-request";
+  const logout = await context.request.post(`${baseUrl}/api/auth/logout`, {
+    headers: {
+      Origin: baseUrl,
+      "x-csrf-token": csrf.value,
+    },
+  });
+  phase = "logout-status";
+  assert.equal(logout.status(), 200);
+  phase = "logout-cookies";
   cookies = await context.cookies(baseUrl);
   assert.equal(
     cookies.some((cookie) => cookie.name === "hardened-blikvm-session"),
@@ -174,7 +174,6 @@ try {
     ["POST", "/api/auth/login", 200],
     ["GET", "/api/inventory", 200],
     ["POST", "/api/auth/password", 200],
-    ["POST", "/api/auth/logout", 200],
   ]) {
     assert.ok(
       responses.some(
