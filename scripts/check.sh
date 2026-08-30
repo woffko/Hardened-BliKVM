@@ -29,18 +29,21 @@ python3 -m unittest \
   tools/test_capture_ssh_preflight.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
+  tools/test_stage_device_systemd_gate.py \
   -v
 python3 -m py_compile \
   tools/capture_pikvm_baseline.py \
   tools/capture_ssh_preflight.py \
   tools/stage_device_broker_inventory.py \
   tools/stage_device_prototype.py \
+  tools/stage_device_systemd_gate.py \
   scripts/rust_lld_static_pie.py \
   tools/test_capture_pikvm_baseline.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_capture_ssh_preflight.py \
   tools/test_stage_device_broker_inventory.py \
-  tools/test_stage_device_prototype.py
+  tools/test_stage_device_prototype.py \
+  tools/test_stage_device_systemd_gate.py
 
 if command -v basedpyright >/dev/null 2>&1; then
   basedpyright \
@@ -48,12 +51,14 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_ssh_preflight.py \
     tools/stage_device_broker_inventory.py \
     tools/stage_device_prototype.py \
+    tools/stage_device_systemd_gate.py \
     scripts/rust_lld_static_pie.py \
     tools/test_capture_pikvm_baseline.py \
     tools/test_rust_lld_static_pie.py \
     tools/test_capture_ssh_preflight.py \
     tools/test_stage_device_broker_inventory.py \
-    tools/test_stage_device_prototype.py
+    tools/test_stage_device_prototype.py \
+    tools/test_stage_device_systemd_gate.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1
