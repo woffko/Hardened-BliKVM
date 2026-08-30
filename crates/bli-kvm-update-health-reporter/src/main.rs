@@ -56,11 +56,21 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             eprintln!("Hardened BliKVM health reporter failed: {error}");
-            if matches!(error, ReporterError::InvalidArguments) {
-                ExitCode::from(2)
-            } else {
-                ExitCode::FAILURE
-            }
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+impl ReporterError {
+    fn exit_code(&self) -> u8 {
+        match self {
+            Self::InvalidArguments => 2,
+            Self::InvalidCredentialDirectory => 10,
+            Self::InvalidCredential => 11,
+            Self::CandidateNotReady => 12,
+            Self::InvalidHealthResponse => 13,
+            Self::ConfirmationUnavailable => 14,
+            Self::Io(_) => 15,
         }
     }
 }
@@ -364,5 +374,19 @@ mod tests {
             validate_health_response(response),
             Err(ReporterError::InvalidHealthResponse)
         ));
+    }
+
+    #[test]
+    fn failure_classes_have_stable_nonoverlapping_exit_codes() {
+        assert_eq!(ReporterError::InvalidArguments.exit_code(), 2);
+        assert_eq!(ReporterError::InvalidCredentialDirectory.exit_code(), 10);
+        assert_eq!(ReporterError::InvalidCredential.exit_code(), 11);
+        assert_eq!(ReporterError::CandidateNotReady.exit_code(), 12);
+        assert_eq!(ReporterError::InvalidHealthResponse.exit_code(), 13);
+        assert_eq!(ReporterError::ConfirmationUnavailable.exit_code(), 14);
+        assert_eq!(
+            ReporterError::Io(io::Error::from(io::ErrorKind::Other)).exit_code(),
+            15
+        );
     }
 }
