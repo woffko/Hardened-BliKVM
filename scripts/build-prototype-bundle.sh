@@ -41,6 +41,7 @@ install -d -m 0755 \
   "$stage/bin" \
   "$stage/libexec" \
   "$stage/share/web" \
+  "$stage/share/nginx" \
   "$stage/share/systemd" \
   "$stage/share/sysusers.d" \
   "$stage/share/docs"
@@ -50,6 +51,9 @@ cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
 find "$stage/share/web" -type f -exec chmod 0644 {} +
+install -m 0644 \
+  packaging/nginx/hardened-blikvm.conf \
+  "$stage/share/nginx/"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-platform-broker.service \
   packaging/systemd/hardened-blikvm-server.service \

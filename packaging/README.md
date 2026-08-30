@@ -14,6 +14,12 @@ has no device or capability access. Its only persistent writable path is the
 systemd-managed mode-0700 state directory. Secure cookies assume an HTTPS
 reverse proxy; the Rust process itself remains loopback-only.
 
+`nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
+1.2 and 1.3, proxies only to the fixed loopback server port, preserves the
+external Host value required by origin/CSRF checks, and carries WebSocket
+upgrade headers. Certificate and key files are deployment inputs and never
+belong in the source bundle.
+
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,
 environment variable, log, or support bundle:

@@ -116,6 +116,9 @@ class StageDevicePrototypeTests(unittest.TestCase):
         self.assertNotIn("accept-new", rendered)
         self.assertNotIn("private-test-value", rendered)
         self.assertEqual(command[0:3], ["sshpass", "-d", "17"])
+        transport = stage.ssh_transport_command(target, 17)
+        self.assertEqual(transport, command[:-1])
+        self.assertEqual(transport[-1], "root@device.invalid")
 
     def test_generated_remote_scripts_are_valid_posix_shell(self) -> None:
         paths = stage.stage_paths("c" * 64, "0123456789abcdef")

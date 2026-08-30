@@ -467,7 +467,7 @@ def run_with_secret_fd(
         os.close(read_fd)
 
 
-def ssh_command(target: RemoteTarget, password_fd: int, remote_script: str) -> list[str]:
+def ssh_transport_command(target: RemoteTarget, password_fd: int) -> list[str]:
     return [
         "sshpass",
         "-d",
@@ -519,6 +519,12 @@ def ssh_command(target: RemoteTarget, password_fd: int, remote_script: str) -> l
         "-o",
         f"UserKnownHostsFile={target.known_hosts}",
         f"{target.username}@{target.host}",
+    ]
+
+
+def ssh_command(target: RemoteTarget, password_fd: int, remote_script: str) -> list[str]:
+    return [
+        *ssh_transport_command(target, password_fd),
         f"sh -c {shlex.quote(remote_script)}",
     ]
 

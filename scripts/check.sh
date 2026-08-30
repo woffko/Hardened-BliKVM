@@ -25,11 +25,13 @@ scripts/verify-systemd-units.sh
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
+  tools/test_packaging_boundaries.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_capture_ssh_preflight.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
+  tools/test_stage_device_tls_browser.py \
   -v
 python3 -m py_compile \
   tools/capture_pikvm_baseline.py \
@@ -37,13 +39,18 @@ python3 -m py_compile \
   tools/stage_device_broker_inventory.py \
   tools/stage_device_prototype.py \
   tools/stage_device_systemd_gate.py \
+  tools/stage_device_tls_browser.py \
   scripts/rust_lld_static_pie.py \
   tools/test_capture_pikvm_baseline.py \
+  tools/test_packaging_boundaries.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_capture_ssh_preflight.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
-  tools/test_stage_device_systemd_gate.py
+  tools/test_stage_device_systemd_gate.py \
+  tools/test_stage_device_tls_browser.py
+
+node --check tools/playwright/device_tls_auth_smoke.mjs
 
 if command -v basedpyright >/dev/null 2>&1; then
   basedpyright \
@@ -52,13 +59,16 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_broker_inventory.py \
     tools/stage_device_prototype.py \
     tools/stage_device_systemd_gate.py \
+    tools/stage_device_tls_browser.py \
     scripts/rust_lld_static_pie.py \
     tools/test_capture_pikvm_baseline.py \
+    tools/test_packaging_boundaries.py \
     tools/test_rust_lld_static_pie.py \
     tools/test_capture_ssh_preflight.py \
     tools/test_stage_device_broker_inventory.py \
     tools/test_stage_device_prototype.py \
-    tools/test_stage_device_systemd_gate.py
+    tools/test_stage_device_systemd_gate.py \
+    tools/test_stage_device_tls_browser.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1
@@ -67,5 +77,6 @@ fi
 pnpm_web build
 pnpm_web lint
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
+pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 
 git diff --check
