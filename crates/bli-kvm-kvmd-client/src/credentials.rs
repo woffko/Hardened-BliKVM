@@ -1,4 +1,4 @@
-use http::HeaderValue;
+use http::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
 const MAX_CREDENTIAL_BYTES: usize = 256;
@@ -44,11 +44,22 @@ impl KvmdCredentials {
         })
     }
 
-    pub(crate) fn username_header(&self) -> HeaderValue {
+    pub fn apply_request_headers(&self, headers: &mut HeaderMap) {
+        headers.insert(
+            HeaderName::from_static("x-kvmd-user"),
+            self.username_header(),
+        );
+        headers.insert(
+            HeaderName::from_static("x-kvmd-passwd"),
+            self.password_header(),
+        );
+    }
+
+    fn username_header(&self) -> HeaderValue {
         HeaderValue::from_bytes(&self.username).expect("credential was validated at construction")
     }
 
-    pub(crate) fn password_header(&self) -> HeaderValue {
+    fn password_header(&self) -> HeaderValue {
         HeaderValue::from_bytes(&self.password).expect("credential was validated at construction")
     }
 }

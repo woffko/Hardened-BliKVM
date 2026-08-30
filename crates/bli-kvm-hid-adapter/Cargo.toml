@@ -1,0 +1,11 @@
+[package]
+name = "bli-kvm-hid-adapter"
+description = "Fail-closed HID report translator for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }

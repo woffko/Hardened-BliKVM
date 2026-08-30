@@ -209,15 +209,14 @@ impl KvmdReadClient {
         let stream = UnixStream::connect(&self.socket_path).await?;
         let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await?;
         let connection_task = tokio::spawn(connection);
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method(Method::GET)
             .uri(path)
             .header(header::ACCEPT, "application/json")
             .header(header::HOST, "localhost")
             .header(header::USER_AGENT, "Hardened-BliKVM-broker/0.1")
-            .header("x-kvmd-user", credentials.username_header())
-            .header("x-kvmd-passwd", credentials.password_header())
             .body(Empty::<Bytes>::new())?;
+        credentials.apply_request_headers(request.headers_mut());
         let response = sender.send_request(request).await?;
         drop(sender);
 

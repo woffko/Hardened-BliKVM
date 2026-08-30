@@ -80,6 +80,15 @@ zero control/WebSocket requests and all staging was removed. This proves the
 fail-closed boundary only; HID leases/translation and ATX arming/timing remain
 required before either capability can change.
 
+Checkpoint: a pure Rust HID translator, exclusive 30-second
+session-and-target-bound lease manager, five-route KVMD transition client, and
+atomic release ledger now pass local failure/recovery tests. Backend errors
+revoke the lease and attempt release-all; a simulated process restart replays a
+persisted key release before granting a new lease. These components are not
+wired to the denial broker or server. Safe external target/focus, broker-side
+attestation, on-device startup replay, event soak, reconnect, and reboot gates
+remain required.
+
 ## Phase 4: Video
 
 - Proxy loopback-only MJPEG first.

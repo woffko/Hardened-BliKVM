@@ -1,0 +1,21 @@
+[package]
+name = "bli-kvm-hid-transition"
+description = "Lease-bound KVMD HID transition engine for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-hid-adapter = { path = "../bli-kvm-hid-adapter" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bli-kvm-kvmd-hid-client = { path = "../bli-kvm-kvmd-hid-client" }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

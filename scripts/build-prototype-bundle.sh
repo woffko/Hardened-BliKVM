@@ -74,6 +74,7 @@ install -m 0644 docs/security-boundaries.md "$stage/share/docs/security-boundari
 install -m 0644 docs/api/broker-v1.md "$stage/share/docs/broker-v1.md"
 install -m 0644 docs/api/inventory-v1.md "$stage/share/docs/inventory-v1.md"
 install -m 0644 docs/api/control-v1.md "$stage/share/docs/control-v1.md"
+install -m 0644 docs/api/hid-transition.md "$stage/share/docs/hid-transition.md"
 install -m 0644 packaging/README.md "$stage/share/docs/packaging-boundary.md"
 
 for legacy in hardened-logo.png sipeed.ico mockServiceWorker.js; do

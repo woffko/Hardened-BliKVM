@@ -11,8 +11,8 @@ passed a physical interaction gate.
 | Read-only inventory | Five authenticated GET endpoints verified | Distinct-UID broker, dedicated-account rollback, `LoadCredential`, sanitizer, and repeated H616 inventory passed | Permanent least-privilege provisioning and reboot persistence |
 | MJPEG | Streamer source online through authenticated API | Read-only Rust proxy/server path passed on H616: 74 frames, 5 reconnects, 2 concurrent streams, session revocation, systemd isolation, and full rollback | TLS Chromium image decode/reconnect gate, then longer latency/soak matrix |
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |
-| Keyboard | HID online through authenticated API | Observed but not exposed | 10,000-event and reboot test |
-| Absolute/relative mouse | HID online; modes not physically exercised | Observed but not exposed | Mode and coordinate matrix |
+| Keyboard | HID online through authenticated API | Fixed-route translator, 30-second session/target lease, fail-closed release, and crash ledger implemented but not wired | Safe target/focus, startup replay, 10,000-event, reconnect, and reboot test |
+| Absolute/relative mouse | HID online; modes not physically exercised | Typed relative/absolute translation and release ledger implemented but not wired; Back/Forward rejected | Safe target/focus, mode, coordinate, scroll, button, reconnect, and reboot matrix |
 | ATX/LED | Enabled and idle through authenticated API | Observed but not exposed | Timing, polarity, exclusive GPIO owner |
 | Virtual media | Enabled, online, and idle through authenticated API | Observed but not exposed | Upload, eject, BIOS boot, interruption |
 | Fan/OLED/RTC/buttons/switch | Source evidence only | Hidden | Shadow and physical tests |

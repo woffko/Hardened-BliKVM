@@ -1,0 +1,542 @@
+//! Stateful translation from fixed USB HID reports to typed KVMD events.
+//!
+//! The table matches the supported `KEYMAP` in the pinned KVMD 3.291 field
+//! image. This crate performs no I/O and does not enable the HID capability.
+
+mod lease;
+
+pub use lease::{
+    HidLeaseAcquisition, HidLeaseBatch, HidLeaseError, HidLeaseIdentity, HidLeaseManager,
+    MAX_HID_LEASE_TTL,
+};
+
+use bli_kvm_core::HidReport;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct KvmdKeyCode {
+    usb_usage: u8,
+    name: &'static str,
+}
+
+impl KvmdKeyCode {
+    pub fn from_usb_usage(code: u8) -> Option<Self> {
+        if (0xe0..=0xe7).contains(&code) {
+            modifier_name(code - 0xe0)
+        } else {
+            key_name(code)
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.name
+    }
+
+    pub const fn usb_usage(self) -> u8 {
+        self.usb_usage
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KvmdMouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl KvmdMouseButton {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Middle => "middle",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KvmdHidEvent {
+    Key {
+        key: KvmdKeyCode,
+        pressed: bool,
+    },
+    MouseButton {
+        button: KvmdMouseButton,
+        pressed: bool,
+    },
+    MouseMove {
+        x: i16,
+        y: i16,
+    },
+    MouseRelative {
+        x: i8,
+        y: i8,
+    },
+    MouseWheel {
+        x: i8,
+        y: i8,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HidTranslationError {
+    InvalidReport,
+    UnsupportedKeycode,
+    UnsupportedMouseButton,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HidTranslationBatch {
+    pub events: Vec<KvmdHidEvent>,
+    pub error: Option<HidTranslationError>,
+}
+
+impl HidTranslationBatch {
+    pub fn accepted(&self) -> bool {
+        self.error.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseMode {
+    Relative,
+    Absolute,
+}
+
+#[derive(Debug, Default)]
+pub struct HidReportTranslator {
+    keyboard: Vec<KvmdKeyCode>,
+    mouse_buttons: u8,
+    mouse_mode: Option<MouseMode>,
+    absolute_position: Option<(u16, u16)>,
+}
+
+impl HidReportTranslator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn translate(&mut self, report: &HidReport) -> HidTranslationBatch {
+        if report.validate().is_err() {
+            return self.reject(HidTranslationError::InvalidReport);
+        }
+        match report {
+            HidReport::Keyboard { data } => self.translate_keyboard(data),
+            HidReport::RelativeMouse { data } => self.translate_relative_mouse(data),
+            HidReport::AbsoluteMouse { data } => self.translate_absolute_mouse(data),
+        }
+    }
+
+    pub fn release_all(&mut self) -> Vec<KvmdHidEvent> {
+        let events = self.release_snapshot();
+        self.keyboard.clear();
+        self.mouse_buttons = 0;
+        self.mouse_mode = None;
+        self.absolute_position = None;
+        events
+    }
+
+    pub fn release_snapshot(&self) -> Vec<KvmdHidEvent> {
+        let mut events = self
+            .keyboard
+            .iter()
+            .rev()
+            .copied()
+            .map(|key| KvmdHidEvent::Key {
+                key,
+                pressed: false,
+            })
+            .collect::<Vec<_>>();
+        for (mask, button) in mouse_buttons() {
+            if self.mouse_buttons & mask != 0 {
+                events.push(KvmdHidEvent::MouseButton {
+                    button,
+                    pressed: false,
+                });
+            }
+        }
+        events
+    }
+
+    fn translate_keyboard(&mut self, data: &[u8; 8]) -> HidTranslationBatch {
+        let Some(current) = keyboard_state(data) else {
+            return self.reject(HidTranslationError::UnsupportedKeycode);
+        };
+        let mut events = Vec::new();
+        for key in self.keyboard.iter().rev().copied() {
+            if !current.contains(&key) {
+                events.push(KvmdHidEvent::Key {
+                    key,
+                    pressed: false,
+                });
+            }
+        }
+        for key in current.iter().copied() {
+            if !self.keyboard.contains(&key) {
+                events.push(KvmdHidEvent::Key { key, pressed: true });
+            }
+        }
+        self.keyboard = current;
+        HidTranslationBatch {
+            events,
+            error: None,
+        }
+    }
+
+    fn translate_relative_mouse(&mut self, data: &[u8; 4]) -> HidTranslationBatch {
+        let mut events = match self.translate_mouse_buttons(data[0]) {
+            Ok(events) => events,
+            Err(error) => return self.reject(error),
+        };
+        let x = data[1] as i8;
+        let y = data[2] as i8;
+        let wheel = data[3] as i8;
+        if x != 0 || y != 0 {
+            events.push(KvmdHidEvent::MouseRelative { x, y });
+        }
+        if wheel != 0 {
+            events.push(KvmdHidEvent::MouseWheel { x: 0, y: wheel });
+        }
+        self.mouse_mode = Some(MouseMode::Relative);
+        HidTranslationBatch {
+            events,
+            error: None,
+        }
+    }
+
+    fn translate_absolute_mouse(&mut self, data: &[u8; 6]) -> HidTranslationBatch {
+        let mut events = match self.translate_mouse_buttons(data[0]) {
+            Ok(events) => events,
+            Err(error) => return self.reject(error),
+        };
+        let raw_x = u16::from_le_bytes([data[1], data[2]]);
+        let raw_y = u16::from_le_bytes([data[3], data[4]]);
+        let current = (raw_x, raw_y);
+        if self.mouse_mode != Some(MouseMode::Absolute) || self.absolute_position != Some(current) {
+            events.push(KvmdHidEvent::MouseMove {
+                x: map_absolute(raw_x),
+                y: map_absolute(raw_y),
+            });
+        }
+        let wheel = data[5] as i8;
+        if wheel != 0 {
+            events.push(KvmdHidEvent::MouseWheel { x: 0, y: wheel });
+        }
+        self.mouse_mode = Some(MouseMode::Absolute);
+        self.absolute_position = Some(current);
+        HidTranslationBatch {
+            events,
+            error: None,
+        }
+    }
+
+    fn translate_mouse_buttons(
+        &mut self,
+        current: u8,
+    ) -> Result<Vec<KvmdHidEvent>, HidTranslationError> {
+        if current & !0x07 != 0 {
+            return Err(HidTranslationError::UnsupportedMouseButton);
+        }
+        let mut events = Vec::new();
+        for (mask, button) in mouse_buttons() {
+            if self.mouse_buttons & mask != 0 && current & mask == 0 {
+                events.push(KvmdHidEvent::MouseButton {
+                    button,
+                    pressed: false,
+                });
+            }
+        }
+        for (mask, button) in mouse_buttons() {
+            if self.mouse_buttons & mask == 0 && current & mask != 0 {
+                events.push(KvmdHidEvent::MouseButton {
+                    button,
+                    pressed: true,
+                });
+            }
+        }
+        self.mouse_buttons = current;
+        Ok(events)
+    }
+
+    fn reject(&mut self, error: HidTranslationError) -> HidTranslationBatch {
+        HidTranslationBatch {
+            events: self.release_all(),
+            error: Some(error),
+        }
+    }
+}
+
+fn mouse_buttons() -> [(u8, KvmdMouseButton); 3] {
+    [
+        (0x01, KvmdMouseButton::Left),
+        (0x02, KvmdMouseButton::Right),
+        (0x04, KvmdMouseButton::Middle),
+    ]
+}
+
+fn keyboard_state(data: &[u8; 8]) -> Option<Vec<KvmdKeyCode>> {
+    let mut keys = Vec::new();
+    for bit in 0..8 {
+        if data[0] & (1 << bit) != 0 {
+            keys.push(modifier_name(bit)?);
+        }
+    }
+    for code in data[2..].iter().copied().filter(|code| *code != 0) {
+        keys.push(key_name(code)?);
+    }
+    Some(keys)
+}
+
+fn modifier_name(bit: u8) -> Option<KvmdKeyCode> {
+    Some(KvmdKeyCode {
+        usb_usage: 0xe0 + bit,
+        name: match bit {
+            0 => "ControlLeft",
+            1 => "ShiftLeft",
+            2 => "AltLeft",
+            3 => "MetaLeft",
+            4 => "ControlRight",
+            5 => "ShiftRight",
+            6 => "AltRight",
+            7 => "MetaRight",
+            _ => return None,
+        },
+    })
+}
+
+fn key_name(code: u8) -> Option<KvmdKeyCode> {
+    let name = match code {
+        4..=29 => LETTER_KEYS[usize::from(code - 4)],
+        30..=39 => DIGIT_KEYS[usize::from(code - 30)],
+        40..=49 => BASIC_KEYS[usize::from(code - 40)],
+        51..=57 => PUNCTUATION_KEYS[usize::from(code - 51)],
+        58..=69 => FUNCTION_KEYS[usize::from(code - 58)],
+        70 => "PrintScreen",
+        71 => "ScrollLock",
+        72 => "Pause",
+        73 => "Insert",
+        74 => "Home",
+        75 => "PageUp",
+        76 => "Delete",
+        77 => "End",
+        78 => "PageDown",
+        79 => "ArrowRight",
+        80 => "ArrowLeft",
+        81 => "ArrowDown",
+        82 => "ArrowUp",
+        83 => "NumLock",
+        84 => "NumpadDivide",
+        85 => "NumpadMultiply",
+        86 => "NumpadSubtract",
+        87 => "NumpadAdd",
+        88 => "NumpadEnter",
+        89..=97 => NUMPAD_DIGITS[usize::from(code - 89)],
+        98 => "Numpad0",
+        99 => "NumpadDecimal",
+        100 => "IntlBackslash",
+        101 => "ContextMenu",
+        102 => "Power",
+        135 => "IntlRo",
+        136 => "KanaMode",
+        137 => "IntlYen",
+        138 => "Convert",
+        139 => "NonConvert",
+        _ => return None,
+    };
+    Some(KvmdKeyCode {
+        usb_usage: code,
+        name,
+    })
+}
+
+fn map_absolute(value: u16) -> i16 {
+    let mapped = (i32::from(value) * 65_535 / 32_767) - 32_768;
+    mapped as i16
+}
+
+const LETTER_KEYS: [&str; 26] = [
+    "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK", "KeyL",
+    "KeyM", "KeyN", "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX",
+    "KeyY", "KeyZ",
+];
+const DIGIT_KEYS: [&str; 10] = [
+    "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9",
+    "Digit0",
+];
+const BASIC_KEYS: [&str; 10] = [
+    "Enter",
+    "Escape",
+    "Backspace",
+    "Tab",
+    "Space",
+    "Minus",
+    "Equal",
+    "BracketLeft",
+    "BracketRight",
+    "Backslash",
+];
+const PUNCTUATION_KEYS: [&str; 7] = [
+    "Semicolon",
+    "Quote",
+    "Backquote",
+    "Comma",
+    "Period",
+    "Slash",
+    "CapsLock",
+];
+const FUNCTION_KEYS: [&str; 12] = [
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+];
+const NUMPAD_DIGITS: [&str; 9] = [
+    "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8",
+    "Numpad9",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(name: &'static str, pressed: bool) -> KvmdHidEvent {
+        let usage = match name {
+            "ControlLeft" => 0xe0,
+            "ShiftLeft" => 0xe1,
+            "KeyA" => 4,
+            "KeyB" => 5,
+            _ => panic!("unsupported test key"),
+        };
+        KvmdHidEvent::Key {
+            key: KvmdKeyCode::from_usb_usage(usage).unwrap(),
+            pressed,
+        }
+    }
+
+    #[test]
+    fn keyboard_releases_before_pressing_and_suppresses_unchanged_state() {
+        let mut translator = HidReportTranslator::new();
+        assert_eq!(
+            translator
+                .translate(&HidReport::Keyboard {
+                    data: [0x02, 0, 4, 0, 0, 0, 0, 0]
+                })
+                .events,
+            vec![key("ShiftLeft", true), key("KeyA", true)]
+        );
+        assert!(
+            translator
+                .translate(&HidReport::Keyboard {
+                    data: [0x02, 0, 4, 0, 0, 0, 0, 0]
+                })
+                .events
+                .is_empty()
+        );
+        assert_eq!(
+            translator
+                .translate(&HidReport::Keyboard {
+                    data: [0, 0, 5, 0, 0, 0, 0, 0]
+                })
+                .events,
+            vec![
+                key("KeyA", false),
+                key("ShiftLeft", false),
+                key("KeyB", true)
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_or_invalid_keyboard_report_releases_all_state() {
+        let mut translator = HidReportTranslator::new();
+        let _ = translator.translate(&HidReport::Keyboard {
+            data: [0x01, 0, 4, 0, 0, 0, 0, 0],
+        });
+        let rejected = translator.translate(&HidReport::Keyboard {
+            data: [0, 0, 50, 0, 0, 0, 0, 0],
+        });
+        assert_eq!(
+            rejected.error,
+            Some(HidTranslationError::UnsupportedKeycode)
+        );
+        assert_eq!(
+            rejected.events,
+            vec![key("KeyA", false), key("ControlLeft", false)]
+        );
+        assert!(translator.release_all().is_empty());
+    }
+
+    #[test]
+    fn relative_mouse_translates_buttons_move_and_wheel() {
+        let mut translator = HidReportTranslator::new();
+        let batch = translator.translate(&HidReport::RelativeMouse {
+            data: [0x01, 5, 0xfb, 0xff],
+        });
+        assert_eq!(
+            batch.events,
+            vec![
+                KvmdHidEvent::MouseButton {
+                    button: KvmdMouseButton::Left,
+                    pressed: true,
+                },
+                KvmdHidEvent::MouseRelative { x: 5, y: -5 },
+                KvmdHidEvent::MouseWheel { x: 0, y: -1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn absolute_mouse_maps_full_coordinate_range_and_mode_switch() {
+        let mut translator = HidReportTranslator::new();
+        let first = translator.translate(&HidReport::AbsoluteMouse {
+            data: [0, 0, 0, 0xff, 0x7f, 0],
+        });
+        assert_eq!(
+            first.events,
+            vec![KvmdHidEvent::MouseMove {
+                x: i16::MIN,
+                y: i16::MAX,
+            }]
+        );
+        assert!(
+            translator
+                .translate(&HidReport::AbsoluteMouse {
+                    data: [0, 0, 0, 0xff, 0x7f, 0]
+                })
+                .events
+                .is_empty()
+        );
+        let _ = translator.translate(&HidReport::RelativeMouse { data: [0, 0, 0, 0] });
+        assert_eq!(
+            translator
+                .translate(&HidReport::AbsoluteMouse {
+                    data: [0, 0, 0, 0xff, 0x7f, 0]
+                })
+                .events
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn unsupported_back_button_releases_held_mouse_and_keyboard_state() {
+        let mut translator = HidReportTranslator::new();
+        let _ = translator.translate(&HidReport::Keyboard {
+            data: [0, 0, 4, 0, 0, 0, 0, 0],
+        });
+        let _ = translator.translate(&HidReport::RelativeMouse { data: [1, 0, 0, 0] });
+        let rejected = translator.translate(&HidReport::RelativeMouse {
+            data: [0x08, 0, 0, 0],
+        });
+        assert_eq!(
+            rejected.error,
+            Some(HidTranslationError::UnsupportedMouseButton)
+        );
+        assert_eq!(
+            rejected.events,
+            vec![
+                key("KeyA", false),
+                KvmdHidEvent::MouseButton {
+                    button: KvmdMouseButton::Left,
+                    pressed: false,
+                }
+            ]
+        );
+    }
+}

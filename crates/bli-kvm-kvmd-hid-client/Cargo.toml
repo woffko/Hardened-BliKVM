@@ -1,0 +1,24 @@
+[package]
+name = "bli-kvm-kvmd-hid-client"
+description = "Fixed-route KVMD HID transition client for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-hid-adapter = { path = "../bli-kvm-hid-adapter" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

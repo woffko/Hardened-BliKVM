@@ -13,7 +13,6 @@ esac
 mkdir -p "$target_dir"
 CARGO_TARGET_DIR="$target_dir" cargo build \
   --workspace \
-  --bins \
   --release \
   --locked \
   --target aarch64-unknown-linux-musl
