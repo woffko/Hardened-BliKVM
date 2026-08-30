@@ -1,13 +1,13 @@
 # Application update supervisor build baseline
 
 This checkpoint records two independent AArch64 builds of source commit
-`b754ae0388ba3219afed4403656dfe9383fd8f12` in separate Cargo target and
+`1a885428393f6060edfd98020686a11272fed064` in separate Cargo target and
 output directories under the designated temporary build root.
 
 Both builds produced a byte-for-byte identical static PIE supervisor:
 
 ```text
-bli-kvm-update-supervisor  a7f21525534a968cae4ce096b9d18583f3abf0d706a3f50b153d43ea3177dcfe
+bli-kvm-update-supervisor  139cd2c5439a9d7c8966738ea894f5bd56067b976fc7108536f5a632ec32534b
 ```
 
 The complete prototype archives, including the supervisor and its systemd
@@ -15,7 +15,7 @@ service, timer, socket, and sysusers templates, were also byte-for-byte
 identical:
 
 ```text
-4f95cfd6961e1f075b6a8e08e75133bc9793b747e8ec22e88da3498d33fd619b
+c08f82a22fea9670988ed7b93becb5e10a28e95e4b0a0e9ba247ab448fde751d
 ```
 
 The existing independently linked payloads remained unchanged:
@@ -33,6 +33,10 @@ stager no-replace publication and manager pointer replacement now invoke the
 kernel's `SYS_renameat2` through `libc::syscall`. Host transition tests and the
 two clean AArch64 builds passed after this change. No fallback to overwrite or
 non-atomic rename was introduced.
+
+This final checkpoint also includes the local signed `stage` command. It can
+publish a verified immutable slot but cannot change the active pointer. The
+two-build comparison covers that exact linked command path.
 
 This baseline proves target linking, static-PIE hardening, and deterministic
 artifact generation. It does not prove runtime syscall availability, systemd

@@ -175,7 +175,7 @@ restart wiring, or H616 acceptance yet.
 Its local `stage` command now verifies one absolute archive path and publishes
 an immutable slot without changing `current`, so device acceptance can use the
 same production CLI rather than manually constructing slot trees.
-Two clean AArch64 builds at source commit `b754ae0` produced a byte-identical
+Two clean AArch64 builds at source commit `1a88542` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in
 `baselines/application-update-supervisor.md`.
