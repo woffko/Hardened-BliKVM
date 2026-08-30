@@ -33,6 +33,7 @@ python3 -m unittest \
   tools/test_stage_device_systemd_gate.py \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
+  tools/test_build_system_image_test_fixture.py \
   -v
 python3 -m py_compile \
   tools/capture_pikvm_baseline.py \
@@ -42,6 +43,7 @@ python3 -m py_compile \
   tools/stage_device_systemd_gate.py \
   tools/stage_device_tls_browser.py \
   tools/build_update_test_fixture.py \
+  tools/build_system_image_test_fixture.py \
   scripts/rust_lld_static_pie.py \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
@@ -51,7 +53,8 @@ python3 -m py_compile \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
   tools/test_stage_device_tls_browser.py \
-  tools/test_build_update_test_fixture.py
+  tools/test_build_update_test_fixture.py \
+  tools/test_build_system_image_test_fixture.py
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
 
@@ -64,6 +67,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_systemd_gate.py \
     tools/stage_device_tls_browser.py \
     tools/build_update_test_fixture.py \
+    tools/build_system_image_test_fixture.py \
     scripts/rust_lld_static_pie.py \
     tools/test_capture_pikvm_baseline.py \
     tools/test_packaging_boundaries.py \
@@ -73,7 +77,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_prototype.py \
     tools/test_stage_device_systemd_gate.py \
     tools/test_stage_device_tls_browser.py \
-    tools/test_build_update_test_fixture.py
+    tools/test_build_update_test_fixture.py \
+    tools/test_build_system_image_test_fixture.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1

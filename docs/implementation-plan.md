@@ -217,7 +217,9 @@ payload tamper, filesystem signatures, entry order/type/mode, extra bootloader
 content, unsafe source inodes, and archive bounds. The conflicting upstream p3
 roles and truncated four-partition field image are recorded in
 `baselines/system-layout-evidence.md`; they remain hard blockers for an H616
-layout or device write.
+layout or device write. A separate fixture builder generates public-only
+rootfs-only and split-boot archives while keeping its ephemeral private key in
+process memory.
 
 ## Phase 7: Release acceptance
 

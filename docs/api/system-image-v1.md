@@ -103,6 +103,12 @@ size, owner, mode, mtime, or ctime change observed across verification. A
 future stager must still snapshot an uploaded source into a private inode and
 write only from that same verified snapshot.
 
+`tools/build_system_image_test_fixture.py` creates rootfs-only and split-boot
+fixtures with an ephemeral Ed25519 key. The private key exists only in process
+memory; output contains public metadata and signed minimal filesystem-signature
+test bytes. These fixtures are deliberately not bootable images or accepted
+layout profiles.
+
 ## Required future transaction
 
 Acceptance of this format does not implement installation. A future
