@@ -1,0 +1,70 @@
+# Virtual-media transition boundary
+
+The virtual-media transition is split into read-only inventory, a private
+opaque-ID catalog, a persisted policy journal, and a fixed KVMD client. These
+components are not connected to the control broker or server, and no media
+mutation capability is advertised.
+
+## Read-only state
+
+The authenticated H616 baseline reported KVMD MSD enabled, online, idle, and
+disconnected. The manifest advertises virtual-media status only as
+`read_only`. The web capability layer requires `read_write` for Image,
+Download, Power, and other mutating menu items, so no media control appears.
+
+## Opaque image catalog
+
+Control messages contain only a non-zero numeric `imageId`. A private catalog
+maps that ID to one validated ASCII basename, expected size, SHA-256, allowed
+CD-ROM/removable modes, and writable policy. Names cannot contain a slash,
+space, traversal, repeated dots, URL, or shell syntax. IDs and names are
+unique, and writable CD-ROM is always invalid.
+
+The catalog's SHA-256 and size are provisioning evidence; a future installer
+must verify them against the actual KVMD storage image before adding an entry.
+The current source provides no upload or catalog-write API.
+
+## Persisted policy
+
+Each mutation carries a non-zero operation ID, opaque session and confirmation
+bindings, a confirmation timestamp, and a typed select/connect command. The
+public eligibility constructor is disabled.
+
+Internal policy tests establish these rules:
+
+- confirmation expires after 30 seconds;
+- offline, disabled, or busy MSD state rejects the operation;
+- image selection requires the drive to be disconnected;
+- setting the already-observed connection state is a no-op only when no
+  indeterminate operation is pending;
+- Pending is atomically persisted before a future backend call, survives
+  restart, blocks every other mutation, and is never automatically retried;
+- duplicate applied/rejected operations return the persisted outcome;
+- conflicting operation-ID reuse is rejected;
+- successful mutations impose a two-second global cooldown;
+- reconciliation must use a later read-only MSD observation;
+- unsafe, symlinked, malformed, or oversized journals are rejected.
+
+## Fixed KVMD client
+
+Only two internal KVMD route families exist:
+
+- `/msd/set_params?image=<catalog-name>&cdrom=<0|1>&rw=<0|1>`;
+- `/msd/set_connected?connected=<0|1>`.
+
+The client has no upload, remote download, readback, remove, reset, generic
+URI, raw path, or request body. Catalog resolution occurs before socket
+connection, and the response must be bounded JSON with `ok=true`.
+
+## Remaining gates
+
+Before media mutation can be wired or advertised:
+
+1. provide atomic, verified catalog provisioning and image storage quotas;
+2. combine policy Pending, fixed backend execution, and completion persistence
+   in one broker state machine;
+3. add startup reconciliation and visible indeterminate/cooldown feedback;
+4. run an H616 disconnected-state no-op gate, then a separately approved
+   attach/eject test against a safe external target;
+5. verify upload interruption, read-only/writable modes, BIOS boot, reconnect,
+   reboot, storage exhaustion, and recovery.

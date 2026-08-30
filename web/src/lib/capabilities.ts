@@ -24,13 +24,17 @@ export function isAvailable(status: FeatureStatus) {
   return status.availability !== 'unavailable';
 }
 
+export function isWritable(status: FeatureStatus) {
+  return status.availability === 'read_write';
+}
+
 export function isPhysicallyVerified(status: FeatureStatus) {
   return status.evidence === 'physical_verified';
 }
 
-function boardFeatureAvailable(manifest: CapabilityManifest | null, name: string) {
+function boardFeatureWritable(manifest: CapabilityManifest | null, name: string) {
   const feature = manifest?.board.features[name];
-  return feature ? isAvailable(feature) : false;
+  return feature ? isWritable(feature) : false;
 }
 
 export function supportsMenuItem(
@@ -39,21 +43,21 @@ export function supportsMenuItem(
 ): boolean {
   switch (item) {
     case 'image':
-      return manifest ? isAvailable(manifest.virtualMedia.status) : false;
+      return manifest ? isWritable(manifest.virtualMedia.status) : false;
     case 'download':
-      return manifest ? isAvailable(manifest.virtualMedia.remoteDownload) : false;
+      return manifest ? isWritable(manifest.virtualMedia.remoteDownload) : false;
     case 'power':
       return Boolean(
-        manifest && isAvailable(manifest.power.status) && manifest.power.actions.length > 0
+        manifest && isWritable(manifest.power.status) && manifest.power.actions.length > 0
       );
     case 'terminal':
-      return boardFeatureAvailable(manifest, 'terminal');
+      return boardFeatureWritable(manifest, 'terminal');
     case 'script':
-      return boardFeatureAvailable(manifest, 'scripts');
+      return boardFeatureWritable(manifest, 'scripts');
     case 'wol':
-      return boardFeatureAvailable(manifest, 'wake_on_lan');
+      return boardFeatureWritable(manifest, 'wake_on_lan');
     case 'picoclaw':
-      return boardFeatureAvailable(manifest, 'picoclaw');
+      return boardFeatureWritable(manifest, 'picoclaw');
     case 'fullscreen':
     case 'collapse':
       return true;
@@ -70,16 +74,16 @@ export function supportsSettingsTab(
     case 'account':
       return true;
     case 'device':
-      return boardFeatureAvailable(manifest, 'device_settings');
+      return boardFeatureWritable(manifest, 'device_settings');
     case 'system':
-      return boardFeatureAvailable(manifest, 'system_settings');
+      return boardFeatureWritable(manifest, 'system_settings');
     case 'tailscale':
-      return boardFeatureAvailable(manifest, 'tailscale');
+      return boardFeatureWritable(manifest, 'tailscale');
     case 'update':
       return Boolean(
         manifest &&
-        (isAvailable(manifest.system.signedApplicationUpdates) ||
-          isAvailable(manifest.system.signedSystemUpdates))
+        (isWritable(manifest.system.signedApplicationUpdates) ||
+          isWritable(manifest.system.signedSystemUpdates))
       );
   }
 }

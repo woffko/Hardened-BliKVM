@@ -64,6 +64,13 @@ over the TLS/SSH-forward boundary with zero control or WebSocket requests.
 Long-duration video, WebRTC, hotplug, configuration, reboot, and physical
 acceptance remain open.
 
+Checkpoint: virtual-media state is now advertised read-only while mutating UI
+requires `read_write`. A private opaque-ID catalog removes caller-controlled
+paths; a persisted policy provides confirmation, Pending crash ambiguity,
+replay/conflict protection, busy/disconnected checks, and cooldown. A separate
+mock-tested KVMD client exposes only catalog-resolved `set_params` and typed
+`set_connected`. Upload/remove/reset and broker/server wiring remain absent.
+
 ## Phase 3: HID and power
 
 - Add the restricted Rust hardware broker.

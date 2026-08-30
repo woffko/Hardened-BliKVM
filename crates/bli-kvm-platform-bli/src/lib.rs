@@ -78,7 +78,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 led_state: FeatureStatus::read_only(runtime_verified),
             },
             virtual_media: VirtualMediaCapabilities {
-                status: FeatureStatus::not_exposed(runtime_verified),
+                status: FeatureStatus::read_only(runtime_verified),
                 modes: vec![VirtualMediaMode::CdRom, VirtualMediaMode::RemovableDisk],
                 resumable_upload: FeatureStatus::unavailable(),
                 remote_download: FeatureStatus::unavailable(),
@@ -136,7 +136,10 @@ mod tests {
             manifest.power.led_state.evidence,
             EvidenceLevel::RuntimeVerified
         );
-        assert!(!manifest.virtual_media.status.is_available());
+        assert_eq!(
+            manifest.virtual_media.status.availability,
+            bli_kvm_core::Availability::ReadOnly
+        );
         assert!(
             manifest
                 .board

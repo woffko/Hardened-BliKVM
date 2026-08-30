@@ -62,6 +62,12 @@ persist Pending before the call and its final outcome afterwards, never retry
 an indeterminate operation, enforce persisted cooldown, and require explicit
 confirmation.
 
+Virtual-media observation is separate from mutation. The opaque catalog,
+persisted policy, and fixed transition client are described in
+`api/media-transition.md`. No caller-controlled path or URL reaches KVMD, the
+public eligibility constructor is disabled, and mutating web controls require
+`read_write` rather than merely an available/read-only status.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

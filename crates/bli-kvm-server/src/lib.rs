@@ -351,6 +351,14 @@ mod tests {
             value["data"]["power"]["ledState"]["availability"],
             "read_only"
         );
+        assert_eq!(
+            value["data"]["virtualMedia"]["status"]["availability"],
+            "read_only"
+        );
+        assert_eq!(
+            value["data"]["virtualMedia"]["remoteDownload"]["availability"],
+            "unavailable"
+        );
     }
 
     #[tokio::test]

@@ -20,7 +20,7 @@ export const handlers = [
           operatingSystem: 'PiKVM/KVMD on Armbian'
         },
         video: {
-          status: { availability: 'unavailable', evidence: 'runtime_verified' },
+          status: { availability: 'read_only', evidence: 'runtime_verified' },
           transports: ['mjpeg'],
           preferredTransport: 'mjpeg',
           maxWidth: null,
@@ -34,10 +34,10 @@ export const handlers = [
         power: {
           status: { availability: 'unavailable', evidence: 'runtime_verified' },
           actions: ['power_short', 'power_long', 'reset'],
-          ledState: { availability: 'unavailable', evidence: 'runtime_verified' }
+          ledState: { availability: 'read_only', evidence: 'runtime_verified' }
         },
         virtualMedia: {
-          status: { availability: 'unavailable', evidence: 'runtime_verified' },
+          status: { availability: 'read_only', evidence: 'runtime_verified' },
           modes: ['cd_rom', 'removable_disk'],
           resumableUpload: { availability: 'unavailable', evidence: 'none' },
           remoteDownload: { availability: 'unavailable', evidence: 'none' }
