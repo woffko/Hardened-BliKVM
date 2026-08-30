@@ -101,6 +101,7 @@ FINAL_KEYS = {
     "stage_absent_final",
 }
 CLEANUP_KEYS = {"cleanup_removed"}
+RUNTIME_FAILURE_KEYS = {"failure_cleanup", "failure_phase"}
 
 
 class BundleReceipt(TypedDict):
@@ -126,6 +127,8 @@ class FailureReceipt(TypedDict):
     failureType: str
     returnCode: int | None
     stdoutBytes: int
+    remotePhase: str | None
+    remoteCleanupConfirmed: bool | None
 
 
 class PassedReceipt(TypedDict):
@@ -195,12 +198,16 @@ class StageError(Exception):
         *,
         return_code: int | None = None,
         stdout_bytes: int = 0,
+        remote_phase: str | None = None,
+        remote_cleanup_confirmed: bool | None = None,
     ) -> None:
         super().__init__(stage)
         self.stage: str = stage
         self.failure_type: str = failure_type
         self.return_code: int | None = return_code
         self.stdout_bytes: int = stdout_bytes
+        self.remote_phase: str | None = remote_phase
+        self.remote_cleanup_confirmed: bool | None = remote_cleanup_confirmed
 
 
 def parse_args() -> Options:
@@ -650,21 +657,31 @@ def build_run_script(paths: StagePaths, bundle: BundleInfo, bind_port: int) -> s
 set -eu
 export LC_ALL=C
 pid=
+phase=validate-stage
+run_succeeded=no
+emit() { printf '%s=%s\n' "$1" "$2"; }
 owned_stage() {
   [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$run_id" ]
+}
+process_active() {
+  [ -n "$pid" ] || return 1
+  case "$pid" in *[!0-9]*|'') return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+  [ -n "$state" ] && [ "$state" != Z ]
 }
 stop_server() {
   [ -n "$pid" ] || return 0
   case "$pid" in *[!0-9]*|'') return 1 ;; esac
-  if kill -0 "$pid" 2>/dev/null; then
+  if process_active; then
     [ "$(readlink "/proc/$pid/exe" 2>/dev/null || true)" = "$server" ] || return 1
     kill -TERM "$pid"
     count=0
-    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 50 ]; do
+    while process_active && [ "$count" -lt 50 ]; do
       sleep 0.1
       count=$((count + 1))
     done
-    kill -0 "$pid" 2>/dev/null && return 1
+    process_active && return 1
   fi
   wait "$pid" 2>/dev/null || true
   pid=
@@ -672,36 +689,51 @@ stop_server() {
 emergency_cleanup() {
   set +e
   safe_to_remove=yes
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  if process_active; then
     if [ "$(readlink "/proc/$pid/exe" 2>/dev/null || true)" != "$server" ]; then
       safe_to_remove=no
     else
       kill -TERM "$pid" 2>/dev/null
       count=0
-      while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 30 ]; do sleep 0.1; count=$((count + 1)); done
-      if kill -0 "$pid" 2>/dev/null; then
+      while process_active && [ "$count" -lt 30 ]; do sleep 0.1; count=$((count + 1)); done
+      if process_active; then
         kill -KILL "$pid" 2>/dev/null
         count=0
-        while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 20 ]; do sleep 0.1; count=$((count + 1)); done
+        while process_active && [ "$count" -lt 20 ]; do sleep 0.1; count=$((count + 1)); done
       fi
-      kill -0 "$pid" 2>/dev/null && safe_to_remove=no
+      process_active && safe_to_remove=no
     fi
   fi
+  if [ -n "$pid" ] && ! process_active; then wait "$pid" 2>/dev/null || true; fi
   if [ "$safe_to_remove" = yes ] && owned_stage; then rm -rf -- "$stage_root"; fi
 }
-trap emergency_cleanup EXIT
+on_exit() {
+  exit_code=$?
+  trap - EXIT HUP INT TERM
+  if [ "$run_succeeded" != yes ]; then
+    emergency_cleanup
+    if [ ! -e "$stage_root" ]; then cleanup_state=removed; else cleanup_state=retained; fi
+    emit failure_phase "$phase"
+    emit failure_cleanup "$cleanup_state"
+  fi
+  exit "$exit_code"
+}
+trap on_exit EXIT
 trap 'exit 1' HUP INT TERM
-emit() { printf '%s=%s\n' "$1" "$2"; }
 owned_stage
 [ -f "$archive" ]
+phase=verify-archive
 actual_sha256=$(sha256sum "$archive" | awk '{print $1}')
 [ "$actual_sha256" = "$expected_sha256" ]
+phase=extract-payload
 mkdir -m 755 "$payload"
 tar -xzf "$archive" --strip-components=1 --no-same-owner -C "$payload"
+phase=verify-payload
 (cd "$payload" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
 [ "$(stat -c '%a' "$server")" = 755 ]
 [ "$(stat -c '%a' "$payload/libexec/bli-kvm-platform-broker")" = 755 ]
 [ -f "$payload/share/web/index.html" ]
+phase=prepare-runtime
 chmod 711 "$stage_root"
 uid=$(getent passwd nobody | head -n 1 | awk -F: '{print $3}')
 gid=$(getent passwd nobody | head -n 1 | awk -F: '{print $4}')
@@ -710,6 +742,7 @@ mkdir -m 700 "$state"
 chown "$uid:$gid" "$state"
 : > "$stage_root/server.log"
 chmod 600 "$stage_root/server.log"
+phase=launch-server
 setpriv --reuid="$uid" --regid="$gid" --clear-groups --bounding-set=-all --no-new-privs \
   env -i PATH=/usr/bin:/bin HOME="$state" TMPDIR="$state" \
   BLI_KVM_BIND="127.0.0.1:$bind_port" \
@@ -720,6 +753,7 @@ setpriv --reuid="$uid" --regid="$gid" --clear-groups --bounding-set=-all --no-ne
   "$server" > "$stage_root/server.log" 2>&1 < /dev/null &
 pid=$!
 printf '%s\n' "$pid" > "$stage_root/server.pid"
+phase=wait-health
 ready=no
 count=0
 while [ "$count" -lt 50 ]; do
@@ -732,6 +766,7 @@ while [ "$count" -lt 50 ]; do
   count=$((count + 1))
 done
 [ "$ready" = yes ]
+phase=verify-process
 status_file="/proc/$pid/status"
 [ -r "$status_file" ]
 uids=$(awk '/^Uid:/ {print $2 " " $3 " " $4 " " $5}' "$status_file")
@@ -744,6 +779,7 @@ case " $gids " in *' 0 '*) exit 1 ;; esac
 [ "$(awk '/^CapBnd:/ {print $2}' "$status_file")" = 0000000000000000 ]
 [ "$(awk '/^NoNewPrivs:/ {print $2}' "$status_file")" = 1 ]
 [ -z "$(awk '/^Groups:/ {$1=""; sub(/^ +/, ""); print}' "$status_file")" ]
+phase=verify-listener
 listener_count=$(awk -v address="0100007F:$port_hex" 'NR > 1 && toupper($2) == address && $4 == "0A" {count++} END {print count + 0}' /proc/net/tcp)
 [ "$listener_count" = 1 ]
 other_listener=no
@@ -755,6 +791,7 @@ for table in /proc/net/tcp /proc/net/tcp6; do
   ' "$table"; then other_listener=yes; fi
 done
 [ "$other_listener" = no ]
+phase=verify-http
 health_code=$(curl --silent --max-time 2 --output "$stage_root/health.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/health" 2>/dev/null)
 [ "$health_code" = 200 ]
 grep -q '"status":"ok"' "$stage_root/health.json"
@@ -773,12 +810,14 @@ grep -qi '^x-frame-options: DENY' "$stage_root/headers.txt"
 grep -qi '^referrer-policy: no-referrer' "$stage_root/headers.txt"
 inventory_code=$(curl --silent --max-time 2 --output "$stage_root/inventory.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/inventory" 2>/dev/null)
 [ "$inventory_code" = 401 ]
+phase=stress-health
 count=0
 while [ "$count" -lt "$health_requests" ]; do
   code=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/health" 2>/dev/null)
   [ "$code" = 200 ]
   count=$((count + 1))
 done
+phase=reject-public-bind
 if setpriv --reuid="$uid" --regid="$gid" --clear-groups --bounding-set=-all --no-new-privs \
   env -i PATH=/usr/bin:/bin HOME="$state" TMPDIR="$state" \
   BLI_KVM_BIND="0.0.0.0:$bind_port" BLI_KVM_WEB_ROOT="$payload/share/web" \
@@ -787,14 +826,18 @@ if setpriv --reuid="$uid" --regid="$gid" --clear-groups --bounding-set=-all --no
   exit 1
 fi
 grep -q 'refusing a non-loopback bind' "$stage_root/nonloopback.log"
+phase=verify-existing-services
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
 root_options=$(findmnt -n -o OPTIONS /)
 case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) exit 1 ;; esac
+phase=stop-server
 stop_server
+phase=remove-stage
 owned_stage
 rm -rf -- "$stage_root"
 [ ! -e "$stage_root" ]
+run_succeeded=yes
 trap - EXIT HUP INT TERM
 emit bundle_sha256 "$actual_sha256"
 emit payload_checksums verified
@@ -841,16 +884,21 @@ if [ ! -e "$stage_root" ]; then emit cleanup_removed yes; exit 0; fi
 if [ -f "$stage_root/server.pid" ]; then
   pid=$(cat "$stage_root/server.pid")
   case "$pid" in *[!0-9]*|'') exit 1 ;; esac
-    if kill -0 "$pid" 2>/dev/null; then
-    [ "$(readlink "/proc/$pid/exe" 2>/dev/null || true)" = "$server" ]
-    kill -TERM "$pid"
-    count=0
-    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 50 ]; do sleep 0.1; count=$((count + 1)); done
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -KILL "$pid"
+  if kill -0 "$pid" 2>/dev/null; then
+    state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+    if [ -n "$state" ] && [ "$state" != Z ]; then
+      [ "$(readlink "/proc/$pid/exe" 2>/dev/null || true)" = "$server" ]
+      kill -TERM "$pid"
       count=0
-      while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 20 ]; do sleep 0.1; count=$((count + 1)); done
-      kill -0 "$pid" 2>/dev/null && exit 1
+      while kill -0 "$pid" 2>/dev/null && [ "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)" != Z ] && [ "$count" -lt 50 ]; do sleep 0.1; count=$((count + 1)); done
+      state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+      if kill -0 "$pid" 2>/dev/null && [ -n "$state" ] && [ "$state" != Z ]; then
+        kill -KILL "$pid"
+        count=0
+        while kill -0 "$pid" 2>/dev/null && [ "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)" != Z ] && [ "$count" -lt 20 ]; do sleep 0.1; count=$((count + 1)); done
+        state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+        if kill -0 "$pid" 2>/dev/null && [ -n "$state" ] && [ "$state" != Z ]; then exit 1; fi
+      fi
     fi
   fi
 fi
@@ -901,15 +949,33 @@ def parse_facts(raw: bytes, expected_keys: set[str]) -> dict[str, str]:
     return dict(sorted(facts.items()))
 
 
+def parse_runtime_failure(raw: bytes) -> tuple[str | None, bool | None]:
+    try:
+        facts = parse_facts(raw, RUNTIME_FAILURE_KEYS)
+    except (UnicodeError, ValueError):
+        return None, None
+    phase = facts["failure_phase"]
+    cleanup = facts["failure_cleanup"]
+    if cleanup not in {"removed", "retained"}:
+        return None, None
+    return phase, cleanup == "removed"
+
+
 def _require_result(
     stage: str, result: subprocess.CompletedProcess[bytes]
 ) -> subprocess.CompletedProcess[bytes]:
     if result.returncode != 0:
+        remote_phase: str | None = None
+        remote_cleanup_confirmed: bool | None = None
+        if stage == "runtime":
+            remote_phase, remote_cleanup_confirmed = parse_runtime_failure(result.stdout)
         raise StageError(
             stage,
             "remote-command",
             return_code=result.returncode,
             stdout_bytes=len(result.stdout),
+            remote_phase=remote_phase,
+            remote_cleanup_confirmed=remote_cleanup_confirmed,
         )
     if len(result.stdout) > MAX_REMOTE_OUTPUT_BYTES:
         raise StageError(stage, "output-limit", stdout_bytes=len(result.stdout))
@@ -1106,6 +1172,8 @@ def execute(options: Options) -> int:
                 "failureType": error.failure_type,
                 "returnCode": error.return_code,
                 "stdoutBytes": error.stdout_bytes,
+                "remotePhase": error.remote_phase,
+                "remoteCleanupConfirmed": error.remote_cleanup_confirmed,
             },
             "cleanup": cleanup,
         }
@@ -1128,6 +1196,8 @@ def execute(options: Options) -> int:
                 "failureType": type(error).__name__,
                 "returnCode": None,
                 "stdoutBytes": 0,
+                "remotePhase": None,
+                "remoteCleanupConfirmed": None,
             },
             "cleanup": cleanup,
         }

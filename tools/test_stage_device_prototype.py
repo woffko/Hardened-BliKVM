@@ -73,6 +73,18 @@ class StageDevicePrototypeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _ = stage.parse_facts(raw, expected)
 
+    def test_runtime_failure_parser_exposes_only_phase_and_cleanup(self) -> None:
+        raw = b"failure_phase=stop-server\nfailure_cleanup=removed\n"
+        self.assertEqual(stage.parse_runtime_failure(raw), ("stop-server", True))
+        result = subprocess.CompletedProcess(["ssh"], 1, stdout=raw, stderr=b"")
+        with self.assertRaises(stage.StageError) as raised:
+            _ = stage._require_result(  # pyright: ignore[reportPrivateUsage]
+                "runtime", result
+            )
+        self.assertEqual(raised.exception.remote_phase, "stop-server")
+        self.assertIs(raised.exception.remote_cleanup_confirmed, True)
+        self.assertEqual(stage.parse_runtime_failure(b"password=unsafe\n"), (None, None))
+
     def test_bundle_validation_rejects_links_and_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as directory_name:
             directory = Path(directory_name)
