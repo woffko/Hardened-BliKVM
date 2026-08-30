@@ -53,6 +53,17 @@ flow through an SSH-only tunnel. Permanent provisioning, certificate
 enrollment, additional browser engines, and reboot persistence remain beyond
 this Phase 2 development checkpoint.
 
+Checkpoint: the first Phase 4 slice was intentionally pulled forward after
+the read-only broker boundary stabilized. A distinct-UID, Unix-only MJPEG
+proxy and session-bound Rust response passed the reversible H616 systemd gate,
+including frame capture, sequential reconnects, two concurrent streams,
+logout revocation, and full cleanup. The capability was then promoted only to
+`read_only`; the GUI kept WebSocket, HID, ATX, media, and writable video
+controls disabled. Real Chromium subsequently decoded and reconnected MJPEG
+over the TLS/SSH-forward boundary with zero control or WebSocket requests.
+Long-duration video, WebRTC, hotplug, configuration, reboot, and physical
+acceptance remain open.
+
 ## Phase 3: HID and power
 
 - Add the restricted Rust hardware broker.
