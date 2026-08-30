@@ -336,6 +336,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-update-stager"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-update-verifier",
+ "ed25519-dalek",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-update-verifier"
 version = "0.1.0"
 dependencies = [

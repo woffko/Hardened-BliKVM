@@ -20,9 +20,9 @@ pub const MAX_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 pub const MAX_PAYLOAD_FILES: usize = 4096;
 
-const MANIFEST_PATH: &str = "manifest.json";
-const SIGNATURE_PATH: &str = "manifest.sig";
-const PAYLOAD_ROOT: &str = "payload";
+pub const APPLICATION_MANIFEST_PATH: &str = "manifest.json";
+pub const APPLICATION_SIGNATURE_PATH: &str = "manifest.sig";
+pub const APPLICATION_PAYLOAD_ROOT: &str = "payload";
 const MAX_TRAILING_ZERO_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,7 +151,7 @@ pub fn verify_application_bytes(
     verify_application_reader(Cursor::new(bytes), bytes.len() as u64, trust_root)
 }
 
-fn verify_application_reader(
+pub fn verify_application_reader(
     reader: impl Read,
     archive_size: u64,
     trust_root: &ApplicationTrustRoot,
@@ -193,7 +193,7 @@ fn verify_application_reader(
         validate_header(entry.header(), entry_type.is_dir())?;
 
         if entry_type.is_dir() {
-            if path == PAYLOAD_ROOT {
+            if path == APPLICATION_PAYLOAD_ROOT {
                 payload_directories.insert(path);
                 continue;
             }
@@ -207,7 +207,7 @@ fn verify_application_reader(
 
         let size = entry.size();
         match path.as_str() {
-            MANIFEST_PATH => {
+            APPLICATION_MANIFEST_PATH => {
                 if entry.header().mode().ok() != Some(0o644)
                     || size == 0
                     || size > MAX_MANIFEST_BYTES
@@ -217,7 +217,7 @@ fn verify_application_reader(
                 }
                 manifest_bytes = Some(read_exact_bounded(&mut entry, size)?);
             }
-            SIGNATURE_PATH => {
+            APPLICATION_SIGNATURE_PATH => {
                 if entry.header().mode().ok() != Some(0o644)
                     || size != 64
                     || signature_bytes.is_some()
@@ -271,14 +271,8 @@ fn verify_application_reader(
 
     let manifest_bytes = manifest_bytes.ok_or(UpdateVerifyError::InvalidManifest)?;
     let signature_bytes = signature_bytes.ok_or(UpdateVerifyError::InvalidSignature)?;
-    let manifest: ApplicationManifest =
-        serde_json::from_slice(&manifest_bytes).map_err(|_| UpdateVerifyError::InvalidManifest)?;
-    validate_manifest(&manifest, trust_root)?;
-    let signature = Signature::from_bytes(&signature_bytes);
-    trust_root
-        .verifying_key
-        .verify_strict(&manifest_bytes, &signature)
-        .map_err(|_| UpdateVerifyError::InvalidSignature)?;
+    let manifest =
+        verify_application_manifest_bytes(&manifest_bytes, &signature_bytes, trust_root)?;
     validate_payload_tree(&manifest, &payload_files, &payload_directories)?;
 
     Ok(VerifiedApplicationBundle {
@@ -286,6 +280,25 @@ fn verify_application_reader(
         manifest_sha256: sha256_hex(&manifest_bytes),
         payload_bytes: total_payload_bytes,
     })
+}
+
+pub fn verify_application_manifest_bytes(
+    manifest_bytes: &[u8],
+    signature_bytes: &[u8; 64],
+    trust_root: &ApplicationTrustRoot,
+) -> Result<ApplicationManifest, UpdateVerifyError> {
+    if manifest_bytes.is_empty() || manifest_bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(UpdateVerifyError::InvalidManifest);
+    }
+    let manifest: ApplicationManifest =
+        serde_json::from_slice(manifest_bytes).map_err(|_| UpdateVerifyError::InvalidManifest)?;
+    validate_manifest(&manifest, trust_root)?;
+    let signature = Signature::from_bytes(signature_bytes);
+    trust_root
+        .verifying_key
+        .verify_strict(manifest_bytes, &signature)
+        .map_err(|_| UpdateVerifyError::InvalidSignature)?;
+    Ok(manifest)
 }
 
 fn validate_header(header: &tar::Header, directory: bool) -> Result<(), UpdateVerifyError> {
@@ -471,9 +484,9 @@ fn validate_payload_tree(
             return Err(UpdateVerifyError::PayloadMismatch);
         }
     }
-    let mut expected_directories = BTreeSet::from([PAYLOAD_ROOT.to_string()]);
+    let mut expected_directories = BTreeSet::from([APPLICATION_PAYLOAD_ROOT.to_string()]);
     for file in &manifest.files {
-        let mut path = PathBuf::from(PAYLOAD_ROOT);
+        let mut path = PathBuf::from(APPLICATION_PAYLOAD_ROOT);
         let components = Path::new(&file.path).components().collect::<Vec<_>>();
         for component in components.iter().take(components.len().saturating_sub(1)) {
             path.push(component.as_os_str());
@@ -644,7 +657,7 @@ mod tests {
         builder
             .append(
                 &header(
-                    MANIFEST_PATH,
+                    APPLICATION_MANIFEST_PATH,
                     0o644,
                     manifest_bytes.len() as u64,
                     EntryType::Regular,
@@ -654,7 +667,7 @@ mod tests {
             .unwrap();
         builder
             .append(
-                &header(SIGNATURE_PATH, 0o644, 64, EntryType::Regular),
+                &header(APPLICATION_SIGNATURE_PATH, 0o644, 64, EntryType::Regular),
                 signature.as_slice(),
             )
             .unwrap();
@@ -833,7 +846,7 @@ mod tests {
         unsigned
             .append(
                 &header(
-                    MANIFEST_PATH,
+                    APPLICATION_MANIFEST_PATH,
                     0o644,
                     manifest_bytes.len() as u64,
                     EntryType::Regular,

@@ -142,9 +142,12 @@ Two clean AArch64 builds at source commit `5603c2b` produced byte-identical
 linked payloads and prototype archives; the exact hashes and the isolated
 non-shipped Rust metadata variance are recorded in
 `baselines/application-update-verifier.md`.
-The verifier performs no extraction or activation yet; anti-rollback slots,
-health confirmation, rollback, and the separately signed system-image format
-remain open.
+The separate stager now performs one bounded source copy, verifies and extracts
+from the same unlinked read-only inode, fsyncs a read-only slot, publishes it
+with no-replace `renameat2`, and fully revalidates idempotent existing slots.
+It remains an unwired library. Active-slot selection, anti-rollback state,
+crash cleanup, health confirmation, rollback, and the separately signed
+system-image format remain open.
 
 ## Phase 7: Release acceptance
 

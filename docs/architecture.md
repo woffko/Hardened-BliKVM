@@ -32,7 +32,7 @@ bli-platform-broker
 
 Separate service users
   - video capture and Janus during transition
-  - optional upload worker
+  - future non-networked update worker owning only its canonical slot root
   - log collector
 ```
 
@@ -51,6 +51,11 @@ never enables a mutating method by itself.
 6. A host build is never treated as physical hardware acceptance.
 7. Application updates and full-system updates have separate trust and
    recovery gates.
+
+The update stager currently exists only as a Rust library. Its intended worker
+has no listener, shell, block-device access, or authority to select a boot or
+application slot. Network upload policy and privileged activation remain
+separate future boundaries.
 
 ## Transition video design
 

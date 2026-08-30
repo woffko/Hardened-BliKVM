@@ -73,6 +73,10 @@ deterministic archive contract in `api/application-update-v1.md`. It has no
 unsigned fallback and accepts only `bin`, `libexec`, and `share` payloads for
 the H616 application slot. Full-system images require a different format and
 key; application verification can never authorize a partition or boot change.
+The non-networked staging library snapshots an input once, verifies and
+extracts only from the resulting unlinked read-only inode, publishes a
+read-only slot with no-replace `renameat2`, and revalidates signed proof plus
+the entire tree. It does not select an active slot or expose an update API.
 
 ## Media processes
 
@@ -86,6 +90,8 @@ network-facing.
 - A write requires explicit task authorization, preflight, rollback, and a
   separate maintenance transition.
 - Application and system update trust are separate.
+- A future update worker owns one canonical same-filesystem slot root; the
+  network server never receives arbitrary filesystem or rename authority.
 - No NanoKVM raw partition path or update assumption is valid for H616.
 - Production release requires signature rejection tests, power-loss recovery,
   and recoverable physical media.
