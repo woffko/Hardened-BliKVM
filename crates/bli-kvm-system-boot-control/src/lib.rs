@@ -105,6 +105,14 @@ pub struct BootSelector {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplicationCompatibilityProof {
+    pub application_sequence: u64,
+    pub minimum_system_sequence: u64,
+    pub manifest_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JournalCopy {
     schema_version: u32,
     generation: u64,
@@ -169,6 +177,18 @@ pub enum BootControlError {
     StateMismatch,
     #[error("boot selector attempt count increased")]
     AttemptCounterIncreased,
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum CompatibilityError {
+    #[error("application compatibility proof is invalid")]
+    InvalidApplicationProof,
+    #[error("system journal is invalid for compatibility evaluation")]
+    InvalidSystemState,
+    #[error("application is incompatible with the confirmed system")]
+    IncompatibleWithConfirmedSystem,
+    #[error("application would prevent rollback to the confirmed system")]
+    IncompatibleWithRollbackAnchor,
 }
 
 #[derive(Serialize)]
@@ -396,6 +416,50 @@ pub fn reconcile(
             None => Err(BootControlError::StateMismatch),
         },
     }
+}
+
+pub fn validate_confirmed_application_for_system_update(
+    journal: &SystemJournal,
+    application: &ApplicationCompatibilityProof,
+) -> Result<(), CompatibilityError> {
+    validate_compatibility_inputs(journal, application)?;
+    if application.minimum_system_sequence > journal.confirmed.sequence {
+        return Err(CompatibilityError::IncompatibleWithConfirmedSystem);
+    }
+    Ok(())
+}
+
+pub fn validate_application_confirmation(
+    journal: &SystemJournal,
+    application: &ApplicationCompatibilityProof,
+) -> Result<(), CompatibilityError> {
+    validate_compatibility_inputs(journal, application)?;
+    let accepted_sequence = match journal.pending.as_ref() {
+        Some(pending) => pending.previous.sequence,
+        None => journal.confirmed.sequence,
+    };
+    if application.minimum_system_sequence > accepted_sequence {
+        return Err(if journal.pending.is_some() {
+            CompatibilityError::IncompatibleWithRollbackAnchor
+        } else {
+            CompatibilityError::IncompatibleWithConfirmedSystem
+        });
+    }
+    Ok(())
+}
+
+fn validate_compatibility_inputs(
+    journal: &SystemJournal,
+    application: &ApplicationCompatibilityProof,
+) -> Result<(), CompatibilityError> {
+    validate_journal(journal).map_err(|_| CompatibilityError::InvalidSystemState)?;
+    if application.application_sequence == 0
+        || application.minimum_system_sequence == 0
+        || !valid_hex(&application.manifest_sha256, 64)
+    {
+        return Err(CompatibilityError::InvalidApplicationProof);
+    }
+    Ok(())
 }
 
 fn parse_canonical<T>(bytes: &[u8]) -> Result<T, BootControlError>

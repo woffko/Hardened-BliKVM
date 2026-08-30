@@ -1,8 +1,10 @@
 use bli_kvm_system_boot_control::{
-    BootControlError, BootSelector, JournalCopy, JournalPhase, PendingSelector,
-    PendingSystemUpdate, Reconciliation, SelectedJournal, SelectedRecord, SelectedSelector,
-    SelectorCopy, SelectorPendingState, SlotIdentity, SystemJournal, SystemRollbackReason,
-    SystemSlot, reconcile, select_journal_copies, select_selector_copies,
+    ApplicationCompatibilityProof, BootControlError, BootSelector, CompatibilityError, JournalCopy,
+    JournalPhase, PendingSelector, PendingSystemUpdate, Reconciliation, SelectedJournal,
+    SelectedRecord, SelectedSelector, SelectorCopy, SelectorPendingState, SlotIdentity,
+    SystemJournal, SystemRollbackReason, SystemSlot, reconcile, select_journal_copies,
+    select_selector_copies, validate_application_confirmation,
+    validate_confirmed_application_for_system_update,
 };
 
 const LAYOUT: &str = "layout-h616-recovery-test-v1";
@@ -103,6 +105,14 @@ fn selected_selector(state: Option<SelectorPendingState>) -> SelectedSelector {
         },
         payload: selector(state),
         degraded: false,
+    }
+}
+
+fn application(sequence: u64, minimum_system_sequence: u64) -> ApplicationCompatibilityProof {
+    ApplicationCompatibilityProof {
+        application_sequence: sequence,
+        minimum_system_sequence,
+        manifest_sha256: hex('d', 64),
     }
 }
 
@@ -417,4 +427,63 @@ fn rollback_reason_serialization_is_bounded_and_known() {
             .contains("attempts_exhausted")
     );
     JournalCopy::from_bytes(&bytes).unwrap();
+}
+
+#[test]
+fn application_confirmation_preserves_the_system_rollback_anchor() {
+    let stable = journal(None);
+    validate_confirmed_application_for_system_update(&stable, &application(9, 5)).unwrap();
+    validate_application_confirmation(&stable, &application(10, 5)).unwrap();
+    assert_eq!(
+        validate_application_confirmation(&stable, &application(10, 6)),
+        Err(CompatibilityError::IncompatibleWithConfirmedSystem)
+    );
+
+    for phase in [
+        JournalPhase::WritePrepared,
+        JournalPhase::CandidateReady,
+        JournalPhase::BootPrepared,
+        JournalPhase::BootArmed,
+        JournalPhase::AwaitingHealth,
+        JournalPhase::ConfirmationPrepared,
+        JournalPhase::RollbackPrepared,
+    ] {
+        let pending = journal(Some(phase));
+        validate_confirmed_application_for_system_update(&pending, &application(9, 5)).unwrap();
+        validate_application_confirmation(&pending, &application(10, 5)).unwrap();
+        assert_eq!(
+            validate_application_confirmation(&pending, &application(10, 6)),
+            Err(CompatibilityError::IncompatibleWithRollbackAnchor)
+        );
+    }
+
+    let confirmed_candidate = SystemJournal {
+        layout_id: LAYOUT.into(),
+        floor_sequence: 6,
+        confirmed: slot(SystemSlot::B, 6, 'b'),
+        pending: None,
+        last_rollback: None,
+    };
+    validate_application_confirmation(&confirmed_candidate, &application(10, 6)).unwrap();
+}
+
+#[test]
+fn compatibility_rejects_invalid_application_or_system_evidence() {
+    assert_eq!(
+        validate_application_confirmation(&journal(None), &application(0, 1)),
+        Err(CompatibilityError::InvalidApplicationProof)
+    );
+    let mut zero_digest = application(1, 1);
+    zero_digest.manifest_sha256 = hex('0', 64);
+    assert_eq!(
+        validate_application_confirmation(&journal(None), &zero_digest),
+        Err(CompatibilityError::InvalidApplicationProof)
+    );
+
+    let mut invalid_journal = journal(None);
+    invalid_journal.floor_sequence = 4;
+    assert_eq!(
+        validate_application_confirmation(&invalid_journal, &application(1, 1)),
+        Err(CompatibilityError::InvalidSystemState)
+    );
 }

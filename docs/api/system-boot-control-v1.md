@@ -145,6 +145,21 @@ application slot. Application confirmation that would require the candidate
 system is forbidden while the system update is pending. This preserves the
 ability to roll back to the previous system.
 
+### Application rollback compatibility
+
+An application proof contains only its sequence, signed manifest SHA-256, and
+`minimumSystemSequence`. Before a system transaction, the confirmed application
+must already be compatible with the confirmed system. During every pending
+phase from `WritePrepared` through `ConfirmationPrepared` or
+`RollbackPrepared`, a newly confirmed application must remain compatible with
+the previous confirmed system, not merely the candidate. Only after the system
+journal has finalized confirmation and removed `pending` may application policy
+use the new system sequence.
+
+`bli-kvm-system-boot-control` implements both checks as pure functions over a
+validated journal and application proof. It does not replace the application
+signature, tree, or anti-rollback verifier.
+
 ## Anti-rollback boundary
 
 A journal-only floor can be rolled back by restoring old storage. Production

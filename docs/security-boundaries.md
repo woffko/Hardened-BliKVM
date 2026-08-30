@@ -128,6 +128,11 @@ mismatched operation/slot/digest evidence, selector generation regression, or
 an increasing attempt count. Its SHA-256 checksum is corruption detection, not
 authentication or physical rollback resistance.
 
+Application/system compatibility is checked against the previous confirmed
+system for the entire pending system transaction. A candidate-only application
+requirement cannot be confirmed early and thereby make automatic system
+rollback unusable.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

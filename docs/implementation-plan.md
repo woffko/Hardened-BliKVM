@@ -275,6 +275,13 @@ The exact host gates, independent AArch64 codegen hashes, byte-identical
 prototype bundle, and non-shipped metadata variance are recorded in
 `baselines/system-recovery-core.md`.
 
+The boot-control core now also validates application/system floor coupling.
+Across all seven pending system phases it permits application confirmation only
+when `minimumSystemSequence` remains compatible with the previous confirmed
+system; the candidate sequence becomes usable only after final system
+confirmation. Two additional tests cover rollback-anchor enforcement, stable
+post-confirmation acceptance, and invalid application/system evidence.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.
