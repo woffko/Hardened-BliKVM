@@ -6,6 +6,8 @@ members = [
   "crates/bli-kvm-kvmd-client",
   "crates/bli-kvm-platform-bli",
   "crates/bli-kvm-platform-broker",
+  "crates/bli-kvm-video-client",
+  "crates/bli-kvm-video-proxy",
   "crates/bli-kvm-server",
 ]
 exclude = ["tools/lsp-smoke/rust"]
@@ -31,7 +33,9 @@ axum = { version = "0.8", features = ["json", "http1", "tokio"] }
 base64 = "0.22"
 bytes = "1"
 http = "1"
+http-body = "1"
 http-body-util = "0.1"
+httparse = "1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 libc = "0.2"

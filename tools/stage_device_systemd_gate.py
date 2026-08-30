@@ -23,8 +23,10 @@ from tools import stage_device_prototype as prototype
 
 ACCOUNT = "hardened-blikvm-broker"
 BROKER_UNIT = "hardened-blikvm-platform-broker.service"
+VIDEO_UNIT = "hardened-blikvm-video-proxy.service"
 SERVER_UNIT = "hardened-blikvm-server.service"
 INVENTORY_REQUESTS = 20
+VIDEO_RECONNECTS = 5
 PREFLIGHT_KEYS = {
     "account_absent",
     "architecture",
@@ -38,6 +40,9 @@ PREFLIGHT_KEYS = {
     "tmp_mount_mode",
     "tools_ready",
     "unit_names_free",
+    "ustreamer_socket",
+    "ustreamer_socket_group",
+    "ustreamer_socket_mode",
 }
 RUN_KEYS = {
     "account_created",
@@ -63,10 +68,21 @@ RUN_KEYS = {
     "server_caps",
     "server_host_network",
     "server_no_credential",
+    "server_no_kvmd_group",
     "server_unit",
     "setup_status",
     "staging_removed",
     "units_removed",
+    "video_caps",
+    "video_content_type",
+    "video_frames",
+    "video_network_namespace",
+    "video_no_device_access",
+    "video_reconnects",
+    "video_session_revocation",
+    "video_socket_mode",
+    "video_status",
+    "video_unit",
     "watchdog_armed",
 }
 FINAL_KEYS = {
@@ -123,8 +139,10 @@ class GatePaths:
     rollback_script: str
     rollback_hashes: str
     broker_unit_path: str
+    video_unit_path: str
     server_unit_path: str
     broker_dropin_dir: str
+    video_dropin_dir: str
     server_dropin_dir: str
     watchdog: str
     server_state_name: str
@@ -184,8 +202,10 @@ def gate_paths(bundle_sha256: str, run_id: str) -> GatePaths:
         rollback_script=f"{test_root}/rollback.sh",
         rollback_hashes=f"{test_root}/rollback.hashes",
         broker_unit_path=f"/run/systemd/system/{BROKER_UNIT}",
+        video_unit_path=f"/run/systemd/system/{VIDEO_UNIT}",
         server_unit_path=f"/run/systemd/system/{SERVER_UNIT}",
         broker_dropin_dir=f"/run/systemd/system/{BROKER_UNIT}.d",
+        video_dropin_dir=f"/run/systemd/system/{VIDEO_UNIT}.d",
         server_dropin_dir=f"/run/systemd/system/{SERVER_UNIT}.d",
         watchdog=f"hardened-blikvm-rollback-{run_id}",
         server_state_name=f"hardened-blikvm-server-test-{run_id}",
@@ -238,12 +258,28 @@ def build_server_dropin(paths: GatePaths, bind_port: int) -> str:
             f"Environment=BLI_KVM_WEB_ROOT={paths.test_root}/payload/share/web",
             f"Environment=BLI_KVM_STATE_DIR={state_path}",
             "Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock",
+            "Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock",
             "Environment=BLI_KVM_SECURE_COOKIES=0",
             "Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0",
             "ExecStart=",
             f"ExecStart={paths.test_root}/payload/bin/bli-kvm-server",
             "SocketBindAllow=",
             f"SocketBindAllow=tcp:{bind_port}",
+            "",
+        )
+    )
+
+
+def build_video_dropin(paths: GatePaths) -> str:
+    return "\n".join(
+        (
+            "[Service]",
+            "User=www-data",
+            "Group=nogroup",
+            "SupplementaryGroups=",
+            "SupplementaryGroups=kvmd",
+            "ExecStart=",
+            f"ExecStart={paths.test_root}/payload/libexec/bli-kvm-video-proxy",
             "",
         )
     )
@@ -259,8 +295,10 @@ def build_rollback_script(paths: GatePaths) -> str:
             "htpasswd": paths.htpasswd,
             "htpasswd_backup": paths.htpasswd_backup,
             "broker_unit_path": paths.broker_unit_path,
+            "video_unit_path": paths.video_unit_path,
             "server_unit_path": paths.server_unit_path,
             "broker_dropin_dir": paths.broker_dropin_dir,
+            "video_dropin_dir": paths.video_dropin_dir,
             "server_dropin_dir": paths.server_dropin_dir,
             "watchdog": paths.watchdog,
             "server_state": f"/run/{paths.server_state_name}",
@@ -275,6 +313,7 @@ modified_sha=$2
 systemctl stop "$watchdog.timer" 2>/dev/null || true
 if [ -z "${INVOCATION_ID:-}" ]; then systemctl stop "$watchdog.service" 2>/dev/null || true; fi
 systemctl stop hardened-blikvm-server.service 2>/dev/null || true
+systemctl stop hardened-blikvm-video-proxy.service 2>/dev/null || true
 systemctl stop hardened-blikvm-platform-broker.service 2>/dev/null || true
 current_sha=$(sha256sum "$htpasswd" | awk '{print $1}')
 if [ "$current_sha" = "$modified_sha" ]; then
@@ -286,10 +325,10 @@ elif [ "$current_sha" != "$before_sha" ]; then
   exit 3
 fi
 [ "$(sha256sum "$htpasswd" | awk '{print $1}')" = "$before_sha" ]
-rm -f -- "$broker_unit_path" "$server_unit_path"
-rm -rf -- "$broker_dropin_dir" "$server_dropin_dir"
+rm -f -- "$broker_unit_path" "$video_unit_path" "$server_unit_path"
+rm -rf -- "$broker_dropin_dir" "$video_dropin_dir" "$server_dropin_dir"
 systemctl daemon-reload
-rm -rf -- /run/hardened-blikvm "$server_state"
+rm -rf -- /run/hardened-blikvm /run/hardened-blikvm-video "$server_state"
 rm -rf -- "$stage_root"
 rm -rf -- "$test_root"
 rm -f -- "$owner_marker"
@@ -307,8 +346,10 @@ def build_preflight_script(
             "owner_marker": paths.owner_marker,
             "htpasswd": paths.htpasswd,
             "broker_unit_path": paths.broker_unit_path,
+            "video_unit_path": paths.video_unit_path,
             "server_unit_path": paths.server_unit_path,
             "broker_dropin_dir": paths.broker_dropin_dir,
+            "video_dropin_dir": paths.video_dropin_dir,
             "server_dropin_dir": paths.server_dropin_dir,
             "watchdog": paths.watchdog,
             "required_bytes": required_bytes,
@@ -332,6 +373,11 @@ root_available=$(df -B1 --output=avail /opt | tail -n 1 | tr -d ' ')
 [ "$root_available" -ge "$required_bytes" ]
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
+ustreamer_socket=/run/kvmd/ustreamer.sock
+[ -S "$ustreamer_socket" ]
+ustreamer_mode=$(stat -c '%a' "$ustreamer_socket")
+ustreamer_group=$(stat -c '%G' "$ustreamer_socket")
+[ "$ustreamer_group" = kvmd ]
 for tool in awk base64 cat chmod chown cp curl df env findmnt getent grep head id install kvmd-htpasswd mkdir mv od readlink rm sed setpriv sha256sum sleep stat systemctl systemd-run tail tar tr wc; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
@@ -343,10 +389,13 @@ if kvmd-htpasswd list 2>/dev/null | grep -Fxq "$account"; then exit 1; fi
 [ ! -e "$test_root" ]
 [ ! -e "$owner_marker" ]
 [ ! -e "$broker_unit_path" ]
+[ ! -e "$video_unit_path" ]
 [ ! -e "$server_unit_path" ]
 [ ! -e "$broker_dropin_dir" ]
+[ ! -e "$video_dropin_dir" ]
 [ ! -e "$server_dropin_dir" ]
 [ ! -e /run/hardened-blikvm ]
+[ ! -e /run/hardened-blikvm-video ]
 if systemctl list-unit-files "$watchdog.timer" --no-legend 2>/dev/null | grep -q .; then exit 1; fi
 if port_in_use; then exit 1; fi
 version=$(systemctl --version | head -n 1 | awk '{print $2}')
@@ -364,6 +413,9 @@ emit tools_ready yes
 emit stage_absent yes
 emit unit_names_free yes
 emit port_free_before yes
+emit ustreamer_socket present
+emit ustreamer_socket_mode "$ustreamer_mode"
+emit ustreamer_socket_group "$ustreamer_group"
 """.strip()
     return f"{values}\n{prototype.PORT_FUNCTION}\n{body}"
 
@@ -387,16 +439,20 @@ def build_runtime_script(
             "rollback_script": paths.rollback_script,
             "rollback_hashes": paths.rollback_hashes,
             "broker_unit_path": paths.broker_unit_path,
+            "video_unit_path": paths.video_unit_path,
             "server_unit_path": paths.server_unit_path,
             "broker_dropin_dir": paths.broker_dropin_dir,
+            "video_dropin_dir": paths.video_dropin_dir,
             "server_dropin_dir": paths.server_dropin_dir,
             "watchdog": paths.watchdog,
             "account": ACCOUNT,
             "bind_port": bind_port,
             "port_hex": f"{bind_port:04X}",
             "inventory_requests": INVENTORY_REQUESTS,
+            "video_reconnects": VIDEO_RECONNECTS,
             "rollback_b64": _encoded(build_rollback_script(paths)),
             "broker_dropin_b64": _encoded(build_broker_dropin(paths)),
+            "video_dropin_b64": _encoded(build_video_dropin(paths)),
             "server_dropin_b64": _encoded(build_server_dropin(paths, bind_port)),
         }
     )
@@ -419,12 +475,13 @@ owned_test() {
 minimal_cleanup() {
   set +e
   systemctl stop hardened-blikvm-server.service 2>/dev/null
+  systemctl stop hardened-blikvm-video-proxy.service 2>/dev/null
   systemctl stop hardened-blikvm-platform-broker.service 2>/dev/null
   if owned_test; then
-    rm -f -- "$broker_unit_path" "$server_unit_path"
-    rm -rf -- "$broker_dropin_dir" "$server_dropin_dir"
+    rm -f -- "$broker_unit_path" "$video_unit_path" "$server_unit_path"
+    rm -rf -- "$broker_dropin_dir" "$video_dropin_dir" "$server_dropin_dir"
     systemctl daemon-reload
-    rm -rf -- /run/hardened-blikvm "/run/hardened-blikvm-server-test-$run_id"
+    rm -rf -- /run/hardened-blikvm /run/hardened-blikvm-video "/run/hardened-blikvm-server-test-$run_id"
     rm -rf -- "$test_root"
     rm -f -- "$owner_marker"
   fi
@@ -469,6 +526,7 @@ mkdir -m 755 "$payload"
 tar -xzf "$archive" --strip-components=1 --no-same-owner -C "$payload"
 (cd "$payload" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
 [ -f "$payload/share/systemd/hardened-blikvm-platform-broker.service" ]
+[ -f "$payload/share/systemd/hardened-blikvm-video-proxy.service" ]
 [ -f "$payload/share/systemd/hardened-blikvm-server.service" ]
 phase=prepare-test-root
 [ ! -e "$test_root" ]
@@ -487,13 +545,16 @@ od -An -N24 -tx1 /dev/urandom | tr -d ' \n' > "$credentials/kvmd-password"
 chmod 400 "$credentials/kvmd-user" "$credentials/kvmd-password"
 phase=install-runtime-units
 install -m 644 "$test_root/payload/share/systemd/hardened-blikvm-platform-broker.service" "$broker_unit_path"
+install -m 644 "$test_root/payload/share/systemd/hardened-blikvm-video-proxy.service" "$video_unit_path"
 install -m 644 "$test_root/payload/share/systemd/hardened-blikvm-server.service" "$server_unit_path"
-install -d -m 755 "$broker_dropin_dir" "$server_dropin_dir"
+install -d -m 755 "$broker_dropin_dir" "$video_dropin_dir" "$server_dropin_dir"
 printf '%s' "$broker_dropin_b64" | base64 -d > "$broker_dropin_dir/test.conf"
+printf '%s' "$video_dropin_b64" | base64 -d > "$video_dropin_dir/test.conf"
 printf '%s' "$server_dropin_b64" | base64 -d > "$server_dropin_dir/test.conf"
-chmod 644 "$broker_dropin_dir/test.conf" "$server_dropin_dir/test.conf"
+chmod 644 "$broker_dropin_dir/test.conf" "$video_dropin_dir/test.conf" "$server_dropin_dir/test.conf"
 systemctl daemon-reload
 systemctl cat hardened-blikvm-platform-broker.service >/dev/null
+systemctl cat hardened-blikvm-video-proxy.service >/dev/null
 systemctl cat hardened-blikvm-server.service >/dev/null
 phase=create-dedicated-account
 before_sha=$(sha256sum "$htpasswd" | awk '{print $1}')
@@ -545,6 +606,34 @@ credentials_directory=$(tr '\0' '\n' < "/proc/$broker_pid/environ" | sed -n 's/^
 [ -n "$credentials_directory" ]
 [ "$(stat -c '%a' "$credentials_directory/kvmd-user")" = 400 ]
 [ "$(stat -c '%a' "$credentials_directory/kvmd-password")" = 400 ]
+phase=start-video-unit
+systemctl start hardened-blikvm-video-proxy.service
+count=0
+while [ "$count" -lt 100 ] && [ ! -S /run/hardened-blikvm-video/mjpeg.sock ]; do
+  [ "$(systemctl is-active hardened-blikvm-video-proxy.service 2>/dev/null || true)" = active ] || exit 1
+  sleep 0.1
+  count=$((count + 1))
+done
+[ -S /run/hardened-blikvm-video/mjpeg.sock ]
+video_pid=$(systemctl show -p MainPID --value hardened-blikvm-video-proxy.service)
+case "$video_pid" in ''|0|*[!0-9]*) exit 1 ;; esac
+phase=verify-video-unit
+[ "$(systemctl show -p User --value hardened-blikvm-video-proxy.service)" = www-data ]
+[ "$(systemctl show -p Group --value hardened-blikvm-video-proxy.service)" = nogroup ]
+[ "$(systemctl show -p PrivateNetwork --value hardened-blikvm-video-proxy.service)" = yes ]
+[ "$(systemctl show -p DevicePolicy --value hardened-blikvm-video-proxy.service)" = closed ]
+[ "$(awk '/^CapEff:/ {print $2}' "/proc/$video_pid/status")" = 0000000000000000 ]
+[ "$(awk '/^CapBnd:/ {print $2}' "/proc/$video_pid/status")" = 0000000000000000 ]
+[ "$(awk '/^NoNewPrivs:/ {print $2}' "/proc/$video_pid/status")" = 1 ]
+[ "$(readlink "/proc/$video_pid/ns/net")" != "$(readlink /proc/1/ns/net)" ]
+kvmd_gid=$(getent group kvmd | head -n 1 | awk -F: '{print $3}')
+case " $(awk '/^Groups:/ {$1=""; print}' "/proc/$video_pid/status") " in *" $kvmd_gid "*) ;; *) exit 1 ;; esac
+[ "$(stat -c '%a' /run/hardened-blikvm-video)" = 750 ]
+[ "$(stat -c '%U' /run/hardened-blikvm-video)" = www-data ]
+[ "$(stat -c '%G' /run/hardened-blikvm-video)" = nogroup ]
+[ "$(stat -c '%a' /run/hardened-blikvm-video/mjpeg.sock)" = 660 ]
+[ "$(stat -c '%U' /run/hardened-blikvm-video/mjpeg.sock)" = www-data ]
+[ "$(stat -c '%G' /run/hardened-blikvm-video/mjpeg.sock)" = nogroup ]
 phase=start-server-unit
 systemctl start hardened-blikvm-server.service
 count=0
@@ -565,6 +654,7 @@ phase=verify-server-unit
 [ "$(awk '/^CapBnd:/ {print $2}' "/proc/$server_pid/status")" = 0000000000000000 ]
 [ "$(awk '/^NoNewPrivs:/ {print $2}' "/proc/$server_pid/status")" = 1 ]
 [ "$(readlink "/proc/$server_pid/ns/net")" = "$(readlink /proc/1/ns/net)" ]
+case " $(awk '/^Groups:/ {$1=""; print}' "/proc/$server_pid/status") " in *" $kvmd_gid "*) exit 1 ;; esac
 if tr '\0' '\n' < "/proc/$server_pid/environ" | grep -Eq '^(CREDENTIALS_DIRECTORY|KVMD_)='; then exit 1; fi
 phase=authenticate
 account_password=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
@@ -592,6 +682,74 @@ while [ "$count" -lt "$inventory_requests" ]; do
   [ "$code" = 200 ]
   count=$((count + 1))
 done
+phase=video-stream
+capture_video() {
+  capture_file=$1
+  capture_headers=$2
+  capture_seconds=$3
+  set +e
+  capture_status=$(curl --noproxy '*' --silent --max-time "$capture_seconds" --cookie "$cookie" \
+    --dump-header "$capture_headers" --output "$capture_file" --write-out '%{http_code}' \
+    "$origin/api/stream/mjpeg" 2>/dev/null)
+  capture_rc=$?
+  set -e
+  [ "$capture_status" = 200 ]
+  case "$capture_rc" in 0|18|28) ;; *) return 1 ;; esac
+  tr -d '\r' < "$capture_headers" | grep -Eqi '^content-type: multipart/x-mixed-replace([;[:space:]]|$)'
+  capture_bytes=$(wc -c < "$capture_file" | tr -d ' ')
+  [ "$capture_bytes" -ge 1024 ]
+  capture_frames=$(od -An -v -t u1 "$capture_file" | awk '{for (index = 1; index <= NF; index++) {if (previous == 255 && $index == 216) frames++; previous = $index}} END {print frames + 0}')
+  [ "$capture_frames" -ge 2 ]
+}
+capture_video "$test_root/video.mjpeg" "$test_root/video.headers" 3
+video_status=$capture_status
+video_frames=$capture_frames
+count=0
+while [ "$count" -lt "$video_reconnects" ]; do
+  capture_video "$test_root/video-reconnect.mjpeg" "$test_root/video-reconnect.headers" 1
+  count=$((count + 1))
+done
+phase=video-concurrency
+capture_video "$test_root/video-concurrent-a.mjpeg" "$test_root/video-concurrent-a.headers" 2 &
+video_a_pid=$!
+capture_video "$test_root/video-concurrent-b.mjpeg" "$test_root/video-concurrent-b.headers" 2 &
+video_b_pid=$!
+wait "$video_a_pid"
+wait "$video_b_pid"
+phase=video-session-revocation
+set +e
+curl --noproxy '*' --silent --max-time 20 --cookie "$cookie" \
+  --output "$test_root/video-revoked.mjpeg" "$origin/api/stream/mjpeg" 2>/dev/null &
+revoked_stream_pid=$!
+set -e
+count=0
+while [ "$count" -lt 50 ]; do
+  if [ -f "$test_root/video-revoked.mjpeg" ] && [ "$(wc -c < "$test_root/video-revoked.mjpeg" | tr -d ' ')" -ge 1024 ]; then break; fi
+  kill -0 "$revoked_stream_pid" 2>/dev/null || exit 1
+  sleep 0.1
+  count=$((count + 1))
+done
+[ "$count" -lt 50 ]
+kill -0 "$revoked_stream_pid" 2>/dev/null
+csrf_token=$(sed -n 's/.*"csrfToken":"\([^"]*\)".*/\1/p' "$test_root/login.json")
+[ -n "$csrf_token" ]
+logout_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/logout.json" --write-out '%{http_code}' \
+  -H "Origin: $origin" -H "x-csrf-token: $csrf_token" -X POST "$origin/api/auth/logout" 2>/dev/null)
+unset csrf_token
+[ "$logout_status" = 200 ]
+count=0
+while kill -0 "$revoked_stream_pid" 2>/dev/null && [ "$count" -lt 50 ]; do
+  sleep 0.1
+  count=$((count + 1))
+done
+if kill -0 "$revoked_stream_pid" 2>/dev/null; then exit 1; fi
+set +e
+wait "$revoked_stream_pid"
+revoked_stream_rc=$?
+set -e
+case "$revoked_stream_rc" in 0|18|23|56) ;; *) exit 1 ;; esac
+revoked_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/stream/mjpeg" 2>/dev/null)
+[ "$revoked_status" = 401 ]
 phase=verify-existing-services
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
@@ -605,6 +763,7 @@ if kvmd-htpasswd list 2>/dev/null | grep -Fxq "$account"; then exit 1; fi
 [ ! -e "$test_root" ]
 [ ! -e "$owner_marker" ]
 [ ! -e "$broker_unit_path" ]
+[ ! -e "$video_unit_path" ]
 [ ! -e "$server_unit_path" ]
 run_succeeded=yes
 trap - EXIT HUP INT TERM
@@ -618,9 +777,15 @@ emit broker_load_credential verified
 emit broker_network_namespace private
 emit broker_caps none
 emit broker_socket_mode 660
+emit video_unit passed
+emit video_network_namespace private
+emit video_caps none
+emit video_no_device_access verified
+emit video_socket_mode 660
 emit server_unit passed
 emit server_host_network loopback-restricted
 emit server_no_credential verified
+emit server_no_kvmd_group verified
 emit server_caps none
 emit no_new_privs yes
 emit setup_status "$setup_status"
@@ -629,6 +794,11 @@ emit inventory_status "$inventory_status"
 emit inventory_backend kvmd_transition
 emit inventory_sanitized yes
 emit inventory_requests "$inventory_requests"
+emit video_status "$video_status"
+emit video_content_type multipart-mjpeg
+emit video_frames "$video_frames"
+emit video_reconnects "$video_reconnects"
+emit video_session_revocation passed
 emit htpasswd_restored yes
 emit account_removed yes
 emit units_removed yes
@@ -651,8 +821,10 @@ def build_cleanup_script(paths: GatePaths) -> str:
             "rollback_script": paths.rollback_script,
             "rollback_hashes": paths.rollback_hashes,
             "broker_unit_path": paths.broker_unit_path,
+            "video_unit_path": paths.video_unit_path,
             "server_unit_path": paths.server_unit_path,
             "broker_dropin_dir": paths.broker_dropin_dir,
+            "video_dropin_dir": paths.video_dropin_dir,
             "server_dropin_dir": paths.server_dropin_dir,
         }
     )
@@ -672,10 +844,12 @@ elif [ -e "$test_root" ] || [ -e "$owner_marker" ]; then
     [ "$current" = "$before" ] || exit 4
   fi
   systemctl stop hardened-blikvm-server.service 2>/dev/null || true
+  systemctl stop hardened-blikvm-video-proxy.service 2>/dev/null || true
   systemctl stop hardened-blikvm-platform-broker.service 2>/dev/null || true
-  rm -f -- "$broker_unit_path" "$server_unit_path"
-  rm -rf -- "$broker_dropin_dir" "$server_dropin_dir"
+  rm -f -- "$broker_unit_path" "$video_unit_path" "$server_unit_path"
+  rm -rf -- "$broker_dropin_dir" "$video_dropin_dir" "$server_dropin_dir"
   systemctl daemon-reload
+  rm -rf -- /run/hardened-blikvm /run/hardened-blikvm-video
   rm -rf -- "$test_root"
   rm -f -- "$owner_marker"
 fi
@@ -699,6 +873,7 @@ def build_final_script(paths: GatePaths, bind_port: int) -> str:
             "test_root": paths.test_root,
             "owner_marker": paths.owner_marker,
             "broker_unit_path": paths.broker_unit_path,
+            "video_unit_path": paths.video_unit_path,
             "server_unit_path": paths.server_unit_path,
             "port_hex": f"{bind_port:04X}",
             "account": ACCOUNT,
@@ -714,8 +889,10 @@ emit() { printf '%s=%s\n' "$1" "$2"; }
 [ ! -e "$test_root" ]
 [ ! -e "$owner_marker" ]
 [ ! -e "$broker_unit_path" ]
+[ ! -e "$video_unit_path" ]
 [ ! -e "$server_unit_path" ]
 [ ! -e /run/hardened-blikvm ]
+[ ! -e /run/hardened-blikvm-video ]
 [ ! -e "$server_state" ]
 if kvmd-htpasswd list 2>/dev/null | grep -Fxq "$account"; then exit 1; fi
 if port_in_use; then exit 1; fi
@@ -785,12 +962,18 @@ def validate_preflight(facts: dict[str, str]) -> None:
         "stage_absent": "yes",
         "unit_names_free": "yes",
         "port_free_before": "yes",
+        "ustreamer_socket": "present",
+        "ustreamer_socket_mode": "660",
+        "ustreamer_socket_group": "kvmd",
     }
     if facts != dict(sorted(expected.items())):
         raise ValueError("systemd preflight invariant failed")
 
 
 def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
+    video_frames = facts.get("video_frames", "")
+    if not video_frames.isdecimal() or int(video_frames) < 2:
+        raise ValueError("systemd video frame invariant failed")
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
@@ -802,9 +985,15 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "broker_network_namespace": "private",
         "broker_caps": "none",
         "broker_socket_mode": "660",
+        "video_unit": "passed",
+        "video_network_namespace": "private",
+        "video_caps": "none",
+        "video_no_device_access": "verified",
+        "video_socket_mode": "660",
         "server_unit": "passed",
         "server_host_network": "loopback-restricted",
         "server_no_credential": "verified",
+        "server_no_kvmd_group": "verified",
         "server_caps": "none",
         "no_new_privs": "yes",
         "setup_status": "200",
@@ -813,6 +1002,11 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "inventory_backend": "kvmd_transition",
         "inventory_sanitized": "yes",
         "inventory_requests": str(INVENTORY_REQUESTS),
+        "video_status": "200",
+        "video_content_type": "multipart-mjpeg",
+        "video_frames": video_frames,
+        "video_reconnects": str(VIDEO_RECONNECTS),
+        "video_session_revocation": "passed",
         "htpasswd_restored": "yes",
         "account_removed": "yes",
         "units_removed": "yes",

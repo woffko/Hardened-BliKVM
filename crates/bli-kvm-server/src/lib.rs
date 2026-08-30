@@ -11,6 +11,7 @@ use axum::{
 use bli_kvm_broker_client::BrokerReadClient;
 use bli_kvm_core::{CapabilityManifest, CapabilityProvider, RuntimeInventory};
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
+use bli_kvm_video_client::VideoReadClient;
 use serde::Serialize;
 use tokio::sync::Mutex;
 use tower_http::services::{ServeDir, ServeFile};
@@ -25,11 +26,13 @@ use crate::{
 
 mod auth;
 mod error;
+mod video;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub capabilities: Arc<CapabilityManifest>,
     pub inventory: Arc<BrokerReadClient>,
+    pub video: Arc<VideoReadClient>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -47,6 +50,7 @@ pub struct ServerOptions {
     pub login_max_failures: u32,
     pub login_lockout_secs: u64,
     pub broker_socket: PathBuf,
+    pub video_socket: PathBuf,
 }
 
 impl Default for ServerOptions {
@@ -60,6 +64,7 @@ impl Default for ServerOptions {
             login_max_failures: 5,
             login_lockout_secs: 600,
             broker_socket: PathBuf::from("/run/hardened-blikvm/platform-broker.sock"),
+            video_socket: PathBuf::from("/run/hardened-blikvm-video/mjpeg.sock"),
         }
     }
 }
@@ -99,6 +104,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             BrokerReadClient::new(&options.broker_socket)
                 .expect("broker socket path must be absolute"),
         ),
+        video: Arc::new(
+            VideoReadClient::new(&options.video_socket)
+                .expect("video proxy socket path must be absolute"),
+        ),
         accounts: Arc::new(AccountStore::new(options.state_dir.join("account.json"))),
         sessions: Arc::new(SessionStore::new()),
         login_limiter: Arc::new(Mutex::new(LoginRateLimiter::new(
@@ -129,6 +138,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(auth::routes::password_state).post(auth::routes::change_password),
         )
         .route("/inventory", get(runtime_inventory))
+        .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let api = public.merge(protected_routes).fallback(api_not_found);
     let router = Router::new().nest("/api", api).with_state(state.clone());
@@ -210,6 +220,10 @@ mod tests {
     };
     use serde_json::Value;
     use tempfile::tempdir;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::UnixListener,
+    };
     use tower::ServiceExt;
 
     use super::*;
@@ -241,6 +255,45 @@ mod tests {
     async fn json_body(response: Response) -> Value {
         let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    async fn setup_and_login(app: &Router) -> (String, String) {
+        let setup = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/auth/setup",
+                serde_json::json!({
+                    "username": "operator",
+                    "password": "initial password"
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(setup).await["code"], 0);
+
+        let login = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({
+                    "username": "operator",
+                    "password": "initial password"
+                }),
+            ))
+            .await
+            .unwrap();
+        let cookie = login.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        let login_body = json_body(login).await;
+        let csrf = login_body["data"]["csrfToken"].as_str().unwrap().to_owned();
+        (cookie, csrf)
     }
 
     #[tokio::test]
@@ -304,6 +357,107 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn mjpeg_stream_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/stream/mjpeg")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authenticated_mjpeg_stream_preserves_only_safe_headers_and_body() {
+        let directory = tempdir().unwrap();
+        let video_socket = directory.path().join("video.sock");
+        let listener = UnixListener::bind(&video_socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            video_socket,
+            secure_cookies: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&app).await;
+        let proxy = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0_u8; 1024];
+                let read = stream.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
+            assert!(request.starts_with("get /mjpeg http/1.1\r\n"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nX-Private-Backend: forbidden\r\nContent-Length: 4\r\n\r\nJPEG",
+                )
+                .await
+                .unwrap();
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/stream/mjpeg")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "multipart/x-mixed-replace; boundary=frame"
+        );
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "no-store, no-cache, must-revalidate"
+        );
+        assert!(!response.headers().contains_key("x-private-backend"));
+        assert_eq!(
+            to_bytes(response.into_body(), 64 * 1024).await.unwrap(),
+            "JPEG"
+        );
+        proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unavailable_video_proxy_returns_sanitized_service_unavailable() {
+        let directory = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            video_socket: directory.path().join("missing-video.sock"),
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&app).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/stream/mjpeg")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = json_body(response).await;
+        assert_eq!(body["code"], -503);
+        assert_eq!(body["msg"], "service unavailable");
+        assert!(!body.to_string().contains("missing-video"));
     }
 
     #[tokio::test]

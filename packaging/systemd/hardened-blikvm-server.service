@@ -2,7 +2,8 @@
 Description=Hardened BliKVM authenticated loopback server
 Documentation=https://github.com/woffko/Hardened-BliKVM
 Requires=hardened-blikvm-platform-broker.service
-After=hardened-blikvm-platform-broker.service
+Wants=hardened-blikvm-video-proxy.service
+After=hardened-blikvm-platform-broker.service hardened-blikvm-video-proxy.service
 ConditionPathExists=/usr/share/hardened-blikvm/web/index.html
 
 [Service]
@@ -16,6 +17,7 @@ Environment=BLI_KVM_BIND=127.0.0.1:18080
 Environment=BLI_KVM_WEB_ROOT=/usr/share/hardened-blikvm/web
 Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
+Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-server

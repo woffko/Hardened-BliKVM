@@ -14,6 +14,9 @@ base64.workspace = true
 bli-kvm-broker-client = { path = "../bli-kvm-broker-client" }
 bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
+bli-kvm-video-client = { path = "../bli-kvm-video-client" }
+bytes.workspace = true
+http-body.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,4 +26,5 @@ tokio.workspace = true
 tower-http.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
 tower.workspace = true

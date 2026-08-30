@@ -32,6 +32,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             env::var("BLI_KVM_BROKER_SOCKET")
                 .unwrap_or_else(|_| "/run/hardened-blikvm/platform-broker.sock".into()),
         ),
+        video_socket: PathBuf::from(
+            env::var("BLI_KVM_VIDEO_SOCKET")
+                .unwrap_or_else(|_| "/run/hardened-blikvm-video/mjpeg.sock".into()),
+        ),
         ..ServerOptions::default()
     };
 

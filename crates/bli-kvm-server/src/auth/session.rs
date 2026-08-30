@@ -1,5 +1,9 @@
 use std::{
     collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,6 +18,17 @@ pub struct Session {
     pub csrf_token: String,
     pub expires_at: Instant,
     pub expires_at_unix: u64,
+    revoked: Arc<AtomicBool>,
+}
+
+impl Session {
+    pub fn is_active(&self) -> bool {
+        !self.revoked.load(Ordering::Acquire) && Instant::now() < self.expires_at
+    }
+
+    fn revoke(&self) {
+        self.revoked.store(true, Ordering::Release);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -40,6 +55,7 @@ impl SessionStore {
                 .unwrap_or_default()
                 .saturating_add(ttl)
                 .as_secs(),
+            revoked: Arc::new(AtomicBool::new(false)),
         };
         self.sessions.write().await.insert(token, session.clone());
         session
@@ -48,21 +64,61 @@ impl SessionStore {
     pub async fn validate(&self, token: &str) -> Option<Session> {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get(token).cloned()?;
-        if Instant::now() >= session.expires_at {
-            sessions.remove(token);
+        if !session.is_active() {
+            if let Some(expired) = sessions.remove(token) {
+                expired.revoke();
+            }
             return None;
         }
         Some(session)
     }
 
     pub async fn revoke(&self, token: &str) {
-        self.sessions.write().await.remove(token);
+        if let Some(session) = self.sessions.write().await.remove(token) {
+            session.revoke();
+        }
     }
 
     pub async fn revoke_user(&self, username: &str) {
-        self.sessions
-            .write()
-            .await
-            .retain(|_, session| session.username != username);
+        self.sessions.write().await.retain(|_, session| {
+            if session.username == username {
+                session.revoke();
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn revocation_is_visible_to_existing_session_clones() {
+        let store = SessionStore::new();
+        let session = store.issue("operator", 60).await;
+        let existing_stream_session = session.clone();
+        assert!(existing_stream_session.is_active());
+
+        store.revoke(&session.token).await;
+
+        assert!(!existing_stream_session.is_active());
+        assert!(store.validate(&session.token).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn user_revocation_invalidates_every_existing_clone() {
+        let store = SessionStore::new();
+        let first = store.issue("operator", 60).await;
+        let second = store.issue("operator", 60).await;
+        let other = store.issue("other", 60).await;
+
+        store.revoke_user("operator").await;
+
+        assert!(!first.is_active());
+        assert!(!second.is_active());
+        assert!(other.is_active());
     }
 }

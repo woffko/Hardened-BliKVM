@@ -22,6 +22,10 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
             "/opt/.hardened-blikvm-test-owner-0123456789abcdef",
         )
         self.assertTrue(paths.rollback_script.startswith(paths.test_root + "/"))
+        self.assertEqual(
+            paths.video_unit_path,
+            "/run/systemd/system/hardened-blikvm-video-proxy.service",
+        )
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(
@@ -55,12 +59,29 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
     def test_dropins_keep_credentials_out_of_server(self) -> None:
         paths = self._paths()
         broker = gate.build_broker_dropin(paths)
+        video = gate.build_video_dropin(paths)
         server = gate.build_server_dropin(paths, 18081)
         self.assertIn("LoadCredential=kvmd-password:", broker)
         self.assertNotIn("LoadCredential", server)
         self.assertIn("User=daemon", broker)
         self.assertIn("User=nobody", server)
+        self.assertIn("User=www-data", video)
+        self.assertIn("SupplementaryGroups=kvmd", video)
+        self.assertNotIn("LoadCredential", video)
+        self.assertIn("BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock", server)
         self.assertIn("SocketBindAllow=tcp:18081", server)
+
+    def test_runtime_video_gate_is_read_only_and_session_bound(self) -> None:
+        paths = self._paths()
+        bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
+        runtime = gate.build_runtime_script(paths, bundle, 18081)
+        self.assertIn("phase=verify-video-unit", runtime)
+        self.assertIn("DevicePolicy --value hardened-blikvm-video-proxy.service", runtime)
+        self.assertIn("/api/stream/mjpeg", runtime)
+        self.assertIn("phase=video-concurrency", runtime)
+        self.assertIn("phase=video-session-revocation", runtime)
+        self.assertNotIn("/api/atx", runtime)
+        self.assertNotIn("/api/hid", runtime)
 
     def test_rollback_refuses_unknown_htpasswd_state(self) -> None:
         paths = self._paths()

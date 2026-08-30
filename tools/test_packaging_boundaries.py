@@ -23,14 +23,33 @@ class PackagingBoundaryTests(unittest.TestCase):
         ).read_text()
         self.assertIn("Environment=BLI_KVM_BIND=127.0.0.1:18080", unit)
         self.assertIn("Environment=BLI_KVM_SECURE_COOKIES=1", unit)
+        self.assertIn(
+            "Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock",
+            unit,
+        )
         self.assertIn("IPAddressDeny=any", unit)
         self.assertIn("IPAddressAllow=localhost", unit)
         self.assertIn("SocketBindDeny=any", unit)
         self.assertIn("SocketBindAllow=tcp:18080", unit)
+        self.assertNotIn("SupplementaryGroups=kvmd", unit)
+
+    def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"
+        ).read_text()
+        self.assertIn("User=hardened-blikvm-video", unit)
+        self.assertIn("SupplementaryGroups=kvmd", unit)
+        self.assertIn("PrivateNetwork=yes", unit)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX", unit)
+        self.assertIn("CapabilityBoundingSet=\n", unit)
+        self.assertIn("DevicePolicy=closed", unit)
+        self.assertIn("ReadWritePaths=/run/hardened-blikvm-video", unit)
+        self.assertNotIn("AF_INET", unit)
 
     def test_prototype_builder_includes_templates_but_not_tls_keys(self) -> None:
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertIn("packaging/nginx/hardened-blikvm.conf", builder)
+        self.assertIn("bli-kvm-video-proxy", builder)
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
 

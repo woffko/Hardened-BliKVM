@@ -8,11 +8,21 @@ namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group
 only to connect to `/run/kvmd/kvmd.sock`.
 
+`hardened-blikvm-video-proxy.service` is a second, distinct non-root identity.
+It joins the `kvmd` supplementary group only to read the existing uStreamer
+Unix socket, has no network or device namespace, and accepts only `GET /mjpeg`
+on `/run/hardened-blikvm-video/mjpeg.sock`. It rewrites that request to the
+fixed uStreamer `GET /stream` route and permits at most two concurrent streams.
+The public Rust server is not a member of `kvmd`; it reaches video only through
+this narrow proxy socket.
+
 `hardened-blikvm-server.service` runs under a different non-root identity. It
 can use only Unix sockets and IPv4 loopback, may bind only TCP port 18080, and
 has no device or capability access. Its only persistent writable path is the
 systemd-managed mode-0700 state directory. Secure cookies assume an HTTPS
-reverse proxy; the Rust process itself remains loopback-only.
+reverse proxy; the Rust process itself remains loopback-only. Video responses
+remain session-bound: logout, password change, or session expiry closes the
+Rust response body before further MJPEG frames are forwarded.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the
