@@ -79,6 +79,8 @@ are constrained by `api/system-boot-control-v1.md` without selecting an H616
 storage implementation. `bli-kvm-system-layout` validates canonical recovery
 geometry and returns only exact capacities/hash evidence; it has no device or
 partition API and no profile is compiled in as accepted.
+`bli-kvm-system-boot-control` similarly models checksummed dual-copy records
+and reconciliation without persistence or a selector adapter.
 
 ## Transition video design
 

@@ -121,6 +121,13 @@ rejects overlaps, unaligned or out-of-bounds ranges, unsafe raw sunxi offsets,
 and the observed live single-root geometry. A structurally valid profile is
 still untrusted until its exact hash and recovery artifact are accepted.
 
+The pure boot-control model uses separate checksum domains for journal and
+selector copies. It tolerates one invalid/torn copy only as degraded state and
+hard-stops same-generation divergence, gaps larger than one generation,
+mismatched operation/slot/digest evidence, selector generation regression, or
+an increasing attempt count. Its SHA-256 checksum is corruption detection, not
+authentication or physical rollback resistance.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

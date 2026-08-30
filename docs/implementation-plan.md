@@ -261,6 +261,17 @@ alignment, capacity, role/pair policy, table limits, unsafe boot-control, raw
 offsets, and non-canonical/unknown documents. The crate returns only profile
 hash and capacities and contains no device writer or accepted built-in profile.
 
+Checkpoint: `bli-kvm-system-boot-control` now models canonical independently
+checksummed journal/selector copies and pure crash reconciliation. It selects a
+single valid copy in degraded mode, accepts only adjacent generations, and
+hard-stops no-valid-copy, same-generation split brain, larger generation gaps,
+invalid phase material, mismatched layout/operation/slot/digest, selector
+generation regression, and attempt-count increase. Nine tests cover clean,
+write-ready, interrupted arm, armed, candidate-booted, awaiting-health,
+confirmation, and rollback states. Checksums are explicitly corruption-only;
+there is no persistence, selector adapter, writer, reboot, or physical
+anti-rollback claim.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

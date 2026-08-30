@@ -46,6 +46,16 @@ candidate manifest SHA-256, initial and remaining attempts, and its own
 generation/checksum. The selector must decrement an attempt durably before
 loading a candidate. The accepted initial attempt range is one through three.
 
+Each journal and selector record has two canonical JSON copies. A
+domain-separated SHA-256 checksum covers schema, generation, and payload. Two
+equal generations must be byte-equivalent in meaning; divergence is split
+brain. A one-generation difference selects the newer valid copy in degraded
+mode so the older copy can be repaired. A larger gap is a hard stop. One torn
+or invalid copy permits degraded read; no valid copy is a hard stop.
+
+The checksum detects corruption and torn state. It is not authentication,
+hardware anti-rollback, or permission to trust state restored by an attacker.
+
 ## Transaction phases
 
 ```text
@@ -157,3 +167,12 @@ proofs, and readback before offering a bounded repair.
 The truncated field image is forbidden as recovery input. Neither vendor
 first-boot partition expansion nor the Bli-PiKVM MSD recipe is an accepted A/B
 layout.
+
+## Current implementation boundary
+
+`bli-kvm-system-boot-control` implements only canonical record validation,
+dual-copy generation selection, journal/selector coherence, and pure
+reconciliation outcomes. It opens no file, device, mount, boot environment, or
+socket and cannot persist a record, decrement a real attempt, select a slot, or
+reboot. A storage adapter must later prove atomic copy replacement and replay
+the returned reconciliation action under recovery authority.

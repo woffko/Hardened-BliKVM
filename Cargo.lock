@@ -336,6 +336,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-system-boot-control"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-system-image-verifier"
 version = "0.1.0"
 dependencies = [
