@@ -5,6 +5,7 @@
 //! network listeners, or credentials.
 
 mod capabilities;
+mod control;
 mod inventory;
 mod platform;
 
@@ -13,6 +14,10 @@ pub use capabilities::{
     FeatureStatus, HidCapabilities, HidMode, PlatformIdentity, PowerAction, PowerCapabilities,
     ProductIdentity, SystemCapabilities, VideoCapabilities, VideoTransport,
     VirtualMediaCapabilities, VirtualMediaMode,
+};
+pub use control::{
+    AtxControlAction, ControlValidationError, HidReport, PlatformControlRequest,
+    VirtualMediaCommand, VirtualMediaControlMode,
 };
 pub use inventory::{
     ComponentObservation, InventoryBackend, InventoryError, RUNTIME_INVENTORY_SCHEMA_VERSION,

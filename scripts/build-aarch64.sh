@@ -22,8 +22,10 @@ release_dir="$target_dir/aarch64-unknown-linux-musl/release"
 scripts/verify-aarch64-elf.sh \
   "$release_dir/bli-kvm-server" \
   "$release_dir/bli-kvm-platform-broker" \
-  "$release_dir/bli-kvm-video-proxy"
+  "$release_dir/bli-kvm-video-proxy" \
+  "$release_dir/bli-kvm-control-broker"
 sha256sum \
   "$release_dir/bli-kvm-server" \
   "$release_dir/bli-kvm-platform-broker" \
-  "$release_dir/bli-kvm-video-proxy"
+  "$release_dir/bli-kvm-video-proxy" \
+  "$release_dir/bli-kvm-control-broker"

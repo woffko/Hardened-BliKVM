@@ -4,9 +4,10 @@ This is a non-installing development bundle for BliKVM v4 H616 evaluation.
 It is not firmware and is not accepted for release or recovery.
 
 The bundle contains a static AArch64 server, a read-only KVMD platform broker,
-a separately isolated read-only MJPEG proxy, the capability-gated web
-interface, service templates, checksums, and security documentation. It
-contains no credential, updater, install script, or enabled hardware mutation.
+a separately isolated read-only MJPEG proxy, a denied-by-default control policy
+broker with no backend, the capability-gated web interface, service templates,
+checksums, and security documentation. It contains no credential, updater,
+install script, or enabled hardware mutation.
 
 Do not modify a working device merely to inspect this archive. On-device
 staging requires a separately approved write/rollback gate. Review

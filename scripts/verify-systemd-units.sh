@@ -20,6 +20,7 @@ install -d -m 0755 \
   "$test_root/usr/share/hardened-blikvm/web"
 install -m 0755 /bin/true "$test_root/bin/true"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-platform-broker"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-control-broker"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-proxy"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-server"
 install -m 0644 "$project_root"/packaging/systemd/*.service "$test_root/usr/lib/systemd/system/"
@@ -41,10 +42,12 @@ done
 systemd-sysusers --root="$test_root"
 systemd-analyze verify --root="$test_root" \
   hardened-blikvm-platform-broker.service \
+  hardened-blikvm-control-broker.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
   >/dev/null

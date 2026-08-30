@@ -1,0 +1,17 @@
+[package]
+name = "bli-kvm-control-client"
+description = "Bounded Unix-socket client for Hardened BliKVM control policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
+bli-kvm-core = { path = "../bli-kvm-core" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

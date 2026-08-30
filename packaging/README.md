@@ -16,6 +16,14 @@ fixed uStreamer `GET /stream` route and permits at most two concurrent streams.
 The public Rust server is not a member of `kvmd`; it reaches video only through
 this narrow proxy socket.
 
+`hardened-blikvm-control-broker.service` is a third isolated identity and is
+denied by default. It has no `kvmd` group, credential, network namespace,
+device access, capability, or backend path. It accepts only the bounded typed
+control protocol and returns `capability_disabled` for HID, ATX, and media.
+Installing this binary does not expose a server route or change a capability.
+Backend access may be added only after the protocol-specific arming,
+idempotency, cooldown, and physical gates documented in `control-v1.md`.
+
 `hardened-blikvm-server.service` runs under a different non-root identity. It
 can use only Unix sockets and IPv4 loopback, may bind only TCP port 18080, and
 has no device or capability access. Its only persistent writable path is the

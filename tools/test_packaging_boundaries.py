@@ -46,10 +46,24 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("ReadWritePaths=/run/hardened-blikvm-video", unit)
         self.assertNotIn("AF_INET", unit)
 
+    def test_control_broker_is_denied_and_has_no_backend_privilege(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-control-broker.service"
+        ).read_text()
+        self.assertIn("User=hardened-blikvm-control", unit)
+        self.assertIn("PrivateNetwork=yes", unit)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX", unit)
+        self.assertIn("CapabilityBoundingSet=\n", unit)
+        self.assertIn("DevicePolicy=closed", unit)
+        self.assertNotIn("SupplementaryGroups=kvmd", unit)
+        self.assertNotIn("LoadCredential", unit)
+        self.assertNotIn("/run/kvmd", unit)
+
     def test_prototype_builder_includes_templates_but_not_tls_keys(self) -> None:
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertIn("packaging/nginx/hardened-blikvm.conf", builder)
         self.assertIn("bli-kvm-video-proxy", builder)
+        self.assertIn("bli-kvm-control-broker", builder)
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
 

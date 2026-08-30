@@ -38,6 +38,12 @@ Read-only observations and mutating methods are separate interfaces. HID, ATX,
 media, GPIO, or configfs methods stay unavailable until their adapter and
 physical gate pass.
 
+Future mutations use the separate bounded control protocol described in
+`api/control-v1.md`; they never extend the read-only inventory protocol. Typed
+control messages still require a denial-by-default runtime policy, operation
+replay protection, arming or leases, cooldown where applicable, and backend
+gates before a capability can be advertised.
+
 MJPEG is the first exposed read-only media path. A dedicated video proxy is the
 only process with supplementary `kvmd` group access to the existing uStreamer
 Unix socket. It has a private network namespace, closed device policy, no

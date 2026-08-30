@@ -121,6 +121,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-control-broker"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-control-client",
+ "bli-kvm-control-protocol",
+ "bli-kvm-core",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "bli-kvm-control-client"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-control-protocol",
+ "bli-kvm-core",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "bli-kvm-control-protocol"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-core"
 version = "0.1.0"
 dependencies = [

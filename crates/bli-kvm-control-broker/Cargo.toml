@@ -1,0 +1,18 @@
+[package]
+name = "bli-kvm-control-broker"
+description = "Denied-by-default control policy broker for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+bli-kvm-control-client = { path = "../bli-kvm-control-client" }
+bli-kvm-core = { path = "../bli-kvm-core" }
+tempfile.workspace = true
