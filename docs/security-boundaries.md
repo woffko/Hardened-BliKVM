@@ -107,6 +107,13 @@ partition, offset, bootloader, state, MSD, installer, hook, URL, or arbitrary
 path are structurally rejected. The verifier has no block-device or boot
 authority; no system writer or accepted H616 layout exists yet.
 
+The future system journal and boot selector are separate persistent domains as
+defined in `api/system-boot-control-v1.md`. A selector attempt counter must be
+decremented durably before candidate boot. Mismatched operation IDs, slots,
+manifest digests, generations, or increasing attempt counts are recovery hard
+stops. A software journal floor alone is not claimed as physical rollback
+resistance.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

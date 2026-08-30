@@ -128,3 +128,6 @@ recovery-owned writer must still:
    exhaustion, verification failure, or interruption;
 7. preserve state and MSD partitions and provide independently bootable
    recovery media.
+
+The required journal/selector phases and crash reconciliation are specified in
+`system-boot-control-v1.md`.

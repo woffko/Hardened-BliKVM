@@ -224,6 +224,15 @@ The exact verifier checkpoint, fixture hashes, two-build AArch64 codegen result,
 and the non-shipped `lib.rmeta` variance are recorded in
 `baselines/system-image-verifier.md`.
 
+Checkpoint: the host-only boot-control contract now separates verifier,
+recovery writer, selector adapter, and health agent authority. It defines
+WritePrepared, CandidateReady, BootPrepared, BootArmed, AwaitingHealth,
+Confirmed, and rollback phases; a one-to-three attempt counter decremented
+before boot; exact journal/selector crash reconciliation; and a floor raised
+only after bound health. It also records the need for rollback-resistant
+storage and two independently verified recovery cards. No selector adapter,
+writer, reboot path, or H616 layout is implemented or authorized.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

@@ -74,7 +74,9 @@ authenticate only fixed rootfs and optional boot filesystem payloads against a
 root-owned exact layout policy. It accepts no device node, partition table,
 offset, bootloader, installer, or hook and has no writer. Recovery provisioning,
 inactive-slot writes, boot selection, reboot, and rollback remain future
-separate processes and gates.
+separate processes and gates. Their journal/selector authority and crash points
+are constrained by `api/system-boot-control-v1.md` without selecting an H616
+storage implementation.
 
 ## Transition video design
 
