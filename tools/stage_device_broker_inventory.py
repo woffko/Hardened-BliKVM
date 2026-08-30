@@ -554,11 +554,31 @@ unset account_password
 rm -f -- "$request"
 phase=inventory
 inventory_status=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output "$stage_root/inventory.json" --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
-[ "$inventory_status" = 200 ]
+if [ "$inventory_status" != 200 ]; then
+  if ! process_active "$broker_pid"; then
+    phase=inventory-broker-exited
+  elif grep -q 'BackendUnauthorized' "$stage_root/broker.log"; then
+    phase=inventory-backend-unauthorized
+  elif grep -q 'BackendUnavailable' "$stage_root/broker.log"; then
+    phase=inventory-backend-unavailable
+  elif grep -q 'InvalidBackendResponse' "$stage_root/broker.log"; then
+    phase=inventory-invalid-backend-response
+  elif grep -q 'Internal' "$stage_root/broker.log"; then
+    phase=inventory-internal
+  else
+    phase="inventory-http-$inventory_status"
+  fi
+  exit 1
+fi
+phase=inventory-schema
 grep -q '"schemaVersion":1' "$stage_root/inventory.json"
+phase=inventory-platform
 grep -q '"platformId":"bli-h616-pikvm"' "$stage_root/inventory.json"
+phase=inventory-backend
 grep -q '"backend":"kvmd_transition"' "$stage_root/inventory.json"
+phase=inventory-sanitizer
 if grep -Eqi '"(password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress)"' "$stage_root/inventory.json"; then exit 1; fi
+phase=inventory-repeat
 count=1
 while [ "$count" -lt "$inventory_requests" ]; do
   code=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)

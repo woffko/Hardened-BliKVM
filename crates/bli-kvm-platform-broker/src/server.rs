@@ -132,9 +132,11 @@ async fn process_request(
             Ok(source) => BrokerReadResponse::Inventory {
                 inventory: sanitize_kvmd_inventory(source),
             },
-            Err(error) => BrokerReadResponse::Error {
-                code: map_client_error(&error),
-            },
+            Err(error) => {
+                let code = map_client_error(&error);
+                eprintln!("KVMD inventory request failed with {code:?}");
+                BrokerReadResponse::Error { code }
+            }
         },
     };
     BrokerResponseEnvelope {
