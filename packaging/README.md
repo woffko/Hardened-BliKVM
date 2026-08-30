@@ -27,4 +27,7 @@ accepts no credential arguments and has no compiled default.
 
 Creating that KVMD account and installing these files are separate on-device
 mutations. They require explicit authorization, `rw`, backup/rollback, and a
-reboot/recovery gate. Nothing in this repository performs that mutation yet.
+reboot/recovery gate. `tools/stage_device_systemd_gate.py` exercises only a
+temporary test account and runtime units with a watchdog, then requires a
+byte-identical htpasswd restore and removes all staging. It is not a production
+installer or permanent account-provisioning tool.

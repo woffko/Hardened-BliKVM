@@ -46,8 +46,10 @@ broker have passed their loopback H616 execution, authenticated inventory,
 HTTP-policy, graceful-stop, and cleanup gates. The temporary broker test reused
 the current test-device credential without exposing it to the server.
 Dedicated least-privilege KVMD account provisioning, systemd
-`LoadCredential`, TLS proxy, and the browser authentication matrix remain
-before the Phase 2 exit gate.
+`LoadCredential`, and runtime unit sandboxing have now passed a reversible
+device gate with byte-identical htpasswd restoration. Permanent provisioning,
+TLS proxy, and the browser authentication matrix remain before the Phase 2
+exit gate.
 
 ## Phase 3: HID and power
 
