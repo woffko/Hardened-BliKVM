@@ -63,6 +63,7 @@ PREFLIGHT_KEYS = {
     "nobody_uid_nonzero",
     "port_free_before",
     "rootfs_mode_before",
+    "setpriv_ready",
     "stage_absent",
     "tmp_available_bytes",
     "tmp_mount_mode",
@@ -604,6 +605,10 @@ gid=$(printf '%s\n' "$account" | awk -F: '{print $4}')
 case "$uid:$gid" in *[!0-9:]*) exit 1 ;; esac
 [ "$uid" -gt 0 ]
 [ "$gid" -gt 0 ]
+setpriv_ready=no
+if setpriv --reuid="$uid" --regid="$gid" --clear-groups --bounding-set=-all --no-new-privs /bin/true >/dev/null 2>&1; then
+  setpriv_ready=yes
+fi
 [ ! -e "$stage_root" ]
 if port_in_use; then exit 1; fi
 emit architecture aarch64
@@ -614,6 +619,7 @@ emit kvmd_active_before active
 emit kvmd_nginx_active_before active
 emit nobody_uid_nonzero yes
 emit nobody_gid_nonzero yes
+emit setpriv_ready "$setpriv_ready"
 emit tools_ready yes
 emit stage_absent yes
 emit port_free_before yes
@@ -669,6 +675,21 @@ process_active() {
   kill -0 "$pid" 2>/dev/null || return 1
   state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
   [ -n "$state" ] && [ "$state" != Z ]
+}
+classify_server_exit() {
+  if grep -q '^setpriv:' "$stage_root/server.log"; then
+    phase=wait-health-exited-setpriv
+  elif grep -q 'web root does not contain index.html' "$stage_root/server.log"; then
+    phase=wait-health-exited-web-root
+  elif grep -q 'Address already in use' "$stage_root/server.log"; then
+    phase=wait-health-exited-address-in-use
+  elif grep -q 'Permission denied' "$stage_root/server.log"; then
+    phase=wait-health-exited-permission
+  elif grep -q 'BLi-KVM development server listening' "$stage_root/server.log"; then
+    phase=wait-health-exited-after-listen
+  else
+    phase=wait-health-exited-other
+  fi
 }
 stop_server() {
   [ -n "$pid" ] || return 0
@@ -757,15 +778,19 @@ phase=wait-health
 ready=no
 count=0
 while [ "$count" -lt 50 ]; do
-  if curl --silent --fail --max-time 1 --output /dev/null "http://127.0.0.1:$bind_port/api/health" 2>/dev/null; then
+  if curl --noproxy '*' --silent --fail --max-time 1 --output /dev/null "http://127.0.0.1:$bind_port/api/health" 2>/dev/null; then
     ready=yes
     break
   fi
-  kill -0 "$pid" 2>/dev/null || exit 1
+  if ! process_active; then classify_server_exit; exit 1; fi
   sleep 0.1
   count=$((count + 1))
 done
-[ "$ready" = yes ]
+if [ "$ready" != yes ]; then
+  listener_count=$(awk -v address="0100007F:$port_hex" 'NR > 1 && toupper($2) == address && $4 == "0A" {count++} END {print count + 0}' /proc/net/tcp)
+  if [ "$listener_count" -gt 0 ]; then phase=wait-health-curl; else phase=wait-health-no-listener; fi
+  exit 1
+fi
 phase=verify-process
 status_file="/proc/$pid/status"
 [ -r "$status_file" ]
@@ -792,28 +817,28 @@ for table in /proc/net/tcp /proc/net/tcp6; do
 done
 [ "$other_listener" = no ]
 phase=verify-http
-health_code=$(curl --silent --max-time 2 --output "$stage_root/health.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/health" 2>/dev/null)
+health_code=$(curl --noproxy '*' --silent --max-time 2 --output "$stage_root/health.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/health" 2>/dev/null)
 [ "$health_code" = 200 ]
 grep -q '"status":"ok"' "$stage_root/health.json"
 grep -q '"backend":"rust"' "$stage_root/health.json"
-capabilities_code=$(curl --silent --max-time 2 --output "$stage_root/capabilities.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/capabilities" 2>/dev/null)
+capabilities_code=$(curl --noproxy '*' --silent --max-time 2 --output "$stage_root/capabilities.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/capabilities" 2>/dev/null)
 [ "$capabilities_code" = 200 ]
 grep -q '"schemaVersion":1' "$stage_root/capabilities.json"
-setup_code=$(curl --silent --max-time 2 --output "$stage_root/setup.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/auth/setup" 2>/dev/null)
+setup_code=$(curl --noproxy '*' --silent --max-time 2 --output "$stage_root/setup.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/auth/setup" 2>/dev/null)
 [ "$setup_code" = 200 ]
 grep -q '"required":true' "$stage_root/setup.json"
-static_code=$(curl --silent --max-time 2 --dump-header "$stage_root/headers.txt" --output "$stage_root/index.html" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/" 2>/dev/null)
+static_code=$(curl --noproxy '*' --silent --max-time 2 --dump-header "$stage_root/headers.txt" --output "$stage_root/index.html" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/" 2>/dev/null)
 [ "$static_code" = 200 ]
 grep -q '<title>Hardened BliKVM</title>' "$stage_root/index.html"
 grep -qi '^x-content-type-options: nosniff' "$stage_root/headers.txt"
 grep -qi '^x-frame-options: DENY' "$stage_root/headers.txt"
 grep -qi '^referrer-policy: no-referrer' "$stage_root/headers.txt"
-inventory_code=$(curl --silent --max-time 2 --output "$stage_root/inventory.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/inventory" 2>/dev/null)
+inventory_code=$(curl --noproxy '*' --silent --max-time 2 --output "$stage_root/inventory.json" --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/inventory" 2>/dev/null)
 [ "$inventory_code" = 401 ]
 phase=stress-health
 count=0
 while [ "$count" -lt "$health_requests" ]; do
-  code=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/health" 2>/dev/null)
+  code=$(curl --noproxy '*' --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/health" 2>/dev/null)
   [ "$code" = 200 ]
   count=$((count + 1))
 done
@@ -991,6 +1016,7 @@ def _validate_preflight(facts: dict[str, str], required_bytes: int) -> None:
         "kvmd_nginx_active_before": "active",
         "nobody_uid_nonzero": "yes",
         "nobody_gid_nonzero": "yes",
+        "setpriv_ready": "yes",
         "tools_ready": "yes",
         "stage_absent": "yes",
         "port_free_before": "yes",
