@@ -9,13 +9,15 @@ assert.ok(
 );
 assert.equal(new URL(baseUrl).protocol, "https:");
 
-const { chromium } = await import(pathToFileURL(modulePath).href);
-const password = `Tls-${crypto.randomBytes(24).toString("hex")}`;
-const changedPassword = `Rotated-${crypto.randomBytes(24).toString("hex")}`;
-const username = "tls-browser-admin";
-const browser = await chromium.launch({ executablePath, headless: true });
-
+let phase = "browser-launch";
+let browser = null;
 try {
+  const { chromium } = await import(pathToFileURL(modulePath).href);
+  const password = `Tls-${crypto.randomBytes(24).toString("hex")}`;
+  const changedPassword = `Rotated-${crypto.randomBytes(24).toString("hex")}`;
+  const username = "tls-browser-admin";
+  browser = await chromium.launch({ executablePath, headless: true });
+  phase = "browser-context";
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     locale: "en-US",
@@ -35,6 +37,7 @@ try {
     }
   });
 
+  phase = "load-document";
   const documentResponse = await page.goto(`${baseUrl}/#/auth/login`, {
     waitUntil: "networkidle",
   });
@@ -44,6 +47,7 @@ try {
     documentResponse?.headers()["x-content-type-options"],
     "nosniff",
   );
+  phase = "first-setup";
   await page.waitForFunction(
     () => document.title === "First Setup - Hardened BliKVM",
   );
@@ -56,6 +60,7 @@ try {
   await inputs.nth(0).fill(username);
   await inputs.nth(1).fill(password);
   await inputs.nth(2).fill(password);
+  phase = "setup-submit";
   const setupResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/auth/setup") &&
@@ -69,12 +74,14 @@ try {
   await page.getByRole("button", { name: "Create account" }).click();
   assert.equal((await setupResponse).status(), 200);
   assert.equal((await loginResponse).status(), 200);
+  phase = "post-login";
   await page.waitForURL(`${baseUrl}/#/`);
   await page.waitForLoadState("networkidle");
   await page.waitForFunction(
     () => document.title === "Adapter status - Hardened BliKVM",
   );
 
+  phase = "cookies";
   let cookies = await context.cookies(baseUrl);
   let session = cookies.find(
     (cookie) => cookie.name === "hardened-blikvm-session",
@@ -89,6 +96,7 @@ try {
   assert.equal(csrf.secure, true);
   assert.equal(csrf.sameSite, "Strict");
 
+  phase = "inventory";
   const inventory = await page.evaluate(async () => {
     const response = await fetch("/api/inventory", { credentials: "include" });
     return { status: response.status, body: await response.json() };
@@ -102,6 +110,7 @@ try {
     /password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress/i,
   );
 
+  phase = "password-page";
   await page.goto(`${baseUrl}/#/auth/password`, { waitUntil: "networkidle" });
   await page.waitForFunction(
     () => document.title === "Change Password - Hardened BliKVM",
@@ -110,6 +119,7 @@ try {
   assert.equal(await inputs.count(), 3);
   await inputs.nth(1).fill(changedPassword);
   await inputs.nth(2).fill(changedPassword);
+  phase = "password-change";
   const passwordResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/auth/password") &&
@@ -124,6 +134,7 @@ try {
     false,
   );
 
+  phase = "relogin";
   inputs = page.locator("input");
   await inputs.nth(0).fill(username);
   await inputs.nth(1).fill(changedPassword);
@@ -136,6 +147,7 @@ try {
   assert.equal(session?.secure, true);
   assert.ok(csrf);
 
+  phase = "logout";
   const logout = await page.evaluate(async (csrfToken) => {
     const response = await fetch("/api/auth/logout", {
       method: "POST",
@@ -151,6 +163,7 @@ try {
     false,
   );
 
+  phase = "response-audit";
   assert.equal(pageErrors.length, 0);
   assert.equal(
     responses.some((response) => response.status === 404),
@@ -174,6 +187,7 @@ try {
     );
   }
 
+  phase = "complete";
   console.log(
     JSON.stringify({
       schemaVersion: 1,
@@ -189,6 +203,23 @@ try {
       apiResponsesObserved: responses.length,
     }),
   );
+} catch (error) {
+  const allowedTypes = new Set([
+    "AssertionError",
+    "Error",
+    "TimeoutError",
+    "TypeError",
+  ]);
+  const errorType = allowedTypes.has(error?.name) ? error.name : "Error";
+  console.log(
+    JSON.stringify({
+      schemaVersion: 1,
+      result: "failed",
+      phase,
+      errorType,
+    }),
+  );
+  process.exitCode = 1;
 } finally {
-  await browser.close();
+  if (browser) await browser.close();
 }

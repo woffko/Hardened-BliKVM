@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import select
 import secrets
 import shlex
@@ -888,6 +889,26 @@ def validate_browser(raw: bytes) -> dict[str, object]:
     return dict(sorted(summary.items()))
 
 
+def validate_browser_failure(raw: bytes) -> tuple[str, str]:
+    if len(raw) > 4096:
+        raise ValueError("browser failure output exceeded the limit")
+    decoded = cast(object, json.loads(raw))
+    if not isinstance(decoded, dict):
+        raise ValueError("browser failure output root is invalid")
+    summary = cast(dict[str, object], decoded)
+    phase = summary.get("phase")
+    error_type = summary.get("errorType")
+    if (
+        summary.get("schemaVersion") != 1
+        or summary.get("result") != "failed"
+        or not isinstance(phase, str)
+        or not re.fullmatch(r"[a-z-]{1,64}", phase)
+        or error_type not in {"AssertionError", "Error", "TimeoutError", "TypeError"}
+    ):
+        raise ValueError("browser failure envelope is invalid")
+    return phase, cast(str, error_type)
+
+
 def _zero(value: bytearray) -> None:
     for index in range(len(value)):
         value[index] = 0
@@ -985,7 +1006,14 @@ def execute(options: Options) -> int:
             timeout=120,
         )
         if browser_result.returncode != 0:
-            raise TlsGateError(stage, "browser-failed", return_code=browser_result.returncode)
+            browser_phase, browser_error = validate_browser_failure(
+                browser_result.stdout
+            )
+            raise TlsGateError(
+                stage,
+                f"browser-{browser_phase}-{browser_error.casefold()}",
+                return_code=browser_result.returncode,
+            )
         browser_summary = validate_browser(browser_result.stdout)
 
         stage = "remote-finish"

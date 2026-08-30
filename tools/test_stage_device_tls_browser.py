@@ -71,6 +71,18 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertNotIn("admin1234", script)
         self.assertNotIn("10.0.", script)
 
+    def test_browser_failure_envelope_is_bounded_and_allowlisted(self) -> None:
+        self.assertEqual(
+            tls.validate_browser_failure(
+                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"AssertionError"}'
+            ),
+            ("cookies", "AssertionError"),
+        )
+        with self.assertRaises(ValueError):
+            _ = tls.validate_browser_failure(
+                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"SecretError"}'
+            )
+
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(
             [sys.executable, "tools/stage_device_tls_browser.py", "--help"],
