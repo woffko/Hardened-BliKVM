@@ -20,6 +20,11 @@ external Host value required by origin/CSRF checks, and carries WebSocket
 upgrade headers. Certificate and key files are deployment inputs and never
 belong in the source bundle.
 
+`tools/stage_device_tls_browser.py` renders this boundary with alternate
+loopback ports and an ephemeral certificate, exposes it only through an SSH
+local forward, runs the browser flow, and removes all generated TLS material.
+It is a development gate, not certificate provisioning.
+
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,
 environment variable, log, or support bundle:

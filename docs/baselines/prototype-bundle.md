@@ -25,18 +25,18 @@ release.
 ## Verified checkpoint
 
 On 2026-08-30, two independent output directories produced byte-identical
-3,228,279-byte commit-bound archives after adding the hardened server unit and
-synthetic-root systemd verification:
+3,229,114-byte commit-bound archives after adding the TLS reverse-proxy
+template and browser-gate boundary:
 
-`420c6ba4ed4baf9127184b489b26701e0144f6891c549631dfd58a82c2c95118`
+`a5cca8ce9f973516213e7cc60f61909bce4a8cf012618758406e1985493d437f`
 
 Independent extraction verified every `SHA256SUMS` entry, numeric root archive
 ownership, 0755 binaries/directories, 0644 web/docs/manifest files, absence of
 symlinks, legacy/MSW assets, host paths, private markers, and test-network
 placeholders. The manifest binds the archive to source commit
-`343976b5c22e0b062aab6e19f22ca92d4beb7a35`, while both acceptance booleans
+`3cd926b2dca6c51b011c93577f69c89b2ca4582a`, while both acceptance booleans
 remain false. Its server, credential-isolated read-only broker, dedicated KVMD
-account rollback, and runtime systemd slices passed the temporary H616 gates
+account rollback, runtime systemd, TLS, and real-browser slices passed the H616 gates
 documented in `device-prototype.md`, `device-broker-inventory.md`, and
-`device-systemd-gate.md`; the hash remains a development checkpoint, not a
-firmware or release identifier.
+`device-systemd-gate.md`, plus `device-tls-browser.md`; the hash remains a
+development checkpoint, not a firmware or release identifier.

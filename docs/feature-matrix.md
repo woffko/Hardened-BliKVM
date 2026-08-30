@@ -6,8 +6,8 @@ passed a physical interaction gate.
 
 | Feature | Existing test baseline | BLi-KVM status | Required gate |
 | --- | --- | --- | --- |
-| HTTPS/login | Reachable; authenticated boundary verified | Local first-account/session flow and runtime systemd setup/login passed | TLS proxy and on-device authenticated browser matrix |
-| Loopback server runtime | Not applicable | Unprivileged H616 server and runtime systemd sandbox gates passed with cleanup | Permanent packaging and TLS proxy |
+| HTTPS/login | Reachable; authenticated boundary verified | H616 TLS 1.2/1.3 Chromium setup/login, secure cookies, rotation, and logout passed | Certificate enrollment, other engines, and mobile matrix |
+| Loopback server runtime | Not applicable | Unprivileged H616 server, systemd sandbox, Nginx loopback, and SSH-forward gates passed | Permanent packaging and reboot persistence |
 | Read-only inventory | Five authenticated GET endpoints verified | Distinct-UID broker, dedicated-account rollback, `LoadCredential`, sanitizer, and repeated H616 inventory passed | Permanent least-privilege provisioning and reboot persistence |
 | MJPEG | Streamer source online through authenticated API | Observed but not exposed | Stream bytes, reconnect, latency, soak |
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |

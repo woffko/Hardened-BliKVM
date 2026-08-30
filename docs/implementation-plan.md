@@ -47,9 +47,11 @@ HTTP-policy, graceful-stop, and cleanup gates. The temporary broker test reused
 the current test-device credential without exposing it to the server.
 Dedicated least-privilege KVMD account provisioning, systemd
 `LoadCredential`, and runtime unit sandboxing have now passed a reversible
-device gate with byte-identical htpasswd restoration. Permanent provisioning,
-TLS proxy, and the browser authentication matrix remain before the Phase 2
-exit gate.
+device gate with byte-identical htpasswd restoration. A loopback Nginx proxy
+then passed TLS 1.2/1.3 and a real Chromium setup/login/inventory/password/logout
+flow through an SSH-only tunnel. Permanent provisioning, certificate
+enrollment, additional browser engines, and reboot persistence remain beyond
+this Phase 2 development checkpoint.
 
 ## Phase 3: HID and power
 
