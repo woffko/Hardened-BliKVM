@@ -139,6 +139,11 @@ carry an expected generation and reject stale state before writing. The future
 adapter must provide atomic per-copy replacement and hold an exclusive recovery
 lock; the trait contains no path or concrete storage implementation.
 
+Recovery images use a separate `recovery-` trust domain and the complete-media
+contract in `api/recovery-image-v1.md`. The truncated field image, live state,
+default credentials, unresolved binaries, `NOASSERTION` components, and
+automatic first-disk targeting are hard failures.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

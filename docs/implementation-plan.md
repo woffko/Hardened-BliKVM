@@ -292,6 +292,15 @@ absent.
 The compatibility/storage AArch64 checkpoint and fault-matrix hashes are
 recorded in `baselines/system-recovery-core.md`.
 
+Checkpoint: `api/recovery-image-v1.md` now defines a third `recovery-` trust
+domain and complete removable-media contract. It binds a raw image, accepted
+layout, boot chain, build recipe, source/license manifests, and canonical SPDX
+3.0.1 SBOM; requires byte-identical builds and two recovery cards; and rejects
+truncation, live state, secrets/default accounts, automatic target selection,
+and every unresolved binary/license/source decision. No artifact can be built
+until redistribution-cleared boot/rootfs inputs, key ceremony, and an accepted
+layout exist.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

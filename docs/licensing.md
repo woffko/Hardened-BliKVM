@@ -48,3 +48,13 @@ Source-code rights do not automatically grant trademark rights. The proposed
 wordmark uses the vendor name and remains a publication blocker until written
 permission or a separate trademark review is available. Development uses the
 distinct `BLi-KVM` product identity.
+
+## Recovery-image gate
+
+A recovery release must include the complete boot chain, firmware, kernel,
+rootfs, native/Rust/npm/web dependencies, build tools, and their relationships
+in an SPDX 3.0.1 SBOM. Each shipped binary or firmware item also needs an exact
+source/provenance record, retained notices/license text, and an explicit
+redistribution/corresponding-source decision. `NOASSERTION` or missing source is
+release-blocking. The current field-image and bundled vendor/Ventoy binaries do
+not satisfy this gate.

@@ -84,6 +84,10 @@ and reconciliation without a filesystem or selector adapter. Its path-free
 storage trait requires per-copy atomic replace, sync, exact readback, expected
 generation, and an external exclusive recovery lock.
 
+Recovery media is a third signed domain described in
+`api/recovery-image-v1.md`. It is a complete independently bootable removable
+image with full provenance/SBOM/license gates, not a network update payload.
+
 ## Transition video design
 
 The first Bli adapter may keep uStreamer and Janus as loopback-only processes.
