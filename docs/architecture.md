@@ -57,6 +57,11 @@ has no listener, shell, block-device access, or authority to select a boot or
 application slot. Network upload policy and privileged activation remain
 separate future boundaries.
 
+The application activation core is also a library. It owns only a signed-slot
+pointer and its private journal, and requires a future local supervisor to
+provide kernel boot-time and health evidence. This does not give the network
+server direct slot, journal, process, or watchdog authority.
+
 ## Transition video design
 
 The first Bli adapter may keep uStreamer and Janus as loopback-only processes.

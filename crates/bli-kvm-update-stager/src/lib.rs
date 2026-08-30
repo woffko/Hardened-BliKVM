@@ -124,6 +124,10 @@ impl ApplicationSlotStager {
         })
     }
 
+    pub fn root_path(&self) -> &Path {
+        &self.root
+    }
+
     pub fn stage(
         &self,
         source: impl AsRef<Path>,

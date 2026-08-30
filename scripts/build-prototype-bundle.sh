@@ -78,6 +78,7 @@ install -m 0644 docs/api/hid-transition.md "$stage/share/docs/hid-transition.md"
 install -m 0644 docs/api/atx-transition.md "$stage/share/docs/atx-transition.md"
 install -m 0644 docs/api/media-transition.md "$stage/share/docs/media-transition.md"
 install -m 0644 docs/api/application-update-v1.md "$stage/share/docs/application-update-v1.md"
+install -m 0644 docs/api/application-activation-v1.md "$stage/share/docs/application-activation-v1.md"
 install -m 0644 packaging/README.md "$stage/share/docs/packaging-boundary.md"
 
 for legacy in hardened-logo.png sipeed.ico mockServiceWorker.js; do

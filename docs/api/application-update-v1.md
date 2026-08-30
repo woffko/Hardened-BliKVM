@@ -114,7 +114,9 @@ retention, standalone inspection, invalid slot IDs, and residue-free covered
 prepublication failures.
 
 The stager is a library and is not connected to the network server, systemd,
-or the H616 device. Active-slot selection, an anti-rollback journal, abandoned
-staging recovery after process or power loss, health confirmation, automatic
-rollback, key rotation, channel metadata, and system-image updates are
+or the H616 device. The separate activation state machine is defined in
+`application-activation-v1.md`; it remains an unwired library as well.
+Clock/boot acquisition, process health credentials, systemd/watchdog wiring,
+abandoned staging recovery after process or power loss, slot garbage
+collection, key rotation, channel metadata, and system-image updates are
 separate gates and remain unavailable.

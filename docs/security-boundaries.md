@@ -77,6 +77,11 @@ The non-networked staging library snapshots an input once, verifies and
 extracts only from the resulting unlinked read-only inode, publishes a
 read-only slot with no-replace `renameat2`, and revalidates signed proof plus
 the entire tree. It does not select an active slot or expose an update API.
+The separate activation library uses a locked bounded journal, a relative
+atomic `current` symlink, a boot-bound monotonic health window, persisted replay
+records, and a highest-confirmed sequence floor. Only a future non-networked
+supervisor may supply clock and health results. Neither library has systemd,
+network, block-device, or H616 runtime wiring yet.
 
 ## Media processes
 

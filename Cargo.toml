@@ -11,6 +11,7 @@ members = [
   "crates/bli-kvm-media-policy",
   "crates/bli-kvm-update-verifier",
   "crates/bli-kvm-update-stager",
+  "crates/bli-kvm-update-manager",
   "crates/bli-kvm-kvmd-media-client",
   "crates/bli-kvm-broker-protocol",
   "crates/bli-kvm-broker-client",

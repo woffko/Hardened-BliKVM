@@ -148,9 +148,19 @@ with no-replace `renameat2`, and fully revalidates idempotent existing slots.
 Two clean AArch64 builds at source commit `0bc0087` produced byte-identical
 linked payloads, stager object code, and prototype archives; exact hashes are
 recorded in `baselines/application-update-stager.md`.
-It remains an unwired library. Active-slot selection, anti-rollback state,
-crash cleanup, health confirmation, rollback, and the separately signed
-system-image format remain open.
+The stager remains an unwired library. Activation policy is handled by the
+separate checkpoint below; staging cleanup, process orchestration, live
+watchdog acceptance, and the separately signed system-image format remain
+open.
+
+Checkpoint: the separate activation core now persists a bounded exclusive
+journal and replay history, switches one relative application pointer
+atomically, raises the sequence floor only after boot-bound health
+confirmation, and rolls back across prepared, switched, timeout, reboot,
+explicit-failure, corrupt-target, and pointer-mismatch states. It remains
+unwired; systemd process orchestration, kernel clock acquisition, one-use
+health credentials, watchdog scheduling, live interruption, and staging/slot
+cleanup remain open.
 
 ## Phase 7: Release acceptance
 
