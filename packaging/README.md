@@ -79,6 +79,9 @@ literal candidate or confirmed unit after activate/watchdog success; the
 unprivileged update service does not receive general `systemctl` authority.
 The slots root is provisioned by tmpfiles as mode 0750, owned by the update
 identity and read-only to the shared runtime group; group write is forbidden.
+Tmpfiles also creates the confirmation socket parent as mode 0750 owned by the
+update identity and shared runtime group, so the server identity can traverse
+to the mode-0620 socket without making the directory world-accessible.
 
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,

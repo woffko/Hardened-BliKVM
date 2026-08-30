@@ -60,11 +60,30 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("Hardened BliKVM update supervisor failed: {error}");
-            if matches!(error, SupervisorCliError::InvalidArguments) {
-                ExitCode::from(2)
-            } else {
-                ExitCode::FAILURE
-            }
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+impl SupervisorCliError {
+    fn exit_code(&self) -> u8 {
+        match self {
+            Self::InvalidArguments => 2,
+            Self::InvalidConfigPath => 10,
+            Self::UnsafeConfigFile => 11,
+            Self::InvalidConfig => 12,
+            Self::Manager(_) => 20,
+            Self::Runtime(UpdateRuntimeError::Manager(_)) => 31,
+            Self::Runtime(UpdateRuntimeError::InvalidHealthResponseLength) => 32,
+            Self::Runtime(UpdateRuntimeError::ChallengeMissing) => 33,
+            Self::Runtime(UpdateRuntimeError::OperationMismatch) => 34,
+            Self::Runtime(UpdateRuntimeError::BootMismatch) => 35,
+            Self::Runtime(UpdateRuntimeError::ChallengeExpired) => 36,
+            Self::Runtime(UpdateRuntimeError::InvalidHealthResponse) => 37,
+            Self::Runtime(_) => 30,
+            Self::Stager(_) => 40,
+            Self::Io(_) => 50,
+            Self::Json(_) => 51,
         }
     }
 }
@@ -421,5 +440,20 @@ mod tests {
         assert!(!encoded.contains("publicKey"));
         assert!(!encoded.contains("credentialPath"));
         assert!(encoded.contains("credentialReady"));
+    }
+
+    #[test]
+    fn command_failure_layers_have_stable_exit_codes() {
+        assert_eq!(SupervisorCliError::InvalidArguments.exit_code(), 2);
+        assert_eq!(SupervisorCliError::InvalidConfig.exit_code(), 12);
+        assert_eq!(
+            SupervisorCliError::Runtime(UpdateRuntimeError::InvalidHealthResponseLength)
+                .exit_code(),
+            32
+        );
+        assert_eq!(
+            SupervisorCliError::Runtime(UpdateRuntimeError::ChallengeMissing).exit_code(),
+            33
+        );
     }
 }

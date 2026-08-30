@@ -154,6 +154,10 @@ class PackagingBoundaryTests(unittest.TestCase):
             "d /var/lib/hardened-blikvm-slots 0750 hardened-blikvm-update hardened-blikvm",
             tmpfiles,
         )
+        self.assertIn(
+            "d /run/hardened-blikvm-update-confirm 0750 hardened-blikvm-update hardened-blikvm",
+            tmpfiles,
+        )
 
 
 if __name__ == "__main__":
