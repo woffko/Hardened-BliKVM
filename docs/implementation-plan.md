@@ -271,6 +271,9 @@ write-ready, interrupted arm, armed, candidate-booted, awaiting-health,
 confirmation, and rollback states. Checksums are explicitly corruption-only;
 there is no persistence, selector adapter, writer, reboot, or physical
 anti-rollback claim.
+The exact host gates, independent AArch64 codegen hashes, byte-identical
+prototype bundle, and non-shipped metadata variance are recorded in
+`baselines/system-recovery-core.md`.
 
 ## Phase 7: Release acceptance
 
