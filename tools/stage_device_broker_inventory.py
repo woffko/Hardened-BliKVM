@@ -16,12 +16,16 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import os
+from pathlib import Path
 import re
 import secrets
 import shlex
 import subprocess
+import sys
 from typing import TypedDict, cast
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 from tools import stage_device_prototype as prototype
 

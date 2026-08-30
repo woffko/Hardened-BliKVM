@@ -1,5 +1,6 @@
 from pathlib import Path
 import subprocess
+import sys
 import unittest
 
 import tools.stage_device_broker_inventory as broker
@@ -19,6 +20,15 @@ class StageDeviceBrokerInventoryTests(unittest.TestCase):
             "/run/.hardened-blikvm-owner-0123456789abcdef",
         )
         self.assertTrue(paths.credentials.startswith(paths.stage.root + "/"))
+
+    def test_direct_entrypoint_can_load_project_tools(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "tools/stage_device_broker_inventory.py", "--help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_generated_scripts_are_valid_posix_shell(self) -> None:
         paths = self._paths()
