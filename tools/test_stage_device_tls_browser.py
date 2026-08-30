@@ -60,6 +60,7 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn("ExitOnForwardFailure=yes", rendered)
         self.assertIn(" -N ", f" {rendered} ")
         self.assertNotIn("sh -c", rendered)
+        self.assertNotIn("ClearAllForwardings=yes", rendered)
 
     def test_browser_script_does_not_contain_fixed_password(self) -> None:
         script = (

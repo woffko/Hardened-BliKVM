@@ -731,7 +731,9 @@ def start_with_secret_fd(
 def tunnel_command(
     target: prototype.RemoteTarget, password_fd: int, local_port: int
 ) -> list[str]:
-    transport = prototype.ssh_transport_command(target, password_fd)
+    transport = prototype.ssh_transport_command(
+        target, password_fd, clear_forwardings=False
+    )
     return [
         *transport[:-1],
         "-o",

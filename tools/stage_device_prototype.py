@@ -467,7 +467,9 @@ def run_with_secret_fd(
         os.close(read_fd)
 
 
-def ssh_transport_command(target: RemoteTarget, password_fd: int) -> list[str]:
+def ssh_transport_command(
+    target: RemoteTarget, password_fd: int, *, clear_forwardings: bool = True
+) -> list[str]:
     return [
         "sshpass",
         "-d",
@@ -480,8 +482,7 @@ def ssh_transport_command(target: RemoteTarget, password_fd: int) -> list[str]:
         str(target.port),
         "-o",
         "BatchMode=no",
-        "-o",
-        "ClearAllForwardings=yes",
+        *(["-o", "ClearAllForwardings=yes"] if clear_forwardings else []),
         "-o",
         "ConnectTimeout=8",
         "-o",
