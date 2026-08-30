@@ -52,6 +52,7 @@ find "$stage/share/web" -type d -exec chmod 0755 {} +
 find "$stage/share/web" -type f -exec chmod 0644 {} +
 install -m 0644 \
   packaging/systemd/hardened-blikvm-platform-broker.service \
+  packaging/systemd/hardened-blikvm-server.service \
   "$stage/share/systemd/"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \

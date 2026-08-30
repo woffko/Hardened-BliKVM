@@ -17,9 +17,11 @@ sh -n scripts/build-prototype-bundle.sh
 sh -n scripts/check-source-boundary.sh
 sh -n scripts/check.sh
 sh -n scripts/rust-lld-linker.sh
+sh -n scripts/verify-systemd-units.sh
 sh -n scripts/verify-aarch64-elf.sh
 
 scripts/check-source-boundary.sh
+scripts/verify-systemd-units.sh
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
