@@ -141,6 +141,24 @@ try {
     /password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress/i,
   );
 
+  phase = "capabilities";
+  const capabilities = await page.evaluate(async () => {
+    const response = await fetch("/api/capabilities", {
+      credentials: "include",
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(capabilities.status, 200);
+  assert.equal(capabilities.body.code, 0);
+  assert.equal(capabilities.body.data.video.status.availability, "read_only");
+  assert.equal(capabilities.body.data.hid.status.availability, "unavailable");
+  assert.equal(capabilities.body.data.power.status.availability, "unavailable");
+  assert.equal(capabilities.body.data.power.ledState.availability, "read_only");
+  assert.equal(
+    capabilities.body.data.virtualMedia.status.availability,
+    "read_only",
+  );
+
   phase = "password-page";
   await page.goto(`${baseUrl}/#/auth/password`, { waitUntil: "networkidle" });
   await page.waitForFunction(
@@ -235,6 +253,7 @@ try {
     ["POST", "/api/auth/setup", 200],
     ["POST", "/api/auth/login", 200],
     ["GET", "/api/inventory", 200],
+    ["GET", "/api/capabilities", 200],
     ["GET", "/api/stream/mjpeg", 200],
     ["POST", "/api/auth/password", 200],
   ]) {
@@ -260,6 +279,11 @@ try {
       csrfCookie: "secure-readable-strict",
       inventoryStatus: 200,
       inventoryBackend: "kvmd_transition",
+      videoCapability: "read_only",
+      hidCapability: "unavailable",
+      powerCapability: "unavailable",
+      powerLedCapability: "read_only",
+      mediaCapability: "read_only",
       videoTransport: "mjpeg",
       videoDecoded: "passed",
       videoReconnects: streamResponses,
