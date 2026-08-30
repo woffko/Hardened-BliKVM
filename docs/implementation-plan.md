@@ -175,6 +175,11 @@ restart wiring, or H616 acceptance yet.
 Its local `stage` command now verifies one absolute archive path and publishes
 an immutable slot without changing `current`, so device acceptance can use the
 same production CLI rather than manually constructing slot trees.
+The exact linked supervisor then passed an isolated H616 gate for three signed
+slots, confirmation, floor enforcement, downgrade and wrong-token rejection,
+lost-token rollback, transient systemd sandboxing, and complete `/tmp` cleanup.
+Details and remaining production-process gates are recorded in
+`baselines/device-update-supervisor.md`.
 Two clean AArch64 builds at source commit `1a88542` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in

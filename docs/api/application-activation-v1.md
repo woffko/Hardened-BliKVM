@@ -113,8 +113,10 @@ timer and Unix confirmation socket run under a distinct update identity with
 no network or device authority. There is deliberately no network activation
 socket and no production signing key or enabled configuration in the bundle.
 
-The supervisor and systemd templates have host-side subprocess and static unit
-tests, but they are not installed or enabled on H616. Candidate-process
-restart ordering, systemd credential delivery, abandoned-staging cleanup, slot
-garbage collection, journal backup, hardware-backed rollback counters, and
-live interruption tests remain separate gates.
+The supervisor also passed an isolated native H616 gate covering staging,
+confirmation, floor enforcement, downgrade rejection, lost-token rollback,
+cleanup, and a transient systemd sandbox. The packaged socket/timer remain
+uninstalled and unenabled. Candidate-process restart ordering, systemd
+credential delivery, abandoned-staging cleanup, slot garbage collection,
+journal backup, hardware-backed rollback counters, and live interruption tests
+remain separate gates.
