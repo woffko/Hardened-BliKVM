@@ -9,7 +9,7 @@ passed a physical interaction gate.
 | HTTPS/login | Reachable; authenticated boundary verified | H616 TLS 1.2/1.3 Chromium setup/login, secure cookies, rotation, and logout passed | Certificate enrollment, other engines, and mobile matrix |
 | Loopback server runtime | Not applicable | Unprivileged H616 server, systemd sandbox, Nginx loopback, and SSH-forward gates passed | Permanent packaging and reboot persistence |
 | Read-only inventory | Five authenticated GET endpoints verified | Distinct-UID broker, dedicated-account rollback, `LoadCredential`, sanitizer, and repeated H616 inventory passed | Permanent least-privilege provisioning and reboot persistence |
-| MJPEG | Streamer source online through authenticated API | Observed but not exposed | Stream bytes, reconnect, latency, soak |
+| MJPEG | Streamer source online through authenticated API | Read-only Rust proxy/server path passed on H616: 74 frames, 5 reconnects, 2 concurrent streams, session revocation, systemd isolation, and full rollback | TLS Chromium image decode/reconnect gate, then longer latency/soak matrix |
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |
 | Keyboard | HID online through authenticated API | Observed but not exposed | 10,000-event and reboot test |
 | Absolute/relative mouse | HID online; modes not physically exercised | Observed but not exposed | Mode and coordinate matrix |

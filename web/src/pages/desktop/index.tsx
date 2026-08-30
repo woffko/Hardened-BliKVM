@@ -48,9 +48,12 @@ function getVideoMode(capabilities: Parameters<typeof normalizeVideoMode>[0]) {
 const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) => {
   const { t } = useTranslation();
   const isDesktopLayout = useIsDesktopLayout();
+  const hidAvailable = isAvailable(capabilities.hid.status);
+  const controlChannelAvailable =
+    hidAvailable || capabilities.video.status.availability === 'read_write';
   const [activeVideoMode, setActiveVideoMode] = useState(() => getVideoMode(capabilities));
   const [picoclawSidebarWidth, setPicoclawSidebarWidth] = useState(420);
-  const captureStatus = useCaptureStatus(activeVideoMode);
+  const captureStatus = useCaptureStatus(controlChannelAvailable ? activeVideoMode : '');
 
   const [videoMode, setVideoMode] = useAtom(videoModeAtom);
   const [resolution, setResolution] = useAtom(resolutionAtom);
@@ -61,7 +64,11 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
   }, [capabilities]);
 
   useEffect(() => {
-    client.connect();
+    if (controlChannelAvailable) {
+      client.connect();
+    } else {
+      client.close();
+    }
 
     setVideoMode(activeVideoMode);
 
@@ -71,7 +78,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
     return () => {
       client.close();
     };
-  }, [activeVideoMode, setResolution, setVideoMode]);
+  }, [activeVideoMode, controlChannelAvailable, setResolution, setVideoMode]);
 
   function handleSplitterResize(sizes: number[]) {
     const nextSidebarWidth = sizes[1];
@@ -101,7 +108,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
                   className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-black"
                 >
                   <Screen />
-                  <CaptureStatusOverlay status={captureStatus} />
+                  {controlChannelAvailable && <CaptureStatusOverlay status={captureStatus} />}
                 </div>
               </Splitter.Panel>
               <Splitter.Panel
@@ -115,9 +122,9 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
             </Splitter>
           </div>
           <ActionOverlay />
-          <Mouse />
-          <Keyboard />
-          <MobileLocalKeyboard />
+          {hidAvailable && <Mouse />}
+          {hidAvailable && <Keyboard />}
+          {hidAvailable && <MobileLocalKeyboard />}
         </div>
       )}
 
@@ -127,7 +134,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
         </div>
       ) : null}
 
-      <VirtualKeyboard />
+      {hidAvailable && <VirtualKeyboard />}
     </div>
   );
 };

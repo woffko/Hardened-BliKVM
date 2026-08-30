@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { updateScreen } from '@/api/vm';
 import * as ls from '@/lib/localstorage';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
@@ -23,6 +24,8 @@ export const Screen = () => {
 
   const videoMode = useAtomValue(videoModeAtom);
   const resolution = useAtomValue(resolutionAtom);
+  const capabilities = useAtomValue(capabilitiesAtom);
+  const isWritable = capabilities?.video.status.availability === 'read_write';
   const [fps, setFps] = useState(30);
   const [quality, setQuality] = useState(2);
   const [gop, setGop] = useState(30);
@@ -30,6 +33,7 @@ export const Screen = () => {
   const initialResolutionRef = useRef(resolution);
 
   useEffect(() => {
+    if (!isWritable) return;
     const initialVideoMode = initialVideoModeRef.current;
     const initialResolution = initialResolutionRef.current;
     void updateScreen('type', initialVideoMode === 'mjpeg' ? 0 : 1);
@@ -59,18 +63,18 @@ export const Screen = () => {
         if (rsp.code === 0) setGop(cookieGop);
       });
     }
-  }, []);
+  }, [isWritable]);
 
   const content = (
     <div className="flex flex-col space-y-1">
-      <VideoMode />
-      <Resolution />
-      <Quality quality={quality} setQuality={setQuality} />
-      <Fps fps={fps} setFps={setFps} />
+      {isWritable && <VideoMode />}
+      {isWritable && <Resolution />}
+      {isWritable && <Quality quality={quality} setQuality={setQuality} />}
+      {isWritable && <Fps fps={fps} setFps={setFps} />}
       <Scale />
-      {videoMode !== 'mjpeg' && <Gop gop={gop} setGop={setGop} />}
-      {videoMode === 'mjpeg' && <FrameDetect />}
-      <Reset />
+      {isWritable && videoMode !== 'mjpeg' && <Gop gop={gop} setGop={setGop} />}
+      {isWritable && videoMode === 'mjpeg' && <FrameDetect />}
+      {isWritable && <Reset />}
     </div>
   );
 

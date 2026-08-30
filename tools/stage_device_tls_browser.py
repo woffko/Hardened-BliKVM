@@ -40,6 +40,9 @@ PREFLIGHT_KEYS = {
     "stage_absent",
     "tmp_mount_mode",
     "tools_ready",
+    "ustreamer_socket",
+    "ustreamer_socket_group",
+    "ustreamer_socket_mode",
 }
 RUN_KEYS = {
     "broker_stopped",
@@ -55,6 +58,7 @@ RUN_KEYS = {
     "tls12",
     "tls13",
     "tls_loopback",
+    "video_proxy_stopped",
 }
 FINAL_KEYS = {
     "kvmd_active_final",
@@ -91,6 +95,9 @@ class TlsPaths:
     credentials: str
     broker_binary: str
     broker_socket: str
+    video_binary: str
+    video_runtime: str
+    video_socket: str
     nginx_state: str
     nginx_config: str
     tls_certificate: str
@@ -160,6 +167,9 @@ def tls_paths(bundle_sha256: str, run_id: str) -> TlsPaths:
         credentials=f"{root}/credentials",
         broker_binary=f"{stage.payload}/libexec/bli-kvm-platform-broker",
         broker_socket="/run/hardened-blikvm/platform-broker.sock",
+        video_binary=f"{stage.payload}/libexec/bli-kvm-video-proxy",
+        video_runtime=f"{root}/video-runtime",
+        video_socket=f"{root}/video-runtime/mjpeg.sock",
         nginx_state=f"{root}/nginx-state",
         nginx_config=f"{root}/nginx.conf",
         tls_certificate=f"{root}/tls.crt",
@@ -309,6 +319,11 @@ tmp_available=$(df -B1 --output=avail /tmp | tail -n 1 | tr -d ' ')
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
 [ -S /run/kvmd/kvmd.sock ]
+[ -S /run/kvmd/ustreamer.sock ]
+ustreamer_mode=$(stat -c '%a' /run/kvmd/ustreamer.sock)
+ustreamer_group=$(stat -c '%G' /run/kvmd/ustreamer.sock)
+[ "$ustreamer_mode" = 660 ]
+[ "$ustreamer_group" = kvmd ]
 for tool in awk cat chmod chown curl df env findmnt getent grep head mkdir mv openssl readlink rm sed setpriv sha256sum sleep stat systemctl tail tar tr; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
@@ -335,6 +350,9 @@ emit browser_runtime_ready yes
 emit tools_ready yes
 emit stage_absent yes
 emit ports_free_before yes
+emit ustreamer_socket present
+emit ustreamer_socket_mode "$ustreamer_mode"
+emit ustreamer_socket_group "$ustreamer_group"
 """.strip()
     return f"{values}\n{prototype.PORT_FUNCTION}\n{body}"
 
@@ -358,6 +376,9 @@ def build_remote_script(
             "broker": paths.broker_binary,
             "credentials": paths.credentials,
             "broker_socket": paths.broker_socket,
+            "video": paths.video_binary,
+            "video_runtime": paths.video_runtime,
+            "video_socket": paths.video_socket,
             "expected_sha256": bundle.sha256,
             "bind_port": bind_port,
             "tls_port": TLS_PORT,
@@ -379,6 +400,7 @@ umask 077
 phase=validate-stage
 run_succeeded=no
 broker_pid=
+video_pid=
 server_pid=
 nginx_pid=
 emit() { printf '%s=%s\n' "$1" "$2"; }
@@ -391,7 +413,7 @@ owned_runtime() {
 emergency_cleanup() {
   set +e
   safe=yes
-  for pair in "$nginx_pid:$nginx_binary" "$server_pid:$server" "$broker_pid:$broker"; do
+  for pair in "$nginx_pid:$nginx_binary" "$server_pid:$server" "$video_pid:$video" "$broker_pid:$broker"; do
     child_pid=${pair%%:*}
     child_exe=${pair#*:}
     [ -n "$child_pid" ] || continue
@@ -433,6 +455,7 @@ actual_sha256=$(sha256sum "$archive" | awk '{print $1}')
 mkdir -m 755 "$payload"
 tar -xzf "$archive" --strip-components=1 --no-same-owner -C "$payload"
 (cd "$payload" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
+[ -x "$video" ]
 daemon_uid=$(getent passwd daemon | head -n 1 | awk -F: '{print $3}')
 nobody_uid=$(getent passwd nobody | head -n 1 | awk -F: '{print $3}')
 nobody_gid=$(getent passwd nobody | head -n 1 | awk -F: '{print $4}')
@@ -447,6 +470,7 @@ chmod 600 "$runtime_marker"
 mkdir -m 750 "$runtime_root"
 chown "$daemon_uid:$nobody_gid" "$runtime_root"
 : > "$stage_root/broker.log"
+: > "$stage_root/video.log"
 : > "$stage_root/server.log"
 : > "$stage_root/nginx.log"
 chmod 600 "$stage_root"/*.log
@@ -459,6 +483,19 @@ printf '%s\n' "$broker_pid" > "$stage_root/broker.pid"
 count=0
 while [ "$count" -lt 60 ] && [ ! -S "$broker_socket" ]; do process_active "$broker_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
 [ -S "$broker_socket" ]
+phase=start-video
+mkdir -m 750 "$video_runtime"
+chown "$www_uid:$nobody_gid" "$video_runtime"
+setpriv --reuid="$www_uid" --regid="$nobody_gid" --groups="$kvmd_gid" --bounding-set=-all --no-new-privs \
+  env -i PATH=/usr/bin:/bin HOME=/nonexistent TMPDIR=/tmp \
+  BLI_KVM_VIDEO_PROXY_SOCKET="$video_socket" BLI_KVM_USTREAMER_SOCKET=/run/kvmd/ustreamer.sock \
+  "$video" > "$stage_root/video.log" 2>&1 < /dev/null &
+video_pid=$!
+printf '%s\n' "$video_pid" > "$stage_root/video.pid"
+count=0
+while [ "$count" -lt 60 ] && [ ! -S "$video_socket" ]; do process_active "$video_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
+[ -S "$video_socket" ]
+[ "$(stat -c '%a' "$video_socket")" = 660 ]
 phase=start-server
 state="$stage_root/state"
 mkdir -m 700 "$state"
@@ -466,7 +503,7 @@ chown "$nobody_uid:$nobody_gid" "$state"
 setpriv --reuid="$nobody_uid" --regid="$nobody_gid" --clear-groups --bounding-set=-all --no-new-privs \
   env -i PATH=/usr/bin:/bin HOME="$state" TMPDIR="$state" \
   BLI_KVM_BIND="127.0.0.1:$bind_port" BLI_KVM_WEB_ROOT="$payload/share/web" \
-  BLI_KVM_STATE_DIR="$state" BLI_KVM_BROKER_SOCKET="$broker_socket" \
+  BLI_KVM_STATE_DIR="$state" BLI_KVM_BROKER_SOCKET="$broker_socket" BLI_KVM_VIDEO_SOCKET="$video_socket" \
   BLI_KVM_SECURE_COOKIES=1 BLI_KVM_ALLOW_MISSING_ORIGIN=0 \
   "$server" > "$stage_root/server.log" 2>&1 < /dev/null &
 server_pid=$!
@@ -513,6 +550,7 @@ phase=wait-browser
 count=0
 while [ "$count" -lt 240 ] && [ ! -f "$browser_done" ]; do
   process_active "$broker_pid" || exit 1
+  process_active "$video_pid" || exit 1
   process_active "$server_pid" || exit 1
   process_active "$nginx_pid" || exit 1
   sleep 0.5
@@ -525,6 +563,8 @@ stop_child "$nginx_pid" "$nginx_binary"
 nginx_pid=
 stop_child "$server_pid" "$server"
 server_pid=
+stop_child "$video_pid" "$video"
+video_pid=
 stop_child "$broker_pid" "$broker"
 broker_pid=
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
@@ -547,6 +587,7 @@ emit tls12 passed
 emit tls13 passed
 emit nginx_stopped yes
 emit server_stopped yes
+emit video_proxy_stopped yes
 emit broker_stopped yes
 emit stage_removed yes
 emit rootfs_mode_after_run "$rootfs_mode"
@@ -589,6 +630,7 @@ def build_cleanup_script(paths: TlsPaths) -> str:
             "run_id": paths.stage.run_id,
             "server": paths.stage.server,
             "broker": paths.broker_binary,
+            "video": paths.video_binary,
             "nginx_binary": paths.nginx_binary,
         }
     )
@@ -598,7 +640,7 @@ emit() { printf '%s=%s\n' "$1" "$2"; }
 if [ -e "$stage_root" ]; then
   [ -f "$stage_marker" ]
   [ "$(cat "$stage_marker" 2>/dev/null || true)" = "$run_id" ]
-  for item in "nginx.pid:$nginx_binary" "server.pid:$server" "broker.pid:$broker"; do
+  for item in "nginx.pid:$nginx_binary" "server.pid:$server" "video.pid:$video" "broker.pid:$broker"; do
     pid_file="$stage_root/${item%%:*}"
     expected=${item#*:}
     [ -f "$pid_file" ] || continue
@@ -825,6 +867,9 @@ def validate_preflight(facts: dict[str, str]) -> None:
         "tools_ready": "yes",
         "stage_absent": "yes",
         "ports_free_before": "yes",
+        "ustreamer_socket": "present",
+        "ustreamer_socket_mode": "660",
+        "ustreamer_socket_group": "kvmd",
     }
     if facts != dict(sorted(expected.items())):
         raise ValueError("TLS preflight invariant failed")
@@ -842,6 +887,7 @@ def validate_remote(facts: dict[str, str], bundle_sha256: str) -> None:
         "tls13": "passed",
         "nginx_stopped": "yes",
         "server_stopped": "yes",
+        "video_proxy_stopped": "yes",
         "broker_stopped": "yes",
         "stage_removed": "yes",
         "rootfs_mode_after_run": "rw",
@@ -873,11 +919,16 @@ def validate_browser(raw: bytes) -> dict[str, object]:
         "schemaVersion": 1,
         "result": "passed",
         "protocol": "https",
-        "title": "Adapter status - Hardened BliKVM",
+        "title": "Remote Desktop - Hardened BliKVM",
         "sessionCookie": "secure-httponly-strict",
         "csrfCookie": "secure-readable-strict",
         "inventoryStatus": 200,
         "inventoryBackend": "kvmd_transition",
+        "videoTransport": "mjpeg",
+        "videoDecoded": "passed",
+        "streamRevocation": "passed",
+        "controlRequestsObserved": 0,
+        "webSocketsObserved": 0,
         "passwordRotation": "passed",
         "logout": "passed",
     }
@@ -886,6 +937,9 @@ def validate_browser(raw: bytes) -> dict[str, object]:
     observed = summary.get("apiResponsesObserved")
     if not isinstance(observed, int) or observed < 5 or observed > 200:
         raise ValueError("browser response count is invalid")
+    reconnects = summary.get("videoReconnects")
+    if not isinstance(reconnects, int) or reconnects < 2 or reconnects > 10:
+        raise ValueError("browser video reconnect count is invalid")
     return dict(sorted(summary.items()))
 
 

@@ -38,6 +38,16 @@ Read-only observations and mutating methods are separate interfaces. HID, ATX,
 media, GPIO, or configfs methods stay unavailable until their adapter and
 physical gate pass.
 
+MJPEG is the first exposed read-only media path. A dedicated video proxy is the
+only process with supplementary `kvmd` group access to the existing uStreamer
+Unix socket. It has a private network namespace, closed device policy, no
+capabilities, a two-stream limit, and accepts only one exact local HTTP route.
+The network server is not in `kvmd`; it receives only the proxy's validated
+multipart body. Streaming remains bound to the authenticated session, so
+logout, password rotation, or expiry stops forwarding further frames. Video
+availability does not enable WebSocket, HID, ATX, media, or video-configuration
+controls.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

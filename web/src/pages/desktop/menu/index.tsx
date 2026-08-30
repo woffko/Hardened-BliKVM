@@ -5,7 +5,7 @@ import { useAtomValue } from 'jotai';
 import { GripVerticalIcon } from 'lucide-react';
 import Draggable, { DraggableData, DraggableEvent } from 'react-draggable';
 
-import { supportsMenuItem, type CapabilityMenuItem } from '@/lib/capabilities.ts';
+import { isAvailable, supportsMenuItem, type CapabilityMenuItem } from '@/lib/capabilities.ts';
 import { HARDENED_LOGO_SRC, HARDENED_NAME, HARDENED_SHORT_NAME } from '@/lib/hardened.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { menuDisabledItemsAtom } from '@/jotai/settings.ts';
@@ -33,6 +33,7 @@ export const Menu = () => {
   const isDesktopLayout = useIsDesktopLayout();
 
   const capabilities = useAtomValue(capabilitiesAtom);
+  const hidAvailable = Boolean(capabilities && isAvailable(capabilities.hid.status));
   const menuDisabledItems = useAtomValue(menuDisabledItemsAtom);
 
   const {
@@ -111,9 +112,9 @@ export const Menu = () => {
             <Divider type="vertical" />
 
             <Screen />
-            <LocalKeyboardButton />
-            <Keyboard />
-            <Mouse />
+            {hidAvailable && <LocalKeyboardButton />}
+            {hidAvailable && <Keyboard />}
+            {hidAvailable && <Mouse />}
             <Divider type="vertical" />
 
             {isEnabled('image') && <Image />}

@@ -53,7 +53,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 operating_system: "PiKVM/KVMD on Armbian".into(),
             },
             video: VideoCapabilities {
-                status: FeatureStatus::not_exposed(runtime_verified),
+                status: FeatureStatus::read_only(runtime_verified),
                 transports: vec![VideoTransport::Mjpeg],
                 preferred_transport: Some(VideoTransport::Mjpeg),
                 max_width: None,
@@ -110,7 +110,11 @@ mod tests {
             manifest.video.status.evidence,
             EvidenceLevel::RuntimeVerified
         );
-        assert!(!manifest.video.status.is_available());
+        assert_eq!(
+            manifest.video.status.availability,
+            bli_kvm_core::Availability::ReadOnly
+        );
+        assert!(manifest.video.status.is_available());
         assert_eq!(manifest.video.transports, vec![VideoTransport::Mjpeg]);
         assert!(
             !manifest

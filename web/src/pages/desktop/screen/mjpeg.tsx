@@ -6,6 +6,7 @@ import { stopFrameDetect } from '@/api/stream.ts';
 import { getFrameDetect } from '@/lib/localstorage.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { getBaseUrl } from '@/lib/service.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
 
@@ -13,6 +14,8 @@ import { useScreenFit } from './use-screen-fit.ts';
 
 export const Mjpeg = () => {
   const resolution = useAtomValue(resolutionAtom);
+  const capabilities = useAtomValue(capabilitiesAtom);
+  const isWritable = capabilities?.video.status.availability === 'read_write';
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const [hasError, setHasError] = useState(false);
@@ -28,12 +31,12 @@ export const Mjpeg = () => {
   useEffect(() => {
     // stop frame detect for a while
     const enabled = getFrameDetect();
-    if (enabled) {
+    if (isWritable && enabled) {
       stopFrameDetect(10);
     }
     setHasError(false);
     setStreamNonce((current) => current + 1);
-  }, [resolution]);
+  }, [isWritable, resolution]);
 
   useEffect(() => {
     const scale = storage.getVideoScale();

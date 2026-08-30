@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +22,8 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             paths.ready,
             paths.browser_done,
             paths.browser_result,
+            paths.video_runtime,
+            paths.video_socket,
         ):
             self.assertTrue(value.startswith(paths.stage.root + "/"))
 
@@ -31,6 +34,16 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn("proxy_pass http://127.0.0.1:18081;", rendered)
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", rendered)
         self.assertNotIn("/etc/hardened-blikvm/tls.key", rendered)
+
+    def test_remote_gate_starts_and_cleans_the_video_proxy(self) -> None:
+        paths = self._paths()
+        bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
+        remote = tls.build_remote_script(paths, bundle, 18081)
+        cleanup = tls.build_cleanup_script(paths)
+        self.assertIn("phase=start-video", remote)
+        self.assertIn("BLI_KVM_USTREAMER_SOCKET=/run/kvmd/ustreamer.sock", remote)
+        self.assertIn('BLI_KVM_VIDEO_SOCKET="$video_socket"', remote)
+        self.assertIn('video.pid:$video', cleanup)
 
     def test_generated_remote_scripts_are_valid_posix_shell(self) -> None:
         paths = self._paths()
@@ -82,6 +95,33 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             _ = tls.validate_browser_failure(
                 b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"SecretError"}'
             )
+
+    def test_browser_success_requires_decoded_reconnected_read_only_video(self) -> None:
+        summary = {
+            "schemaVersion": 1,
+            "result": "passed",
+            "protocol": "https",
+            "title": "Remote Desktop - Hardened BliKVM",
+            "sessionCookie": "secure-httponly-strict",
+            "csrfCookie": "secure-readable-strict",
+            "inventoryStatus": 200,
+            "inventoryBackend": "kvmd_transition",
+            "videoTransport": "mjpeg",
+            "videoDecoded": "passed",
+            "videoReconnects": 2,
+            "streamRevocation": "passed",
+            "controlRequestsObserved": 0,
+            "webSocketsObserved": 0,
+            "passwordRotation": "passed",
+            "logout": "passed",
+            "apiResponsesObserved": 8,
+        }
+        validated = tls.validate_browser(json.dumps(summary, separators=(",", ":")).encode())
+        self.assertEqual(validated["videoReconnects"], 2)
+
+        summary["videoReconnects"] = 1
+        with self.assertRaises(ValueError):
+            _ = tls.validate_browser(json.dumps(summary, separators=(",", ":")).encode())
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(

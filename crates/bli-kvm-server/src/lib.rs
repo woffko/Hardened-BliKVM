@@ -337,7 +337,7 @@ mod tests {
         );
         assert_eq!(
             value["data"]["video"]["status"]["availability"],
-            "unavailable"
+            "read_only"
         );
         assert_eq!(
             value["data"]["video"]["transports"],

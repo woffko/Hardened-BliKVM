@@ -23,9 +23,22 @@ try {
     locale: "en-US",
   });
   const page = await context.newPage();
+  const requests = [];
   const responses = [];
   const pageErrors = [];
+  let webSocketsObserved = 0;
+  let activeStreamResponse = null;
+  let streamResponses = 0;
   page.on("pageerror", (error) => pageErrors.push(error.name));
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/")) {
+      requests.push({ method: request.method(), path });
+    }
+  });
+  page.on("websocket", () => {
+    webSocketsObserved += 1;
+  });
   page.on("response", (response) => {
     const path = new URL(response.url()).pathname;
     if (path.startsWith("/api/")) {
@@ -34,6 +47,10 @@ try {
         path,
         status: response.status(),
       });
+    }
+    if (path === "/api/stream/mjpeg") {
+      activeStreamResponse = response;
+      streamResponses += 1;
     }
   });
 
@@ -71,15 +88,29 @@ try {
       response.url().endsWith("/api/auth/login") &&
       response.request().method() === "POST",
   );
+  const initialStreamResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/stream/mjpeg" &&
+      response.request().method() === "GET",
+  );
   await page.getByRole("button", { name: "Create account" }).click();
   assert.equal((await setupResponse).status(), 200);
   assert.equal((await loginResponse).status(), 200);
   phase = "post-login";
   await page.waitForURL(`${baseUrl}/#/`);
-  await page.waitForLoadState("networkidle");
-  await page.waitForFunction(
-    () => document.title === "Adapter status - Hardened BliKVM",
+  const initialStream = await initialStreamResponse;
+  assert.equal(initialStream.status(), 200);
+  assert.match(
+    initialStream.headers()["content-type"] || "",
+    /^multipart\/x-mixed-replace\s*;/i,
   );
+  await page.waitForFunction(
+    () => document.title === "Remote Desktop - Hardened BliKVM",
+  );
+  await page.waitForFunction(() => {
+    const screen = document.querySelector("img#screen");
+    return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
+  });
 
   phase = "cookies";
   let cookies = await context.cookies(baseUrl);
@@ -138,14 +169,25 @@ try {
   inputs = page.locator("input");
   await inputs.nth(0).fill(username);
   await inputs.nth(1).fill(changedPassword);
+  const reconnectedStreamResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/stream/mjpeg" &&
+      response.request().method() === "GET",
+  );
   await page.getByRole("button", { name: "Login" }).click();
   await page.waitForURL(`${baseUrl}/#/`);
-  await page.waitForLoadState("networkidle");
+  assert.equal((await reconnectedStreamResponse).status(), 200);
+  await page.waitForFunction(() => {
+    const screen = document.querySelector("img#screen");
+    return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
+  });
   cookies = await context.cookies(baseUrl);
   session = cookies.find((cookie) => cookie.name === "hardened-blikvm-session");
   csrf = cookies.find((cookie) => cookie.name === "hardened-blikvm-csrf");
   assert.equal(session?.secure, true);
   assert.ok(csrf);
+  assert.ok(activeStreamResponse, "missing active MJPEG response");
+  const activeStreamFinished = activeStreamResponse.finished();
 
   phase = "logout-request";
   const logout = await context.request.post(`${baseUrl}/api/auth/logout`, {
@@ -156,6 +198,12 @@ try {
   });
   phase = "logout-status";
   assert.equal(logout.status(), 200);
+  await Promise.race([
+    activeStreamFinished,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("MJPEG stream survived logout")), 5000),
+    ),
+  ]);
   phase = "logout-cookies";
   cookies = await context.cookies(baseUrl);
   assert.equal(
@@ -169,10 +217,25 @@ try {
     responses.some((response) => response.status === 404),
     false,
   );
+  const prohibitedControlPrefixes = [
+    "/api/ws",
+    "/api/vm",
+    "/api/hid",
+    "/api/atx",
+    "/api/msd",
+    "/api/stream/mjpeg/detect",
+  ];
+  const controlRequestsObserved = requests.filter((request) =>
+    prohibitedControlPrefixes.some((prefix) => request.path.startsWith(prefix)),
+  ).length;
+  assert.equal(controlRequestsObserved, 0);
+  assert.equal(webSocketsObserved, 0);
+  assert.ok(streamResponses >= 2, "MJPEG reconnect was not observed");
   for (const required of [
     ["POST", "/api/auth/setup", 200],
     ["POST", "/api/auth/login", 200],
     ["GET", "/api/inventory", 200],
+    ["GET", "/api/stream/mjpeg", 200],
     ["POST", "/api/auth/password", 200],
   ]) {
     assert.ok(
@@ -192,11 +255,17 @@ try {
       schemaVersion: 1,
       result: "passed",
       protocol: "https",
-      title: "Adapter status - Hardened BliKVM",
+      title: "Remote Desktop - Hardened BliKVM",
       sessionCookie: "secure-httponly-strict",
       csrfCookie: "secure-readable-strict",
       inventoryStatus: 200,
       inventoryBackend: "kvmd_transition",
+      videoTransport: "mjpeg",
+      videoDecoded: "passed",
+      videoReconnects: streamResponses,
+      streamRevocation: "passed",
+      controlRequestsObserved,
+      webSocketsObserved,
       passwordRotation: "passed",
       logout: "passed",
       apiResponsesObserved: responses.length,
