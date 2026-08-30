@@ -54,6 +54,14 @@ logout, password rotation, or expiry stops forwarding further frames. Video
 availability does not enable WebSocket, HID, ATX, media, or video-configuration
 controls.
 
+Read-only ATX LED observation is independent from ATX mutation eligibility.
+The transition policy and fixed client are described in
+`api/atx-transition.md`; the public policy constructor is disabled and the
+client is not linked into the control broker. A future backend must atomically
+persist Pending before the call and its final outcome afterwards, never retry
+an indeterminate operation, enforce persisted cooldown, and require explicit
+confirmation.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

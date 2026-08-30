@@ -1,0 +1,24 @@
+[package]
+name = "bli-kvm-kvmd-atx-client"
+description = "Fixed-route KVMD ATX transition client for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

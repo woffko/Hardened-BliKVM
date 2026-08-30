@@ -75,7 +75,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                     PowerAction::PowerLong,
                     PowerAction::Reset,
                 ],
-                led_state: FeatureStatus::not_exposed(runtime_verified),
+                led_state: FeatureStatus::read_only(runtime_verified),
             },
             virtual_media: VirtualMediaCapabilities {
                 status: FeatureStatus::not_exposed(runtime_verified),
@@ -128,6 +128,14 @@ mod tests {
         );
         assert!(!manifest.hid.status.is_available());
         assert!(!manifest.power.status.is_available());
+        assert_eq!(
+            manifest.power.led_state.availability,
+            bli_kvm_core::Availability::ReadOnly
+        );
+        assert_eq!(
+            manifest.power.led_state.evidence,
+            EvidenceLevel::RuntimeVerified
+        );
         assert!(!manifest.virtual_media.status.is_available());
         assert!(
             manifest

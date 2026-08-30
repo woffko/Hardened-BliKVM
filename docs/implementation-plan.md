@@ -89,6 +89,14 @@ wired to the denial broker or server. Safe external target/focus, broker-side
 attestation, on-device startup replay, event soak, reconnect, and reboot gates
 remain required.
 
+Checkpoint: read-only H616 power-LED evidence is now advertised independently
+while the ATX action capability remains unavailable. A private atomic journal
+implements confirmation age, Pending crash ambiguity, persisted replay,
+operation-ID conflict detection, and five/30-second cooldowns. Its public
+eligibility is compile-time disabled. A separate mock-tested KVMD client has
+only the three fixed waiting ATX routes and is not connected to the broker.
+No Power or Reset action was invoked.
+
 ## Phase 4: Video
 
 - Proxy loopback-only MJPEG first.

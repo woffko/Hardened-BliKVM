@@ -13,7 +13,7 @@ passed a physical interaction gate.
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |
 | Keyboard | HID online through authenticated API | Fixed-route translator, 30-second session/target lease, fail-closed release, and crash ledger implemented but not wired | Safe target/focus, startup replay, 10,000-event, reconnect, and reboot test |
 | Absolute/relative mouse | HID online; modes not physically exercised | Typed relative/absolute translation and release ledger implemented but not wired; Back/Forward rejected | Safe target/focus, mode, coordinate, scroll, button, reconnect, and reboot matrix |
-| ATX/LED | Enabled and idle through authenticated API | Observed but not exposed | Timing, polarity, exclusive GPIO owner |
+| ATX/LED | Enabled, idle, and power LED=true through authenticated API | LED observation exposed read-only through sanitized inventory; all ATX actions remain unavailable | Persisted confirmation/idempotency/cooldown, timing, polarity, exclusive GPIO owner, and physical gate |
 | Virtual media | Enabled, online, and idle through authenticated API | Observed but not exposed | Upload, eject, BIOS boot, interruption |
 | Fan/OLED/RTC/buttons/switch | Source evidence only | Hidden | Shadow and physical tests |
 | Signed app update | Not established | Unavailable | Signature, atomicity, rollback |

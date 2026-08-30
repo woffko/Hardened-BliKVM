@@ -100,6 +100,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-atx-policy"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-broker-client"
 version = "0.1.0"
 dependencies = [
@@ -177,6 +188,24 @@ dependencies = [
  "bli-kvm-hid-adapter",
  "bli-kvm-kvmd-client",
  "bli-kvm-kvmd-hid-client",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "bli-kvm-kvmd-atx-client"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "bli-kvm-kvmd-client",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "serde",
  "serde_json",
  "tempfile",

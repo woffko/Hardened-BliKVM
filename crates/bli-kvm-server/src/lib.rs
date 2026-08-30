@@ -343,6 +343,14 @@ mod tests {
             value["data"]["video"]["transports"],
             serde_json::json!(["mjpeg"])
         );
+        assert_eq!(
+            value["data"]["power"]["status"]["availability"],
+            "unavailable"
+        );
+        assert_eq!(
+            value["data"]["power"]["ledState"]["availability"],
+            "read_only"
+        );
     }
 
     #[tokio::test]
