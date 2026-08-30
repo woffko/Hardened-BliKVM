@@ -189,7 +189,10 @@ transactional slot garbage collection now protects every journal/current
 reference, retains a bounded newest-candidate set, and uses a durable marker
 plus atomic tombstone rename with pre/post-rename crash recovery. The installed
 candidate-process orchestration gate is the next application-update slice.
-Two clean AArch64 builds at source commit `1a88542` produced a byte-identical
+The exact GC-linked AArch64 supervisor passed the corresponding isolated H616
+gate: sequence 1 was deleted while active sequence 2 and protected previous
+sequence 3 remained, followed by clean marker/tombstone and `/tmp` cleanup.
+Two clean AArch64 builds at source commit `858f12f` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in
 `baselines/application-update-supervisor.md`.

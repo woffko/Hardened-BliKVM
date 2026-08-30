@@ -4,7 +4,7 @@ The test-only BliKVM H616 device passed an isolated `/tmp` application-update
 gate with the exact AArch64 static-PIE supervisor:
 
 ```text
-139cd2c5439a9d7c8966738ea894f5bd56067b976fc7108536f5a632ec32534b
+dba225bd9b4040a7aa8a32d670c2f16a35c78f280b65e54af96df131a158e65e
 ```
 
 The gate used an ephemeral Ed25519 key generated only in host process memory.
@@ -30,6 +30,9 @@ uploaded. No private key was serialized, transferred, logged, or retained.
 - the same clean watchdog path passed inside a transient systemd sandbox with
   no-new-privileges, private devices, protected system/kernel settings,
   Unix-only address families, IP denial, and one exact writable staging tree.
+- after rollback, explicit `gc 0` deleted only unreferenced sequence 1 while
+  preserving active/confirmed sequence 2 and protected previous rollback
+  anchor sequence 3; no deletion marker or tombstone remained.
 
 ## Preserved device state
 
@@ -44,8 +47,9 @@ state.
 ## Remaining gates
 
 This proves the verifier, stager, journal, raw `SYS_renameat2`, kernel boot-time
-sampling, one-use credential, watchdog rollback, and transient sandbox on the
-target kernel and userspace. It does not yet install the packaged socket/timer,
-restart a real candidate server from the `current` pointer, deliver the token
-through systemd credentials, interrupt real storage writes, reboot/power-cut
-the device, garbage-collect slots, or establish production signing keys.
+sampling, one-use credential, watchdog rollback, transactional slot deletion,
+and transient sandbox on the target kernel and userspace. It does not yet
+install the packaged socket/timer, restart a real candidate server from the
+`current` pointer, deliver the token through systemd credentials, interrupt
+real storage writes, reboot/power-cut the device, or establish production
+signing keys.
