@@ -45,10 +45,15 @@ bootloader, state partition, or MSD partition. A separately reviewed recovery
 layout profile must later bind a layout ID to exact inactive-slot capacities
 and boot-control semantics before any writer can exist.
 
+The later bounded live inventory in `device-storage-layout.md` confirms the
+same four partition sizes and roles: root/logs, an unmounted 3 MiB filesystem,
+data, and MSD. It also proves that the complete device has only 2,586,836,992
+unpartitioned bytes, which is smaller than the 5,448,400,896-byte root. The
+current disk therefore has no unused same-size A/B root target.
+
 ## Missing evidence
 
 - a complete redistribution-cleared recovery image;
-- sanitized live partition start/size/type and mount-role evidence;
 - the exact H616 ROM/SPL/U-Boot boot chain and bootloader storage locations;
 - a proven redundant-root partition map with preserved state and MSD roles;
 - boot-attempt, health-confirmation, rollback-counter, and recovery-card

@@ -233,6 +233,15 @@ only after bound health. It also records the need for rollback-resistant
 storage and two independently verified recovery cards. No selector adapter,
 writer, reboot path, or H616 layout is implemented or authorized.
 
+Checkpoint: a bounded read-only H616 inventory now confirms one non-removable
+MMC disk with the same four MBR/ext4 sizes as the field image: root/logs, an
+unmounted 3 MiB partition, data, and MSD. The complete disk has a
+2,586,836,992-byte unpartitioned tail, smaller than the 5,448,400,896-byte root,
+so it cannot provide an unused equal A/B slot. UUID-rooted Armbian boot scripts
+exist, but extlinux, slot hints, and fw_env tools do not. The ten-byte raw read,
+unchanged services/mounts, and remaining boot-chain unknowns are recorded in
+`baselines/device-storage-layout.md`; no layout or write target was accepted.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.
