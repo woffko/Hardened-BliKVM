@@ -54,7 +54,8 @@ current disk therefore has no unused same-size A/B root target.
 ## Missing evidence
 
 - a complete redistribution-cleared recovery image;
-- the exact H616 ROM/SPL/U-Boot boot chain and bootloader storage locations;
+- the complete SPL/U-Boot image extent/version and a proven redundant selector
+  storage mechanism;
 - a proven redundant-root partition map with preserved state and MSD roles;
 - boot-attempt, health-confirmation, rollback-counter, and recovery-card
   behavior across interrupted writes and repeated reboot;

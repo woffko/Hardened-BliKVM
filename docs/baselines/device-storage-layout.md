@@ -49,7 +49,9 @@ valid recovery image.
   selector is exposed by this evidence.
 
 The probe did not read the boot script contents, raw SPL/U-Boot area, UUIDs,
-serials, or unmounted partition contents.
+serials, or unmounted partition contents. A later separately bounded probe
+classified the standard sunxi magic locations, boot-script features, and p2
+metadata in `device-boot-chain.md`.
 
 ## Consequence
 

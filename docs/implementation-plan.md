@@ -242,6 +242,15 @@ exist, but extlinux, slot hints, and fw_env tools do not. The ten-byte raw read,
 unchanged services/mounts, and remaining boot-chain unknowns are recorded in
 `baselines/device-storage-layout.md`; no layout or write target was accepted.
 
+Checkpoint: two further read-only probes found `eGON.BT0` at the standard 8 KiB
+sunxi location but not at 128 KiB, no exposed eMMC boot partitions, and no
+bootcount/bootlimit/altbootcmd/saveenv/upgrade primitives in the root-hosted
+Armbian boot scripts. The unmounted 3 MiB p2 is clean ext4 without a journal;
+only `lost+found` exists among eight allowlisted boot paths. Exact hashes,
+bounded-read policy, official offset reference, and remaining uncertainty are
+recorded in `baselines/device-boot-chain.md`. P2 and all raw boot ranges remain
+unaccepted write targets.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.
