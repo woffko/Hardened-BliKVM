@@ -555,7 +555,17 @@ rm -f -- "$request"
 phase=inventory
 inventory_status=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output "$stage_root/inventory.json" --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
 if [ "$inventory_status" != 200 ]; then
-  if ! process_active "$broker_pid"; then
+  diagnostic=$(sed -n 's/^KVMD inventory request failed with [A-Za-z]* at \([a-z]*\) with \([a-z0-9_]*\)$/\1-\2/p' "$stage_root/broker.log" | tail -n 1)
+  case "$diagnostic" in
+    info-*|atx-*|hid-*|msd-*|streamer-*) phase="inventory-$diagnostic" ;;
+    '') ;;
+    *) phase=inventory-invalid-diagnostic ;;
+  esac
+  if [ "$phase" = inventory-invalid-diagnostic ]; then
+    exit 1
+  elif [ -n "$diagnostic" ]; then
+    :
+  elif ! process_active "$broker_pid"; then
     phase=inventory-broker-exited
   elif grep -q 'BackendUnauthorized' "$stage_root/broker.log"; then
     phase=inventory-backend-unauthorized

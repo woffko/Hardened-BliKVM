@@ -42,6 +42,41 @@ pub enum KvmdClientError {
     MissingResult,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KvmdReadEndpoint {
+    Info,
+    Atx,
+    Hid,
+    Msd,
+    Streamer,
+}
+
+impl KvmdReadEndpoint {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Atx => "atx",
+            Self::Hid => "hid",
+            Self::Msd => "msd",
+            Self::Streamer => "streamer",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("KVMD {endpoint:?} inventory endpoint failed")]
+pub struct KvmdInventoryError {
+    pub endpoint: KvmdReadEndpoint,
+    #[source]
+    pub source: KvmdClientError,
+}
+
+impl KvmdInventoryError {
+    fn new(endpoint: KvmdReadEndpoint, source: KvmdClientError) -> Self {
+        Self { endpoint, source }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct KvmdReadClient {
     socket_path: PathBuf,
@@ -117,13 +152,33 @@ impl KvmdReadClient {
     pub async fn inventory(
         &self,
         credentials: &KvmdCredentials,
-    ) -> Result<KvmdInventory, KvmdClientError> {
+    ) -> Result<KvmdInventory, KvmdInventoryError> {
         let (info, atx, hid, msd, streamer) = tokio::try_join!(
-            self.info(credentials),
-            self.atx(credentials),
-            self.hid(credentials),
-            self.msd(credentials),
-            self.streamer(credentials),
+            async {
+                self.info(credentials)
+                    .await
+                    .map_err(|source| KvmdInventoryError::new(KvmdReadEndpoint::Info, source))
+            },
+            async {
+                self.atx(credentials)
+                    .await
+                    .map_err(|source| KvmdInventoryError::new(KvmdReadEndpoint::Atx, source))
+            },
+            async {
+                self.hid(credentials)
+                    .await
+                    .map_err(|source| KvmdInventoryError::new(KvmdReadEndpoint::Hid, source))
+            },
+            async {
+                self.msd(credentials)
+                    .await
+                    .map_err(|source| KvmdInventoryError::new(KvmdReadEndpoint::Msd, source))
+            },
+            async {
+                self.streamer(credentials)
+                    .await
+                    .map_err(|source| KvmdInventoryError::new(KvmdReadEndpoint::Streamer, source))
+            },
         )?;
         Ok(KvmdInventory {
             info,
@@ -156,6 +211,7 @@ impl KvmdReadClient {
             .method(Method::GET)
             .uri(path)
             .header(header::ACCEPT, "application/json")
+            .header(header::HOST, "localhost")
             .header(header::USER_AGENT, "Hardened-BliKVM-broker/0.1")
             .header("x-kvmd-user", credentials.username_header())
             .header("x-kvmd-passwd", credentials.password_header())
@@ -262,6 +318,7 @@ mod tests {
 
         let request = server.await.unwrap().to_ascii_lowercase();
         assert!(request.starts_with("get /api/atx http/1.1\r\n"));
+        assert!(request.contains("host: localhost\r\n"));
         assert!(request.contains("x-kvmd-user: test-operator\r\n"));
         assert!(request.contains("x-kvmd-passwd: not-a-real-password\r\n"));
     }

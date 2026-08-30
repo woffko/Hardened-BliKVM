@@ -133,8 +133,12 @@ async fn process_request(
                 inventory: sanitize_kvmd_inventory(source),
             },
             Err(error) => {
-                let code = map_client_error(&error);
-                eprintln!("KVMD inventory request failed with {code:?}");
+                let code = map_client_error(&error.source);
+                eprintln!(
+                    "KVMD inventory request failed with {code:?} at {} with {}",
+                    error.endpoint.as_str(),
+                    client_error_class(&error.source),
+                );
                 BrokerReadResponse::Error { code }
             }
         },
@@ -143,6 +147,22 @@ async fn process_request(
         schema_version: BROKER_SCHEMA_VERSION,
         request_id: request.request_id,
         response,
+    }
+}
+
+fn client_error_class(error: &KvmdClientError) -> String {
+    match error {
+        KvmdClientError::Status(status) => format!("status_{}", status.as_u16()),
+        KvmdClientError::Io(_) => "io".into(),
+        KvmdClientError::Timeout => "timeout".into(),
+        KvmdClientError::Hyper(_) => "hyper".into(),
+        KvmdClientError::ResponseTooLarge => "response_too_large".into(),
+        KvmdClientError::InvalidJson(_) => "invalid_json".into(),
+        KvmdClientError::ApiRejected => "api_rejected".into(),
+        KvmdClientError::MissingResult => "missing_result".into(),
+        KvmdClientError::RelativeSocketPath => "relative_socket_path".into(),
+        KvmdClientError::InvalidResponseLimit => "invalid_response_limit".into(),
+        KvmdClientError::Http(_) => "http_build".into(),
     }
 }
 
@@ -182,6 +202,10 @@ mod tests {
         assert_eq!(
             map_client_error(&KvmdClientError::ResponseTooLarge),
             BrokerErrorCode::InvalidBackendResponse
+        );
+        assert_eq!(
+            client_error_class(&KvmdClientError::Status(http::StatusCode::BAD_REQUEST)),
+            "status_400"
         );
     }
 

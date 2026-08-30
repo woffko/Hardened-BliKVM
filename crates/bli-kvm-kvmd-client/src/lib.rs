@@ -7,7 +7,7 @@ mod client;
 mod credentials;
 mod models;
 
-pub use client::{KvmdClientError, KvmdReadClient};
+pub use client::{KvmdClientError, KvmdInventoryError, KvmdReadClient, KvmdReadEndpoint};
 pub use credentials::{CredentialError, KvmdCredentials};
 pub use models::{
     KvmdAtxLeds, KvmdAtxState, KvmdEndpointState, KvmdExtrasInfo, KvmdHidState, KvmdInfoState,
