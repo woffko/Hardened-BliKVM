@@ -156,6 +156,10 @@ After the originating command has completely exited, token present selects the
 candidate service; token absent selects the confirmed service after rollback.
 The root apply services invoke `systemctl restart` only for those two literal
 unit names. No request-derived command, unit name, shell, TCP control socket,
-or browser route is involved. These orchestration templates are statically
-verified but remain uninstalled and unenabled pending a temporary H616 process
-gate.
+or browser route is involved. The exact server, reporter, one-use systemd
+credential, confirmation socket, failed candidate, timeout rollback, and
+restored server passed a temporary isolated H616 process gate. The packaged
+templates remain uninstalled and unenabled; production key enrollment, live
+installation, interruption, reboot, and full-system recovery are separate
+gates documented in
+`../baselines/device-update-process-orchestration.md`.

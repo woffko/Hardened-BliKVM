@@ -96,6 +96,14 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertNotIn("LoadCredential", unit)
         self.assertIn("StandardInput=socket", confirmation)
         self.assertIn("confirm-stdin", confirmation)
+        self.assertIn(
+            "ReadWritePaths=/var/lib/hardened-blikvm-update /run/hardened-blikvm-update",
+            confirmation,
+        )
+        self.assertIn(
+            "ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-update /run/hardened-blikvm-update",
+            watchdog,
+        )
         self.assertIn("Accept=yes", socket)
         self.assertIn("SocketMode=0620", socket)
         self.assertIn("SocketGroup=hardened-blikvm", socket)
@@ -140,6 +148,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         )
         self.assertIn("activate %i", activation)
         self.assertNotIn("sh -c", activation)
+        self.assertIn(
+            "ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-update /run/hardened-blikvm-update",
+            activation,
+        )
         self.assertIn(
             "systemctl restart hardened-blikvm-server-candidate.service",
             apply_candidate,

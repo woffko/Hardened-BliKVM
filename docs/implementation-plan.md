@@ -187,8 +187,7 @@ only marker-owned bounded residue after link/owner/device/type validation;
 read-only partial trees and symlink-escape refusal are tested. Reference-aware
 transactional slot garbage collection now protects every journal/current
 reference, retains a bounded newest-candidate set, and uses a durable marker
-plus atomic tombstone rename with pre/post-rename crash recovery. The installed
-candidate-process orchestration gate is the next application-update slice.
+plus atomic tombstone rename with pre/post-rename crash recovery.
 The exact GC-linked AArch64 supervisor passed the corresponding isolated H616
 gate: sequence 1 was deleted while active sequence 2 and protected previous
 sequence 3 remained, followed by clean marker/tombstone and `/tmp` cleanup.
@@ -197,12 +196,15 @@ Checkpoint: a minimal Rust health reporter now validates the real server's
 loopback health contract, reads the token only from a systemd credential, and
 submits exactly 32 bytes to the Unix confirmation socket. Static current,
 candidate, activate, apply-candidate, and apply-confirmed units use literal
-paths/unit names and no shell. Temporary installed H616 process orchestration
-remains the next acceptance gate.
-Two clean AArch64 builds at source commit `858f12f` produced a byte-identical
-linked static-PIE supervisor and prototype archive; exact hashes and the
-musl-specific raw `SYS_renameat2` correction are recorded in
-`baselines/application-update-supervisor.md`.
+paths/unit names and no shell. The exact Rust server, supervisor, reporter,
+systemd credential delivery, socket confirmation, failed-candidate timeout,
+rollback, and restored server then passed a temporary isolated H616 process
+gate. The confirmation sandbox writes only its state and runtime directories;
+all staging and transient units were removed, KVMD remained active, and no
+physical action occurred. Two independent AArch64 builds at source commit
+`2be3f7f` produced byte-identical binaries and prototype archives. Exact hashes,
+the sandbox finding, and the remaining installation/interruption/recovery gates
+are recorded in `baselines/device-update-process-orchestration.md`.
 
 ## Phase 7: Release acceptance
 

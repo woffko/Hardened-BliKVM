@@ -44,3 +44,14 @@ This baseline proves target linking, static-PIE hardening, and deterministic
 artifact generation. It does not prove runtime syscall availability, systemd
 socket activation, live watchdog behavior, storage interruption recovery, or
 H616 acceptance.
+
+## Candidate-process checkpoint
+
+Source commit `2be3f7ff767ae9ed3fa07d843310d667ca7dd418` added bounded
+lock acquisition and stable local-only manager failure codes. Two independent
+AArch64 builds produced the same supervisor
+`e6dd0b2396fd230830cb87d1a5b14bde03436df4b3be12d01b612b3fc87edee4`
+and byte-identical prototype archives
+`e7e7ffa6e43007fcf0f9fdf2f864fcf2281553ec44ba75d3c1883f06c48ca674`.
+That exact supervisor passed the isolated H616 candidate-process gate described
+in `device-update-process-orchestration.md`.

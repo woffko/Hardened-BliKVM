@@ -60,6 +60,14 @@ timer runs every two seconds, but its condition prevents operation before a
 valid configuration and initialized journal exist. These units are templates
 only and are not enabled by the prototype bundle.
 
+`ProtectSystem=strict` is paired with explicit path allowlists. Confirmation
+can write only the update state and runtime directories. Activation and the
+watchdog additionally need the separately provisioned slots root for the
+atomic `current` pointer and marker-bound cleanup. Unix ownership and mode
+checks remain mandatory; `ReadWritePaths` does not grant permissions by
+itself. No update service receives a broad `/var/lib`, `/run`, or root-filesystem
+write exception.
+
 The local `stage` command is intentionally separate from `activate`: it accepts
 an absolute archive path, applies the configured public trust root, and can
 only publish an immutable slot. It cannot change the active pointer. No upload
