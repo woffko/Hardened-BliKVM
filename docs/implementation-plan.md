@@ -311,6 +311,9 @@ unreviewed binary provenance, branch-like revisions, invalid license/hash,
 SPDX drift, cross-reference mismatch, unknown fields, and non-canonical or
 oversized documents. The crate performs no legal inference, network access,
 scanning, signing, or image build, and no real passing manifest exists yet.
+The two-build codegen checkpoint and exact missing real inputs are recorded in
+`baselines/recovery-inputs.md`; synthetic test evidence is not a recovery
+release candidate.
 
 ## Phase 7: Release acceptance
 
