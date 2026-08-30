@@ -172,6 +172,9 @@ confirmation or rollback. A sandboxed two-second watchdog timer and
 group-gated health-only Unix socket are packaged but not installed or enabled.
 There is no activation socket, production trust key, HTTP/GUI route, process
 restart wiring, or H616 acceptance yet.
+Its local `stage` command now verifies one absolute archive path and publishes
+an immutable slot without changing `current`, so device acceptance can use the
+same production CLI rather than manually constructing slot trees.
 Two clean AArch64 builds at source commit `b754ae0` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in

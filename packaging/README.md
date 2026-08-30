@@ -60,6 +60,11 @@ timer runs every two seconds, but its condition prevents operation before a
 valid configuration and initialized journal exist. These units are templates
 only and are not enabled by the prototype bundle.
 
+The local `stage` command is intentionally separate from `activate`: it accepts
+an absolute archive path, applies the configured public trust root, and can
+only publish an immutable slot. It cannot change the active pointer. No upload
+or activation API is exposed by these service templates.
+
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,
 environment variable, log, or support bundle:

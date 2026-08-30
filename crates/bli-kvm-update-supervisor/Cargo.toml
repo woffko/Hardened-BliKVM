@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 bli-kvm-update-manager = { path = "../bli-kvm-update-manager" }
 bli-kvm-update-runtime = { path = "../bli-kvm-update-runtime" }
+bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
 bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
 libc.workspace = true
 serde.workspace = true
@@ -17,7 +18,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
 bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
 ed25519-dalek = { workspace = true, features = ["signature"] }
 sha2.workspace = true

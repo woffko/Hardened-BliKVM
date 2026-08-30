@@ -7,11 +7,10 @@ use std::{
     process::{Command, Stdio},
 };
 
-use bli_kvm_update_stager::ApplicationSlotStager;
 use bli_kvm_update_verifier::{
     APPLICATION_ARCHITECTURE, APPLICATION_FORMAT_V1, APPLICATION_MANIFEST_PATH,
     APPLICATION_PRODUCT, APPLICATION_SIGNATURE_PATH, APPLICATION_TARGET, ApplicationFile,
-    ApplicationManifest, ApplicationTrustRoot,
+    ApplicationManifest,
 };
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::json;
@@ -28,9 +27,8 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let runtime = create_private_directory(root.path(), "runtime");
     let sources = create_private_directory(root.path(), "sources");
     let signing = SigningKey::from_bytes(&[57; 32]);
-    let trust = ApplicationTrustRoot::new(KEY_ID, signing.verifying_key().to_bytes()).unwrap();
-    let slot1 = stage(&slots, &sources, &signing, &trust, 1);
-    let slot2 = stage(&slots, &sources, &signing, &trust, 2);
+    let source1 = write_bundle(&sources, &signing, 1);
+    let source2 = write_bundle(&sources, &signing, 2);
     let config = root.path().join("supervisor.json");
     fs::write(
         &config,
@@ -52,13 +50,28 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     fs::set_permissions(&config, Permissions::from_mode(0o600)).unwrap();
 
     let binary = env!("CARGO_BIN_EXE_bli-kvm-update-supervisor");
-    let initialized = command(binary, &config, &["initialize", &slot1.slot_id])
+    let staged1 = command(binary, &config, &["stage", source1.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(staged1.status.success(), "{:?}", staged1.stderr);
+    let staged1 = json_output(&staged1);
+    assert_eq!(staged1["result"], "published");
+    let slot1 = staged1["slotId"].as_str().unwrap().to_string();
+    let staged2 = command(binary, &config, &["stage", source2.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(staged2.status.success(), "{:?}", staged2.stderr);
+    let staged2 = json_output(&staged2);
+    assert_eq!(staged2["result"], "published");
+    let slot2 = staged2["slotId"].as_str().unwrap().to_string();
+
+    let initialized = command(binary, &config, &["initialize", &slot1])
         .output()
         .unwrap();
     assert!(initialized.status.success(), "{:?}", initialized.stderr);
     assert_eq!(json_output(&initialized)["result"], "initialized");
 
-    let activated = command(binary, &config, &["activate", &slot2.slot_id])
+    let activated = command(binary, &config, &["activate", &slot2])
         .output()
         .unwrap();
     assert!(activated.status.success(), "{:?}", activated.stderr);
@@ -90,7 +103,7 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let status = command(binary, &config, &["status"]).output().unwrap();
     assert!(status.status.success(), "{:?}", status.stderr);
     let status = json_output(&status);
-    assert_eq!(status["activeSlotId"], slot2.slot_id);
+    assert_eq!(status["activeSlotId"], slot2);
     assert_eq!(status["floorSequence"], 2);
 }
 
@@ -112,23 +125,14 @@ fn create_private_directory(root: &Path, name: &str) -> PathBuf {
     path
 }
 
-fn stage(
-    slots: &Path,
-    sources: &Path,
-    signing: &SigningKey,
-    trust: &ApplicationTrustRoot,
-    sequence: u64,
-) -> bli_kvm_update_stager::StagedApplication {
+fn write_bundle(sources: &Path, signing: &SigningKey, sequence: u64) -> PathBuf {
     let payload = payload(sequence);
     let manifest = manifest(sequence, &payload);
     let archive = bundle(signing, &manifest, &payload);
     let source = sources.join(format!("application-{sequence}.tar"));
     fs::write(&source, archive).unwrap();
     fs::set_permissions(&source, Permissions::from_mode(0o600)).unwrap();
-    ApplicationSlotStager::open(slots)
-        .unwrap()
-        .stage(source, trust)
-        .unwrap()
+    source
 }
 
 fn payload(sequence: u64) -> BTreeMap<&'static str, (u32, Vec<u8>)> {

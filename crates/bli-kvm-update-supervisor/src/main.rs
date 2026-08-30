@@ -16,6 +16,7 @@ use bli_kvm_update_runtime::{
     ChallengeReconciliation, HealthChallengeStore, SupervisorRecovery, UpdateRuntimeError,
     UpdateSupervisor,
 };
+use bli_kvm_update_stager::{ApplicationSlotStager, ApplicationStageError, StageDisposition};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -35,6 +36,8 @@ enum SupervisorCliError {
     Manager(#[from] UpdateManagerError),
     #[error("update runtime rejected the command")]
     Runtime(#[from] UpdateRuntimeError),
+    #[error("signed application staging rejected the command")]
+    Stager(#[from] ApplicationStageError),
     #[error("supervisor I/O failed")]
     Io(#[from] io::Error),
     #[error("supervisor receipt serialization failed")]
@@ -44,6 +47,7 @@ enum SupervisorCliError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliCommand {
     Status,
+    Stage(PathBuf),
     Initialize(String),
     Activate(String),
     WatchdogOnce,
@@ -67,34 +71,55 @@ fn main() -> ExitCode {
 fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCliError> {
     let (config_path, command) = parse_arguments(arguments)?;
     let config = load_config(&config_path)?;
-    let manager = ApplicationUpdateManager::open(
-        config.slot_root,
-        config.state_root,
-        config.trust_root,
-        config.system_sequence,
-        config.health_timeout_ms,
-    )?;
-    let challenges = HealthChallengeStore::open(config.runtime_root)?;
-    let supervisor = UpdateSupervisor::new(manager, challenges);
     let receipt = match command {
-        CliCommand::Status => status_receipt(&supervisor.status()?),
-        CliCommand::Initialize(slot_id) => {
-            let status = supervisor.initialize(&slot_id)?;
+        CliCommand::Stage(source) => {
+            let staged =
+                ApplicationSlotStager::open(config.slot_root)?.stage(source, &config.trust_root)?;
             json!({
-                "command": "initialize",
-                "result": "initialized",
-                "status": status_receipt(&status),
+                "command": "stage",
+                "result": match staged.disposition {
+                    StageDisposition::Published => "published",
+                    StageDisposition::AlreadyPresent => "already_present",
+                },
+                "slotId": staged.slot_id,
+                "version": staged.manifest.version,
+                "sequence": staged.manifest.sequence,
+                "manifestSha256": staged.manifest_sha256,
+                "payloadBytes": staged.payload_bytes,
             })
         }
-        CliCommand::Activate(slot_id) => {
-            let activation = supervisor.activate(&slot_id)?;
-            activation_receipt(activation.outcome, activation.credential_path.is_some())
-        }
-        CliCommand::WatchdogOnce => watchdog_receipt(supervisor.watchdog_once()?),
-        CliCommand::ConfirmStdin => {
-            let stdin = io::stdin();
-            let mut locked = stdin.lock();
-            confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
+        command => {
+            let manager = ApplicationUpdateManager::open(
+                config.slot_root,
+                config.state_root,
+                config.trust_root,
+                config.system_sequence,
+                config.health_timeout_ms,
+            )?;
+            let challenges = HealthChallengeStore::open(config.runtime_root)?;
+            let supervisor = UpdateSupervisor::new(manager, challenges);
+            match command {
+                CliCommand::Status => status_receipt(&supervisor.status()?),
+                CliCommand::Initialize(slot_id) => {
+                    let status = supervisor.initialize(&slot_id)?;
+                    json!({
+                        "command": "initialize",
+                        "result": "initialized",
+                        "status": status_receipt(&status),
+                    })
+                }
+                CliCommand::Activate(slot_id) => {
+                    let activation = supervisor.activate(&slot_id)?;
+                    activation_receipt(activation.outcome, activation.credential_path.is_some())
+                }
+                CliCommand::WatchdogOnce => watchdog_receipt(supervisor.watchdog_once()?),
+                CliCommand::ConfirmStdin => {
+                    let stdin = io::stdin();
+                    let mut locked = stdin.lock();
+                    confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
+                }
+                CliCommand::Stage(_) => unreachable!("stage handled before manager creation"),
+            }
         }
     };
     let stdout = io::stdout();
@@ -128,6 +153,11 @@ fn parse_arguments(
         "status" => CliCommand::Status,
         "watchdog-once" => CliCommand::WatchdogOnce,
         "confirm-stdin" => CliCommand::ConfirmStdin,
+        "stage" => CliCommand::Stage(PathBuf::from(
+            arguments
+                .next()
+                .ok_or(SupervisorCliError::InvalidArguments)?,
+        )),
         "initialize" | "activate" => {
             let slot_id = arguments
                 .next()
@@ -305,6 +335,15 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(parsed.1, CliCommand::Activate(_)));
+        let staged = parse_arguments([
+            "supervisor".into(),
+            "--config".into(),
+            "/etc/hardened-blikvm/update.json".into(),
+            "stage".into(),
+            "/var/lib/hardened-blikvm-incoming/application.tar".into(),
+        ])
+        .unwrap();
+        assert!(matches!(staged.1, CliCommand::Stage(_)));
 
         for arguments in [
             vec!["supervisor", "status"],

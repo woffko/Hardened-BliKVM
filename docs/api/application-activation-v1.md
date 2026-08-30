@@ -102,7 +102,10 @@ ID twice around `CLOCK_BOOTTIME`, generates one-use 32-byte health credentials,
 stores them only in a mode-0400 runtime file, compares responses in constant
 time, zeroizes token buffers, and reconciles challenge state with the manager.
 
-`bli-kvm-update-supervisor` exposes only fixed local commands. Slot IDs and a
+`bli-kvm-update-supervisor` exposes only fixed local commands. `stage` accepts
+one absolute local archive path and can publish a verified slot but cannot
+select it. `initialize`, `activate`, `status`, and `watchdog-once` accept only
+their bounded non-secret values. Slot IDs, archive/config paths, and a
 root-owned public-key configuration may appear in argv; a health token may
 enter only as exactly 32 raw stdin bytes for `confirm-stdin`. JSON receipts
 never contain the token, credential path, or public key. The packaged watchdog
