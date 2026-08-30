@@ -65,8 +65,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("bli-kvm-video-proxy", builder)
         self.assertIn("bli-kvm-control-broker", builder)
         self.assertIn("bli-kvm-update-supervisor", builder)
+        self.assertIn("bli-kvm-update-health-reporter", builder)
         self.assertIn("hardened-blikvm-update-watchdog.timer", builder)
         self.assertIn("hardened-blikvm-update-confirm.socket", builder)
+        self.assertIn("packaging/tmpfiles.d/hardened-blikvm-update.conf", builder)
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
 
@@ -99,6 +101,59 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("SocketGroup=hardened-blikvm", socket)
         self.assertNotIn("ListenStream=0.0.0.0", socket)
         self.assertIn("OnUnitActiveSec=2s", timer)
+
+    def test_candidate_orchestration_is_fixed_and_credential_gated(self) -> None:
+        candidate = (
+            ROOT / "packaging/systemd/hardened-blikvm-server-candidate.service"
+        ).read_text()
+        current = (
+            ROOT / "packaging/systemd/hardened-blikvm-server-current.service"
+        ).read_text()
+        activation = (
+            ROOT / "packaging/systemd/hardened-blikvm-update-activate@.service"
+        ).read_text()
+        apply_candidate = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-update-apply-candidate.service"
+        ).read_text()
+        apply_confirmed = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-update-apply-confirmed.service"
+        ).read_text()
+        tmpfiles = (
+            ROOT / "packaging/tmpfiles.d/hardened-blikvm-update.conf"
+        ).read_text()
+        self.assertIn(
+            "LoadCredential=application-health-token:/run/hardened-blikvm-update/health-token",
+            candidate,
+        )
+        self.assertIn("bli-kvm-update-health-reporter", candidate)
+        self.assertIn("--health-endpoint 127.0.0.1:18080", candidate)
+        self.assertIn("--confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock", candidate)
+        self.assertIn(
+            "ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server",
+            candidate,
+        )
+        self.assertIn(
+            "ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server",
+            current,
+        )
+        self.assertIn("activate %i", activation)
+        self.assertNotIn("sh -c", activation)
+        self.assertIn(
+            "systemctl restart hardened-blikvm-server-candidate.service",
+            apply_candidate,
+        )
+        self.assertIn(
+            "systemctl restart hardened-blikvm-server-current.service",
+            apply_confirmed,
+        )
+        self.assertNotIn("%i", apply_candidate)
+        self.assertNotIn("%i", apply_confirmed)
+        self.assertIn(
+            "d /var/lib/hardened-blikvm-slots 0750 hardened-blikvm-update hardened-blikvm",
+            tmpfiles,
+        )
 
 
 if __name__ == "__main__":

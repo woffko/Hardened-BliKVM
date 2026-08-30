@@ -70,6 +70,16 @@ socket. It retains the newest `N` unreferenced signed candidates, never deletes
 active/confirmed/previous/pending/current references, and completes any
 durable deletion tombstone before considering new collection.
 
+Confirmed and candidate server templates both execute the signed `current`
+slot. The candidate requires `application-health-token` through systemd
+credentials and runs the dedicated Rust health reporter only after startup.
+The reporter validates the exact loopback health response before submitting
+the token to the Unix socket. Fixed root apply services restart only the
+literal candidate or confirmed unit after activate/watchdog success; the
+unprivileged update service does not receive general `systemctl` authority.
+The slots root is provisioned by tmpfiles as mode 0750, owned by the update
+identity and read-only to the shared runtime group; group write is forbidden.
+
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,
 environment variable, log, or support bundle:

@@ -67,6 +67,12 @@ one-use stdin-only confirmation path. Its systemd socket is health-only; local
 activation remains an explicit fixed CLI operation for a future update worker.
 No HTTP route or browser capability is connected to it.
 
+Candidate process orchestration is split again: PID 1 copies the one-use token
+into a read-only credential visible to the candidate unit, while a small Rust
+reporter validates the loopback server health contract and can only write that
+token to the health socket. Fixed root apply units perform the two literal
+candidate/confirmed restarts after activation or watchdog completion.
+
 ## Transition video design
 
 The first Bli adapter may keep uStreamer and Janus as loopback-only processes.

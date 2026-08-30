@@ -92,6 +92,12 @@ Unix socket as exact raw stdin. It has no activation socket, TCP family,
 device, capability, shell, or block authority. These units remain uninstalled
 and unenabled on H616.
 
+Candidate readiness is not inferred from process existence alone. A separate
+reporter validates the exact loopback Rust health response before forwarding a
+systemd-delivered one-use token to the Unix-only confirmation socket. Fixed
+root apply services may restart only the literal candidate or confirmed unit;
+the update identity itself has no general service-manager authority.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

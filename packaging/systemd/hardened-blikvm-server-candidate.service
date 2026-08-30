@@ -1,0 +1,61 @@
+[Unit]
+Description=Hardened BliKVM health-gated candidate application server
+Documentation=https://github.com/woffko/Hardened-BliKVM
+Requires=hardened-blikvm-platform-broker.service hardened-blikvm-update-confirm.socket
+Wants=hardened-blikvm-video-proxy.service
+After=hardened-blikvm-platform-broker.service hardened-blikvm-video-proxy.service hardened-blikvm-update-confirm.socket
+Conflicts=hardened-blikvm-server.service hardened-blikvm-server-current.service
+ConditionPathExists=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
+ConditionPathExists=/var/lib/hardened-blikvm-slots/current/share/web/index.html
+ConditionPathExists=/run/hardened-blikvm-update/health-token
+
+[Service]
+Type=simple
+User=hardened-blikvm-server
+Group=hardened-blikvm
+UMask=0077
+StateDirectory=hardened-blikvm
+StateDirectoryMode=0700
+Environment=BLI_KVM_BIND=127.0.0.1:18080
+Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots/current/share/web
+Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
+Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
+Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
+Environment=BLI_KVM_SECURE_COOKIES=1
+Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
+LoadCredential=application-health-token:/run/hardened-blikvm-update/health-token
+ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
+ExecStartPost=/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter --health-endpoint 127.0.0.1:18080 --confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock
+Restart=no
+TimeoutStartSec=15s
+TimeoutStopSec=10s
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+IPAddressDeny=any
+IPAddressAllow=localhost
+SocketBindDeny=any
+SocketBindAllow=tcp:18080
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

@@ -14,8 +14,10 @@ trap cleanup EXIT HUP INT TERM
 install -d -m 0755 \
   "$test_root/bin" \
   "$test_root/etc" \
+  "$test_root/usr/bin" \
   "$test_root/usr/lib/systemd/system" \
   "$test_root/usr/lib/sysusers.d" \
+  "$test_root/usr/lib/tmpfiles.d" \
   "$test_root/usr/libexec/hardened-blikvm" \
   "$test_root/usr/share/hardened-blikvm/web"
 install -m 0755 /bin/true "$test_root/bin/true"
@@ -24,6 +26,8 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-contro
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-proxy"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-server"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter"
+install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0644 \
   "$project_root"/packaging/systemd/*.service \
   "$project_root"/packaging/systemd/*.socket \
@@ -32,6 +36,9 @@ install -m 0644 \
 install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm.conf" \
   "$test_root/usr/lib/sysusers.d/"
+install -m 0644 \
+  "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
+  "$test_root/usr/lib/tmpfiles.d/"
 : > "$test_root/usr/share/hardened-blikvm/web/index.html"
 printf '%s\n' \
   '[Service]' \
@@ -45,6 +52,13 @@ for target in sysinit.target basic.target shutdown.target multi-user.target sock
 done
 
 systemd-sysusers --root="$test_root"
+systemd-tmpfiles --cat-config --root="$test_root" >/dev/null
+install -d -m 0755 \
+  "$test_root/var/lib/hardened-blikvm-slots/current/bin" \
+  "$test_root/var/lib/hardened-blikvm-slots/current/share/web"
+install -m 0755 /bin/true \
+  "$test_root/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server"
+: > "$test_root/var/lib/hardened-blikvm-slots/current/share/web/index.html"
 systemd-analyze verify --root="$test_root" \
   hardened-blikvm-platform-broker.service \
   hardened-blikvm-control-broker.service \
@@ -53,7 +67,12 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-update-watchdog.service \
   hardened-blikvm-update-watchdog.timer \
   hardened-blikvm-update-confirm.socket \
-  hardened-blikvm-update-confirm@.service
+  hardened-blikvm-update-confirm@.service \
+  hardened-blikvm-update-activate@.service \
+  hardened-blikvm-update-apply-candidate.service \
+  hardened-blikvm-update-apply-confirmed.service \
+  hardened-blikvm-server-current.service \
+  hardened-blikvm-server-candidate.service
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
@@ -61,4 +80,9 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-activate@.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-apply-candidate.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-apply-confirmed.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-server-current.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-server-candidate.service" \
   >/dev/null

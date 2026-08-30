@@ -61,8 +61,8 @@ at the same sequence is rejected. Failed candidates do not raise the floor.
 
 Each activation has a non-zero 128-bit operation ID and a non-zero 256-bit
 health-binding digest. The journal stores only those opaque bindings, not a
-plaintext credential. The future supervisor must generate and validate the
-actual one-use health credential, then pass its digest to this library; a
+plaintext credential. The local supervisor generates and validates the actual
+one-use health credential, then passes its digest to this library; a
 network request must never call confirmation directly.
 
 The health window is bound to a kernel boot ID and a monotonic boot-time clock.
@@ -117,6 +117,25 @@ The supervisor also passed an isolated native H616 gate covering staging,
 confirmation, floor enforcement, downgrade rejection, lost-token rollback,
 cleanup, and a transient systemd sandbox. The packaged socket/timer remain
 uninstalled and unenabled. Candidate-process restart ordering, systemd
-credential delivery, abandoned-staging cleanup, slot garbage collection,
-journal backup, hardware-backed rollback counters, and live interruption tests
-remain separate gates.
+credential delivery, journal backup, hardware-backed rollback counters, and
+live interruption tests remain separate gates. Marker-safe staging cleanup and
+transactional reference-aware slot garbage collection are implemented and
+passed their isolated H616 gate.
+
+The next packaged orchestration layer has separate confirmed and candidate
+server units. Both execute only the signed `current` slot. The candidate unit
+requires the one-use runtime token through systemd `LoadCredential`, waits for
+the Rust server's strict loopback `/api/health` response, and then runs the
+minimal `bli-kvm-update-health-reporter`. The reporter accepts only IPv4
+loopback, validates the bounded HTTP status/content type/product JSON, reads
+exactly 32 credential bytes, writes them only to the fixed Unix confirmation
+socket, and zeroizes the buffer.
+
+Local activation and watchdog units use fixed `OnSuccess` apply services.
+After the originating command has completely exited, token present selects the
+candidate service; token absent selects the confirmed service after rollback.
+The root apply services invoke `systemctl restart` only for those two literal
+unit names. No request-derived command, unit name, shell, TCP control socket,
+or browser route is involved. These orchestration templates are statically
+verified but remain uninstalled and unenabled pending a temporary H616 process
+gate.

@@ -192,6 +192,13 @@ candidate-process orchestration gate is the next application-update slice.
 The exact GC-linked AArch64 supervisor passed the corresponding isolated H616
 gate: sequence 1 was deleted while active sequence 2 and protected previous
 sequence 3 remained, followed by clean marker/tombstone and `/tmp` cleanup.
+
+Checkpoint: a minimal Rust health reporter now validates the real server's
+loopback health contract, reads the token only from a systemd credential, and
+submits exactly 32 bytes to the Unix confirmation socket. Static current,
+candidate, activate, apply-candidate, and apply-confirmed units use literal
+paths/unit names and no shell. Temporary installed H616 process orchestration
+remains the next acceptance gate.
 Two clean AArch64 builds at source commit `858f12f` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in

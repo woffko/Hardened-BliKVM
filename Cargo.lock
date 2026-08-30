@@ -336,6 +336,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-update-health-reporter"
+version = "0.1.0"
+dependencies = [
+ "httparse",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "bli-kvm-update-manager"
 version = "0.1.0"
 dependencies = [
