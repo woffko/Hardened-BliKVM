@@ -90,12 +90,23 @@ web_tree_sha=$(
 server_size=$(wc -c < "$stage/bin/bli-kvm-server" | tr -d ' ')
 broker_size=$(wc -c < "$stage/libexec/bli-kvm-platform-broker" | tr -d ' ')
 
+source_state=uncommitted-development-checkpoint
+source_commit=
+if git diff --quiet \
+  && git diff --cached --quiet \
+  && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+  source_state=committed-development-checkpoint
+  source_commit=$(git rev-parse HEAD)
+fi
+
 jq -n \
   --arg server_sha "$server_sha" \
   --arg broker_sha "$broker_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
+  --arg source_state "$source_state" \
+  --arg source_commit "$source_commit" \
   --argjson server_size "$server_size" \
   --argjson broker_size "$broker_size" \
   '{
@@ -103,7 +114,8 @@ jq -n \
     product: "Hardened BliKVM",
     version: "0.1.0-dev",
     target: "aarch64-unknown-linux-musl",
-    sourceState: "uncommitted-development-checkpoint",
+    sourceState: $source_state,
+    sourceCommit: (if $source_commit == "" then null else $source_commit end),
     releaseAccepted: false,
     deviceAccepted: false,
     artifacts: {
