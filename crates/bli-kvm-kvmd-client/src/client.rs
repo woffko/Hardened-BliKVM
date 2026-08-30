@@ -114,39 +114,41 @@ impl KvmdReadClient {
         })
     }
 
+    // These are KVMD's internal Unix-socket routes. The public Nginx boundary
+    // rewrites `/api/<route>` to `/<route>` before proxying to this socket.
     pub async fn info(
         &self,
         credentials: &KvmdCredentials,
     ) -> Result<KvmdInfoState, KvmdClientError> {
-        self.get_json("/api/info", credentials).await
+        self.get_json("/info", credentials).await
     }
 
     pub async fn atx(
         &self,
         credentials: &KvmdCredentials,
     ) -> Result<KvmdAtxState, KvmdClientError> {
-        self.get_json("/api/atx", credentials).await
+        self.get_json("/atx", credentials).await
     }
 
     pub async fn hid(
         &self,
         credentials: &KvmdCredentials,
     ) -> Result<KvmdHidState, KvmdClientError> {
-        self.get_json("/api/hid", credentials).await
+        self.get_json("/hid", credentials).await
     }
 
     pub async fn msd(
         &self,
         credentials: &KvmdCredentials,
     ) -> Result<KvmdMsdState, KvmdClientError> {
-        self.get_json("/api/msd", credentials).await
+        self.get_json("/msd", credentials).await
     }
 
     pub async fn streamer(
         &self,
         credentials: &KvmdCredentials,
     ) -> Result<KvmdStreamerState, KvmdClientError> {
-        self.get_json("/api/streamer", credentials).await
+        self.get_json("/streamer", credentials).await
     }
 
     pub async fn inventory(
@@ -317,7 +319,7 @@ mod tests {
         assert_eq!(state.leds.power, Some(true));
 
         let request = server.await.unwrap().to_ascii_lowercase();
-        assert!(request.starts_with("get /api/atx http/1.1\r\n"));
+        assert!(request.starts_with("get /atx http/1.1\r\n"));
         assert!(request.contains("host: localhost\r\n"));
         assert!(request.contains("x-kvmd-user: test-operator\r\n"));
         assert!(request.contains("x-kvmd-passwd: not-a-real-password\r\n"));

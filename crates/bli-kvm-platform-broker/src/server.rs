@@ -226,19 +226,19 @@ mod tests {
                 let request = String::from_utf8(request).unwrap();
                 let path = request.split_whitespace().nth(1).unwrap();
                 let body = match path {
-                    "/api/info" => {
+                    "/info" => {
                         r#"{"ok":true,"result":{"system":{"kvmd":{"version":"3.291"},"streamer":{"version":"6.11"}},"extras":{"janus":{"enabled":false}}}}"#
                     }
-                    "/api/atx" => {
+                    "/atx" => {
                         r#"{"ok":true,"result":{"enabled":true,"busy":false,"leds":{"power":true}}}"#
                     }
-                    "/api/hid" => {
+                    "/hid" => {
                         r#"{"ok":true,"result":{"online":true,"busy":false,"mouse":{"online":true}}}"#
                     }
-                    "/api/msd" => {
+                    "/msd" => {
                         r#"{"ok":true,"result":{"enabled":true,"online":true,"busy":false,"drive":{"connected":false}}}"#
                     }
-                    "/api/streamer" => {
+                    "/streamer" => {
                         r#"{"ok":true,"result":{"streamer":{"source":{"online":true}}}}"#
                     }
                     _ => panic!("unexpected read-only KVMD path"),
