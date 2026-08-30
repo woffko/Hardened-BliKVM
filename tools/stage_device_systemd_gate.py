@@ -27,6 +27,11 @@ VIDEO_UNIT = "hardened-blikvm-video-proxy.service"
 SERVER_UNIT = "hardened-blikvm-server.service"
 INVENTORY_REQUESTS = 20
 VIDEO_RECONNECTS = 5
+JPEG_COUNTER_AWK = (
+    "{for (field = 1; field <= NF; field++) "
+    "{if (previous == 255 && $field == 216) frames++; previous = $field}} "
+    "END {print frames + 0}"
+)
 PREFLIGHT_KEYS = {
     "account_absent",
     "architecture",
@@ -450,6 +455,7 @@ def build_runtime_script(
             "port_hex": f"{bind_port:04X}",
             "inventory_requests": INVENTORY_REQUESTS,
             "video_reconnects": VIDEO_RECONNECTS,
+            "jpeg_counter_awk": JPEG_COUNTER_AWK,
             "rollback_b64": _encoded(build_rollback_script(paths)),
             "broker_dropin_b64": _encoded(build_broker_dropin(paths)),
             "video_dropin_b64": _encoded(build_video_dropin(paths)),
@@ -698,7 +704,7 @@ capture_video() {
   tr -d '\r' < "$capture_headers" | grep -Eqi '^content-type: multipart/x-mixed-replace([;[:space:]]|$)'
   capture_bytes=$(wc -c < "$capture_file" | tr -d ' ')
   [ "$capture_bytes" -ge 1024 ]
-  capture_frames=$(od -An -v -t u1 "$capture_file" | awk '{for (index = 1; index <= NF; index++) {if (previous == 255 && $index == 216) frames++; previous = $index}} END {print frames + 0}')
+  capture_frames=$(od -An -v -t u1 "$capture_file" | awk "$jpeg_counter_awk")
   [ "$capture_frames" -ge 2 ]
 }
 capture_video "$test_root/video.mjpeg" "$test_root/video.headers" 3

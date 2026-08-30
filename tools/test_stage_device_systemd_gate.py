@@ -83,6 +83,17 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
         self.assertNotIn("/api/atx", runtime)
         self.assertNotIn("/api/hid", runtime)
 
+    def test_jpeg_counter_is_executable_with_posix_awk(self) -> None:
+        result = subprocess.run(
+            ["awk", gate.JPEG_COUNTER_AWK],
+            input=b"255 216 1 2 255 216 3 4\n",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, b"2\n")
+
     def test_rollback_refuses_unknown_htpasswd_state(self) -> None:
         paths = self._paths()
         rollback = gate.build_rollback_script(paths)
