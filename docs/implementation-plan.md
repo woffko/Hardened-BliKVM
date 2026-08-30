@@ -138,6 +138,10 @@ Checkpoint: the first application-only artifact verifier now uses strict
 in-process Ed25519, a distinct `app-` trust domain, deterministic raw-tar
 metadata, exact payload-tree matching, per-file SHA-256, and bounded resource
 limits. Negative tests cover key/signature/payload/path/type/tree failures.
+Two clean AArch64 builds at source commit `5603c2b` produced byte-identical
+linked payloads and prototype archives; the exact hashes and the isolated
+non-shipped Rust metadata variance are recorded in
+`baselines/application-update-verifier.md`.
 The verifier performs no extraction or activation yet; anti-rollback slots,
 health confirmation, rollback, and the separately signed system-image format
 remain open.
