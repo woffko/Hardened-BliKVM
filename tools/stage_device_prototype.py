@@ -596,7 +596,7 @@ case "$tmp_available" in ''|*[!0-9]*) exit 1 ;; esac
 [ "$(uname -m)" = aarch64 ]
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
-for tool in awk cat chmod chown curl df env findmnt getent grep head mkdir mv readlink rm setpriv sha256sum sleep stat systemctl tail tar tr; do
+for tool in awk cat chmod chown curl df env findmnt getent grep head mkdir mv readlink rm sed setpriv sha256sum sleep stat systemctl tail tar tr; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
 account=$(getent passwd nobody | head -n 1)
@@ -677,18 +677,28 @@ process_active() {
   [ -n "$state" ] && [ "$state" != Z ]
 }
 classify_server_exit() {
+  server_status=$1
+  error_code=$(sed -n -e 's/.*code: \([0-9][0-9]*\).*/\1/p' -e 's/.*os error \([0-9][0-9]*\).*/\1/p' "$stage_root/server.log" | head -n 1)
   if grep -q '^setpriv:' "$stage_root/server.log"; then
-    phase=wait-health-exited-setpriv
+    phase="wait-health-exited-setpriv-status-$server_status"
+  elif grep -q '^env:' "$stage_root/server.log"; then
+    phase="wait-health-exited-env-status-$server_status"
+  elif [ -n "$error_code" ]; then
+    phase="wait-health-exited-os-error-$error_code-status-$server_status"
   elif grep -q 'web root does not contain index.html' "$stage_root/server.log"; then
-    phase=wait-health-exited-web-root
+    phase="wait-health-exited-web-root-status-$server_status"
   elif grep -q 'Address already in use' "$stage_root/server.log"; then
-    phase=wait-health-exited-address-in-use
+    phase="wait-health-exited-address-in-use-status-$server_status"
   elif grep -q 'Permission denied' "$stage_root/server.log"; then
-    phase=wait-health-exited-permission
+    phase="wait-health-exited-permission-status-$server_status"
   elif grep -q 'BLi-KVM development server listening' "$stage_root/server.log"; then
-    phase=wait-health-exited-after-listen
+    phase="wait-health-exited-after-listen-status-$server_status"
+  elif grep -q 'panicked at' "$stage_root/server.log"; then
+    phase="wait-health-exited-panic-status-$server_status"
+  elif grep -q '^Error:' "$stage_root/server.log"; then
+    phase="wait-health-exited-rust-error-status-$server_status"
   else
-    phase=wait-health-exited-other
+    phase="wait-health-exited-other-status-$server_status"
   fi
 }
 stop_server() {
@@ -782,7 +792,15 @@ while [ "$count" -lt 50 ]; do
     ready=yes
     break
   fi
-  if ! process_active; then classify_server_exit; exit 1; fi
+  if ! process_active; then
+    set +e
+    wait "$pid"
+    server_status=$?
+    set -e
+    pid=
+    classify_server_exit "$server_status"
+    exit 1
+  fi
   sleep 0.1
   count=$((count + 1))
 done
