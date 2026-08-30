@@ -372,6 +372,26 @@ fn rejects_incompatible_slots_invalid_operations_and_concurrent_managers() {
 }
 
 #[test]
+fn manager_waits_for_a_short_lived_owner() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager(1);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(manager);
+    });
+
+    let replacement = ApplicationUpdateManager::open(
+        fixture.slots.path(),
+        fixture.state.path(),
+        fixture.trust.clone(),
+        1,
+        DEFAULT_HEALTH_TIMEOUT_MS,
+    );
+    release.join().unwrap();
+    replacement.unwrap();
+}
+
+#[test]
 fn unsafe_journal_permissions_are_never_repaired_implicitly() {
     let fixture = Fixture::new();
     let slot1 = fixture.stage(1, 1, 1);

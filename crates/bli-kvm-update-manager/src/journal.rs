@@ -6,12 +6,16 @@ use std::{
         unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     },
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
 };
 
 use crate::{UpdateManagerError, model::JournalDocument};
 
 pub(crate) const JOURNAL_FILE_NAME: &str = "application-state.json";
 const MAX_JOURNAL_BYTES: u64 = 64 * 1024;
+const LOCK_ACQUIRE_ATTEMPTS: usize = 40;
+const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DirectoryIdentity {
@@ -39,12 +43,7 @@ impl StateStore {
         if identity_from_metadata(&root_directory.metadata()?) != identity {
             return Err(UpdateManagerError::UnsafeStateRoot);
         }
-        // SAFETY: flock only observes the valid owned directory descriptor.
-        let lock_result =
-            unsafe { libc::flock(root_directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if lock_result != 0 {
-            return Err(UpdateManagerError::ManagerBusy);
-        }
+        acquire_state_root_lock(&root_directory)?;
         let path = root.join(JOURNAL_FILE_NAME);
         let store = Self {
             root,
@@ -156,6 +155,30 @@ impl StateStore {
         }
         Ok(())
     }
+}
+
+fn acquire_state_root_lock(root_directory: &File) -> Result<(), UpdateManagerError> {
+    for attempt in 0..LOCK_ACQUIRE_ATTEMPTS {
+        // SAFETY: flock observes only the valid owned directory descriptor.
+        let result =
+            unsafe { libc::flock(root_directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            return Ok(());
+        }
+
+        let error = std::io::Error::last_os_error();
+        let contended = matches!(
+            error.raw_os_error(),
+            Some(code) if code == libc::EAGAIN || code == libc::EWOULDBLOCK
+        );
+        if !contended {
+            return Err(UpdateManagerError::Io(error));
+        }
+        if attempt + 1 < LOCK_ACQUIRE_ATTEMPTS {
+            thread::sleep(LOCK_RETRY_DELAY);
+        }
+    }
+    Err(UpdateManagerError::ManagerBusy)
 }
 
 fn validate_directory(path: &Path) -> Result<DirectoryIdentity, UpdateManagerError> {

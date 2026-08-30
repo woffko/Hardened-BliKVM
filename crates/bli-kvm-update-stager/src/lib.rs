@@ -11,6 +11,8 @@ use std::{
         },
     },
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
 };
 
 use bli_kvm_update_verifier::{
@@ -35,6 +37,8 @@ const DELETION_MARKER_SCHEMA_VERSION: u32 = 1;
 const DELETION_MARKER_PURPOSE: &str = "hardened-blikvm-slot-deletion";
 const MAX_SLOT_RECEIPT_BYTES: u64 = 4 * 1024;
 const MAX_TREE_ENTRIES: usize = MAX_PAYLOAD_FILES * 2 + 16;
+const LOCK_ACQUIRE_ATTEMPTS: usize = 40;
+const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageDisposition {
@@ -164,17 +168,14 @@ impl ApplicationSlotStager {
         if identity_from_metadata(&root_directory.metadata()?) != identity {
             return Err(ApplicationStageError::UnsafeRoot);
         }
-        // SAFETY: flock observes only the valid owned directory descriptor.
-        let lock_result =
-            unsafe { libc::flock(root_directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if lock_result != 0 {
-            return Err(ApplicationStageError::StagerBusy);
-        }
-        Ok(Self {
+        acquire_slot_root_lock(&root_directory)?;
+        let stager = Self {
             root,
             root_directory,
             identity,
-        })
+        };
+        stager.validate_root()?;
+        Ok(stager)
     }
 
     pub fn root_path(&self) -> &Path {
@@ -1683,6 +1684,30 @@ fn validate_payload_file(
     Ok(())
 }
 
+fn acquire_slot_root_lock(root_directory: &File) -> Result<(), ApplicationStageError> {
+    for attempt in 0..LOCK_ACQUIRE_ATTEMPTS {
+        // SAFETY: flock observes only the valid owned directory descriptor.
+        let result =
+            unsafe { libc::flock(root_directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            return Ok(());
+        }
+
+        let error = io::Error::last_os_error();
+        let contended = matches!(
+            error.raw_os_error(),
+            Some(code) if code == libc::EAGAIN || code == libc::EWOULDBLOCK
+        );
+        if !contended {
+            return Err(ApplicationStageError::Io(error));
+        }
+        if attempt + 1 < LOCK_ACQUIRE_ATTEMPTS {
+            thread::sleep(LOCK_RETRY_DELAY);
+        }
+    }
+    Err(ApplicationStageError::StagerBusy)
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     hex_lower(Sha256::digest(bytes).as_ref())
 }
@@ -1711,6 +1736,20 @@ mod staging_cleanup_tests {
             ApplicationSlotStager::open(root.path()),
             Err(ApplicationStageError::StagerBusy)
         ));
+    }
+
+    #[test]
+    fn slot_root_lock_waits_for_a_short_lived_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let first = ApplicationSlotStager::open(root.path()).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(first);
+        });
+
+        let replacement = ApplicationSlotStager::open(root.path());
+        release.join().unwrap();
+        replacement.unwrap();
     }
 
     #[test]

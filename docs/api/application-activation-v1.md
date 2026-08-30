@@ -21,12 +21,15 @@ state-root/
   application-state.json       mode 0600
 ```
 
-The state root is held under a non-blocking exclusive `flock` for the manager
-lifetime. The journal is bounded to 64 KiB, rejects unknown or inconsistent
-fields, is written through a mode-0600 temporary file, and is fsynced before
-atomic replacement and parent-directory fsync. The current pointer is always a
-single relative validated slot ID. It is replaced with `renameat2` relative to
-a pinned slots-root descriptor and followed by directory fsync.
+The state root is held under an exclusive `flock` for the manager lifetime.
+Acquisition uses 40 non-blocking attempts separated by 25 milliseconds and
+then returns `ManagerBusy`; only `EAGAIN`/`EWOULDBLOCK` is retried. This absorbs
+short systemd command overlap without allowing an unbounded waiter. The journal
+is bounded to 64 KiB, rejects unknown or inconsistent fields, is written
+through a mode-0600 temporary file, and is fsynced before atomic replacement
+and parent-directory fsync. The current pointer is always a single relative
+validated slot ID. It is replaced with `renameat2` relative to a pinned
+slots-root descriptor and followed by directory fsync.
 
 ## Activation transaction
 

@@ -98,9 +98,12 @@ idempotent `AlreadyPresent` result is returned. A corrupt or conflicting slot
 is never repaired or replaced implicitly. The same full validation is exposed
 for standalone inspection without retaining the original source archive.
 
-The slot root is held under a non-blocking exclusive `flock` for every staging,
-inspection-manager, or cleanup process. A fresh `.staging-...` directory gets
-a private structured receipt before extraction begins. That marker is
+The slot root is held under an exclusive `flock` for every staging,
+inspection-manager, or cleanup process. Acquisition uses 40 non-blocking
+attempts separated by 25 milliseconds and then returns `StagerBusy`; only
+`EAGAIN`/`EWOULDBLOCK` is retried. This absorbs short supervisor overlap without
+allowing an unbounded waiter. A fresh `.staging-...` directory gets a private
+structured receipt before extraction begins. That marker is
 atomically replaced by the final slot receipt only after the complete verified
 tree and retained signature proof exist. `stage` and `watchdog-once` remove
 abandoned trees only when the direct child name, owner, filesystem, marker or
