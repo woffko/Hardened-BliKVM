@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Hardened BliKVM application update watchdog
+Documentation=https://github.com/woffko/Hardened-BliKVM
+
+[Timer]
+OnBootSec=2s
+OnUnitActiveSec=2s
+AccuracySec=250ms
+RandomizedDelaySec=0
+Unit=hardened-blikvm-update-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -165,6 +165,14 @@ Two clean AArch64 builds at source commit `fdaf418` produced byte-identical
 linked payloads, manager object code, and prototype archives; exact hashes are
 recorded in `baselines/application-update-manager.md`.
 
+Checkpoint: a local supervisor now samples kernel boot ID and `CLOCK_BOOTTIME`,
+issues a mode-0400 one-use health credential, accepts exactly 32 raw stdin
+bytes, zeroizes secret buffers, reconciles crash residue, and drives manager
+confirmation or rollback. A sandboxed two-second watchdog timer and
+group-gated health-only Unix socket are packaged but not installed or enabled.
+There is no activation socket, production trust key, HTTP/GUI route, process
+restart wiring, or H616 acceptance yet.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

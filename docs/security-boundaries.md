@@ -80,8 +80,11 @@ the entire tree. It does not select an active slot or expose an update API.
 The separate activation library uses a locked bounded journal, a relative
 atomic `current` symlink, a boot-bound monotonic health window, persisted replay
 records, and a highest-confirmed sequence floor. Only a future non-networked
-supervisor may supply clock and health results. Neither library has systemd,
-network, block-device, or H616 runtime wiring yet.
+supervisor may supply clock and health results. The local supervisor now reads
+kernel evidence itself and accepts a one-use token only through a group-gated
+Unix socket as exact raw stdin. It has no activation socket, TCP family,
+device, capability, shell, or block authority. These units remain uninstalled
+and unenabled on H616.
 
 ## Media processes
 

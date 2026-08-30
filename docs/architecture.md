@@ -57,10 +57,15 @@ has no listener, shell, block-device access, or authority to select a boot or
 application slot. Network upload policy and privileged activation remain
 separate future boundaries.
 
-The application activation core is also a library. It owns only a signed-slot
-pointer and its private journal, and requires a future local supervisor to
-provide kernel boot-time and health evidence. This does not give the network
-server direct slot, journal, process, or watchdog authority.
+The application activation core is a library. It owns only a signed-slot
+pointer and its private journal, and accepts boot-time and health evidence only
+from the local supervisor layer. This does not give the network server direct
+slot, journal, process, or watchdog authority.
+
+The first local supervisor implementation now provides that evidence and a
+one-use stdin-only confirmation path. Its systemd socket is health-only; local
+activation remains an explicit fixed CLI operation for a future update worker.
+No HTTP route or browser capability is connected to it.
 
 ## Transition video design
 

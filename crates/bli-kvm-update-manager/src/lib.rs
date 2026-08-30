@@ -28,6 +28,7 @@ pub enum RollbackReason {
     ExplicitHealthFailure,
     PointerMismatch,
     TargetInvalid,
+    HealthChallengeLost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +242,10 @@ impl ApplicationUpdateManager {
         self.status()
     }
 
+    pub fn health_timeout_ms(&self) -> u64 {
+        self.health_timeout_ms
+    }
+
     pub fn status(&self) -> Result<ManagerStatus, UpdateManagerError> {
         let document = self.load_required()?;
         self.validate_referenced_slots(&document)?;
@@ -374,6 +379,16 @@ impl ApplicationUpdateManager {
         }
         self.validate_rollback_anchor(&document, pending)?;
         self.rollback_document(document, RollbackReason::ExplicitHealthFailure)
+    }
+
+    pub fn abort_missing_health_challenge(&self) -> Result<RecoveryOutcome, UpdateManagerError> {
+        let document = self.load_required()?;
+        let pending = document
+            .pending
+            .as_ref()
+            .ok_or(UpdateManagerError::ConfirmationMismatch)?;
+        self.validate_rollback_anchor(&document, pending)?;
+        self.rollback_document(document, RollbackReason::HealthChallengeLost)
     }
 
     pub fn recover(&self, clock: ClockSnapshot) -> Result<RecoveryOutcome, UpdateManagerError> {

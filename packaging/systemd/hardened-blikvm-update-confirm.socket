@@ -1,0 +1,17 @@
+[Unit]
+Description=Hardened BliKVM one-use update health confirmation socket
+Documentation=https://github.com/woffko/Hardened-BliKVM
+
+[Socket]
+ListenStream=/run/hardened-blikvm-update-confirm/confirm.sock
+Accept=yes
+SocketUser=hardened-blikvm-update
+SocketGroup=hardened-blikvm
+SocketMode=0620
+DirectoryMode=0750
+Backlog=4
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

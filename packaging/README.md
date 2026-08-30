@@ -43,6 +43,23 @@ loopback ports and an ephemeral certificate, exposes it only through an SSH
 local forward, runs the browser flow, and removes all generated TLS material.
 It is a development gate, not certificate provisioning.
 
+`bli-kvm-update-supervisor` is a distinct non-networked application-update
+identity. Its watchdog service can write only the systemd-managed slots, state,
+and private runtime directories. It reads the fixed root-owned
+`/etc/hardened-blikvm/update-supervisor.json`, which contains an Ed25519 public
+key and non-secret paths but no signing key or credential. The source bundle
+does not ship this file: production key selection and provisioning require a
+separate reviewed key ceremony.
+
+The confirmation socket is Unix-only, mode 0620, and group-gated. It accepts
+exactly one 32-byte raw health token on stdin for a per-connection service. The
+token itself remains mode 0400 in the update runtime directory so PID 1 can
+later deliver it as a systemd credential to the candidate process. No token is
+accepted through argv, environment, JSON, HTTP, or the browser. The watchdog
+timer runs every two seconds, but its condition prevents operation before a
+valid configuration and initialized journal exist. These units are templates
+only and are not enabled by the prototype bundle.
+
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,
 environment variable, log, or support bundle:

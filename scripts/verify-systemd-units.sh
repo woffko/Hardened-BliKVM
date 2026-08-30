@@ -23,7 +23,12 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-platfo
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-control-broker"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-proxy"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-server"
-install -m 0644 "$project_root"/packaging/systemd/*.service "$test_root/usr/lib/systemd/system/"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
+install -m 0644 \
+  "$project_root"/packaging/systemd/*.service \
+  "$project_root"/packaging/systemd/*.socket \
+  "$project_root"/packaging/systemd/*.timer \
+  "$test_root/usr/lib/systemd/system/"
 install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm.conf" \
   "$test_root/usr/lib/sysusers.d/"
@@ -34,7 +39,7 @@ printf '%s\n' \
   'ExecStart=/bin/true' \
   > "$test_root/usr/lib/systemd/system/kvmd.service"
 printf '%s\n' 'g kvmd -' > "$test_root/usr/lib/sysusers.d/kvmd-test.conf"
-for target in sysinit.target basic.target shutdown.target multi-user.target; do
+for target in sysinit.target basic.target shutdown.target multi-user.target sockets.target timers.target; do
   printf '%s\n' '[Unit]' "Description=Synthetic $target" \
     > "$test_root/usr/lib/systemd/system/$target"
 done
@@ -44,10 +49,16 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-platform-broker.service \
   hardened-blikvm-control-broker.service \
   hardened-blikvm-video-proxy.service \
-  hardened-blikvm-server.service
+  hardened-blikvm-server.service \
+  hardened-blikvm-update-watchdog.service \
+  hardened-blikvm-update-watchdog.timer \
+  hardened-blikvm-update-confirm.socket \
+  hardened-blikvm-update-confirm@.service
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
   >/dev/null

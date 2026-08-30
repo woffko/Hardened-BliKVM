@@ -96,10 +96,22 @@ pruned. Exhaustion is explicit and requires a future reviewed rollover format.
 
 ## Current implementation boundary
 
-`bli-kvm-update-manager` implements this journal, pointer, health, replay,
-anti-rollback, and recovery core with host-side crash-state tests. It is not
-connected to an HTTP API, GUI, systemd service, watchdog timer, process launch,
-or the H616 device. Clock and boot-ID acquisition, one-use health credentials,
-service restart ordering, abandoned-staging cleanup, slot garbage collection,
-journal backup, hardware-backed rollback counters, and live interruption tests
-remain separate gates.
+`bli-kvm-update-manager` implements the journal, pointer, health, replay,
+anti-rollback, and recovery core. `bli-kvm-update-runtime` reads the kernel boot
+ID twice around `CLOCK_BOOTTIME`, generates one-use 32-byte health credentials,
+stores them only in a mode-0400 runtime file, compares responses in constant
+time, zeroizes token buffers, and reconciles challenge state with the manager.
+
+`bli-kvm-update-supervisor` exposes only fixed local commands. Slot IDs and a
+root-owned public-key configuration may appear in argv; a health token may
+enter only as exactly 32 raw stdin bytes for `confirm-stdin`. JSON receipts
+never contain the token, credential path, or public key. The packaged watchdog
+timer and Unix confirmation socket run under a distinct update identity with
+no network or device authority. There is deliberately no network activation
+socket and no production signing key or enabled configuration in the bundle.
+
+The supervisor and systemd templates have host-side subprocess and static unit
+tests, but they are not installed or enabled on H616. Candidate-process
+restart ordering, systemd credential delivery, abandoned-staging cleanup, slot
+garbage collection, journal backup, hardware-backed rollback counters, and
+live interruption tests remain separate gates.

@@ -22,9 +22,11 @@ scripts/verify-aarch64-elf.sh \
   "$release_dir/bli-kvm-server" \
   "$release_dir/bli-kvm-platform-broker" \
   "$release_dir/bli-kvm-video-proxy" \
-  "$release_dir/bli-kvm-control-broker"
+  "$release_dir/bli-kvm-control-broker" \
+  "$release_dir/bli-kvm-update-supervisor"
 sha256sum \
   "$release_dir/bli-kvm-server" \
   "$release_dir/bli-kvm-platform-broker" \
   "$release_dir/bli-kvm-video-proxy" \
-  "$release_dir/bli-kvm-control-broker"
+  "$release_dir/bli-kvm-control-broker" \
+  "$release_dir/bli-kvm-update-supervisor"

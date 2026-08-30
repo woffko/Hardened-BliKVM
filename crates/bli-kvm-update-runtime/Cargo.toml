@@ -1,0 +1,26 @@
+[package]
+name = "bli-kvm-update-runtime"
+description = "Kernel evidence and one-use health challenge runtime for Hardened BliKVM updates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-update-manager = { path = "../bli-kvm-update-manager" }
+libc.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
+bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
+ed25519-dalek = { workspace = true, features = ["signature"] }
+tar.workspace = true

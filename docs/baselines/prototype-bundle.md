@@ -4,14 +4,16 @@
 development archive. It contains only:
 
 - the verified AArch64 static-PIE server and read-only broker;
+- the non-enabled local update supervisor without a production trust config;
 - the production frontend without MSW or legacy branding assets;
 - reviewed systemd/sysusers templates;
 - license, architecture, security, and protocol documentation;
 - a machine-readable manifest and per-file checksums.
 
 The archive deliberately contains no credential, test endpoint, private
-evidence, updater, install script, device image, recovery claim, or mutation
-command. `releaseAccepted` and `deviceAccepted` remain false in its manifest.
+evidence, production signing key or update configuration, install script,
+device image, recovery claim, enabled service, or hardware-mutation command.
+`releaseAccepted` and `deviceAccepted` remain false in its manifest.
 
 File ownership and modes are produced in a Linux `/tmp` staging tree before
 the archive is written to D:, avoiding the 0777 mode presentation of the

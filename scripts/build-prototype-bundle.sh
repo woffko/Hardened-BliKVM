@@ -27,7 +27,8 @@ server_binary="$release_dir/bli-kvm-server"
 broker_binary="$release_dir/bli-kvm-platform-broker"
 video_proxy_binary="$release_dir/bli-kvm-video-proxy"
 control_broker_binary="$release_dir/bli-kvm-control-broker"
-scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary"
+update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
+scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$update_supervisor_binary"
 
 temp_root=$(mktemp -d /tmp/hardened-blikvm-bundle.XXXXXX)
 cleanup() {
@@ -51,6 +52,7 @@ install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
 install -m 0755 "$video_proxy_binary" "$stage/libexec/bli-kvm-video-proxy"
 install -m 0755 "$control_broker_binary" "$stage/libexec/bli-kvm-control-broker"
+install -m 0755 "$update_supervisor_binary" "$stage/libexec/bli-kvm-update-supervisor"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
@@ -63,6 +65,12 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-control-broker.service \
   packaging/systemd/hardened-blikvm-video-proxy.service \
   packaging/systemd/hardened-blikvm-server.service \
+  packaging/systemd/hardened-blikvm-update-watchdog.service \
+  packaging/systemd/hardened-blikvm-update-confirm@.service \
+  "$stage/share/systemd/"
+install -m 0644 \
+  packaging/systemd/hardened-blikvm-update-watchdog.timer \
+  packaging/systemd/hardened-blikvm-update-confirm.socket \
   "$stage/share/systemd/"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \
@@ -100,6 +108,7 @@ server_sha=$(sha256sum "$stage/bin/bli-kvm-server" | cut -d ' ' -f 1)
 broker_sha=$(sha256sum "$stage/libexec/bli-kvm-platform-broker" | cut -d ' ' -f 1)
 video_proxy_sha=$(sha256sum "$stage/libexec/bli-kvm-video-proxy" | cut -d ' ' -f 1)
 control_broker_sha=$(sha256sum "$stage/libexec/bli-kvm-control-broker" | cut -d ' ' -f 1)
+update_supervisor_sha=$(sha256sum "$stage/libexec/bli-kvm-update-supervisor" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
 pnpm_lock_sha=$(sha256sum web/pnpm-lock.yaml | cut -d ' ' -f 1)
 web_tree_sha=$(
@@ -110,6 +119,7 @@ server_size=$(wc -c < "$stage/bin/bli-kvm-server" | tr -d ' ')
 broker_size=$(wc -c < "$stage/libexec/bli-kvm-platform-broker" | tr -d ' ')
 video_proxy_size=$(wc -c < "$stage/libexec/bli-kvm-video-proxy" | tr -d ' ')
 control_broker_size=$(wc -c < "$stage/libexec/bli-kvm-control-broker" | tr -d ' ')
+update_supervisor_size=$(wc -c < "$stage/libexec/bli-kvm-update-supervisor" | tr -d ' ')
 
 source_state=uncommitted-development-checkpoint
 source_commit=
@@ -125,6 +135,7 @@ jq -n \
   --arg broker_sha "$broker_sha" \
   --arg video_proxy_sha "$video_proxy_sha" \
   --arg control_broker_sha "$control_broker_sha" \
+  --arg update_supervisor_sha "$update_supervisor_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
@@ -134,6 +145,7 @@ jq -n \
   --argjson broker_size "$broker_size" \
   --argjson video_proxy_size "$video_proxy_size" \
   --argjson control_broker_size "$control_broker_size" \
+  --argjson update_supervisor_size "$update_supervisor_size" \
   '{
     schemaVersion: 1,
     product: "Hardened BliKVM",
@@ -148,6 +160,7 @@ jq -n \
       broker: {path: "libexec/bli-kvm-platform-broker", sha256: $broker_sha, size: $broker_size},
       videoProxy: {path: "libexec/bli-kvm-video-proxy", sha256: $video_proxy_sha, size: $video_proxy_size},
       controlBroker: {path: "libexec/bli-kvm-control-broker", sha256: $control_broker_sha, size: $control_broker_size},
+      updateSupervisor: {path: "libexec/bli-kvm-update-supervisor", sha256: $update_supervisor_sha, size: $update_supervisor_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
     },
     locks: {cargo: $cargo_lock_sha, pnpm: $pnpm_lock_sha}
@@ -166,6 +179,7 @@ test "$(stat -c '%a' "$stage/bin/bli-kvm-server")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-platform-broker")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-video-proxy")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-control-broker")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-supervisor")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755

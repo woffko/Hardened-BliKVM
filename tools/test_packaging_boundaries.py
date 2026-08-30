@@ -64,8 +64,41 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("packaging/nginx/hardened-blikvm.conf", builder)
         self.assertIn("bli-kvm-video-proxy", builder)
         self.assertIn("bli-kvm-control-broker", builder)
+        self.assertIn("bli-kvm-update-supervisor", builder)
+        self.assertIn("hardened-blikvm-update-watchdog.timer", builder)
+        self.assertIn("hardened-blikvm-update-confirm.socket", builder)
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
+
+    def test_update_supervisor_is_local_health_only_and_sandboxed(self) -> None:
+        watchdog = (
+            ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.service"
+        ).read_text()
+        confirmation = (
+            ROOT / "packaging/systemd/hardened-blikvm-update-confirm@.service"
+        ).read_text()
+        socket = (
+            ROOT / "packaging/systemd/hardened-blikvm-update-confirm.socket"
+        ).read_text()
+        timer = (
+            ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.timer"
+        ).read_text()
+        for unit in (watchdog, confirmation):
+            self.assertIn("User=hardened-blikvm-update", unit)
+            self.assertIn("ProtectSystem=strict", unit)
+            self.assertIn("ProtectProc=invisible", unit)
+            self.assertIn("IPAddressDeny=any", unit)
+            self.assertIn("CapabilityBoundingSet=\n", unit)
+            self.assertIn("DevicePolicy=closed", unit)
+            self.assertNotIn("AF_INET", unit)
+            self.assertNotIn("LoadCredential", unit)
+        self.assertIn("StandardInput=socket", confirmation)
+        self.assertIn("confirm-stdin", confirmation)
+        self.assertIn("Accept=yes", socket)
+        self.assertIn("SocketMode=0620", socket)
+        self.assertIn("SocketGroup=hardened-blikvm", socket)
+        self.assertNotIn("ListenStream=0.0.0.0", socket)
+        self.assertIn("OnUnitActiveSec=2s", timer)
 
 
 if __name__ == "__main__":
