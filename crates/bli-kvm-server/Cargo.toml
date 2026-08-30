@@ -1,0 +1,26 @@
+[package]
+name = "bli-kvm-server"
+description = "Unprivileged BLi-KVM HTTP control plane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+argon2.workspace = true
+axum.workspace = true
+base64.workspace = true
+bli-kvm-broker-client = { path = "../bli-kvm-broker-client" }
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+
+[dev-dependencies]
+tower.workspace = true

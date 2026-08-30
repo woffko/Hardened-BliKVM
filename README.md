@@ -1,0 +1,75 @@
+# BLi-KVM
+
+BLi-KVM is a security-focused KVM-over-IP stack for BliKVM v4 H616 hardware.
+It is being built as a GPL-3.0-only Rust control plane with a React/TypeScript
+web interface derived from the proven Hardened NanoKVM product shape.
+
+The target is not a themed copy of the existing BliKVM application. BLi-KVM
+uses a platform-neutral core and explicit hardware adapters so that security,
+API, update, and recovery invariants remain testable across platforms.
+
+The planned canonical GitHub repository is `woffko/Hardened-BliKVM`. It has
+not been created or published from this worktree yet.
+
+## Current status
+
+The first read-only prototype layers are implemented:
+
+- versioned capability, runtime-inventory, and broker contracts;
+- a fail-closed, fully rebranded GUI with first-account setup;
+- Argon2id passwords, opaque HttpOnly sessions, CSRF/origin checks, revocation,
+  and scoped login lockout;
+- a loopback-only Axum server with protected `/api/inventory`;
+- a credential-isolated read-only platform broker and bounded KVMD Unix-socket
+  client; schema v1 has no mutation variants;
+- a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;
+- reproducible stripped AArch64 static-PIE builds for the server and broker;
+- architecture, field-image, upstream, licensing, and security baselines;
+- project-scoped semantic LSP smoke fixtures.
+
+No device mutation, native hardware driver, firmware image, updater, or
+production release is implemented yet. A successful host or cross-build is not
+hardware acceptance. The user-supplied field image is truncated relative to
+its partition table and is explicitly rejected as a recovery/release image.
+
+## Architecture
+
+```text
+React/TypeScript web UI
+        |
+        | HTTPS / WebSocket
+        v
+bli-kvm-server (unprivileged Rust process)
+        |
+        | restricted Unix socket
+        v
+bli-platform-broker (credential-isolated Rust process)
+        |
+        +-- now: five allowlisted read-only KVMD GETs
+        +-- later: typed HID / USB configfs / virtual media
+        +-- later: ATX / fan / OLED / RTC / buttons / serial switch
+
+Separate media services
+        +-- loopback/Unix-socket uStreamer transition
+```
+
+See [the architecture](docs/architecture.md),
+[implementation plan](docs/implementation-plan.md), and
+[security boundaries](docs/security-boundaries.md).
+
+## Development
+
+```sh
+./scripts/check.sh
+cargo run -p bli-kvm-server
+scripts/build-aarch64.sh
+```
+
+The check runner uses `/mnt/d/debug/blikvm/hardened-blikvm/pnpm-store` for
+large temporary frontend dependencies. Override it with the task-specific
+`BLI_KVM_PNPM_STORE` variable when that path is unavailable.
+
+The development server binds to `127.0.0.1:18080` and refuses non-loopback
+binds. Device exposure must use a separately hardened TLS reverse proxy. Do not
+place device images, credentials, private evidence, or extracted root
+filesystems in this repository.

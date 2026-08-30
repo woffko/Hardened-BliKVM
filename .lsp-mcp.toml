@@ -1,0 +1,31 @@
+schema_version = 1
+
+[project]
+workspaces = [
+  ".",
+  "tools/lsp-smoke/c",
+  "tools/lsp-smoke/rust",
+  "tools/lsp-smoke/python",
+  "tools/lsp-smoke/typescript",
+  "tools/lsp-smoke/dart",
+]
+
+[backends.clangd]
+enabled = true
+required = false
+
+[backends.basedpyright]
+enabled = true
+required = false
+
+[backends.rust]
+enabled = true
+required = false
+
+[backends.typescript]
+enabled = true
+required = false
+
+[backends.dart]
+enabled = true
+required = false

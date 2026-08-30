@@ -1,0 +1,15 @@
+[package]
+name = "bli-kvm-platform-bli"
+description = "BliKVM v4 H616 platform descriptor and adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "bli-kvm-broker-client"
+description = "Bounded read-only Unix-socket client for the BLi-KVM platform broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
+bli-kvm-core = { path = "../bli-kvm-core" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

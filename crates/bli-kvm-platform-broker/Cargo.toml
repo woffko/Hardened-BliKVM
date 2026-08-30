@@ -1,0 +1,20 @@
+[package]
+name = "bli-kvm-platform-broker"
+description = "Credential-isolated read-only platform broker for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
+libc.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+http.workspace = true
+tempfile.workspace = true

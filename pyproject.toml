@@ -1,0 +1,10 @@
+[tool.basedpyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+include = ["tools"]
+exclude = [
+  "build",
+  "evidence/private",
+  "target",
+  "tools/lsp-smoke",
+]

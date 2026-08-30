@@ -1,0 +1,12 @@
+[target.aarch64-unknown-linux-musl]
+linker = "scripts/rust-lld-linker.sh"
+rustflags = [
+  "-C", "linker-flavor=ld.lld",
+  "-C", "link-self-contained=yes",
+  "-C", "relocation-model=pic",
+  "-C", "link-arg=-z",
+  "-C", "link-arg=relro",
+  "-C", "link-arg=-z",
+  "-C", "link-arg=now",
+  "-C", "link-arg=-pie",
+]

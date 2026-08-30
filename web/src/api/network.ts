@@ -1,0 +1,104 @@
+import { http } from '@/lib/http.ts';
+
+export type DNSMode = 'manual' | 'dhcp';
+export type IPv6Mode = 'disabled' | 'slaac' | 'dhcpv6' | 'manual';
+
+export type NetworkConfig = {
+  interface?: string;
+  address?: string;
+  subnetMask?: string;
+  gateway?: string;
+};
+
+export type IPv6Config = {
+  interface?: string;
+  address?: string;
+  prefix?: number;
+  gateway?: string;
+};
+
+// wake on lan
+export function wol(mac: string) {
+  const data = {
+    mac
+  };
+  return http.post('/api/network/wol', data);
+}
+
+// get wake-on-lan macs history
+export function getWolMacs() {
+  return http.get('/api/network/wol/mac');
+}
+
+export function deleteWolMac(mac: string) {
+  const data = {
+    mac
+  };
+  return http.delete('/api/network/wol/mac', data);
+}
+
+// set Mac name
+export function setWolMacName(mac: string, name: string) {
+  return http.post('/api/network/wol/mac/name', { mac, name });
+}
+
+// get wifi information
+export function getWiFi() {
+  return http.get('/api/network/wifi');
+}
+
+// connect wifi without auth (only available in wifi configuration mode)
+export function connectWifiNoAuth(ssid: string, password: string, apPassword?: string) {
+  const data = {
+    ssid,
+    password
+  };
+  return http.post('/api/network/wifi', data, {
+    headers: {
+      'X-AP-Key': apPassword || ''
+    }
+  });
+}
+
+// verify ap login
+export function verifyApLogin(apPassword: string) {
+  return http.post(
+    '/api/network/wifi/verify',
+    {},
+    {
+      headers: {
+        'X-AP-Key': apPassword || ''
+      }
+    }
+  );
+}
+
+// connect wifi
+export function connectWifi(ssid: string, password: string) {
+  const data = {
+    ssid,
+    password
+  };
+  return http.post('/api/network/wifi/connect', data);
+}
+
+// disconnect wifi
+export function disconnectWifi() {
+  return http.post('/api/network/wifi/disconnect');
+}
+
+export function getDNS() {
+  return http.get('/api/network/dns');
+}
+
+export function setDNS(mode: DNSMode, servers: string[], config?: NetworkConfig) {
+  return http.post('/api/network/dns', { mode, servers, ...(config || {}) });
+}
+
+export function getIPv6() {
+  return http.get('/api/network/ipv6');
+}
+
+export function setIPv6(mode: IPv6Mode, config?: IPv6Config) {
+  return http.post('/api/network/ipv6', { mode, ...(config || {}) });
+}

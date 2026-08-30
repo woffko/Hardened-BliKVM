@@ -1,0 +1,23 @@
+/build/
+target/
+node_modules/
+.dart_tool/
+__pycache__/
+*.py[cod]
+
+# Private and temporary hardware evidence never belongs in Git.
+/evidence/private/
+/scratch/
+/vendor/
+*.7z
+*.img
+*.img.*
+*.raw
+*.deb
+
+# Local development output.
+/dist/
+/web/dist/
+/web/.env.*
+/state/
+*.log

@@ -1,0 +1,730 @@
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Button, Input, Segmented } from 'antd';
+import { CheckIcon, PlusIcon, XIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+
+import * as api from '@/api/network.ts';
+import type { DNSMode } from '@/api/network.ts';
+
+import type { NetworkSectionHandle, NetworkSectionResult, NetworkSectionStatus } from './types.ts';
+
+type DNSState = {
+  mode: DNSMode;
+  servers: string[];
+  dhcp: string[];
+  info: DNSInfo;
+  config?: NetworkConfig;
+};
+
+type DNSInfo = {
+  interface?: string;
+  type?: string;
+  address?: string;
+  subnetMask?: string;
+  gateway?: string;
+};
+
+type NetworkConfig = {
+  interface?: string;
+  address?: string;
+  subnetMask?: string;
+  gateway?: string;
+};
+
+const maxServers = 6;
+
+type DNSProps = {
+  showFooter?: boolean;
+  disabled?: boolean;
+  onStatusChange?: (status: NetworkSectionStatus) => void;
+};
+
+function formatInterface(info: DNSInfo) {
+  if (!info.interface) return '';
+  if (!info.type) return info.interface;
+
+  return `${info.type} (${info.interface})`;
+}
+
+function normalizeServers(servers: string[]) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const server of servers) {
+    const value = normalizeServer(server);
+    if (!value || seen.has(value)) continue;
+
+    seen.add(value);
+    normalized.push(value);
+  }
+
+  return normalized;
+}
+
+function normalizeServer(server: string) {
+  return server.split('#')[0].trim().split(/\s+/)[0] || '';
+}
+
+function isValidIP(value: string) {
+  return isValidIPv4(value) || isValidIPv6(value);
+}
+
+function isValidIPv4(value: string) {
+  const parts = value.split('.');
+  if (parts.length !== 4) return false;
+
+  return parts.every((part) => {
+    if (!/^\d+$/.test(part)) return false;
+    if (part.length > 1 && part.startsWith('0')) return false;
+
+    const number = Number(part);
+    return number >= 0 && number <= 255;
+  });
+}
+
+function normalizeIPv4(value: string) {
+  return value.trim().split('/')[0].trim();
+}
+
+function isValidSubnetMask(value: string) {
+  if (!isValidIPv4(value)) return false;
+
+  const mask = ipv4ToNumber(value);
+  if (mask === null) return false;
+
+  let seenZero = false;
+  for (let bit = 31; bit >= 0; bit--) {
+    const isOne = (mask & (1 << bit)) !== 0;
+    if (!isOne) {
+      seenZero = true;
+    } else if (seenZero) {
+      return false;
+    }
+  }
+
+  return mask !== 0;
+}
+
+function ipv4ToNumber(value: string) {
+  if (!isValidIPv4(value)) return null;
+
+  return value.split('.').reduce((acc, part) => (acc << 8) + Number(part), 0) >>> 0;
+}
+
+function isSameSubnet(address: string, gateway: string, subnetMask: string) {
+  const ip = ipv4ToNumber(address);
+  const router = ipv4ToNumber(gateway);
+  const mask = ipv4ToNumber(subnetMask);
+  if (ip === null || router === null || mask === null) return false;
+
+  return (ip & mask) === (router & mask);
+}
+
+function isValidIPv6(value: string) {
+  if (!value.includes(':')) return false;
+
+  try {
+    new URL(`http://[${value}]/`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildRedirectURL(address: string) {
+  const target = normalizeIPv4(address);
+  const { protocol, port, pathname, search, hash } = window.location;
+  const defaultPort =
+    (protocol === 'http:' && port === '80') || (protocol === 'https:' && port === '443');
+  const portPart = port && !defaultPort ? `:${port}` : '';
+
+  return `${protocol}//${target}${portPart}${pathname}${search}${hash}`;
+}
+
+const Panel = ({
+  title,
+  description,
+  children
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) => {
+  return (
+    <div className="overflow-hidden rounded-xl bg-neutral-800/50">
+      <div className="px-4 pb-1.5 pt-3">
+        <div className="font-semibold text-neutral-100">{title}</div>
+        {description && (
+          <div className="mt-0.5 text-xs leading-snug text-neutral-500">{description}</div>
+        )}
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+};
+
+const InfoRow = ({
+  label,
+  value,
+  isLast = false
+}: {
+  label: string;
+  value?: string;
+  isLast?: boolean;
+}) => {
+  return (
+    <div className="px-4">
+      <div
+        className={`flex min-h-[44px] flex-col items-start gap-1 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:py-0 ${
+          isLast ? '' : 'border-b border-neutral-700/50'
+        }`}
+      >
+        <span className="text-sm text-neutral-300">{label}</span>
+        <span className="w-full break-all text-left text-sm text-neutral-500 sm:w-auto sm:max-w-[330px] sm:text-right">
+          {value || '-'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const EditableInfoRow = ({
+  label,
+  value,
+  placeholder,
+  status,
+  isLast = false,
+  onChange
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  status?: 'error';
+  isLast?: boolean;
+  onChange: (value: string) => void;
+}) => {
+  return (
+    <div className="px-4">
+      <div
+        className={`flex min-h-[52px] flex-col items-start gap-2 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:py-0 ${
+          isLast ? '' : 'border-b border-neutral-700/50'
+        }`}
+      >
+        <span className="shrink-0 text-sm text-neutral-300">{label}</span>
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          status={status}
+          className="w-full sm:max-w-[260px]"
+        />
+      </div>
+    </div>
+  );
+};
+
+const ServerList = ({ servers }: { servers: string[] }) => {
+  const { t } = useTranslation();
+
+  if (!servers.length) {
+    return (
+      <div className="px-4 py-3 text-sm text-neutral-500">{t('settings.network.dns.none')}</div>
+    );
+  }
+
+  return (
+    <div>
+      {servers.map((server, index) => (
+        <div key={`${server}-${index}`} className="px-4">
+          <div
+            className={`min-h-[44px] py-2.5 text-sm text-neutral-400 ${
+              index === servers.length - 1 ? '' : 'border-b border-neutral-700/50'
+            }`}
+          >
+            {server}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const EditableServerRow = ({
+  value,
+  autoFocus,
+  onChange,
+  onRemove
+}: {
+  value: string;
+  autoFocus: boolean;
+  onChange: (value: string) => void;
+  onRemove: () => void;
+}) => {
+  const inputRef = useRef<any>(null);
+  const normalized = normalizeServer(value);
+  const isInvalid = normalized !== '' && !isValidIP(normalized);
+
+  useEffect(() => {
+    if (autoFocus && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [autoFocus]);
+
+  return (
+    <div className="group px-4 py-1.5">
+      <div className="flex items-center gap-2">
+        <Input
+          ref={inputRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="1.1.1.1 or 2606:4700:4700::1111"
+          status={isInvalid ? 'error' : undefined}
+        />
+        <Button
+          size="small"
+          shape="circle"
+          icon={<XIcon size={14} />}
+          onClick={onRemove}
+          className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+        />
+      </div>
+    </div>
+  );
+};
+
+export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
+  ({ showFooter = true, disabled = false, onStatusChange }, ref) => {
+    const { t } = useTranslation();
+
+    const [mode, setMode] = useState<DNSMode>('dhcp');
+    const [originalMode, setOriginalMode] = useState<DNSMode>('dhcp');
+    const [servers, setServers] = useState<string[]>([]);
+    const [originalServers, setOriginalServers] = useState<string[]>([]);
+    const [dhcp, setDHCP] = useState<string[]>([]);
+    const [info, setInfo] = useState<DNSInfo>({});
+    const [address, setAddress] = useState('');
+    const [subnetMask, setSubnetMask] = useState('');
+    const [gateway, setGateway] = useState('');
+    const [originalAddress, setOriginalAddress] = useState('');
+    const [originalSubnetMask, setOriginalSubnetMask] = useState('');
+    const [originalGateway, setOriginalGateway] = useState('');
+
+    const [isLoading, setIsLoading] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
+    const [focusNewRow, setFocusNewRow] = useState(false);
+
+    useEffect(() => {
+      getDNS();
+    }, []);
+
+    async function getDNS(showLoading = true) {
+      if (showLoading) setIsLoading(true);
+
+      try {
+        const rsp = await api.getDNS();
+        if (rsp.code !== 0) {
+          setError(rsp.msg);
+          return;
+        }
+
+        const data = rsp.data as DNSState;
+        const fetchedMode = data.mode || 'dhcp';
+        setMode(fetchedMode);
+        setOriginalMode(fetchedMode);
+
+        const fetchedServers = data.servers?.filter(Boolean) || [];
+        setServers(fetchedServers);
+        setOriginalServers(fetchedServers);
+        setDHCP(data.dhcp || []);
+        setInfo(data.info || {});
+
+        const config = data.config || {};
+        const fetchedAddress = normalizeIPv4(config.address || data.info?.address || '');
+        const fetchedSubnetMask = config.subnetMask || data.info?.subnetMask || '';
+        const fetchedGateway = config.gateway || data.info?.gateway || '';
+        setAddress(fetchedAddress);
+        setSubnetMask(fetchedSubnetMask);
+        setGateway(fetchedGateway);
+        setOriginalAddress(fetchedAddress);
+        setOriginalSubnetMask(fetchedSubnetMask);
+        setOriginalGateway(fetchedGateway);
+      } catch (err) {
+        console.log(err);
+      } finally {
+        if (showLoading) setIsLoading(false);
+      }
+    }
+
+    async function save(): Promise<NetworkSectionResult> {
+      if (isSaving) return { changed: false };
+      if (!hasChanges) return { changed: false };
+
+      setMessage('');
+      setError('');
+
+      const normalized = normalizeServers(servers);
+      if (mode === 'manual' && normalized.length === 0) {
+        setError(t('settings.network.dns.invalid'));
+        return { changed: false, error: true };
+      }
+
+      if (mode === 'manual' && normalized.some((server) => !isValidIP(server))) {
+        setError(t('settings.network.dns.invalid'));
+        return { changed: false, error: true };
+      }
+
+      const normalizedAddress = normalizeIPv4(address);
+      const normalizedSubnetMask = subnetMask.trim();
+      const normalizedGateway = normalizeIPv4(gateway);
+      const hasValidManualNetwork =
+        mode !== 'manual' ||
+        (isValidIPv4(normalizedAddress) &&
+          isValidSubnetMask(normalizedSubnetMask) &&
+          isValidIPv4(normalizedGateway) &&
+          isSameSubnet(normalizedAddress, normalizedGateway, normalizedSubnetMask));
+      const redirectURL = mode === 'manual' ? buildRedirectURL(normalizedAddress) : '';
+      if (!hasValidManualNetwork) {
+        setError(t('settings.network.dns.invalidNetwork'));
+        return { changed: false, error: true };
+      }
+
+      setIsSaving(true);
+      let redirectTimer: number | undefined;
+      if (mode === 'manual') {
+        setMessage(t('settings.network.dns.redirecting'));
+        redirectTimer = window.setTimeout(() => window.location.assign(redirectURL), 5000);
+      }
+
+      try {
+        const rsp = await api.setDNS(
+          mode,
+          mode === 'manual' ? normalized : [],
+          mode === 'manual'
+            ? {
+                interface: info.interface || 'eth0',
+                address: normalizedAddress,
+                subnetMask: normalizedSubnetMask,
+                gateway: normalizedGateway
+              }
+            : undefined
+        );
+        if (rsp.code !== 0) {
+          if (redirectTimer) window.clearTimeout(redirectTimer);
+          setError(rsp.msg || t('settings.network.dns.saveFailed'));
+          return { changed: true, error: true };
+        }
+
+        setServers(normalized);
+        setOriginalServers(normalized);
+        setOriginalMode(mode);
+        setAddress(normalizedAddress);
+        setSubnetMask(normalizedSubnetMask);
+        setGateway(normalizedGateway);
+        setOriginalAddress(normalizedAddress);
+        setOriginalSubnetMask(normalizedSubnetMask);
+        setOriginalGateway(normalizedGateway);
+
+        if (mode === 'manual') {
+          if (redirectTimer) window.clearTimeout(redirectTimer);
+          setMessage(t('settings.network.dns.redirecting'));
+          window.setTimeout(() => window.location.assign(redirectURL), 800);
+          return { changed: true, redirecting: true };
+        } else {
+          await getDNS(false);
+          setMessage(t('settings.network.dns.saved'));
+          return { changed: true };
+        }
+      } catch (err) {
+        console.log(err);
+        if (mode === 'manual') {
+          if (!redirectTimer) {
+            setMessage(t('settings.network.dns.redirecting'));
+            window.setTimeout(() => window.location.assign(redirectURL), 1200);
+          }
+          return { changed: true, redirecting: true };
+        }
+        setError(t('settings.network.dns.saveFailed'));
+        return { changed: true, error: true };
+      } finally {
+        setIsSaving(false);
+      }
+    }
+
+    function addServer() {
+      if (servers.length >= maxServers) return;
+      setMessage('');
+      setError('');
+      setServers([...servers, '']);
+      setFocusNewRow(true);
+    }
+
+    function removeServer(index: number) {
+      setMessage('');
+      setError('');
+      setServers(servers.filter((_, i) => i !== index));
+    }
+
+    function updateServer(index: number, value: string) {
+      setMessage('');
+      setError('');
+      const updated = [...servers];
+      updated[index] = value;
+      setServers(updated);
+    }
+
+    const normalizedServers = normalizeServers(servers);
+    const normalizedAddress = normalizeIPv4(address);
+    const normalizedGateway = normalizeIPv4(gateway);
+    const trimmedSubnetMask = subnetMask.trim();
+    const hasInvalidServer =
+      mode === 'manual' &&
+      servers.some((server) => {
+        const val = normalizeServer(server);
+        return val !== '' && !isValidIP(val);
+      });
+    const hasInvalidNetwork =
+      mode === 'manual' &&
+      (!isValidIPv4(normalizedAddress) ||
+        !isValidSubnetMask(trimmedSubnetMask) ||
+        !isValidIPv4(normalizedGateway) ||
+        !isSameSubnet(normalizedAddress, normalizedGateway, trimmedSubnetMask));
+    const isExceedMax = mode === 'manual' && normalizedServers.length > maxServers;
+    const hasChanges =
+      mode !== originalMode ||
+      normalizedServers.join(',') !== normalizeServers(originalServers).join(',') ||
+      (mode === 'manual' &&
+        (normalizedAddress !== originalAddress ||
+          trimmedSubnetMask !== originalSubnetMask ||
+          normalizedGateway !== originalGateway));
+
+    const statusText = error || message || (hasChanges ? t('settings.network.dns.unsaved') : '');
+    const statusKind = error ? 'error' : message ? 'success' : hasChanges ? 'warning' : '';
+    const statusColor = error ? 'text-red-400' : message ? 'text-green-400' : 'text-yellow-400/80';
+    const serversDescription =
+      mode === 'dhcp'
+        ? t('settings.network.dns.dhcpServersDescription')
+        : t('settings.network.dns.manualServersDescription');
+
+    const canApply =
+      hasChanges &&
+      !isLoading &&
+      !isSaving &&
+      !hasInvalidServer &&
+      !hasInvalidNetwork &&
+      !isExceedMax;
+    const canAdd = !isLoading && !isSaving && !disabled && servers.length < maxServers;
+    const status = useMemo<NetworkSectionStatus>(
+      () => ({
+        hasPending: hasChanges,
+        hasInvalid: hasInvalidServer || hasInvalidNetwork || isExceedMax,
+        canApply,
+        isLoading,
+        isSaving,
+        statusText,
+        statusKind
+      }),
+      [
+        canApply,
+        hasChanges,
+        hasInvalidNetwork,
+        hasInvalidServer,
+        isExceedMax,
+        isLoading,
+        isSaving,
+        statusKind,
+        statusText
+      ]
+    );
+
+    useImperativeHandle(ref, () => ({ apply: save }));
+
+    useEffect(() => {
+      onStatusChange?.(status);
+    }, [onStatusChange, status]);
+
+    return (
+      <div className="flex flex-col space-y-8">
+        <div className="flex flex-col space-y-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col space-y-1">
+              <span>{t('settings.network.dns.ipv4Title')}</span>
+              <span className="text-xs text-neutral-500">
+                {t('settings.network.dns.ipv4Description')}
+              </span>
+            </div>
+
+            <Segmented
+              className="max-w-full overflow-x-auto"
+              disabled={disabled || isLoading || isSaving}
+              value={mode}
+              onChange={(val) => {
+                setMode(val as DNSMode);
+                setMessage('');
+                setError('');
+              }}
+              options={[
+                { label: t('settings.network.dns.dhcp'), value: 'dhcp' },
+                { label: t('settings.network.dns.manual'), value: 'manual' }
+              ]}
+            />
+          </div>
+
+          <Panel title={t('settings.network.dns.networkDetails')}>
+            <InfoRow label={t('settings.network.dns.interface')} value={formatInterface(info)} />
+            {mode === 'manual' ? (
+              <>
+                <EditableInfoRow
+                  label={t('settings.network.dns.ipAddress')}
+                  value={address}
+                  placeholder="192.0.2.53"
+                  status={address.trim() && !isValidIPv4(normalizedAddress) ? 'error' : undefined}
+                  onChange={(value) => {
+                    setAddress(value);
+                    setMessage('');
+                    setError('');
+                  }}
+                />
+                <EditableInfoRow
+                  label={t('settings.network.dns.subnetMask')}
+                  value={subnetMask}
+                  placeholder="255.255.255.0"
+                  status={
+                    subnetMask.trim() && !isValidSubnetMask(trimmedSubnetMask) ? 'error' : undefined
+                  }
+                  onChange={(value) => {
+                    setSubnetMask(value);
+                    setMessage('');
+                    setError('');
+                  }}
+                />
+                <EditableInfoRow
+                  label={t('settings.network.dns.router')}
+                  value={gateway}
+                  placeholder="192.0.2.1"
+                  status={gateway.trim() && !isValidIPv4(normalizedGateway) ? 'error' : undefined}
+                  isLast
+                  onChange={(value) => {
+                    setGateway(value);
+                    setMessage('');
+                    setError('');
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <InfoRow label={t('settings.network.dns.ipAddress')} value={info.address} />
+                <InfoRow label={t('settings.network.dns.subnetMask')} value={info.subnetMask} />
+                <InfoRow label={t('settings.network.dns.router')} value={info.gateway} isLast />
+              </>
+            )}
+          </Panel>
+        </div>
+
+        <div className="flex flex-col space-y-5">
+          <div className="flex flex-col space-y-1">
+            <span>{t('settings.network.dns.title')}</span>
+            <span className="text-xs text-neutral-500">
+              {t('settings.network.dns.description')}
+            </span>
+          </div>
+
+          <Panel title={t('settings.network.dns.dnsServers')} description={serversDescription}>
+            {mode === 'manual' ? (
+              <div>
+                {servers.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-neutral-500">
+                    {t('settings.network.dns.none')}
+                  </div>
+                ) : (
+                  servers.map((server, index) => (
+                    <EditableServerRow
+                      key={index}
+                      value={server}
+                      autoFocus={focusNewRow && index === servers.length - 1}
+                      onChange={(val) => updateServer(index, val)}
+                      onRemove={() => removeServer(index)}
+                    />
+                  ))
+                )}
+
+                {/* Add server button */}
+                {canAdd && (
+                  <div className="px-4 py-1.5 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="dashed"
+                        className="flex-1"
+                        icon={<PlusIcon size={14} />}
+                        onClick={addServer}
+                      >
+                        {t('settings.network.dns.add')}
+                      </Button>
+                      <Button
+                        type="text"
+                        size="small"
+                        className="invisible shrink-0"
+                        icon={<XIcon size={14} />}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Validation hints */}
+                {(hasInvalidServer || hasInvalidNetwork || isExceedMax) && (
+                  <div className="space-y-1 px-4 pb-3">
+                    {hasInvalidServer && (
+                      <div className="text-xs text-red-400">
+                        {t('settings.network.dns.invalid')}
+                      </div>
+                    )}
+                    {hasInvalidNetwork && (
+                      <div className="text-xs text-red-400">
+                        {t('settings.network.dns.invalidNetwork')}
+                      </div>
+                    )}
+                    {isExceedMax && (
+                      <div className="text-xs text-red-400">
+                        {t('settings.network.dns.maxServers', { count: maxServers })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ServerList servers={dhcp} />
+            )}
+          </Panel>
+        </div>
+
+        {/* Footer: status + save button */}
+        {showFooter && (hasChanges || statusText) && (
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className={`text-xs ${statusColor}`}>{statusText}</span>
+
+            <Button
+              className="w-full sm:w-auto"
+              type={hasChanges ? 'primary' : 'default'}
+              icon={message ? <CheckIcon size={14} /> : undefined}
+              loading={isSaving}
+              disabled={
+                isLoading ||
+                (!hasChanges && !hasInvalidServer && !hasInvalidNetwork) ||
+                hasInvalidServer ||
+                hasInvalidNetwork ||
+                isExceedMax
+              }
+              onClick={() => void save()}
+            >
+              {mode === 'manual' ? t('settings.network.dns.apply') : t('settings.network.dns.save')}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+);
+
+DNS.displayName = 'DNS';

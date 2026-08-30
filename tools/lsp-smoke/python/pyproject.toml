@@ -1,0 +1,7 @@
+[project]
+name = "bli-kvm-lsp-probe"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.basedpyright]
+typeCheckingMode = "strict"

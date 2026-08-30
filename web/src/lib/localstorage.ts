@@ -1,0 +1,312 @@
+import { Resolution } from '@/types';
+
+const STORAGE_PREFIX = 'hardened-blikvm';
+const LANGUAGE_KEY = `${STORAGE_PREFIX}-language`;
+const VIDEO_MODE_KEY = `${STORAGE_PREFIX}-video-mode`;
+const VIDEO_SCALE_KEY = `${STORAGE_PREFIX}-video-scale`;
+const WEB_RESOLUTION_KEY = `${STORAGE_PREFIX}-web-resolution`;
+const WEB_TITLE_KEY = `${STORAGE_PREFIX}-web-title`;
+const FPS_KEY = `${STORAGE_PREFIX}-fps`;
+const QUALITY_KEY = `${STORAGE_PREFIX}-quality`;
+const GOP_KEY = `${STORAGE_PREFIX}-gop`;
+const FRAME_DETECT_KEY = `${STORAGE_PREFIX}-frame-detect`;
+const MOUSE_STYLE_KEY = `${STORAGE_PREFIX}-mouse-style`;
+const MOUSE_MODE_KEY = `${STORAGE_PREFIX}-mouse-mode`;
+const MOBILE_POINTER_MODE_KEY = `${STORAGE_PREFIX}-mobile-pointer-mode`;
+const POINTER_SENSITIVITY_KEY = `${STORAGE_PREFIX}-pointer-sensitivity`;
+const MOUSE_SCROLL_DIRECTION_KEY = `${STORAGE_PREFIX}-mouse-scroll-direction`;
+const MOUSE_SCROLL_INTERVAL_KEY = `${STORAGE_PREFIX}-mouse-scroll-interval`;
+const SKIP_UPDATE_KEY = `${STORAGE_PREFIX}-check-update`;
+const KEYBOARD_SYSTEM_KEY = `${STORAGE_PREFIX}-keyboard-system`;
+const KEYBOARD_LANGUAGE_KEY = `${STORAGE_PREFIX}-keyboard-language`;
+const SKIP_MODIFY_PASSWORD_KEY = `${STORAGE_PREFIX}-skip-modify-password`;
+const MENU_DISABLED_ITEMS_KEY = `${STORAGE_PREFIX}-menu-disabled-items`;
+const MENU_AUTO_HIDE_KEY = `${STORAGE_PREFIX}-menu-auto-hide`;
+const LAYOUT_MODE_KEY = `${STORAGE_PREFIX}-layout-mode`;
+const POWER_CONFIRM_KEY = `${STORAGE_PREFIX}-power-confirm`;
+
+type ItemWithExpiry = {
+  value: string;
+  expiry: number;
+};
+
+const menuDisplayModes = ['off', 'auto', 'always'];
+const layoutModes = ['auto', 'mobile'] as const;
+
+export type LayoutMode = (typeof layoutModes)[number];
+
+function normalizeMenuDisplayMode(value: string | null): string | null {
+  if (!value) return null;
+
+  const mode = value.trim().toLowerCase();
+  if (menuDisplayModes.includes(mode)) return mode;
+  if (mode === 'true') return 'auto';
+  if (mode === 'false') return 'always';
+
+  return null;
+}
+
+// set the value with expiration time (unit: milliseconds)
+function setWithExpiry(key: string, value: string, ttl: number) {
+  const now = new Date();
+
+  const item: ItemWithExpiry = {
+    value: value,
+    expiry: now.getTime() + ttl
+  };
+
+  localStorage.setItem(key, JSON.stringify(item));
+}
+
+// get the value with expiration time
+function getWithExpiry(key: string) {
+  const itemStr = localStorage.getItem(key);
+  if (!itemStr) return null;
+
+  const item: ItemWithExpiry = JSON.parse(itemStr);
+  const now = new Date();
+  if (now.getTime() > item.expiry) {
+    localStorage.removeItem(key);
+    return null;
+  }
+
+  return item.value;
+}
+
+export function getLanguage() {
+  return localStorage.getItem(LANGUAGE_KEY);
+}
+
+export function setLanguage(language: string) {
+  localStorage.setItem(LANGUAGE_KEY, language);
+}
+
+export function getVideoMode() {
+  return localStorage.getItem(VIDEO_MODE_KEY);
+}
+
+export function setVideoMode(mode: string) {
+  localStorage.setItem(VIDEO_MODE_KEY, mode);
+}
+
+export function getVideoScale(): number | null {
+  const scale = localStorage.getItem(VIDEO_SCALE_KEY);
+  if (scale && Number(scale)) {
+    return Number(scale);
+  }
+  return null;
+}
+
+export function setVideoScale(scale: number): void {
+  localStorage.setItem(VIDEO_SCALE_KEY, String(scale));
+}
+
+export function getResolution(): Resolution | null {
+  const resolution = localStorage.getItem(WEB_RESOLUTION_KEY);
+  if (resolution) {
+    const obj = JSON.parse(window.atob(resolution));
+    return obj as Resolution;
+  }
+
+  return null;
+}
+
+export function setResolution(resolution: Resolution) {
+  localStorage.setItem(WEB_RESOLUTION_KEY, window.btoa(JSON.stringify(resolution)));
+}
+
+export function getWebTitle() {
+  return localStorage.getItem(WEB_TITLE_KEY) || '';
+}
+
+export function setWebTitle(title: string) {
+  const value = title.trim().slice(0, 80);
+  if (value) {
+    localStorage.setItem(WEB_TITLE_KEY, value);
+  } else {
+    localStorage.removeItem(WEB_TITLE_KEY);
+  }
+  return value;
+}
+
+export function getFps() {
+  const fps = localStorage.getItem(FPS_KEY);
+  return fps ? Number(fps) : null;
+}
+
+export function setFps(fps: number) {
+  localStorage.setItem(FPS_KEY, String(fps));
+}
+
+export function getQuality() {
+  const quality = localStorage.getItem(QUALITY_KEY);
+  return quality ? Number(quality) : null;
+}
+
+export function setQuality(quality: number) {
+  localStorage.setItem(QUALITY_KEY, String(quality));
+}
+
+export function getGop() {
+  const gop = localStorage.getItem(GOP_KEY);
+  return gop ? Number(gop) : null;
+}
+
+export function setGop(gop: number) {
+  localStorage.setItem(GOP_KEY, String(gop));
+}
+
+export function getFrameDetect(): boolean {
+  const enabled = localStorage.getItem(FRAME_DETECT_KEY);
+  return enabled === 'true';
+}
+
+export function setFrameDetect(enabled: boolean) {
+  localStorage.setItem(FRAME_DETECT_KEY, String(enabled));
+}
+
+export function getMouseStyle() {
+  return localStorage.getItem(MOUSE_STYLE_KEY);
+}
+
+export function setMouseStyle(mouse: string) {
+  localStorage.setItem(MOUSE_STYLE_KEY, mouse);
+}
+
+export function getMouseMode() {
+  return localStorage.getItem(MOUSE_MODE_KEY);
+}
+
+export function setMouseMode(mouse: string) {
+  localStorage.setItem(MOUSE_MODE_KEY, mouse);
+}
+
+export function getMobilePointerMode() {
+  return localStorage.getItem(MOBILE_POINTER_MODE_KEY);
+}
+
+export function setMobilePointerMode(mode: string) {
+  localStorage.setItem(MOBILE_POINTER_MODE_KEY, mode);
+}
+
+export function getPointerSensitivity(): number | null {
+  const sensitivity = localStorage.getItem(POINTER_SENSITIVITY_KEY);
+  if (!sensitivity) return null;
+
+  const value = Number(sensitivity);
+  if (!Number.isFinite(value)) return null;
+
+  return Math.max(0.25, Math.min(2, value));
+}
+
+export function setPointerSensitivity(sensitivity: number): void {
+  const value = Math.max(0.25, Math.min(2, sensitivity));
+  localStorage.setItem(POINTER_SENSITIVITY_KEY, String(value));
+}
+
+export function getMouseScrollDirection(): number | null {
+  const direction = localStorage.getItem(MOUSE_SCROLL_DIRECTION_KEY);
+  if (direction && Number(direction)) {
+    return Number(direction);
+  }
+  return null;
+}
+
+export function setMouseScrollDirection(direction: number): void {
+  localStorage.setItem(MOUSE_SCROLL_DIRECTION_KEY, String(direction));
+}
+
+export function getMouseScrollInterval() {
+  const interval = localStorage.getItem(MOUSE_SCROLL_INTERVAL_KEY);
+  return interval ? Number(interval) : null;
+}
+
+export function setMouseScrollInterval(interval: number): void {
+  localStorage.setItem(MOUSE_SCROLL_INTERVAL_KEY, String(interval));
+}
+
+export function getSkipUpdate() {
+  const skip = getWithExpiry(SKIP_UPDATE_KEY);
+  return skip === 'true';
+}
+
+export function setSkipUpdate(skip: boolean) {
+  const expiry = 3 * 24 * 60 * 60 * 1000; // 3 days
+  setWithExpiry(SKIP_UPDATE_KEY, String(skip), expiry);
+}
+
+export function setKeyboardSystem(system: string) {
+  localStorage.setItem(KEYBOARD_SYSTEM_KEY, system);
+}
+
+export function getKeyboardSystem() {
+  return localStorage.getItem(KEYBOARD_SYSTEM_KEY);
+}
+
+export function setKeyboardLanguage(language: string) {
+  localStorage.setItem(KEYBOARD_LANGUAGE_KEY, language);
+}
+
+export function getKeyboardLanguage() {
+  return localStorage.getItem(KEYBOARD_LANGUAGE_KEY);
+}
+
+export function setSkipModifyPassword(skip: boolean) {
+  const expiry = 3 * 24 * 60 * 60 * 1000; // 3 days
+  setWithExpiry(SKIP_MODIFY_PASSWORD_KEY, String(skip), expiry);
+}
+
+export function getSkipModifyPassword() {
+  const skip = getWithExpiry(SKIP_MODIFY_PASSWORD_KEY);
+  return skip === 'true';
+}
+
+export function setMenuDisabledItems(items: string[]) {
+  const value = JSON.stringify(items);
+  localStorage.setItem(MENU_DISABLED_ITEMS_KEY, value);
+}
+
+export function getMenuDisabledItems(): string[] {
+  const value = localStorage.getItem(MENU_DISABLED_ITEMS_KEY);
+  return value ? JSON.parse(value) : [];
+}
+
+export function getMenuDisplayMode(): string {
+  const value = localStorage.getItem(MENU_AUTO_HIDE_KEY);
+  const mode = normalizeMenuDisplayMode(value);
+  if (!mode) {
+    return 'auto';
+  }
+  if (mode !== value) {
+    localStorage.setItem(MENU_AUTO_HIDE_KEY, mode);
+  }
+  return mode;
+}
+
+export function setMenuDisplayMode(mode: string) {
+  localStorage.setItem(MENU_AUTO_HIDE_KEY, mode);
+}
+
+export function getLayoutMode(): LayoutMode {
+  const value = localStorage.getItem(LAYOUT_MODE_KEY);
+  if (layoutModes.includes(value as LayoutMode)) {
+    return value as LayoutMode;
+  }
+  if (value) {
+    localStorage.removeItem(LAYOUT_MODE_KEY);
+  }
+  return 'auto';
+}
+
+export function setLayoutMode(mode: LayoutMode) {
+  localStorage.setItem(LAYOUT_MODE_KEY, mode);
+}
+
+export function getPowerConfirm() {
+  const enabled = localStorage.getItem(POWER_CONFIRM_KEY);
+  return enabled === 'true';
+}
+
+export function setPowerConfirm(enabled: boolean) {
+  localStorage.setItem(POWER_CONFIRM_KEY, String(enabled));
+}

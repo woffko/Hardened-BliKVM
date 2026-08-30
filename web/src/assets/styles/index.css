@@ -1,0 +1,205 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: #000;
+}
+
+.settings-modal-mobile {
+  width: 100vw !important;
+  max-width: none;
+  margin: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.settings-modal-mobile .ant-modal-content {
+  width: 100%;
+  max-width: 100vw;
+  height: 100dvh;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.settings-modal-mobile .ant-modal-body {
+  width: 100%;
+  max-width: 100vw;
+  overflow: hidden;
+}
+
+.settings-modal-mobile .ant-modal-close {
+  top: calc(env(safe-area-inset-top) + 8px);
+  right: 10px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.settings-mobile-tabs {
+  scrollbar-width: none;
+}
+
+.settings-mobile-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-segmented-wrap-labels .ant-segmented-item-label,
+.settings-modal-mobile .ant-segmented-item-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: auto;
+  min-height: 2rem;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.settings-modal-mobile [data-slot='scroll-area-viewport'] {
+  max-width: 100%;
+  overflow-x: hidden !important;
+  overscroll-behavior-x: none;
+}
+
+.settings-modal-mobile [data-slot='scroll-area-viewport'] > div {
+  max-width: 100%;
+}
+
+.settings-modal-mobile .ant-alert-message,
+.settings-modal-mobile .ant-alert-description,
+.settings-modal-mobile .ant-typography {
+  overflow-wrap: anywhere;
+}
+
+.settings-modal-mobile .ant-input,
+.settings-modal-mobile .ant-input-number,
+.settings-modal-mobile .ant-select {
+  max-width: 100%;
+}
+
+.settings-modal-mobile .ant-switch {
+  flex-shrink: 0;
+  margin-right: 10px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #000000;
+}
+::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+.spin {
+  animation: spin 1s linear;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hardened-login-logo {
+  position: relative;
+  transform: translateZ(0);
+}
+
+.hardened-login-logo::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(96, 165, 250, 0.5);
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.98);
+}
+
+.hardened-login-logo--active {
+  animation: hardened-login-logo-press 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.hardened-login-logo--active::after {
+  animation: hardened-login-logo-pulse 680ms ease-out;
+}
+
+@keyframes hardened-login-logo-press {
+  0% {
+    transform: translateZ(0) scale(1);
+  }
+  38% {
+    transform: translateZ(0) scale(0.965);
+  }
+  72% {
+    transform: translateZ(0) scale(1.012);
+  }
+  100% {
+    transform: translateZ(0) scale(1);
+  }
+}
+
+@keyframes hardened-login-logo-pulse {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hardened-login-logo--active,
+  .hardened-login-logo--active::after {
+    animation: none;
+  }
+
+  .hardened-login-logo--active::after {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+}
+
+/* PicoClaw Chat Custom Scrollbar */
+.picoclaw-sidebar-scrollbar *::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.picoclaw-sidebar-scrollbar *::-webkit-scrollbar-track {
+  background: transparent;
+}
+.picoclaw-sidebar-scrollbar *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+.picoclaw-sidebar-scrollbar *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* PicoClaw Chat Loading Animation */
+@keyframes picoclaw-loading-bounce {
+  0%,
+  100% {
+    transform: translateY(0.5px);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-1.5px);
+    opacity: 1;
+  }
+}

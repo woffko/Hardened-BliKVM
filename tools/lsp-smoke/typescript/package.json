@@ -1,0 +1,5 @@
+{
+  "name": "bli-kvm-lsp-probe",
+  "private": true,
+  "type": "module"
+}

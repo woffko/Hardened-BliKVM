@@ -1,0 +1,60 @@
+# BLi-KVM target architecture
+
+## Decision
+
+BLi-KVM reuses the Hardened NanoKVM product shape and security model, not its
+SG2002 hardware assumptions. The target consists of a platform-neutral Rust
+core, a React/TypeScript frontend, and explicit platform adapters.
+
+The current BliKVM Node, Vue, C, shell, and PiKVM implementations are
+compatibility references. They are not the production trust boundary.
+
+## Process boundary
+
+```text
+Browser
+  |
+  | HTTPS and authenticated WebSocket
+  v
+bli-kvm-server
+  - unprivileged user
+  - auth, API, policy, static web, update verification
+  - no direct GPIO, configfs, block-device, or shell access
+  |
+  | permission-restricted Unix socket with fixed request types
+  v
+bli-platform-broker
+  - minimal privileged process
+  - exact device allowlist
+  - transition: authenticated allowlisted KVMD Unix-socket client
+  - native: HID, USB configfs, ATX, board I/O, virtual-media LUN actions
+  - credentials supplied by systemd, never by argv or the network process
+
+Separate service users
+  - video capture and Janus during transition
+  - optional upload worker
+  - log collector
+```
+
+The transition broker is logically privileged even when it needs no root UID:
+its KVMD credential can perform hardware actions. Read-only inventory and
+mutating methods use separate traits and policy checks. A runtime observation
+never enables a mutating method by itself.
+
+## Core invariants
+
+1. Merely rendering a page cannot acquire or mutate hardware.
+2. No user-controlled value reaches a shell command.
+3. A network-facing process does not run as root.
+4. Hardware actions use typed requests and explicit authorization.
+5. Capability availability and evidence quality are separate facts.
+6. A host build is never treated as physical hardware acceptance.
+7. Application updates and full-system updates have separate trust and
+   recovery gates.
+
+## Transition video design
+
+The first Bli adapter may keep uStreamer and Janus as loopback-only processes.
+The web application selects a Janus or native WebRTC adapter from the
+capability manifest. Janus is removed only after a Rust V4L2/native WebRTC path
+passes the same latency, format, reconnect, multi-client, and endurance gates.

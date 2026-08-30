@@ -1,0 +1,24 @@
+# Packaging boundary
+
+These files describe the intended service boundary; they are not installed by
+the host development build.
+
+`hardened-blikvm-platform-broker.service` has no TCP address family, no device
+namespace access, no capabilities, and no writable path outside its runtime
+directory. During the KVMD transition it joins the `kvmd` supplementary group
+only to connect to `/run/kvmd/kvmd.sock`.
+
+The two files below must be provisioned locally as root-owned mode 0400 files
+and must never be included in a package, image source tree, command line,
+environment variable, log, or support bundle:
+
+- `/etc/hardened-blikvm/kvmd-user`
+- `/etc/hardened-blikvm/kvmd-password`
+
+They should identify a dedicated KVMD account, not an administrator or SSH
+account. The service loads them with systemd `LoadCredential`; the broker
+accepts no credential arguments and has no compiled default.
+
+Creating that KVMD account and installing these files are separate on-device
+mutations. They require explicit authorization, `rw`, backup/rollback, and a
+reboot/recovery gate. Nothing in this repository performs that mutation yet.

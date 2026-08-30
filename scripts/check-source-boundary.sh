@@ -1,0 +1,95 @@
+#!/bin/sh
+set -eu
+
+temp_list=$(mktemp /tmp/hardened-blikvm-source-list.XXXXXX)
+cleanup() {
+  case "$temp_list" in
+    /tmp/hardened-blikvm-source-list.*) rm -f -- "$temp_list" ;;
+    *) echo "refusing unsafe temporary cleanup" >&2 ;;
+  esac
+}
+trap cleanup EXIT HUP INT TERM
+
+git ls-files --cached --others --exclude-standard | sort > "$temp_list"
+if [ ! -s "$temp_list" ]; then
+  echo "no Git-visible source files found" >&2
+  exit 1
+fi
+
+while IFS= read -r path; do
+  case "$path" in
+    evidence/private/*|.codex/*|.agents/*|AGENTS.override.md|web/dist/*|target/*|*/node_modules/*|state/*|scratch/*|vendor/*|*.7z|*.img|*.raw|*.deb)
+      echo "forbidden Git-visible path: $path" >&2
+      exit 1
+      ;;
+  esac
+  if [ -L "$path" ]; then
+    echo "unexpected source symlink: $path" >&2
+    exit 1
+  fi
+  size=$(wc -c < "$path" | tr -d ' ')
+  if [ "$size" -gt 2097152 ]; then
+    echo "unexpected source file larger than 2 MiB: $path" >&2
+    exit 1
+  fi
+  mime=$(file -b --mime-type "$path")
+  case "$mime" in
+    text/*|application/json|application/toml|application/xml|application/javascript|inode/x-empty) ;;
+    image/png)
+      if [ "$path" != "web/public/hardened-blikvm-logo.png" ]; then
+        echo "unexpected PNG source asset: $path" >&2
+        exit 1
+      fi
+      ;;
+    image/svg+xml)
+      case "$path" in
+        *.svg) ;;
+        *)
+          echo "unexpected SVG source asset path: $path" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "unexpected binary source file ($mime): $path" >&2
+      exit 1
+      ;;
+  esac
+done < "$temp_list"
+
+secret_matches=$(
+  rg --hidden -n -i \
+    --glob '!.git/**' \
+    --glob '!.codex/**' \
+    --glob '!AGENTS.override.md' \
+    --glob '!evidence/private/**' \
+    --glob '!web/public/*.png' \
+    "BEGIN [A-Z ]*PRIVATE KEY|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|(api[_-]?key|token|secret)[[:space:]]*[:=][[:space:]]*[\"'][A-Za-z0-9+/=_-]{16,}[\"']|https?://[^/[:space:]@:]+:[^@[:space:]]+@" \
+    . || true
+)
+secret_matches=$(printf '%s\n' "$secret_matches" | rg -v '^\./tools/test_' || true)
+if [ -n "$secret_matches" ]; then
+  printf '%s\n' "$secret_matches" >&2
+  echo "potential secret in Git-visible source" >&2
+  exit 1
+fi
+
+private_ip_matches=$(
+  rg --hidden -n \
+    --glob '!.git/**' \
+    --glob '!.codex/**' \
+    --glob '!AGENTS.override.md' \
+    --glob '!evidence/private/**' \
+    --glob '!web/public/*.png' \
+    '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b' \
+    . || true
+)
+private_ip_matches=$(printf '%s\n' "$private_ip_matches" \
+  | rg -v '^\./tools/test_capture_pikvm_baseline\.py:' || true)
+if [ -n "$private_ip_matches" ]; then
+  printf '%s\n' "$private_ip_matches" >&2
+  echo "private IPv4 literal in Git-visible source" >&2
+  exit 1
+fi
+
+echo "source boundary check passed"
