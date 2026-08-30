@@ -282,6 +282,14 @@ system; the candidate sequence becomes usable only after final system
 confirmation. Two additional tests cover rollback-anchor enforcement, stable
 post-confirmation acceptance, and invalid application/system evidence.
 
+The same crate now defines a path-free redundant storage trait and ordered
+persistence coordinator. Nine in-memory fault-injection tests cover clean
+initialization, pre-existing-state refusal, first/second copy replace errors,
+torn writes, sync loss, crash discard, degraded old/new recovery, convergence,
+selector parity, read failure, generation exhaustion, and stale expected
+generation before write. A concrete adapter and transition authorizer remain
+absent.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

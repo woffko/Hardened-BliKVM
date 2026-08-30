@@ -80,7 +80,9 @@ storage implementation. `bli-kvm-system-layout` validates canonical recovery
 geometry and returns only exact capacities/hash evidence; it has no device or
 partition API and no profile is compiled in as accepted.
 `bli-kvm-system-boot-control` similarly models checksummed dual-copy records
-and reconciliation without persistence or a selector adapter.
+and reconciliation without a filesystem or selector adapter. Its path-free
+storage trait requires per-copy atomic replace, sync, exact readback, expected
+generation, and an external exclusive recovery lock.
 
 ## Transition video design
 

@@ -8,6 +8,8 @@ pub const MAX_RECORD_BYTES: usize = 64 * 1024;
 const JOURNAL_DOMAIN: &[u8] = b"hardened-blikvm-system-journal-v1\0";
 const SELECTOR_DOMAIN: &[u8] = b"hardened-blikvm-boot-selector-v1\0";
 
+type RawCopies = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemSlot {
@@ -140,6 +142,54 @@ pub type SelectedJournal = SelectedRecord<SystemJournal>;
 pub type SelectedSelector = SelectedRecord<BootSelector>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordDomain {
+    Journal,
+    Selector,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyIndex {
+    A,
+    B,
+}
+
+impl CopyIndex {
+    fn other(self) -> Self {
+        match self {
+            Self::A => Self::B,
+            Self::B => Self::A,
+        }
+    }
+}
+
+pub trait RedundantRecordStorage {
+    type Error;
+
+    /// Read one complete durable copy. The adapter must never synthesize bytes.
+    fn read_copy(
+        &mut self,
+        domain: RecordDomain,
+        index: CopyIndex,
+    ) -> Result<Option<Vec<u8>>, Self::Error>;
+
+    /// Atomically replace one logical copy, but do not claim durability yet.
+    fn replace_copy(
+        &mut self,
+        domain: RecordDomain,
+        index: CopyIndex,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error>;
+
+    /// Make the preceding replacement durable before another copy is touched.
+    fn sync_copy(&mut self, domain: RecordDomain, index: CopyIndex) -> Result<(), Self::Error>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistedRecord {
+    pub generation: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reconciliation {
     Clean,
     CandidateUnselected { phase: JournalPhase },
@@ -189,6 +239,26 @@ pub enum CompatibilityError {
     IncompatibleWithConfirmedSystem,
     #[error("application would prevent rollback to the confirmed system")]
     IncompatibleWithRollbackAnchor,
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum StorageOperationError {
+    #[error("redundant storage read failed")]
+    Read,
+    #[error("redundant storage already contains state")]
+    AlreadyInitialized,
+    #[error("redundant storage state is invalid")]
+    State(#[from] BootControlError),
+    #[error("redundant storage generation is exhausted")]
+    GenerationExhausted,
+    #[error("redundant storage changed since it was read")]
+    ConcurrentStateChange,
+    #[error("redundant storage copy replacement failed")]
+    Replace,
+    #[error("redundant storage copy sync failed")]
+    Sync,
+    #[error("redundant storage readback verification failed")]
+    Verification,
 }
 
 #[derive(Serialize)]
@@ -305,6 +375,84 @@ pub fn select_selector_copies(
         a.map(|copy| (copy.generation, copy.payload)),
         b.map(|copy| (copy.generation, copy.payload)),
     )
+}
+
+pub fn load_journal_storage<S: RedundantRecordStorage>(
+    storage: &mut S,
+) -> Result<SelectedJournal, StorageOperationError> {
+    let (copy_a, copy_b) = read_domain(storage, RecordDomain::Journal)?;
+    select_journal_copies(copy_a.as_deref(), copy_b.as_deref()).map_err(Into::into)
+}
+
+pub fn load_selector_storage<S: RedundantRecordStorage>(
+    storage: &mut S,
+) -> Result<SelectedSelector, StorageOperationError> {
+    let (copy_a, copy_b) = read_domain(storage, RecordDomain::Selector)?;
+    select_selector_copies(copy_a.as_deref(), copy_b.as_deref()).map_err(Into::into)
+}
+
+pub fn initialize_journal_storage<S: RedundantRecordStorage>(
+    storage: &mut S,
+    payload: SystemJournal,
+) -> Result<PersistedRecord, StorageOperationError> {
+    require_empty_domain(storage, RecordDomain::Journal)?;
+    let bytes = JournalCopy::new(1, payload)?.to_bytes()?;
+    commit_copy(storage, RecordDomain::Journal, CopyIndex::A, &bytes)?;
+    commit_copy(storage, RecordDomain::Journal, CopyIndex::B, &bytes)?;
+    Ok(PersistedRecord { generation: 1 })
+}
+
+pub fn initialize_selector_storage<S: RedundantRecordStorage>(
+    storage: &mut S,
+    payload: BootSelector,
+) -> Result<PersistedRecord, StorageOperationError> {
+    require_empty_domain(storage, RecordDomain::Selector)?;
+    let bytes = SelectorCopy::new(1, payload)?.to_bytes()?;
+    commit_copy(storage, RecordDomain::Selector, CopyIndex::A, &bytes)?;
+    commit_copy(storage, RecordDomain::Selector, CopyIndex::B, &bytes)?;
+    Ok(PersistedRecord { generation: 1 })
+}
+
+pub fn persist_journal_storage<S: RedundantRecordStorage>(
+    storage: &mut S,
+    expected_generation: u64,
+    payload: SystemJournal,
+) -> Result<PersistedRecord, StorageOperationError> {
+    let (copy_a, copy_b) = read_domain(storage, RecordDomain::Journal)?;
+    let selected = select_journal_copies(copy_a.as_deref(), copy_b.as_deref())?;
+    if selected.generation != expected_generation {
+        return Err(StorageOperationError::ConcurrentStateChange);
+    }
+    let generation = selected
+        .generation
+        .checked_add(1)
+        .ok_or(StorageOperationError::GenerationExhausted)?;
+    let bytes = JournalCopy::new(generation, payload)?.to_bytes()?;
+    let first = older_or_invalid_journal_copy(copy_a.as_deref(), copy_b.as_deref());
+    commit_copy(storage, RecordDomain::Journal, first, &bytes)?;
+    commit_copy(storage, RecordDomain::Journal, first.other(), &bytes)?;
+    Ok(PersistedRecord { generation })
+}
+
+pub fn persist_selector_storage<S: RedundantRecordStorage>(
+    storage: &mut S,
+    expected_generation: u64,
+    payload: BootSelector,
+) -> Result<PersistedRecord, StorageOperationError> {
+    let (copy_a, copy_b) = read_domain(storage, RecordDomain::Selector)?;
+    let selected = select_selector_copies(copy_a.as_deref(), copy_b.as_deref())?;
+    if selected.generation != expected_generation {
+        return Err(StorageOperationError::ConcurrentStateChange);
+    }
+    let generation = selected
+        .generation
+        .checked_add(1)
+        .ok_or(StorageOperationError::GenerationExhausted)?;
+    let bytes = SelectorCopy::new(generation, payload)?.to_bytes()?;
+    let first = older_or_invalid_selector_copy(copy_a.as_deref(), copy_b.as_deref());
+    commit_copy(storage, RecordDomain::Selector, first, &bytes)?;
+    commit_copy(storage, RecordDomain::Selector, first.other(), &bytes)?;
+    Ok(PersistedRecord { generation })
 }
 
 pub fn reconcile(
@@ -475,6 +623,90 @@ where
         return Err(BootControlError::InvalidDocument);
     }
     Ok(value)
+}
+
+fn read_domain<S: RedundantRecordStorage>(
+    storage: &mut S,
+    domain: RecordDomain,
+) -> Result<RawCopies, StorageOperationError> {
+    let copy_a = storage
+        .read_copy(domain, CopyIndex::A)
+        .map_err(|_| StorageOperationError::Read)?;
+    let copy_b = storage
+        .read_copy(domain, CopyIndex::B)
+        .map_err(|_| StorageOperationError::Read)?;
+    Ok((copy_a, copy_b))
+}
+
+fn require_empty_domain<S: RedundantRecordStorage>(
+    storage: &mut S,
+    domain: RecordDomain,
+) -> Result<(), StorageOperationError> {
+    let (copy_a, copy_b) = read_domain(storage, domain)?;
+    if copy_a.is_some() || copy_b.is_some() {
+        return Err(StorageOperationError::AlreadyInitialized);
+    }
+    Ok(())
+}
+
+fn commit_copy<S: RedundantRecordStorage>(
+    storage: &mut S,
+    domain: RecordDomain,
+    index: CopyIndex,
+    bytes: &[u8],
+) -> Result<(), StorageOperationError> {
+    storage
+        .replace_copy(domain, index, bytes)
+        .map_err(|_| StorageOperationError::Replace)?;
+    storage
+        .sync_copy(domain, index)
+        .map_err(|_| StorageOperationError::Sync)?;
+    let readback = storage
+        .read_copy(domain, index)
+        .map_err(|_| StorageOperationError::Read)?;
+    if readback.as_deref() != Some(bytes) {
+        return Err(StorageOperationError::Verification);
+    }
+    Ok(())
+}
+
+fn older_or_invalid_journal_copy(copy_a: Option<&[u8]>, copy_b: Option<&[u8]>) -> CopyIndex {
+    older_or_invalid_copy(
+        copy_a.and_then(|bytes| {
+            JournalCopy::from_bytes(bytes)
+                .ok()
+                .map(|copy| copy.generation)
+        }),
+        copy_b.and_then(|bytes| {
+            JournalCopy::from_bytes(bytes)
+                .ok()
+                .map(|copy| copy.generation)
+        }),
+    )
+}
+
+fn older_or_invalid_selector_copy(copy_a: Option<&[u8]>, copy_b: Option<&[u8]>) -> CopyIndex {
+    older_or_invalid_copy(
+        copy_a.and_then(|bytes| {
+            SelectorCopy::from_bytes(bytes)
+                .ok()
+                .map(|copy| copy.generation)
+        }),
+        copy_b.and_then(|bytes| {
+            SelectorCopy::from_bytes(bytes)
+                .ok()
+                .map(|copy| copy.generation)
+        }),
+    )
+}
+
+fn older_or_invalid_copy(generation_a: Option<u64>, generation_b: Option<u64>) -> CopyIndex {
+    match (generation_a, generation_b) {
+        (None, _) => CopyIndex::A,
+        (Some(_), None) => CopyIndex::B,
+        (Some(a), Some(b)) if a > b => CopyIndex::B,
+        (Some(_), Some(_)) => CopyIndex::A,
+    }
 }
 
 fn record_checksum<T: Serialize>(

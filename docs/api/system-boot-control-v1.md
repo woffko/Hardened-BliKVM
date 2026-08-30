@@ -191,3 +191,24 @@ reconciliation outcomes. It opens no file, device, mount, boot environment, or
 socket and cannot persist a record, decrement a real attempt, select a slot, or
 reboot. A storage adapter must later prove atomic copy replacement and replay
 the returned reconciliation action under recovery authority.
+
+### Storage adapter contract
+
+The crate now exposes a path-free `RedundantRecordStorage` trait. A recovery
+adapter supplies only domain (`journal` or `selector`) and copy (`A` or `B`)
+operations: read durable bytes, atomically replace one logical copy, and sync
+that replacement. The caller must hold one exclusive recovery lock across each
+load/persist operation.
+
+Persistence requires the generation observed by the caller. A stale expected
+generation fails before any write. The coordinator writes an invalid or older
+copy first, syncs it, reads back exact canonical bytes, and only then touches
+the other copy. Initialization refuses any pre-existing bytes, including
+invalid debris.
+
+The in-memory fault matrix covers replace error, torn replacement, sync error,
+and crash before either or both copies. A failure on the first copy preserves
+the old generation; a durable first/new copy plus failed second copy selects the
+new adjacent generation in degraded mode. This coordinator does not validate
+that one journal payload is an authorized phase transition; a future recovery
+state machine must produce the payload before persistence.

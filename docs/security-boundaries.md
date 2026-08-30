@@ -133,6 +133,12 @@ system for the entire pending system transaction. A candidate-only application
 requirement cannot be confirmed early and thereby make automatic system
 rollback unusable.
 
+The boot-control storage coordinator writes the invalid/older copy first and
+requires sync plus exact readback before touching the second copy. Persist calls
+carry an expected generation and reject stale state before writing. The future
+adapter must provide atomic per-copy replacement and hold an exclusive recovery
+lock; the trait contains no path or concrete storage implementation.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and
