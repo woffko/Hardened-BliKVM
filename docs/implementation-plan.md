@@ -72,6 +72,14 @@ acceptance remain open.
 
 Exit gate: HID event, mode, ATX timing, LED, reboot, and recovery tests pass.
 
+Checkpoint: the bounded v1 control protocol, client, and isolated broker now
+exist, but the broker has no backend and always returns
+`capability_disabled`. Its static-PIE AArch64 bundle passed a non-actuating H616
+gate for HID, ATX, and virtual-media request families while the browser issued
+zero control/WebSocket requests and all staging was removed. This proves the
+fail-closed boundary only; HID leases/translation and ATX arming/timing remain
+required before either capability can change.
+
 ## Phase 4: Video
 
 - Proxy loopback-only MJPEG first.
