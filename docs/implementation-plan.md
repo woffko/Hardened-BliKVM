@@ -220,6 +220,9 @@ roles and truncated four-partition field image are recorded in
 layout or device write. A separate fixture builder generates public-only
 rootfs-only and split-boot archives while keeping its ephemeral private key in
 process memory.
+The exact verifier checkpoint, fixture hashes, two-build AArch64 codegen result,
+and the non-shipped `lib.rmeta` variance are recorded in
+`baselines/system-image-verifier.md`.
 
 ## Phase 7: Release acceptance
 
