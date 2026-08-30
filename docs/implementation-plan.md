@@ -289,6 +289,8 @@ torn writes, sync loss, crash discard, degraded old/new recovery, convergence,
 selector parity, read failure, generation exhaustion, and stale expected
 generation before write. A concrete adapter and transition authorizer remain
 absent.
+The compatibility/storage AArch64 checkpoint and fault-matrix hashes are
+recorded in `baselines/system-recovery-core.md`.
 
 ## Phase 7: Release acceptance
 

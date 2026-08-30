@@ -56,7 +56,42 @@ reproducibility gates.
 
 ## Boundary
 
-This proves deterministic machine code for validation and reconciliation only.
-It does not accept a concrete layout hash, recovery image, U-Boot build,
-journal storage adapter, selector adapter, block writer, application/system
-floor coupling, recovery card, reboot, or power-cut behavior.
+The initial checkpoint proves deterministic machine code for validation and
+reconciliation only. At that source revision it did not include
+application/system floor coupling or a storage coordinator, and it did not
+accept a concrete layout hash, recovery image, U-Boot build, storage/selector
+adapter, block writer, recovery card, reboot, or power-cut behavior.
+
+## Compatibility and storage checkpoint
+
+Source commit `ba465eeca9fb74f8d97620180afdf7adcd7400f3` adds
+application/system rollback compatibility and the path-free redundant storage
+coordinator. Eleven policy/reconciliation tests and nine storage fault tests
+pass. The latter inject first/second copy replace errors, torn writes, sync
+loss, crash discard, read failure, stale generation, and generation exhaustion.
+
+Two further independent AArch64 builds produced byte-identical prototype
+archives:
+
+```text
+b24dbc66377a2343778149fa788d5b3f4a5622b0b4007b15c6238203dd1ad4e0
+```
+
+The updated boot-control executable code-generation object also matched:
+
+```text
+519b9783720e1a9a929c8bc540a14035a0c8161c6b3b5660b833a3287d29fb87
+```
+
+Only non-shipped compiler metadata varied:
+
+```text
+rlib A   01c6fcd0039536eeeae64bbb1e4ea2ed469b6be7f5fd8565a605d949ea4c2311
+rlib B   d6de730c35a62a7e63d492a721e54f7ead5609ff8162e566fcaa3f2e96c6b654
+rmeta A  861829494e9e69222c6457ad79b2261547285147a7d9b03b4d75a365c74c8f66
+rmeta B  e6f1b4c432e8fdc1bad0561911f187e8aba8902ba4cd3ae46594a301f1009ac6
+```
+
+The storage trait has no path or implementation. These results do not prove a
+real filesystem/block adapter, exclusive recovery lock, storage power-loss
+semantics, selector mutation, or authorized journal phase transitions.
