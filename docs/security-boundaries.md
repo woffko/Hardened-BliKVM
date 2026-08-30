@@ -80,6 +80,9 @@ the entire tree. It does not select an active slot or expose an update API.
 Its slot root is process-locked, and automatic crash cleanup is limited to
 bounded direct children carrying the exact staging/final receipt and containing
 no link, special file, foreign owner, or unexpected top-level path.
+Garbage collection is local and explicit. It cannot delete any journal or
+pointer reference, and uses a durable marker plus atomic tombstone rename
+before bounded recursive removal; ambiguous deletion state is a hard stop.
 The separate activation library uses a locked bounded journal, a relative
 atomic `current` symlink, a boot-bound monotonic health window, persisted replay
 records, and a highest-confirmed sequence floor. Only a future non-networked

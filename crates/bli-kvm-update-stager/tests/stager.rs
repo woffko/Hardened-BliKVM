@@ -333,6 +333,125 @@ fn refuses_a_corrupted_existing_slot_instead_of_overwriting_it() {
     assert_eq!(root_entries(slots.path()), vec![staged.slot_id]);
 }
 
+#[test]
+fn lists_and_transactionally_deletes_only_unreferenced_signed_slots() {
+    let (signing, trust) = keys();
+    let first_payload = payload();
+    let first_manifest = manifest(&first_payload);
+    let source_directory = tempfile::tempdir().unwrap();
+    let first_source = write_source(
+        &source_directory,
+        "first.tar",
+        &bundle(&signing, &first_manifest, &first_payload),
+    );
+    let mut second_payload = first_payload.clone();
+    second_payload.insert(
+        "bin/bli-kvm-server",
+        (0o755, b"different-signed-server".to_vec()),
+    );
+    let second_manifest = manifest(&second_payload);
+    let second_source = write_source(
+        &source_directory,
+        "second.tar",
+        &bundle(&signing, &second_manifest, &second_payload),
+    );
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let first = stager.stage(first_source, &trust).unwrap();
+    let second = stager.stage(second_source, &trust).unwrap();
+    assert_eq!(stager.list_slots(&trust).unwrap().len(), 2);
+
+    let protected = BTreeSet::from([first.slot_id.clone()]);
+    assert!(matches!(
+        stager.delete_unreferenced_slot(&first.slot_id, &protected, &trust),
+        Err(ApplicationStageError::ProtectedSlot)
+    ));
+    assert_eq!(
+        stager
+            .delete_unreferenced_slot(&second.slot_id, &protected, &trust)
+            .unwrap()
+            .slot_id,
+        second.slot_id
+    );
+    assert!(!second.slot_path.exists());
+    assert_eq!(stager.list_slots(&trust).unwrap().len(), 1);
+    assert!(!fs::read_dir(slots.path()).unwrap().any(|entry| {
+        let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+        name.starts_with(".delete-") || name.starts_with(".deleting-")
+    }));
+}
+
+#[test]
+fn recovers_marker_before_rename_and_rejects_unmarked_tombstones() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let manifest = manifest(&payload);
+    let source_directory = tempfile::tempdir().unwrap();
+    let source = write_source(
+        &source_directory,
+        "application.tar",
+        &bundle(&signing, &manifest, &payload),
+    );
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let staged = stager.stage(source, &trust).unwrap();
+    let marker = slots
+        .path()
+        .join(format!(".delete-{}.json", staged.slot_id));
+    fs::write(
+        &marker,
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 1,
+            "purpose": "hardened-blikvm-slot-deletion",
+            "slotId": staged.slot_id,
+            "manifestSha256": staged.manifest_sha256,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&marker, Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        stager
+            .recover_slot_deletions(&BTreeSet::new(), &trust)
+            .unwrap()
+            .completed,
+        1
+    );
+    assert!(!staged.slot_path.exists());
+    assert!(!marker.exists());
+
+    let orphan = slots.path().join(format!(".deleting-{}", staged.slot_id));
+    fs::write(
+        &marker,
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 1,
+            "purpose": "hardened-blikvm-slot-deletion",
+            "slotId": staged.slot_id,
+            "manifestSha256": staged.manifest_sha256,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&marker, Permissions::from_mode(0o600)).unwrap();
+    fs::create_dir(&orphan).unwrap();
+    fs::create_dir(orphan.join("share")).unwrap();
+    assert_eq!(
+        stager
+            .recover_slot_deletions(&BTreeSet::new(), &trust)
+            .unwrap()
+            .completed,
+        1
+    );
+    assert!(!marker.exists());
+    assert!(!orphan.exists());
+
+    fs::create_dir(&orphan).unwrap();
+    assert!(matches!(
+        stager.recover_slot_deletions(&BTreeSet::new(), &trust),
+        Err(ApplicationStageError::UnsafeDeletionState)
+    ));
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut value = String::with_capacity(digest.len() * 2);

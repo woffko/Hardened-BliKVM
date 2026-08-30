@@ -2,7 +2,11 @@ mod journal;
 mod model;
 mod pointer;
 
-use std::{collections::BTreeMap, io, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io,
+    path::PathBuf,
+};
 
 use bli_kvm_update_stager::{
     ApplicationSlotStager, ApplicationStageError, StagedApplication, StagingCleanup,
@@ -20,6 +24,7 @@ use pointer::PointerStore;
 pub const DEFAULT_HEALTH_TIMEOUT_MS: u64 = 60_000;
 pub const MINIMUM_HEALTH_TIMEOUT_MS: u64 = 10_000;
 pub const MAXIMUM_HEALTH_TIMEOUT_MS: u64 = 10 * 60_000;
+pub const MAX_UNREFERENCED_SLOT_RETENTION: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,6 +120,19 @@ pub struct ManagerStatus {
     pub last_rollback: Option<RollbackReason>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageRecovery {
+    pub abandoned_staging_removed: usize,
+    pub slot_deletions_completed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GarbageCollection {
+    pub recovery: StorageRecovery,
+    pub deleted_slot_ids: Vec<String>,
+    pub retained_unreferenced: usize,
+}
+
 #[derive(Debug, Error)]
 pub enum UpdateManagerError {
     #[error("application slot root path is invalid")]
@@ -169,6 +187,8 @@ pub enum UpdateManagerError {
     ConfirmationMismatch,
     #[error("application slot proof does not match persisted state")]
     SlotProofMismatch,
+    #[error("application slot retention policy is invalid")]
+    InvalidRetention,
     #[error("application slot staging or proof validation failed")]
     Stager(#[from] ApplicationStageError),
     #[error("application update I/O failed")]
@@ -250,6 +270,60 @@ impl ApplicationUpdateManager {
 
     pub fn cleanup_abandoned_staging(&self) -> Result<StagingCleanup, UpdateManagerError> {
         Ok(self.stager.cleanup_abandoned_staging()?)
+    }
+
+    pub fn recover_update_storage(&self) -> Result<StorageRecovery, UpdateManagerError> {
+        let document = self.load_required()?;
+        self.validate_referenced_slots(&document)?;
+        let protected = protected_slot_ids(&document);
+        let abandoned_staging_removed = self.stager.cleanup_abandoned_staging()?.removed;
+        let slot_deletions_completed = self
+            .stager
+            .recover_slot_deletions(&protected, &self.trust_root)?
+            .completed;
+        Ok(StorageRecovery {
+            abandoned_staging_removed,
+            slot_deletions_completed,
+        })
+    }
+
+    pub fn garbage_collect(
+        &self,
+        retain_unreferenced: usize,
+    ) -> Result<GarbageCollection, UpdateManagerError> {
+        if retain_unreferenced > MAX_UNREFERENCED_SLOT_RETENTION {
+            return Err(UpdateManagerError::InvalidRetention);
+        }
+        let _ = self.status()?;
+        let recovery = self.recover_update_storage()?;
+        let document = self.load_required()?;
+        let protected = protected_slot_ids(&document);
+        let slots = self.stager.list_slots(&self.trust_root)?;
+        let mut unreferenced = slots
+            .into_iter()
+            .filter(|slot| !protected.contains(&slot.slot_id))
+            .collect::<Vec<_>>();
+        unreferenced.sort_by(|left, right| {
+            left.manifest
+                .sequence
+                .cmp(&right.manifest.sequence)
+                .then_with(|| left.slot_id.cmp(&right.slot_id))
+        });
+        let delete_count = unreferenced.len().saturating_sub(retain_unreferenced);
+        let mut deleted_slot_ids = Vec::with_capacity(delete_count);
+        for slot in unreferenced.into_iter().take(delete_count) {
+            let deleted = self.stager.delete_unreferenced_slot(
+                &slot.slot_id,
+                &protected,
+                &self.trust_root,
+            )?;
+            deleted_slot_ids.push(deleted.slot_id);
+        }
+        Ok(GarbageCollection {
+            recovery,
+            deleted_slot_ids,
+            retained_unreferenced: retain_unreferenced,
+        })
     }
 
     pub fn status(&self) -> Result<ManagerStatus, UpdateManagerError> {
@@ -728,6 +802,21 @@ fn confirmation_from_recovery(outcome: RecoveryOutcome) -> ConfirmationOutcome {
             unreachable!("confirmation rollback always returns RolledBack")
         }
     }
+}
+
+fn protected_slot_ids(document: &JournalDocument) -> BTreeSet<String> {
+    let mut protected = BTreeSet::from([
+        document.active.slot_id.clone(),
+        document.confirmed.slot_id.clone(),
+    ]);
+    if let Some(previous) = &document.previous {
+        protected.insert(previous.slot_id.clone());
+    }
+    if let Some(pending) = &document.pending {
+        protected.insert(pending.previous.slot_id.clone());
+        protected.insert(pending.target.slot_id.clone());
+    }
+    protected
 }
 
 fn status_from_document(document: &JournalDocument) -> ManagerStatus {

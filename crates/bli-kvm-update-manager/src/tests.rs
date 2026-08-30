@@ -406,6 +406,40 @@ fn operation_history_exhaustion_is_explicit_and_never_prunes_replay_evidence() {
     assert_eq!(manager.status().unwrap().active_slot_id, slot1.slot_id);
 }
 
+#[test]
+fn garbage_collection_protects_journal_references_and_retains_newest_candidates() {
+    let fixture = Fixture::new();
+    let slot1 = fixture.stage(1, 1, 1);
+    let slot2 = fixture.stage(2, 1, 1);
+    let slot3 = fixture.stage(3, 1, 1);
+    let slot4 = fixture.stage(4, 1, 1);
+    let manager = fixture.manager(1);
+    manager.initialize(&slot1.slot_id).unwrap();
+    manager.activate(request(70, &slot2, 8, 100)).unwrap();
+    manager
+        .confirm_health([70; 16], [134; 32], clock(8, 101))
+        .unwrap();
+
+    assert!(matches!(
+        manager.garbage_collect(MAX_UNREFERENCED_SLOT_RETENTION + 1),
+        Err(UpdateManagerError::InvalidRetention)
+    ));
+    let collected = manager.garbage_collect(1).unwrap();
+    assert_eq!(collected.deleted_slot_ids, vec![slot3.slot_id.clone()]);
+    assert_eq!(collected.retained_unreferenced, 1);
+    assert_eq!(manager.status().unwrap().active_slot_id, slot2.slot_id);
+    drop(manager);
+
+    let stager = ApplicationSlotStager::open(fixture.slots.path()).unwrap();
+    let remaining = stager
+        .list_slots(&fixture.trust)
+        .unwrap()
+        .into_iter()
+        .map(|slot| slot.slot_id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining, vec![slot1.slot_id, slot2.slot_id, slot4.slot_id]);
+}
+
 fn payload(sequence: u64, variant: u8) -> BTreeMap<&'static str, (u32, Vec<u8>)> {
     BTreeMap::from([
         (

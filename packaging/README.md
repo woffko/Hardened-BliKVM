@@ -65,6 +65,11 @@ an absolute archive path, applies the configured public trust root, and can
 only publish an immutable slot. It cannot change the active pointer. No upload
 or activation API is exposed by these service templates.
 
+The local `gc N` command is also explicit and unavailable over the health
+socket. It retains the newest `N` unreferenced signed candidates, never deletes
+active/confirmed/previous/pending/current references, and completes any
+durable deletion tombstone before considering new collection.
+
 The two files below must be provisioned locally as root-owned mode 0400 files
 and must never be included in a package, image source tree, command line,
 environment variable, log, or support bundle:

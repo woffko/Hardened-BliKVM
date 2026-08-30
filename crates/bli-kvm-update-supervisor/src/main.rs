@@ -48,6 +48,7 @@ enum SupervisorCliError {
 enum CliCommand {
     Status,
     Stage(PathBuf),
+    GarbageCollect(usize),
     Initialize(String),
     Activate(String),
     WatchdogOnce,
@@ -98,29 +99,49 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                 config.system_sequence,
                 config.health_timeout_ms,
             )?;
-            let challenges = HealthChallengeStore::open(config.runtime_root)?;
-            let supervisor = UpdateSupervisor::new(manager, challenges);
             match command {
-                CliCommand::Status => status_receipt(&supervisor.status()?),
-                CliCommand::Initialize(slot_id) => {
-                    let status = supervisor.initialize(&slot_id)?;
+                CliCommand::GarbageCollect(retain) => {
+                    let collected = manager.garbage_collect(retain)?;
                     json!({
-                        "command": "initialize",
-                        "result": "initialized",
-                        "status": status_receipt(&status),
+                        "command": "gc",
+                        "result": "completed",
+                        "deletedSlotIds": collected.deleted_slot_ids,
+                        "retainedUnreferenced": collected.retained_unreferenced,
+                        "abandonedStagingRemoved": collected.recovery.abandoned_staging_removed,
+                        "slotDeletionsCompleted": collected.recovery.slot_deletions_completed,
                     })
                 }
-                CliCommand::Activate(slot_id) => {
-                    let activation = supervisor.activate(&slot_id)?;
-                    activation_receipt(activation.outcome, activation.credential_path.is_some())
+                command => {
+                    let challenges = HealthChallengeStore::open(config.runtime_root)?;
+                    let supervisor = UpdateSupervisor::new(manager, challenges);
+                    match command {
+                        CliCommand::Status => status_receipt(&supervisor.status()?),
+                        CliCommand::Initialize(slot_id) => {
+                            let status = supervisor.initialize(&slot_id)?;
+                            json!({
+                                "command": "initialize",
+                                "result": "initialized",
+                                "status": status_receipt(&status),
+                            })
+                        }
+                        CliCommand::Activate(slot_id) => {
+                            let activation = supervisor.activate(&slot_id)?;
+                            activation_receipt(
+                                activation.outcome,
+                                activation.credential_path.is_some(),
+                            )
+                        }
+                        CliCommand::WatchdogOnce => watchdog_receipt(supervisor.watchdog_once()?),
+                        CliCommand::ConfirmStdin => {
+                            let stdin = io::stdin();
+                            let mut locked = stdin.lock();
+                            confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
+                        }
+                        CliCommand::Stage(_) | CliCommand::GarbageCollect(_) => {
+                            unreachable!("command handled before supervisor creation")
+                        }
+                    }
                 }
-                CliCommand::WatchdogOnce => watchdog_receipt(supervisor.watchdog_once()?),
-                CliCommand::ConfirmStdin => {
-                    let stdin = io::stdin();
-                    let mut locked = stdin.lock();
-                    confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
-                }
-                CliCommand::Stage(_) => unreachable!("stage handled before manager creation"),
             }
         }
     };
@@ -155,6 +176,14 @@ fn parse_arguments(
         "status" => CliCommand::Status,
         "watchdog-once" => CliCommand::WatchdogOnce,
         "confirm-stdin" => CliCommand::ConfirmStdin,
+        "gc" => {
+            let retain = arguments
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .and_then(|value| value.parse::<usize>().ok())
+                .ok_or(SupervisorCliError::InvalidArguments)?;
+            CliCommand::GarbageCollect(retain)
+        }
         "stage" => CliCommand::Stage(PathBuf::from(
             arguments
                 .next()
@@ -281,6 +310,7 @@ fn watchdog_receipt(recovery: SupervisorRecovery) -> Value {
         "manager": manager,
         "challenge": challenge_reconciliation(recovery.challenge),
         "abandonedStagingRemoved": recovery.abandoned_staging_removed,
+        "slotDeletionsCompleted": recovery.slot_deletions_completed,
     })
 }
 
@@ -347,6 +377,15 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(staged.1, CliCommand::Stage(_)));
+        let collected = parse_arguments([
+            "supervisor".into(),
+            "--config".into(),
+            "/etc/hardened-blikvm/update.json".into(),
+            "gc".into(),
+            "2".into(),
+        ])
+        .unwrap();
+        assert_eq!(collected.1, CliCommand::GarbageCollect(2));
 
         for arguments in [
             vec!["supervisor", "status"],

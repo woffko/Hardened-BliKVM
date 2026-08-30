@@ -28,6 +28,7 @@ pub struct SupervisorRecovery {
     pub manager: RecoveryOutcome,
     pub challenge: ChallengeReconciliation,
     pub abandoned_staging_removed: usize,
+    pub slot_deletions_completed: usize,
 }
 
 #[derive(Debug)]
@@ -152,7 +153,9 @@ impl UpdateSupervisor {
     }
 
     pub fn watchdog_once(&self) -> Result<SupervisorRecovery, UpdateRuntimeError> {
-        let abandoned_staging_removed = self.manager.cleanup_abandoned_staging()?.removed;
+        let storage = self.manager.recover_update_storage()?;
+        let abandoned_staging_removed = storage.abandoned_staging_removed;
+        let slot_deletions_completed = storage.slot_deletions_completed;
         let clock = self.kernel.snapshot()?;
         let initial = self.manager.recover(clock)?;
         let status = self.manager.status()?;
@@ -166,6 +169,7 @@ impl UpdateSupervisor {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMissing,
                     abandoned_staging_removed,
+                    slot_deletions_completed,
                 });
             }
             (Some(_), Ok(Some(challenge))) => {
@@ -175,6 +179,7 @@ impl UpdateSupervisor {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMismatch,
                     abandoned_staging_removed,
+                    slot_deletions_completed,
                 });
             }
             (Some(_), Err(UpdateRuntimeError::InvalidChallengeState)) => {
@@ -184,6 +189,7 @@ impl UpdateSupervisor {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMismatch,
                     abandoned_staging_removed,
+                    slot_deletions_completed,
                 });
             }
             (Some(_), Err(error)) => return Err(error),
@@ -202,6 +208,7 @@ impl UpdateSupervisor {
             manager: initial,
             challenge,
             abandoned_staging_removed,
+            slot_deletions_completed,
         })
     }
 }

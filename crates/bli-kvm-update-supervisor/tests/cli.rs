@@ -29,6 +29,7 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let signing = SigningKey::from_bytes(&[57; 32]);
     let source1 = write_bundle(&sources, &signing, 1);
     let source2 = write_bundle(&sources, &signing, 2);
+    let source3 = write_bundle(&sources, &signing, 3);
     let config = root.path().join("supervisor.json");
     fs::write(
         &config,
@@ -65,6 +66,12 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let staged2 = json_output(&staged2);
     assert_eq!(staged2["result"], "published");
     let slot2 = staged2["slotId"].as_str().unwrap().to_string();
+    let staged3 = command(binary, &config, &["stage", source3.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(staged3.status.success(), "{:?}", staged3.stderr);
+    let staged3 = json_output(&staged3);
+    let slot3 = staged3["slotId"].as_str().unwrap().to_string();
 
     let initialized = command(binary, &config, &["initialize", &slot1])
         .output()
@@ -106,6 +113,12 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let status = json_output(&status);
     assert_eq!(status["activeSlotId"], slot2);
     assert_eq!(status["floorSequence"], 2);
+    let collected = command(binary, &config, &["gc", "0"]).output().unwrap();
+    assert!(collected.status.success(), "{:?}", collected.stderr);
+    let collected = json_output(&collected);
+    assert_eq!(collected["result"], "completed");
+    assert_eq!(collected["deletedSlotIds"], json!([slot3]));
+    assert!(!slots.join(slot3).exists());
 }
 
 fn command(binary: &str, config: &Path, arguments: &[&str]) -> Command {

@@ -185,7 +185,10 @@ Checkpoint: staging now holds an exclusive slot-root lock and writes a durable
 structured marker before extraction. Local `stage` and watchdog paths clean
 only marker-owned bounded residue after link/owner/device/type validation;
 read-only partial trees and symlink-escape refusal are tested. Reference-aware
-transactional slot garbage collection remains the next update-storage slice.
+transactional slot garbage collection now protects every journal/current
+reference, retains a bounded newest-candidate set, and uses a durable marker
+plus atomic tombstone rename with pre/post-rename crash recovery. The installed
+candidate-process orchestration gate is the next application-update slice.
 Two clean AArch64 builds at source commit `1a88542` produced a byte-identical
 linked static-PIE supervisor and prototype archive; exact hashes and the
 musl-specific raw `SYS_renameat2` correction are recorded in

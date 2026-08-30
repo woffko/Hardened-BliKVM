@@ -110,6 +110,23 @@ this validation and are then deleted with parent fsync. Symlinks, hardlinks,
 foreign ownership, special files, malformed names, missing markers, and
 unbounded trees are hard stops rather than cleanup candidates.
 
+Reference-aware garbage collection is an explicit local `gc N` command, where
+`N` retains the newest 0 through 16 otherwise-unreferenced candidates. The
+manager always protects journal active, confirmed, previous, pending target,
+pending rollback anchor, and the actual `current` symlink. All slot proofs and
+the pointer must validate before collection; invalid retention, corrupt slots,
+unknown root entries, and pointer/journal disagreement are hard stops.
+
+Deletion is a durable transaction. A root-level mode-0600 marker binds the
+slot ID and manifest hash, then the fully reverified signed slot is atomically
+renamed to `.deleting-<slotId>` with no-replace `SYS_renameat2` and root fsync.
+Only the tombstoned direct child is recursively removed, after same-device,
+owner, entry-type, link-count, top-level-path, and size-bound checks. The
+marker is removed and fsynced last. Watchdog recovery handles crashes before
+rename, after rename, during partial removal, and after removal but before
+marker cleanup. A tombstone without its marker, both original and tombstone,
+or any protected marker is never guessed away.
+
 ## Current implementation boundary
 
 `bli-kvm-update-verifier` verifies archive metadata, signature, manifest shape,
@@ -125,13 +142,16 @@ input, writable or symlink sources, unsafe roots, read-only modes, proof
 retention, standalone inspection, invalid slot IDs, and residue-free covered
 prepublication failures. Cleanup tests additionally cover exclusive root
 locking, marker-owned read-only crash residue, idempotent cleanup, and symlink
-escape refusal.
+escape refusal. Deletion tests cover protected references, deterministic slot
+listing, newest-candidate retention, marker-before-rename recovery,
+tombstone-after-rename recovery, partial deletion, and unmarked-tombstone
+refusal.
 
 The stager is exposed only through the local supervisor's fixed `stage`
 command; it is not connected to the network server or GUI. That command and
 the activation state machine in `application-activation-v1.md` passed an
 isolated H616 gate, while packaged production units remain uninstalled.
-Reference-aware slot garbage collection, real candidate-process orchestration,
-production key rotation, channel metadata, and system-image updates remain
-separate gates. Unmarked residue from the tiny mkdir-before-marker crash window
-intentionally requires manual review.
+Real candidate-process orchestration, production key rotation, channel
+metadata, and system-image updates remain separate gates. Unmarked staging
+residue from the tiny mkdir-before-marker crash window intentionally requires
+manual review.

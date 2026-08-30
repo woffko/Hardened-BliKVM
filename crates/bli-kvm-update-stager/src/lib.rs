@@ -31,6 +31,8 @@ pub const SLOT_SIGNATURE_PATH: &str = ".hardened-blikvm/manifest.sig";
 const SLOT_RECEIPT_SCHEMA_VERSION: u32 = 1;
 const STAGING_MARKER_SCHEMA_VERSION: u32 = 1;
 const STAGING_MARKER_PURPOSE: &str = "hardened-blikvm-application-staging";
+const DELETION_MARKER_SCHEMA_VERSION: u32 = 1;
+const DELETION_MARKER_PURPOSE: &str = "hardened-blikvm-slot-deletion";
 const MAX_SLOT_RECEIPT_BYTES: u64 = 4 * 1024;
 const MAX_TREE_ENTRIES: usize = MAX_PAYLOAD_FILES * 2 + 16;
 
@@ -55,6 +57,16 @@ pub struct StagingCleanup {
     pub removed: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotDeletion {
+    pub slot_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeletionRecovery {
+    pub completed: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SlotReceipt {
@@ -69,6 +81,15 @@ struct SlotReceipt {
 struct StagingMarker {
     schema_version: u32,
     purpose: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeletionMarker {
+    schema_version: u32,
+    purpose: String,
+    slot_id: String,
+    manifest_sha256: String,
 }
 
 #[derive(Debug, Error)]
@@ -99,6 +120,14 @@ pub enum ApplicationStageError {
     UnsafeExistingSlot,
     #[error("an abandoned application staging tree is unsafe")]
     UnsafeAbandonedStaging,
+    #[error("application slot deletion state is unsafe or inconsistent")]
+    UnsafeDeletionState,
+    #[error("application slot is protected by active update state")]
+    ProtectedSlot,
+    #[error("application slot does not exist")]
+    SlotNotFound,
+    #[error("application slot root contains an unexpected entry")]
+    UnexpectedRootEntry,
     #[error("an application slot conflicts with the verified bundle")]
     SlotConflict,
     #[error("atomic no-replace slot publication is unavailable")]
@@ -158,6 +187,10 @@ impl ApplicationSlotStager {
         trust_root: &ApplicationTrustRoot,
     ) -> Result<StagedApplication, ApplicationStageError> {
         self.validate_root()?;
+        let (deletion_markers, deletion_tombstones) = self.collect_deletion_state()?;
+        if !deletion_markers.is_empty() || !deletion_tombstones.is_empty() {
+            return Err(ApplicationStageError::UnsafeDeletionState);
+        }
         let (mut snapshot, archive_size) = self.snapshot_source(source.as_ref())?;
         let verified = verify_application_reader(&mut snapshot, archive_size, trust_root)?;
         let slot_id = slot_id(&verified);
@@ -266,6 +299,94 @@ impl ApplicationSlotStager {
         Ok(StagingCleanup { removed })
     }
 
+    pub fn list_slots(
+        &self,
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<Vec<StagedApplication>, ApplicationStageError> {
+        self.validate_root()?;
+        let mut slots = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .to_str()
+                .ok_or(ApplicationStageError::UnexpectedRootEntry)?
+                .to_string();
+            if valid_slot_id(&name) {
+                slots.push(self.inspect_slot(&name, trust_root)?);
+            } else if matches!(name.as_str(), "current" | ".current-next") {
+                continue;
+            } else {
+                return Err(ApplicationStageError::UnexpectedRootEntry);
+            }
+        }
+        slots.sort_by(|left, right| {
+            left.manifest
+                .sequence
+                .cmp(&right.manifest.sequence)
+                .then_with(|| left.slot_id.cmp(&right.slot_id))
+        });
+        Ok(slots)
+    }
+
+    pub fn recover_slot_deletions(
+        &self,
+        protected_slot_ids: &BTreeSet<String>,
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<DeletionRecovery, ApplicationStageError> {
+        self.validate_root()?;
+        let protected = self.with_current_protected(protected_slot_ids)?;
+        let (markers, tombstones) = self.collect_deletion_state()?;
+        for tombstone in &tombstones {
+            if !markers.contains_key(tombstone) {
+                return Err(ApplicationStageError::UnsafeDeletionState);
+            }
+        }
+        let mut completed = 0_usize;
+        for (slot_id, marker) in markers {
+            if protected.contains(&slot_id) {
+                return Err(ApplicationStageError::ProtectedSlot);
+            }
+            self.recover_one_deletion(&marker, trust_root)?;
+            completed = completed.saturating_add(1);
+        }
+        Ok(DeletionRecovery { completed })
+    }
+
+    pub fn delete_unreferenced_slot(
+        &self,
+        slot_id: &str,
+        protected_slot_ids: &BTreeSet<String>,
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<SlotDeletion, ApplicationStageError> {
+        if !valid_slot_id(slot_id) {
+            return Err(ApplicationStageError::InvalidSlotId);
+        }
+        let protected = self.with_current_protected(protected_slot_ids)?;
+        if protected.contains(slot_id) {
+            return Err(ApplicationStageError::ProtectedSlot);
+        }
+        let _ = self.recover_slot_deletions(&protected, trust_root)?;
+        let staged = match self.inspect_slot(slot_id, trust_root) {
+            Ok(staged) => staged,
+            Err(ApplicationStageError::UnsafeExistingSlot) if !self.root.join(slot_id).exists() => {
+                return Err(ApplicationStageError::SlotNotFound);
+            }
+            Err(error) => return Err(error),
+        };
+        let marker = DeletionMarker {
+            schema_version: DELETION_MARKER_SCHEMA_VERSION,
+            purpose: DELETION_MARKER_PURPOSE.to_string(),
+            slot_id: staged.slot_id.clone(),
+            manifest_sha256: staged.manifest_sha256,
+        };
+        self.write_deletion_marker(&marker)?;
+        self.recover_one_deletion(&marker, trust_root)?;
+        Ok(SlotDeletion {
+            slot_id: staged.slot_id,
+        })
+    }
+
     pub fn inspect_slot(
         &self,
         slot_id: &str,
@@ -283,6 +404,123 @@ impl ApplicationSlotStager {
             StageDisposition::AlreadyPresent,
             verified,
         ))
+    }
+
+    fn with_current_protected(
+        &self,
+        protected_slot_ids: &BTreeSet<String>,
+    ) -> Result<BTreeSet<String>, ApplicationStageError> {
+        let mut protected = protected_slot_ids.clone();
+        let current = self.root.join("current");
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_symlink()
+                    || metadata.dev() != self.identity.device
+                    || metadata.uid() != self.identity.owner
+                    || metadata.nlink() != 1
+                {
+                    return Err(ApplicationStageError::UnsafeDeletionState);
+                }
+                let target = fs::read_link(current)?;
+                let target = target
+                    .to_str()
+                    .ok_or(ApplicationStageError::UnsafeDeletionState)?;
+                if target.contains('/') || !valid_slot_id(target) {
+                    return Err(ApplicationStageError::UnsafeDeletionState);
+                }
+                protected.insert(target.to_string());
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ApplicationStageError::Io(error)),
+        }
+        Ok(protected)
+    }
+
+    fn collect_deletion_state(
+        &self,
+    ) -> Result<(BTreeMap<String, DeletionMarker>, BTreeSet<String>), ApplicationStageError> {
+        let mut markers = BTreeMap::new();
+        let mut tombstones = BTreeSet::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .to_str()
+                .ok_or(ApplicationStageError::UnsafeDeletionState)?
+                .to_string();
+            if name.starts_with(".delete-") {
+                let slot_id = slot_id_from_deletion_marker_name(&name)?;
+                let marker = read_deletion_marker(&entry.path(), self.identity)?;
+                if marker.slot_id != slot_id || markers.insert(slot_id, marker).is_some() {
+                    return Err(ApplicationStageError::UnsafeDeletionState);
+                }
+            } else if name.starts_with(".deleting-") {
+                let slot_id = slot_id_from_tombstone_name(&name)?;
+                if !tombstones.insert(slot_id) {
+                    return Err(ApplicationStageError::UnsafeDeletionState);
+                }
+            }
+        }
+        Ok((markers, tombstones))
+    }
+
+    fn write_deletion_marker(&self, marker: &DeletionMarker) -> Result<(), ApplicationStageError> {
+        validate_deletion_marker(marker)?;
+        let destination = self.root.join(deletion_marker_name(&marker.slot_id));
+        if fs::symlink_metadata(&destination).is_ok() {
+            return Err(ApplicationStageError::UnsafeDeletionState);
+        }
+        let content =
+            serde_json::to_vec(marker).map_err(|_| ApplicationStageError::Serialization)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
+        fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
+        temporary.write_all(&content)?;
+        temporary.flush()?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist_noclobber(destination)
+            .map_err(|error| ApplicationStageError::Io(error.error))?;
+        self.root_directory.sync_all()?;
+        Ok(())
+    }
+
+    fn recover_one_deletion(
+        &self,
+        marker: &DeletionMarker,
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<(), ApplicationStageError> {
+        validate_deletion_marker(marker)?;
+        let original = self.root.join(&marker.slot_id);
+        let tombstone = self.root.join(tombstone_name(&marker.slot_id));
+        let original_exists = path_exists(&original)?;
+        let tombstone_exists = path_exists(&tombstone)?;
+        if original_exists && tombstone_exists {
+            return Err(ApplicationStageError::UnsafeDeletionState);
+        }
+        if original_exists {
+            let verified = load_published_slot(&original, trust_root, self.identity)?;
+            if verified.manifest_sha256 != marker.manifest_sha256 {
+                return Err(ApplicationStageError::UnsafeDeletionState);
+            }
+            rename_child_no_replace(
+                &self.root_directory,
+                &original,
+                tombstone
+                    .file_name()
+                    .ok_or(ApplicationStageError::UnsafeDeletionState)?,
+            )?;
+            self.root_directory.sync_all()?;
+        }
+        if path_exists(&tombstone)? {
+            validate_deleting_tree(&tombstone, self.identity)?;
+            make_tree_owner_writable(&tombstone)
+                .map_err(|_| ApplicationStageError::UnsafeDeletionState)?;
+            fs::remove_dir_all(&tombstone)?;
+            self.root_directory.sync_all()?;
+        }
+        remove_deletion_marker(&self.root, marker, self.identity)?;
+        self.root_directory.sync_all()?;
+        Ok(())
     }
 
     fn validate_root(&self) -> Result<(), ApplicationStageError> {
@@ -900,6 +1138,119 @@ fn make_tree_owner_writable(path: &Path) -> io::Result<()> {
         fs::set_permissions(path, Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+fn deletion_marker_name(slot_id: &str) -> String {
+    format!(".delete-{slot_id}.json")
+}
+
+fn tombstone_name(slot_id: &str) -> String {
+    format!(".deleting-{slot_id}")
+}
+
+fn slot_id_from_deletion_marker_name(value: &str) -> Result<String, ApplicationStageError> {
+    let slot_id = value
+        .strip_prefix(".delete-")
+        .and_then(|value| value.strip_suffix(".json"))
+        .ok_or(ApplicationStageError::UnsafeDeletionState)?;
+    if !valid_slot_id(slot_id) {
+        return Err(ApplicationStageError::UnsafeDeletionState);
+    }
+    Ok(slot_id.to_string())
+}
+
+fn slot_id_from_tombstone_name(value: &str) -> Result<String, ApplicationStageError> {
+    let slot_id = value
+        .strip_prefix(".deleting-")
+        .ok_or(ApplicationStageError::UnsafeDeletionState)?;
+    if !valid_slot_id(slot_id) {
+        return Err(ApplicationStageError::UnsafeDeletionState);
+    }
+    Ok(slot_id.to_string())
+}
+
+fn validate_deletion_marker(marker: &DeletionMarker) -> Result<(), ApplicationStageError> {
+    if marker.schema_version != DELETION_MARKER_SCHEMA_VERSION
+        || marker.purpose != DELETION_MARKER_PURPOSE
+        || !valid_slot_id(&marker.slot_id)
+        || !valid_sha256_text(&marker.manifest_sha256)
+        || !marker.slot_id.ends_with(&marker.manifest_sha256)
+    {
+        return Err(ApplicationStageError::UnsafeDeletionState);
+    }
+    Ok(())
+}
+
+fn read_deletion_marker(
+    path: &Path,
+    identity: RootIdentity,
+) -> Result<DeletionMarker, ApplicationStageError> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| ApplicationStageError::UnsafeDeletionState)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| ApplicationStageError::UnsafeDeletionState)?;
+    if !metadata.is_file()
+        || metadata.dev() != identity.device
+        || metadata.uid() != identity.owner
+        || metadata.nlink() != 1
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.len() == 0
+        || metadata.len() > MAX_SLOT_RECEIPT_BYTES
+    {
+        return Err(ApplicationStageError::UnsafeDeletionState);
+    }
+    let mut content = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_SLOT_RECEIPT_BYTES + 1)
+        .read_to_end(&mut content)?;
+    let marker: DeletionMarker =
+        serde_json::from_slice(&content).map_err(|_| ApplicationStageError::UnsafeDeletionState)?;
+    validate_deletion_marker(&marker)?;
+    Ok(marker)
+}
+
+fn remove_deletion_marker(
+    root: &Path,
+    expected: &DeletionMarker,
+    identity: RootIdentity,
+) -> Result<(), ApplicationStageError> {
+    let path = root.join(deletion_marker_name(&expected.slot_id));
+    if read_deletion_marker(&path, identity)? != *expected {
+        return Err(ApplicationStageError::UnsafeDeletionState);
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+fn path_exists(path: &Path) -> Result<bool, ApplicationStageError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ApplicationStageError::Io(error)),
+    }
+}
+
+fn validate_deleting_tree(
+    root: &Path,
+    identity: RootIdentity,
+) -> Result<(), ApplicationStageError> {
+    let metadata =
+        fs::symlink_metadata(root).map_err(|_| ApplicationStageError::UnsafeDeletionState)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.dev() != identity.device
+        || metadata.uid() != identity.owner
+        || metadata.permissions().mode() & 0o7000 != 0
+    {
+        return Err(ApplicationStageError::UnsafeDeletionState);
+    }
+    let mut entries = 0_usize;
+    let mut bytes = 0_u64;
+    inspect_abandoned_directory(root, root, identity, &mut entries, &mut bytes)
+        .map_err(|_| ApplicationStageError::UnsafeDeletionState)
 }
 
 fn valid_staging_name(value: &str) -> bool {
