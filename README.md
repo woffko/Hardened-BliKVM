@@ -28,6 +28,8 @@ The reversible H616 prototype and the application-update core are implemented:
 - a signed Ed25519 application verifier, immutable stager, anti-rollback
   journal, one-use health credential, watchdog rollback, and transactional
   slot garbage collection;
+- a host-only, separately keyed system-image verifier bound to an explicit
+  recovery/boot-control/layout policy and incapable of selecting a disk;
 - H616 gates for systemd credential delivery, a real candidate server, health
   confirmation, rejected candidate timeout, rollback, and restored service;
 - a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;

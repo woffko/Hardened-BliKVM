@@ -98,6 +98,15 @@ systemd-delivered one-use token to the Unix-only confirmation socket. Fixed
 root apply services may restart only the literal candidate or confirmed unit;
 the update identity itself has no general service-manager authority.
 
+System-image verification uses `hardened-blikvm-system-v1`, `sys-` key IDs, and
+the contract in `api/system-image-v1.md`. A root-owned local policy must match
+the exact layout ID, inactive-slot capacities, and installed recovery and
+boot-control sequences. The archive can contain only a rootfs image and an
+optional separate boot filesystem image. Unknown fields and any disk, device,
+partition, offset, bootloader, state, MSD, installer, hook, URL, or arbitrary
+path are structurally rejected. The verifier has no block-device or boot
+authority; no system writer or accepted H616 layout exists yet.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and
@@ -110,6 +119,7 @@ network-facing.
 - A write requires explicit task authorization, preflight, rollback, and a
   separate maintenance transition.
 - Application and system update trust are separate.
+- A valid system manifest is evidence only and never selects a device or slot.
 - A future update worker owns one canonical same-filesystem slot root; the
   network server never receives arbitrary filesystem or rename authority.
 - No NanoKVM raw partition path or update assumption is valid for H616.

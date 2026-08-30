@@ -10,11 +10,11 @@ private configuration. Those values remain in encrypted Project Memory.
 - Current KVM functionality: reported working by the device owner. A bounded
   authenticated read-only API probe now verifies the running control-plane
   status listed below; physical interaction verification is still pending.
-- Root filesystem: expected to be read-only by default; write mode is a
-  separate maintenance action and must never be entered for read-only
-  inspection. The latest SSH preflight found it already mounted `rw` before
-  BLi-KVM performed any device mutation. That discrepancy blocks the first
-  write gate until the owner chooses whether to preserve or restore `ro`.
+- Root filesystem: the latest SSH preflight found it already mounted `rw`
+  before BLi-KVM performed any device mutation. The owner explicitly chose to
+  leave this test device `rw` for the current work. Gates record the mode and
+  do not call the `rw` or `ro` helpers unless a later task explicitly requires
+  a transition.
 - Public reachability check: HTTPS redirects to the PiKVM login boundary and
   protected API access rejects unauthenticated requests.
 

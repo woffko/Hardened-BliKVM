@@ -336,6 +336,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-system-image-verifier"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-update-health-reporter"
 version = "0.1.0"
 dependencies = [

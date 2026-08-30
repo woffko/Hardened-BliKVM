@@ -52,15 +52,11 @@ never enables a mutating method by itself.
 7. Application updates and full-system updates have separate trust and
    recovery gates.
 
-The update stager currently exists only as a Rust library. Its intended worker
-has no listener, shell, block-device access, or authority to select a boot or
-application slot. Network upload policy and privileged activation remain
-separate future boundaries.
-
-The application activation core is a library. It owns only a signed-slot
-pointer and its private journal, and accepts boot-time and health evidence only
-from the local supervisor layer. This does not give the network server direct
-slot, journal, process, or watchdog authority.
+The application updater is a local-only verifier, immutable stager,
+anti-rollback manager, one-use health runtime, and fixed supervisor CLI. It has
+no network activation interface, shell, block-device access, or authority to
+select a system boot slot. The network server receives no direct slot, journal,
+process, watchdog, or signing-key authority.
 
 The first local supervisor implementation now provides that evidence and a
 one-use stdin-only confirmation path. Its systemd socket is health-only; local
@@ -72,6 +68,13 @@ into a read-only credential visible to the candidate unit, while a small Rust
 reporter validates the loopback server health contract and can only write that
 token to the health socket. Fixed root apply units perform the two literal
 candidate/confirmed restarts after activation or watchdog completion.
+
+The system-image verifier is a separate crate and Ed25519 trust domain. It can
+authenticate only fixed rootfs and optional boot filesystem payloads against a
+root-owned exact layout policy. It accepts no device node, partition table,
+offset, bootloader, installer, or hook and has no writer. Recovery provisioning,
+inactive-slot writes, boot selection, reboot, and rollback remain future
+separate processes and gates.
 
 ## Transition video design
 

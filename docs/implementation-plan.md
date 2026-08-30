@@ -206,6 +206,19 @@ physical action occurred. Two independent AArch64 builds at source commit
 the sandbox finding, and the remaining installation/interruption/recovery gates
 are recorded in `baselines/device-update-process-orchestration.md`.
 
+Checkpoint: the first host-only system-image verifier now uses a separate
+`sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
+root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
+capacities, and minimum recovery and boot-control sequences. The archive has no
+field for a disk, partition, offset, bootloader, state, MSD, installer, hook,
+URL, or arbitrary path, and the crate has no writer. Negative tests cover
+cross-domain keys, policy mismatch, signatures, non-canonical/unknown JSON,
+payload tamper, filesystem signatures, entry order/type/mode, extra bootloader
+content, unsafe source inodes, and archive bounds. The conflicting upstream p3
+roles and truncated four-partition field image are recorded in
+`baselines/system-layout-evidence.md`; they remain hard blockers for an H616
+layout or device write.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

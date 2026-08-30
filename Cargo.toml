@@ -10,6 +10,7 @@ members = [
   "crates/bli-kvm-media-catalog",
   "crates/bli-kvm-media-policy",
   "crates/bli-kvm-update-verifier",
+  "crates/bli-kvm-system-image-verifier",
   "crates/bli-kvm-update-stager",
   "crates/bli-kvm-update-manager",
   "crates/bli-kvm-update-runtime",

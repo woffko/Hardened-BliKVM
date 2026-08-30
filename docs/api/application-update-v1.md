@@ -3,7 +3,8 @@
 Application updates and full-system images use separate formats and trust
 roots. This document defines only the application bundle. It cannot write a
 kernel, partition, bootloader, device node, absolute path, or arbitrary system
-file.
+file. The independent host-only system contract is defined in
+`system-image-v1.md`.
 
 ## Container
 
