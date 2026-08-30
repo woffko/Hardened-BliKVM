@@ -301,6 +301,17 @@ and every unresolved binary/license/source decision. No artifact can be built
 until redistribution-cleared boot/rootfs inputs, key ceremony, and an accepted
 layout exist.
 
+Checkpoint: `bli-kvm-recovery-inputs` now validates canonical recovery build
+evidence with ten required component kinds, separately named firmware,
+source/artifact/license-text hashes, pinned revisions, corresponding source,
+reviewed `cleared` status, cross-reference hashes, and exact SPDX 3.0.1
+context/schema/model plus structural/semantic results. Nine tests reject
+missing/renamed/unsorted inputs, `blocked`/`no_assertion`, missing source,
+unreviewed binary provenance, branch-like revisions, invalid license/hash,
+SPDX drift, cross-reference mismatch, unknown fields, and non-canonical or
+oversized documents. The crate performs no legal inference, network access,
+scanning, signing, or image build, and no real passing manifest exists yet.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

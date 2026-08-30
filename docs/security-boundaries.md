@@ -144,6 +144,12 @@ contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and
 automatic first-disk targeting are hard failures.
 
+Recovery build evidence is checked by `bli-kvm-recovery-inputs`: required
+component identities, source/artifact/license-text hashes, pinned revisions,
+corresponding source, reviewed `cleared` status, and exact SPDX 3.0.1 offline
+resource bindings. It does not make a legal decision or parse the full SPDX
+license grammar; the pinned offline validator remains mandatory.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

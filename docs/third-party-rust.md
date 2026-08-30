@@ -2,7 +2,7 @@
 
 The initial `Cargo.lock` was resolved with Rust/Cargo `1.95.0` on 2026-08-30.
 At the signed-application-verifier checkpoint, the full locked graph contains
-133 packages: 29 workspace packages and 104 external packages. Every external
+134 packages: 30 workspace packages and 104 external packages. Every external
 package declares one or more of the following permissive license expressions:
 
 - MIT;
@@ -15,8 +15,8 @@ package declares one or more of the following permissive license expressions:
 
 No package reports a missing license expression in the current graph.
 `cargo audit --deny warnings` loaded 1,226 RustSec advisories and completed
-successfully against all 133 locked packages on 2026-08-30. The pure
-boot-control model adds one workspace package and no external dependency.
+successfully against all 134 locked packages on 2026-08-30. The recovery-input
+validator adds one workspace package and no external dependency.
 
 The KVMD client makes existing Axum-transitive HTTP crates (`http`, `hyper`,
 `hyper-util`, `http-body-util`, and `bytes`) direct dependencies. Only
@@ -46,6 +46,9 @@ system-call dependency.
 
 The boot-control model reuses that same Serde/JSON/SHA-256/error set and adds
 no filesystem, device, bootloader, randomness, network, or system-call crate.
+
+The recovery-input validator also reuses only Serde/JSON/SHA-256/error crates;
+it does not embed a license parser, SPDX validator, downloader, or scanner.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 

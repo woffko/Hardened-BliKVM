@@ -75,6 +75,9 @@ Every input is content-addressed and provenance-bound:
    blocked redistribution decision for every binary/firmware component;
 8. a pinned offline SBOM validator and schemas.
 
+The canonical structure and fail-closed clearance rules are implemented by
+`bli-kvm-recovery-inputs` and specified in `recovery-inputs-v1.md`.
+
 `NOASSERTION`, missing license text, unavailable corresponding source, unknown
 prebuilt firmware provenance, or an uncleared trademark/binary grant is a hard
 release failure rather than a warning.

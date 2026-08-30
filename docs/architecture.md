@@ -87,6 +87,8 @@ generation, and an external exclusive recovery lock.
 Recovery media is a third signed domain described in
 `api/recovery-image-v1.md`. It is a complete independently bootable removable
 image with full provenance/SBOM/license gates, not a network update payload.
+`bli-kvm-recovery-inputs` validates only the canonical public evidence document
+and contains no downloader, package manager, scanner, signer, or image builder.
 
 ## Transition video design
 

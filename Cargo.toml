@@ -13,6 +13,7 @@ members = [
   "crates/bli-kvm-system-image-verifier",
   "crates/bli-kvm-system-layout",
   "crates/bli-kvm-system-boot-control",
+  "crates/bli-kvm-recovery-inputs",
   "crates/bli-kvm-update-stager",
   "crates/bli-kvm-update-manager",
   "crates/bli-kvm-update-runtime",

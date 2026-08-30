@@ -58,3 +58,7 @@ source/provenance record, retained notices/license text, and an explicit
 redistribution/corresponding-source decision. `NOASSERTION` or missing source is
 release-blocking. The current field-image and bundled vendor/Ventoy binaries do
 not satisfy this gate.
+
+The pure recovery-input validator enforces evidence completeness and an
+explicit reviewed clearance state. It does not infer legal sufficiency from a
+repository license or automatically approve an SPDX expression.

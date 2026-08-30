@@ -34,6 +34,8 @@ The reversible H616 prototype and the application-update core are implemented:
   state policy, bounded sunxi raw ranges, and rejects the current live layout;
 - a pure dual-copy system journal/selector model that hard-stops split brain,
   generation gaps, mismatched evidence, and increasing attempt counters;
+- a canonical recovery-input gate requiring pinned provenance, corresponding
+  source, explicit redistribution clearance, and SPDX 3.0.1 validation;
 - H616 gates for systemd credential delivery, a real candidate server, health
   confirmation, rejected candidate timeout, rollback, and restored service;
 - a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;
