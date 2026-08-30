@@ -33,6 +33,9 @@ Verification also requires a root-owned local policy containing:
 - the exact rootfs inactive-slot capacity;
 - whether a separate boot slot exists and its exact capacity.
 
+Production policy values must come from a `bli-kvm-system-layout` validated
+canonical profile; callers may not synthesize capacities from live free space.
+
 The verifier only returns evidence. It has no device, mount, block, partition,
 boot-selection, or reboot authority.
 

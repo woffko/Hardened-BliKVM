@@ -30,6 +30,8 @@ The reversible H616 prototype and the application-update core are implemented:
   slot garbage collection;
 - a host-only, separately keyed system-image verifier bound to an explicit
   recovery/boot-control/layout policy and incapable of selecting a disk;
+- a recovery-only geometry validator that requires equal A/B roots, redundant
+  state policy, bounded sunxi raw ranges, and rejects the current live layout;
 - H616 gates for systemd credential delivery, a real candidate server, health
   confirmation, rejected candidate timeout, rollback, and restored service;
 - a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;

@@ -76,7 +76,9 @@ offset, bootloader, installer, or hook and has no writer. Recovery provisioning,
 inactive-slot writes, boot selection, reboot, and rollback remain future
 separate processes and gates. Their journal/selector authority and crash points
 are constrained by `api/system-boot-control-v1.md` without selecting an H616
-storage implementation.
+storage implementation. `bli-kvm-system-layout` validates canonical recovery
+geometry and returns only exact capacities/hash evidence; it has no device or
+partition API and no profile is compiled in as accepted.
 
 ## Transition video design
 

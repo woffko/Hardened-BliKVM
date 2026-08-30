@@ -114,6 +114,13 @@ manifest digests, generations, or increasing attempt counts are recovery hard
 stops. A software journal floor alone is not claimed as physical rollback
 resistance.
 
+Recovery layout parsing is isolated in `bli-kvm-system-layout` and
+`api/system-layout-v1.md`. It accepts only fixed semantic roles and numeric
+sector geometry, requires equal root A/B and redundant state policy, and
+rejects overlaps, unaligned or out-of-bounds ranges, unsafe raw sunxi offsets,
+and the observed live single-root geometry. A structurally valid profile is
+still untrusted until its exact hash and recovery artifact are accepted.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

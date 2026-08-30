@@ -251,6 +251,16 @@ bounded-read policy, official offset reference, and remaining uncertainty are
 recorded in `baselines/device-boot-chain.md`. P2 and all raw boot ranges remain
 unaccepted write targets.
 
+Checkpoint: `bli-kvm-system-layout` now validates canonical recovery-only MBR
+or GPT geometry with 512-byte sectors, fixed semantic roles, 1 MiB alignment,
+non-overlap/bounds, primary sunxi raw range, equal read-only root A/B, optional
+paired boot A/B, separate writable state, redundant journal/selector copies,
+bounded attempts, and mandatory external recovery media. Seven host tests cover
+valid MBR/GPT examples, the exact live geometry rejection, overlaps, ordering,
+alignment, capacity, role/pair policy, table limits, unsafe boot-control, raw
+offsets, and non-canonical/unknown documents. The crate returns only profile
+hash and capacities and contains no device writer or accepted built-in profile.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.

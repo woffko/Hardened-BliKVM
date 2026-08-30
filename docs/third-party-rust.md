@@ -2,7 +2,7 @@
 
 The initial `Cargo.lock` was resolved with Rust/Cargo `1.95.0` on 2026-08-30.
 At the signed-application-verifier checkpoint, the full locked graph contains
-131 packages: 27 workspace packages and 104 external packages. Every external
+132 packages: 28 workspace packages and 104 external packages. Every external
 package declares one or more of the following permissive license expressions:
 
 - MIT;
@@ -15,8 +15,8 @@ package declares one or more of the following permissive license expressions:
 
 No package reports a missing license expression in the current graph.
 `cargo audit --deny warnings` loaded 1,226 RustSec advisories and completed
-successfully against all 131 locked packages on 2026-08-30. The system-image
-verifier adds one workspace package and no external dependency.
+successfully against all 132 locked packages on 2026-08-30. The system layout
+validator adds one workspace package and no external dependency.
 
 The KVMD client makes existing Axum-transitive HTTP crates (`http`, `hyper`,
 `hyper-util`, `http-body-util`, and `bytes`) direct dependencies. Only
@@ -39,6 +39,10 @@ The system-image verifier reuses the already locked Ed25519, SHA-256,
 deterministic tar, Serde, libc, and error crates. Its production dependency
 graph does not depend on the application verifier crate; trust-domain
 separation is enforced independently on both sides.
+
+The recovery layout validator reuses only the already locked Serde, JSON,
+SHA-256, and error crates. It adds no device, partitioning, bootloader, or
+system-call dependency.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
