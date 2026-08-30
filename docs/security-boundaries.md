@@ -68,6 +68,12 @@ persisted policy, and fixed transition client are described in
 public eligibility constructor is disabled, and mutating web controls require
 `read_write` rather than merely an available/read-only status.
 
+Application update verification uses the separate Ed25519 trust domain and
+deterministic archive contract in `api/application-update-v1.md`. It has no
+unsigned fallback and accepts only `bin`, `libexec`, and `share` payloads for
+the H616 application slot. Full-system images require a different format and
+key; application verification can never authorize a partition or boot change.
+
 ## Media processes
 
 Transition uStreamer and Janus processes bind to loopback or Unix sockets and

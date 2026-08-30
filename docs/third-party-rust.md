@@ -1,9 +1,9 @@
 # Rust dependency baseline
 
 The initial `Cargo.lock` was resolved with Rust/Cargo `1.95.0` on 2026-08-30.
-After adding the bounded KVMD Unix-socket client, the full locked graph contains
-86 external packages and four workspace packages. Every external package declared
-one or more of the following permissive license expressions:
+At the signed-application-verifier checkpoint, the full locked graph contains
+124 packages: 21 workspace packages and 103 external packages. Every external
+package declares one or more of the following permissive license expressions:
 
 - MIT;
 - Apache-2.0, including the LLVM exception where declared;
@@ -13,14 +13,21 @@ one or more of the following permissive license expressions:
 - Unlicense;
 - Unicode-3.0.
 
-No package reported a missing license expression in this initial graph.
+No package reports a missing license expression in the current graph.
 `cargo audit --deny warnings` loaded 1,226 RustSec advisories and completed
-successfully against all 90 locked packages on 2026-08-30.
+successfully against all 124 locked packages on 2026-08-30.
 
 The KVMD client makes existing Axum-transitive HTTP crates (`http`, `hyper`,
 `hyper-util`, `http-body-util`, and `bytes`) direct dependencies. Only
 `try-lock` and `want` were newly added to the lock graph. No external package
 reported a missing license expression.
+
+The signed application verifier adds 17 external packages to the previous
+locked graph. Its direct additions are `ed25519-dalek` 3.0.0, `sha2` 0.11.0,
+and `tar` 0.4.46 with default features disabled; `libc` was already locked.
+The remaining additions are their cryptographic, deterministic-archive, and
+build-time transitive dependencies. The complete locked graph was fetched and
+then successfully resolved with `cargo metadata --locked --offline`.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 

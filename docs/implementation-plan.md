@@ -134,6 +134,14 @@ safe recovery from interruption.
 Exit gate: negative signature/archive/path tests, power-cut recovery, SBOM,
 dependency audit, secret scan, and privilege audit pass.
 
+Checkpoint: the first application-only artifact verifier now uses strict
+in-process Ed25519, a distinct `app-` trust domain, deterministic raw-tar
+metadata, exact payload-tree matching, per-file SHA-256, and bounded resource
+limits. Negative tests cover key/signature/payload/path/type/tree failures.
+The verifier performs no extraction or activation yet; anti-rollback slots,
+health confirmation, rollback, and the separately signed system-image format
+remain open.
+
 ## Phase 7: Release acceptance
 
 - Use at least two devices and two recovery cards.
