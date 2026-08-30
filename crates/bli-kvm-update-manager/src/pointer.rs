@@ -151,10 +151,11 @@ impl PointerStore {
 fn rename_current(root: &File) -> io::Result<()> {
     let source = CString::new(TEMPORARY_LINK_NAME).expect("constant has no NUL");
     let destination = CString::new(CURRENT_LINK_NAME).expect("constant has no NUL");
-    // SAFETY: both names are fixed NUL-terminated child names and the same
-    // owned directory descriptor is used for the atomic replacement.
+    // SAFETY: SYS_renameat2 receives two valid directory descriptors, two
+    // live NUL-terminated child names, and the documented zero flags value.
     let result = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             root.as_raw_fd(),
             source.as_ptr(),
             root.as_raw_fd(),

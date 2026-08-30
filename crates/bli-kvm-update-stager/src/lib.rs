@@ -755,10 +755,11 @@ fn rename_child_no_replace(
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     let destination_name = CString::new(destination_name.as_bytes())
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-    // SAFETY: both C strings are NUL-terminated, live for the call, and the
-    // directory file descriptor is open and owned by the stager.
+    // SAFETY: SYS_renameat2 receives two valid directory descriptors, two
+    // live NUL-terminated child names, and the documented no-replace flag.
     let result = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             root.as_raw_fd(),
             source_name.as_ptr(),
             root.as_raw_fd(),
