@@ -145,6 +145,9 @@ non-shipped Rust metadata variance are recorded in
 The separate stager now performs one bounded source copy, verifies and extracts
 from the same unlinked read-only inode, fsyncs a read-only slot, publishes it
 with no-replace `renameat2`, and fully revalidates idempotent existing slots.
+Two clean AArch64 builds at source commit `0bc0087` produced byte-identical
+linked payloads, stager object code, and prototype archives; exact hashes are
+recorded in `baselines/application-update-stager.md`.
 It remains an unwired library. Active-slot selection, anti-rollback state,
 crash cleanup, health confirmation, rollback, and the separately signed
 system-image format remain open.
