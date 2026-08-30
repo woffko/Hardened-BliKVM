@@ -107,7 +107,11 @@ write only from that same verified snapshot.
 fixtures with an ephemeral Ed25519 key. The private key exists only in process
 memory; output contains public metadata and signed minimal filesystem-signature
 test bytes. These fixtures are deliberately not bootable images or accepted
-layout profiles.
+layout profiles. The receipt reports whether the destination enforced requested
+POSIX modes. A public-only fixture written to a mount that reports permissive
+modes, such as the current temporary D: workspace, is untrusted between
+sessions and must be regenerated or consumed only after its exact hashes are
+revalidated from a trusted invocation.
 
 ## Required future transaction
 

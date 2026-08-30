@@ -43,6 +43,7 @@ class FixtureReceipt(TypedDict):
     keyId: str
     publicKeyHex: str
     sourceCommit: str
+    posixModesEnforced: bool
     artifacts: list[ArtifactReceipt]
 
 
@@ -229,7 +230,7 @@ def build_bundle(
     return output.getvalue()
 
 
-def write_private(path: Path, content: bytes) -> None:
+def write_exclusive(path: Path, content: bytes) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb", closefd=False) as handle:
@@ -270,7 +271,7 @@ def build_fixture(output: Path, source_commit: str) -> FixtureReceipt:
             layout_id,
             with_boot,
         )
-        write_private(output / name, content)
+        write_exclusive(output / name, content)
         artifacts.append(
             {
                 "path": name,
@@ -282,15 +283,20 @@ def build_fixture(output: Path, source_commit: str) -> FixtureReceipt:
                 "sizeBytes": len(content),
             }
         )
+    posix_modes_enforced = (output.stat().st_mode & 0o777) == 0o700 and all(
+        (output / artifact["path"]).stat().st_mode & 0o777 == 0o600
+        for artifact in artifacts
+    )
     receipt: FixtureReceipt = {
         "schemaVersion": 1,
         "fixture": "hardened-blikvm-ephemeral-system-image",
         "keyId": key_id,
         "publicKeyHex": public_key.hex(),
         "sourceCommit": source_commit,
+        "posixModesEnforced": posix_modes_enforced,
         "artifacts": artifacts,
     }
-    write_private(
+    write_exclusive(
         output / "fixture.json",
         json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode("ascii"),
     )

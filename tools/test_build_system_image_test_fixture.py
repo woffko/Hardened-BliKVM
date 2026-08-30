@@ -34,6 +34,7 @@ class SystemImageTestFixtureTests(unittest.TestCase):
             receipt = build_fixture(output, "2" * 40)
             self.assertEqual(receipt["schemaVersion"], 1)
             self.assertTrue(receipt["keyId"].startswith("sys-"))
+            self.assertTrue(receipt["posixModesEnforced"])
             self.assertEqual(len(receipt["artifacts"]), 2)
             self.assertEqual(
                 sorted(path.name for path in output.iterdir()),
