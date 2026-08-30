@@ -41,10 +41,13 @@ hardware mutation exists in the network process.
 Exit gate: browser and authentication matrix passes on a designated test-only
 device without changing its working KVM stack.
 
-Checkpoint: the commit-bound unprivileged server slice has passed its
-loopback-only H616 run, HTTP-policy, graceful-stop, and cleanup gate. Dedicated
-KVMD broker credentials, authenticated on-device inventory, TLS proxy, and the
-browser authentication matrix remain before the Phase 2 exit gate.
+Checkpoint: the commit-bound unprivileged server and distinct-UID read-only
+broker have passed their loopback H616 execution, authenticated inventory,
+HTTP-policy, graceful-stop, and cleanup gates. The temporary broker test reused
+the current test-device credential without exposing it to the server.
+Dedicated least-privilege KVMD account provisioning, systemd
+`LoadCredential`, TLS proxy, and the browser authentication matrix remain
+before the Phase 2 exit gate.
 
 ## Phase 3: HID and power
 

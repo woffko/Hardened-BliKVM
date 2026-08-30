@@ -8,7 +8,7 @@ passed a physical interaction gate.
 | --- | --- | --- | --- |
 | HTTPS/login | Reachable; authenticated boundary verified | Local first-account/session flow verified; H616 setup-state endpoint passed | TLS proxy and on-device authenticated browser matrix |
 | Loopback server runtime | Not applicable | Unprivileged H616 server gate passed with cleanup | Repeat under installed systemd and TLS proxy |
-| Read-only inventory | Five authenticated GET endpoints verified | Typed KVMD client, broker IPC, sanitizer, protected HTTP endpoint | Dedicated on-device KVMD account and recovery-media run |
+| Read-only inventory | Five authenticated GET endpoints verified | Distinct-UID broker, protected server endpoint, sanitizer, and 20-request H616 gate passed | Dedicated KVMD account, systemd credentials, and installed-service run |
 | MJPEG | Streamer source online through authenticated API | Observed but not exposed | Stream bytes, reconnect, latency, soak |
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |
 | Keyboard | HID online through authenticated API | Observed but not exposed | 10,000-event and reboot test |

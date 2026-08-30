@@ -4,13 +4,13 @@ Verified on 2026-08-30 with Rust 1.95.0 and target
 `aarch64-unknown-linux-musl`.
 
 Two independent target directories at source commit
-`83ae0da7a43775d947d927a24999898e7c4a444b` produced byte-identical release
+`c3c8e8bafaec423af2c0af8cb16e5ebc0b68fc46` produced byte-identical release
 binaries:
 
 | Binary | Size | SHA-256 |
 | --- | ---: | --- |
 | `bli-kvm-server` | 1,694,880 bytes | `33876305bc1835e5495c47b2a18245a7f84639387a139c2abbe9c1f41623baeb` |
-| `bli-kvm-platform-broker` | 983,936 bytes | `0dbc9598f37374aff99e55c9ee41b328bd0c811d3439e6ffca64b54e1af5b906` |
+| `bli-kvm-platform-broker` | 987,040 bytes | `ac188772008d7fedc410356689d453ae0f7e83bc0944ae70bd3573f1f48d011c` |
 
 Both are stripped AArch64 static PIE executables with `ET_DYN`, GNU RELRO,
 non-executable stack, BIND_NOW, and PIE flags. Neither has an ELF interpreter,
@@ -33,7 +33,8 @@ Reproduce and re-check with:
 scripts/build-aarch64.sh /mnt/d/debug/blikvm/hardened-blikvm/target-aarch64
 ```
 
-The commit-bound server was subsequently executed successfully as an
-unprivileged identity on H616. See `device-prototype.md`. This does not prove
-KVMD broker credentials, systemd installation, video/HID/ATX/media behavior,
-or recovery.
+The commit-bound server and credential-isolated read-only broker were
+subsequently executed successfully as distinct unprivileged identities on
+H616. See `device-prototype.md` and `device-broker-inventory.md`. This does not
+prove dedicated-account provisioning, systemd installation,
+video/HID/ATX/media behavior, or recovery.

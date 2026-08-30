@@ -27,6 +27,13 @@ network-facing server never receives that credential. Native backends use fixed
 device paths, strict field validation, bounded timeouts, and an operation
 allowlist. No backend may invoke a shell with request-derived content.
 
+KVMD's public Nginx routes use `/api/<route>`, but the local Unix socket uses
+the rewritten internal `/<route>` form. The transition client therefore
+allowlists only `/info`, `/atx`, `/hid`, `/msd`, and `/streamer`; it also sends
+a fixed Host header required by HTTP/1.1. Endpoint-level diagnostic logs expose
+only a fixed endpoint enum and coarse error class, never a response body or
+credential.
+
 Read-only observations and mutating methods are separate interfaces. HID, ATX,
 media, GPIO, or configfs methods stay unavailable until their adapter and
 physical gate pass.
