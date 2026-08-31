@@ -16,6 +16,7 @@ members = [
   "crates/bli-kvm-diagnostic-export",
   "crates/bli-kvm-diagnostic-protocol",
   "crates/bli-kvm-diagnostic-collector-policy",
+  "crates/bli-kvm-diagnostic-window-policy",
   "crates/bli-kvm-media-catalog",
   "crates/bli-kvm-media-policy",
   "crates/bli-kvm-update-verifier",

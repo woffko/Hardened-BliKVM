@@ -1,0 +1,13 @@
+[package]
+name = "bli-kvm-diagnostic-window-policy"
+description = "Bounded diagnostic window and handoff policy for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-collector-policy = { path = "../bli-kvm-diagnostic-collector-policy" }
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
+bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
