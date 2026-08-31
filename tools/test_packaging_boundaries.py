@@ -226,6 +226,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-collector-policy"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
+        peer = ROOT / "crates/bli-kvm-diagnostic-peer-policy"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -238,6 +239,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 window / "Cargo.toml",
+                peer / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-collector-policy",
@@ -286,6 +288,44 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("pub struct DiagnosticWindowManager", source)
         self.assertIn("pub struct DiagnosticSession", source)
         self.assertIn("pub struct DiagnosticWindowSnapshot", source)
+        for forbidden in (
+            "std::",
+            "String",
+            "Vec<",
+            "Path",
+            "Command",
+            "/dev/",
+            "/var/",
+            "tokio::",
+            "libc::",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_peer_policy_maps_only_kernel_credentials_and_is_unlinked(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-peer-policy"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        self.assertIn('"crates/bli-kvm-diagnostic-peer-policy"', workspace)
+        self.assertIn(
+            'bli-kvm-diagnostic-collector-policy = { path = "../bli-kvm-diagnostic-collector-policy" }',
+            manifest,
+        )
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-peer-policy",
+                    other_manifest.read_text(),
+                )
+        self.assertIn("#![no_std]", source)
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertIn("pub struct KernelPeerCredentials", source)
+        self.assertIn("pub struct DiagnosticPeerAssignments", source)
+        self.assertIn("pub const fn map_peer", source)
         for forbidden in (
             "std::",
             "String",

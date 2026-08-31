@@ -1,0 +1,11 @@
+[package]
+name = "bli-kvm-diagnostic-peer-policy"
+description = "Exact Unix peer identity policy for Hardened BliKVM diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-collector-policy = { path = "../bli-kvm-diagnostic-collector-policy" }
