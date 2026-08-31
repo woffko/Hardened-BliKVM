@@ -55,6 +55,12 @@ sysfs epoch and derives only RTC-minus-system offset. The root-only RTC
 character node, raw I2C, clock setting, alarm, and synchronization directions
 remain outside the broker boundary.
 
+Fan control is currently a host-only policy library, not a broker adapter. It
+can propose a bounded duty from sanitized samples and monotonic time, but it is
+not linked into any runtime process. Startup, sensor fault, invalid input,
+timeout, and critical heat all resolve to maximum-cooling policy; no result can
+reach GPIO/PWM until the separate physical driver boundary is accepted.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

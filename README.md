@@ -28,6 +28,8 @@ The reversible H616 prototype and the application-update core are implemented:
 - an isolated read-only MJPEG proxy with session-bound browser delivery;
 - fail-closed Rust HID, ATX, and virtual-media transition cores that are not yet
   wired to a hardware-mutating backend;
+- a pure host-only fan hysteresis/dwell/failsafe policy that is not linked to
+  any runtime or hardware backend;
 - a signed Ed25519 application verifier, immutable stager, anti-rollback
   journal, one-use health credential, watchdog rollback, and transactional
   slot garbage collection;

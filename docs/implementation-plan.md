@@ -148,6 +148,14 @@ capability is runtime-verified. Rebind/fault, drift, battery, reboot, alarm, and
 any clock-write direction remain separate gates; exact evidence is recorded in
 `baselines/device-rtc.md`.
 
+Checkpoint: a separate `bli-kvm-fan-policy` crate now models only proposed fan
+commands. It validates thresholds, hysteresis, duty curves, sensor timeout, and
+minimum on/off dwell; startup, sensor failure, invalid input, timeout, and
+critical heat fail to 100 percent. The crate has no hardware/runtime dependency
+and is not linked into the broker or server. GPIO/PWM ownership, polarity,
+frequency, minimum spinning duty, stall/fault injection, boot/restart behavior,
+and physical thermal soak remain required before any fan capability exists.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

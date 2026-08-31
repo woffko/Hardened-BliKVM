@@ -6,6 +6,22 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class PackagingBoundaryTests(unittest.TestCase):
+    def test_fan_policy_is_pure_host_only_and_not_linked_to_runtime(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        manifest = (ROOT / "crates/bli-kvm-fan-policy/Cargo.toml").read_text()
+        source = (ROOT / "crates/bli-kvm-fan-policy/src/lib.rs").read_text()
+        self.assertIn('"crates/bli-kvm-fan-policy"', workspace)
+        self.assertIn("thiserror.workspace = true", manifest)
+        for runtime_manifest in (
+            "crates/bli-kvm-platform-bli/Cargo.toml",
+            "crates/bli-kvm-platform-broker/Cargo.toml",
+            "crates/bli-kvm-server/Cargo.toml",
+        ):
+            self.assertNotIn("bli-kvm-fan-policy", (ROOT / runtime_manifest).read_text())
+        self.assertIn("pub const FAILSAFE_DUTY_PERCENT: u8 = 100", source)
+        for forbidden in ("/dev/", "gpio", "softPwm", "std::fs", "libc::", "tokio::"):
+            self.assertNotIn(forbidden, source)
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
