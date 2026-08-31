@@ -1,0 +1,11 @@
+[package]
+name = "bli-kvm-diagnostic-protocol"
+description = "Fixed typed producer protocol for Hardened BliKVM diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
