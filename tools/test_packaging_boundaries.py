@@ -195,8 +195,11 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("DIAGNOSTIC_EVENT_FRAME_BYTES", source)
+        self.assertIn("DIAGNOSTIC_RESPONSE_FRAME_BYTES", source)
         self.assertIn("pub fn encode_event", source)
         self.assertIn("pub fn decode_event", source)
+        self.assertIn("pub fn encode_response", source)
+        self.assertIn("pub fn decode_response", source)
         for forbidden in (
             "std::",
             "String",

@@ -7,6 +7,9 @@
 //! bytes, and four mandatory-zero reserved bytes. Source role, process
 //! identity, lifecycle epoch, sequence, time, paths, text, and arbitrary bytes
 //! are outside this protocol and must be assigned or rejected by the collector.
+//! A producer must wait for one exact response before sending another event;
+//! accepted, policy-rejected, backpressured, and unavailable outcomes therefore
+//! cannot be confused. Invalid frames are connection-fatal and have no response.
 
 use bli_kvm_diagnostic_export::MAX_RETRY_ATTEMPT;
 pub use bli_kvm_diagnostic_export::{
@@ -15,6 +18,7 @@ pub use bli_kvm_diagnostic_export::{
 
 pub const DIAGNOSTIC_PROTOCOL_SCHEMA_VERSION: u8 = 1;
 pub const DIAGNOSTIC_EVENT_FRAME_BYTES: usize = 8;
+pub const DIAGNOSTIC_RESPONSE_FRAME_BYTES: usize = 4;
 
 const TAG_READY: u8 = 1;
 const TAG_UNAVAILABLE: u8 = 2;
@@ -23,15 +27,31 @@ const TAG_RETRY_SCHEDULED: u8 = 4;
 const TAG_OPERATION_FINISHED: u8 = 5;
 const TAG_RESOURCE_PRESSURE: u8 = 6;
 const TAG_JOURNAL_OBSERVED: u8 = 7;
+const RESPONSE_ACCEPTED: u8 = 1;
+const RESPONSE_REJECTED: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticProtocolError {
     InvalidLength,
     UnsupportedSchemaVersion(u8),
     UnknownEventTag(u8),
+    UnknownResponseTag(u8),
     InvalidPayload,
     NonCanonicalReserved,
     LifecycleEventForbidden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticProducerRejection {
+    EventNotAllowed,
+    Backpressure,
+    CollectorUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticProducerResponse {
+    Accepted,
+    Rejected { reason: DiagnosticProducerRejection },
 }
 
 pub fn encode_event(
@@ -115,6 +135,59 @@ pub fn decode_event(bytes: &[u8]) -> Result<DiagnosticEvent, DiagnosticProtocolE
         }),
         TAG_READY..=TAG_JOURNAL_OBSERVED => Err(DiagnosticProtocolError::InvalidPayload),
         tag => Err(DiagnosticProtocolError::UnknownEventTag(tag)),
+    }
+}
+
+pub fn encode_response(
+    response: DiagnosticProducerResponse,
+) -> [u8; DIAGNOSTIC_RESPONSE_FRAME_BYTES] {
+    let (tag, argument) = match response {
+        DiagnosticProducerResponse::Accepted => (RESPONSE_ACCEPTED, 0),
+        DiagnosticProducerResponse::Rejected { reason } => {
+            (RESPONSE_REJECTED, encode_rejection(reason))
+        }
+    };
+    [DIAGNOSTIC_PROTOCOL_SCHEMA_VERSION, tag, argument, 0]
+}
+
+pub fn decode_response(
+    bytes: &[u8],
+) -> Result<DiagnosticProducerResponse, DiagnosticProtocolError> {
+    if bytes.len() != DIAGNOSTIC_RESPONSE_FRAME_BYTES {
+        return Err(DiagnosticProtocolError::InvalidLength);
+    }
+    if bytes[0] != DIAGNOSTIC_PROTOCOL_SCHEMA_VERSION {
+        return Err(DiagnosticProtocolError::UnsupportedSchemaVersion(bytes[0]));
+    }
+    if bytes[3] != 0 {
+        return Err(DiagnosticProtocolError::NonCanonicalReserved);
+    }
+    match bytes[1] {
+        RESPONSE_ACCEPTED if bytes[2] == 0 => Ok(DiagnosticProducerResponse::Accepted),
+        RESPONSE_ACCEPTED => Err(DiagnosticProtocolError::InvalidPayload),
+        RESPONSE_REJECTED => Ok(DiagnosticProducerResponse::Rejected {
+            reason: decode_rejection(bytes[2])?,
+        }),
+        tag => Err(DiagnosticProtocolError::UnknownResponseTag(tag)),
+    }
+}
+
+const fn encode_rejection(reason: DiagnosticProducerRejection) -> u8 {
+    match reason {
+        DiagnosticProducerRejection::EventNotAllowed => 1,
+        DiagnosticProducerRejection::Backpressure => 2,
+        DiagnosticProducerRejection::CollectorUnavailable => 3,
+    }
+}
+
+const fn decode_rejection(
+    value: u8,
+) -> Result<DiagnosticProducerRejection, DiagnosticProtocolError> {
+    match value {
+        1 => Ok(DiagnosticProducerRejection::EventNotAllowed),
+        2 => Ok(DiagnosticProducerRejection::Backpressure),
+        3 => Ok(DiagnosticProducerRejection::CollectorUnavailable),
+        _ => Err(DiagnosticProtocolError::InvalidPayload),
     }
 }
 
@@ -486,5 +559,94 @@ mod tests {
             }
         );
         assert_eq!(encode_event(event), Ok(frame));
+    }
+
+    #[test]
+    fn every_response_roundtrips_with_exact_acknowledgement_bytes() {
+        let cases = [
+            (DiagnosticProducerResponse::Accepted, [1, 1, 0, 0]),
+            (
+                DiagnosticProducerResponse::Rejected {
+                    reason: DiagnosticProducerRejection::EventNotAllowed,
+                },
+                [1, 2, 1, 0],
+            ),
+            (
+                DiagnosticProducerResponse::Rejected {
+                    reason: DiagnosticProducerRejection::Backpressure,
+                },
+                [1, 2, 2, 0],
+            ),
+            (
+                DiagnosticProducerResponse::Rejected {
+                    reason: DiagnosticProducerRejection::CollectorUnavailable,
+                },
+                [1, 2, 3, 0],
+            ),
+        ];
+        for (response, frame) in cases {
+            assert_eq!(encode_response(response), frame);
+            assert_eq!(decode_response(&frame), Ok(response));
+        }
+    }
+
+    #[test]
+    fn every_response_tag_and_argument_pair_has_a_closed_domain() {
+        for tag in 0..=u8::MAX {
+            for argument in 0..=u8::MAX {
+                let decoded =
+                    decode_response(&[DIAGNOSTIC_PROTOCOL_SCHEMA_VERSION, tag, argument, 0]);
+                let expected_valid = (tag == RESPONSE_ACCEPTED && argument == 0)
+                    || (tag == RESPONSE_REJECTED && (1..=3).contains(&argument));
+                assert_eq!(decoded.is_ok(), expected_valid);
+                if !expected_valid {
+                    let expected = if matches!(tag, RESPONSE_ACCEPTED | RESPONSE_REJECTED) {
+                        DiagnosticProtocolError::InvalidPayload
+                    } else {
+                        DiagnosticProtocolError::UnknownResponseTag(tag)
+                    };
+                    assert_eq!(decoded, Err(expected));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn response_length_schema_and_reserved_byte_are_exact() {
+        let valid = encode_response(DiagnosticProducerResponse::Accepted);
+        let mut lengths = [0_u8; 17];
+        lengths[..DIAGNOSTIC_RESPONSE_FRAME_BYTES].copy_from_slice(&valid);
+        for length in 0..=lengths.len() {
+            if length == DIAGNOSTIC_RESPONSE_FRAME_BYTES {
+                assert_eq!(
+                    decode_response(&lengths[..length]),
+                    Ok(DiagnosticProducerResponse::Accepted)
+                );
+            } else {
+                assert_eq!(
+                    decode_response(&lengths[..length]),
+                    Err(DiagnosticProtocolError::InvalidLength)
+                );
+            }
+        }
+        for schema in 0..=u8::MAX {
+            if schema == DIAGNOSTIC_PROTOCOL_SCHEMA_VERSION {
+                continue;
+            }
+            let mut frame = valid;
+            frame[0] = schema;
+            assert_eq!(
+                decode_response(&frame),
+                Err(DiagnosticProtocolError::UnsupportedSchemaVersion(schema))
+            );
+        }
+        for reserved in 1..=u8::MAX {
+            let mut frame = valid;
+            frame[3] = reserved;
+            assert_eq!(
+                decode_response(&frame),
+                Err(DiagnosticProtocolError::NonCanonicalReserved)
+            );
+        }
     }
 }
