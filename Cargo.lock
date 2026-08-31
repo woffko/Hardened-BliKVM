@@ -182,6 +182,7 @@ dependencies = [
 name = "bli-kvm-diagnostic-collector"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-diagnostic-export-listener",
  "bli-kvm-diagnostic-peer-adapter",
  "nix",
  "signal-hook",

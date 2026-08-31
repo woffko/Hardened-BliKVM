@@ -2,9 +2,10 @@
 
 This is a fixed local Unix-stream contract for one authenticated
 collector consumer. It is not an HTTP API, does not package the collector, and
-does not expose live-window state. The pure codec and its caller-bound listener
-remain unlinked from the collector process. They add no fixed socket path,
-persistence, retry, client, API, or UI. Protocol host/AArch64 evidence is in
+does not expose live-window state. The unshipped collector now links the pure
+codec and caller-bound listener at the fixed local `export.sock`; no shipped
+process or client consumes it. Persistence, retry, API, and UI remain absent.
+Protocol host/AArch64 evidence is in
 `../baselines/diagnostic-export-protocol.md`.
 
 ## Request frame
@@ -79,6 +80,6 @@ accepts a caller-owned Unix listener, permits at most two active connections,
 drops excess connections without waiting, bounds request reads to two seconds
 and response writes to five seconds, and closes after one request/response. It
 clones or acknowledges collector state before response I/O, so a stalled
-consumer holds no collector mutex. Device/process integration remains pending;
-standalone listener host/AArch64 evidence is recorded in
+consumer holds no collector mutex. Dual-socket collector host/AArch64/device
+evidence remains pending; standalone listener host/AArch64 evidence is in
 `../baselines/diagnostic-export-listener.md`.

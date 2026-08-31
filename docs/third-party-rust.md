@@ -106,6 +106,9 @@ only the existing export/protocol/window/peer-adapter/Tokio graph. It adds no
 external package: locked metadata is 158 total, 50 workspace, and 108 external
 packages. The refreshed 1,233-advisory RustSec scan accepted the exact graph.
 
+Linking the export listener into the existing unshipped collector adds no
+workspace or external package and no dependency version.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

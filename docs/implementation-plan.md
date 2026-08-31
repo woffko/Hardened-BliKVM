@@ -417,6 +417,15 @@ links it. The full host matrix with 138 Python tests, two byte-identical
 export rlib, metadata, and ThinLTO pairs passed; see
 `baselines/diagnostic-export-listener.md`.
 
+Checkpoint in progress: the unshipped collector now atomically binds fixed
+`collector.sock` and `export.sock` paths and runs producer plus authenticated
+export loops over one `Arc<DiagnosticCollectorRuntime>`. Completion or panic of
+either task broadcasts shutdown through a drop guard; both tasks are joined
+before exact inode cleanup. Five collector tests cover dual-socket modes,
+partial-bind rollback, replacement refusal, shutdown broadcast including
+unwind, and typed task/runtime failure mapping. No bundle, client, persistence,
+API/UI, or device acceptance exists yet.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

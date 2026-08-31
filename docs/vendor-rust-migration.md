@@ -154,6 +154,9 @@ diagnostic receipt and has no collector service dependency. See
 `baselines/diagnostic-export-protocol.md`. The next unlinked layer is a bounded
 caller-owned listener that accepts only the exact platform-broker peer; see
 `baselines/diagnostic-export-listener.md`.
+The unshipped collector now owns both fixed local sockets and supervises the
+producer/export loops over one runtime; its reversible dual-socket H616 gate is
+the next acceptance boundary.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

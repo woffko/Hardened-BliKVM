@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bli-kvm-diagnostic-export-listener = { path = "../bli-kvm-diagnostic-export-listener" }
 bli-kvm-diagnostic-peer-adapter = { path = "../bli-kvm-diagnostic-peer-adapter" }
 nix.workspace = true
 signal-hook.workspace = true

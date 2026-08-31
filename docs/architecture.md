@@ -126,7 +126,11 @@ platform-broker role from `SO_PEERCRED`, accepts a caller-bound Unix listener,
 uses two non-waiting connection permits, and bounds one request/read and
 response/write. Snapshot and acknowledgement complete under the shared runtime
 before socket output, so stalled export I/O holds no collector state lock. No
-collector process or package links this listener yet.
+shipped package links this listener. The unshipped collector now binds fixed
+`collector.sock` and `export.sock` paths atomically and runs both loops over one
+shared runtime. A drop guard broadcasts shutdown if either task returns or
+panics; both tasks are joined before inode-bound socket cleanup. No export
+client exists.
 
 ## Core invariants
 

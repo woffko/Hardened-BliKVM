@@ -98,3 +98,7 @@ producer and export loops over the same runtime, prove exact platform-broker
 authentication and producer independence under stalled export I/O, and restore
 both sockets and all temporary state on H616. Persistence, export client,
 platform-broker routing, HTTP, and UI remain later gates.
+
+The unshipped collector subsequently linked this listener and added the fixed
+second socket. That process-level source is tracked separately and does not
+change the standalone evidence above.

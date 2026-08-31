@@ -261,7 +261,11 @@ Wrong roles and excess connections receive no response. Two fixed non-waiting
 permits, a two-second exact-request read, five-second response write, one
 request per connection, single-use listener ownership, and bounded task joins
 contain untrusted local behavior. It owns no path and remains outside the
-collector process; persistence and acknowledgement policy at the consumer are
+shipped product. The unshipped collector binds both fixed mode-0660 sockets in
+one validated runtime directory and shares one runtime between producer and
+export loops. Partial second-socket setup drops the first inode-bound owner;
+completion or panic of either task broadcasts shutdown to the other, and both
+are joined before cleanup. Persistence and consumer acknowledgement policy are
 still absent.
 
 The pure peer policy validates five producer UIDs and one collector UID as
