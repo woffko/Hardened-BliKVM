@@ -417,7 +417,7 @@ links it. The full host matrix with 138 Python tests, two byte-identical
 export rlib, metadata, and ThinLTO pairs passed; see
 `baselines/diagnostic-export-listener.md`.
 
-Checkpoint in progress: the unshipped collector now atomically binds fixed
+Checkpoint: the unshipped collector atomically binds fixed
 `collector.sock` and `export.sock` paths and runs producer plus authenticated
 export loops over one `Arc<DiagnosticCollectorRuntime>`. Completion or panic of
 either task broadcasts shutdown through a drop guard; both tasks are joined
@@ -429,6 +429,20 @@ source `437b65f` passed the full host matrix, two byte-identical 4,796,918-byte
 archives, an identical 715,032-byte collector, all export-stack rlib pairs, and
 the reversible H616 exact-consumer/pressure/repeat/mismatch/ack/shutdown matrix
 with complete rollback; see `baselines/device-diagnostic-export.md`.
+
+Checkpoint: source `3f1984d` adds a separate unlinked fixed-path Rust export
+client. It performs one fresh two-/two-/five-second bounded connection/write/
+response exchange per call, requires exact EOF framing, owns at most 8 KiB of
+typed payload, and exposes nonzero instance/window bindings. Read failures are
+retryable only by an explicit caller because reads do not mutate state;
+acknowledgement failures and cancellation after polling are conservatively
+delivery ambiguous and never retried. Thirteen tests cover every response,
+maximum payload, malformed/partial/oversize/EOF/read/write/connect/time bounds,
+wrong binding/operation, cancellation, and no hidden retry. The full host
+matrix with 139 Python tests, two byte-identical 4,797,360-byte archives, and
+byte-identical client/protocol/export AArch64 artifacts passed. It remains
+outside the platform broker, bundle, persistence, API, UI, package, and device
+runtime; see `baselines/diagnostic-export-client.md`.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

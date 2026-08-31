@@ -156,8 +156,10 @@ caller-owned listener that accepts only the exact platform-broker peer; see
 `baselines/diagnostic-export-listener.md`.
 The unshipped collector now owns both fixed local sockets and supervises the
 producer/export loops over one runtime; its reversible dual-socket H616 gate is
-accepted in `baselines/device-diagnostic-export.md`. A Rust export client is the
-next separate boundary.
+accepted in `baselines/device-diagnostic-export.md`. The separate fixed-path
+Rust export client is host/AArch64 verified and remains unlinked; see
+`baselines/diagnostic-export-client.md`. The next boundary is platform-broker
+integration without persistence or HTTP/UI.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

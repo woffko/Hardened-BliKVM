@@ -130,10 +130,15 @@ shipped package links this listener. The unshipped collector now binds fixed
 `collector.sock` and `export.sock` paths atomically and runs both loops over one
 shared runtime. A drop guard broadcasts shutdown if either task returns or
 panics; both tasks are joined before inode-bound socket cleanup. No export
-client exists. The reversible H616 gate accepted exact consumer identity,
-connection pressure with producer progress, repeatable sealed reads,
+product route exists. A separate unlinked Rust client now opens only the fixed
+`export.sock`, uses one fresh connection per operation, returns an owned
+fixed-capacity snapshot, and distinguishes retryable non-mutating reads from
+delivery-ambiguous acknowledgements. It never retries, persists, logs, or
+accepts a caller-selected path. The reversible H616 gate accepted exact
+consumer identity, connection pressure with producer progress, repeatable sealed reads,
 mismatch-preserving and exact acknowledgement, dual-loop shutdown, and complete
-rollback; see `baselines/device-diagnostic-export.md`.
+rollback; see `baselines/device-diagnostic-export.md` and
+`baselines/diagnostic-export-client.md`.
 
 ## Core invariants
 

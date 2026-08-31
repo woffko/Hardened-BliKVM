@@ -265,12 +265,26 @@ shipped product. The unshipped collector binds both fixed mode-0660 sockets in
 one validated runtime directory and shares one runtime between producer and
 export loops. Partial second-socket setup drops the first inode-bound owner;
 completion or panic of either task broadcasts shutdown to the other, and both
-are joined before cleanup. Persistence and consumer acknowledgement policy are
-still absent. The reversible H616 gate accepted exact platform-broker identity,
+are joined before cleanup. Persistence and a linked product consumer remain
+absent. The reversible H616 gate accepted exact platform-broker identity,
 wrong-role/root rejection, two-permit pressure with concurrent producer
 progress, repeatable snapshot/mismatch/exact-ack behavior, bounded partial I/O,
 dual shutdown, and complete restoration. It used a generated client, not a
 product consumer; see `baselines/device-diagnostic-export.md`.
+
+The unlinked Rust export client now fixes the consumer side to that same
+`export.sock`. It opens a fresh connection for every read or acknowledgement,
+bounds connect/write/whole-response reads to two/two/five seconds, requires
+connection EOF after at most 8,216 canonical bytes, and returns only an owned
+8-KiB typed-bundle payload with its exact instance/window binding. Read failures
+are explicitly safe only for a later caller-selected read; no retry is
+automatic. After an acknowledgement write begins, every timeout, EOF, I/O,
+oversize, malformed, wrong-operation, or wrong-binding response is delivery
+ambiguous. Cancelling a polled acknowledgement is also potentially ambiguous
+and must be reconciled by reading again, never by blindly repeating the ack.
+The client is not linked into the platform broker, owns no persistence, and
+adds no HTTP, UI, package, unit, capability, logging, or arbitrary-path surface;
+see `baselines/diagnostic-export-client.md`.
 
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials

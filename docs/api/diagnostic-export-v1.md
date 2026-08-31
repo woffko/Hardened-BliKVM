@@ -3,8 +3,9 @@
 This is a fixed local Unix-stream contract for one authenticated
 collector consumer. It is not an HTTP API, does not package the collector, and
 does not expose live-window state. The unshipped collector now links the pure
-codec and caller-bound listener at the fixed local `export.sock`; no shipped
-process or client consumes it. Persistence, retry, API, and UI remain absent.
+codec and caller-bound listener at the fixed local `export.sock`. A separate
+fixed-path Rust client is host/AArch64 verified but no shipped process consumes
+it. Persistence, automatic retry, API, and UI remain absent.
 Protocol host/AArch64 evidence is in
 `../baselines/diagnostic-export-protocol.md`.
 
@@ -83,5 +84,7 @@ clones or acknowledges collector state before response I/O, so a stalled
 consumer holds no collector mutex. Dual-socket collector host/AArch64/device
 evidence passed with complete rollback; see
 `../baselines/device-diagnostic-export.md`. The gate used a fixed generated
-client under the exact platform-broker UID; a Rust client and product route do
-not exist yet.
+client under the exact platform-broker UID. The later Rust client preserves the
+same exact frames, fresh-connection closure, fixed bounds, and acknowledgement
+ambiguity, but remains unlinked from the platform broker; see
+`../baselines/diagnostic-export-client.md`.
