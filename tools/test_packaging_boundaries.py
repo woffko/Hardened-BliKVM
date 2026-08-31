@@ -307,6 +307,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-peer-policy"
+        adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -316,7 +317,10 @@ class PackagingBoundaryTests(unittest.TestCase):
             manifest,
         )
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                adapter / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-peer-policy",
                     other_manifest.read_text(),
@@ -326,6 +330,13 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("pub struct KernelPeerCredentials", source)
         self.assertIn("pub struct DiagnosticPeerAssignments", source)
         self.assertIn("pub const fn map_peer", source)
+        for identity_type in (
+            "KernelPeerCredentials",
+            "DiagnosticPeerAssignments",
+        ):
+            before = production.split(f"pub struct {identity_type}", 1)[0]
+            derive = before.rsplit("#[derive(", 1)[-1].split(")]", 1)[0]
+            self.assertNotIn("Debug", derive)
         for forbidden in (
             "std::",
             "String",
@@ -337,6 +348,52 @@ class PackagingBoundaryTests(unittest.TestCase):
             "tokio::",
             "libc::",
             "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_peer_adapter_uses_only_fixed_safe_identity_apis_and_is_unlinked(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        self.assertIn('"crates/bli-kvm-diagnostic-peer-adapter"', workspace)
+        for dependency in (
+            'bli-kvm-diagnostic-peer-policy = { path = "../bli-kvm-diagnostic-peer-policy" }',
+            "nix.workspace = true",
+            "tokio.workspace = true",
+        ):
+            self.assertIn(dependency, manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-peer-adapter",
+                    other_manifest.read_text(),
+                )
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertIn("User::from_name", source)
+        self.assertIn("Group::from_name", source)
+        self.assertIn(".peer_cred()", source)
+        for account in (
+            "hardened-blikvm-diagnostics",
+            "hardened-blikvm-server",
+            "hardened-blikvm-broker",
+            "hardened-blikvm-video",
+            "hardened-blikvm-control",
+            "hardened-blikvm-update",
+            "hardened-blikvm",
+        ):
+            self.assertIn(account, source)
+        for forbidden in (
+            "unsafe {",
+            "libc::",
+            "std::env",
+            "Command",
+            "Path",
+            "/dev/",
+            "/var/",
         ):
             self.assertNotIn(forbidden, production)
 

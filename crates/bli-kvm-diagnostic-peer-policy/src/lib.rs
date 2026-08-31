@@ -8,7 +8,7 @@
 //! six distinct non-root UIDs and one exact non-root shared GID, and returns
 //! only the semantic source. PID, UID, and GID never enter diagnostic output.
 
-use bli_kvm_diagnostic_collector_policy::DiagnosticSource;
+pub use bli_kvm_diagnostic_collector_policy::DiagnosticSource;
 
 pub const MAX_KERNEL_PID: u32 = 2_147_483_647;
 
@@ -51,7 +51,7 @@ pub enum DiagnosticPeerError {
     UnexpectedPeerGroup,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KernelPeerCredentials {
     pid: Option<u32>,
     uid: u32,
@@ -64,7 +64,7 @@ impl KernelPeerCredentials {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DiagnosticPeerAssignments {
     collector_uid: u32,
     producer_uids: [u32; 5],
@@ -208,15 +208,16 @@ mod tests {
         for index in 0..UIDS.len() {
             let mut values = [100, 101, 102, 103, 104, 105, SHARED_GID];
             values[index] = 0;
-            assert_eq!(
+            assert!(matches!(
                 assignments_from(values),
-                Err(DiagnosticPeerConfigError::ZeroUid(ACCOUNTS[index]))
-            );
+                Err(DiagnosticPeerConfigError::ZeroUid(account))
+                    if account == ACCOUNTS[index]
+            ));
         }
-        assert_eq!(
+        assert!(matches!(
             assignments_from([100, 101, 102, 103, 104, 105, 0]),
             Err(DiagnosticPeerConfigError::ZeroSharedGroup)
-        );
+        ));
     }
 
     #[test]
@@ -225,13 +226,15 @@ mod tests {
             for second in (first + 1)..UIDS.len() {
                 let mut values = [100, 101, 102, 103, 104, 105, SHARED_GID];
                 values[second] = values[first];
-                assert_eq!(
+                assert!(matches!(
                     assignments_from(values),
                     Err(DiagnosticPeerConfigError::DuplicateUid {
-                        first: ACCOUNTS[first],
-                        second: ACCOUNTS[second],
+                        first: found_first,
+                        second: found_second,
                     })
-                );
+                        if found_first == ACCOUNTS[first]
+                            && found_second == ACCOUNTS[second]
+                ));
             }
         }
     }
