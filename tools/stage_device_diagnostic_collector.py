@@ -386,6 +386,7 @@ def build_client(paths: Paths) -> str:
     return f'''#!/usr/bin/python3
 import os
 import socket
+import stat
 import sys
 import time
 
@@ -398,6 +399,7 @@ EXPORT_READ = bytes((1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 EXPORT_HEADER_BYTES = 24
 EXPORT_MAX_PAYLOAD = 8192
 STATE_PREFIX = {(paths.client_state + '/')!r}
+SEALED_STATE = {(paths.client_state + '/sealed.bin')!r}
 
 def receive_exact(stream, size):
     output = bytearray()
@@ -447,11 +449,23 @@ def export_ack(instance, window):
         raise RuntimeError("ack binding invalid")
     return bytes((1, 2, 0, 0)) + instance.to_bytes(8, "big") + window.to_bytes(4, "big")
 
-def load_state(path):
-    if not path.startswith(STATE_PREFIX):
-        raise RuntimeError("state path invalid")
-    with open(path, "rb") as handle:
-        response = handle.read(24 + EXPORT_MAX_PAYLOAD + 1)
+def load_state():
+    descriptor = os.open(SEALED_STATE, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or metadata.st_uid != os.geteuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_size > 24 + EXPORT_MAX_PAYLOAD):
+            raise RuntimeError("state metadata invalid")
+        response = b""
+        while len(response) <= 24 + EXPORT_MAX_PAYLOAD:
+            chunk = os.read(descriptor, 4096)
+            if not chunk:
+                break
+            response += chunk
+    finally:
+        os.close(descriptor)
     if len(response) > 24 + EXPORT_MAX_PAYLOAD:
         raise RuntimeError("state oversized")
     return response, export_binding(response)
@@ -523,32 +537,34 @@ elif mode == "hold":
     os.close(descriptor)
     expect_closed(stream, "hold received trailing data")
 elif mode == "export-read":
-    if len(sys.argv) != 3 or not sys.argv[2].startswith(STATE_PREFIX):
-        raise RuntimeError("export state path invalid")
     stream.sendall(EXPORT_READ)
     response = export_response(stream)
     export_binding(response)
-    descriptor = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    descriptor = os.open(
+        SEALED_STATE,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
     try:
         write_all_descriptor(descriptor, response)
     finally:
         os.close(descriptor)
 elif mode == "export-repeat":
-    expected, _ = load_state(sys.argv[2])
+    expected, _ = load_state()
     stream.sendall(EXPORT_READ)
     if export_response(stream) != expected:
         raise RuntimeError("sealed snapshot changed")
 elif mode == "export-ack-mismatch":
-    expected, (instance, window) = load_state(sys.argv[2])
+    _, (instance, window) = load_state()
     wrong_instance = instance + 1 if instance < (1 << 64) - 1 else instance - 1
     stream.sendall(export_ack(wrong_instance, window))
     expect_fixed(export_response(stream), 4, (wrong_instance, window))
 elif mode == "export-ack":
-    _, binding = load_state(sys.argv[2])
+    _, binding = load_state()
     stream.sendall(export_ack(*binding))
     expect_fixed(export_response(stream), 3, binding)
 elif mode == "export-ack-empty":
-    _, binding = load_state(sys.argv[2])
+    _, binding = load_state()
     stream.sendall(export_ack(*binding))
     expect_fixed(export_response(stream), 1)
 elif mode == "export-no-sealed":
@@ -1054,20 +1070,19 @@ rm -f -- "$export_ready_one" "$export_ready_two"
 phase=create-sealed-window
 run_as hardened-blikvm-broker fill
 sleep 0.2
-sealed_state="$client_state/sealed.bin"
-run_as hardened-blikvm-broker export-read "$sealed_state"
-run_as hardened-blikvm-broker export-repeat "$sealed_state"
+run_as hardened-blikvm-broker export-read
+run_as hardened-blikvm-broker export-repeat
 phase=export-rejected-peers
 python3 "$client" export-rejected
 run_as hardened-blikvm-server export-rejected
 run_as hardened-blikvm-broker export-malformed
 run_as hardened-blikvm-broker export-partial
 phase=export-acknowledgement
-run_as hardened-blikvm-broker export-ack-mismatch "$sealed_state"
-run_as hardened-blikvm-broker export-repeat "$sealed_state"
-run_as hardened-blikvm-broker export-ack "$sealed_state"
+run_as hardened-blikvm-broker export-ack-mismatch
+run_as hardened-blikvm-broker export-repeat
+run_as hardened-blikvm-broker export-ack
 run_as hardened-blikvm-broker export-no-sealed
-run_as hardened-blikvm-broker export-ack-empty "$sealed_state"
+run_as hardened-blikvm-broker export-ack-empty
 phase=rejected-peers
 python3 "$client" rejected
 unknown_uid=$(getent passwd nobody | awk -F: 'NR == 1 {print $3}')

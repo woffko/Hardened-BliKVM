@@ -78,6 +78,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             client,
         )
         self.assertIn("ACCEPTED = bytes((1, 1, 0, 0))", client)
+        self.assertIn("SEALED_STATE = ", client)
+        self.assertIn("os.O_NOFOLLOW", client)
+        self.assertIn("stat.S_ISREG", client)
+        self.assertIn("metadata.st_nlink != 1", client)
         for mode in (
             "accepted",
             "control-disabled",
