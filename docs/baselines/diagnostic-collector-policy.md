@@ -97,3 +97,8 @@ future runtime still needs a credential-bound fixed local protocol, peer-to-role
 mapping, collector-owned monotonic clock, disconnect/crash lifecycle, bounded
 backpressure, confinement, authenticated export, privacy review, packaging,
 and browser tests. Until then, no diagnostic capability is advertised.
+
+Final protocol source `64b256d7bddb6b2c1b609dcd11866036dacdb118`
+adds a separate pure sibling codec for producer events and mandatory
+accepted/rejected responses. It does not link or weaken this policy; a future
+runtime must compose both explicitly. See `diagnostic-protocol.md`.

@@ -276,6 +276,17 @@ byte-identical collector/export AArch64 rlib, metadata and ThinLTO pairs passed.
 There is no peer binding, socket, clock, process, API, UI or capability; see
 `baselines/diagnostic-collector-policy.md`.
 
+Checkpoint: final source commit `64b256d` adds the unlinked
+`bli-kvm-diagnostic-protocol`: one canonical eight-byte producer event without
+source/lifecycle/sequence/time and one mandatory four-byte accepted or typed
+rejection response. All request payload and response domains are exhaustively
+tested. The full host suite, two byte-identical prototype archives, and
+byte-identical protocol/collector/export AArch64 rlib, metadata and ThinLTO
+pairs passed. The earlier event-only `009a9ce` is rejected as incomplete because
+it could not distinguish backpressure from acceptance. No socket, peer binding,
+runtime or capability exists; see `api/diagnostic-producer-v1.md` and
+`baselines/diagnostic-protocol.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

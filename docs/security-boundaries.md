@@ -207,6 +207,14 @@ perform the typed mapping before the authenticated server boundary; unknown
 events and all raw content fail closed. No diagnostic capability is currently
 advertised.
 
+The unlinked producer protocol contains one canonical eight-byte typed event
+and a mandatory four-byte accepted/rejected response. It has no source,
+lifecycle, sequence, time, identity, text, or arbitrary payload field. Current
+service UIDs are distinct while their runtime group is shared, so future role
+binding must use kernel `SO_PEERCRED` against five exact resolved non-root UIDs;
+group access alone is insufficient. A producer waits for acceptance before its
+next frame, preventing hard backpressure from looking like success.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

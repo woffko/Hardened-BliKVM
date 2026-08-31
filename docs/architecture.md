@@ -74,7 +74,9 @@ or device interface. A separate unlinked policy accepts exactly five existing
 process roles, enforces source lifecycle epochs and sequences, global ordering,
 hard capacity, and a role-specific event matrix. A future runtime must bind a
 local peer to one source and assign collector-owned time without forwarding raw
-log content.
+log content. Its unlinked producer codec carries one fixed typed event and
+requires one exact accepted/rejected response before another event; source,
+lifecycle, sequence and time never cross that wire.
 
 ## Core invariants
 

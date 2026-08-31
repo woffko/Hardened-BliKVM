@@ -73,8 +73,10 @@ accepted; see `trusted-floor-topology.md`. Reboot/shutdown stay unavailable.
 
 The first pure diagnostic-export model now enforces the semantic, bounded,
 no-path/no-message portion of the log boundary; see `diagnostic-export.md`. It
-performed no live capture. Its only consumer is an unlinked pure policy for
+performed no live capture. One consumer is an unlinked pure policy for
 five fixed process roles, exact lifecycle epochs/sequences, global ordering and
-a closed event matrix; see `diagnostic-collector-policy.md`. There is still no
-runtime collector, peer-bound source adapter, API, UI, package, or advertised
-diagnostic capability.
+a closed event matrix; see `diagnostic-collector-policy.md`. A separate pure
+codec defines fixed event and mandatory accepted/rejected frames without source
+or identity; see `diagnostic-protocol.md`. There is still no runtime collector,
+peer-bound source adapter, API, UI, package, or advertised diagnostic
+capability.

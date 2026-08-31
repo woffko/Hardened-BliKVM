@@ -75,6 +75,10 @@ adds one consumer: the also-unlinked, pure
 `bli-kvm-diagnostic-collector-policy`. No process, package, API, UI, or device
 runtime links either crate; see `diagnostic-collector-policy.md`.
 
+Final protocol source `64b256d7bddb6b2c1b609dcd11866036dacdb118`
+adds a second pure, unlinked consumer with fixed event and mandatory response
+frames. No runtime links any diagnostic crate; see `diagnostic-protocol.md`.
+
 No live log, configured log path, rotated file, process output, identifier, or
 device state was read for this slice. A future adapter must map one reviewed,
 fixed local source into these semantic events without forwarding raw content;
