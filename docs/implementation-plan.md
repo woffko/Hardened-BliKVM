@@ -191,6 +191,17 @@ no frames or unique identifier. The serial-switch capability remains hidden;
 only a pure bounded protocol codec can proceed without deliberately attached
 hardware. See `baselines/device-serial-topology.md`.
 
+Checkpoint: the separate `bli-kvm-serial-switch-codec` now models typed ports,
+exact ten-byte select commands, and exact five-byte status frames. It rejects
+all other lengths, padding, noise, fixed-byte mutations and non-port bytes; it
+is no_std, dependency-free, unlinked, and has no I/O capability. At source
+commit `2410e42`, the full host suite, two byte-identical prototype archives,
+two byte-identical AArch64 rlibs and byte-identical extracted ThinLTO codegen
+passed. This is source/codegen evidence rather than a wire capture. Identity,
+exclusive 19200/8N1 ownership, bounded streaming/timeouts, reconnect and
+four-port physical behavior remain mandatory. See
+`baselines/serial-switch-codec.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.
