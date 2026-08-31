@@ -142,7 +142,7 @@ class Options:
     expected_sha256: str
     output: str
     bind_port: int
-    thermal_only: bool
+    board_observations_only: bool
 
 
 @dataclass(frozen=True)
@@ -194,11 +194,13 @@ def parse_args() -> Options:
     _ = parser.add_argument("--expected-sha256", required=True)
     _ = parser.add_argument("--output", required=True)
     _ = parser.add_argument("--bind-port", type=int, default=18081)
-    _ = parser.add_argument(
-        "--thermal-only",
+    profile = parser.add_mutually_exclusive_group()
+    _ = profile.add_argument(
+        "--board-observations-only",
         action="store_true",
-        help="stop after the authenticated thermal inventory gate and mark video stream checks skipped",
+        help="stop after authenticated board observations and mark video stream checks skipped",
     )
+    _ = profile.add_argument("--thermal-only", action="store_true", help=argparse.SUPPRESS)
     namespace = parser.parse_args()
     return Options(
         endpoint=cast(str, namespace.endpoint),
@@ -208,7 +210,9 @@ def parse_args() -> Options:
         expected_sha256=cast(str, namespace.expected_sha256),
         output=cast(str, namespace.output),
         bind_port=cast(int, namespace.bind_port),
-        thermal_only=cast(bool, namespace.thermal_only),
+        board_observations_only=cast(
+            bool, namespace.board_observations_only or namespace.thermal_only
+        ),
     )
 
 
@@ -447,7 +451,7 @@ def build_runtime_script(
     paths: GatePaths,
     bundle: prototype.BundleInfo,
     bind_port: int,
-    thermal_only: bool = False,
+    board_observations_only: bool = False,
 ) -> str:
     values = _assignments(
         {
@@ -477,7 +481,9 @@ def build_runtime_script(
             "inventory_requests": INVENTORY_REQUESTS,
             "video_reconnects": VIDEO_RECONNECTS,
             "jpeg_counter_awk": JPEG_COUNTER_AWK,
-            "runtime_profile": "thermal-only" if thermal_only else "full",
+            "runtime_profile": (
+                "board-observations-only" if board_observations_only else "full"
+            ),
             "rollback_b64": _encoded(build_rollback_script(paths)),
             "broker_dropin_b64": _encoded(build_broker_dropin(paths)),
             "video_dropin_b64": _encoded(build_video_dropin(paths)),
@@ -733,8 +739,8 @@ while [ "$count" -lt "$inventory_requests" ]; do
   [ "$code" = 200 ]
   count=$((count + 1))
 done
-if [ "$runtime_profile" = thermal-only ]; then
-  phase=thermal-only-complete
+if [ "$runtime_profile" = board-observations-only ]; then
+  phase=board-observations-complete
   video_status=skipped
   video_content_type=skipped
   video_frames=skipped
@@ -1068,9 +1074,11 @@ def validate_preflight(facts: dict[str, str]) -> None:
 
 
 def validate_run(
-    facts: dict[str, str], bundle_sha256: str, thermal_only: bool = False
+    facts: dict[str, str],
+    bundle_sha256: str,
+    board_observations_only: bool = False,
 ) -> None:
-    if thermal_only:
+    if board_observations_only:
         video_status = "skipped"
         video_content_type = "skipped"
         video_frames = "skipped"
@@ -1099,7 +1107,9 @@ def validate_run(
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
-        "runtime_profile": "thermal-only" if thermal_only else "full",
+        "runtime_profile": (
+            "board-observations-only" if board_observations_only else "full"
+        ),
         "dedicated_credential": "verified",
         "account_created": "yes",
         "watchdog_armed": "yes",
@@ -1167,7 +1177,7 @@ def validate_final(facts: dict[str, str]) -> None:
         raise ValueError("systemd final-state invariant failed")
 
 
-def policy_receipt(thermal_only: bool = False) -> PolicyReceipt:
+def policy_receipt(board_observations_only: bool = False) -> PolicyReceipt:
     return {
         "accountMutation": "temporary-dedicated-kvmd-account",
         "accountRollback": "byte-identical-htpasswd-restore",
@@ -1177,7 +1187,9 @@ def policy_receipt(thermal_only: bool = False) -> PolicyReceipt:
         "kvmdRestarted": False,
         "rootfsHelpersInvoked": False,
         "persistentChangeScope": "temporary-and-rollback-required",
-        "runtimeProfile": "thermal-only" if thermal_only else "full",
+        "runtimeProfile": (
+            "board-observations-only" if board_observations_only else "full"
+        ),
     }
 
 
@@ -1219,8 +1231,8 @@ def execute(options: Options) -> int:
     cleanup_required = False
     stage = "initialization"
     probe = (
-        "hardened-blikvm-reversible-thermal-systemd-gate"
-        if options.thermal_only
+        "hardened-blikvm-reversible-board-observations-systemd-gate"
+        if options.board_observations_only
         else "hardened-blikvm-reversible-systemd-gate"
     )
     try:
@@ -1257,12 +1269,14 @@ def execute(options: Options) -> int:
             prototype.run_ssh(
                 target,
                 secret,
-                build_runtime_script(paths, bundle, bind_port, options.thermal_only),
+                build_runtime_script(
+                    paths, bundle, bind_port, options.board_observations_only
+                ),
                 timeout=300,
             ),
         )
         checks = prototype.parse_facts(run_result.stdout, RUN_KEYS)
-        validate_run(checks, bundle.sha256, options.thermal_only)
+        validate_run(checks, bundle.sha256, options.board_observations_only)
 
         stage = "final-state"
         final_result = require_result(
@@ -1284,7 +1298,7 @@ def execute(options: Options) -> int:
                 "sizeBytes": bundle.size_bytes,
                 "sourceCommit": bundle.source_commit,
             },
-            "policy": policy_receipt(options.thermal_only),
+            "policy": policy_receipt(options.board_observations_only),
             "preflight": preflight,
             "checks": checks,
             "finalState": final_state,
@@ -1307,7 +1321,7 @@ def execute(options: Options) -> int:
                 "sizeBytes": bundle.size_bytes,
                 "sourceCommit": bundle.source_commit,
             },
-            "policy": policy_receipt(options.thermal_only),
+            "policy": policy_receipt(options.board_observations_only),
             "failure": {
                 "stage": error.stage,
                 "failureType": error.failure_type,
@@ -1335,7 +1349,7 @@ def execute(options: Options) -> int:
                 "sizeBytes": bundle.size_bytes,
                 "sourceCommit": bundle.source_commit,
             },
-            "policy": policy_receipt(options.thermal_only),
+            "policy": policy_receipt(options.board_observations_only),
             "failure": {
                 "stage": stage,
                 "failureType": type(error).__name__,

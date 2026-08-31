@@ -38,3 +38,53 @@ This baseline establishes topology and one read-only observation only. It does
 not accept calibration, accuracy, drift, battery retention, suspend/resume,
 reboot persistence, century handling, alarm/wakeup behavior, or either clock
 write direction.
+
+## Runtime inventory checkpoint
+
+The bounded Rust adapter subsequently passed its host, reproducibility,
+reversible systemd, and TLS Chromium gates on 2026-08-31. The accepted
+development bundle is:
+
+- source commit: `cc37a3ca5d6d223de964eba85ee774fe14551ff3`;
+- archive SHA-256:
+  `aa16c7c3cb19e1b4f5141e5cacb99e67e95f068b688c74d30e33a91c36c65fed`;
+- archive size: 4,776,772 bytes;
+- AArch64 server SHA-256:
+  `489e3fb857d05d4c701824cfe74e3b8c8ae57d4370981776a413b897144c4a08`;
+- AArch64 platform-broker SHA-256:
+  `af8501be6278f3f4c79041d382677ce0e8faeb1b6d041d9a822ad28043dcde98`;
+- web tree SHA-256:
+  `d85320a7cb3b6db3b2b5b55117ebab167f7c566bce69839a84f767fbe4731c44`.
+
+Two fresh independent AArch64 target/output directories produced
+byte-identical archives. Their manifests bind the same six Rust payloads, web
+tree, lock hashes, and committed source. `releaseAccepted` and
+`deviceAccepted` remain false.
+
+The exact archive passed the focused reversible systemd profile:
+
+- every payload checksum matched and the dedicated KVMD credential was
+  delivered only through `LoadCredential`;
+- broker, video-proxy, and server sandbox identity, capability, device,
+  network, socket, and credential boundaries passed;
+- setup/login and 20 authenticated sanitized inventory requests returned HTTP
+  200 and schema v3;
+- external RTC epoch `1759491069` and RTC-minus-system offset `-28648078`
+  seconds passed the paired bounds;
+- RTC capability was `read_only` with `runtime_verified` evidence;
+- the focused profile explicitly skipped video stream throughput while still
+  validating the video unit sandbox;
+- htpasswd rollback was byte-identical, temporary account/units/runtime/staging
+  disappeared, watchdog and port were inactive, KVMD services remained active,
+  and rootfs stayed read-write.
+
+The same archive passed the TLS Chromium gate. Chromium validated schema v3,
+the bounded paired RTC observation, runtime capability, and exact External RTC
+and RTC offset rendering in Settings / About. TLS 1.2/1.3, secure cookies,
+password rotation, logout, MJPEG decode, four reconnects, stream revocation,
+zero control requests, and final cleanup also passed.
+
+No raw I2C or RTC character device was opened by the Rust adapter. No hardware
+or system clock, alarm, wakeup setting, device registration, filesystem state,
+GPIO, fan, PWM, HID, ATX, media, partition, reboot, or physical action was
+performed. The stale offset is intentionally observable but never corrected.

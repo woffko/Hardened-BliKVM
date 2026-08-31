@@ -141,8 +141,12 @@ bounded external epoch and RTC-minus-system offset; Settings/About formats both
 without any raw I2C, RTC character-device open, registration, or clock write.
 At source commit `6c9006a`, two independent AArch64 builds were byte-identical
 and 20 authenticated H616 broker requests returned valid schema v3 observations
-with complete cleanup. The capability is runtime-verified; focused systemd and
-TLS Chromium rendering remain separate gates.
+with complete cleanup. The final runtime-evidence archive at source commit
+`cc37a3c` was again byte-identical across two builds and passed focused systemd
+and TLS Chromium Settings/About rendering with complete rollback. The
+capability is runtime-verified. Rebind/fault, drift, battery, reboot, alarm, and
+any clock-write direction remain separate gates; exact evidence is recorded in
+`baselines/device-rtc.md`.
 
 ## Phase 6: Hardening and updates
 

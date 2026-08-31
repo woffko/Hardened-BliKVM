@@ -43,7 +43,7 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
             gate.build_rollback_script(paths),
             gate.build_preflight_script(paths, 10_000_000, 18081),
             gate.build_runtime_script(paths, bundle, 18081),
-            gate.build_runtime_script(paths, bundle, 18081, thermal_only=True),
+            gate.build_runtime_script(paths, bundle, 18081, board_observations_only=True),
             gate.build_cleanup_script(paths),
             gate.build_final_script(paths, 18081),
         )
@@ -96,12 +96,14 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
         self.assertNotIn("/api/atx", runtime)
         self.assertNotIn("/api/hid", runtime)
 
-    def test_thermal_only_profile_is_explicit_and_skips_only_stream_checks(self) -> None:
+    def test_board_observation_profile_is_explicit_and_skips_only_stream_checks(self) -> None:
         paths = self._paths()
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
-        runtime = gate.build_runtime_script(paths, bundle, 18081, thermal_only=True)
-        self.assertIn("runtime_profile=thermal-only", runtime)
-        self.assertIn('if [ "$runtime_profile" = thermal-only ]', runtime)
+        runtime = gate.build_runtime_script(
+            paths, bundle, 18081, board_observations_only=True
+        )
+        self.assertIn("runtime_profile=board-observations-only", runtime)
+        self.assertIn('if [ "$runtime_profile" = board-observations-only ]', runtime)
         self.assertIn("video_status=skipped", runtime)
         self.assertIn("video_session_revocation=skipped", runtime)
         self.assertIn("phase=inventory-thermal", runtime)
@@ -162,7 +164,8 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
         )
         self.assertEqual(policy["runtimeProfile"], "full")
         self.assertEqual(
-            gate.policy_receipt(thermal_only=True)["runtimeProfile"], "thermal-only"
+            gate.policy_receipt(board_observations_only=True)["runtimeProfile"],
+            "board-observations-only",
         )
 
 

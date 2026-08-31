@@ -50,3 +50,11 @@ runtime-inventory v2 temperature slice and passed its focused systemd and TLS
 Chromium gates. Exact artifact hashes, accepted behavior, rollback evidence,
 and the independent video-throughput limitation are recorded in
 `device-thermal.md`.
+
+## Read-only external RTC checkpoint
+
+A later byte-identical bundle pair at source commit `cc37a3c` added the fixed
+PCF8563 inventory-v3 epoch/offset observation. Its focused systemd and TLS
+Chromium gates passed without opening raw I2C or `/dev/rtc1` and without setting
+either clock. Exact hashes, rollback evidence, and remaining drift/battery/write
+limits are recorded in `device-rtc.md`.
