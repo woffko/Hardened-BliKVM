@@ -29,7 +29,7 @@ the vendor daemon beside a second GPIO owner.
 | button/activity LED loop | debounced input/output driver | observe input only | press duration, bounce, reboot, polarity |
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
-| OLED Python/C drivers | bounded SPI display worker for H616 ST7789 | metadata-only topology; disabled | exclusive SPI/GPIO handoff, electrical identity, rendering/timeout, crash/reboot and physical screen matrix |
+| OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -66,6 +66,12 @@ while GPIO259/260/262 are already used sysfs outputs. The vendor init cannot be
 used for discovery because it opens/configures SPI, requests outputs, toggles
 reset/backlight and transmits commands. See
 `baselines/device-oled-topology.md`.
+
+The unlinked Rust model now rejects invalid/empty 240x240 windows, emits typed
+`0x2a`/`0x2b`/`0x2c` command and address-data phases, maps rotations, converts
+RGB565 deterministically, and enforces exact bounded pixel counts. It contains
+no initialization or I/O and does not relax the ownership blocker; see
+`baselines/st7789-model.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

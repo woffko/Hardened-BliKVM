@@ -211,6 +211,15 @@ display worker until an explicit SPI/GPIO owner handoff, safe electrical state,
 bounded rendering, crash/reboot and physical-screen gates pass. See
 `baselines/device-oled-topology.md`.
 
+Checkpoint: the unlinked `bli-kvm-st7789-model` now provides strict 240x240
+windows, typed column/row/memory-write phases, bijective rotations,
+deterministic RGB565 bytes, bounded 240-pixel chunks, and exact completion. It
+is no_std, dependency-free, and has no initialization or I/O authority. At
+source commit `8bf6784`, the full host suite, two byte-identical prototype
+archives, two byte-identical AArch64 rlibs and byte-identical extracted ThinLTO
+codegen passed. Existing SPI/GPIO ownership and every physical display gate
+remain unchanged. See `baselines/st7789-model.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

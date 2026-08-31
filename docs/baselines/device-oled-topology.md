@@ -51,3 +51,8 @@ identity, safe reset/backlight states, bounded transfer sizes and timeouts,
 validated mode/frequency, deterministic RGB565 rendering, burn-in and
 information-disclosure policy, crash/restart/reboot handling, and physical
 screen tests. None of those gates is satisfied by this metadata baseline.
+
+A separate unlinked pure Rust model now validates 240x240 address windows,
+typed command/data phases, rotations, RGB565 encoding, bounded pixel chunks,
+and exact completion. Its host and AArch64 codegen evidence is recorded in
+`st7789-model.md`; it does not change this runtime or physical status.
