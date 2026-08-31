@@ -1,0 +1,8 @@
+[package]
+name = "bli-kvm-serial-switch-codec"
+description = "Pure bounded serial-switch frame codec for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true

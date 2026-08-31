@@ -340,6 +340,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-serial-switch-codec"
+version = "0.1.0"
+
+[[package]]
 name = "bli-kvm-server"
 version = "0.1.0"
 dependencies = [
