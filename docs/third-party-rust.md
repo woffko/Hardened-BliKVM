@@ -95,6 +95,11 @@ control-broker `thiserror` removal at `bc2e5f0`, adds no package. Locked
 metadata remains 156 total, 48 workspace, and 108 external packages. The
 refreshed 1,233-advisory RustSec scan accepted the exact graph.
 
+The pure diagnostic sealed-window export protocol adds one workspace package
+and reuses only `bli-kvm-diagnostic-export`. It adds no external package:
+locked metadata is 157 total, 49 workspace, and 108 external packages with no
+missing external license expression.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

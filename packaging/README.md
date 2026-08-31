@@ -54,6 +54,9 @@ receipt. Because the collector remains excluded, this does not package or
 advertise a diagnostic export capability. The linked path passed a reversible
 H616 exact-event, stalled-response, queue-pressure, shutdown, browser, and
 cleanup gate without adding a unit dependency.
+The separate sealed-window export-v1 codec remains unlinked and absent from the
+bundle. It adds no export socket, service identity, persistence, client, API,
+UI, or install target.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

@@ -87,12 +87,17 @@ pub enum WindowTickOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticWindowSnapshot {
+    instance_id: u64,
     window_id: u32,
     bundle: DiagnosticBundle,
     omitted_lifecycle_events: u8,
 }
 
 impl DiagnosticWindowSnapshot {
+    pub const fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
     pub const fn window_id(&self) -> u32 {
         self.window_id
     }
@@ -176,6 +181,7 @@ impl DiagnosticWindowManager {
 
     pub fn live_snapshot(&self) -> Result<DiagnosticWindowSnapshot, DiagnosticWindowError> {
         Ok(DiagnosticWindowSnapshot {
+            instance_id: self.instance_id,
             window_id: self.live_window_id,
             bundle: self
                 .collector
@@ -296,12 +302,16 @@ impl DiagnosticWindowManager {
         }
     }
 
-    pub fn acknowledge_sealed(&mut self, window_id: u32) -> Result<(), DiagnosticWindowError> {
+    pub fn acknowledge_sealed(
+        &mut self,
+        instance_id: u64,
+        window_id: u32,
+    ) -> Result<(), DiagnosticWindowError> {
         let sealed = self
             .sealed
             .as_ref()
             .ok_or(DiagnosticWindowError::NoSealedWindow)?;
-        if sealed.window_id != window_id {
+        if sealed.instance_id != instance_id || sealed.window_id != window_id {
             return Err(DiagnosticWindowError::AcknowledgementMismatch);
         }
         self.sealed = None;
@@ -491,6 +501,7 @@ impl DiagnosticWindowManager {
             .export()
             .map_err(|_| DiagnosticWindowError::CollectorUnavailable)?;
         let sealed = DiagnosticWindowSnapshot {
+            instance_id: self.instance_id,
             window_id: self.live_window_id,
             bundle,
             omitted_lifecycle_events: self.omitted_lifecycle_events,
@@ -606,6 +617,7 @@ mod tests {
             Err(DiagnosticWindowError::InvalidInstanceId)
         );
         let manager = manager();
+        assert_eq!(manager.live_snapshot().unwrap().instance_id(), 7);
         assert_eq!(manager.live_window_id(), 1);
         assert_eq!(manager.live_record_count(), 0);
         assert_eq!(manager.active_source_count(), 0);
@@ -773,16 +785,22 @@ mod tests {
             Ok(WindowTickOutcome::Rotated)
         );
         assert_eq!(manager.sealed_window().unwrap().window_id(), 1);
+        assert_eq!(manager.sealed_window().unwrap().instance_id(), 7);
         let before = manager.clone();
         assert_eq!(
-            manager.acknowledge_sealed(2),
+            manager.acknowledge_sealed(7, 2),
             Err(DiagnosticWindowError::AcknowledgementMismatch)
         );
         assert_eq!(manager, before);
-        assert_eq!(manager.acknowledge_sealed(1), Ok(()));
+        assert_eq!(
+            manager.acknowledge_sealed(8, 1),
+            Err(DiagnosticWindowError::AcknowledgementMismatch)
+        );
+        assert_eq!(manager, before);
+        assert_eq!(manager.acknowledge_sealed(7, 1), Ok(()));
         assert!(manager.sealed_window().is_none());
         assert_eq!(
-            manager.acknowledge_sealed(1),
+            manager.acknowledge_sealed(7, 1),
             Err(DiagnosticWindowError::NoSealedWindow)
         );
         assert_eq!(
@@ -834,7 +852,7 @@ mod tests {
             manager.connect(DiagnosticSource::Server, now),
             Err(DiagnosticWindowError::Backpressure)
         ));
-        assert_eq!(manager.acknowledge_sealed(1), Ok(()));
+        assert_eq!(manager.acknowledge_sealed(7, 1), Ok(()));
         assert_eq!(manager.tick(now), Ok(WindowTickOutcome::Rotated));
         let sealed = manager.sealed_window().unwrap();
         assert_eq!(sealed.window_id(), 2);
@@ -876,14 +894,27 @@ mod tests {
     fn manager_restart_and_instance_tokens_never_cross() {
         let mut first = DiagnosticWindowManager::new(1, 0).unwrap();
         let token = first.connect(DiagnosticSource::Server, 0).unwrap();
+        assert_eq!(
+            first.tick(u64::from(MAX_WINDOW_MS) + 1),
+            Ok(WindowTickOutcome::Rotated)
+        );
+        let stale_snapshot = first.sealed_window().unwrap().clone();
         let mut second = DiagnosticWindowManager::new(2, 0).unwrap();
         second.connect(DiagnosticSource::Server, 0).unwrap();
         assert_eq!(
-            second.submit(token, 1, DiagnosticEvent::Ready),
+            second.tick(u64::from(MAX_WINDOW_MS) + 1),
+            Ok(WindowTickOutcome::Rotated)
+        );
+        assert_eq!(
+            second.submit(token, u64::from(MAX_WINDOW_MS) + 2, DiagnosticEvent::Ready),
             Err(DiagnosticWindowError::SessionMismatch)
         );
-        assert_eq!(second.live_window_id(), 1);
-        assert!(second.sealed_window().is_none());
+        assert_eq!(
+            second.acknowledge_sealed(stale_snapshot.instance_id(), stale_snapshot.window_id()),
+            Err(DiagnosticWindowError::AcknowledgementMismatch)
+        );
+        assert_eq!(second.live_window_id(), 2);
+        assert_eq!(second.sealed_window().unwrap().instance_id(), 2);
     }
 
     #[test]

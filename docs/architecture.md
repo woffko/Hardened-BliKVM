@@ -114,6 +114,12 @@ capability is advertised. The reversible H616 exact-event and stalled-collector
 integration gates passed with complete cleanup; see
 `baselines/device-diagnostic-control.md`.
 
+The next unlinked pure boundary is a fixed sealed-window export codec. It binds
+acknowledgement to both the OS-random collector instance and window ID, accepts
+only a typed `DiagnosticBundle` for encoding, and bounds one 16-byte request
+plus a 24-byte header and at most 8 KiB of payload. It adds no socket, consumer
+identity, persistence, API, UI, or retry behavior yet.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

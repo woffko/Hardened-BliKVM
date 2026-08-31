@@ -197,9 +197,13 @@ impl DiagnosticCollectorRuntime {
         self.shared.sealed_window().await
     }
 
-    /// Acknowledges only the exact currently sealed window identifier.
-    pub async fn acknowledge_sealed(&self, window_id: u32) -> Result<(), DiagnosticListenerError> {
-        self.shared.acknowledge_sealed(window_id).await
+    /// Acknowledges only the exact current instance and sealed window identifiers.
+    pub async fn acknowledge_sealed(
+        &self,
+        instance_id: u64,
+        window_id: u32,
+    ) -> Result<(), DiagnosticListenerError> {
+        self.shared.acknowledge_sealed(instance_id, window_id).await
     }
 
     async fn admit(
@@ -305,11 +309,15 @@ impl SharedRuntime {
         Ok(self.core.lock().await.sealed_window().cloned())
     }
 
-    async fn acknowledge_sealed(&self, window_id: u32) -> Result<(), DiagnosticListenerError> {
+    async fn acknowledge_sealed(
+        &self,
+        instance_id: u64,
+        window_id: u32,
+    ) -> Result<(), DiagnosticListenerError> {
         self.core
             .lock()
             .await
-            .acknowledge_sealed(window_id)
+            .acknowledge_sealed(instance_id, window_id)
             .map_err(Into::into)
     }
 }
@@ -895,7 +903,7 @@ mod tests {
             );
             if let Some(sealed) = runtime.sealed_window().await.unwrap() {
                 runtime
-                    .acknowledge_sealed(sealed.window_id())
+                    .acknowledge_sealed(sealed.instance_id(), sealed.window_id())
                     .await
                     .unwrap();
             }

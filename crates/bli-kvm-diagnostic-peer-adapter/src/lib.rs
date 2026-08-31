@@ -184,9 +184,13 @@ impl DiagnosticRuntimeCore {
         self.windows.sealed_window()
     }
 
-    pub fn acknowledge_sealed(&mut self, window_id: u32) -> Result<(), DiagnosticRuntimeError> {
+    pub fn acknowledge_sealed(
+        &mut self,
+        instance_id: u64,
+        window_id: u32,
+    ) -> Result<(), DiagnosticRuntimeError> {
         self.windows
-            .acknowledge_sealed(window_id)
+            .acknowledge_sealed(instance_id, window_id)
             .map_err(DiagnosticRuntimeError::Window)
     }
 
@@ -755,13 +759,20 @@ mod tests {
         let mut connection = runtime.accept(peer(DiagnosticSource::Server), 0).unwrap();
         assert_eq!(runtime.tick(DAY_MS + 1), Ok(WindowTickOutcome::Rotated));
         assert_eq!(runtime.sealed_window().unwrap().window_id(), 1);
+        assert_eq!(runtime.sealed_window().unwrap().instance_id(), 7);
         assert!(matches!(
-            runtime.acknowledge_sealed(2),
+            runtime.acknowledge_sealed(7, 2),
             Err(DiagnosticRuntimeError::Window(
                 DiagnosticWindowError::AcknowledgementMismatch
             ))
         ));
-        assert_eq!(runtime.acknowledge_sealed(1), Ok(()));
+        assert!(matches!(
+            runtime.acknowledge_sealed(8, 1),
+            Err(DiagnosticRuntimeError::Window(
+                DiagnosticWindowError::AcknowledgementMismatch
+            ))
+        ));
+        assert_eq!(runtime.acknowledge_sealed(7, 1), Ok(()));
         assert!(runtime.sealed_window().is_none());
         assert_eq!(
             runtime.disconnect(&mut connection, DAY_MS + 2),

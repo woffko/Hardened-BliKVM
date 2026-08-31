@@ -389,6 +389,15 @@ denials during a seven-second collector-response stall. The browser regression
 and complete rollback passed at bundle/documentation source `34187aa`; see
 `baselines/device-diagnostic-control.md`.
 
+Checkpoint in progress: the pure unlinked diagnostic export-v1 codec adds an
+exact 16-byte read/ack request and a canonical 24-byte response header with at
+most 8 KiB of typed bundle payload. Snapshot and acknowledgement now carry the
+collector's nonzero instance binding as well as the window ID, preventing stale
+pre-restart acknowledgements from clearing a new window with the same numeric
+ID. Five codec tests plus the existing 35 window/runtime tests pass. No export
+listener, consumer identity, persistence, client, API/UI, package, or device
+gate exists yet; see `api/diagnostic-export-v1.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

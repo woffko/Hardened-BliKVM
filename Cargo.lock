@@ -201,6 +201,13 @@ name = "bli-kvm-diagnostic-export"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-diagnostic-export-protocol"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-export",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-peer-adapter"
 version = "0.1.0"
 dependencies = [

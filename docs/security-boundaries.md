@@ -241,11 +241,19 @@ capture withheld its collector response for seven seconds. Both gates restored
 all temporary state; see `baselines/device-diagnostic-control.md`.
 
 The unlinked window policy keeps one live bundle and at most one sealed bundle
-awaiting exact acknowledgement. `record_count + active_sources <= 32` reserves
+awaiting exact instance-and-window acknowledgement. `record_count +
+active_sources <= 32` reserves
 one stop record per peer. A second required rotation returns backpressure. If
 EOF cannot be recorded because an overdue window is blocked, the role is still
 released and bounded omission metadata marks the bundle incomplete. Window and
 session state are ephemeral and contain no durable audit claim.
+
+The unlinked export-v1 codec carries only a read-sealed operation or a nonzero
+collector-instance/window acknowledgement. Its sealed encoder accepts only the
+typed bounded bundle; every tag, binding, count, length, and reserved byte is
+canonical. No identity lookup, listener, persistence, client, HTTP route, or UI
+is implemented. A future adapter must authenticate one exact kernel peer and
+must not acknowledge until its consumer has durably retained the bundle.
 
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials

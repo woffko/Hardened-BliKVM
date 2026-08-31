@@ -144,11 +144,12 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_diagnostic_export_is_typed_pure_no_std_and_unlinked(self) -> None:
+    def test_diagnostic_export_is_typed_pure_no_std_and_runtime_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-export"
         collector = ROOT / "crates/bli-kvm-diagnostic-collector-policy"
         protocol = ROOT / "crates/bli-kvm-diagnostic-protocol"
+        export_protocol = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
@@ -160,6 +161,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 crate / "Cargo.toml",
                 collector / "Cargo.toml",
                 protocol / "Cargo.toml",
+                export_protocol / "Cargo.toml",
                 window / "Cargo.toml",
             }:
                 self.assertNotIn("bli-kvm-diagnostic-export", other_manifest.read_text())
@@ -178,6 +180,53 @@ class PackagingBoundaryTests(unittest.TestCase):
             "tokio::",
             "libc::",
             "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_export_protocol_is_fixed_instance_bound_and_unlinked(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        self.assertIn('"crates/bli-kvm-diagnostic-export-protocol"', workspace)
+        self.assertIn(
+            'bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }',
+            manifest,
+        )
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-export-protocol", other_manifest.read_text()
+                )
+        for required in (
+            "#![no_std]",
+            "#![forbid(unsafe_code)]",
+            "DIAGNOSTIC_EXPORT_REQUEST_BYTES: usize = 16",
+            "DIAGNOSTIC_EXPORT_RESPONSE_HEADER_BYTES: usize = 24",
+            "MAX_DIAGNOSTIC_EXPORT_RESPONSE_BYTES",
+            "instance_id: u64",
+            "window_id: u32",
+            "NonCanonicalReserved",
+            "bundle: &'a DiagnosticBundle",
+            "pub fn decode_request",
+            "pub fn decode_response",
+        ):
+            self.assertIn(required, production)
+        for forbidden in (
+            "std::",
+            "String",
+            "Vec<",
+            "Path",
+            "Command",
+            "tokio::",
+            "serde",
+            "libc::",
+            "unsafe {",
+            "/dev/",
+            "/var/",
         ):
             self.assertNotIn(forbidden, production)
 
