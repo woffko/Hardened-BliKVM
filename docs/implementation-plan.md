@@ -263,8 +263,18 @@ and 8,192 canonical ASCII bytes, with hard failure instead of truncation. It
 has no message, path, identity or I/O surface. At source commit `071013a`, the
 full host suite, two byte-identical prototype archives, and byte-identical
 AArch64 rlib, metadata and ThinLTO codegen passed. No live log was read and no
-collector, API, UI or capability is linked; see
+runtime collector, API, UI or capability is linked; see
 `baselines/diagnostic-export.md`.
+
+Checkpoint: the unlinked `bli-kvm-diagnostic-collector-policy` accepts exactly
+the five existing server/broker/proxy/supervisor roles, requires nonzero source
+epochs, exact sequences, explicit stop/restart, collector-wide monotonic time,
+and a closed role/event/resource matrix. Capacity and transition failures do
+not advance state; epoch and sequence are not exported. At source commit
+`45ed884`, the full host suite, two byte-identical prototype archives, and
+byte-identical collector/export AArch64 rlib, metadata and ThinLTO pairs passed.
+There is no peer binding, socket, clock, process, API, UI or capability; see
+`baselines/diagnostic-collector-policy.md`.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

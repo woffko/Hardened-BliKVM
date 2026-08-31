@@ -199,9 +199,13 @@ Diagnostic export does not accept raw log lines for post-hoc redaction. Its
 unlinked pure model contains only fixed semantic enums, monotonic relative
 offsets, derived severity, and bounded deterministic ASCII output. It has no
 message, path, identity, filesystem, process, clock, network, or device surface.
-A future non-networked collector must own one reviewed fixed source and perform
-the typed mapping before the authenticated server boundary; unknown events and
-all raw content fail closed. No diagnostic capability is currently advertised.
+The separate unlinked collector policy accepts only the five current process
+roles, exact lifecycle epoch/sequence transitions, and a role-specific event
+matrix. Source epoch and sequence never enter output. A future non-networked
+collector must bind peer credentials to one role, own monotonic time, and
+perform the typed mapping before the authenticated server boundary; unknown
+events and all raw content fail closed. No diagnostic capability is currently
+advertised.
 
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,

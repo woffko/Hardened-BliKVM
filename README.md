@@ -31,8 +31,9 @@ The reversible H616 prototype and the application-update core are implemented:
 - pure host-only fan policy and mock-backed supervisor crates that enforce
   failsafe/latch semantics but are not linked to any runtime or hardware
   backend;
-- a pure typed diagnostic-export core with fixed semantic events, bounded
-  relative time and output, and no raw message, path, identity, or I/O surface;
+- pure typed diagnostic-export and fixed-source collector-policy cores with
+  bounded relative time, lifecycle and output, and no raw message, path,
+  identity, or I/O surface;
 - a signed Ed25519 application verifier, immutable stager, anti-rollback
   journal, one-use health credential, watchdog rollback, and transactional
   slot garbage collection;

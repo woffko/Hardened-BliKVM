@@ -70,6 +70,11 @@ codegen members. The archive manifest identifies the exact committed source
 and retains `releaseAccepted=false` and `deviceAccepted=false`. The diagnostic
 crate is absent from the prototype archive.
 
+Follow-up source commit `45ed8848f7f2d3cf0ccc2af884478a785f86b7e7`
+adds one consumer: the also-unlinked, pure
+`bli-kvm-diagnostic-collector-policy`. No process, package, API, UI, or device
+runtime links either crate; see `diagnostic-collector-policy.md`.
+
 No live log, configured log path, rotated file, process output, identifier, or
 device state was read for this slice. A future adapter must map one reviewed,
 fixed local source into these semantic events without forwarding raw content;

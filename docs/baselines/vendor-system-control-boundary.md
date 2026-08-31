@@ -73,5 +73,8 @@ accepted; see `trusted-floor-topology.md`. Reboot/shutdown stay unavailable.
 
 The first pure diagnostic-export model now enforces the semantic, bounded,
 no-path/no-message portion of the log boundary; see `diagnostic-export.md`. It
-is unlinked and performed no live capture. There is still no collector, source
-adapter, API, UI, package, or advertised diagnostic capability.
+performed no live capture. Its only consumer is an unlinked pure policy for
+five fixed process roles, exact lifecycle epochs/sequences, global ordering and
+a closed event matrix; see `diagnostic-collector-policy.md`. There is still no
+runtime collector, peer-bound source adapter, API, UI, package, or advertised
+diagnostic capability.

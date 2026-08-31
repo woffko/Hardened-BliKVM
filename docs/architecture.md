@@ -70,8 +70,11 @@ exists, and this does not claim safety after sudden process/kernel/power loss.
 Diagnostic export is currently another unlinked pure boundary. It accepts only
 fixed semantic enums and bounded relative offsets, emits deterministic bounded
 ASCII, and has no message, path, identity, filesystem, process, clock, network,
-or device interface. A future collector must own one reviewed fixed source and
-map it to typed events without forwarding raw log content.
+or device interface. A separate unlinked policy accepts exactly five existing
+process roles, enforces source lifecycle epochs and sequences, global ordering,
+hard capacity, and a role-specific event matrix. A future runtime must bind a
+local peer to one source and assign collector-owned time without forwarding raw
+log content.
 
 ## Core invariants
 
