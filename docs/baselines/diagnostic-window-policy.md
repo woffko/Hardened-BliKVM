@@ -116,3 +116,8 @@ manager with the authenticated peer token and exact producer frames. The
 private session no longer implements `Debug`; updated AArch64 metadata and
 reproducibility evidence are recorded in `diagnostic-runtime-core.md`. No
 shipped process links the composition.
+
+Listener source `89050939af218ddbdd7143fb63e320e1ca9eac67` now supplies the
+real monotonic tick owner, serializes time under the policy mutex, and exposes
+only bounded snapshots/exact acknowledgement; see
+`diagnostic-listener-runtime.md`.

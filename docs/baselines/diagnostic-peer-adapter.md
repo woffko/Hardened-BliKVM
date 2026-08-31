@@ -107,3 +107,8 @@ Source `6de71c28df1eb521108a955d046e098feb3bacb3` later adds the unlinked
 in-memory composition core without weakening fixed-name lookup or peer
 credential disposal. It still creates no listener, process, account, clock,
 service, API, UI, or capability; see `diagnostic-runtime-core.md`.
+
+Source `89050939af218ddbdd7143fb63e320e1ca9eac67` then adds the unlinked
+caller-bound listener and I/O owner while retaining the same fixed-name and
+connection-bound credential path; see `diagnostic-listener-runtime.md`. It
+does not bind a path or create a process/service capability.

@@ -95,8 +95,10 @@ No device gate was run because this policy has no I/O and was unlinked at this
 checkpoint. No live log, configured path, process output, identifier, or device
 state was read. The later unlinked runtime core supplies credential-bound
 peer-to-role, exact local protocol, disconnect lifecycle, and bounded
-backpressure composition. A process still needs a real monotonic clock,
-listener, crash handling, confinement, authenticated export, privacy review,
+backpressure composition. Its transient listener now supplies real monotonic
+time, caller-bound accept, bounded I/O, and graceful task cleanup; see
+`diagnostic-listener-runtime.md`. A process still needs socket ownership,
+crash handling, confinement, authenticated export, privacy review,
 packaging, and browser tests. Until then, no diagnostic capability is
 advertised.
 

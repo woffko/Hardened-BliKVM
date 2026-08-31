@@ -73,8 +73,8 @@ ASCII, and has no message, path, identity, filesystem, process, clock, network,
 or device interface. A separate unlinked policy accepts exactly five existing
 process roles, enforces source lifecycle epochs and sequences, global ordering,
 hard capacity, and a role-specific event matrix. Its unlinked producer codec
-carries one fixed typed event and
-requires one exact accepted/rejected response before another event; source,
+carries one fixed typed event and requires one exact accepted/rejected response
+before another event; source,
 lifecycle, sequence and time never cross that wire. A fourth pure layer owns
 one live and one sealed window, reserves every active source's stop record,
 requires exact handoff acknowledgement, and marks an unrecordable disconnect
@@ -90,8 +90,11 @@ contains an unlinked in-memory runtime core that consumes that token, creates
 an opaque instance-bound session, decodes one exact frame, returns one exact
 response, records EOF, and delegates bounded rotation/snapshot/acknowledgement
 to the window policy. Invalid frames receive no response and terminate through
-the disconnect path. It still has no listener, async I/O owner, real clock,
-process, service, API, or advertised capability. Numeric assignment,
+the disconnect path. A transient unlinked owner now accepts a caller-bound
+Unix listener, creates a random nonzero instance binding, samples `Instant`
+under the core mutex, bounds partial-frame and response I/O, reaps connection
+tasks, and records graceful shutdown. It has no socket path/bind/permission
+ownership, process, service, API, or advertised capability. Numeric assignment,
 credential, authenticated-peer, and connection handles intentionally expose no
 generic `Debug` output.
 

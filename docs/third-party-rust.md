@@ -60,6 +60,14 @@ binary or prototype archive. `cargo audit --deny warnings` refreshed and loaded
 1,233 RustSec advisories, then accepted all 152 locked dependencies on
 2026-08-31.
 
+The transient diagnostic listener reuses the already locked `rand_core 0.6.4`
+and `getrandom 0.2.17` entropy path for a process-local nonzero instance
+binding. Its host-only tests reuse the already locked `tempfile`. Source commit
+`8905093` therefore adds no external package: locked offline metadata remains
+152 total, 46 workspace, and 106 external packages, with no missing external
+license expression. The refreshed 1,233-advisory RustSec scan accepted the
+exact graph.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

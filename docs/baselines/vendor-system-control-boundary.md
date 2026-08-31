@@ -86,5 +86,8 @@ collector eUID validation and Tokio peer credentials; see
 `diagnostic-peer-adapter.md`. Its unlinked in-memory core now consumes an
 opaque authenticated peer, composes exact protocol/window operations, and
 terminates invalid frames through bounded EOF accounting; see
-`diagnostic-runtime-core.md`. There is still no collector account/listener/
-process, real clock, API, UI, package, or advertised diagnostic capability.
+`diagnostic-runtime-core.md`. The later transient owner adds a caller-bound
+Unix listener, real monotonic clock, bounded I/O, and graceful cleanup; see
+`diagnostic-listener-runtime.md`. There is still no collector account,
+socket-path owner, process, systemd unit, API, UI, package, or advertised
+diagnostic capability.

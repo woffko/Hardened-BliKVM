@@ -8,9 +8,9 @@ service, public API, log reader, or capability.
 ## Trust boundary
 
 The producer frame never carries source role, UID, PID, epoch, sequence,
-timestamp, path, unit, message, request data, or arbitrary bytes. A future
-collector must obtain `SO_PEERCRED` from the accepted Unix stream and map its
-UID to exactly one configured process role before reading a frame.
+timestamp, path, unit, message, request data, or arbitrary bytes. The transient
+collector runtime obtains `SO_PEERCRED` from the accepted Unix stream and maps
+its UID to exactly one configured process role before reading a frame.
 
 Current sysusers allocate five distinct non-root service accounts dynamically,
 but all services run with shared group `hardened-blikvm`. Group access can limit
@@ -89,9 +89,11 @@ committed the event and advanced state. A rejection means the event was not
 accepted and state did not advance. Pipelining is forbidden, so no producer
 request identifier or correlation field is needed.
 
-Protocol-invalid frames are connection-fatal and receive no response. A future
-runtime must bound read/write time, close partial frames, reject a second active
-peer for the same role, and never turn protocol text into a log message.
+Protocol-invalid frames are connection-fatal and receive no response. The
+transient runtime bounds a started partial frame and response write to five
+seconds, closes partial frames, rejects a second active peer for the same role,
+and never turns protocol bytes into a log message. An idle long-running peer
+may retain its one fixed role slot for its process lifetime.
 
 ## Unavailable process runtime
 
@@ -99,9 +101,10 @@ This protocol does not encode window rollover or persistence. The separate
 unlinked `bli-kvm-diagnostic-window-policy` now defines a 32-record live window,
 lifecycle reservation, one sealed-window handoff, exact acknowledgement,
 backpressure, visible incomplete disconnects, manager restart, and monotonic
-clock rollback. The unlinked `DiagnosticRuntimeCore` now composes a mapped peer,
-one request/response, connection termination, and those window operations. A
-process runtime must still supply a fixed Unix listener, a fresh instance
-binding, real monotonic time, bounded read/write time, partial-frame handling,
-and concurrency without weakening that policy. No raw vendor log adapter is
-permitted. See `../baselines/diagnostic-runtime-core.md`.
+clock rollback. `DiagnosticCollectorRuntime` now composes a mapped peer, one
+request/response at a time, connection termination, OS-random instance binding,
+real monotonic time, concurrent role sessions, periodic ticks, and graceful
+cleanup around a caller-owned pre-bound Unix listener. A process runtime must
+still own the fixed socket path, mode, account, service lifecycle, and export
+handoff without weakening that policy. No raw vendor log adapter is permitted.
+See `../baselines/diagnostic-listener-runtime.md`.

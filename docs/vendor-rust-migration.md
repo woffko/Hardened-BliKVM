@@ -31,7 +31,7 @@ the vendor daemon beside a second GPIO owner.
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
-| system-info/reboot/hostname/log routes | separate sanitized adapters, guarded typed actions, and fixed semantic diagnostics | actions lack a trusted floor; typed policies plus an unlinked authenticated frame/window runtime core emit no raw text/path/numeric identity | different accepted floor hardware/firmware and action gates; collector account/listener/process runtime, authenticated UI and separate hostname work |
+| system-info/reboot/hostname/log routes | separate sanitized adapters, guarded typed actions, and fixed semantic diagnostics | actions lack a trusted floor; an unlinked kernel-authenticated Unix listener now owns exact frame/window I/O and emits no raw text/path/numeric identity | different accepted floor hardware/firmware and action gates; collector account/socket owner/process/systemd, authenticated UI and separate hostname work |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -125,8 +125,10 @@ source. The safe adapter resolves fixed names, verifies the collector eUID and
 uses Tokio peer credentials without returning numeric identity. Its unlinked
 runtime core now consumes an opaque authenticated token, composes exact frames
 with the two-window manager, returns canonical responses, and terminates invalid
-frames through bounded EOF accounting. There is no collector account/process,
-listener, real clock or API. See
+frames through bounded EOF accounting. A transient library owner now adds the
+caller-bound Unix accept loop, random instance ID, real monotonic clock, bounded
+partial-frame/response I/O, concurrent role tasks, and graceful cleanup. There
+is no collector account, socket-path owner, process, systemd unit or API. See
 `baselines/vendor-system-control-boundary.md`,
 `baselines/system-action-policy.md`, `baselines/system-action-journal.md`,
 `baselines/system-action-store.md`, `baselines/system-action-maintenance.md`,
@@ -134,8 +136,8 @@ listener, real clock or API. See
 `baselines/diagnostic-collector-policy.md`, plus
 `api/diagnostic-producer-v1.md`, `baselines/diagnostic-protocol.md`,
 `baselines/diagnostic-window-policy.md`, `baselines/diagnostic-peer-policy.md`,
-`baselines/diagnostic-peer-adapter.md`, and
-`baselines/diagnostic-runtime-core.md`.
+`baselines/diagnostic-peer-adapter.md`, `baselines/diagnostic-runtime-core.md`,
+and `baselines/diagnostic-listener-runtime.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

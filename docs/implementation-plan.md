@@ -331,6 +331,17 @@ metadata, and ThinLTO comparisons. No listener, real clock, account, process,
 systemd unit, persistence, API, UI, package, device gate, or capability exists;
 see `baselines/diagnostic-runtime-core.md`.
 
+Checkpoint: source commit `8905093` adds a single-use transient listener owner
+around that core. It accepts only a caller-bound Unix listener, authenticates
+every stream before reading, owns an OS-random instance binding and `Instant`
+clock, samples time under the core mutex, bounds partial frames and responses,
+reaps tasks before accepts, and joins lifecycle cleanup on shutdown. Twenty-four
+adapter/listener tests, the full host suite, RustSec scan, and two byte-identical
+4,780,338-byte AArch64 archives passed, as did direct listener/adapter and every
+lower rlib/metadata/ThinLTO comparison. No socket path, account, process,
+systemd unit, producer integration, persistence, API, UI, package, device gate,
+or capability exists; see `baselines/diagnostic-listener-runtime.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

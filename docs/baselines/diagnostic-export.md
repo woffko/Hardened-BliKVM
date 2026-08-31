@@ -87,8 +87,10 @@ adds the pure two-window handoff consumer. It remains unlinked and I/O-free; see
 No live log, configured log path, rotated file, process output, identifier, or
 device state was read for this slice. Later peer-adapter and runtime-core
 sources map one reviewed fixed local peer into these semantic events without
-forwarding raw content; see `diagnostic-runtime-core.md`. A process runtime
-still needs privilege separation, bounded I/O, authenticated export, privacy
-review, packaging, and browser tests. Until those gates pass, the vendor
+forwarding raw content; see `diagnostic-runtime-core.md`. The later transient
+listener adds bounded local I/O and lifecycle cleanup; see
+`diagnostic-listener-runtime.md`. A process still needs privilege separation,
+socket ownership, authenticated export, privacy review, packaging, and browser
+tests. Until those gates pass, the vendor
 raw-log route and every Hardened diagnostic-export capability remain
 unavailable.

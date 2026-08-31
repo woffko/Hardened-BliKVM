@@ -102,11 +102,15 @@ runtime binaries and the web tree were identical between builds. No diagnostic
 crate is packaged or linked into a shipped process; the workspace dependency
 graph still ends at the peer-adapter crate.
 
-No device test was run for this checkpoint. No live log, process output,
+No device test was run at this in-memory checkpoint. No live log, process output,
 configured log path, identifier, account, socket, or device state was read or
-created. There is still no listener, async connection handler, bounded I/O
-timeout, real monotonic clock, fresh runtime-instance source, collector
+created. There was no listener, async connection handler, bounded I/O timeout,
+real monotonic clock, fresh runtime-instance source, collector
 account/process, systemd unit, persistence, authenticated export API/UI,
-package, or advertised capability. The next gate is a bounded Unix connection
-handler and listener with explicit clock and instance ownership, followed by a
-reversible isolated account/systemd H616 test before any product integration.
+package, or advertised capability.
+
+Source `89050939af218ddbdd7143fb63e320e1ca9eac67` later adds the unlinked
+caller-bound Unix listener, OS-random instance binding, monotonic clock,
+bounded I/O, concurrency, reaping, and graceful cleanup; see
+`diagnostic-listener-runtime.md`. It still adds no collector account, socket
+path owner, process, service, API, UI, package, or capability.

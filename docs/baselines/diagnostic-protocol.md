@@ -92,3 +92,7 @@ first exact decode/submit/encode composition. Invalid frames terminate without
 a response; canonical policy, backpressure, and unavailable responses preserve
 the connection. The core remains outside every shipped process; see
 `diagnostic-runtime-core.md`.
+
+Listener source `89050939af218ddbdd7143fb63e320e1ca9eac67` now owns exact
+frame reads and response writes with fixed time limits while preserving the
+same codec contract; see `diagnostic-listener-runtime.md`.

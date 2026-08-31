@@ -93,3 +93,7 @@ unchanged; updated metadata/reproducibility is recorded in
 Runtime-core source `6de71c28df1eb521108a955d046e098feb3bacb3` then consumes only
 the opaque mapped token and never reintroduces numeric identity; see
 `diagnostic-runtime-core.md`.
+
+Listener source `89050939af218ddbdd7143fb63e320e1ca9eac67` now applies that
+mapping before every accepted stream can read a frame; unknown and duplicate
+peers create no session. See `diagnostic-listener-runtime.md`.

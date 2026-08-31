@@ -201,12 +201,14 @@ offsets, derived severity, and bounded deterministic ASCII output. It has no
 message, path, identity, filesystem, process, clock, network, or device surface.
 The separate unlinked collector policy accepts only the five current process
 roles, exact lifecycle epoch/sequence transitions, and a role-specific event
-matrix. Source epoch and sequence never enter output. A future non-networked
-collector process must own monotonic time and keep the typed mapping before the
-authenticated server boundary; unknown events and all raw content fail closed.
-The unlinked in-memory core now composes the already authenticated role, exact
-frame codec, and window policy, but it creates no listener or process. No
-diagnostic capability is currently advertised.
+matrix. Source epoch and sequence never enter output. An eventual non-networked
+collector process must keep the typed mapping before the authenticated server
+boundary; unknown events and all raw content fail closed.
+The unlinked runtime now composes the already authenticated role, exact frame
+codec, window policy, a caller-bound Unix listener, OS-random instance binding,
+real monotonic time, fixed I/O limits, and graceful task cleanup. It creates no
+socket path, account, service, or process. No diagnostic capability is
+currently advertised.
 
 The unlinked producer protocol contains one canonical eight-byte typed event
 and a mandatory four-byte accepted/rejected response. It has no source,
@@ -227,9 +229,9 @@ The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials
 need a positive bounded PID and exact producer UID/GID. Root, collector,
 unknown, missing, duplicate, and wrong-group peers fail closed. Only the
-semantic source leaves the mapper; numeric credentials are discarded. A future
-adapter must use a safe connection-bound `peer_cred` API and cannot accept
-source from the producer frame.
+semantic source leaves the mapper; numeric credentials are discarded. The safe
+adapter uses a connection-bound `peer_cred` API and never accepts source from
+the producer frame.
 
 The unlinked safe adapter resolves only six compile-time account names and one
 group through nix, validates the current effective collector UID, and maps a
@@ -240,7 +242,11 @@ an unlinked runtime core; its opaque connection handle is instance-bound and
 cannot be cloned, debug-printed, or consumed by a foreign core. Malformed frames
 receive no response and terminate through a recorded or visibly incomplete EOF
 path. Policy, backpressure, and unavailable responses remain canonical and do
-not masquerade as acceptance. No listener, clock owner, collector process,
+not masquerade as acceptance. The transient listener samples `Instant` only
+while holding the core mutex, permits only five fixed role sessions, bounds a
+started partial frame and response write to five seconds, and preserves the
+mandatory response for a frame committed before shutdown. Production code does
+not bind, chmod, unlink, configure, or log a socket. No collector process,
 systemd unit, package, API, or UI is linked.
 
 Recovery images use a separate `recovery-` trust domain and the complete-media
