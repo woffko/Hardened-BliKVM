@@ -61,6 +61,12 @@ not linked into any runtime process. Startup, sensor fault, invalid input,
 timeout, and critical heat all resolve to maximum-cooling policy; no result can
 reach GPIO/PWM until the separate physical driver boundary is accepted.
 
+An unlinked mock-backed supervisor sits above that policy. It requires a
+confirmed maximum-cooling startup command, suppresses duplicate commands,
+escalates actuator errors to a maximum-cooling attempt, latches after failures,
+and re-confirms maximum cooling for controlled shutdown. No concrete actuator
+exists, and this does not claim safety after sudden process/kernel/power loss.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

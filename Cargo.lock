@@ -181,6 +181,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-fan-supervisor"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-fan-policy",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-hid-adapter"
 version = "0.1.0"
 dependencies = [

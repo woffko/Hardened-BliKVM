@@ -44,3 +44,5 @@ carried into the policy contract.
 
 Host-test and AArch64 codegen evidence is recorded in
 `baselines/fan-policy.md`.
+
+The next unlinked lifecycle layer is specified in `fan-supervisor.md`.

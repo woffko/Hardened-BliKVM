@@ -160,6 +160,14 @@ archives, and byte-identical extracted AArch64 ThinLTO policy object passed;
 exact hashes and the non-shipped rlib metadata boundary are recorded in
 `baselines/fan-policy.md`.
 
+Checkpoint: an additional unlinked `bli-kvm-fan-supervisor` composes the policy
+with an abstract mockable actuator. It requires confirmed 100-percent startup,
+sends changed commands only, attempts and latches maximum cooling after any
+actuator error, blocks samples while actuation is uncertain, supports explicit
+failsafe retry, and re-confirms maximum cooling on controlled shutdown. It has
+no concrete driver and makes no crash-safety claim; those remain physical
+kernel/hardware gates.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

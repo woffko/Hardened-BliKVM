@@ -22,6 +22,23 @@ class PackagingBoundaryTests(unittest.TestCase):
         for forbidden in ("/dev/", "gpio", "softPwm", "std::fs", "libc::", "tokio::"):
             self.assertNotIn(forbidden, source)
 
+    def test_fan_supervisor_is_mockable_unlinked_and_has_no_concrete_actuator(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        manifest = (ROOT / "crates/bli-kvm-fan-supervisor/Cargo.toml").read_text()
+        source = (ROOT / "crates/bli-kvm-fan-supervisor/src/lib.rs").read_text()
+        self.assertIn('"crates/bli-kvm-fan-supervisor"', workspace)
+        self.assertIn("bli-kvm-fan-policy", manifest)
+        for runtime_manifest in (
+            "crates/bli-kvm-platform-bli/Cargo.toml",
+            "crates/bli-kvm-platform-broker/Cargo.toml",
+            "crates/bli-kvm-server/Cargo.toml",
+        ):
+            self.assertNotIn("bli-kvm-fan-supervisor", (ROOT / runtime_manifest).read_text())
+        self.assertIn("pub trait FanActuator", source)
+        self.assertIn("pub fn prepare_shutdown", source)
+        for forbidden in ("/dev/", "softPwm", "std::fs", "libc::", "tokio::"):
+            self.assertNotIn(forbidden, source)
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)

@@ -1,0 +1,12 @@
+[package]
+name = "bli-kvm-fan-supervisor"
+description = "Unlinked fail-safe fan command supervisor for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-fan-policy = { path = "../bli-kvm-fan-policy" }
+thiserror.workspace = true

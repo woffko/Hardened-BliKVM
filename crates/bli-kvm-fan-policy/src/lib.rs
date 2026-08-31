@@ -111,6 +111,8 @@ pub enum FanObservation {
 pub struct FanDutyPercent(u8);
 
 impl FanDutyPercent {
+    pub const MAXIMUM: Self = Self(100);
+
     pub const fn new(value: u8) -> Option<Self> {
         if value >= 1 && value <= 100 {
             Some(Self(value))

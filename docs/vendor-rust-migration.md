@@ -25,7 +25,7 @@ the vendor daemon beside a second GPIO owner.
 | JSON config reader | strict versioned Serde config | read-only parse | unknown-field, range, symlink, owner/mode tests |
 | H616 GPIO mapping | immutable board profile | source evidence | line identity, polarity, exclusive ownership |
 | ATX socket and GPIO pulses | typed ATX driver | disabled | bounded timing, busy/idempotency, LED polarity |
-| fan loop and thermal sysfs | pure hysteresis/dwell/failsafe policy, then a separate driver | policy only; no wiring | pin/polarity/frequency/minimum-duty, sensor/stall failure and PWM/temperature soak |
+| fan loop and thermal sysfs | pure policy plus latched supervisor, then a separate driver | mock supervisor only; no wiring | pin/polarity/frequency/minimum-duty, crash/sensor/stall failure and PWM/temperature soak |
 | button/activity LED loop | debounced input/output driver | observe input only | press duration, bounce, reboot, polarity |
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | framed serial protocol adapter | enumerate only | udev identity, framing, timeout, four-port matrix |
