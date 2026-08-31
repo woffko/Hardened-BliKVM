@@ -642,6 +642,10 @@ impl SelectedDiagnosticJournal {
         self.repair_target
     }
 
+    pub const fn selected_bytes(&self) -> &RawDiagnosticJournalCopy {
+        &self.selected_bytes
+    }
+
     fn nonce_used(&self, key_id: u32, nonce: DiagnosticJournalNonce) -> bool {
         self.metadata
             .iter()

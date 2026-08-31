@@ -289,6 +289,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-diagnostic-store"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-export",
+ "bli-kvm-diagnostic-journal",
+ "libc",
+ "nix",
+ "rand_core",
+ "tempfile",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-window-policy"
 version = "0.1.0"
 dependencies = [

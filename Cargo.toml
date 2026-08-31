@@ -17,6 +17,7 @@ members = [
   "crates/bli-kvm-diagnostic-export-protocol",
   "crates/bli-kvm-diagnostic-export-client",
   "crates/bli-kvm-diagnostic-journal",
+  "crates/bli-kvm-diagnostic-store",
   "crates/bli-kvm-diagnostic-export-listener",
   "crates/bli-kvm-diagnostic-protocol",
   "crates/bli-kvm-diagnostic-producer-client",

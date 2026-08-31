@@ -1,0 +1,18 @@
+[package]
+name = "bli-kvm-diagnostic-store"
+description = "Atomic fixed-root encrypted diagnostic storage for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-journal = { path = "../bli-kvm-diagnostic-journal" }
+libc.workspace = true
+nix.workspace = true
+rand_core.workspace = true
+
+[dev-dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
+tempfile.workspace = true

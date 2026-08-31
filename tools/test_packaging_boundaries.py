@@ -156,6 +156,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         export_protocol = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
         export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
         diagnostic_journal = ROOT / "crates/bli-kvm-diagnostic-journal"
+        diagnostic_store = ROOT / "crates/bli-kvm-diagnostic-store"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
@@ -175,6 +176,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 export_protocol / "Cargo.toml",
                 export_client / "Cargo.toml",
                 diagnostic_journal / "Cargo.toml",
+                diagnostic_store / "Cargo.toml",
                 export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
@@ -418,6 +420,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_diagnostic_journal_is_encrypted_bounded_pure_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-journal"
+        store = ROOT / "crates/bli-kvm-diagnostic-store"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -431,7 +434,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(dependency, manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                store / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-journal", other_manifest.read_text()
                 )
@@ -490,6 +496,95 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("XChaCha20Poly1305", design)
         self.assertIn("does not protect", design)
         self.assertIn("write-before-ack", design)
+
+    def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-store"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source
+        tests = (crate / "src/tests.rs").read_text()
+        design = (ROOT / "docs/design/diagnostic-store-v1.md").read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-store"', workspace)
+        for dependency in (
+            "bli-kvm-diagnostic-journal =",
+            "libc.workspace = true",
+            "nix.workspace = true",
+            "rand_core.workspace = true",
+        ):
+            self.assertIn(dependency, manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-store", other_manifest.read_text()
+                )
+        for required in (
+            '"/var/lib/hardened-blikvm-diagnostics"',
+            '"journal-a.bin"',
+            '"journal-b.bin"',
+            'c".journal-a.tmp"',
+            'c".journal-b.tmp"',
+            '"hardened-blikvm-broker"',
+            '"hardened-blikvm"',
+            "User::from_name",
+            "Group::from_name",
+            "geteuid()",
+            "getegid()",
+            "libc::O_NOFOLLOW",
+            "libc::O_NONBLOCK",
+            "libc::openat",
+            "libc::flock",
+            "libc::renameat",
+            "libc::unlinkat",
+            "libc::fgetxattr",
+            "sync_all()",
+            "plan_initialize",
+            "plan_update",
+            "plan_repair",
+            "select_copies",
+            "verify_written",
+            "OsRng",
+            "try_fill_bytes",
+            "pub struct DiagnosticJournalStore",
+        ):
+            self.assertIn(required, production)
+        self.assertNotRegex(
+            production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticJournalStore",
+        )
+        self.assertNotIn("bli-kvm-diagnostic-store", builder)
+        for forbidden in (
+            "pub fn open_at",
+            "pub fn with_root",
+            "pub fn with_path",
+            "std::env",
+            "Command",
+            "tokio::",
+            "serde",
+            "DiagnosticExportClient",
+            ".acknowledge(",
+            "BrokerReadClient",
+            "Http",
+            "Tcp",
+            "println!",
+            "eprintln!",
+            "log::",
+            "tracing",
+            "kvmd-password",
+            "LoadCredential",
+        ):
+            self.assertNotIn(forbidden, production)
+        for required_test in (
+            "every_durability_fault_point_on_both_copy_writes_is_recoverable",
+            "active_previous_key_rotation_rewrites_both_copies_under_active_key",
+            "unsafe_copy_types_modes_links_sizes_and_acls_are_rejected",
+            "nonce_failure_reuse_wrong_key_floor_and_root_replacement_fail_closed",
+        ):
+            self.assertIn(required_test, tests)
+        self.assertIn("/var/lib/hardened-blikvm-diagnostics", design)
+        self.assertIn("write-readback-sync-ack", design)
+        self.assertIn("does not retain", design)
 
     def test_platform_diagnostic_route_is_feature_gated_exact_peer_and_read_only(
         self,
