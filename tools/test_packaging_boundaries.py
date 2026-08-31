@@ -146,13 +146,15 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_system_action_policy_is_pure_no_std_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-system-action-policy"
+        journal = ROOT / "crates/bli-kvm-system-action-journal/Cargo.toml"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         self.assertIn('"crates/bli-kvm-system-action-policy"', workspace)
         self.assertNotIn("[dependencies]", manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in (crate / "Cargo.toml", journal):
                 self.assertNotIn("bli-kvm-system-action-policy", other_manifest.read_text())
+        self.assertIn("bli-kvm-system-action-policy", journal.read_text())
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("pub enum SystemAction", source)
@@ -163,6 +165,34 @@ class PackagingBoundaryTests(unittest.TestCase):
             "/usr/bin/",
             "std::",
             "std::process",
+            "libc::",
+            "tokio::",
+            "systemctl",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_system_action_journal_is_pure_no_std_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-system-action-journal"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        self.assertIn('"crates/bli-kvm-system-action-journal"', workspace)
+        self.assertIn("bli-kvm-system-action-policy", manifest)
+        self.assertIn("sha2.workspace = true", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn("bli-kvm-system-action-journal", other_manifest.read_text())
+        self.assertIn("#![no_std]", source)
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertIn("JOURNAL_COPY_BYTES", source)
+        self.assertIn("pub fn select_copies", source)
+        self.assertIn("pub fn plan_update", source)
+        for forbidden in (
+            "/dev/",
+            "/var/",
+            "std::",
+            "std::fs",
             "libc::",
             "tokio::",
             "systemctl",

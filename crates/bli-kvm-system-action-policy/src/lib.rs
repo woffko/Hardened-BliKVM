@@ -255,6 +255,61 @@ impl SystemActionRecord {
     pub const fn terminal_boot_binding(self) -> Option<[u8; 16]> {
         self.terminal_boot_binding
     }
+
+    pub const fn snapshot(self) -> SystemActionRecordSnapshot {
+        SystemActionRecordSnapshot {
+            operation_id: self.operation_id,
+            session_binding: self.fingerprint.session_binding,
+            confirmation_binding: self.fingerprint.confirmation_binding,
+            confirmation_issued_at_ms: self.fingerprint.confirmation_issued_at_ms,
+            origin_boot_binding: self.fingerprint.origin_boot_binding,
+            action: self.fingerprint.action,
+            phase: self.phase,
+            prepared_at_ms: self.prepared_at_ms,
+            dispatch_started_at_ms: self.dispatch_started_at_ms,
+            terminal_at_ms: self.terminal_at_ms,
+            terminal_boot_binding: self.terminal_boot_binding,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemActionRecordSnapshot {
+    pub operation_id: [u8; 16],
+    pub session_binding: u64,
+    pub confirmation_binding: [u8; 32],
+    pub confirmation_issued_at_ms: u64,
+    pub origin_boot_binding: [u8; 16],
+    pub action: SystemAction,
+    pub phase: SystemActionPhase,
+    pub prepared_at_ms: u64,
+    pub dispatch_started_at_ms: Option<u64>,
+    pub terminal_at_ms: Option<u64>,
+    pub terminal_boot_binding: Option<[u8; 16]>,
+}
+
+impl TryFrom<SystemActionRecordSnapshot> for SystemActionRecord {
+    type Error = SystemActionPolicyError;
+
+    fn try_from(snapshot: SystemActionRecordSnapshot) -> Result<Self, Self::Error> {
+        let record = Self {
+            operation_id: snapshot.operation_id,
+            fingerprint: OperationFingerprint {
+                session_binding: snapshot.session_binding,
+                confirmation_binding: snapshot.confirmation_binding,
+                confirmation_issued_at_ms: snapshot.confirmation_issued_at_ms,
+                origin_boot_binding: snapshot.origin_boot_binding,
+                action: snapshot.action,
+            },
+            phase: snapshot.phase,
+            prepared_at_ms: snapshot.prepared_at_ms,
+            dispatch_started_at_ms: snapshot.dispatch_started_at_ms,
+            terminal_at_ms: snapshot.terminal_at_ms,
+            terminal_boot_binding: snapshot.terminal_boot_binding,
+        };
+        validate_record(&record)?;
+        Ok(record)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +338,34 @@ impl SystemActionPolicyState {
 
     pub const fn records(&self) -> &[Option<SystemActionRecord>; MAX_OPERATION_RECORDS] {
         &self.records
+    }
+
+    pub fn record_snapshots(&self) -> [Option<SystemActionRecordSnapshot>; MAX_OPERATION_RECORDS] {
+        let mut snapshots = [None; MAX_OPERATION_RECORDS];
+        for (index, record) in self.records.iter().enumerate() {
+            snapshots[index] = record.map(SystemActionRecord::snapshot);
+        }
+        snapshots
+    }
+
+    pub fn from_record_snapshots(
+        generation: u64,
+        snapshots: [Option<SystemActionRecordSnapshot>; MAX_OPERATION_RECORDS],
+    ) -> Result<Self, SystemActionPolicyError> {
+        let mut records = [None; MAX_OPERATION_RECORDS];
+        for (index, snapshot) in snapshots.into_iter().enumerate() {
+            records[index] = match snapshot {
+                Some(snapshot) => Some(SystemActionRecord::try_from(snapshot)?),
+                None => None,
+            };
+        }
+        let state = Self {
+            schema_version: STATE_SCHEMA_VERSION,
+            generation,
+            records,
+        };
+        validate_state(&state)?;
+        Ok(state)
     }
 }
 
@@ -1434,5 +1517,26 @@ mod tests {
             Err(SystemActionPolicyError::GenerationExhausted)
         );
         assert_eq!(exhausted.snapshot(), before);
+    }
+
+    #[test]
+    fn record_snapshots_round_trip_only_through_state_validation() {
+        let mut engine = SystemActionPolicyEngine::new();
+        let operation = request(1, SystemAction::Shutdown, 60_000, BOOT_A);
+        let ticket = prepared_ticket(&mut engine, operation, 60_001);
+        let _intent = dispatch_intent(&mut engine, ticket, BOOT_A, 60_002);
+        let state = engine.snapshot();
+        let snapshots = state.record_snapshots();
+        assert_eq!(
+            SystemActionPolicyState::from_record_snapshots(state.generation(), snapshots).unwrap(),
+            state
+        );
+
+        let mut invalid = snapshots;
+        invalid[0].as_mut().unwrap().operation_id = [0; 16];
+        assert_eq!(
+            SystemActionPolicyState::from_record_snapshots(state.generation(), invalid),
+            Err(SystemActionPolicyError::InvalidState)
+        );
     }
 }

@@ -1,0 +1,12 @@
+[package]
+name = "bli-kvm-system-action-journal"
+description = "Pure redundant journal model for Hardened BliKVM system actions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy" }
+sha2.workspace = true
