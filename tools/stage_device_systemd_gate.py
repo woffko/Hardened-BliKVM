@@ -715,13 +715,23 @@ capture_video() {
     "$origin/api/stream/mjpeg" 2>/dev/null)
   capture_rc=$?
   set -e
-  [ "$capture_status" = 200 ]
-  case "$capture_rc" in 0|18|28) ;; *) return 1 ;; esac
-  tr -d '\r' < "$capture_headers" | grep -Eqi '^content-type: multipart/x-mixed-replace([;[:space:]]|$)'
+  [ "$capture_status" = 200 ] || return 11
+  case "$capture_rc" in 0|18|28) ;; *) return 12 ;; esac
+  if ! tr -d '\r' < "$capture_headers" | grep -Eqi '^content-type: multipart/x-mixed-replace([;[:space:]]|$)'; then return 13; fi
   capture_bytes=$(wc -c < "$capture_file" | tr -d ' ')
-  [ "$capture_bytes" -ge 1024 ]
+  [ "$capture_bytes" -ge 1024 ] || return 14
   capture_frames=$(od -An -v -t u1 "$capture_file" | awk "$jpeg_counter_awk")
-  [ "$capture_frames" -ge 2 ]
+  [ "$capture_frames" -ge 2 ] || return 15
+}
+capture_failure_class() {
+  case "$1" in
+    11) printf http ;;
+    12) printf curl ;;
+    13) printf content-type ;;
+    14) printf bytes ;;
+    15) printf frames ;;
+    *) printf unknown ;;
+  esac
 }
 capture_video "$test_root/video.mjpeg" "$test_root/video.headers" 3
 video_status=$capture_status
@@ -736,8 +746,22 @@ capture_video "$test_root/video-concurrent-a.mjpeg" "$test_root/video-concurrent
 video_a_pid=$!
 capture_video "$test_root/video-concurrent-b.mjpeg" "$test_root/video-concurrent-b.headers" 2 &
 video_b_pid=$!
+set +e
 wait "$video_a_pid"
+video_a_rc=$?
 wait "$video_b_pid"
+video_b_rc=$?
+set -e
+if [ "$video_a_rc" -ne 0 ] && [ "$video_b_rc" -ne 0 ]; then
+  phase="video-concurrency-both-$(capture_failure_class "$video_a_rc")-$(capture_failure_class "$video_b_rc")"
+  exit 1
+elif [ "$video_a_rc" -ne 0 ]; then
+  phase="video-concurrency-a-$(capture_failure_class "$video_a_rc")"
+  exit 1
+elif [ "$video_b_rc" -ne 0 ]; then
+  phase="video-concurrency-b-$(capture_failure_class "$video_b_rc")"
+  exit 1
+fi
 phase=video-session-revocation
 set +e
 curl --noproxy '*' --silent --max-time 20 --cookie "$cookie" \

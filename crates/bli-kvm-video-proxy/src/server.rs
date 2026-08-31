@@ -89,17 +89,33 @@ async fn handle_connection(
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "uStreamer request timed out"))??;
 
+    let (mut downstream_read, mut downstream_write) = downstream.into_split();
+    let mut downstream_probe = [0_u8; 1];
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = timeout(config.idle_timeout, upstream.read(&mut buffer))
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "uStreamer stream idle"))??;
+        let read = tokio::select! {
+            biased;
+            downstream = downstream_read.read(&mut downstream_probe) => {
+                return match downstream? {
+                    0 => Ok(()),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "video request body is forbidden",
+                    )),
+                };
+            }
+            upstream = timeout(config.idle_timeout, upstream.read(&mut buffer)) => {
+                upstream.map_err(|_| {
+                    io::Error::new(io::ErrorKind::TimedOut, "uStreamer stream idle")
+                })??
+            }
+        };
         if read == 0 {
             return Ok(());
         }
         timeout(
             config.request_timeout,
-            downstream.write_all(&buffer[..read]),
+            downstream_write.write_all(&buffer[..read]),
         )
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "video client write timed out"))??;
@@ -218,6 +234,34 @@ mod tests {
         upstream_task.await.unwrap();
         proxy.abort();
         let _ = proxy.await;
+    }
+
+    #[tokio::test]
+    async fn downstream_disconnect_cancels_a_silent_upstream() {
+        let directory = tempfile::tempdir().unwrap();
+        let upstream_path = directory.path().join("upstream.sock");
+        let upstream_listener = UnixListener::bind(&upstream_path).unwrap();
+        let config =
+            VideoProxyConfig::new(directory.path().join("proxy.sock"), &upstream_path).unwrap();
+        let (proxy_downstream, mut client_downstream) = UnixStream::pair().unwrap();
+        let handler =
+            tokio::spawn(async move { handle_connection(proxy_downstream, &config).await });
+
+        client_downstream
+            .write_all(b"GET /mjpeg HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let (mut upstream, _) = upstream_listener.accept().await.unwrap();
+        let mut request = vec![0_u8; UPSTREAM_REQUEST.len()];
+        upstream.read_exact(&mut request).await.unwrap();
+        assert_eq!(request, UPSTREAM_REQUEST);
+
+        drop(client_downstream);
+        let result = tokio::time::timeout(Duration::from_millis(500), handler)
+            .await
+            .expect("handler retained a disconnected downstream permit")
+            .unwrap();
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
