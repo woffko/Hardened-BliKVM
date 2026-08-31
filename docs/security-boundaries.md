@@ -152,6 +152,16 @@ carry an expected generation and reject stale state before writing. The future
 adapter must provide atomic per-copy replacement and hold an exclusive recovery
 lock; the trait contains no path or concrete storage implementation.
 
+The system-action journal is a separate fixed binary domain. It binds journal
+generation to validated policy generation, rejects noncanonical fields,
+split-brain copies, gaps and a caller-supplied rollback floor, and plans the
+non-selected copy first with an expected-generation check. Its SHA-256 is
+corruption detection, not writer authentication or physical rollback
+resistance. No filesystem implementation exists; a future root-owned adapter
+must add no-follow owner/mode checks, exclusive locking, atomic same-directory
+replacement, file and directory sync, exact readback, and an independently
+justified generation floor before system actions can be enabled.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

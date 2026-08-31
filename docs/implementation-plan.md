@@ -265,6 +265,16 @@ suite, two byte-identical prototype archives, two byte-identical AArch64 rlibs,
 metadata and ThinLTO codegen passed. There is no durable store, actuator,
 runtime link or enabled capability; see `baselines/system-action-policy.md`.
 
+Checkpoint: the unlinked `bli-kvm-system-action-journal` now encodes policy
+state into one strict fixed-size format with domain-separated SHA-256, binds
+journal and policy generations, selects redundant copies with split-brain,
+gap and external-floor hard stops, and plans non-selected-first writes with
+expected-generation/readback checks. At source commit `b9106ab`, the full host
+suite, two byte-identical prototype archives, policy/journal AArch64 rlibs,
+metadata and ThinLTO codegen passed. SHA-256 is corruption detection only; no
+filesystem adapter, lock, sync, actuator or enabled capability exists. See
+`baselines/system-action-journal.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

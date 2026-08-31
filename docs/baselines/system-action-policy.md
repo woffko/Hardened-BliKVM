@@ -92,8 +92,10 @@ archive, whose manifest identifies the exact committed source and retains
 `releaseAccepted=false` and `deviceAccepted=false`.
 
 No reboot, shutdown, hostname, service, filesystem, log, clock, Power, or Reset
-action was executed. Runtime remains unavailable until a reviewed durable
-journal, privilege-separated fixed actuator, authenticated API/UI confirmation,
-visible progress, update/storage coordination, boot observation, packaging,
-reboot/shutdown persistence, failure injection, and explicit device acceptance
-all pass. Hostname and log handling remain separate unavailable capabilities.
+action was executed. A subsequent storage-neutral redundant journal model is
+recorded in `system-action-journal.md`, but no concrete durable store exists.
+Runtime remains unavailable until a privilege-separated fixed actuator,
+authenticated API/UI confirmation, visible progress, update/storage
+coordination, boot observation, packaging, reboot/shutdown persistence, failure
+injection, and explicit device acceptance all pass. Hostname and log handling
+remain separate unavailable capabilities.
