@@ -61,6 +61,12 @@ controller. Source-associated control offsets 259, 260, and 262 are already
 used legacy sysfs outputs. No SPI node or GPIO value was opened, no transfer or
 line request occurred, and the display capability remains hidden.
 
+A sanitized network probe confirms NetworkManager ownership, an active H616
+Ethernet interface and an inactive wireless interface through sysfs metadata
+only. Addresses, MACs, SSIDs/BSSIDs, routes, resolvers, profiles, endpoints and
+credentials were not read or retained. No network command or state change
+occurred; network configuration remains unavailable.
+
 ## Field-image evidence
 
 - MBR partition layout with separate root, data, and virtual-media roles.
@@ -82,6 +88,8 @@ line request occurred, and the display capability remains hidden.
 - configfs topology and BIOS boot from virtual media;
 - OLED/display behavior, fan, buttons, and serial switch; read-only display
   topology is recorded separately;
+- network apply/rollback, Wi-Fi privacy, connectivity watchdog, recovery and
+  reboot persistence; sanitized ownership topology is recorded separately;
 - RTC calibration, drift, battery retention, alarm/wakeup, and clock-write
   direction; read-only kernel topology is recorded separately;
 - fan GPIO electrical polarity, PWM semantics, minimum spinning duty, exclusive

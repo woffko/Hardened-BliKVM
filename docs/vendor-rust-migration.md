@@ -30,6 +30,7 @@ the vendor daemon beside a second GPIO owner.
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
+| NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -85,6 +86,13 @@ polls, regardless of external activity. The unlinked Rust LED policy makes
 asserted level, period, and pulse explicit, starts and fails inactive, restarts
 the phase on enable, and computes delayed phases without drift. It does not
 write the used sysfs output; see `baselines/activity-led-policy.md`.
+
+The pinned Node network routes mix interface state with addresses, gateways,
+DNS, connection names, SSIDs and BSSIDs, then perform root shell mutation,
+profile mode0777 changes, NetworkManager restart and connection cycling without
+a watchdog rollback. Only fixed-candidate sysfs type/link/driver facts and
+manager active state were retained in the sanitized live baseline; see
+`baselines/device-network-topology.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

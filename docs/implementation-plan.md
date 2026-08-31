@@ -238,6 +238,15 @@ and byte-identical extracted ThinLTO codegen passed. Offset261 was not written,
 its legacy owner remains, and no capability was enabled. See
 `baselines/activity-led-policy.md`.
 
+Checkpoint: a sanitized network source/live audit separates fixed interface
+type/link/driver and manager-state metadata from every address, MAC, SSID,
+BSSID, route, resolver, profile, endpoint and credential. The live H616
+baseline confirms NetworkManager, Ethernet and Wi-Fi ownership without invoking
+`nmcli` or changing network state. Vendor root shell routes, profile mode0777,
+manager restart and connection cycling are rejected. No Rust adapter or network
+capability exists; typed commit/confirm, watchdog rollback, out-of-band recovery
+and reboot gates remain. See `baselines/device-network-topology.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.
