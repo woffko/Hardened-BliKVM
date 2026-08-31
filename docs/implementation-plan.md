@@ -318,6 +318,19 @@ AArch64 rlib, metadata and ThinLTO pairs passed. No listener, collector account,
 process, systemd unit or capability exists; see
 `baselines/diagnostic-peer-adapter.md`.
 
+Checkpoint: source commit `6de71c2` adds an unlinked in-memory runtime core to
+the safe peer adapter. An opaque non-cloneable authenticated token is consumed
+into an opaque instance-bound connection; one exact producer frame is decoded,
+submitted to the two-window policy, and answered with one canonical response.
+Invalid frames receive no response and terminate through EOF accounting;
+foreign-core handles fail without being consumed, while policy/backpressure/
+unavailable responses keep the connection usable. The full host suite with 122
+Python tests and two byte-identical 4,780,015-byte prototype archives passed,
+as did direct adapter/window/protocol/peer/collector/export/nix AArch64 rlib,
+metadata, and ThinLTO comparisons. No listener, real clock, account, process,
+systemd unit, persistence, API, UI, package, device gate, or capability exists;
+see `baselines/diagnostic-runtime-core.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

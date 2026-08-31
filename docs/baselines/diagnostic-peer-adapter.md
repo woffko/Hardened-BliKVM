@@ -97,10 +97,13 @@ external, with no missing external license expression.
 `cargo audit --deny warnings` refreshed and loaded 1,233 RustSec advisories and
 accepted all 152 locked dependencies.
 
-No device or named live-account gate was run. There is still no listener,
-collector process/account, runtime composition, instance/clock source, systemd
-unit, server export protocol, authenticated API/UI, package, or advertised
-capability. A later isolated gate must create only an ephemeral test account
-set or use the eventual reviewed sysusers template, exercise peer rejection and
-disconnect behavior, then restore exact prior state. Raw vendor logs remain
-outside the design.
+No device or named live-account gate was run at this adapter-only checkpoint.
+There was no listener, collector process/account, runtime composition,
+instance/clock source, systemd unit, server export protocol, authenticated
+API/UI, package, or advertised capability. Raw vendor logs remained outside
+the design.
+
+Source `6de71c28df1eb521108a955d046e098feb3bacb3` later adds the unlinked
+in-memory composition core without weakening fixed-name lookup or peer
+credential disposal. It still creates no listener, process, account, clock,
+service, API, UI, or capability; see `diagnostic-runtime-core.md`.

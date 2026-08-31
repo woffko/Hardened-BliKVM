@@ -202,10 +202,11 @@ message, path, identity, filesystem, process, clock, network, or device surface.
 The separate unlinked collector policy accepts only the five current process
 roles, exact lifecycle epoch/sequence transitions, and a role-specific event
 matrix. Source epoch and sequence never enter output. A future non-networked
-collector must bind peer credentials to one role, own monotonic time, and
-perform the typed mapping before the authenticated server boundary; unknown
-events and all raw content fail closed. No diagnostic capability is currently
-advertised.
+collector process must own monotonic time and keep the typed mapping before the
+authenticated server boundary; unknown events and all raw content fail closed.
+The unlinked in-memory core now composes the already authenticated role, exact
+frame codec, and window policy, but it creates no listener or process. No
+diagnostic capability is currently advertised.
 
 The unlinked producer protocol contains one canonical eight-byte typed event
 and a mandatory four-byte accepted/rejected response. It has no source,
@@ -234,8 +235,13 @@ The unlinked safe adapter resolves only six compile-time account names and one
 group through nix, validates the current effective collector UID, and maps a
 Tokio Unix stream through `peer_cred`. Lookup and peer failures are coarse typed
 errors with no numeric values. PID/UID/GID containers do not implement `Debug`,
-and only the semantic source is returned. No listener or collector process is
-linked.
+and only an opaque semantic-source token is returned. The token is consumed by
+an unlinked runtime core; its opaque connection handle is instance-bound and
+cannot be cloned, debug-printed, or consumed by a foreign core. Malformed frames
+receive no response and terminate through a recorded or visibly incomplete EOF
+path. Policy, backpressure, and unavailable responses remain canonical and do
+not masquerade as acceptance. No listener, clock owner, collector process,
+systemd unit, package, API, or UI is linked.
 
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,

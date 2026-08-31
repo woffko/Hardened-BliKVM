@@ -1,8 +1,9 @@
 # Diagnostic producer protocol v1
 
 This contract defines one fixed local producer event and its mandatory
-collector response. The codec is implemented but unlinked. It does not create a
-collector process, socket, service, public API, log reader, or capability.
+collector response. The codec and its in-memory runtime composition are
+implemented but unlinked. They do not create a collector process, socket,
+service, public API, log reader, or capability.
 
 ## Trust boundary
 
@@ -25,8 +26,10 @@ User/group resolution and safe kernel credential retrieval remain adapter work.
 
 The unlinked `bli-kvm-diagnostic-peer-adapter` now implements that narrow
 adapter with fixed names, safe nix lookup, current effective-UID validation, and
-Tokio `UnixStream::peer_cred`. It returns only the source and has no listener,
-runtime, logging, configuration, or fallback identity.
+Tokio `UnixStream::peer_cred`. It returns only an opaque authenticated-source
+token and has no configuration or fallback identity. The token can be consumed
+only once by the same crate's unlinked runtime core, which creates an opaque
+instance-bound connection handle and never returns numeric credentials.
 
 The collector assigns lifecycle `Started`/`Stopped`, epoch, sequence, and
 relative monotonic offset at accept, event acceptance, and EOF. A producer
@@ -90,12 +93,15 @@ Protocol-invalid frames are connection-fatal and receive no response. A future
 runtime must bound read/write time, close partial frames, reject a second active
 peer for the same role, and never turn protocol text into a log message.
 
-## Unavailable runtime
+## Unavailable process runtime
 
 This protocol does not encode window rollover or persistence. The separate
 unlinked `bli-kvm-diagnostic-window-policy` now defines a 32-record live window,
 lifecycle reservation, one sealed-window handoff, exact acknowledgement,
 backpressure, visible incomplete disconnects, manager restart, and monotonic
-clock rollback. A runtime must still supply peer credentials, a fresh instance
-binding, real monotonic time, bounded I/O, and concurrency without weakening
-that policy. No raw vendor log adapter is permitted.
+clock rollback. The unlinked `DiagnosticRuntimeCore` now composes a mapped peer,
+one request/response, connection termination, and those window operations. A
+process runtime must still supply a fixed Unix listener, a fresh instance
+binding, real monotonic time, bounded read/write time, partial-frame handling,
+and concurrency without weakening that policy. No raw vendor log adapter is
+permitted. See `../baselines/diagnostic-runtime-core.md`.

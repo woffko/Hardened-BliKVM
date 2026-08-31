@@ -77,16 +77,18 @@ runtime links either crate; see `diagnostic-collector-policy.md`.
 
 Final protocol source `64b256d7bddb6b2c1b609dcd11866036dacdb118`
 adds a second pure, unlinked consumer with fixed event and mandatory response
-frames. No runtime links any diagnostic crate; see `diagnostic-protocol.md`.
+frames. No shipped process links any diagnostic crate; see
+`diagnostic-protocol.md`.
 
 Window-policy source `a00e1a8eb5942d83cd5590b39fbcf9c5cf055fbf`
 adds the pure two-window handoff consumer. It remains unlinked and I/O-free; see
 `diagnostic-window-policy.md`.
 
 No live log, configured log path, rotated file, process output, identifier, or
-device state was read for this slice. A future adapter must map one reviewed,
-fixed local source into these semantic events without forwarding raw content;
-it then needs privilege separation, bounded collection, authenticated export,
-privacy review, runtime packaging, and browser tests. Until those gates pass,
-the vendor raw-log route and every Hardened diagnostic-export capability remain
+device state was read for this slice. Later peer-adapter and runtime-core
+sources map one reviewed fixed local peer into these semantic events without
+forwarding raw content; see `diagnostic-runtime-core.md`. A process runtime
+still needs privilege separation, bounded I/O, authenticated export, privacy
+review, packaging, and browser tests. Until those gates pass, the vendor
+raw-log route and every Hardened diagnostic-export capability remain
 unavailable.

@@ -75,16 +75,21 @@ exact source commit and retains `releaseAccepted=false` and
 `deviceAccepted=false`. No diagnostic crate is present in the prototype.
 
 No live account lookup, socket, process, or device test was run because the
-policy is pure and unlinked. No UID, GID, PID, identifier, live log, configured
-path, process output, or device state was captured. A future adapter must safely
-resolve the six exact accounts and shared group, use a safe Unix-stream
-`peer_cred` API, bind the mapped source to one window session, enforce one active
-peer per role, and discard numeric credentials. User-database failure, UID
-change, collector restart, concurrency, timeout, systemd confinement, privacy,
-browser, and H616 gates remain mandatory.
+policy is pure and was unlinked at this checkpoint. No UID, GID, PID,
+identifier, live log, configured path, process output, or device state was
+captured. Later adapter/runtime checkpoints safely resolve the six exact
+accounts and shared group, use Unix-stream `peer_cred`, bind the mapped source
+to one window session, enforce one active peer per role, and discard numeric
+credentials. User-database failure, UID change, collector restart, concurrency,
+timeout, systemd confinement, privacy, browser, and H616 gates remain
+mandatory.
 
 Adapter source `b62d827c107d035a9b1580476fc7662054e4e315` removes generic
 `Debug` from both numeric identity containers, re-exports the source type, and
 adds the separate safe fixed-name lookup/peer_cred consumer. Peer codegen stays
 unchanged; updated metadata/reproducibility is recorded in
 `diagnostic-peer-adapter.md`.
+
+Runtime-core source `6de71c28df1eb521108a955d046e098feb3bacb3` then consumes only
+the opaque mapped token and never reintroduces numeric identity; see
+`diagnostic-runtime-core.md`.

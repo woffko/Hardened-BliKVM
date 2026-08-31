@@ -86,3 +86,9 @@ Window-policy source `a00e1a8eb5942d83cd5590b39fbcf9c5cf055fbf`
 now consumes the response types for accepted, policy-rejected, backpressured,
 and unavailable outcomes. It remains pure and unlinked; see
 `diagnostic-window-policy.md`.
+
+Runtime-core source `6de71c28df1eb521108a955d046e098feb3bacb3` now performs the
+first exact decode/submit/encode composition. Invalid frames terminate without
+a response; canonical policy, backpressure, and unavailable responses preserve
+the connection. The core remains outside every shipped process; see
+`diagnostic-runtime-core.md`.

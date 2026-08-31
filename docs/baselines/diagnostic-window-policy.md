@@ -110,3 +110,9 @@ link a socket or runtime. See `diagnostic-peer-policy.md`.
 Adapter source `b62d827c107d035a9b1580476fc7662054e4e315` now provides the
 safe source intended to precede `connect`; it remains unlinked from this state
 machine and from every process. See `diagnostic-peer-adapter.md`.
+
+Runtime-core source `6de71c28df1eb521108a955d046e098feb3bacb3` now composes this
+manager with the authenticated peer token and exact producer frames. The
+private session no longer implements `Debug`; updated AArch64 metadata and
+reproducibility evidence are recorded in `diagnostic-runtime-core.md`. No
+shipped process links the composition.

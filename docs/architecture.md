@@ -72,9 +72,8 @@ fixed semantic enums and bounded relative offsets, emits deterministic bounded
 ASCII, and has no message, path, identity, filesystem, process, clock, network,
 or device interface. A separate unlinked policy accepts exactly five existing
 process roles, enforces source lifecycle epochs and sequences, global ordering,
-hard capacity, and a role-specific event matrix. A future runtime must bind a
-local peer to one source and assign collector-owned time without forwarding raw
-log content. Its unlinked producer codec carries one fixed typed event and
+hard capacity, and a role-specific event matrix. Its unlinked producer codec
+carries one fixed typed event and
 requires one exact accepted/rejected response before another event; source,
 lifecycle, sequence and time never cross that wire. A fourth pure layer owns
 one live and one sealed window, reserves every active source's stop record,
@@ -82,13 +81,19 @@ requires exact handoff acknowledgement, and marks an unrecordable disconnect
 as visibly incomplete instead of stranding the source or claiming completeness.
 The pure peer layer validates six distinct non-root UIDs plus the shared GID and
 maps connection-bound PID/UID/GID facts to only one source. Numeric credentials
-are not returned or exported; a future safe adapter must obtain them from the
-kernel for each accepted stream.
+are not returned or exported.
 
 That unlinked adapter now uses fixed-name safe nix account lookup, verifies the
 collector effective UID, and calls Tokio `UnixStream::peer_cred` before
-returning only the mapped source. It has no listener or runtime owner, and the
-numeric assignment/credential containers intentionally have no `Debug` output.
+returning only an opaque authenticated-source token. The same crate now
+contains an unlinked in-memory runtime core that consumes that token, creates
+an opaque instance-bound session, decodes one exact frame, returns one exact
+response, records EOF, and delegates bounded rotation/snapshot/acknowledgement
+to the window policy. Invalid frames receive no response and terminate through
+the disconnect path. It still has no listener, async I/O owner, real clock,
+process, service, API, or advertised capability. Numeric assignment,
+credential, authenticated-peer, and connection handles intentionally expose no
+generic `Debug` output.
 
 ## Core invariants
 

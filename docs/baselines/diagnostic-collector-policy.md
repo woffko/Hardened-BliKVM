@@ -91,12 +91,14 @@ collector/export layer. The archive manifest identifies the exact committed
 source and retains `releaseAccepted=false` and `deviceAccepted=false`. Neither
 pure diagnostic crate is present in the prototype archive.
 
-No device gate was run because this policy has no I/O and is unlinked. No live
-log, configured path, process output, identifier, or device state was read. A
-future runtime still needs a credential-bound fixed local protocol, peer-to-role
-mapping, collector-owned monotonic clock, disconnect/crash lifecycle, bounded
-backpressure, confinement, authenticated export, privacy review, packaging,
-and browser tests. Until then, no diagnostic capability is advertised.
+No device gate was run because this policy has no I/O and was unlinked at this
+checkpoint. No live log, configured path, process output, identifier, or device
+state was read. The later unlinked runtime core supplies credential-bound
+peer-to-role, exact local protocol, disconnect lifecycle, and bounded
+backpressure composition. A process still needs a real monotonic clock,
+listener, crash handling, confinement, authenticated export, privacy review,
+packaging, and browser tests. Until then, no diagnostic capability is
+advertised.
 
 Final protocol source `64b256d7bddb6b2c1b609dcd11866036dacdb118`
 adds a separate pure sibling codec for producer events and mandatory
@@ -111,3 +113,7 @@ visible incomplete EOF metadata. It remains pure and unlinked; see
 Peer-policy source `fcfde44543b64f1a93eec05ea47c9f92ea6efe7b`
 adds the separate pure UID/GID/PID-to-source mapper without changing this event
 matrix. It remains unlinked; see `diagnostic-peer-policy.md`.
+
+Runtime-core source `6de71c28df1eb521108a955d046e098feb3bacb3` now composes the
+collector with authenticated peer tokens, exact frames, and window sessions;
+see `diagnostic-runtime-core.md`. No shipped process links the composition.

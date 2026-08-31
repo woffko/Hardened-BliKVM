@@ -83,5 +83,8 @@ visible incomplete EOF metadata; see `diagnostic-window-policy.md`. The peer
 policy maps validated exact UID/GID/PID facts to only the semantic source; see
 `diagnostic-peer-policy.md`. The unlinked safe adapter adds fixed-name lookup,
 collector eUID validation and Tokio peer credentials; see
-`diagnostic-peer-adapter.md`. There is still no collector account/listener/
-process, API, UI, package, or advertised diagnostic capability.
+`diagnostic-peer-adapter.md`. Its unlinked in-memory core now consumes an
+opaque authenticated peer, composes exact protocol/window operations, and
+terminates invalid frames through bounded EOF accounting; see
+`diagnostic-runtime-core.md`. There is still no collector account/listener/
+process, real clock, API, UI, package, or advertised diagnostic capability.
