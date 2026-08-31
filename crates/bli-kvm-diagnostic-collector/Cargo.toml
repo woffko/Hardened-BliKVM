@@ -1,0 +1,17 @@
+[package]
+name = "bli-kvm-diagnostic-collector"
+description = "Unshipped fixed-socket diagnostic collector for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-peer-adapter = { path = "../bli-kvm-diagnostic-peer-adapter" }
+nix.workspace = true
+signal-hook.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

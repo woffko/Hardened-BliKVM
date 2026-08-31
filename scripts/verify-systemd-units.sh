@@ -27,6 +27,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-server"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-collector"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0644 \
@@ -36,6 +37,7 @@ install -m 0644 \
   "$test_root/usr/lib/systemd/system/"
 install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm.conf" \
+  "$project_root/packaging/sysusers.d/hardened-blikvm-diagnostics.conf" \
   "$test_root/usr/lib/sysusers.d/"
 install -m 0644 \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
@@ -75,6 +77,7 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-update-apply-confirmed.service \
   hardened-blikvm-server-current.service \
   hardened-blikvm-server-candidate.service \
+  hardened-blikvm-diagnostic-collector.service \
   hardened-blikvm-system-action-store-init.service \
   hardened-blikvm-system-action-store-inspect.service
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
@@ -89,6 +92,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-update-apply-confirmed.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server-current.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server-candidate.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-diagnostic-collector.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
   >/dev/null

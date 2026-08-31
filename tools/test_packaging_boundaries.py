@@ -360,11 +360,12 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, production)
 
-    def test_diagnostic_peer_adapter_uses_only_fixed_safe_identity_apis_and_is_unlinked(
+    def test_diagnostic_peer_adapter_has_only_fixed_identity_and_unshipped_consumer(
         self,
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
+        collector = ROOT / "crates/bli-kvm-diagnostic-collector/Cargo.toml"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         listener_source = (crate / "src/listener.rs").read_text()
@@ -381,11 +382,12 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(dependency, manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in (crate / "Cargo.toml", collector):
                 self.assertNotIn(
                     "bli-kvm-diagnostic-peer-adapter",
                     other_manifest.read_text(),
                 )
+        self.assertIn("bli-kvm-diagnostic-peer-adapter", collector.read_text())
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("User::from_name", source)
         self.assertIn("Group::from_name", source)
@@ -476,6 +478,102 @@ class PackagingBoundaryTests(unittest.TestCase):
             "/var/",
         ):
             self.assertNotIn(forbidden, listener_production)
+
+    def test_diagnostic_collector_is_fixed_unshipped_and_confined(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-collector"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        main = (crate / "src/main.rs").read_text()
+        unit = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-diagnostic-collector.service"
+        ).read_text()
+        sysusers = (
+            ROOT
+            / "packaging/sysusers.d/hardened-blikvm-diagnostics.conf"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        verifier = (ROOT / "scripts/verify-systemd-units.sh").read_text()
+
+        self.assertIn('"crates/bli-kvm-diagnostic-collector"', workspace)
+        self.assertIn("bli-kvm-diagnostic-peer-adapter", manifest)
+        self.assertIn("nix.workspace = true", manifest)
+        self.assertIn("signal-hook.workspace = true", manifest)
+        self.assertIn("tokio.workspace = true", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-collector = {",
+                    other_manifest.read_text(),
+                )
+        for required in (
+            "#![forbid(unsafe_code)]",
+            '"/run/hardened-blikvm-diagnostics"',
+            '"/run/hardened-blikvm-diagnostics/collector.sock"',
+            "DiagnosticCollectorRuntime::from_current_process()",
+            "UnixListener::bind",
+            "Signals::new([SIGTERM, SIGINT])",
+            ".name(\"diagnostic-signal\".into())",
+            "signal_handle.close()",
+            "DIAGNOSTIC_RUNTIME_DIRECTORY_MODE: u32 = 0o750",
+            "DIAGNOSTIC_SOCKET_MODE: u32 = 0o660",
+            "metadata.dev()",
+            "metadata.ino()",
+            "metadata.uid()",
+            "metadata.gid()",
+        ):
+            self.assertIn(required, production)
+        for forbidden in (
+            "unsafe {",
+            "std::env",
+            "args_os",
+            "Command",
+            "Tcp",
+            "/dev/",
+            "/var/",
+            "raw log",
+            "read_to_",
+            "serde",
+            "tracing",
+            "log::",
+        ):
+            self.assertNotIn(forbidden, production)
+        self.assertNotIn("std::env", main)
+        self.assertIn("Hardened BliKVM diagnostic collector failed", main)
+
+        for directive in (
+            "User=hardened-blikvm-diagnostics",
+            "Group=hardened-blikvm",
+            "DynamicUser=yes",
+            "UMask=0117",
+            "RuntimeDirectory=hardened-blikvm-diagnostics",
+            "RuntimeDirectoryMode=0750",
+            "RuntimeDirectoryPreserve=no",
+            "ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-collector",
+            "StandardOutput=null",
+            "NoNewPrivileges=yes",
+            "PrivateDevices=yes",
+            "PrivateNetwork=yes",
+            "ProtectSystem=strict",
+            "ReadWritePaths=/run/hardened-blikvm-diagnostics",
+            "RestrictAddressFamilies=AF_UNIX",
+            "CapabilityBoundingSet=",
+            "DevicePolicy=closed",
+            "IPAddressDeny=any",
+        ):
+            self.assertIn(directive, unit)
+        self.assertNotIn("[Install]", unit)
+        self.assertIn(
+            'u hardened-blikvm-diagnostics - "Hardened BliKVM typed diagnostic collector" /nonexistent /usr/sbin/nologin',
+            sysusers,
+        )
+        self.assertIn("m hardened-blikvm-diagnostics hardened-blikvm", sysusers)
+        self.assertNotIn("bli-kvm-diagnostic-collector", builder)
+        self.assertNotIn("hardened-blikvm-diagnostics.conf", builder)
+        self.assertIn("bli-kvm-diagnostic-collector", verifier)
+        self.assertIn("hardened-blikvm-diagnostics.conf", verifier)
 
     def test_system_action_policy_is_pure_no_std_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
