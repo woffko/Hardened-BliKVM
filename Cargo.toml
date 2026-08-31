@@ -14,6 +14,7 @@ members = [
   "crates/bli-kvm-display-button-policy",
   "crates/bli-kvm-activity-led-policy",
   "crates/bli-kvm-diagnostic-export",
+  "crates/bli-kvm-diagnostic-collector-policy",
   "crates/bli-kvm-media-catalog",
   "crates/bli-kvm-media-policy",
   "crates/bli-kvm-update-verifier",
