@@ -256,6 +256,15 @@ log and clock actions remain unavailable pending typed eligibility,
 confirmation/idempotency, update/storage guards, rollback/redaction, post-boot
 and persistence gates. See `baselines/vendor-system-control-boundary.md`.
 
+Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
+reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
+update, storage, recovery and post-boot guards. Separate prepared/dispatching
+snapshots, crash ambiguity, terminal replay, bounded history, startup/cooldown
+and post-boot acceptance fail closed. At source commit `6c75377`, the full host
+suite, two byte-identical prototype archives, two byte-identical AArch64 rlibs,
+metadata and ThinLTO codegen passed. There is no durable store, actuator,
+runtime link or enabled capability; see `baselines/system-action-policy.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

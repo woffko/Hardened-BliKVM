@@ -51,6 +51,8 @@ and reboot persistence. Logs require a fixed local source, redaction, size/time
 bounds, authorization, and no shell path. Clock writes retain their separate
 RTC policy and physical gate.
 
-This audit changes no runtime capability. It defines the boundary for a future
-pure policy and privileged adapter; it does not authorize reboot, shutdown,
+This audit changes no runtime capability. The first pure reboot/shutdown state
+policy now implements the non-I/O portion of this boundary; see
+`system-action-policy.md`. It remains unlinked and publicly disabled, with no
+durable store or privileged adapter, and does not authorize reboot, shutdown,
 hostname, service, filesystem, log, or clock actions.
