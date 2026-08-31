@@ -1,0 +1,8 @@
+[package]
+name = "bli-kvm-activity-led-policy"
+description = "Pure fail-closed activity LED schedule policy for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true

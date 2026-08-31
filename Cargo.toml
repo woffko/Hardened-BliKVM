@@ -12,6 +12,7 @@ members = [
   "crates/bli-kvm-serial-switch-codec",
   "crates/bli-kvm-st7789-model",
   "crates/bli-kvm-display-button-policy",
+  "crates/bli-kvm-activity-led-policy",
   "crates/bli-kvm-media-catalog",
   "crates/bli-kvm-media-policy",
   "crates/bli-kvm-update-verifier",

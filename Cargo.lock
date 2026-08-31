@@ -100,6 +100,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-activity-led-policy"
+version = "0.1.0"
+
+[[package]]
 name = "bli-kvm-atx-policy"
 version = "0.1.0"
 dependencies = [
