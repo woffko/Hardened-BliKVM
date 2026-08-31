@@ -77,6 +77,8 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
     def test_runtime_is_dynamic_user_af_unix_only_and_bounded(self) -> None:
         runtime = gate.build_run_script(self.paths(), self.assets())
         self.assertIn("systemd-sysusers --root=", runtime)
+        self.assertIn("failure_phase", runtime)
+        self.assertIn("phase=create-transient-identities", runtime)
         self.assertIn("--property=DynamicUser=yes", runtime)
         self.assertIn("systemd-run --quiet --collect", runtime)
         self.assertIn("transient_identities created-and-removed", runtime)
@@ -106,6 +108,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn('sha256sum "$unit_target"', rollback)
         self.assertIn('sha256sum "$binary_target"', rollback)
         self.assertIn('rmdir "$binary_parent"', rollback)
+        self.assertIn(
+            '[ "$parent_before" = absent ] && [ -e "$binary_parent" ]',
+            rollback,
+        )
         self.assertIn('rm -rf -- "$stage_root"', rollback)
         self.assertNotIn('rm -rf -- "$runtime_directory"', rollback)
         self.assertNotIn('rm -rf -- "$binary_parent"', rollback)
@@ -141,6 +147,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertNotIn("/dev/gpio", scripts)
 
     def test_fact_validators_are_exact(self) -> None:
+        self.assertEqual(
+            gate.parse_runtime_failure(b"failure_phase=create-transient-identities\n"),
+            "create-transient-identities",
+        )
         preflight = {
             "account_absent_before": "yes",
             "architecture": "aarch64",

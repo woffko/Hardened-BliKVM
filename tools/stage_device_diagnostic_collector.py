@@ -106,7 +106,9 @@ FINAL_KEYS = {
     "unit_absent_final",
     "watchdog_inactive_final",
 }
+FAILURE_KEYS = {"failure_phase"}
 CLEANUP_KEYS = {"cleanup_restored"}
+SAFE_PHASE = re.compile(r"^[a-z0-9-]{1,80}$")
 
 
 class CleanupReceipt(TypedDict):
@@ -608,14 +610,6 @@ while [ "$count" -lt 100 ]; do
   sleep 0.1
   count=$((count + 1))
 done
-for identity_unit in $identity_units_stop; do
-  count=0
-  while [ "$count" -lt 100 ] && systemctl cat "$identity_unit" >/dev/null 2>&1; do
-    sleep 0.1
-    count=$((count + 1))
-  done
-  if systemctl cat "$identity_unit" >/dev/null 2>&1; then exit 1; fi
-done
 if [ -e "$unit_target" ]; then
   [ -f "$unit_target" ]
   [ ! -L "$unit_target" ]
@@ -638,7 +632,11 @@ if [ -e "$binary_target" ]; then
   [ "$(sha256sum "$binary_target" | cut -d ' ' -f 1)" = "$binary_sha" ]
   rm -f -- "$binary_target"
 fi
-if [ "$parent_before" = absent ]; then rmdir "$binary_parent"; fi
+if [ "$parent_before" = absent ] && [ -e "$binary_parent" ]; then
+  [ -d "$binary_parent" ]
+  [ ! -L "$binary_parent" ]
+  rmdir "$binary_parent"
+fi
 [ ! -e "$runtime_directory" ]
 [ ! -e "$binary_target" ]
 if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
@@ -699,7 +697,17 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
 set -eu
 export LC_ALL=C
 umask 077
+phase=validate-assets
+run_succeeded=no
 emit() { printf '%s=%s\n' "$1" "$2"; }
+on_exit() {
+  exit_code=$?
+  trap - EXIT HUP INT TERM
+  if [ "$run_succeeded" != yes ]; then emit failure_phase "$phase"; fi
+  exit "$exit_code"
+}
+trap on_exit EXIT
+trap 'exit 1' HUP INT TERM
 [ -f "$marker" ]
 [ "$(cat "$marker")" = "$marker_value" ]
 [ "$(stat -c %s "$binary")" = "$binary_size" ]
@@ -716,6 +724,7 @@ chmod 755 "$client"
 [ "$(sha256sum "$client" | cut -d ' ' -f 1)" = "$client_sha" ]
 printf '%s' "$rollback_b64" | base64 -d > "$rollback_script"
 chmod 700 "$rollback_script"
+phase=verify-sysusers
 synthetic_root="$stage_root/sysusers-root"
 install -d -m 755 "$synthetic_root/etc" "$synthetic_root/usr/lib/sysusers.d"
 printf 'g %s -\n' "$shared_group" > "$synthetic_root/usr/lib/sysusers.d/00-base.conf"
@@ -726,8 +735,10 @@ awk -F: -v group="$shared_group" -v account="$collector_account" '$1 == group &&
 if [ -e "$binary_parent" ]; then parent_before=present; else parent_before=absent; fi
 printf 'parent_before=%s\n' "$parent_before" > "$rollback_state"
 chmod 600 "$rollback_state"
+phase=arm-watchdog
 systemd-run --quiet --unit="$watchdog" --on-active=10min --timer-property=AccuracySec=1s /bin/sh "$rollback_script"
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" = active ]
+phase=create-transient-identities
 for identity_pair in $identity_pairs; do
   account=${identity_pair%%:*}
   identity_unit=${identity_pair#*:}
@@ -754,6 +765,7 @@ for identity_pair in $identity_pairs; do
   seen="$seen$uid:"
   [ "$(awk '/^Gid:/ {print $2}' "/proc/$pid/status")" = "$shared_gid" ]
 done
+phase=install-runtime
 if [ "$parent_before" = absent ]; then mkdir -m 755 "$binary_parent"; fi
 install -m 0755 "$binary" "$binary_part"
 [ "$(sha256sum "$binary_part" | cut -d ' ' -f 1)" = "$binary_sha" ]
@@ -763,6 +775,7 @@ install -m 0644 "$unit_source" "$unit_target"
 [ "$(sha256sum "$unit_target" | cut -d ' ' -f 1)" = "$unit_sha" ]
 systemctl daemon-reload
 systemd-analyze verify "$unit_name" >/dev/null 2>&1
+phase=start-collector
 systemctl start "$unit_name"
 count=0
 while [ "$count" -lt 100 ] && [ ! -S "$socket_path" ]; do
@@ -790,6 +803,7 @@ done
 [ "$(awk '/^Uid:/ {print $2}' "/proc/$collector_pid/status")" = "$collector_uid" ]
 [ "$(stat -c '%a:%u:%g' "$runtime_directory")" = "750:$collector_uid:$shared_gid" ]
 [ "$(stat -c '%a:%u:%g' "$socket_path")" = "660:$collector_uid:$shared_gid" ]
+phase=accepted-sources
 install -d -m 0770 -o root -g "$shared_group" "$client_state"
 run_as() {
   account=$1
@@ -804,6 +818,7 @@ for account in $producer_accounts; do
   accepted_count=$((accepted_count + 1))
 done
 [ "$accepted_count" = 5 ]
+phase=rejected-peers
 python3 "$client" rejected
 unknown_uid=$(getent passwd nobody | awk -F: 'NR == 1 {print $3}')
 case "$unknown_uid" in ''|0|*[!0-9]*) exit 1 ;; esac
@@ -812,6 +827,7 @@ for account in $producer_accounts; do
 done
 [ "$unknown_uid" != "$collector_uid" ]
 setpriv --reuid="$unknown_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" rejected
+phase=duplicate-peer
 server_uid=$(getent passwd hardened-blikvm-server | awk -F: 'NR == 1 {print $3}')
 duplicate_ready="$client_state/duplicate.ready"
 setpriv --reuid="$server_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" hold "$duplicate_ready" &
@@ -828,10 +844,13 @@ kill "$holder_pid"
 wait "$holder_pid" 2>/dev/null || true
 rm -f -- "$duplicate_ready"
 sleep 0.2
+phase=partial-frame
 run_as hardened-blikvm-server partial
 sleep 0.2
+phase=malformed-frame
 run_as hardened-blikvm-server malformed
 [ "$(systemctl is-active "$unit_name" 2>/dev/null || true)" = active ]
+phase=graceful-shutdown
 update_uid=$(getent passwd hardened-blikvm-update | awk -F: 'NR == 1 {print $3}')
 shutdown_ready="$client_state/shutdown.ready"
 setpriv --reuid="$update_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" hold "$shutdown_ready" &
@@ -854,11 +873,13 @@ done
 if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 [ "$(systemctl show -p MainPID --value kvmd.service)" = "$kvmd_pid_before" ]
 [ "$(systemctl show -p MainPID --value kvmd-nginx.service)" = "$nginx_pid_before" ]
+phase=rollback
 /bin/sh "$rollback_script"
 [ ! -e "$stage_root" ]
 [ ! -e "$unit_target" ]
 [ ! -e "$binary_target" ]
 [ ! -e "$runtime_directory" ]
+run_succeeded=yes
 emit binary_hash_verified yes
 emit collector_caps none
 emit collector_dynamic_user yes
@@ -980,7 +1001,6 @@ for account in $producer_accounts; do
 done
 for identity_unit in $identity_units; do
   [ "$(systemctl is-active "$identity_unit" 2>/dev/null || true)" != active ]
-  if systemctl cat "$identity_unit" >/dev/null 2>&1; then exit 1; fi
 done
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" != active ]
 [ "$(systemctl is-active "$watchdog.service" 2>/dev/null || true)" != active ]
@@ -1006,6 +1026,14 @@ def require_result(stage: str, result: subprocess.CompletedProcess[bytes]) -> by
     if result.returncode != 0 or len(result.stdout) > 16 * 1024:
         raise RuntimeError(stage)
     return result.stdout
+
+
+def parse_runtime_failure(raw: bytes) -> str:
+    facts = native.parse_facts(raw, FAILURE_KEYS)
+    phase = facts["failure_phase"]
+    if SAFE_PHASE.fullmatch(phase) is None:
+        raise ValueError("runtime failure phase is invalid")
+    return phase
 
 
 def validate_preflight(facts: dict[str, str]) -> None:
@@ -1151,16 +1179,20 @@ def execute(options: Options) -> int:
         )
 
         stage = "runtime-and-rollback"
+        runtime_result = prototype.run_ssh(
+            target,
+            secret,
+            build_run_script(paths, assets),
+            timeout=180,
+        )
+        if runtime_result.returncode != 0:
+            try:
+                stage = f"runtime-{parse_runtime_failure(runtime_result.stdout)}"
+            except (UnicodeError, ValueError):
+                stage = "runtime-unknown"
+            raise RuntimeError(stage)
         checks = native.parse_facts(
-            require_result(
-                stage,
-                prototype.run_ssh(
-                    target,
-                    secret,
-                    build_run_script(paths, assets),
-                    timeout=180,
-                ),
-            ),
+            require_result(stage, runtime_result),
             RUN_KEYS,
         )
         validate_run(checks)
