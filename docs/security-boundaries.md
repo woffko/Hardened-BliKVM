@@ -255,6 +255,15 @@ canonical. No identity lookup, listener, persistence, client, HTTP route, or UI
 is implemented. A future adapter must authenticate one exact kernel peer and
 must not acknowledge until its consumer has durably retained the bundle.
 
+The unlinked export listener resolves the same fixed account set and accepts
+only the platform-broker semantic role from connection-bound `SO_PEERCRED`.
+Wrong roles and excess connections receive no response. Two fixed non-waiting
+permits, a two-second exact-request read, five-second response write, one
+request per connection, single-use listener ownership, and bounded task joins
+contain untrusted local behavior. It owns no path and remains outside the
+collector process; persistence and acknowledgement policy at the consumer are
+still absent.
+
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials
 need a positive bounded PID and exact producer UID/GID. Root, collector,

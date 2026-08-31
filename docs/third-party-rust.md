@@ -101,6 +101,11 @@ locked metadata is 157 total, 49 workspace, and 108 external packages with no
 missing external license expression. The refreshed 1,233-advisory RustSec scan
 accepted the exact graph.
 
+The unlinked diagnostic export listener adds one workspace package and reuses
+only the existing export/protocol/window/peer-adapter/Tokio graph. It adds no
+external package: locked metadata is 158 total, 50 workspace, and 108 external
+packages.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

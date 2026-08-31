@@ -1,10 +1,10 @@
 # Diagnostic sealed-window export protocol v1
 
-This is a fixed local Unix-stream contract for one future authenticated
+This is a fixed local Unix-stream contract for one authenticated
 collector consumer. It is not an HTTP API, does not package the collector, and
-does not expose live-window state. The current crate is a pure unlinked codec
-with no socket, identity lookup, persistence, retry, allocation, or I/O. Its
-host/AArch64 evidence is recorded in
+does not expose live-window state. The pure codec and its caller-bound listener
+remain unlinked from the collector process. They add no fixed socket path,
+persistence, retry, client, API, or UI. Protocol host/AArch64 evidence is in
 `../baselines/diagnostic-export-protocol.md`.
 
 ## Request frame
@@ -73,7 +73,11 @@ consumer must reconcile by reading again and must not assume success from a
 transport failure. This v1 codec itself provides no retry, persistence, or
 cross-restart durability claim.
 
-The future adapter must authenticate an exact non-root consumer through kernel
-peer credentials, bound partial-read/response-write time, permit only one
-request and response per connection, and keep producer ingestion independent
-of a stalled export consumer.
+The unlinked listener authenticates only the exact non-root platform-broker
+role through the existing fixed-name resolver and kernel peer credentials. It
+accepts a caller-owned Unix listener, permits at most two active connections,
+drops excess connections without waiting, bounds request reads to two seconds
+and response writes to five seconds, and closes after one request/response. It
+clones or acknowledges collector state before response I/O, so a stalled
+consumer holds no collector mutex. Listener host/AArch64/device evidence remains
+pending.

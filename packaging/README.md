@@ -56,7 +56,8 @@ H616 exact-event, stalled-response, queue-pressure, shutdown, browser, and
 cleanup gate without adding a unit dependency.
 The separate sealed-window export-v1 codec remains unlinked and absent from the
 bundle. It adds no export socket, service identity, persistence, client, API,
-UI, or install target.
+UI, or install target. Its caller-bound exact-platform-broker listener is also
+unlinked and excluded from the collector and prototype binaries.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

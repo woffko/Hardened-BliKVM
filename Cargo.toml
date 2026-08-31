@@ -15,6 +15,7 @@ members = [
   "crates/bli-kvm-activity-led-policy",
   "crates/bli-kvm-diagnostic-export",
   "crates/bli-kvm-diagnostic-export-protocol",
+  "crates/bli-kvm-diagnostic-export-listener",
   "crates/bli-kvm-diagnostic-protocol",
   "crates/bli-kvm-diagnostic-producer-client",
   "crates/bli-kvm-diagnostic-collector-policy",

@@ -113,6 +113,15 @@ impl DiagnosticWindowSnapshot {
     pub const fn bundle(&self) -> &DiagnosticBundle {
         &self.bundle
     }
+
+    pub fn into_parts(self) -> (u64, u32, u8, DiagnosticBundle) {
+        (
+            self.instance_id,
+            self.window_id,
+            self.omitted_lifecycle_events,
+            self.bundle,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

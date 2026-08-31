@@ -57,11 +57,36 @@ pub enum DiagnosticPeerAdapterError {
     InvalidAssignments(DiagnosticPeerConfigError),
     PeerCredentialReadFailed,
     PeerRejected(DiagnosticPeerError),
+    UnexpectedExportConsumer,
 }
 
 #[derive(PartialEq, Eq)]
 pub struct AuthenticatedDiagnosticPeer {
     source: DiagnosticSource,
+}
+
+#[derive(PartialEq, Eq)]
+pub struct AuthenticatedDiagnosticExportConsumer {
+    _private: (),
+}
+
+pub struct DiagnosticExportConsumerAuthenticator {
+    assignments: DiagnosticPeerAssignments,
+}
+
+impl DiagnosticExportConsumerAuthenticator {
+    pub fn from_current_process() -> Result<Self, DiagnosticPeerAdapterError> {
+        Ok(Self {
+            assignments: resolve_current_assignments()?,
+        })
+    }
+
+    pub fn authenticate(
+        &self,
+        stream: &UnixStream,
+    ) -> Result<AuthenticatedDiagnosticExportConsumer, DiagnosticPeerAdapterError> {
+        map_tokio_export_consumer(&self.assignments, stream)
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -229,6 +254,23 @@ pub fn map_tokio_peer(
         credentials.gid(),
     )?;
     Ok(AuthenticatedDiagnosticPeer { source })
+}
+
+pub fn map_tokio_export_consumer(
+    assignments: &DiagnosticPeerAssignments,
+    stream: &UnixStream,
+) -> Result<AuthenticatedDiagnosticExportConsumer, DiagnosticPeerAdapterError> {
+    let peer = map_tokio_peer(assignments, stream)?;
+    export_consumer_from_source(peer.source)
+}
+
+fn export_consumer_from_source(
+    source: DiagnosticSource,
+) -> Result<AuthenticatedDiagnosticExportConsumer, DiagnosticPeerAdapterError> {
+    if source != DiagnosticSource::PlatformBroker {
+        return Err(DiagnosticPeerAdapterError::UnexpectedExportConsumer);
+    }
+    Ok(AuthenticatedDiagnosticExportConsumer { _private: () })
 }
 
 fn map_credential_values(
@@ -436,6 +478,22 @@ mod tests {
             assignments.map_peer(KernelPeerCredentials::new(Some(1), UIDS[1], SHARED_GID,)),
             Ok(DiagnosticSource::Server)
         );
+    }
+
+    #[test]
+    fn export_consumer_token_accepts_only_the_platform_broker_role() {
+        assert!(export_consumer_from_source(DiagnosticSource::PlatformBroker).is_ok());
+        for source in [
+            DiagnosticSource::Server,
+            DiagnosticSource::VideoProxy,
+            DiagnosticSource::ControlBroker,
+            DiagnosticSource::UpdateSupervisor,
+        ] {
+            assert!(matches!(
+                export_consumer_from_source(source),
+                Err(DiagnosticPeerAdapterError::UnexpectedExportConsumer)
+            ));
+        }
     }
 
     #[test]

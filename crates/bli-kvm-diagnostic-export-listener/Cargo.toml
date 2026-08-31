@@ -1,0 +1,18 @@
+[package]
+name = "bli-kvm-diagnostic-export-listener"
+description = "Authenticated bounded sealed-window listener for Hardened BliKVM diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
+bli-kvm-diagnostic-export-protocol = { path = "../bli-kvm-diagnostic-export-protocol" }
+bli-kvm-diagnostic-peer-adapter = { path = "../bli-kvm-diagnostic-peer-adapter" }
+bli-kvm-diagnostic-window-policy = { path = "../bli-kvm-diagnostic-window-policy" }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

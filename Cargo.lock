@@ -201,6 +201,18 @@ name = "bli-kvm-diagnostic-export"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-diagnostic-export-listener"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-export",
+ "bli-kvm-diagnostic-export-protocol",
+ "bli-kvm-diagnostic-peer-adapter",
+ "bli-kvm-diagnostic-window-policy",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-export-protocol"
 version = "0.1.0"
 dependencies = [

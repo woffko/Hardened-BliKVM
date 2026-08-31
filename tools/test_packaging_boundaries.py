@@ -150,6 +150,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         collector = ROOT / "crates/bli-kvm-diagnostic-collector-policy"
         protocol = ROOT / "crates/bli-kvm-diagnostic-protocol"
         export_protocol = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
+        export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
@@ -162,6 +163,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 collector / "Cargo.toml",
                 protocol / "Cargo.toml",
                 export_protocol / "Cargo.toml",
+                export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
                 self.assertNotIn("bli-kvm-diagnostic-export", other_manifest.read_text())
@@ -188,6 +190,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
+        export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -197,7 +200,10 @@ class PackagingBoundaryTests(unittest.TestCase):
             manifest,
         )
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                export_listener / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-export-protocol", other_manifest.read_text()
                 )
@@ -226,6 +232,74 @@ class PackagingBoundaryTests(unittest.TestCase):
             "libc::",
             "unsafe {",
             "/dev/",
+            "/var/",
+        ):
+            self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_export_listener_is_exact_bounded_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-export-listener"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-export-listener"', workspace)
+        for dependency in (
+            "bli-kvm-diagnostic-export =",
+            "bli-kvm-diagnostic-export-protocol =",
+            "bli-kvm-diagnostic-peer-adapter =",
+            "bli-kvm-diagnostic-window-policy =",
+            "tokio.workspace = true",
+        ):
+            self.assertIn(dependency, manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-export-listener", other_manifest.read_text()
+                )
+        for required in (
+            "DIAGNOSTIC_EXPORT_REQUEST_TIMEOUT",
+            "DIAGNOSTIC_EXPORT_RESPONSE_TIMEOUT",
+            "DIAGNOSTIC_EXPORT_MAX_CONNECTIONS: usize = 2",
+            "DiagnosticExportConsumerAuthenticator::from_current_process()",
+            ".authenticate(stream)",
+            ".try_acquire_owned()",
+            "DIAGNOSTIC_EXPORT_REQUEST_BYTES",
+            "decode_request(&bytes)",
+            "state.sealed_window().await",
+            "state.acknowledge(instance_id, window_id).await",
+            "stream.write_all(frame.as_bytes())",
+            "JoinSet",
+            ".compare_exchange",
+        ):
+            self.assertIn(required, production)
+        self.assertLess(
+            production.index("response_for_request(state.as_ref(), request).await"),
+            production.index("stream.write_all(frame.as_bytes())"),
+        )
+        self.assertNotRegex(
+            production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticExportListener",
+        )
+        self.assertNotIn("bli-kvm-diagnostic-export-listener", builder)
+        for forbidden in (
+            "std::env",
+            "Command",
+            "Path",
+            "String",
+            "Vec<",
+            "Tcp",
+            "serde",
+            "tracing",
+            "log::",
+            "fs::",
+            "UnixListener::bind",
+            "UnixStream::connect",
+            "remove_file",
+            "println!",
+            "eprintln!",
+            "/dev/",
+            "/run/",
             "/var/",
         ):
             self.assertNotIn(forbidden, production)
@@ -450,6 +524,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
+        export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -464,6 +539,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 adapter / "Cargo.toml",
+                export_listener / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-window-policy",
@@ -546,6 +622,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
         collector = ROOT / "crates/bli-kvm-diagnostic-collector/Cargo.toml"
+        export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener/Cargo.toml"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         listener_source = (crate / "src/listener.rs").read_text()
@@ -562,17 +639,20 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(dependency, manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest not in (crate / "Cargo.toml", collector):
+            if other_manifest not in (crate / "Cargo.toml", collector, export_listener):
                 self.assertNotIn(
                     "bli-kvm-diagnostic-peer-adapter",
                     other_manifest.read_text(),
                 )
         self.assertIn("bli-kvm-diagnostic-peer-adapter", collector.read_text())
+        self.assertIn("bli-kvm-diagnostic-peer-adapter", export_listener.read_text())
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("User::from_name", source)
         self.assertIn("Group::from_name", source)
         self.assertIn(".peer_cred()", source)
         self.assertIn("pub struct AuthenticatedDiagnosticPeer", source)
+        self.assertIn("pub struct AuthenticatedDiagnosticExportConsumer", source)
+        self.assertIn("pub struct DiagnosticExportConsumerAuthenticator", source)
         self.assertIn("pub struct DiagnosticConnection", source)
         self.assertIn("pub struct DiagnosticRuntimeCore", source)
         self.assertIn("pub fn handle_frame", source)
@@ -607,6 +687,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(required, listener_production)
         for handle_type in (
             "AuthenticatedDiagnosticPeer",
+            "AuthenticatedDiagnosticExportConsumer",
             "DiagnosticConnection",
         ):
             before = production.split(f"pub struct {handle_type}", 1)[0]

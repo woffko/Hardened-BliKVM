@@ -120,6 +120,14 @@ only a typed `DiagnosticBundle` for encoding, and bounds one 16-byte request
 plus a 24-byte header and at most 8 KiB of payload. It adds no socket, consumer
 identity, persistence, API, UI, or retry behavior yet.
 
+An unlinked listener now composes that codec with the existing collector
+runtime and fixed account resolver. It authenticates only the semantic
+platform-broker role from `SO_PEERCRED`, accepts a caller-bound Unix listener,
+uses two non-waiting connection permits, and bounds one request/read and
+response/write. Snapshot and acknowledgement complete under the shared runtime
+before socket output, so stalled export I/O holds no collector state lock. No
+collector process or package links this listener yet.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.
