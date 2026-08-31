@@ -39,6 +39,9 @@ the vendor daemon beside a second GPIO owner.
 
 - ATX header-pin mapping: power 18, reset 37, power LED 36, HDD LED 41.
 - Fan header pin: 15.
+- Live metadata: chip0 offset 269 is already `output active-high [used]` by
+  consumer `sysfs`; `/sys/class/gpio/gpio269` is `out`, `active_low=0`. This
+  proves existing logical ownership, not physical fan polarity.
 - Button/activity mapping: button 12 and activity LED 32.
 - Thermal source: `/sys/class/thermal/thermal_zone0/temp`.
 - GPIO chip assumption: `/dev/gpiochip0`.

@@ -171,6 +171,13 @@ byte-identical prototype archives, and byte-identical extracted AArch64 ThinLTO
 supervisor object passed; exact hashes and the non-shipped metadata boundary are
 recorded in `baselines/fan-supervisor.md`.
 
+Checkpoint: a metadata-only H616 probe confirmed that chip0 has 288 lines and
+offset 269 is already a used legacy sysfs output (`out`, `active_low=0`). No
+line request or value read occurred. This blocks a concrete second owner until
+legacy-owner handoff and rollback are proven; logical active-high metadata does
+not replace electrical polarity/PWM/minimum-duty or thermal-soak evidence. See
+`baselines/device-fan-gpio.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

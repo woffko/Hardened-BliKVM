@@ -33,5 +33,10 @@ state. A future concrete driver still needs verified polarity/frequency/duty,
 exclusive ownership, readback or stall evidence where possible, and a
 kernel/hardware maximum-cooling failsafe before any runtime linkage.
 
+The live read-only ownership baseline additionally shows that H616 chip0 offset
+269 is already a used sysfs output. A concrete driver is therefore blocked from
+requesting it until an exclusive legacy-owner handoff and rollback gate exists;
+see `baselines/device-fan-gpio.md`.
+
 Host-test and AArch64 codegen evidence is recorded in
 `baselines/fan-supervisor.md`.

@@ -66,4 +66,7 @@ other physical interaction.
 - OLED, fan, buttons, and serial switch;
 - RTC calibration, drift, battery retention, alarm/wakeup, and clock-write
   direction; read-only kernel topology is recorded separately;
+- fan GPIO electrical polarity, PWM semantics, minimum spinning duty, exclusive
+  owner handoff, stall/fault behavior and thermal soak; read-only line ownership
+  is recorded separately;
 - update interruption, recovery card, and repeated reboot tests.
