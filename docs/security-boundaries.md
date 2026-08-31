@@ -282,9 +282,18 @@ automatic. After an acknowledgement write begins, every timeout, EOF, I/O,
 oversize, malformed, wrong-operation, or wrong-binding response is delivery
 ambiguous. Cancelling a polled acknowledgement is also potentially ambiguous
 and must be reconciled by reading again, never by blindly repeating the ack.
-The client is not linked into the platform broker, owns no persistence, and
-adds no HTTP, UI, package, unit, capability, logging, or arbitrary-path surface;
-see `baselines/diagnostic-export-client.md`.
+The client is linked only by the Platform Broker's default-off
+`diagnostic-export` feature. Default builds retain inventory-only schema v1 and
+contain no export-socket literal. The unshipped feature exposes a separate
+local schema v2 only after all six UIDs/shared GID resolve distinctly, the
+current process maps to Platform Broker, and `SO_PEERCRED` maps the downstream
+peer to Server with a live PID. Root and wrong roles receive no snapshot. The
+bundle is parsed back into closed semantic records and must re-encode exactly
+before relay. There is deliberately no acknowledgement call, persistence,
+retry loop, server call site, HTTP route, UI, package, capability, or startup
+dependency. Native fail-open/read/repeat/auth/rollback evidence is in
+`baselines/device-diagnostic-broker.md`; the standalone transport evidence
+remains in `baselines/diagnostic-export-client.md`.
 
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials

@@ -86,5 +86,7 @@ evidence passed with complete rollback; see
 `../baselines/device-diagnostic-export.md`. The gate used a fixed generated
 client under the exact platform-broker UID. The later Rust client preserves the
 same exact frames, fresh-connection closure, fixed bounds, and acknowledgement
-ambiguity, but remains unlinked from the platform broker; see
-`../baselines/diagnostic-export-client.md`.
+ambiguity. A later default-off Platform Broker feature uses only `ReadSealed`,
+revalidates the canonical bundle, and exposes it over local broker schema v2 to
+the exact Server role. It never calls acknowledgement and remains absent from
+the default bundle and HTTP/UI; see `../baselines/device-diagnostic-broker.md`.

@@ -113,3 +113,10 @@ The next gate must link the client only into the unshipped platform broker,
 preserve acknowledgement ambiguity without persistence or HTTP/UI, and prove
 the exact native route under reversible H616 staging before a persistence layer
 is designed.
+
+Final source `3461d77` subsequently added that integration behind a default-off
+Platform Broker feature. It does not change the standalone client's transport
+contract. The feature uses reads only, has a separate local schema v2 and exact
+Server peer authorization, and passed reversible H616 evidence in
+`device-diagnostic-broker.md`. Acknowledgement remains unavailable until
+durable persistence exists.

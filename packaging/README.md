@@ -66,8 +66,14 @@ gate but remains deliberately outside the bundle.
 The separate Rust export client is also absent from every shipped manifest and
 binary. It accepts no configurable path or timeout, creates no files, opens one
 fresh fixed-socket connection per operation, and never retries a read or
-acknowledgement automatically. It remains a source-only boundary until a
-separate platform-broker integration gate is accepted.
+acknowledgement automatically. Its accepted Platform Broker integration now
+exists only behind default-off feature
+`diagnostic-export`. `build-prototype-bundle.sh` enables no such feature: its
+broker binary contains no export-socket literal and schema v1 remains
+inventory-only. The separately built schema-v2 feature binary has no install
+unit and passed a transient H616 gate, but is not copied into the bundle. It can
+read only for the exact Server peer and has no acknowledgement, persistence,
+server/HTTP/UI call site, retry, or advertised capability.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

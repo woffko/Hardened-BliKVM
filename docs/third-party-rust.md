@@ -115,6 +115,12 @@ locked metadata is 159 total, 51 workspace, and 108 external packages with no
 missing external license expression. The refreshed 1,233-advisory RustSec scan
 accepted the exact graph at source `3f1984d`.
 
+The default-off Platform Broker diagnostic route reuses only existing workspace
+crates plus the already locked nix/Tokio/Serde graph. It adds no workspace or
+external package: locked metadata remains 159 total, 51 workspace, and 108
+external packages with no missing external license expression. The refreshed
+1,233-advisory RustSec scan accepted the exact graph at final source `3461d77`.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

@@ -444,6 +444,22 @@ byte-identical client/protocol/export AArch64 artifacts passed. It remains
 outside the platform broker, bundle, persistence, API, UI, package, and device
 runtime; see `baselines/diagnostic-export-client.md`.
 
+Checkpoint: final source `3461d77` adds a default-off diagnostic integration
+across the broker protocol/client and Platform Broker. Inventory remains schema
+v1; the unshipped feature uses read-only schema v2 and rejects cross-version
+request/response types. It re-parses every returned bundle into the closed
+semantic model, authenticates the exact Server peer through the existing
+six-distinct-UID/shared-GID policy and `SO_PEERCRED`, maps only bounded outcomes,
+and contains no acknowledgement call. Default and all-feature host matrices
+with 140 Python tests passed. Two independent AArch64 builds produced identical
+default bundles and default/feature final ELFs; upper Serde metadata retained
+known target-root differences while every ThinLTO member matched. Live H616
+proved startup without collector, typed unavailable, two identical exact-Server
+reads, root/wrong-role denial, direct-frame equality, no acknowledgement, and
+complete rollback. The feature is absent from the prototype, server, HTTP/UI,
+capabilities, persistence, and install units; see
+`baselines/device-diagnostic-broker.md` and `api/broker-v1.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

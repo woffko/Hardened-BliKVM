@@ -140,6 +140,16 @@ mismatch-preserving and exact acknowledgement, dual-loop shutdown, and complete
 rollback; see `baselines/device-diagnostic-export.md` and
 `baselines/diagnostic-export-client.md`.
 
+A default-off `diagnostic-export` feature now links that client only into an
+unshipped Platform Broker variant. Default schema v1 and the prototype broker
+remain inventory-only. The feature adds local schema v2, revalidates the typed
+bundle before JSON, authenticates the exact Server peer with the existing
+six-UID/shared-GID policy, and offers read/no-sealed/unavailable outcomes only.
+There is no acknowledgement path. The feature broker starts without the
+collector, and repeated reads preserve the same sealed frame. Host, independent
+AArch64, and reversible H616 evidence passed with the default bundle unchanged
+in scope; see `baselines/device-diagnostic-broker.md`.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.
