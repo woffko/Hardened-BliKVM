@@ -127,11 +127,13 @@ thermal source. Its Rust adapter uses no-follow open semantics, rejects unsafe
 metadata, malformed/oversized input, and values outside -40 through 150 degrees
 Celsius, and adds a nullable millidegree observation to inventory schema v2.
 The React interface displays the sanitized value while fan, PWM, GPIO, and all
-other board controls remain unavailable. Host gates and a reversible H616
-distinct-UID broker run passed at source commit `f13e3ea`: 20 authenticated
-inventory requests returned schema v2 and a bounded 53,927 m°C observation with
-complete cleanup. The capability is therefore runtime-verified; systemd
-sandbox and TLS Chromium rendering remain separate required gates.
+other board controls remain unavailable. At source commit `329194e`, the full
+host suite, two byte-identical AArch64 builds, a focused reversible systemd
+profile with 20 authenticated inventory requests, and TLS Chromium
+Settings/About rendering passed with complete cleanup. The capability is
+runtime-verified. Controlled missing-sensor behavior, longer observation,
+permanent packaging, and reboot persistence remain open; exact hashes and the
+separate video-gate limitation are recorded in `baselines/device-thermal.md`.
 
 ## Phase 6: Hardening and updates
 

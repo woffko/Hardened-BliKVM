@@ -42,3 +42,11 @@ account rollback, runtime systemd, TLS, and real-browser slices passed the H616 
 documented in `device-prototype.md`, `device-broker-inventory.md`, and
 `device-systemd-gate.md`, plus `device-tls-browser.md`; the hash remains a
 development checkpoint, not a firmware or release identifier.
+
+## Read-only thermal checkpoint
+
+A later byte-identical bundle pair at source commit `329194e` added the bounded
+runtime-inventory v2 temperature slice and passed its focused systemd and TLS
+Chromium gates. Exact artifact hashes, accepted behavior, rollback evidence,
+and the independent video-throughput limitation are recorded in
+`device-thermal.md`.
