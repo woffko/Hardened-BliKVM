@@ -154,8 +154,8 @@ fn ensure_bounded(bytes: &[u8]) -> Result<(), BrokerProtocolError> {
 #[cfg(test)]
 mod tests {
     use bli_kvm_core::{
-        ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RuntimeVersions,
-        ThermalObservation,
+        ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RtcObservation,
+        RuntimeVersions, ThermalObservation,
     };
 
     use super::*;
@@ -192,6 +192,7 @@ mod tests {
             power: ComponentObservation::default(),
             virtual_media: ComponentObservation::default(),
             thermal: ThermalObservation::default(),
+            rtc: RtcObservation::default(),
             power_led: None,
             janus_enabled: Some(false),
         };

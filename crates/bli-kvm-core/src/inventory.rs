@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const RUNTIME_INVENTORY_SCHEMA_VERSION: u16 = 2;
+pub const RUNTIME_INVENTORY_SCHEMA_VERSION: u16 = 3;
+
+const MIN_RTC_UNIX_SECONDS: i64 = 946_684_800;
+const MAX_RTC_UNIX_SECONDS: i64 = 4_102_444_799;
+const MAX_RTC_OFFSET_SECONDS: i64 = 315_576_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +36,14 @@ pub struct ThermalObservation {
     pub temperature_millidegrees_celsius: Option<i32>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RtcObservation {
+    pub unix_seconds: Option<i64>,
+    /// External RTC Unix seconds minus system Unix seconds.
+    pub offset_from_system_seconds: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeInventory {
@@ -44,6 +56,7 @@ pub struct RuntimeInventory {
     pub power: ComponentObservation,
     pub virtual_media: ComponentObservation,
     pub thermal: ThermalObservation,
+    pub rtc: RtcObservation,
     pub power_led: Option<bool>,
     pub janus_enabled: Option<bool>,
 }
@@ -58,6 +71,8 @@ pub enum InventoryError {
     InvalidVersion,
     #[error("runtime inventory temperature is outside the accepted range")]
     InvalidTemperature,
+    #[error("runtime inventory RTC observation is invalid")]
+    InvalidRtc,
 }
 
 impl RuntimeInventory {
@@ -91,6 +106,13 @@ impl RuntimeInventory {
         {
             return Err(InventoryError::InvalidTemperature);
         }
+        match (self.rtc.unix_seconds, self.rtc.offset_from_system_seconds) {
+            (None, None) => {}
+            (Some(unix_seconds), Some(offset))
+                if (MIN_RTC_UNIX_SECONDS..=MAX_RTC_UNIX_SECONDS).contains(&unix_seconds)
+                    && offset.unsigned_abs() <= MAX_RTC_OFFSET_SECONDS as u64 => {}
+            _ => return Err(InventoryError::InvalidRtc),
+        }
         Ok(())
     }
 }
@@ -116,6 +138,7 @@ mod tests {
             power: ComponentObservation::default(),
             virtual_media: ComponentObservation::default(),
             thermal: ThermalObservation::default(),
+            rtc: RtcObservation::default(),
             power_led: None,
             janus_enabled: Some(false),
         }
@@ -148,5 +171,19 @@ mod tests {
             inventory.validate(),
             Err(InventoryError::InvalidTemperature)
         );
+    }
+
+    #[test]
+    fn rtc_observation_is_paired_and_bounded() {
+        let mut inventory = inventory();
+        inventory.rtc.unix_seconds = Some(1_759_489_393);
+        inventory.rtc.offset_from_system_seconds = Some(-28_647_995);
+        assert_eq!(inventory.validate(), Ok(()));
+
+        inventory.rtc.offset_from_system_seconds = None;
+        assert_eq!(inventory.validate(), Err(InventoryError::InvalidRtc));
+        inventory.rtc.offset_from_system_seconds = Some(-28_647_995);
+        inventory.rtc.unix_seconds = Some(MAX_RTC_UNIX_SECONDS + 1);
+        assert_eq!(inventory.validate(), Err(InventoryError::InvalidRtc));
     }
 }

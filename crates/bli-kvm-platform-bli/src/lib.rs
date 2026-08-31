@@ -7,13 +7,18 @@
 
 mod hardware;
 mod inventory;
+mod rtc;
+mod sysfs;
 mod thermal;
 
 pub use hardware::{
     GpioLineEvidence, GpioRole, H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence,
     VENDOR_SOURCE_REVISION,
 };
-pub use inventory::{sanitize_kvmd_inventory, sanitize_kvmd_inventory_with_thermal};
+pub use inventory::{
+    BliPlatformObservations, sanitize_kvmd_inventory, sanitize_kvmd_inventory_with_observations,
+};
+pub use rtc::{RtcReadError, RtcReadout, read_h616_external_rtc};
 pub use thermal::{ThermalReadError, read_h616_temperature_millidegrees};
 
 use std::collections::BTreeMap;
@@ -34,13 +39,14 @@ impl CapabilityProvider for BliH616PikvmPlatform {
         let runtime_verified = EvidenceLevel::RuntimeVerified;
         let source_verified = EvidenceLevel::SourceVerified;
         let mut board_features = BTreeMap::new();
-        for name in ["fan", "oled", "rtc", "physical_buttons", "serial_switch"] {
+        for name in ["fan", "oled", "physical_buttons", "serial_switch"] {
             board_features.insert(
                 name.to_string(),
                 FeatureStatus::not_exposed(source_verified),
             );
         }
         board_features.insert("thermal".into(), FeatureStatus::read_only(runtime_verified));
+        board_features.insert("rtc".into(), FeatureStatus::read_only(source_verified));
 
         CapabilityManifest {
             schema_version: CAPABILITY_SCHEMA_VERSION,
@@ -150,6 +156,10 @@ mod tests {
         assert_eq!(
             manifest.board.features["fan"],
             FeatureStatus::not_exposed(EvidenceLevel::SourceVerified)
+        );
+        assert_eq!(
+            manifest.board.features["rtc"],
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified)
         );
     }
 

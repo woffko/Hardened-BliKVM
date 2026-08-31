@@ -45,6 +45,12 @@ the accepted result to -40 through 150 degrees Celsius, and exposes no source
 path or raw value. This observation does not authorize fan, PWM, GPIO, or any
 other board mutation.
 
+External RTC observation uses only fixed, read-only kernel class attributes and
+requires exact `rtc-pcf8563 0-0051` identity. It never opens `/dev/rtc1` or raw
+I2C, never registers a device, and never sets either clock. Epoch and
+RTC-minus-system offset are paired, range-bounded public facts; a missing,
+rebound, malformed, or implausible source fails to null observations.
+
 Future mutations use the separate bounded control protocol described in
 `api/control-v1.md`; they never extend the read-only inventory protocol. Typed
 control messages still require a denial-by-default runtime policy, operation

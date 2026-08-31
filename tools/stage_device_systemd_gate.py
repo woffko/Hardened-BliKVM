@@ -72,6 +72,10 @@ RUN_KEYS = {
     "no_new_privs",
     "payload_checksums",
     "rootfs_mode_after_run",
+    "rtc_capability",
+    "rtc_evidence",
+    "rtc_offset_seconds",
+    "rtc_unix_seconds",
     "runtime_profile",
     "server_caps",
     "server_host_network",
@@ -697,7 +701,7 @@ rm -f -- "$request"
 phase=inventory
 inventory_status=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output "$test_root/inventory.json" --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
 [ "$inventory_status" = 200 ]
-grep -q '"schemaVersion":2' "$test_root/inventory.json"
+grep -q '"schemaVersion":3' "$test_root/inventory.json"
 grep -q '"backend":"kvmd_transition"' "$test_root/inventory.json"
 if grep -Eqi '"(password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress)"' "$test_root/inventory.json"; then exit 1; fi
 phase=inventory-thermal
@@ -705,12 +709,24 @@ thermal_millidegrees=$(sed -n 's/.*"temperatureMillidegreesCelsius":\(-\{0,1\}[0
 printf '%s\n' "$thermal_millidegrees" | grep -Eq '^-?[0-9]+$'
 [ "$thermal_millidegrees" -ge -40000 ]
 [ "$thermal_millidegrees" -le 150000 ]
+phase=inventory-rtc
+rtc_unix_seconds=$(sed -n 's/.*"unixSeconds":\([0-9][0-9]*\).*/\1/p' "$test_root/inventory.json")
+rtc_offset_seconds=$(sed -n 's/.*"offsetFromSystemSeconds":\(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$test_root/inventory.json")
+printf '%s\n' "$rtc_unix_seconds" | grep -Eq '^[0-9]+$'
+printf '%s\n' "$rtc_offset_seconds" | grep -Eq '^-?[0-9]+$'
+[ "$rtc_unix_seconds" -ge 946684800 ]
+[ "$rtc_unix_seconds" -le 4102444799 ]
+[ "$rtc_offset_seconds" -ge -315576000 ]
+[ "$rtc_offset_seconds" -le 315576000 ]
 phase=thermal-capability
 capabilities_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/capabilities.json" --write-out '%{http_code}' "$origin/api/capabilities" 2>/dev/null)
 [ "$capabilities_status" = 200 ]
 grep -q '"thermal":{"availability":"read_only","evidence":"runtime_verified"}' "$test_root/capabilities.json"
+grep -q '"rtc":{"availability":"read_only","evidence":"source_verified"}' "$test_root/capabilities.json"
 thermal_capability=read_only
 thermal_evidence=runtime_verified
+rtc_capability=read_only
+rtc_evidence=source_verified
 count=1
 while [ "$count" -lt "$inventory_requests" ]; do
   code=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
@@ -864,13 +880,17 @@ emit setup_status "$setup_status"
 emit login_status "$login_status"
 emit capabilities_status "$capabilities_status"
 emit inventory_status "$inventory_status"
-emit inventory_schema 2
+emit inventory_schema 3
 emit inventory_backend kvmd_transition
 emit inventory_sanitized yes
 emit inventory_requests "$inventory_requests"
 emit thermal_millidegrees "$thermal_millidegrees"
 emit thermal_capability "$thermal_capability"
 emit thermal_evidence "$thermal_evidence"
+emit rtc_unix_seconds "$rtc_unix_seconds"
+emit rtc_offset_seconds "$rtc_offset_seconds"
+emit rtc_capability "$rtc_capability"
+emit rtc_evidence "$rtc_evidence"
 emit video_status "$video_status"
 emit video_content_type "$video_content_type"
 emit video_frames "$video_frames"
@@ -1067,6 +1087,15 @@ def validate_run(
     thermal = facts.get("thermal_millidegrees", "")
     if not re.fullmatch(r"-?[0-9]+", thermal) or not -40_000 <= int(thermal) <= 150_000:
         raise ValueError("systemd thermal invariant failed")
+    rtc_unix = facts.get("rtc_unix_seconds", "")
+    rtc_offset = facts.get("rtc_offset_seconds", "")
+    if (
+        not rtc_unix.isdecimal()
+        or not 946_684_800 <= int(rtc_unix) <= 4_102_444_799
+        or not re.fullmatch(r"-?[0-9]+", rtc_offset)
+        or not -315_576_000 <= int(rtc_offset) <= 315_576_000
+    ):
+        raise ValueError("systemd RTC invariant failed")
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
@@ -1094,13 +1123,17 @@ def validate_run(
         "login_status": "200",
         "capabilities_status": "200",
         "inventory_status": "200",
-        "inventory_schema": "2",
+        "inventory_schema": "3",
         "inventory_backend": "kvmd_transition",
         "inventory_sanitized": "yes",
         "inventory_requests": str(INVENTORY_REQUESTS),
         "thermal_millidegrees": thermal,
         "thermal_capability": "read_only",
         "thermal_evidence": "runtime_verified",
+        "rtc_unix_seconds": rtc_unix,
+        "rtc_offset_seconds": rtc_offset,
+        "rtc_capability": "read_only",
+        "rtc_evidence": "source_verified",
         "video_status": video_status,
         "video_content_type": video_content_type,
         "video_frames": video_frames,

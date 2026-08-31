@@ -12,7 +12,8 @@ use bli_kvm_broker_protocol::{
 };
 use bli_kvm_kvmd_client::{KvmdClientError, KvmdCredentials, KvmdReadClient};
 use bli_kvm_platform_bli::{
-    read_h616_temperature_millidegrees, sanitize_kvmd_inventory_with_thermal,
+    BliPlatformObservations, read_h616_external_rtc, read_h616_temperature_millidegrees,
+    sanitize_kvmd_inventory_with_observations,
 };
 use thiserror::Error;
 use tokio::{
@@ -139,8 +140,24 @@ async fn process_request(
                         None
                     }
                 };
+                let external_rtc = match read_h616_external_rtc() {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        eprintln!(
+                            "H616 external RTC observation failed with {}",
+                            error.class()
+                        );
+                        None
+                    }
+                };
                 BrokerReadResponse::Inventory {
-                    inventory: sanitize_kvmd_inventory_with_thermal(source, thermal),
+                    inventory: sanitize_kvmd_inventory_with_observations(
+                        source,
+                        BliPlatformObservations {
+                            temperature_millidegrees_celsius: thermal,
+                            external_rtc,
+                        },
+                    ),
                 }
             }
             Err(error) => {

@@ -55,9 +55,11 @@ class StageDeviceBrokerInventoryTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         script = broker.build_runtime_script(paths, bundle, 18081)
         self.assertIn("/api/inventory", script)
-        self.assertIn('"schemaVersion":2', script)
+        self.assertIn('"schemaVersion":3', script)
         self.assertIn("temperatureMillidegreesCelsius", script)
         self.assertIn("phase=inventory-thermal", script)
+        self.assertIn("offsetFromSystemSeconds", script)
+        self.assertIn("phase=inventory-rtc", script)
         for forbidden in (
             "/api/atx/click",
             "/api/atx/power",
@@ -79,6 +81,19 @@ class StageDeviceBrokerInventoryTests(unittest.TestCase):
             }
         )
         with self.assertRaisesRegex(ValueError, "thermal invariant"):
+            broker.validate_run(facts, "a" * 64)
+
+    def test_runtime_validator_requires_paired_bounded_rtc_observation(self) -> None:
+        facts = {key: "placeholder" for key in broker.RUN_KEYS}
+        facts.update(
+            {
+                "bundle_sha256": "a" * 64,
+                "thermal_millidegrees": "42000",
+                "rtc_unix_seconds": "4102444800",
+                "rtc_offset_seconds": "0",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "RTC invariant"):
             broker.validate_run(facts, "a" * 64)
 
     def test_failure_parser_accepts_only_allowlisted_fields(self) -> None:

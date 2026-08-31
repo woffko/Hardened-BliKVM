@@ -12,6 +12,7 @@ import { isAvailable, normalizeVideoMode } from '@/lib/capabilities.ts';
 import { removeToken } from '@/lib/cookie.ts';
 import { HARDENED_NAME } from '@/lib/hardened.ts';
 import * as storage from '@/lib/localstorage.ts';
+import { formatRtcOffsetSeconds, formatRtcUnixSeconds } from '@/lib/rtc.ts';
 import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
 import { client } from '@/lib/websocket.ts';
 import {
@@ -150,7 +151,7 @@ const AdapterPending = ({ capabilities }: { capabilities: CapabilityManifest }) 
     let cancelled = false;
     getRuntimeInventory()
       .then((response) => {
-        if (!cancelled && response.code === 0 && response.data.schemaVersion === 2) {
+        if (!cancelled && response.code === 0 && response.data.schemaVersion === 3) {
           setInventory(response.data);
         }
       })
@@ -212,6 +213,10 @@ const AdapterPending = ({ capabilities }: { capabilities: CapabilityManifest }) 
               <span>
                 {formatTemperatureMillidegrees(inventory.thermal.temperatureMillidegreesCelsius)}
               </span>
+              <span>External RTC</span>
+              <span>{formatRtcUnixSeconds(inventory.rtc.unixSeconds)}</span>
+              <span>RTC offset</span>
+              <span>{formatRtcOffsetSeconds(inventory.rtc.offsetFromSystemSeconds)}</span>
             </div>
           ) : (
             <div className="mt-2 text-neutral-500">

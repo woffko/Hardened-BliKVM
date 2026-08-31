@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { getCurrentVersion } from '@/api/application.ts';
 import { getRuntimeInventory } from '@/api/inventory.ts';
 import { formatHardenedVersion } from '@/lib/hardened.ts';
+import { formatRtcOffsetSeconds, formatRtcUnixSeconds } from '@/lib/rtc.ts';
 import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
@@ -32,7 +33,9 @@ export const Information = () => {
     let cancelled = false;
     getRuntimeInventory()
       .then((response) => {
-        if (!cancelled && response.code === 0) setInventory(response.data);
+        if (!cancelled && response.code === 0 && response.data.schemaVersion === 3) {
+          setInventory(response.data);
+        }
       })
       .catch(() => undefined);
     getCurrentVersion()
@@ -66,6 +69,11 @@ export const Information = () => {
         <InfoRow
           label="SoC temperature"
           value={formatTemperatureMillidegrees(inventory?.thermal.temperatureMillidegreesCelsius)}
+        />
+        <InfoRow label="External RTC" value={formatRtcUnixSeconds(inventory?.rtc.unixSeconds)} />
+        <InfoRow
+          label="RTC offset"
+          value={formatRtcOffsetSeconds(inventory?.rtc.offsetFromSystemSeconds)}
         />
         <InfoRow
           label={t('settings.about.application')}

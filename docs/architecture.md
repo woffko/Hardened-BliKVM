@@ -27,7 +27,8 @@ bli-platform-broker
 - minimal privileged process
 - exact device allowlist
 - transition: authenticated allowlisted KVMD Unix-socket client
-- read-only platform facts: fixed, bounded H616 thermal sysfs observation
+- read-only platform facts: fixed, bounded H616 thermal and external-RTC sysfs
+  observations
 - native: HID, USB configfs, ATX, board I/O, virtual-media LUN actions
   - credentials supplied by systemd, never by argv or the network process
 
@@ -47,6 +48,12 @@ sysfs facility. It opens one compiled path with no-follow semantics, validates
 source metadata and a bounded integer, and returns only millidegrees Celsius or
 an unavailable observation. No request field can select a path, fan, PWM, or
 GPIO target.
+
+The external-RTC adapter similarly accepts no path or clock operation. It
+requires the fixed kernel-bound PCF8563 identity before reading one bounded
+sysfs epoch and derives only RTC-minus-system offset. The root-only RTC
+character node, raw I2C, clock setting, alarm, and synchronization directions
+remain outside the broker boundary.
 
 ## Core invariants
 

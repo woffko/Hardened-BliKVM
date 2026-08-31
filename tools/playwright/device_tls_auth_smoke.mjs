@@ -9,6 +9,25 @@ assert.ok(
 );
 assert.equal(new URL(baseUrl).protocol, "https:");
 
+function formatRtcOffsetSeconds(value) {
+  if (value === 0) return "0s";
+  const sign = value < 0 ? "-" : "+";
+  let remaining = Math.abs(value);
+  const days = Math.floor(remaining / 86_400);
+  remaining %= 86_400;
+  const hours = Math.floor(remaining / 3_600);
+  remaining %= 3_600;
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const parts = [
+    days ? `${days}d` : "",
+    hours ? `${hours}h` : "",
+    minutes ? `${minutes}m` : "",
+    seconds ? `${seconds}s` : "",
+  ].filter(Boolean);
+  return `${sign}${parts.join(" ")}`;
+}
+
 let phase = "browser-launch";
 let browser = null;
 try {
@@ -134,13 +153,21 @@ try {
   });
   assert.equal(inventory.status, 200);
   assert.equal(inventory.body.code, 0);
-  assert.equal(inventory.body.data.schemaVersion, 2);
+  assert.equal(inventory.body.data.schemaVersion, 3);
   assert.equal(inventory.body.data.backend, "kvmd_transition");
   const thermalMillidegrees =
     inventory.body.data.thermal?.temperatureMillidegreesCelsius;
   assert.equal(Number.isInteger(thermalMillidegrees), true);
   assert.ok(thermalMillidegrees >= -40_000);
   assert.ok(thermalMillidegrees <= 150_000);
+  const rtcUnixSeconds = inventory.body.data.rtc?.unixSeconds;
+  const rtcOffsetSeconds = inventory.body.data.rtc?.offsetFromSystemSeconds;
+  assert.equal(Number.isInteger(rtcUnixSeconds), true);
+  assert.ok(rtcUnixSeconds >= 946_684_800);
+  assert.ok(rtcUnixSeconds <= 4_102_444_799);
+  assert.equal(Number.isInteger(rtcOffsetSeconds), true);
+  assert.ok(rtcOffsetSeconds >= -315_576_000);
+  assert.ok(rtcOffsetSeconds <= 315_576_000);
   assert.doesNotMatch(
     JSON.stringify(inventory.body.data),
     /password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress/i,
@@ -171,6 +198,14 @@ try {
     capabilities.body.data.board.features.thermal.evidence,
     "runtime_verified",
   );
+  assert.equal(
+    capabilities.body.data.board.features.rtc.availability,
+    "read_only",
+  );
+  assert.equal(
+    capabilities.body.data.board.features.rtc.evidence,
+    "source_verified",
+  );
 
   phase = "thermal-ui";
   const aboutInventoryResponse = page.waitForResponse(
@@ -182,17 +217,40 @@ try {
   await page.locator("svg.lucide-settings").first().click();
   const aboutInventory = await (await aboutInventoryResponse).json();
   assert.equal(aboutInventory.code, 0);
-  assert.equal(aboutInventory.data.schemaVersion, 2);
+  assert.equal(aboutInventory.data.schemaVersion, 3);
   const aboutThermalMillidegrees =
     aboutInventory.data.thermal?.temperatureMillidegreesCelsius;
   assert.equal(Number.isInteger(aboutThermalMillidegrees), true);
   assert.ok(aboutThermalMillidegrees >= -40_000);
   assert.ok(aboutThermalMillidegrees <= 150_000);
+  const aboutRtcUnixSeconds = aboutInventory.data.rtc?.unixSeconds;
+  const aboutRtcOffsetSeconds =
+    aboutInventory.data.rtc?.offsetFromSystemSeconds;
+  assert.equal(Number.isInteger(aboutRtcUnixSeconds), true);
+  assert.ok(aboutRtcUnixSeconds >= 946_684_800);
+  assert.ok(aboutRtcUnixSeconds <= 4_102_444_799);
+  assert.equal(Number.isInteger(aboutRtcOffsetSeconds), true);
+  assert.ok(aboutRtcOffsetSeconds >= -315_576_000);
+  assert.ok(aboutRtcOffsetSeconds <= 315_576_000);
   const thermalText = `${(aboutThermalMillidegrees / 1000).toFixed(1)} °C`;
+  const rtcText = new Date(aboutRtcUnixSeconds * 1000)
+    .toISOString()
+    .replace("T", " ")
+    .replace(".000Z", " UTC");
+  const rtcOffsetText = formatRtcOffsetSeconds(aboutRtcOffsetSeconds);
   const settingsDialog = page.getByRole("dialog");
   await settingsDialog.getByText("SoC temperature", { exact: true }).waitFor();
   assert.ok(
     (await settingsDialog.getByText(thermalText, { exact: true }).count()) >= 1,
+  );
+  await settingsDialog.getByText("External RTC", { exact: true }).waitFor();
+  assert.ok(
+    (await settingsDialog.getByText(rtcText, { exact: true }).count()) >= 1,
+  );
+  await settingsDialog.getByText("RTC offset", { exact: true }).waitFor();
+  assert.ok(
+    (await settingsDialog.getByText(rtcOffsetText, { exact: true }).count()) >=
+      1,
   );
   await page.keyboard.press("Escape");
   await settingsDialog.waitFor({ state: "hidden" });
@@ -316,12 +374,16 @@ try {
       sessionCookie: "secure-httponly-strict",
       csrfCookie: "secure-readable-strict",
       inventoryStatus: 200,
-      inventorySchema: 2,
+      inventorySchema: 3,
       inventoryBackend: "kvmd_transition",
       thermalObservation: "bounded_millidegrees",
       thermalCapability: "read_only",
       thermalEvidence: "runtime_verified",
       thermalUi: "rendered",
+      rtcObservation: "bounded_epoch_and_offset",
+      rtcCapability: "read_only",
+      rtcEvidence: "source_verified",
+      rtcUi: "rendered",
       videoCapability: "read_only",
       hidCapability: "unavailable",
       powerCapability: "unavailable",

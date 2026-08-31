@@ -1,7 +1,7 @@
 # Runtime inventory v1
 
 This is the historical inventory contract. The current prototype emits
-[`Runtime inventory v2`](inventory-v2.md); the broker framing protocol remains
+[`Runtime inventory v3`](inventory-v3.md); the broker framing protocol remains
 at version 1 because its request variants did not change.
 
 `GET /api/inventory` is authenticated and read-only. The network server sends a

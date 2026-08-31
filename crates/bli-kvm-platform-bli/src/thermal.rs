@@ -1,11 +1,8 @@
-use std::{
-    fs::OpenOptions,
-    io::Read,
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-    path::Path,
-};
+use std::path::Path;
 
 use thiserror::Error;
+
+use crate::sysfs::{BoundedSysfsReadError, read_bounded_ascii};
 
 const H616_THERMAL_PATH: &str = "/sys/class/thermal/thermal_zone0/temp";
 const MAX_TEMPERATURE_BYTES: u64 = 16;
@@ -37,42 +34,16 @@ pub fn read_h616_temperature_millidegrees() -> Result<i32, ThermalReadError> {
 }
 
 fn read_temperature(path: &Path) -> Result<i32, ThermalReadError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|error| {
-            if error.raw_os_error() == Some(libc::ELOOP) {
-                ThermalReadError::UnsafeSource
-            } else {
-                ThermalReadError::Unavailable
-            }
-        })?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| ThermalReadError::UnsafeSource)?;
-    if !metadata.is_file() || metadata.nlink() != 1 || metadata.permissions().mode() & 0o022 != 0 {
-        return Err(ThermalReadError::UnsafeSource);
-    }
-    let mut bytes = Vec::with_capacity(MAX_TEMPERATURE_BYTES as usize);
-    file.take(MAX_TEMPERATURE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ThermalReadError::Unavailable)?;
-    if bytes.is_empty() || bytes.len() as u64 > MAX_TEMPERATURE_BYTES {
-        return Err(ThermalReadError::InvalidValue);
-    }
-    if bytes.last() == Some(&b'\n') {
-        bytes.pop();
-    }
-    if bytes.last() == Some(&b'\r') {
-        bytes.pop();
-    }
-    let text = std::str::from_utf8(&bytes).map_err(|_| ThermalReadError::InvalidValue)?;
+    let text = read_bounded_ascii(path, MAX_TEMPERATURE_BYTES).map_err(|error| match error {
+        BoundedSysfsReadError::Unavailable => ThermalReadError::Unavailable,
+        BoundedSysfsReadError::UnsafeSource => ThermalReadError::UnsafeSource,
+        BoundedSysfsReadError::InvalidValue => ThermalReadError::InvalidValue,
+    })?;
     if text.is_empty()
         || text.starts_with('+')
         || text
             .strip_prefix('-')
-            .unwrap_or(text)
+            .unwrap_or(&text)
             .bytes()
             .any(|byte| !byte.is_ascii_digit())
     {
@@ -89,7 +60,10 @@ fn read_temperature(path: &Path) -> Result<i32, ThermalReadError> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::symlink};
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
 
     use tempfile::tempdir;
 

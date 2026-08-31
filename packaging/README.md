@@ -6,9 +6,9 @@ the host development build.
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group
-only to connect to `/run/kvmd/kvmd.sock`. Its additional H616 thermal input is
-one compiled, read-only sysfs path; no request can select a path or control a
-fan, PWM channel, or GPIO line.
+only to connect to `/run/kvmd/kvmd.sock`. Its additional H616 thermal and RTC
+inputs are compiled, read-only sysfs paths; no request can select a path,
+synchronize a clock, or control a fan, PWM channel, or GPIO line.
 
 `hardened-blikvm-video-proxy.service` is a second, distinct non-root identity.
 It joins the `kvmd` supplementary group only to read the existing uStreamer

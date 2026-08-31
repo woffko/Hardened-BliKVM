@@ -1,5 +1,8 @@
 # Runtime inventory v2
 
+This is the historical thermal-only inventory contract. The current prototype
+emits [`Runtime inventory v3`](inventory-v3.md); broker framing remains v1.
+
 `GET /api/inventory` is authenticated and read-only. The network server sends a
 single `inventory` request to the local platform broker and returns only the
 sanitized `RuntimeInventory` contract. Inventory schema versions are

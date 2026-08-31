@@ -72,6 +72,8 @@ RUN_KEYS = {
     "payload_checksums",
     "rootfs_mode_after_run",
     "runtime_removed",
+    "rtc_offset_seconds",
+    "rtc_unix_seconds",
     "server_caps",
     "server_gid",
     "server_groups",
@@ -582,7 +584,7 @@ if [ "$inventory_status" != 200 ]; then
   exit 1
 fi
 phase=inventory-schema
-grep -q '"schemaVersion":2' "$stage_root/inventory.json"
+grep -q '"schemaVersion":3' "$stage_root/inventory.json"
 phase=inventory-platform
 grep -q '"platformId":"bli-h616-pikvm"' "$stage_root/inventory.json"
 phase=inventory-backend
@@ -592,6 +594,15 @@ thermal_millidegrees=$(sed -n 's/.*"temperatureMillidegreesCelsius":\(-\{0,1\}[0
 printf '%s\n' "$thermal_millidegrees" | grep -Eq '^-?[0-9]+$'
 [ "$thermal_millidegrees" -ge -40000 ]
 [ "$thermal_millidegrees" -le 150000 ]
+phase=inventory-rtc
+rtc_unix_seconds=$(sed -n 's/.*"unixSeconds":\([0-9][0-9]*\).*/\1/p' "$stage_root/inventory.json")
+rtc_offset_seconds=$(sed -n 's/.*"offsetFromSystemSeconds":\(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$stage_root/inventory.json")
+printf '%s\n' "$rtc_unix_seconds" | grep -Eq '^[0-9]+$'
+printf '%s\n' "$rtc_offset_seconds" | grep -Eq '^-?[0-9]+$'
+[ "$rtc_unix_seconds" -ge 946684800 ]
+[ "$rtc_unix_seconds" -le 4102444799 ]
+[ "$rtc_offset_seconds" -ge -315576000 ]
+[ "$rtc_offset_seconds" -le 315576000 ]
 phase=inventory-sanitizer
 if grep -Eqi '"(password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress)"' "$stage_root/inventory.json"; then exit 1; fi
 phase=inventory-repeat
@@ -644,9 +655,11 @@ emit no_new_privs yes
 emit setup_status "$setup_status"
 emit login_status "$login_status"
 emit inventory_status "$inventory_status"
-emit inventory_schema 2
+emit inventory_schema 3
 emit inventory_backend kvmd_transition
 emit thermal_millidegrees "$thermal_millidegrees"
+emit rtc_unix_seconds "$rtc_unix_seconds"
+emit rtc_offset_seconds "$rtc_offset_seconds"
 emit inventory_sanitized yes
 emit inventory_requests "$inventory_requests"
 emit kvmd_active_after_run active
@@ -803,6 +816,15 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
     thermal = facts.get("thermal_millidegrees", "")
     if not re.fullmatch(r"-?[0-9]+", thermal) or not -40_000 <= int(thermal) <= 150_000:
         raise ValueError("broker thermal invariant failed")
+    rtc_unix = facts.get("rtc_unix_seconds", "")
+    rtc_offset = facts.get("rtc_offset_seconds", "")
+    if (
+        not rtc_unix.isdecimal()
+        or not 946_684_800 <= int(rtc_unix) <= 4_102_444_799
+        or not re.fullmatch(r"-?[0-9]+", rtc_offset)
+        or not -315_576_000 <= int(rtc_offset) <= 315_576_000
+    ):
+        raise ValueError("broker RTC invariant failed")
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
@@ -824,9 +846,11 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "setup_status": "200",
         "login_status": "200",
         "inventory_status": "200",
-        "inventory_schema": "2",
+        "inventory_schema": "3",
         "inventory_backend": "kvmd_transition",
         "thermal_millidegrees": thermal,
+        "rtc_unix_seconds": rtc_unix,
+        "rtc_offset_seconds": rtc_offset,
         "inventory_sanitized": "yes",
         "inventory_requests": str(INVENTORY_REQUESTS),
         "kvmd_active_after_run": "active",

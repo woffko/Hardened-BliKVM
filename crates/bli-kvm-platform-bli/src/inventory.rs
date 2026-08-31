@@ -1,19 +1,27 @@
 use bli_kvm_core::{
-    ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RuntimeInventory,
-    RuntimeVersions, ThermalObservation,
+    ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RtcObservation,
+    RuntimeInventory, RuntimeVersions, ThermalObservation,
 };
 use bli_kvm_kvmd_client::KvmdInventory;
 
+use crate::RtcReadout;
+
 const PLATFORM_ID: &str = "bli-h616-pikvm";
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BliPlatformObservations {
+    pub temperature_millidegrees_celsius: Option<i32>,
+    pub external_rtc: Option<RtcReadout>,
+}
 
 /// Remove KVMD-specific structure and retain only the public runtime facts.
 pub fn sanitize_kvmd_inventory(source: KvmdInventory) -> RuntimeInventory {
-    sanitize_kvmd_inventory_with_thermal(source, None)
+    sanitize_kvmd_inventory_with_observations(source, BliPlatformObservations::default())
 }
 
-pub fn sanitize_kvmd_inventory_with_thermal(
+pub fn sanitize_kvmd_inventory_with_observations(
     source: KvmdInventory,
-    temperature_millidegrees_celsius: Option<i32>,
+    observations: BliPlatformObservations,
 ) -> RuntimeInventory {
     let inventory = RuntimeInventory {
         schema_version: RUNTIME_INVENTORY_SCHEMA_VERSION,
@@ -45,7 +53,13 @@ pub fn sanitize_kvmd_inventory_with_thermal(
             connected: source.msd.drive.connected,
         },
         thermal: ThermalObservation {
-            temperature_millidegrees_celsius,
+            temperature_millidegrees_celsius: observations.temperature_millidegrees_celsius,
+        },
+        rtc: RtcObservation {
+            unix_seconds: observations.external_rtc.map(|rtc| rtc.unix_seconds),
+            offset_from_system_seconds: observations
+                .external_rtc
+                .map(|rtc| rtc.offset_from_system_seconds),
         },
         power_led: source.atx.leds.power,
         janus_enabled: source.info.extras.janus.enabled,
@@ -116,11 +130,23 @@ mod tests {
         assert_eq!(inventory.power_led, Some(true));
         assert_eq!(inventory.janus_enabled, Some(false));
         assert_eq!(inventory.thermal.temperature_millidegrees_celsius, None);
+        assert_eq!(inventory.rtc, RtcObservation::default());
 
-        let inventory = sanitize_kvmd_inventory_with_thermal(source, Some(42_125));
+        let inventory = sanitize_kvmd_inventory_with_observations(
+            source,
+            BliPlatformObservations {
+                temperature_millidegrees_celsius: Some(42_125),
+                external_rtc: Some(RtcReadout {
+                    unix_seconds: 1_759_489_393,
+                    offset_from_system_seconds: -28_647_995,
+                }),
+            },
+        );
         assert_eq!(
             inventory.thermal.temperature_millidegrees_celsius,
             Some(42_125)
         );
+        assert_eq!(inventory.rtc.unix_seconds, Some(1_759_489_393));
+        assert_eq!(inventory.rtc.offset_from_system_seconds, Some(-28_647_995));
     }
 }
