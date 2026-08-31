@@ -173,9 +173,29 @@ try {
   );
 
   phase = "thermal-ui";
-  const thermalText = `${(thermalMillidegrees / 1000).toFixed(1)} °C`;
-  await page.getByText("SoC temperature", { exact: true }).first().waitFor();
-  assert.ok((await page.getByText(thermalText, { exact: true }).count()) >= 1);
+  const aboutInventoryResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/inventory" &&
+      response.request().method() === "GET" &&
+      response.status() === 200,
+  );
+  await page.locator("svg.lucide-settings").first().click();
+  const aboutInventory = await (await aboutInventoryResponse).json();
+  assert.equal(aboutInventory.code, 0);
+  assert.equal(aboutInventory.data.schemaVersion, 2);
+  const aboutThermalMillidegrees =
+    aboutInventory.data.thermal?.temperatureMillidegreesCelsius;
+  assert.equal(Number.isInteger(aboutThermalMillidegrees), true);
+  assert.ok(aboutThermalMillidegrees >= -40_000);
+  assert.ok(aboutThermalMillidegrees <= 150_000);
+  const thermalText = `${(aboutThermalMillidegrees / 1000).toFixed(1)} °C`;
+  const settingsDialog = page.getByRole("dialog");
+  await settingsDialog.getByText("SoC temperature", { exact: true }).waitFor();
+  assert.ok(
+    (await settingsDialog.getByText(thermalText, { exact: true }).count()) >= 1,
+  );
+  await page.keyboard.press("Escape");
+  await settingsDialog.waitFor({ state: "hidden" });
 
   phase = "password-page";
   await page.goto(`${baseUrl}/#/auth/password`, { waitUntil: "networkidle" });
