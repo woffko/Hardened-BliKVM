@@ -1,4 +1,6 @@
 use std::{
+    error::Error,
+    fmt,
     fs::{self, Permissions},
     io,
     os::unix::fs::{FileTypeExt, PermissionsExt},
@@ -14,7 +16,6 @@ use bli_kvm_diagnostic_producer_client::{
     DiagnosticReportReceipt, DiagnosticReporter, DiagnosticReporterHandle,
 };
 use bli_kvm_diagnostic_protocol::{DiagnosticEvent, RejectReason};
-use thiserror::Error;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::UnixListener,
@@ -24,16 +25,45 @@ use tokio::{
 
 use crate::{ControlBrokerConfig, ControlBrokerConfigError};
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ControlBrokerError {
-    #[error("control broker configuration is invalid")]
-    Config(#[from] ControlBrokerConfigError),
-    #[error("control broker runtime directory is invalid")]
+    Config(ControlBrokerConfigError),
     InvalidRuntimeDirectory,
-    #[error("control broker socket already exists")]
     SocketAlreadyExists,
-    #[error("control broker I/O failed")]
-    Io(#[from] io::Error),
+    Io(io::Error),
+}
+
+impl fmt::Display for ControlBrokerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Config(_) => "control broker configuration is invalid",
+            Self::InvalidRuntimeDirectory => "control broker runtime directory is invalid",
+            Self::SocketAlreadyExists => "control broker socket already exists",
+            Self::Io(_) => "control broker I/O failed",
+        })
+    }
+}
+
+impl Error for ControlBrokerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Config(error) => Some(error),
+            Self::Io(error) => Some(error),
+            Self::InvalidRuntimeDirectory | Self::SocketAlreadyExists => None,
+        }
+    }
+}
+
+impl From<ControlBrokerConfigError> for ControlBrokerError {
+    fn from(error: ControlBrokerConfigError) -> Self {
+        Self::Config(error)
+    }
+}
+
+impl From<io::Error> for ControlBrokerError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 pub async fn run(config: ControlBrokerConfig) -> Result<(), ControlBrokerError> {

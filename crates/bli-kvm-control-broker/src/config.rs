@@ -1,6 +1,4 @@
-use std::{env, ffi::OsString, path::PathBuf, time::Duration};
-
-use thiserror::Error;
+use std::{env, error::Error, ffi::OsString, fmt, path::PathBuf, time::Duration};
 
 const DEFAULT_CONTROL_SOCKET: &str = "/run/hardened-blikvm-control/control.sock";
 
@@ -11,15 +9,26 @@ pub struct ControlBrokerConfig {
     pub max_connections: usize,
 }
 
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlBrokerConfigError {
-    #[error("control broker socket path must be absolute")]
     InvalidSocketPath,
-    #[error("control broker timeout must be greater than zero")]
     InvalidTimeout,
-    #[error("control broker connection limit must be between 1 and 16")]
     InvalidConnectionLimit,
 }
+
+impl fmt::Display for ControlBrokerConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidSocketPath => "control broker socket path must be absolute",
+            Self::InvalidTimeout => "control broker timeout must be greater than zero",
+            Self::InvalidConnectionLimit => {
+                "control broker connection limit must be between 1 and 16"
+            }
+        })
+    }
+}
+
+impl Error for ControlBrokerConfigError {}
 
 impl ControlBrokerConfig {
     pub fn from_environment() -> Result<Self, ControlBrokerConfigError> {

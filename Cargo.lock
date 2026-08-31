@@ -145,7 +145,6 @@ dependencies = [
  "bli-kvm-diagnostic-producer-client",
  "bli-kvm-diagnostic-protocol",
  "tempfile",
- "thiserror",
  "tokio",
 ]
 

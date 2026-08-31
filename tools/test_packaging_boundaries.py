@@ -341,6 +341,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("bli-kvm-diagnostic-producer-client", builder)
         self.assertIn("bli-kvm-diagnostic-producer-client", control_manifest)
         self.assertIn("bli-kvm-diagnostic-protocol", control_manifest)
+        self.assertNotIn("thiserror", control_manifest)
         self.assertIn("DiagnosticReporter::start().ok()", control_production)
         self.assertIn("DiagnosticEvent::RequestRejected", control_production)
         self.assertIn("RejectReason::CapabilityDisabled", control_production)
