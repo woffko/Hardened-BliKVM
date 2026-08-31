@@ -31,7 +31,7 @@ the vendor daemon beside a second GPIO owner.
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
-| system-info/reboot/hostname/log routes | separate sanitized adapters plus guarded typed actions | unshipped policy/journal/store plus empty-only maintenance; 15 H616 `/tmp` tests and static unit verification pass, production root absent | reversible root/systemd gate, external floor, production-fs power-loss, fixed actuator, authenticated UI, update/storage/post-boot; separate hostname/log work |
+| system-info/reboot/hostname/log routes | separate sanitized adapters plus guarded typed actions | unshipped policy/journal/store and empty-only maintenance pass native plus reversible H616 exact-root init/inspect/rollback; original absence restored, actions unavailable | external floor, nonempty/power-loss/reboot persistence, fixed actuator, authenticated UI, update/storage/post-boot; separate hostname/log work |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -109,7 +109,9 @@ and exact readback, but is unprovisioned and has no accepted external floor or
 power-loss proof. Its complete store harness passed natively in an isolated
 H616 `/tmp` stage without creating the production root or changing services.
 An unshipped root-only CLI and static units now permit only empty initialization
-and empty-state inspection. All actions remain unavailable; see
+and empty-state inspection. Their H616 watchdog gate restored every persistent
+and runtime path to its original absence after both operations passed. All
+actions remain unavailable; see
 `baselines/vendor-system-control-boundary.md`,
 `baselines/system-action-policy.md`, `baselines/system-action-journal.md`,
 `baselines/system-action-store.md`, and `baselines/system-action-maintenance.md`.

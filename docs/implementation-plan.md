@@ -302,6 +302,14 @@ path. At source commit `b455f06`, two byte-identical AArch64 maintenance
 binaries/rlibs plus lower-layer rlibs and prototype archives passed. No H616
 production root was created; see `baselines/system-action-maintenance.md`.
 
+Checkpoint: the exact maintenance binary, runtime units and tmpfiles source
+then passed a ten-minute-watchdog H616 gate. Empty generation one initialized
+and inspected under systemd; two canonical copies matched. Marker/hash/metadata
+rollback restored the original absence of production root, binary parent,
+binary, runtime units, stage and watchdog while rootfs stayed read-write and
+KVMD stayed active. External floor, nonempty state, power cut and every system
+action remain unaccepted; see `baselines/system-action-maintenance.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

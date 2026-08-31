@@ -88,3 +88,42 @@ only an empty store under systemd confinement, then removes every created path
 and proves the original absence plus unchanged services/rootfs mode. Even that
 will not establish an external rollback floor, power-cut durability, or system
 action eligibility.
+
+## Reversible H616 production-root gate
+
+The exact 441,928-byte AArch64 maintenance static PIE from source commit
+`b455f06df08c56061eeaea0d888be7b4b5fdd3c3` has SHA-256:
+
+`a323032a149d5bb17c8632141ce4f41607465bb29b9d5c2b05663f32ddfd57a2`
+
+The rollback-gated device orchestration tool was committed at `761bab5` and
+passed nine focused shell/parser/rollback tests plus the full 111-test Python
+gate before SSH. It uploaded only the exact binary, two source units and
+tmpfiles declaration into a marker-protected `/tmp` stage. A ten-minute
+transient systemd rollback timer was active before the first persistent write.
+
+Preflight proved that the production root, maintenance binary parent/binary,
+runtime units, stage and watchdog were absent; rootfs was read-write and the
+existing KVMD services were active. The test then:
+
+- installed the exact maintenance binary and runtime-only unit copies;
+- created the exact root:root mode-0700 production directory through the
+  source tmpfiles declaration;
+- ran confined `initialize-empty` successfully;
+- verified two equal, root-owned, single-link, 2,076-byte mode-0600 copies at
+  empty generation one;
+- ran confined `inspect-empty` successfully;
+- invoked the marker/hash/metadata-gated rollback before the watchdog deadline.
+
+The separate final-state check proved that the production root, binary parent,
+binary, both runtime units and remote stage returned to their original absent
+state; the watchdog timer/service were inactive, rootfs remained read-write,
+and both KVMD services remained active. The local hash-named binary snapshot
+was removed after the mode-0600 private receipt was validated. The receipt is
+Git-ignored and contains no routing, credential, hostname, address, serial or
+other device identity.
+
+This accepts reversible empty provisioning and inspection on the current H616
+production filesystem under the source confinement. It does not accept an
+external rollback floor, nonempty journal state, repair, power interruption,
+reboot/shutdown execution, actuator wiring, packaging or reboot persistence.

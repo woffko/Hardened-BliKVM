@@ -63,4 +63,5 @@ system-action-accepted or connected to a privileged adapter, and none
 authorizes reboot, shutdown, hostname, service, filesystem, log, or clock
 actions. The unshipped maintenance boundary adds only empty initialization and
 empty-state inspection under static confined units; see
-`system-action-maintenance.md`.
+`system-action-maintenance.md`. Its reversible H616 test restored the original
+absence after both operations; no system action was introduced.
