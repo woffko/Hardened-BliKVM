@@ -10,9 +10,9 @@ use std::{
 #[cfg(feature = "diagnostic-export")]
 use bli_kvm_broker_protocol::BrokerDiagnosticSnapshot;
 use bli_kvm_broker_protocol::{
-    BROKER_SCHEMA_VERSION, BrokerErrorCode, BrokerReadRequest, BrokerReadResponse,
-    BrokerRequestEnvelope, BrokerResponseEnvelope, MAX_BROKER_MESSAGE_BYTES, decode_request,
-    encode_frame, encode_response,
+    BrokerErrorCode, BrokerReadRequest, BrokerReadResponse, BrokerRequestEnvelope,
+    BrokerResponseEnvelope, MAX_BROKER_MESSAGE_BYTES, decode_request, encode_frame,
+    encode_response,
 };
 #[cfg(feature = "diagnostic-export")]
 use bli_kvm_diagnostic_export_client::{
@@ -376,7 +376,7 @@ async fn process_request(
         BrokerReadRequest::Inventory => inventory_response(client, credentials).await,
     };
     BrokerResponseEnvelope {
-        schema_version: BROKER_SCHEMA_VERSION,
+        schema_version: request.schema_version,
         request_id: request.request_id,
         response,
     }
@@ -412,7 +412,7 @@ where
         },
     };
     BrokerResponseEnvelope {
-        schema_version: BROKER_SCHEMA_VERSION,
+        schema_version: request.schema_version,
         request_id: request.request_id,
         response,
     }
@@ -598,7 +598,7 @@ mod tests {
     #[cfg(feature = "diagnostic-export")]
     fn diagnostic_request(request_id: u64) -> BrokerRequestEnvelope {
         BrokerRequestEnvelope {
-            schema_version: BROKER_SCHEMA_VERSION,
+            schema_version: bli_kvm_broker_protocol::BROKER_DIAGNOSTIC_SCHEMA_VERSION,
             request_id,
             request: BrokerReadRequest::Diagnostics,
         }

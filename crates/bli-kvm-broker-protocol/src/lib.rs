@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const BROKER_SCHEMA_VERSION: u16 = 1;
+#[cfg(feature = "diagnostic-export")]
+pub const BROKER_DIAGNOSTIC_SCHEMA_VERSION: u16 = 2;
 pub const MAX_BROKER_MESSAGE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,31 +203,19 @@ pub fn decode_request(bytes: &[u8]) -> Result<BrokerRequestEnvelope, BrokerProto
     ensure_bounded(bytes)?;
     let request: BrokerRequestEnvelope =
         serde_json::from_slice(bytes).map_err(|_| BrokerProtocolError::InvalidJson)?;
-    if request.schema_version != BROKER_SCHEMA_VERSION {
-        return Err(BrokerProtocolError::UnsupportedSchemaVersion(
-            request.schema_version,
-        ));
-    }
+    validate_request_version(&request)?;
     Ok(request)
 }
 
 pub fn encode_request(request: &BrokerRequestEnvelope) -> Result<Vec<u8>, BrokerProtocolError> {
-    if request.schema_version != BROKER_SCHEMA_VERSION {
-        return Err(BrokerProtocolError::UnsupportedSchemaVersion(
-            request.schema_version,
-        ));
-    }
+    validate_request_version(request)?;
     let bytes = serde_json::to_vec(request).map_err(|_| BrokerProtocolError::InvalidJson)?;
     ensure_bounded(&bytes)?;
     Ok(bytes)
 }
 
 pub fn encode_response(response: &BrokerResponseEnvelope) -> Result<Vec<u8>, BrokerProtocolError> {
-    if response.schema_version != BROKER_SCHEMA_VERSION {
-        return Err(BrokerProtocolError::UnsupportedSchemaVersion(
-            response.schema_version,
-        ));
-    }
+    validate_response_version(response)?;
     validate_response(&response.response)?;
     let bytes = serde_json::to_vec(response).map_err(|_| BrokerProtocolError::InvalidJson)?;
     ensure_bounded(&bytes)?;
@@ -236,13 +226,58 @@ pub fn decode_response(bytes: &[u8]) -> Result<BrokerResponseEnvelope, BrokerPro
     ensure_bounded(bytes)?;
     let response: BrokerResponseEnvelope =
         serde_json::from_slice(bytes).map_err(|_| BrokerProtocolError::InvalidJson)?;
-    if response.schema_version != BROKER_SCHEMA_VERSION {
-        return Err(BrokerProtocolError::UnsupportedSchemaVersion(
-            response.schema_version,
-        ));
-    }
+    validate_response_version(&response)?;
     validate_response(&response.response)?;
     Ok(response)
+}
+
+fn validate_request_version(request: &BrokerRequestEnvelope) -> Result<(), BrokerProtocolError> {
+    let valid = match request.request {
+        BrokerReadRequest::Inventory => request.schema_version == BROKER_SCHEMA_VERSION,
+        #[cfg(feature = "diagnostic-export")]
+        BrokerReadRequest::Diagnostics => {
+            request.schema_version == BROKER_DIAGNOSTIC_SCHEMA_VERSION
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(BrokerProtocolError::UnsupportedSchemaVersion(
+            request.schema_version,
+        ))
+    }
+}
+
+fn validate_response_version(response: &BrokerResponseEnvelope) -> Result<(), BrokerProtocolError> {
+    let valid = match &response.response {
+        BrokerReadResponse::Inventory { .. } => response.schema_version == BROKER_SCHEMA_VERSION,
+        #[cfg(feature = "diagnostic-export")]
+        BrokerReadResponse::Diagnostics { .. } => {
+            response.schema_version == BROKER_DIAGNOSTIC_SCHEMA_VERSION
+        }
+        BrokerReadResponse::Error { .. } => error_schema_supported(response.schema_version),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(BrokerProtocolError::UnsupportedSchemaVersion(
+            response.schema_version,
+        ))
+    }
+}
+
+fn error_schema_supported(schema_version: u16) -> bool {
+    if schema_version == BROKER_SCHEMA_VERSION {
+        return true;
+    }
+    #[cfg(feature = "diagnostic-export")]
+    {
+        schema_version == BROKER_DIAGNOSTIC_SCHEMA_VERSION
+    }
+    #[cfg(not(feature = "diagnostic-export"))]
+    {
+        false
+    }
 }
 
 fn validate_response(response: &BrokerReadResponse) -> Result<(), BrokerProtocolError> {
@@ -311,12 +346,26 @@ mod tests {
             decode_request(&encode_request(&request).unwrap()).unwrap(),
             request
         );
-        let diagnostics = br#"{"schemaVersion":1,"requestId":8,"request":{"type":"diagnostics"}}"#;
+        let diagnostics = br#"{"schemaVersion":2,"requestId":8,"request":{"type":"diagnostics"}}"#;
         #[cfg(feature = "diagnostic-export")]
-        assert_eq!(
-            decode_request(diagnostics).unwrap().request,
-            BrokerReadRequest::Diagnostics
-        );
+        {
+            assert_eq!(
+                decode_request(diagnostics).unwrap().request,
+                BrokerReadRequest::Diagnostics
+            );
+            assert_eq!(
+                decode_request(
+                    br#"{"schemaVersion":1,"requestId":8,"request":{"type":"diagnostics"}}"#
+                ),
+                Err(BrokerProtocolError::UnsupportedSchemaVersion(1))
+            );
+            assert_eq!(
+                decode_request(
+                    br#"{"schemaVersion":2,"requestId":8,"request":{"type":"inventory"}}"#
+                ),
+                Err(BrokerProtocolError::UnsupportedSchemaVersion(2))
+            );
+        }
         #[cfg(not(feature = "diagnostic-export"))]
         assert_eq!(
             decode_request(diagnostics),
@@ -372,7 +421,7 @@ mod tests {
         assert!(!format!("{snapshot:?}").contains("component="));
 
         let response = BrokerResponseEnvelope {
-            schema_version: BROKER_SCHEMA_VERSION,
+            schema_version: BROKER_DIAGNOSTIC_SCHEMA_VERSION,
             request_id: 9,
             response: BrokerReadResponse::Diagnostics {
                 snapshot: Some(snapshot.clone()),
@@ -380,6 +429,14 @@ mod tests {
         };
         let encoded = encode_response(&response).unwrap();
         assert_eq!(decode_response(&encoded).unwrap(), response);
+        let mut wrong_version = response.clone();
+        wrong_version.schema_version = BROKER_SCHEMA_VERSION;
+        assert_eq!(
+            encode_response(&wrong_version),
+            Err(BrokerProtocolError::UnsupportedSchemaVersion(
+                BROKER_SCHEMA_VERSION
+            ))
+        );
 
         let mut invalid: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         invalid["response"]["snapshot"]["recordCount"] = 2.into();

@@ -122,6 +122,7 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertNotIn("subprocess", client)
         self.assertNotIn("open('/", client)
         self.assertIn("BROKER_REQUEST = b'", client)
+        self.assertIn('"schemaVersion":2', client)
         self.assertIn("object_pairs_hook=strict_object", client)
         self.assertIn("broker response has trailing data", client)
 

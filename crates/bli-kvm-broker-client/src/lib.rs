@@ -5,7 +5,7 @@ use std::{
 };
 
 #[cfg(feature = "diagnostic-export")]
-use bli_kvm_broker_protocol::BrokerDiagnosticSnapshot;
+use bli_kvm_broker_protocol::{BROKER_DIAGNOSTIC_SCHEMA_VERSION, BrokerDiagnosticSnapshot};
 use bli_kvm_broker_protocol::{
     BROKER_SCHEMA_VERSION, BrokerErrorCode, BrokerProtocolError, BrokerReadRequest,
     BrokerReadResponse, BrokerRequestEnvelope, MAX_BROKER_MESSAGE_BYTES, decode_response,
@@ -108,8 +108,13 @@ impl BrokerReadClient {
         request: BrokerReadRequest,
     ) -> Result<BrokerReadResponse, BrokerClientError> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let schema_version = match request {
+            BrokerReadRequest::Inventory => BROKER_SCHEMA_VERSION,
+            #[cfg(feature = "diagnostic-export")]
+            BrokerReadRequest::Diagnostics => BROKER_DIAGNOSTIC_SCHEMA_VERSION,
+        };
         let request = BrokerRequestEnvelope {
-            schema_version: BROKER_SCHEMA_VERSION,
+            schema_version,
             request_id,
             request,
         };
@@ -232,7 +237,7 @@ mod tests {
                 BrokerDiagnosticSnapshot::from_bundle(7, 3, 1, &exporter.export().unwrap())
                     .unwrap();
             let response = BrokerResponseEnvelope {
-                schema_version: BROKER_SCHEMA_VERSION,
+                schema_version: BROKER_DIAGNOSTIC_SCHEMA_VERSION,
                 request_id: request.request_id,
                 response: BrokerReadResponse::Diagnostics {
                     snapshot: Some(snapshot),

@@ -471,7 +471,7 @@ EXPORT_MAX_PAYLOAD = 8192
 STATE_PREFIX = {(paths.client_state + '/')!r}
 SEALED_STATE = {(paths.client_state + '/sealed.bin')!r}
 BROKER_STATE = {(paths.client_state + '/broker-sealed.bin')!r}
-BROKER_REQUEST = b'{{"schemaVersion":1,"requestId":71,"request":{{"type":"diagnostics"}}}}'
+BROKER_REQUEST = b'{{"schemaVersion":2,"requestId":71,"request":{{"type":"diagnostics"}}}}'
 
 def receive_exact(stream, size):
     output = bytearray()
@@ -584,7 +584,7 @@ def broker_response(expected):
         raise RuntimeError("broker response json invalid") from error
     if set(envelope) != {{"schemaVersion", "requestId", "response"}}:
         raise RuntimeError("broker envelope fields invalid")
-    if envelope["schemaVersion"] != 1 or envelope["requestId"] != 71:
+    if envelope["schemaVersion"] != 2 or envelope["requestId"] != 71:
         raise RuntimeError("broker envelope binding invalid")
     response = envelope["response"]
     if type(response) is not dict:

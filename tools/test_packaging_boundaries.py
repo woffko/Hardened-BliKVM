@@ -454,6 +454,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(account, source)
         self.assertIn('#[cfg(feature = "diagnostic-export")]', protocol)
+        self.assertIn("BROKER_DIAGNOSTIC_SCHEMA_VERSION: u16 = 2", protocol)
         self.assertIn("Diagnostics", protocol)
         self.assertIn("DiagnosticBundle::decode", protocol)
         self.assertIn('#[cfg(feature = "diagnostic-export")]', client)
