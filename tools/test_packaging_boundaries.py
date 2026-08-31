@@ -151,6 +151,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         runtime_collector = ROOT / "crates/bli-kvm-diagnostic-collector"
         protocol = ROOT / "crates/bli-kvm-diagnostic-protocol"
         export_protocol = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
+        export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
@@ -165,6 +166,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 runtime_collector / "Cargo.toml",
                 protocol / "Cargo.toml",
                 export_protocol / "Cargo.toml",
+                export_client / "Cargo.toml",
                 export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
@@ -192,6 +194,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
+        export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
@@ -204,6 +207,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
             if other_manifest not in {
                 crate / "Cargo.toml",
+                export_client / "Cargo.toml",
                 export_listener / "Cargo.toml",
             }:
                 self.assertNotIn(
@@ -233,6 +237,70 @@ class PackagingBoundaryTests(unittest.TestCase):
             "serde",
             "libc::",
             "unsafe {",
+            "/dev/",
+            "/var/",
+        ):
+            self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_export_client_is_fixed_bounded_owned_and_unlinked(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-export-client"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-export-client"', workspace)
+        self.assertIn("bli-kvm-diagnostic-export-protocol", manifest)
+        self.assertIn("tokio.workspace = true", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-export-client", other_manifest.read_text()
+                )
+        for required in (
+            "#![forbid(unsafe_code)]",
+            '"/run/hardened-blikvm-diagnostics/export.sock"',
+            "DIAGNOSTIC_EXPORT_CONNECT_TIMEOUT",
+            "DIAGNOSTIC_EXPORT_WRITE_TIMEOUT",
+            "DIAGNOSTIC_EXPORT_READ_TIMEOUT",
+            "MAX_DIAGNOSTIC_EXPORT_PAYLOAD_BYTES",
+            "pub enum DiagnosticExportReadError",
+            "pub enum DiagnosticExportAcknowledgementError",
+            "pub struct DiagnosticExportBinding",
+            "pub struct DiagnosticSealedSnapshot",
+            "pub struct DiagnosticExportClient",
+            "pub async fn read_sealed",
+            "pub async fn acknowledge",
+            "UnixStream::connect",
+            "timeout(limits.write_timeout",
+            "timeout(limits.response_timeout",
+            "decode_response(frame.as_bytes())",
+            "DeliveryAmbiguous",
+        ):
+            self.assertIn(required, production)
+        self.assertNotRegex(
+            production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticExportClient",
+        )
+        self.assertNotIn("bli-kvm-diagnostic-export-client", builder)
+        for forbidden in (
+            "pub fn with_parts",
+            "pub fn with_timeout",
+            "pub fn with_socket",
+            "std::env",
+            "Command",
+            "std::fs",
+            "Tcp",
+            "serde",
+            "tracing",
+            "log::",
+            "println!",
+            "eprintln!",
+            "Io(",
+            "retry(",
+            "sleep(",
             "/dev/",
             "/var/",
         ):

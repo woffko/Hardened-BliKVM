@@ -1,0 +1,15 @@
+[package]
+name = "bli-kvm-diagnostic-export-client"
+description = "Fixed-path bounded sealed-window client for Hardened BliKVM diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-export-protocol = { path = "../bli-kvm-diagnostic-export-protocol" }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
