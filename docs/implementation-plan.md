@@ -366,6 +366,14 @@ export AArch64 rlib, metadata and ThinLTO pairs passed. No shipped process,
 unit, package, API/UI or capability links the client; see
 `baselines/diagnostic-producer-client.md`.
 
+Checkpoint: source `5ccd68b` adds an unlinked non-blocking reporter above the
+producer client: eight fixed slots, `try_lock` submission, typed drop receipts,
+one ordered worker, no retry, saturating semantic counters, and bounded
+drain/abort shutdown. The complete 19-test crate passed twelve repeated runs,
+the host suite with 134 Python tests, two byte-identical 4,781,022-byte
+archives, and byte-identical updated AArch64 rlib/metadata/ThinLTO pairs. No
+service or package links it; see `baselines/diagnostic-producer-reporter.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

@@ -97,6 +97,12 @@ automatically. A new explicit call may reconnect, but cannot claim whether the
 prior ambiguous event was accepted. See
 `../baselines/diagnostic-producer-client.md`.
 
+The same unshipped crate now provides a bounded reporter for callers that may
+not wait on diagnostics. It uses an eight-event fixed ring, immediate typed
+drop receipts, one ordered no-retry worker, saturating semantic counters, and a
+three-second shutdown ceiling. See
+`../baselines/diagnostic-producer-reporter.md`.
+
 Protocol-invalid frames are connection-fatal and receive no response. The
 transient runtime bounds a started partial frame and response write to five
 seconds, closes partial frames, rejects a second active peer for the same role,

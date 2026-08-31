@@ -95,3 +95,8 @@ The next gate must select one non-critical producer, define which semantic
 events it may emit and how ambiguous delivery affects its own operation, then
 prove reversible integration without making diagnostics a dependency for
 service startup or hardware behavior.
+
+Source `5ccd68b` subsequently added the first unlinked bounded reporter around
+this client without changing its transport contract or dependency graph. Its
+separate evidence and the narrowed next gate are recorded in
+`diagnostic-producer-reporter.md`.

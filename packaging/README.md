@@ -45,7 +45,10 @@ H616 gate, but remain explicitly excluded from `build-prototype-bundle.sh` and
 have no `[Install]` target. No diagnostic capability is packaged or advertised.
 The separate producer client is likewise excluded from the bundle and from all
 service manifests. It exposes no configurable path or timeout and performs no
-automatic retry after delivery becomes ambiguous.
+automatic retry after delivery becomes ambiguous. Its bounded diagnostic
+reporter is also excluded and unlinked. The reporter accepts through one fixed
+eight-event ring with non-blocking typed receipts, uses one ordered no-retry
+worker, and cannot retain process liveness during shutdown.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

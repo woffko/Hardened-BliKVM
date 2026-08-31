@@ -83,6 +83,13 @@ and no external package: locked metadata is 156 total, 48 workspace, and 108
 external packages with no missing external license expression. The refreshed
 1,233-advisory RustSec scan accepted the exact graph.
 
+The bounded diagnostic reporter added inside that same unshipped crate at
+source `5ccd68b` reuses Tokio synchronization, task, and time support already
+present in the exact lock graph. It adds no workspace or external package:
+locked metadata remains 156 total, 48 workspace, and 108 external packages
+with no missing external license expression. The refreshed 1,233-advisory
+RustSec scan accepted the unchanged graph.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

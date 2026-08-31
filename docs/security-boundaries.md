@@ -226,6 +226,11 @@ failures are definitely not sent. Once write begins, write/response failure or
 malformed response is delivery-ambiguous, clears the connection, and is never
 retried automatically. Its errors contain no path, I/O detail, frame, response,
 or identity. No shipped process links the client.
+The unlinked reporter accepts only fixed typed events into an eight-slot ring
+using `try_lock`; invalid, contended, full, and closed submissions return
+immediate drop receipts. One worker never retries client failures. Saturating
+semantic counters and bounded shutdown contain no raw or identifying data and
+cannot delay a caller or retain process liveness.
 
 The unlinked window policy keeps one live bundle and at most one sealed bundle
 awaiting exact acknowledgement. `record_count + active_sources <= 32` reserves

@@ -105,6 +105,9 @@ A separate unlinked producer client now owns the fixed collector path and one
 serialized persistent stream. It bounds connect/write/response, distinguishes
 definitely-not-sent from delivery-ambiguous failures, drops uncertain streams,
 and never retries automatically. No service currently depends on it.
+A sibling reporter adds one fixed eight-event ring, non-blocking submission,
+one ordered worker, bounded semantic counters, and a three-second shutdown
+ceiling. It also remains unlinked.
 
 ## Core invariants
 
