@@ -1,5 +1,6 @@
 use std::{
     ffi::CStr,
+    fmt,
     fs::{self, File, OpenOptions, Permissions},
     io::{Read, Seek, SeekFrom, Write},
     os::{
@@ -17,8 +18,6 @@ use bli_kvm_system_action_journal::{
     SystemActionPolicyState, plan_initialize, plan_repair, plan_update, select_copies,
     verify_written,
 };
-use thiserror::Error;
-
 pub const SYSTEM_ACTION_STORE_ROOT: &str = "/var/lib/hardened-blikvm-system-actions";
 pub const COPY_A_FILE_NAME: &str = "journal-a.bin";
 pub const COPY_B_FILE_NAME: &str = "journal-b.bin";
@@ -37,32 +36,72 @@ const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 #[cfg(test)]
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(1);
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum SystemActionStoreError {
-    #[error("system-action store root is invalid")]
     InvalidRoot,
-    #[error("system-action store root is unsafe")]
     UnsafeRoot,
-    #[error("system-action store is busy")]
     StoreBusy,
-    #[error("system-action store contains an unexpected entry")]
     UnexpectedEntry,
-    #[error("system-action journal copy {0:?} is unsafe")]
     UnsafeCopy(CopyIndex),
-    #[error("system-action temporary copy {0:?} is unsafe")]
     UnsafeTemporary(CopyIndex),
-    #[error("system-action store is already initialized")]
     AlreadyInitialized,
-    #[error("system-action store changed concurrently")]
     ConcurrentStateChange,
-    #[error("system-action journal verification failed")]
     VerificationFailed,
-    #[error("system-action journal model rejected state: {0:?}")]
     Journal(JournalError),
-    #[error("system-action store I/O failed")]
-    Io(#[from] std::io::Error),
-    #[error("injected system-action store fault")]
+    Io(std::io::Error),
     InjectedFault,
+}
+
+impl fmt::Display for SystemActionStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRoot => formatter.write_str("system-action store root is invalid"),
+            Self::UnsafeRoot => formatter.write_str("system-action store root is unsafe"),
+            Self::StoreBusy => formatter.write_str("system-action store is busy"),
+            Self::UnexpectedEntry => {
+                formatter.write_str("system-action store contains an unexpected entry")
+            }
+            Self::UnsafeCopy(index) => {
+                write!(formatter, "system-action journal copy {index:?} is unsafe")
+            }
+            Self::UnsafeTemporary(index) => {
+                write!(
+                    formatter,
+                    "system-action temporary copy {index:?} is unsafe"
+                )
+            }
+            Self::AlreadyInitialized => {
+                formatter.write_str("system-action store is already initialized")
+            }
+            Self::ConcurrentStateChange => {
+                formatter.write_str("system-action store changed concurrently")
+            }
+            Self::VerificationFailed => {
+                formatter.write_str("system-action journal verification failed")
+            }
+            Self::Journal(error) => write!(
+                formatter,
+                "system-action journal model rejected state: {error:?}"
+            ),
+            Self::Io(_) => formatter.write_str("system-action store I/O failed"),
+            Self::InjectedFault => formatter.write_str("injected system-action store fault"),
+        }
+    }
+}
+
+impl std::error::Error for SystemActionStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for SystemActionStoreError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
 }
 
 impl From<JournalError> for SystemActionStoreError {

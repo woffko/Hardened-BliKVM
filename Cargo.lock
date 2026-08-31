@@ -398,7 +398,6 @@ dependencies = [
  "bli-kvm-system-action-journal",
  "libc",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]

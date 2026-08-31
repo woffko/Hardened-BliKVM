@@ -10,7 +10,6 @@ repository.workspace = true
 [dependencies]
 bli-kvm-system-action-journal = { path = "../bli-kvm-system-action-journal" }
 libc.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
