@@ -185,6 +185,12 @@ blocks native second owners and preserves physical Power/Reset, polarity,
 debounce, fan-safety and owner-handoff gates. See
 `baselines/device-gpio-profile.md`.
 
+Checkpoint: a metadata-only serial topology probe found no ttyUSB0-3 device and
+no serial/by-id directory. It opened no TTY, changed no termios and read/wrote
+no frames or unique identifier. The serial-switch capability remains hidden;
+only a pure bounded protocol codec can proceed without deliberately attached
+hardware. See `baselines/device-serial-topology.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

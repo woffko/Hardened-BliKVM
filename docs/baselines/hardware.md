@@ -50,6 +50,11 @@ and ATX LED lines are owned by KVMD, activity LED and fan by legacy sysfs, and
 the display-button line is unused input. This is ownership evidence, not
 physical polarity or behavior acceptance.
 
+A separate metadata-only serial probe found no ttyUSB0-3 class/device nodes and
+no serial/by-id directory. It opened no TTY and read no unique identifiers or
+frames. Serial-switch runtime support remains absent until deliberate hardware
+is attached and physically gated.
+
 ## Field-image evidence
 
 - MBR partition layout with separate root, data, and virtual-media roles.

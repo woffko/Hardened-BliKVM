@@ -30,6 +30,7 @@ python3 -m unittest \
   tools/test_capture_ssh_preflight.py \
   tools/test_capture_rtc_baseline.py \
   tools/test_capture_gpio_line_baseline.py \
+  tools/test_capture_serial_topology.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
@@ -42,6 +43,7 @@ python3 -m py_compile \
   tools/capture_ssh_preflight.py \
   tools/capture_rtc_baseline.py \
   tools/capture_gpio_line_baseline.py \
+  tools/capture_serial_topology.py \
   tools/stage_device_broker_inventory.py \
   tools/stage_device_prototype.py \
   tools/stage_device_systemd_gate.py \
@@ -55,6 +57,7 @@ python3 -m py_compile \
   tools/test_capture_ssh_preflight.py \
   tools/test_capture_rtc_baseline.py \
   tools/test_capture_gpio_line_baseline.py \
+  tools/test_capture_serial_topology.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
@@ -70,6 +73,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_ssh_preflight.py \
     tools/capture_rtc_baseline.py \
     tools/capture_gpio_line_baseline.py \
+    tools/capture_serial_topology.py \
     tools/stage_device_broker_inventory.py \
     tools/stage_device_prototype.py \
     tools/stage_device_systemd_gate.py \
@@ -83,6 +87,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_ssh_preflight.py \
     tools/test_capture_rtc_baseline.py \
     tools/test_capture_gpio_line_baseline.py \
+    tools/test_capture_serial_topology.py \
     tools/test_stage_device_broker_inventory.py \
     tools/test_stage_device_prototype.py \
     tools/test_stage_device_systemd_gate.py \

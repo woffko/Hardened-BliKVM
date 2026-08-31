@@ -28,7 +28,7 @@ the vendor daemon beside a second GPIO owner.
 | fan loop and thermal sysfs | pure policy plus latched supervisor, then a separate driver | mock supervisor only; no wiring | pin/polarity/frequency/minimum-duty, crash/sensor/stall failure and PWM/temperature soak |
 | button/activity LED loop | debounced input/output driver | observe input only | press duration, bounce, reboot, polarity |
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
-| serial KVM switch | framed serial protocol adapter | enumerate only | udev identity, framing, timeout, four-port matrix |
+| serial KVM switch | bounded pure frame codec before any TTY adapter | metadata only; current ttyUSB topology absent | reviewed non-unique identity/routing, framing, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | bounded I2C/SPI display worker | disabled | model/address, bus contention, display timeout |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
@@ -58,6 +58,10 @@ KVMD owns Power/Reset and both ATX LED inputs; legacy sysfs owns activity LED
 and fan outputs; display-button offset 257 is unused input. No line value was
 read. These facts block concurrent ownership but do not establish electrical
 polarity or physical behavior.
+
+The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
+serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and
+frame reads/writes are not acceptable discovery mechanisms.
 
 ## Broker invariants
 
