@@ -179,3 +179,8 @@ This accepts the code path only on the device's executable temporary
 filesystem. It does not prove the uncreated production root, an external
 rollback floor, systemd confinement, storage-controller persistence, sudden
 power loss, reboot/shutdown execution, or post-boot recovery.
+
+A subsequent unshipped maintenance CLI plus static tmpfiles/systemd templates
+now constrain provisioning to empty generation one and read-only empty-state
+inspection; see `system-action-maintenance.md`. They are host-verified and
+AArch64-reproducible but have not yet created the production root on H616.

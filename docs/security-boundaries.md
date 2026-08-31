@@ -174,6 +174,13 @@ This verifies temporary-filesystem syscall behavior and cleanup only; it does
 not relax the external-floor, production-filesystem, systemd, power-loss,
 runtime-authorization, actuator, or post-boot boundaries.
 
+The unshipped store-maintenance binary accepts only empty initialization and
+empty-state inspection. Its static root-only units have no install section,
+network namespace, device or capability authority, and expose one exact
+writable path. No repair or floor override exists. Host systemd/tmpfiles checks
+and AArch64 reproducibility do not authorize production-root creation; that
+requires a separate reversible H616 gate with original-absence restoration.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

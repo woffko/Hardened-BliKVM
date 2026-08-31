@@ -61,4 +61,6 @@ host-tested metadata, lock, sync and readback semantics; see
 stage, but the production root remained absent. None is provisioned, packaged,
 system-action-accepted or connected to a privileged adapter, and none
 authorizes reboot, shutdown, hostname, service, filesystem, log, or clock
-actions.
+actions. The unshipped maintenance boundary adds only empty initialization and
+empty-state inspection under static confined units; see
+`system-action-maintenance.md`.

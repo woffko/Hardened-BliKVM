@@ -294,6 +294,14 @@ behavior only, not production provisioning, an external rollback floor,
 systemd confinement, power-cut durability or any system action. See the native
 section in `baselines/system-action-store.md`.
 
+Checkpoint: the unshipped maintenance binary now exposes only
+`initialize-empty` and `inspect-empty`; no repair, path, floor override or
+action exists. Exact mode-0700 tmpfiles and two static root-only one-shot units
+are host-verified with network/device/capability denial and one exact writable
+path. At source commit `b455f06`, two byte-identical AArch64 maintenance
+binaries/rlibs plus lower-layer rlibs and prototype archives passed. No H616
+production root was created; see `baselines/system-action-maintenance.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.
