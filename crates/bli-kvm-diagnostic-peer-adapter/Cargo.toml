@@ -1,6 +1,6 @@
 [package]
 name = "bli-kvm-diagnostic-peer-adapter"
-description = "Safe local account and Unix peer adapter for Hardened BliKVM diagnostics"
+description = "Safe local peer and transient Unix listener runtime for Hardened BliKVM diagnostics"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,4 +12,8 @@ bli-kvm-diagnostic-peer-policy = { path = "../bli-kvm-diagnostic-peer-policy" }
 bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
 bli-kvm-diagnostic-window-policy = { path = "../bli-kvm-diagnostic-window-policy" }
 nix.workspace = true
+rand_core.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

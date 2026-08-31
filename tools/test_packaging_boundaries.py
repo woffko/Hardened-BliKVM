@@ -367,13 +367,16 @@ class PackagingBoundaryTests(unittest.TestCase):
         crate = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
+        listener_source = (crate / "src/listener.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
+        listener_production = listener_source.split("#[cfg(test)]", 1)[0]
         self.assertIn('"crates/bli-kvm-diagnostic-peer-adapter"', workspace)
         for dependency in (
             'bli-kvm-diagnostic-peer-policy = { path = "../bli-kvm-diagnostic-peer-policy" }',
             'bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }',
             'bli-kvm-diagnostic-window-policy = { path = "../bli-kvm-diagnostic-window-policy" }',
             "nix.workspace = true",
+            "rand_core.workspace = true",
             "tokio.workspace = true",
         ):
             self.assertIn(dependency, manifest)
@@ -391,6 +394,35 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("pub struct DiagnosticConnection", source)
         self.assertIn("pub struct DiagnosticRuntimeCore", source)
         self.assertIn("pub fn handle_frame", source)
+        self.assertIn("pub struct DiagnosticCollectorRuntime", listener_source)
+        self.assertIn("pub fn from_current_process", listener_source)
+        self.assertIn("pub async fn serve_until", listener_source)
+        self.assertNotRegex(
+            listener_production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticCollectorRuntime",
+        )
+        self.assertNotIn("pub fn with_parts", listener_production)
+        self.assertNotIn("pub struct RuntimeLimits", listener_production)
+        for required in (
+            "UnixListener",
+            "listener.accept()",
+            "map_tokio_peer",
+            "OsRng",
+            ".try_fill_bytes",
+            "Instant::now()",
+            "Mutex<DiagnosticRuntimeCore>",
+            "read_exact",
+            "write_all",
+            "timeout(",
+            "watch::channel(false)",
+            "JoinSet",
+            ".compare_exchange",
+            "MissedTickBehavior::Delay",
+            "DIAGNOSTIC_PARTIAL_FRAME_TIMEOUT",
+            "DIAGNOSTIC_RESPONSE_WRITE_TIMEOUT",
+            "DIAGNOSTIC_WINDOW_TICK_INTERVAL",
+        ):
+            self.assertIn(required, listener_production)
         for handle_type in (
             "AuthenticatedDiagnosticPeer",
             "DiagnosticConnection",
@@ -419,6 +451,31 @@ class PackagingBoundaryTests(unittest.TestCase):
             "/var/",
         ):
             self.assertNotIn(forbidden, production)
+        for forbidden in (
+            "unsafe {",
+            "libc::",
+            "std::env",
+            "Command",
+            "Path",
+            "String",
+            "Vec<",
+            "format!",
+            "SystemTime",
+            "Tcp",
+            "serde",
+            "tracing",
+            "log::",
+            "fs::",
+            "UnixListener::bind",
+            "UnixStream::connect",
+            "remove_file",
+            "println!",
+            "eprintln!",
+            "/dev/",
+            "/run/",
+            "/var/",
+        ):
+            self.assertNotIn(forbidden, listener_production)
 
     def test_system_action_policy_is_pure_no_std_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()

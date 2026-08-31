@@ -196,6 +196,8 @@ dependencies = [
  "bli-kvm-diagnostic-protocol",
  "bli-kvm-diagnostic-window-policy",
  "nix",
+ "rand_core",
+ "tempfile",
  "tokio",
 ]
 

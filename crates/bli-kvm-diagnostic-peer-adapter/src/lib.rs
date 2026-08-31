@@ -2,10 +2,19 @@
 
 //! Safe fixed-name account resolution and connection-bound peer mapping.
 //!
-//! This crate has no listener, path, configuration, environment, logging,
-//! persistence, or process runtime. It resolves seven compile-time names,
-//! validates the current collector UID, reads credentials only through Tokio's
-//! safe `UnixStream::peer_cred`, and composes an in-memory frame/window core.
+//! This crate has no socket path, configuration, environment, logging,
+//! persistence, service, or shipped process. It resolves seven compile-time
+//! names, validates the current collector UID, reads credentials only through
+//! Tokio's safe `UnixStream::peer_cred`, and composes an in-memory frame/window
+//! core. A transient module accepts a caller-owned pre-bound Unix listener and
+//! owns monotonic time, bounded frame I/O, and graceful connection cleanup.
+
+mod listener;
+
+pub use listener::{
+    DIAGNOSTIC_PARTIAL_FRAME_TIMEOUT, DIAGNOSTIC_RESPONSE_WRITE_TIMEOUT,
+    DIAGNOSTIC_WINDOW_TICK_INTERVAL, DiagnosticCollectorRuntime, DiagnosticListenerError,
+};
 
 use bli_kvm_diagnostic_peer_policy::{
     DiagnosticAccount, DiagnosticPeerAssignments, DiagnosticPeerConfigError, DiagnosticPeerError,
