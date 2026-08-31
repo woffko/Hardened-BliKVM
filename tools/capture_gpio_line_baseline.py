@@ -18,7 +18,8 @@ from tools import stage_device_prototype as prototype
 
 
 MAX_OUTPUT_BYTES = 16 * 1024
-PROFILE_OFFSETS = (228, 272, 234, 233, 257, 261, 269)
+SCHEMA_VERSION = 2
+PROFILE_OFFSETS = (228, 272, 234, 233, 257, 261, 269, 259, 260, 262)
 LINE_FIELDS = ("status", "info", "legacy_present", "direction", "active_low", "edge")
 FACT_KEYS = {
     "architecture",
@@ -99,7 +100,7 @@ emit_legacy_line() {
     emit "line${offset}_edge" unavailable
   fi
 }
-for offset in 228 272 234 233 257 261 269; do emit_legacy_line "$offset"; done
+for offset in 228 272 234 233 257 261 269 259 260 262; do emit_legacy_line "$offset"; done
 emit_line_info() {
   offset=$1
   line_info=$(printf '%s\n' "$gpioinfo_output" | awk -v target="$offset" '
@@ -121,7 +122,7 @@ emit_line_info() {
   fi
 }
 emit_unavailable_lines() {
-  for offset in 228 272 234 233 257 261 269; do
+  for offset in 228 272 234 233 257 261 269 259 260 262; do
     emit "line${offset}_status" unavailable
     emit "line${offset}_info" unavailable
   done
@@ -138,13 +139,13 @@ if command -v gpioinfo >/dev/null 2>&1; then
     gpioinfo_rc=$?
   fi
   if [ "$gpioinfo_rc" -ne 0 ]; then
-    gpioinfo_output=$(gpioinfo -c gpiochip0 228 272 234 233 257 261 269 2>/dev/null)
+    gpioinfo_output=$(gpioinfo -c gpiochip0 228 272 234 233 257 261 269 259 260 262 2>/dev/null)
     gpioinfo_rc=$?
   fi
   set -e
   if [ "$gpioinfo_rc" -eq 0 ]; then
     emit gpioinfo_probe success
-    for offset in 228 272 234 233 257 261 269; do emit_line_info "$offset"; done
+    for offset in 228 272 234 233 257 261 269 259 260 262; do emit_line_info "$offset"; done
   else
     emit gpioinfo_probe error
     emit_unavailable_lines
@@ -343,7 +344,7 @@ def execute(options: Options) -> int:
     invoked = b"gpioinfo_available=yes\n" in result.stdout
     if result.returncode != 0:
         failed: FailedGpioReceipt = {
-            "schemaVersion": 1,
+            "schemaVersion": SCHEMA_VERSION,
             "probe": "hardened-blikvm-read-only-gpio-profile-baseline",
             "result": "failed",
             "policy": policy_receipt(invoked),
@@ -359,7 +360,7 @@ def execute(options: Options) -> int:
         facts = parse_facts(result.stdout)
     except (UnicodeError, ValueError):
         failed = {
-            "schemaVersion": 1,
+            "schemaVersion": SCHEMA_VERSION,
             "probe": "hardened-blikvm-read-only-gpio-profile-baseline",
             "result": "failed",
             "policy": policy_receipt(invoked),
@@ -372,7 +373,7 @@ def execute(options: Options) -> int:
         write_json_0600_atomic(output, failed)
         return 1
     receipt: GpioReceipt = {
-        "schemaVersion": 1,
+        "schemaVersion": SCHEMA_VERSION,
         "probe": "hardened-blikvm-read-only-gpio-profile-baseline",
         "result": "passed",
         "policy": policy_receipt(facts["gpioinfo_available"] == "yes"),

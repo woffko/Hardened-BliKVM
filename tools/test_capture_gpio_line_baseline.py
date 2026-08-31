@@ -85,6 +85,7 @@ class CaptureGpioLineBaselineTests(unittest.TestCase):
             self.assertNotIn(forbidden, gpio.REMOTE_PROBE)
 
     def test_policy_explicitly_records_metadata_only_scope(self) -> None:
+        self.assertEqual(gpio.SCHEMA_VERSION, 2)
         policy = gpio.policy_receipt(True)
         self.assertIs(policy["gpioInfoCommandInvoked"], True)
         self.assertIs(policy["lineRequestPerformed"], False)
