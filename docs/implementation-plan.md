@@ -310,6 +310,13 @@ binary, runtime units, stage and watchdog while rootfs stayed read-write and
 KVMD stayed active. External floor, nonempty state, power cut and every system
 action remain unaccepted; see `baselines/system-action-maintenance.md`.
 
+Checkpoint: pinned kernel/DTB plus live metadata show no usable TPM, TEE/OP-TEE
+or eMMC RPMB interface. Generic TPM kernel support has no bound device, TEE is
+disabled, and the single MMC block exposes no RPMB node. No device or identifier
+was read and no key/object was provisioned. A same-filesystem value is not an
+independent floor, so reboot/shutdown remain disabled; see
+`baselines/trusted-floor-topology.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

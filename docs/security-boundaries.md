@@ -188,6 +188,13 @@ separate final check restored the original absence of production/runtime paths
 while KVMD stayed active. This does not authorize nonempty state, a rollback
 floor, repair, power loss, reboot persistence or any system action.
 
+The H616 trusted-floor audit found no bound TPM, TEE/OP-TEE, or exposed eMMC
+RPMB interface. Generic TPM framework configuration is not a counter, and a
+floor stored with the redundant journal is rollbackable with it. System actions
+must remain disabled unless different verified hardware/firmware supplies an
+independent monotonic primitive plus reviewed irreversible provisioning, key
+custody, recovery and physical fault gates.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

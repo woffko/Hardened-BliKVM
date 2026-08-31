@@ -65,3 +65,7 @@ actions. The unshipped maintenance boundary adds only empty initialization and
 empty-state inspection under static confined units; see
 `system-action-maintenance.md`. Its reversible H616 test restored the original
 absence after both operations; no system action was introduced.
+
+The separate trusted-floor audit found no live TPM, TEE/OP-TEE, or RPMB
+interface despite generic TPM kernel support. No same-filesystem floor is
+accepted; see `trusted-floor-topology.md`. Reboot/shutdown stay unavailable.

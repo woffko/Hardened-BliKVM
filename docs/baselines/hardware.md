@@ -67,6 +67,13 @@ only. Addresses, MACs, SSIDs/BSSIDs, routes, resolvers, profiles, endpoints and
 credentials were not read or retained. No network command or state change
 occurred; network configuration remains unavailable.
 
+A metadata-only trusted-floor probe found no TPM or TEE device/class and no
+RPMB sysfs or device node. The kernel has generic TPM framework support, but TEE
+is disabled and one ordinary MMC block device exposes no RPMB interface. No
+device was opened and no identifier or key was read/provisioned. This hardware
+currently supplies no accepted external rollback floor; see
+`trusted-floor-topology.md`.
+
 ## Field-image evidence
 
 - MBR partition layout with separate root, data, and virtual-media roles.
