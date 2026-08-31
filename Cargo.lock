@@ -142,6 +142,8 @@ dependencies = [
  "bli-kvm-control-client",
  "bli-kvm-control-protocol",
  "bli-kvm-core",
+ "bli-kvm-diagnostic-producer-client",
+ "bli-kvm-diagnostic-protocol",
  "tempfile",
  "thiserror",
  "tokio",

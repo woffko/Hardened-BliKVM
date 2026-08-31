@@ -181,12 +181,15 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, production)
 
-    def test_diagnostic_protocol_is_fixed_no_std_and_unlinked(self) -> None:
+    def test_diagnostic_protocol_is_fixed_no_std_and_linked_only_to_control_broker(
+        self,
+    ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-protocol"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
         producer = ROOT / "crates/bli-kvm-diagnostic-producer-client"
+        control_broker = ROOT / "crates/bli-kvm-control-broker"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -201,6 +204,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 window / "Cargo.toml",
                 adapter / "Cargo.toml",
                 producer / "Cargo.toml",
+                control_broker / "Cargo.toml",
             }:
                 self.assertNotIn("bli-kvm-diagnostic-protocol", other_manifest.read_text())
         self.assertIn("#![no_std]", source)
@@ -225,7 +229,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, production)
 
-    def test_diagnostic_producer_client_is_fixed_bounded_and_unlinked(self) -> None:
+    def test_diagnostic_producer_client_is_fixed_bounded_and_control_broker_only(
+        self,
+    ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-producer-client"
         manifest = (crate / "Cargo.toml").read_text()
@@ -233,6 +239,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         reporter_source = (crate / "src/reporter.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
         reporter_production = reporter_source.split("#[cfg(test)]", 1)[0]
+        control_broker = ROOT / "crates/bli-kvm-control-broker"
+        control_manifest = (control_broker / "Cargo.toml").read_text()
+        control_source = (control_broker / "src/server.rs").read_text()
+        control_production = control_source.split("#[cfg(test)]", 1)[0]
         collector = (
             ROOT / "crates/bli-kvm-diagnostic-collector/src/lib.rs"
         ).read_text()
@@ -241,7 +251,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("bli-kvm-diagnostic-protocol", manifest)
         self.assertIn("tokio.workspace = true", manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                control_broker / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-producer-client = {",
                     other_manifest.read_text(),
@@ -326,6 +339,18 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, reporter_production)
         self.assertNotIn("bli-kvm-diagnostic-producer-client", builder)
+        self.assertIn("bli-kvm-diagnostic-producer-client", control_manifest)
+        self.assertIn("bli-kvm-diagnostic-protocol", control_manifest)
+        self.assertIn("DiagnosticReporter::start().ok()", control_production)
+        self.assertIn("DiagnosticEvent::RequestRejected", control_production)
+        self.assertIn("RejectReason::CapabilityDisabled", control_production)
+        self.assertIn("let _ = diagnostics.try_report", control_production)
+        self.assertLess(
+            control_production.index("stream.write_all"),
+            control_production.index("let _ = diagnostics.try_report"),
+        )
+        for forbidden in (".snapshot()", ".shutdown().await", "DiagnosticReporterSnapshot"):
+            self.assertNotIn(forbidden, control_production)
 
     def test_diagnostic_collector_policy_has_fixed_pure_sources_and_is_unlinked(
         self,
@@ -892,6 +917,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("SupplementaryGroups=kvmd", unit)
         self.assertNotIn("LoadCredential", unit)
         self.assertNotIn("/run/kvmd", unit)
+        self.assertNotIn("hardened-blikvm-diagnostic-collector", unit)
 
     def test_prototype_builder_includes_templates_but_not_tls_keys(self) -> None:
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()

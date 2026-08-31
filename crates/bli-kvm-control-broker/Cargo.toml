@@ -9,6 +9,8 @@ repository.workspace = true
 
 [dependencies]
 bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
+bli-kvm-diagnostic-producer-client = { path = "../bli-kvm-diagnostic-producer-client" }
+bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
 thiserror.workspace = true
 tokio.workspace = true
 
