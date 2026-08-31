@@ -1,0 +1,8 @@
+[package]
+name = "bli-kvm-system-action-policy"
+description = "Pure fail-closed reboot and shutdown policy for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true

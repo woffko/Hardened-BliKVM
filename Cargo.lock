@@ -380,6 +380,10 @@ name = "bli-kvm-st7789-model"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-system-action-policy"
+version = "0.1.0"
+
+[[package]]
 name = "bli-kvm-system-boot-control"
 version = "0.1.0"
 dependencies = [
