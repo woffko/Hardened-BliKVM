@@ -266,7 +266,11 @@ one validated runtime directory and shares one runtime between producer and
 export loops. Partial second-socket setup drops the first inode-bound owner;
 completion or panic of either task broadcasts shutdown to the other, and both
 are joined before cleanup. Persistence and consumer acknowledgement policy are
-still absent.
+still absent. The reversible H616 gate accepted exact platform-broker identity,
+wrong-role/root rejection, two-permit pressure with concurrent producer
+progress, repeatable snapshot/mismatch/exact-ack behavior, bounded partial I/O,
+dual shutdown, and complete restoration. It used a generated client, not a
+product consumer; see `baselines/device-diagnostic-export.md`.
 
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials

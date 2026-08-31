@@ -81,5 +81,7 @@ drops excess connections without waiting, bounds request reads to two seconds
 and response writes to five seconds, and closes after one request/response. It
 clones or acknowledges collector state before response I/O, so a stalled
 consumer holds no collector mutex. Dual-socket collector host/AArch64/device
-evidence remains pending; standalone listener host/AArch64 evidence is in
-`../baselines/diagnostic-export-listener.md`.
+evidence passed with complete rollback; see
+`../baselines/device-diagnostic-export.md`. The gate used a fixed generated
+client under the exact platform-broker UID; a Rust client and product route do
+not exist yet.

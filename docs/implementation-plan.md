@@ -424,7 +424,11 @@ either task broadcasts shutdown through a drop guard; both tasks are joined
 before exact inode cleanup. Five collector tests cover dual-socket modes,
 partial-bind rollback, replacement refusal, shutdown broadcast including
 unwind, and typed task/runtime failure mapping. No bundle, client, persistence,
-API/UI, or device acceptance exists yet.
+API/UI, or product capability exists. Gate source `a17b867` plus hardened final
+source `437b65f` passed the full host matrix, two byte-identical 4,796,918-byte
+archives, an identical 715,032-byte collector, all export-stack rlib pairs, and
+the reversible H616 exact-consumer/pressure/repeat/mismatch/ack/shutdown matrix
+with complete rollback; see `baselines/device-diagnostic-export.md`.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

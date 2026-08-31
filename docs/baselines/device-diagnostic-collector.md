@@ -133,3 +133,7 @@ collector binary and added the canonical control-broker rejection event. The
 real collector accepted `RequestRejected(CapabilityDisabled)` from the exact
 `hardened-blikvm-control` identity before all account, runtime, binary, unit,
 watchdog, and stage state was restored. See `device-diagnostic-control.md`.
+
+Final checkpoint `437b65f` adds the authenticated `export.sock` beside the
+producer socket and repeats the complete rollback with sealed-window read/ack
+coverage; see `device-diagnostic-export.md`.

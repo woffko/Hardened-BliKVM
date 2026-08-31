@@ -101,4 +101,5 @@ platform-broker routing, HTTP, and UI remain later gates.
 
 The unshipped collector subsequently linked this listener and added the fixed
 second socket. That process-level source is tracked separately and does not
-change the standalone evidence above.
+change the standalone evidence above. Its reversible H616 acceptance is in
+`device-diagnostic-export.md`.

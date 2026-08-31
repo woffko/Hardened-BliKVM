@@ -130,7 +130,10 @@ shipped package links this listener. The unshipped collector now binds fixed
 `collector.sock` and `export.sock` paths atomically and runs both loops over one
 shared runtime. A drop guard broadcasts shutdown if either task returns or
 panics; both tasks are joined before inode-bound socket cleanup. No export
-client exists.
+client exists. The reversible H616 gate accepted exact consumer identity,
+connection pressure with producer progress, repeatable sealed reads,
+mismatch-preserving and exact acknowledgement, dual-loop shutdown, and complete
+rollback; see `baselines/device-diagnostic-export.md`.
 
 ## Core invariants
 

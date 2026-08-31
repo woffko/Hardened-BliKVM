@@ -61,7 +61,8 @@ excluded from the prototype binary set. The unshipped collector now links it
 and owns a second fixed `export.sock`, but the collector binary/unit/sysusers
 fragment remain excluded from `build-prototype-bundle.sh`; no client, install
 target, ordering dependency, persistence, API, UI, or advertised export
-capability exists.
+capability exists. The dual-socket collector passed a reversible native H616
+gate but remains deliberately outside the bundle.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the
