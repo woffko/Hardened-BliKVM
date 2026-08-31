@@ -220,17 +220,23 @@ binding must use kernel `SO_PEERCRED` against five exact resolved non-root UIDs;
 group access alone is insufficient. A producer waits for acceptance before its
 next frame, preventing hard backpressure from looking like success.
 
-The unlinked Rust producer client uses only the fixed collector socket and
+The Rust producer client uses only the fixed collector socket and
 serializes one frame/response at a time. Invalid local events and connect
 failures are definitely not sent. Once write begins, write/response failure or
 malformed response is delivery-ambiguous, clears the connection, and is never
 retried automatically. Its errors contain no path, I/O detail, frame, response,
-or identity. No shipped process links the client.
-The unlinked reporter accepts only fixed typed events into an eight-slot ring
+or identity. Only the denial-only control broker links it.
+The reporter accepts only fixed typed events into an eight-slot ring
 using `try_lock`; invalid, contended, full, and closed submissions return
 immediate drop receipts. One worker never retries client failures. Saturating
 semantic counters and bounded shutdown contain no raw or identifying data and
-cannot delay a caller or retain process liveness.
+cannot delay a caller or retain process liveness. The control broker attempts
+one fixed capability-disabled rejection event only after its response write,
+ignores the receipt, starts without diagnostics on reporter-construction
+failure, and neither observes counters nor awaits reporter shutdown. Collector
+outage, delivery ambiguity, queue pressure, and worker failure therefore have
+no return path into the control decision. Native H616 integration remains a
+separate reversible gate.
 
 The unlinked window policy keeps one live bundle and at most one sealed bundle
 awaiting exact acknowledgement. `record_count + active_sources <= 32` reserves

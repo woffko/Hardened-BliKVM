@@ -77,7 +77,7 @@ external, with no missing external license expression. The refreshed
 1,233-advisory RustSec scan accepted the exact graph. The collector and its
 templates remain outside the prototype archive.
 
-The unlinked diagnostic producer client reuses only the existing Tokio and
+The diagnostic producer client reuses only the existing Tokio and
 diagnostic protocol/export graph. Source `49173a7` adds one workspace package
 and no external package: locked metadata is 156 total, 48 workspace, and 108
 external packages with no missing external license expression. The refreshed
@@ -89,6 +89,11 @@ present in the exact lock graph. It adds no workspace or external package:
 locked metadata remains 156 total, 48 workspace, and 108 external packages
 with no missing external license expression. The refreshed 1,233-advisory
 RustSec scan accepted the unchanged graph.
+
+Control-broker integration at source `a143a75`, followed by the direct
+control-broker `thiserror` removal at `bc2e5f0`, adds no package. Locked
+metadata remains 156 total, 48 workspace, and 108 external packages. The
+refreshed 1,233-advisory RustSec scan accepted the exact graph.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 

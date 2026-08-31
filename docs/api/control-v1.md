@@ -67,7 +67,10 @@ A response is either `applied` or a fixed rejection code:
 `backend_unavailable`, `backend_rejected`, or `internal`. Backend messages,
 paths, credentials, and raw payloads are never returned.
 
-The first runtime gate for this protocol must be denial-only: all three request
-families must receive `capability_disabled`, no backend socket or device may be
-opened, and the existing read-only inventory and video paths must remain
-unchanged.
+The runtime remains denial-only: all three request families receive
+`capability_disabled`, no backend socket or device is opened, and the existing
+read-only inventory and video paths remain unchanged. After the response write,
+the broker may make one non-blocking attempt to report only the fixed semantic
+capability-disabled rejection. Queue state, collector outage, ambiguous
+delivery, or reporter shutdown cannot change or delay the control response and
+cannot enable a control capability.

@@ -89,7 +89,7 @@ committed the event and advanced state. A rejection means the event was not
 accepted and state did not advance. Pipelining is forbidden, so no producer
 request identifier or correlation field is needed.
 
-The unlinked `bli-kvm-diagnostic-producer-client` implements this exchange on
+The `bli-kvm-diagnostic-producer-client` implements this exchange on
 one serialized persistent connection to the fixed collector socket. It returns
 invalid event/connect failures as definitely not sent. Any failure after frame
 writing begins is delivery-ambiguous, discards the stream, and is never retried
@@ -97,11 +97,19 @@ automatically. A new explicit call may reconnect, but cannot claim whether the
 prior ambiguous event was accepted. See
 `../baselines/diagnostic-producer-client.md`.
 
-The same unshipped crate now provides a bounded reporter for callers that may
+The same crate provides a bounded reporter for callers that may
 not wait on diagnostics. It uses an eight-event fixed ring, immediate typed
 drop receipts, one ordered no-retry worker, saturating semantic counters, and a
 three-second shutdown ceiling. See
 `../baselines/diagnostic-producer-reporter.md`.
+
+The denial-only control broker is its first and only runtime consumer. After a
+valid request has received the exact `capability_disabled` response, the broker
+makes one best-effort `try_report` call with
+`RequestRejected(CapabilityDisabled)` and discards the receipt. Reporter startup
+failure disables only diagnostics. No diagnostic outcome can alter the control
+response, broker startup, or process lifetime. The collector remains unshipped
+and no authenticated export API exists.
 
 Protocol-invalid frames are connection-fatal and receive no response. The
 transient runtime bounds a started partial frame and response write to five

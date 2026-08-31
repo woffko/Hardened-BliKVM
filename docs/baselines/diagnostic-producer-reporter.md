@@ -82,3 +82,12 @@ checkpoint may integrate only the deny-only control broker. It must prove that
 control responses complete independently of reporter saturation, collector
 outage, ambiguous delivery, and reporter shutdown before any package or
 capability is accepted.
+
+That next source checkpoint is now implemented. Commit `a143a75` links the
+reporter only into the denial-only control broker and attempts one fixed
+capability-disabled rejection after the response write. The broker ignores all
+receipts and retains no reporter counter or shutdown await. Follow-up `bc2e5f0`
+removes its direct path-dependent error derive. The final host matrix, two
+byte-identical prototype archives and all shipped AArch64 ELF pairs passed;
+the exact device stall/queue-pressure gate remains pending and no diagnostic
+export capability is advertised.

@@ -97,17 +97,21 @@ tasks, and records graceful shutdown. A separate unshipped collector now owns
 the single fixed socket path and a hardened local-only service boundary. Its
 reversible H616 gate passed exact peer, timeout, shutdown, and restoration
 checks. No shipped package, producer integration, API, or advertised capability
-exists. Numeric assignment,
+exists at that collector checkpoint. Numeric assignment,
 credential, authenticated-peer, and connection handles intentionally expose no
 generic `Debug` output.
 
-A separate unlinked producer client now owns the fixed collector path and one
-serialized persistent stream. It bounds connect/write/response, distinguishes
-definitely-not-sent from delivery-ambiguous failures, drops uncertain streams,
-and never retries automatically. No service currently depends on it.
-A sibling reporter adds one fixed eight-event ring, non-blocking submission,
-one ordered worker, bounded semantic counters, and a three-second shutdown
-ceiling. It also remains unlinked.
+The denial-only control broker is now the sole runtime consumer of the fixed
+producer client and its reporter. It starts diagnostics best-effort, submits
+only `RequestRejected(CapabilityDisabled)` after the control response has been
+written, ignores every queue receipt, and retains the reporter owner only for
+the broker lifetime. The client still bounds connect/write/response, discards
+uncertain streams, and never retries automatically. The reporter still uses
+one fixed eight-event ring, non-blocking submission, one ordered worker,
+bounded semantic counters, and bounded abort-on-drop shutdown. No collector is
+packaged, no service dependency was added, and no diagnostic API or product
+capability is advertised. The reversible H616 integration gate remains
+pending.
 
 ## Core invariants
 

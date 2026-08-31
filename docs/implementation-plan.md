@@ -374,6 +374,18 @@ the host suite with 134 Python tests, two byte-identical 4,781,022-byte
 archives, and byte-identical updated AArch64 rlib/metadata/ThinLTO pairs. No
 service or package links it; see `baselines/diagnostic-producer-reporter.md`.
 
+Checkpoint: source `a143a75` links that reporter only into the denial-only
+control broker. One fixed capability-disabled event is attempted after the
+response write; reporter construction and every receipt are fail-open for
+diagnostics and cannot change the denial. Five focused broker tests, including
+all queue receipts and a deliberately blocked diagnostic callback, passed 20
+consecutive runs. Follow-up `bc2e5f0` removes the broker's direct path-dependent
+error derive. The full host matrix, RustSec scan, two byte-identical
+4,795,272-byte archives, all six shipped ELF pairs, and the updated broker
+ThinLTO pair passed. Only non-shipped Rust metadata remains root-dependent
+through the existing Serde/core graph. The reversible H616
+stall/queue-pressure gate is still required before device acceptance.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching
