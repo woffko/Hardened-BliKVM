@@ -7,6 +7,14 @@
 //! write has begun, any write or response failure is conservatively reported as
 //! delivery-ambiguous.
 
+mod reporter;
+
+pub use reporter::{
+    DIAGNOSTIC_REPORT_QUEUE_CAPACITY, DIAGNOSTIC_REPORTER_SHUTDOWN_TIMEOUT,
+    DiagnosticReportDropReason, DiagnosticReportReceipt, DiagnosticReporter,
+    DiagnosticReporterHandle, DiagnosticReporterSnapshot, DiagnosticReporterStartError,
+};
+
 use std::{
     error::Error,
     fmt,

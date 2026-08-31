@@ -230,7 +230,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         crate = ROOT / "crates/bli-kvm-diagnostic-producer-client"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
+        reporter_source = (crate / "src/reporter.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
+        reporter_production = reporter_source.split("#[cfg(test)]", 1)[0]
         collector = (
             ROOT / "crates/bli-kvm-diagnostic-collector/src/lib.rs"
         ).read_text()
@@ -284,6 +286,45 @@ class PackagingBoundaryTests(unittest.TestCase):
             "/var/",
         ):
             self.assertNotIn(forbidden, production)
+        for required in (
+            "DIAGNOSTIC_REPORT_QUEUE_CAPACITY: usize = 8",
+            "DIAGNOSTIC_REPORTER_SHUTDOWN_TIMEOUT",
+            "pub enum DiagnosticReportDropReason",
+            "pub enum DiagnosticReportReceipt",
+            "pub struct DiagnosticReporterSnapshot",
+            "pub struct DiagnosticReporterHandle",
+            "pub struct DiagnosticReporter",
+            "pub fn try_report",
+            ".try_lock()",
+            "[Option<DiagnosticEvent>; DIAGNOSTIC_REPORT_QUEUE_CAPACITY]",
+            "runtime.spawn",
+            "notify.notify_one()",
+            "value.saturating_add(1)",
+            "worker.abort()",
+        ):
+            self.assertIn(required, reporter_production)
+        self.assertEqual(reporter_production.count("runtime.spawn"), 1)
+        self.assertNotRegex(
+            reporter_production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticReporter(?:\s|\{)",
+        )
+        for forbidden in (
+            "tokio::sync::mpsc",
+            "Vec<",
+            "String",
+            "HashMap",
+            "Box<",
+            "std::env",
+            "Command",
+            "std::fs",
+            "println!",
+            "eprintln!",
+            "tracing",
+            "log::",
+            "/dev/",
+            "/var/",
+        ):
+            self.assertNotIn(forbidden, reporter_production)
         self.assertNotIn("bli-kvm-diagnostic-producer-client", builder)
 
     def test_diagnostic_collector_policy_has_fixed_pure_sources_and_is_unlinked(
