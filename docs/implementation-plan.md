@@ -166,7 +166,10 @@ sends changed commands only, attempts and latches maximum cooling after any
 actuator error, blocks samples while actuation is uncertain, supports explicit
 failsafe retry, and re-confirms maximum cooling on controlled shutdown. It has
 no concrete driver and makes no crash-safety claim; those remain physical
-kernel/hardware gates.
+kernel/hardware gates. At source commit `9979c77`, the full host suite, two
+byte-identical prototype archives, and byte-identical extracted AArch64 ThinLTO
+supervisor object passed; exact hashes and the non-shipped metadata boundary are
+recorded in `baselines/fan-supervisor.md`.
 
 ## Phase 6: Hardening and updates
 

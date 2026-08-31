@@ -32,3 +32,6 @@ kernel failure, watchdog reset, or power loss may leave an unknown hardware
 state. A future concrete driver still needs verified polarity/frequency/duty,
 exclusive ownership, readback or stall evidence where possible, and a
 kernel/hardware maximum-cooling failsafe before any runtime linkage.
+
+Host-test and AArch64 codegen evidence is recorded in
+`baselines/fan-supervisor.md`.

@@ -67,3 +67,12 @@ does not contain the library. Separate extraction showed byte-identical AArch64
 ThinLTO policy object code while non-shipped rlib metadata differed. Exact
 hashes and the no-runtime/no-hardware boundary are recorded in
 `fan-policy.md`.
+
+## Unlinked fan-supervisor checkpoint
+
+Source commit `9979c77` added a mock-backed, unlinked fan supervisor. Two
+independent workspace builds retained byte-identical prototype archives; the
+archive contains neither fan crate. Extracted AArch64 ThinLTO supervisor object
+code was byte-identical while rlib metadata differed. Exact hashes and the
+controlled-shutdown-versus-crash boundary are recorded in
+`fan-supervisor.md`.
