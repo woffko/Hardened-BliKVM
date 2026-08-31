@@ -66,8 +66,18 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         client = gate.build_client(self.paths())
         compile(client, "generated-diagnostic-client.py", "exec")
         self.assertIn("READY = bytes((1, 1, 0, 0, 0, 0, 0, 0))", client)
+        self.assertIn(
+            "CONTROL_DISABLED = bytes((1, 3, 2, 0, 0, 0, 0, 0))", client
+        )
         self.assertIn("ACCEPTED = bytes((1, 1, 0, 0))", client)
-        for mode in ("accepted", "rejected", "malformed", "partial", "hold"):
+        for mode in (
+            "accepted",
+            "control-disabled",
+            "rejected",
+            "malformed",
+            "partial",
+            "hold",
+        ):
             self.assertIn(f'mode == "{mode}"', client)
         self.assertNotIn("subprocess", client)
         self.assertNotIn("open('/", client)
@@ -83,6 +93,8 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn("systemctl show -p DynamicUser", runtime)
         self.assertIn("systemctl show -p PrivateNetwork", runtime)
         self.assertIn("five_sources_accepted 5", runtime)
+        self.assertIn("control_rejection_accepted yes", runtime)
+        self.assertIn("run_as hardened-blikvm-control control-disabled", runtime)
         self.assertIn("duplicate_rejected yes", runtime)
         self.assertIn("partial_timeout bounded", runtime)
         self.assertIn("malformed_rejected yes", runtime)
@@ -175,6 +187,7 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "collector_network_namespace": "private",
             "collector_no_new_privs": "yes",
             "collector_unit": "active-then-stopped",
+            "control_rejection_accepted": "yes",
             "duplicate_rejected": "yes",
             "five_sources_accepted": "5",
             "graceful_shutdown": "yes",

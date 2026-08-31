@@ -78,6 +78,7 @@ RUN_KEYS = {
     "collector_network_namespace",
     "collector_no_new_privs",
     "collector_unit",
+    "control_rejection_accepted",
     "duplicate_rejected",
     "five_sources_accepted",
     "graceful_shutdown",
@@ -372,6 +373,7 @@ import time
 
 SOCKET = {paths.socket!r}
 READY = bytes((1, 1, 0, 0, 0, 0, 0, 0))
+CONTROL_DISABLED = bytes((1, 3, 2, 0, 0, 0, 0, 0))
 ACCEPTED = bytes((1, 1, 0, 0))
 
 def receive_exact(stream, size):
@@ -389,6 +391,10 @@ stream.settimeout(8)
 stream.connect(SOCKET)
 if mode == "accepted":
     stream.sendall(READY)
+    if receive_exact(stream, 4) != ACCEPTED:
+        raise RuntimeError("response mismatch")
+elif mode == "control-disabled":
+    stream.sendall(CONTROL_DISABLED)
     if receive_exact(stream, 4) != ACCEPTED:
         raise RuntimeError("response mismatch")
 elif mode == "rejected":
@@ -850,6 +856,8 @@ for account in $producer_accounts; do
   accepted_count=$((accepted_count + 1))
 done
 [ "$accepted_count" = 5 ]
+sleep 0.2
+run_as hardened-blikvm-control control-disabled
 phase=rejected-peers
 python3 "$client" rejected
 unknown_uid=$(getent passwd nobody | awk -F: 'NR == 1 {print $3}')
@@ -912,6 +920,7 @@ emit collector_identity static-sysusers
 emit collector_network_namespace private
 emit collector_no_new_privs yes
 emit collector_unit active-then-stopped
+emit control_rejection_accepted yes
 emit duplicate_rejected yes
 emit five_sources_accepted 5
 emit graceful_shutdown yes
@@ -1092,6 +1101,7 @@ def validate_run(facts: dict[str, str]) -> None:
         "collector_network_namespace": "private",
         "collector_no_new_privs": "yes",
         "collector_unit": "active-then-stopped",
+        "control_rejection_accepted": "yes",
         "duplicate_rejected": "yes",
         "five_sources_accepted": "5",
         "graceful_shutdown": "yes",

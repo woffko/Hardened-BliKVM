@@ -24,10 +24,18 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             paths.browser_result,
             paths.control_runtime,
             paths.control_socket,
+            paths.diagnostic_capture,
+            paths.diagnostic_seen,
             paths.video_runtime,
             paths.video_socket,
         ):
             self.assertTrue(value.startswith(paths.stage.root + "/"))
+        self.assertEqual(paths.diagnostic_runtime, tls.DIAGNOSTIC_RUNTIME)
+        self.assertEqual(paths.diagnostic_socket, tls.DIAGNOSTIC_SOCKET)
+        self.assertEqual(
+            paths.diagnostic_runtime_marker,
+            "/run/.hardened-blikvm-diagnostics-owner-0123456789abcdef",
+        )
 
     def test_rendered_nginx_is_tls_loopback_and_uses_test_upstream(self) -> None:
         rendered = tls.render_test_nginx(self._paths(), 18081)
@@ -56,8 +64,93 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn("hid=capability_disabled", remote)
         self.assertIn("atx=capability_disabled", remote)
         self.assertIn("media=capability_disabled", remote)
+        self.assertIn("requests=32", remote)
+        self.assertIn("latency=bounded", remote)
+        self.assertIn("phase=start-diagnostic-stall", remote)
+        self.assertIn("phase=stop-control-during-diagnostic-stall", remote)
+        self.assertIn("control_queue_pressure 32-denials", remote)
+        self.assertIn("control_response_latency independent", remote)
+        self.assertIn("diagnostic_event control-capability-disabled", remote)
+        self.assertLess(
+            remote.index("phase=stop-control-during-diagnostic-stall"),
+            remote.index("phase=start-video"),
+        )
+        self.assertIn('diagnostic.pid:$python_binary', cleanup)
+        self.assertIn('[ -S "$diagnostic_socket" ]', cleanup)
+        self.assertNotIn('rm -rf -- "$diagnostic_runtime"', cleanup)
         self.assertNotIn("/run/kvmd", tls.CONTROL_PROBE)
+        self.assertNotIn("/dev/gpio", remote)
+        self.assertNotRegex(remote, r"systemctl (?:stop|restart) kvmd")
+        self.assertNotRegex(remote, r"(?m)^[ \t]*(?:reboot|shutdown|poweroff)(?:[ \t]|$)")
         self.assertIn('control.pid:$control', cleanup)
+
+    def test_diagnostic_capture_and_pressure_probe_are_fixed_and_bounded(self) -> None:
+        compile(tls.DIAGNOSTIC_CAPTURE, "diagnostic-capture.py", "exec")
+        compile(tls.CONTROL_PROBE, "control-probe.py", "exec")
+        self.assertIn(
+            "expected = bytes((1, 3, 2, 0, 0, 0, 0, 0))",
+            tls.DIAGNOSTIC_CAPTURE,
+        )
+        self.assertIn("time.sleep(7)", tls.DIAGNOSTIC_CAPTURE)
+        self.assertIn("requests = base_requests + [base_requests[0]] * 29", tls.CONTROL_PROBE)
+        self.assertIn("maximum >= 1.0 or total >= 4.0", tls.CONTROL_PROBE)
+        self.assertNotIn("subprocess", tls.DIAGNOSTIC_CAPTURE)
+
+    def test_diagnostic_facts_are_required_by_every_validator(self) -> None:
+        preflight = {
+            "architecture": "aarch64",
+            "browser_runtime_ready": "yes",
+            "diagnostic_absent_before": "yes",
+            "kvmd_active_before": "active",
+            "kvmd_nginx_active_before": "active",
+            "nginx_ready": "yes",
+            "ports_free_before": "yes",
+            "rootfs_mode_before": "rw",
+            "stage_absent": "yes",
+            "tmp_mount_mode": "exec",
+            "tools_ready": "yes",
+            "ustreamer_socket": "present",
+            "ustreamer_socket_group": "kvmd",
+            "ustreamer_socket_mode": "660",
+        }
+        tls.validate_preflight(dict(sorted(preflight.items())))
+        remote = {
+            "broker_stopped": "yes",
+            "bundle_sha256": "a" * 64,
+            "credential_isolation": "verified",
+            "control_broker_stopped": "yes",
+            "control_denials": "verified",
+            "control_no_backend": "verified",
+            "control_queue_pressure": "32-denials",
+            "control_response_latency": "independent",
+            "diagnostic_event": "control-capability-disabled",
+            "diagnostic_runtime_removed": "yes",
+            "diagnostic_stall": "seven-second-no-response",
+            "nginx_config": "verified",
+            "nginx_stopped": "yes",
+            "payload_checksums": "verified",
+            "ready": "yes",
+            "rootfs_mode_after_run": "rw",
+            "server_stopped": "yes",
+            "stage_removed": "yes",
+            "tls12": "passed",
+            "tls13": "passed",
+            "tls_loopback": "yes",
+            "video_proxy_stopped": "yes",
+        }
+        tls.validate_remote(dict(sorted(remote.items())), "a" * 64)
+        final = {
+            "diagnostic_absent_final": "yes",
+            "kvmd_active_final": "active",
+            "kvmd_nginx_active_final": "active",
+            "ports_free_final": "yes",
+            "rootfs_mode_final": "rw",
+            "stage_absent_final": "yes",
+        }
+        tls.validate_final(dict(sorted(final.items())))
+        remote["control_response_latency"] = "dependent"
+        with self.assertRaises(ValueError):
+            tls.validate_remote(dict(sorted(remote.items())), "a" * 64)
 
     def test_generated_remote_scripts_are_valid_posix_shell(self) -> None:
         paths = self._paths()

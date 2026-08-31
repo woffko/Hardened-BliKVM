@@ -29,9 +29,12 @@ from tools import stage_device_prototype as prototype
 
 
 TLS_PORT = 18443
+DIAGNOSTIC_RUNTIME = "/run/hardened-blikvm-diagnostics"
+DIAGNOSTIC_SOCKET = f"{DIAGNOSTIC_RUNTIME}/collector.sock"
 PREFLIGHT_KEYS = {
     "architecture",
     "browser_runtime_ready",
+    "diagnostic_absent_before",
     "kvmd_active_before",
     "kvmd_nginx_active_before",
     "nginx_ready",
@@ -51,6 +54,11 @@ RUN_KEYS = {
     "control_broker_stopped",
     "control_denials",
     "control_no_backend",
+    "control_queue_pressure",
+    "control_response_latency",
+    "diagnostic_event",
+    "diagnostic_runtime_removed",
+    "diagnostic_stall",
     "nginx_config",
     "nginx_stopped",
     "payload_checksums",
@@ -64,6 +72,7 @@ RUN_KEYS = {
     "video_proxy_stopped",
 }
 FINAL_KEYS = {
+    "diagnostic_absent_final",
     "kvmd_active_final",
     "kvmd_nginx_active_final",
     "ports_free_final",
@@ -101,6 +110,11 @@ class TlsPaths:
     control_binary: str
     control_runtime: str
     control_socket: str
+    diagnostic_runtime: str
+    diagnostic_runtime_marker: str
+    diagnostic_socket: str
+    diagnostic_capture: str
+    diagnostic_seen: str
     video_binary: str
     video_runtime: str
     video_socket: str
@@ -176,6 +190,11 @@ def tls_paths(bundle_sha256: str, run_id: str) -> TlsPaths:
         control_binary=f"{stage.payload}/libexec/bli-kvm-control-broker",
         control_runtime=f"{root}/control-runtime",
         control_socket=f"{root}/control-runtime/control.sock",
+        diagnostic_runtime=DIAGNOSTIC_RUNTIME,
+        diagnostic_runtime_marker=f"/run/.hardened-blikvm-diagnostics-owner-{run_id}",
+        diagnostic_socket=DIAGNOSTIC_SOCKET,
+        diagnostic_capture=f"{root}/diagnostic-capture.py",
+        diagnostic_seen=f"{root}/diagnostic.seen",
         video_binary=f"{stage.payload}/libexec/bli-kvm-video-proxy",
         video_runtime=f"{root}/video-runtime",
         video_socket=f"{root}/video-runtime/mjpeg.sock",
@@ -218,18 +237,59 @@ stop_child() {
 }
 """.strip()
 
+DIAGNOSTIC_CAPTURE = r"""
+import os
+import socket
+import sys
+import time
+
+socket_path, seen_path = sys.argv[1:]
+expected = bytes((1, 3, 2, 0, 0, 0, 0, 0))
+
+listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+connection = None
+try:
+    listener.bind(socket_path)
+    os.chmod(socket_path, 0o660)
+    listener.listen(1)
+    connection, _ = listener.accept()
+    listener.close()
+    connection.settimeout(3)
+    frame = b""
+    while len(frame) < len(expected):
+        chunk = connection.recv(len(expected) - len(frame))
+        if not chunk:
+            raise RuntimeError("short diagnostic frame")
+        frame += chunk
+    if frame != expected:
+        raise RuntimeError("unexpected diagnostic frame")
+    descriptor = os.open(seen_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(descriptor)
+    time.sleep(7)
+finally:
+    if connection is not None:
+        connection.close()
+    listener.close()
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+""".strip()
+
 CONTROL_PROBE = r"""
 import json
 import socket
 import struct
 import sys
+import time
 
 socket_path = sys.argv[1]
-requests = [
+base_requests = [
     ("hid", {"type": "hid", "report": {"mode": "keyboard", "data": [0] * 8}}),
     ("atx", {"type": "atx", "action": "power_short"}),
     ("media", {"type": "virtual_media", "command": {"action": "set_connected", "connected": False}}),
 ]
+requests = base_requests + [base_requests[0]] * 29
 
 def read_exact(stream, length):
     value = b""
@@ -240,7 +300,11 @@ def read_exact(stream, length):
         value += chunk
     return value
 
+started = time.monotonic()
+maximum = 0.0
+observed = {}
 for request_id, (name, request) in enumerate(requests, 1):
+    request_started = time.monotonic()
     operation_id = f"{request_id:032x}"
     envelope = {
         "schemaVersion": 1,
@@ -266,7 +330,17 @@ for request_id, (name, request) in enumerate(requests, 1):
     }
     if response != expected:
         raise RuntimeError("unexpected control response")
-    print(f"{name}=capability_disabled")
+    elapsed = time.monotonic() - request_started
+    maximum = max(maximum, elapsed)
+    observed[name] = "capability_disabled"
+
+total = time.monotonic() - started
+if maximum >= 1.0 or total >= 4.0:
+    raise RuntimeError("control response latency exceeded isolation bound")
+for name in ("hid", "atx", "media"):
+    print(f"{name}={observed[name]}")
+print("requests=32")
+print("latency=bounded")
 """.strip()
 
 
@@ -358,6 +432,9 @@ def build_preflight_script(
             "stage_root": paths.stage.root,
             "runtime_root": paths.runtime_root,
             "runtime_marker": paths.runtime_marker,
+            "diagnostic_runtime": paths.diagnostic_runtime,
+            "diagnostic_runtime_marker": paths.diagnostic_runtime_marker,
+            "diagnostic_socket": paths.diagnostic_socket,
             "required_bytes": required_bytes,
             "server_port_hex": f"{bind_port:04X}",
             "tls_port_hex": f"{TLS_PORT:04X}",
@@ -384,7 +461,7 @@ ustreamer_mode=$(stat -c '%a' /run/kvmd/ustreamer.sock)
 ustreamer_group=$(stat -c '%G' /run/kvmd/ustreamer.sock)
 [ "$ustreamer_mode" = 660 ]
 [ "$ustreamer_group" = kvmd ]
-for tool in awk base64 cat chmod chown curl df env findmnt getent grep head mkdir mv openssl python3 readlink rm sed setpriv sha256sum sleep stat systemctl tail tar tr wc; do
+for tool in awk base64 cat chmod chown curl df env find findmnt getent grep head mkdir mv openssl python3 readlink rm rmdir sed setpriv sha256sum sleep stat systemctl tail tar tr wc; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
 [ -x "$nginx_binary" ]
@@ -396,6 +473,9 @@ getent group kvmd >/dev/null
 [ ! -e "$stage_root" ]
 [ ! -e "$runtime_root" ]
 [ ! -e "$runtime_marker" ]
+[ ! -e "$diagnostic_runtime" ]
+[ ! -e "$diagnostic_runtime_marker" ]
+[ ! -e "$diagnostic_socket" ]
 port_hex=$server_port_hex
 if port_in_use; then exit 1; fi
 port_hex=$tls_port_hex
@@ -407,6 +487,7 @@ emit kvmd_active_before active
 emit kvmd_nginx_active_before active
 emit nginx_ready yes
 emit browser_runtime_ready yes
+emit diagnostic_absent_before yes
 emit tools_ready yes
 emit stage_absent yes
 emit ports_free_before yes
@@ -426,6 +507,9 @@ def build_remote_script(
     control_probe_b64 = base64.b64encode(CONTROL_PROBE.encode("utf-8")).decode(
         "ascii"
     )
+    diagnostic_capture_b64 = base64.b64encode(
+        DIAGNOSTIC_CAPTURE.encode("utf-8")
+    ).decode("ascii")
     values = _assignments(
         {
             "stage_root": paths.stage.root,
@@ -442,6 +526,11 @@ def build_remote_script(
             "control": paths.control_binary,
             "control_runtime": paths.control_runtime,
             "control_socket": paths.control_socket,
+            "diagnostic_runtime": paths.diagnostic_runtime,
+            "diagnostic_runtime_marker": paths.diagnostic_runtime_marker,
+            "diagnostic_socket": paths.diagnostic_socket,
+            "diagnostic_capture": paths.diagnostic_capture,
+            "diagnostic_seen": paths.diagnostic_seen,
             "video": paths.video_binary,
             "video_runtime": paths.video_runtime,
             "video_socket": paths.video_socket,
@@ -458,6 +547,7 @@ def build_remote_script(
             "browser_result": paths.browser_result,
             "nginx_b64": nginx_b64,
             "control_probe_b64": control_probe_b64,
+            "diagnostic_capture_b64": diagnostic_capture_b64,
         }
     )
     body = r"""
@@ -468,9 +558,11 @@ phase=validate-stage
 run_succeeded=no
 broker_pid=
 control_pid=
+diagnostic_pid=
 video_pid=
 server_pid=
 nginx_pid=
+python_binary=
 emit() { printf '%s=%s\n' "$1" "$2"; }
 owned_stage() {
   [ -f "$stage_marker" ] && [ "$(cat "$stage_marker" 2>/dev/null || true)" = "$run_id" ]
@@ -478,10 +570,28 @@ owned_stage() {
 owned_runtime() {
   [ -f "$runtime_marker" ] && [ "$(cat "$runtime_marker" 2>/dev/null || true)" = "$run_id" ]
 }
+owned_diagnostics() {
+  [ -f "$diagnostic_runtime_marker" ] && [ "$(cat "$diagnostic_runtime_marker" 2>/dev/null || true)" = "$run_id" ]
+}
+cleanup_diagnostics() {
+  owned_diagnostics || return 1
+  if [ -e "$diagnostic_runtime" ]; then
+    [ -d "$diagnostic_runtime" ]
+    [ ! -L "$diagnostic_runtime" ]
+    unexpected=$(find "$diagnostic_runtime" -mindepth 1 -maxdepth 1 ! -name collector.sock -print -quit)
+    [ -z "$unexpected" ]
+    if [ -e "$diagnostic_socket" ]; then
+      [ -S "$diagnostic_socket" ]
+      rm -f -- "$diagnostic_socket"
+    fi
+    rmdir "$diagnostic_runtime"
+  fi
+  rm -f -- "$diagnostic_runtime_marker"
+}
 emergency_cleanup() {
   set +e
   safe=yes
-  for pair in "$nginx_pid:$nginx_binary" "$server_pid:$server" "$video_pid:$video" "$control_pid:$control" "$broker_pid:$broker"; do
+  for pair in "$nginx_pid:$nginx_binary" "$server_pid:$server" "$video_pid:$video" "$control_pid:$control" "$diagnostic_pid:$python_binary" "$broker_pid:$broker"; do
     child_pid=${pair%%:*}
     child_exe=${pair#*:}
     [ -n "$child_pid" ] || continue
@@ -499,6 +609,7 @@ emergency_cleanup() {
       else safe=no; fi
     fi
   done
+  if [ "$safe" = yes ] && { [ -e "$diagnostic_runtime" ] || [ -e "$diagnostic_runtime_marker" ]; }; then cleanup_diagnostics || safe=no; fi
   if [ "$safe" = yes ] && owned_runtime; then rm -rf -- "$runtime_root"; rm -f -- "$runtime_marker"; fi
   if [ "$safe" = yes ] && owned_stage; then rm -rf -- "$stage_root"; fi
 }
@@ -507,7 +618,7 @@ on_exit() {
   trap - EXIT HUP INT TERM
   if [ "$run_succeeded" != yes ]; then
     emergency_cleanup
-    if [ ! -e "$stage_root" ] && [ ! -e "$runtime_root" ] && [ ! -e "$runtime_marker" ]; then cleanup_state=removed; else cleanup_state=retained; fi
+    if [ ! -e "$stage_root" ] && [ ! -e "$runtime_root" ] && [ ! -e "$runtime_marker" ] && [ ! -e "$diagnostic_runtime" ] && [ ! -e "$diagnostic_runtime_marker" ]; then cleanup_state=removed; else cleanup_state=retained; fi
     emit failure_phase "$phase"
     emit failure_cleanup "$cleanup_state"
   fi
@@ -525,6 +636,8 @@ tar -xzf "$archive" --strip-components=1 --no-same-owner -C "$payload"
 (cd "$payload" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
 [ -x "$video" ]
 [ -x "$control" ]
+python_binary=$(readlink -f "$(command -v python3)")
+[ -x "$python_binary" ]
 daemon_uid=$(getent passwd daemon | head -n 1 | awk -F: '{print $3}')
 nobody_uid=$(getent passwd nobody | head -n 1 | awk -F: '{print $3}')
 nobody_gid=$(getent passwd nobody | head -n 1 | awk -F: '{print $4}')
@@ -540,6 +653,7 @@ mkdir -m 750 "$runtime_root"
 chown "$daemon_uid:$nobody_gid" "$runtime_root"
 : > "$stage_root/broker.log"
 : > "$stage_root/control.log"
+: > "$stage_root/diagnostic.log"
 : > "$stage_root/video.log"
 : > "$stage_root/server.log"
 : > "$stage_root/nginx.log"
@@ -553,6 +667,22 @@ printf '%s\n' "$broker_pid" > "$stage_root/broker.pid"
 count=0
 while [ "$count" -lt 60 ] && [ ! -S "$broker_socket" ]; do process_active "$broker_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
 [ -S "$broker_socket" ]
+phase=start-diagnostic-stall
+printf '%s\n' "$run_id" > "$diagnostic_runtime_marker"
+chmod 600 "$diagnostic_runtime_marker"
+mkdir -m 750 "$diagnostic_runtime"
+chown "0:$nobody_gid" "$diagnostic_runtime"
+printf '%s' "$diagnostic_capture_b64" | base64 -d > "$diagnostic_capture"
+chmod 500 "$diagnostic_capture"
+"$python_binary" "$diagnostic_capture" "$diagnostic_socket" "$diagnostic_seen" \
+  > "$stage_root/diagnostic.log" 2>&1 < /dev/null &
+diagnostic_pid=$!
+printf '%s\n' "$diagnostic_pid" > "$stage_root/diagnostic.pid"
+count=0
+while [ "$count" -lt 60 ] && [ ! -S "$diagnostic_socket" ]; do process_active "$diagnostic_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
+[ -S "$diagnostic_socket" ]
+chown "0:$nobody_gid" "$diagnostic_socket"
+chmod 660 "$diagnostic_socket"
 phase=start-control-denial
 mkdir -m 750 "$control_runtime"
 chown "$www_uid:$nobody_gid" "$control_runtime"
@@ -578,7 +708,16 @@ setpriv --reuid="$nobody_uid" --regid="$nobody_gid" --clear-groups --bounding-se
 [ "$(sed -n '1p' "$stage_root/control.result")" = hid=capability_disabled ]
 [ "$(sed -n '2p' "$stage_root/control.result")" = atx=capability_disabled ]
 [ "$(sed -n '3p' "$stage_root/control.result")" = media=capability_disabled ]
-[ "$(wc -l < "$stage_root/control.result" | tr -d ' ')" = 3 ]
+[ "$(sed -n '4p' "$stage_root/control.result")" = requests=32 ]
+[ "$(sed -n '5p' "$stage_root/control.result")" = latency=bounded ]
+[ "$(wc -l < "$stage_root/control.result" | tr -d ' ')" = 5 ]
+count=0
+while [ "$count" -lt 20 ] && [ ! -f "$diagnostic_seen" ]; do process_active "$diagnostic_pid" || exit 1; sleep 0.1; count=$((count + 1)); done
+[ -f "$diagnostic_seen" ]
+phase=stop-control-during-diagnostic-stall
+process_active "$diagnostic_pid"
+stop_child "$control_pid" "$control"
+control_pid=
 phase=start-video
 mkdir -m 750 "$video_runtime"
 chown "$www_uid:$nobody_gid" "$video_runtime"
@@ -646,7 +785,6 @@ phase=wait-browser
 count=0
 while [ "$count" -lt 240 ] && [ ! -f "$browser_done" ]; do
   process_active "$broker_pid" || exit 1
-  process_active "$control_pid" || exit 1
   process_active "$video_pid" || exit 1
   process_active "$server_pid" || exit 1
   process_active "$nginx_pid" || exit 1
@@ -662,8 +800,8 @@ stop_child "$server_pid" "$server"
 server_pid=
 stop_child "$video_pid" "$video"
 video_pid=
-stop_child "$control_pid" "$control"
-control_pid=
+stop_child "$diagnostic_pid" "$python_binary"
+diagnostic_pid=
 stop_child "$broker_pid" "$broker"
 broker_pid=
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
@@ -673,6 +811,7 @@ case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) exit 1 ;; esac
 owned_runtime
 rm -rf -- "$runtime_root"
 rm -f -- "$runtime_marker"
+cleanup_diagnostics
 owned_stage
 rm -rf -- "$stage_root"
 run_succeeded=yes
@@ -690,6 +829,11 @@ emit video_proxy_stopped yes
 emit control_broker_stopped yes
 emit control_denials verified
 emit control_no_backend verified
+emit control_queue_pressure 32-denials
+emit control_response_latency independent
+emit diagnostic_event control-capability-disabled
+emit diagnostic_runtime_removed yes
+emit diagnostic_stall seven-second-no-response
 emit broker_stopped yes
 emit stage_removed yes
 emit rootfs_mode_after_run "$rootfs_mode"
@@ -729,6 +873,9 @@ def build_cleanup_script(paths: TlsPaths) -> str:
             "stage_marker": paths.stage.marker,
             "runtime_root": paths.runtime_root,
             "runtime_marker": paths.runtime_marker,
+            "diagnostic_runtime": paths.diagnostic_runtime,
+            "diagnostic_runtime_marker": paths.diagnostic_runtime_marker,
+            "diagnostic_socket": paths.diagnostic_socket,
             "run_id": paths.stage.run_id,
             "server": paths.stage.server,
             "broker": paths.broker_binary,
@@ -740,10 +887,11 @@ def build_cleanup_script(paths: TlsPaths) -> str:
     body = r"""
 set -eu
 emit() { printf '%s=%s\n' "$1" "$2"; }
+python_binary=$(readlink -f "$(command -v python3)")
 if [ -e "$stage_root" ]; then
   [ -f "$stage_marker" ]
   [ "$(cat "$stage_marker" 2>/dev/null || true)" = "$run_id" ]
-  for item in "nginx.pid:$nginx_binary" "server.pid:$server" "video.pid:$video" "control.pid:$control" "broker.pid:$broker"; do
+  for item in "nginx.pid:$nginx_binary" "server.pid:$server" "video.pid:$video" "control.pid:$control" "diagnostic.pid:$python_binary" "broker.pid:$broker"; do
     pid_file="$stage_root/${item%%:*}"
     expected=${item#*:}
     [ -f "$pid_file" ] || continue
@@ -762,6 +910,20 @@ if [ -e "$stage_root" ]; then
     fi
   done
 fi
+if [ -e "$diagnostic_runtime" ] || [ -e "$diagnostic_runtime_marker" ]; then
+  [ -e "$stage_root" ]
+  [ -f "$diagnostic_runtime_marker" ]
+  [ "$(cat "$diagnostic_runtime_marker" 2>/dev/null || true)" = "$run_id" ]
+  if [ -e "$diagnostic_runtime" ]; then
+    [ -d "$diagnostic_runtime" ]
+    [ ! -L "$diagnostic_runtime" ]
+    unexpected=$(find "$diagnostic_runtime" -mindepth 1 -maxdepth 1 ! -name collector.sock -print -quit)
+    [ -z "$unexpected" ]
+    if [ -e "$diagnostic_socket" ]; then [ -S "$diagnostic_socket" ]; rm -f -- "$diagnostic_socket"; fi
+    rmdir "$diagnostic_runtime"
+  fi
+  rm -f -- "$diagnostic_runtime_marker"
+fi
 if [ -e "$runtime_root" ] || [ -e "$runtime_marker" ]; then
   [ -f "$runtime_marker" ]
   [ "$(cat "$runtime_marker" 2>/dev/null || true)" = "$run_id" ]
@@ -772,6 +934,9 @@ if [ -e "$stage_root" ]; then rm -rf -- "$stage_root"; fi
 [ ! -e "$stage_root" ]
 [ ! -e "$runtime_root" ]
 [ ! -e "$runtime_marker" ]
+[ ! -e "$diagnostic_runtime" ]
+[ ! -e "$diagnostic_runtime_marker" ]
+[ ! -e "$diagnostic_socket" ]
 emit cleanup_removed yes
 """.strip()
     return f"{values}\n{PROCESS_FUNCTIONS}\n{body}"
@@ -783,6 +948,9 @@ def build_final_script(paths: TlsPaths, bind_port: int) -> str:
             "stage_root": paths.stage.root,
             "runtime_root": paths.runtime_root,
             "runtime_marker": paths.runtime_marker,
+            "diagnostic_runtime": paths.diagnostic_runtime,
+            "diagnostic_runtime_marker": paths.diagnostic_runtime_marker,
+            "diagnostic_socket": paths.diagnostic_socket,
             "server_port_hex": f"{bind_port:04X}",
             "tls_port_hex": f"{TLS_PORT:04X}",
         }
@@ -794,6 +962,9 @@ emit() { printf '%s=%s\n' "$1" "$2"; }
 [ ! -e "$stage_root" ]
 [ ! -e "$runtime_root" ]
 [ ! -e "$runtime_marker" ]
+[ ! -e "$diagnostic_runtime" ]
+[ ! -e "$diagnostic_runtime_marker" ]
+[ ! -e "$diagnostic_socket" ]
 port_hex=$server_port_hex
 if port_in_use; then exit 1; fi
 port_hex=$tls_port_hex
@@ -803,6 +974,7 @@ case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) exit 1 ;; esac
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
 emit stage_absent_final yes
+emit diagnostic_absent_final yes
 emit ports_free_final yes
 emit rootfs_mode_final "$rootfs_mode"
 emit kvmd_active_final active
@@ -961,6 +1133,7 @@ def parse_failure(raw: bytes) -> tuple[str | None, bool | None]:
 def validate_preflight(facts: dict[str, str]) -> None:
     expected = {
         "architecture": "aarch64",
+        "diagnostic_absent_before": "yes",
         "rootfs_mode_before": "rw",
         "tmp_mount_mode": "exec",
         "kvmd_active_before": "active",
@@ -986,6 +1159,11 @@ def validate_remote(facts: dict[str, str], bundle_sha256: str) -> None:
         "credential_isolation": "verified",
         "control_denials": "verified",
         "control_no_backend": "verified",
+        "control_queue_pressure": "32-denials",
+        "control_response_latency": "independent",
+        "diagnostic_event": "control-capability-disabled",
+        "diagnostic_runtime_removed": "yes",
+        "diagnostic_stall": "seven-second-no-response",
         "nginx_config": "verified",
         "tls_loopback": "yes",
         "tls12": "passed",
@@ -1004,6 +1182,7 @@ def validate_remote(facts: dict[str, str], bundle_sha256: str) -> None:
 
 def validate_final(facts: dict[str, str]) -> None:
     expected = {
+        "diagnostic_absent_final": "yes",
         "stage_absent_final": "yes",
         "ports_free_final": "yes",
         "rootfs_mode_final": "rw",
@@ -1236,6 +1415,7 @@ def execute(options: Options) -> int:
                 "certificate": "ephemeral-self-signed",
                 "kvmdAccess": "read-only-inventory",
                 "controlBroker": "denial-only-no-backend",
+                "diagnostics": "exact-event-stall-and-queue-pressure",
                 "physicalActionsInvoked": False,
                 "persistentPathsChanged": False,
             },
