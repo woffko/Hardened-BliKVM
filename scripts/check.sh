@@ -36,6 +36,7 @@ python3 -m unittest \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
+  tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
@@ -51,6 +52,7 @@ python3 -m py_compile \
   tools/stage_device_broker_inventory.py \
   tools/stage_device_prototype.py \
   tools/stage_device_systemd_gate.py \
+  tools/stage_device_system_action_store.py \
   tools/stage_device_tls_browser.py \
   tools/build_update_test_fixture.py \
   tools/build_system_image_test_fixture.py \
@@ -67,6 +69,7 @@ python3 -m py_compile \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
+  tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py
@@ -85,6 +88,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_broker_inventory.py \
     tools/stage_device_prototype.py \
     tools/stage_device_systemd_gate.py \
+    tools/stage_device_system_action_store.py \
     tools/stage_device_tls_browser.py \
     tools/build_update_test_fixture.py \
     tools/build_system_image_test_fixture.py \
@@ -101,6 +105,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_broker_inventory.py \
     tools/test_stage_device_prototype.py \
     tools/test_stage_device_systemd_gate.py \
+    tools/test_stage_device_system_action_store.py \
     tools/test_stage_device_tls_browser.py \
     tools/test_build_update_test_fixture.py \
     tools/test_build_system_image_test_fixture.py
