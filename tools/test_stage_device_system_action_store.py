@@ -42,6 +42,19 @@ class StageDeviceSystemActionStoreTests(unittest.TestCase):
                     str(Path(directory.name) / "known_hosts")
                 )
 
+    def test_explicit_endpoint_fallback_keeps_hashed_host_key_verification(self) -> None:
+        directory = self.private_known_hosts(
+            "|1|hash|hash ssh-ed25519 AAAA\n"
+        )
+        with directory:
+            target = stage.target_from_known_hosts(
+                str(Path(directory.name) / "known_hosts"),
+                "ssh://192.0.2.10:2222",
+            )
+            self.assertEqual(target.host, "192.0.2.10")
+            self.assertEqual(target.port, 2222)
+            self.assertEqual(target.username, "root")
+
     def test_stage_paths_are_unique_bounded_and_marker_protected(self) -> None:
         paths = stage.stage_paths("a" * 64, "b" * 16)
         self.assertRegex(paths.root, stage.STAGE_ROOT)

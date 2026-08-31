@@ -13,6 +13,7 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 import ipaddress
+import os
 from pathlib import Path
 import re
 import secrets
@@ -31,6 +32,9 @@ from tools import stage_device_prototype as prototype
 
 
 APPROVED_BUILD_ROOT = Path("/mnt/d/debug/blikvm/hardened-blikvm")
+LOCAL_SNAPSHOT = re.compile(
+    r"^hardened-blikvm-system-action-store-harness-[0-9a-f]{64}$"
+)
 PRODUCTION_STORE_ROOT = "/var/lib/hardened-blikvm-system-actions"
 MAX_HARNESS_BYTES = 16 * 1024 * 1024
 MIN_TMP_HEADROOM_BYTES = 8 * 1024 * 1024
@@ -85,6 +89,7 @@ class Options:
     source_commit: str
     known_hosts: str
     output: str
+    endpoint: str | None
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,7 @@ def parse_args() -> Options:
     parser.add_argument(
         "--known-hosts", default="evidence/private/ssh-known-hosts"
     )
+    parser.add_argument("--endpoint")
     parser.add_argument(
         "--output", default="evidence/private/device-system-action-store-native.json"
     )
@@ -126,6 +132,7 @@ def parse_args() -> Options:
         source_commit=cast(str, namespace.source_commit),
         known_hosts=cast(str, namespace.known_hosts),
         output=cast(str, namespace.output),
+        endpoint=cast(str | None, namespace.endpoint),
     )
 
 
@@ -145,13 +152,19 @@ def validate_harness(path_value: str, source_commit: str) -> HarnessInfo:
         raise ValueError("harness must not be a symlink")
     path = source.resolve(strict=True)
     approved = APPROVED_BUILD_ROOT.resolve(strict=True)
-    if not path.is_relative_to(approved):
+    approved_snapshot = (
+        path.parent == Path("/tmp")
+        and LOCAL_SNAPSHOT.fullmatch(path.name) is not None
+    )
+    if not path.is_relative_to(approved) and not approved_snapshot:
         raise ValueError("harness is outside the approved build root")
     metadata = path.stat()
     if (
         not stat.S_ISREG(metadata.st_mode)
         or not 0 < metadata.st_size <= MAX_HARNESS_BYTES
         or metadata.st_mode & 0o022
+        or metadata.st_nlink != 1
+        or metadata.st_uid != os.geteuid()
     ):
         raise ValueError("harness metadata is unsafe")
     with path.open("rb") as handle:
@@ -173,11 +186,21 @@ def validate_harness(path_value: str, source_commit: str) -> HarnessInfo:
             program_types.append(struct.unpack_from("<I", entry)[0])
         if 3 in program_types or 1 not in program_types:
             raise ValueError("harness is not a static PIE executable")
-    return HarnessInfo(path, hash_file(path), metadata.st_size, source_commit)
+    sha256 = hash_file(path)
+    if approved_snapshot and path.name != (
+        f"hardened-blikvm-system-action-store-harness-{sha256}"
+    ):
+        raise ValueError("harness snapshot name does not match its SHA-256")
+    return HarnessInfo(path, sha256, metadata.st_size, source_commit)
 
 
-def target_from_known_hosts(path_value: str) -> prototype.RemoteTarget:
+def target_from_known_hosts(
+    path_value: str, endpoint: str | None = None
+) -> prototype.RemoteTarget:
     known_hosts = prototype.validate_private_file(path_value)
+    if endpoint is not None:
+        host, port = prototype.parse_endpoint(endpoint)
+        return prototype.RemoteTarget(host, port, "root", known_hosts)
     if known_hosts.stat().st_size > 1024 * 1024:
         raise ValueError("known-hosts exceeded the size limit")
     endpoints: set[tuple[str, int]] = set()
@@ -515,7 +538,7 @@ def attempt_cleanup(
 def execute(options: Options) -> int:
     output = prototype.validate_output_path(options.output)
     harness = validate_harness(options.harness, options.source_commit)
-    target = target_from_known_hosts(options.known_hosts)
+    target = target_from_known_hosts(options.known_hosts, options.endpoint)
     paths = stage_paths(harness.sha256, secrets.token_hex(8))
     required_bytes = harness.size_bytes * 4 + MIN_TMP_HEADROOM_BYTES
     secret = prototype.read_secret_stdin()
