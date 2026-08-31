@@ -388,6 +388,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-system-action-maintenance"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-system-action-store",
+]
+
+[[package]]
 name = "bli-kvm-system-action-policy"
 version = "0.1.0"
 

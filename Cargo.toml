@@ -22,6 +22,7 @@ members = [
   "crates/bli-kvm-system-action-policy",
   "crates/bli-kvm-system-action-journal",
   "crates/bli-kvm-system-action-store",
+  "crates/bli-kvm-system-action-maintenance",
   "crates/bli-kvm-recovery-inputs",
   "crates/bli-kvm-update-stager",
   "crates/bli-kvm-update-manager",

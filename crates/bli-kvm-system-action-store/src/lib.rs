@@ -14,10 +14,11 @@ use std::{
 };
 
 use bli_kvm_system_action_journal::{
-    CopyIndex, JOURNAL_COPY_BYTES, JournalError, RawJournalCopy, SelectedJournal,
-    SystemActionPolicyState, plan_initialize, plan_repair, plan_update, select_copies,
-    verify_written,
+    CopyIndex, JOURNAL_COPY_BYTES, JournalError, RawJournalCopy, SelectedJournal, plan_initialize,
+    plan_repair, plan_update, select_copies, verify_written,
 };
+
+pub use bli_kvm_system_action_journal::SystemActionPolicyState;
 pub const SYSTEM_ACTION_STORE_ROOT: &str = "/var/lib/hardened-blikvm-system-actions";
 pub const COPY_A_FILE_NAME: &str = "journal-a.bin";
 pub const COPY_B_FILE_NAME: &str = "journal-b.bin";

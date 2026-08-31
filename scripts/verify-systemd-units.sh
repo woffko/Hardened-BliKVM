@@ -27,6 +27,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-server"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0644 \
   "$project_root"/packaging/systemd/*.service \
@@ -38,6 +39,7 @@ install -m 0644 \
   "$test_root/usr/lib/sysusers.d/"
 install -m 0644 \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
+  "$project_root/packaging/tmpfiles.d/hardened-blikvm-system-actions.conf" \
   "$test_root/usr/lib/tmpfiles.d/"
 : > "$test_root/usr/share/hardened-blikvm/web/index.html"
 printf '%s\n' \
@@ -72,7 +74,9 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-update-apply-candidate.service \
   hardened-blikvm-update-apply-confirmed.service \
   hardened-blikvm-server-current.service \
-  hardened-blikvm-server-candidate.service
+  hardened-blikvm-server-candidate.service \
+  hardened-blikvm-system-action-store-init.service \
+  hardened-blikvm-system-action-store-inspect.service
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
@@ -85,4 +89,6 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-update-apply-confirmed.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server-current.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server-candidate.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
   >/dev/null

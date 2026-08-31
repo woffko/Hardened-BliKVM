@@ -1,0 +1,11 @@
+[package]
+name = "bli-kvm-system-action-maintenance"
+description = "Non-actuating exact-root store maintenance for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store" }

@@ -205,14 +205,16 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_system_action_store_is_exact_root_atomic_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-system-action-store"
+        maintenance = ROOT / "crates/bli-kvm-system-action-maintenance/Cargo.toml"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         self.assertIn('"crates/bli-kvm-system-action-store"', workspace)
         self.assertIn("bli-kvm-system-action-journal", manifest)
         self.assertIn("libc.workspace = true", manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in (crate / "Cargo.toml", maintenance):
                 self.assertNotIn("bli-kvm-system-action-store", other_manifest.read_text())
+        self.assertIn("bli-kvm-system-action-store", maintenance.read_text())
         self.assertIn(
             '"/var/lib/hardened-blikvm-system-actions"', source
         )
@@ -235,6 +237,71 @@ class PackagingBoundaryTests(unittest.TestCase):
             "sh -c",
         ):
             self.assertNotIn(forbidden, source)
+
+    def test_system_action_maintenance_is_static_confined_and_unshipped(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-system-action-maintenance"
+        manifest = (crate / "Cargo.toml").read_text()
+        library = (crate / "src/lib.rs").read_text()
+        main = (crate / "src/main.rs").read_text()
+        production_library = library.split("#[cfg(test)]", 1)[0]
+        self.assertIn('"crates/bli-kvm-system-action-maintenance"', workspace)
+        self.assertIn("bli-kvm-system-action-store", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-system-action-maintenance", other_manifest.read_text()
+                )
+        self.assertIn('"initialize-empty"', production_library)
+        self.assertIn('"inspect-empty"', production_library)
+        for forbidden in (
+            '"repair"',
+            '"reboot"',
+            '"shutdown"',
+            "std::process",
+            "tokio::",
+            "systemctl",
+        ):
+            self.assertNotIn(forbidden, production_library)
+            self.assertNotIn(forbidden, main)
+
+        init_unit = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-system-action-store-init.service"
+        ).read_text()
+        inspect_unit = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-system-action-store-inspect.service"
+        ).read_text()
+        for unit in (init_unit, inspect_unit):
+            self.assertIn("User=root", unit)
+            self.assertIn("PrivateNetwork=yes", unit)
+            self.assertIn("PrivateDevices=yes", unit)
+            self.assertIn("ProtectSystem=strict", unit)
+            self.assertIn("RestrictAddressFamilies=AF_UNIX", unit)
+            self.assertIn("CapabilityBoundingSet=\n", unit)
+            self.assertIn("DevicePolicy=closed", unit)
+            self.assertIn("IPAddressDeny=any", unit)
+            self.assertIn(
+                "ReadWritePaths=/var/lib/hardened-blikvm-system-actions", unit
+            )
+            self.assertNotIn("[Install]", unit)
+            self.assertNotIn("systemctl", unit)
+        self.assertIn(" initialize-empty", init_unit)
+        self.assertIn(" inspect-empty", inspect_unit)
+
+        tmpfiles = (
+            ROOT / "packaging/tmpfiles.d/hardened-blikvm-system-actions.conf"
+        ).read_text()
+        self.assertEqual(
+            tmpfiles,
+            "# Type Path Mode User Group Age Argument\n"
+            "d /var/lib/hardened-blikvm-system-actions 0700 root root - -\n",
+        )
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertNotIn("bli-kvm-system-action-maintenance", builder)
+        self.assertNotIn("hardened-blikvm-system-action-store-init", builder)
+        self.assertNotIn("hardened-blikvm-system-actions.conf", builder)
 
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
