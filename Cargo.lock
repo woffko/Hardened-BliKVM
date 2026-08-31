@@ -178,6 +178,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-diagnostic-export"
+version = "0.1.0"
+
+[[package]]
 name = "bli-kvm-display-button-policy"
 version = "0.1.0"
 

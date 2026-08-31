@@ -143,6 +143,35 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_diagnostic_export_is_typed_pure_no_std_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-export"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        self.assertIn('"crates/bli-kvm-diagnostic-export"', workspace)
+        self.assertNotIn("[dependencies]", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn("bli-kvm-diagnostic-export", other_manifest.read_text())
+        self.assertIn("#![no_std]", source)
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertIn("pub enum DiagnosticEvent", source)
+        self.assertIn("MAX_RECORDS", source)
+        for forbidden in (
+            "std::",
+            "String",
+            "Vec<",
+            "Path",
+            "Command",
+            "/dev/",
+            "/var/",
+            "tokio::",
+            "libc::",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+
     def test_system_action_policy_is_pure_no_std_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-system-action-policy"

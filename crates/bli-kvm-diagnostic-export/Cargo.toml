@@ -1,0 +1,8 @@
+[package]
+name = "bli-kvm-diagnostic-export"
+description = "Typed privacy-preserving diagnostics export for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
