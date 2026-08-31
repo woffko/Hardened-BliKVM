@@ -229,6 +229,15 @@ prototype archives, two byte-identical AArch64 rlibs and byte-identical
 extracted ThinLTO codegen passed. No GPIO value or button was tested and no
 capability was enabled. See `baselines/display-button-policy.md`.
 
+Checkpoint: the unlinked `bli-kvm-activity-led-policy` replaces the vendor's
+fixed 20-sample output loop with explicit asserted polarity, bounded
+period/pulse/idle timing, disabled/fault inactive states, drift-free monotonic
+phase, and deterministic restart. At source commit `012ebe3`, the full host
+suite, two byte-identical prototype archives, two byte-identical AArch64 rlibs
+and byte-identical extracted ThinLTO codegen passed. Offset261 was not written,
+its legacy owner remains, and no capability was enabled. See
+`baselines/activity-led-policy.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

@@ -26,7 +26,7 @@ the vendor daemon beside a second GPIO owner.
 | H616 GPIO mapping | immutable board profile | source evidence | line identity, polarity, exclusive ownership |
 | ATX socket and GPIO pulses | typed ATX driver | disabled | bounded timing, busy/idempotency, LED polarity |
 | fan loop and thermal sysfs | pure policy plus latched supervisor, then a separate driver | mock supervisor only; no wiring | pin/polarity/frequency/minimum-duty, crash/sensor/stall failure and PWM/temperature soak |
-| button/activity LED loop | pure one-shot button policy, then separate input/output drivers | unlinked no_std policy; no observation | input/LED ownership, pull/polarity, physical bounce/press, display integration and reboot |
+| button/activity LED loop | pure one-shot button and LED schedule policies, then separate drivers | two unlinked no_std policies; no I/O | input/output ownership, pull/polarity, physical bounce/press/visible timing, display integration and reboot |
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
@@ -79,6 +79,12 @@ Rust policy replaces sample counts with explicit monotonic debounce/hold
 timing, requires a stable release before arming, emits once per press, and keeps
 polarity configurable. No GPIO observation exists yet; see
 `baselines/display-button-policy.md`.
+
+The vendor activity output writes LOW for one 100-ms poll and then HIGH for 19
+polls, regardless of external activity. The unlinked Rust LED policy makes
+asserted level, period, and pulse explicit, starts and fails inactive, restarts
+the phase on enable, and computes delayed phases without drift. It does not
+write the used sysfs output; see `baselines/activity-led-policy.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

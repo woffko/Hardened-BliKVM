@@ -48,3 +48,8 @@ bounded debounce/hold timing, startup-held suppression, one-shot-until-release
 semantics, and clock-rollback rejection. Its evidence is recorded in
 `display-button-policy.md`; it does not read offset257 or change this metadata
 or physical acceptance status.
+
+An unlinked pure Rust activity-LED policy also models explicit polarity,
+bounded pulse/idle timing, drift-free monotonic phase, inactive fault/disabled
+states, and safe restart. Its evidence is in `activity-led-policy.md`; it does
+not write offset261 or alter the existing legacy owner.
