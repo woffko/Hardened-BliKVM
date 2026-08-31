@@ -6,7 +6,7 @@ import tools.capture_gpio_line_baseline as gpio
 
 
 def valid_facts() -> dict[str, str]:
-    return {
+    facts = {
         "architecture": "aarch64",
         "rootfs_mode": "rw",
         "chip_present": "yes",
@@ -21,13 +21,24 @@ def valid_facts() -> dict[str, str]:
         "gpioinfo_available": "yes",
         "gpioinfo_version": "gpioinfo (libgpiod) v1.6.3",
         "gpioinfo_probe": "success",
-        "line269_status": "captured",
-        "line269_info": 'line 269: unnamed "blikvm-fan" output active-high [used]',
-        "legacy_sysfs_line_present": "yes",
-        "legacy_direction": "out",
-        "legacy_active_low": "0",
-        "legacy_edge": "none",
     }
+    for offset in gpio.PROFILE_OFFSETS:
+        facts[f"line{offset}_status"] = "captured"
+        facts[f"line{offset}_info"] = f"line {offset}: unnamed unused input active-high"
+        facts[f"line{offset}_legacy_present"] = "no"
+        facts[f"line{offset}_direction"] = "unavailable"
+        facts[f"line{offset}_active_low"] = "unavailable"
+        facts[f"line{offset}_edge"] = "unavailable"
+    facts.update(
+        {
+            "line269_info": 'line 269: unnamed "blikvm-fan" output active-high [used]',
+            "line269_legacy_present": "yes",
+            "line269_direction": "out",
+            "line269_active_low": "0",
+            "line269_edge": "none",
+        }
+    )
+    return facts
 
 
 class CaptureGpioLineBaselineTests(unittest.TestCase):
@@ -58,8 +69,9 @@ class CaptureGpioLineBaselineTests(unittest.TestCase):
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr.decode())
         self.assertIn("gpioinfo", gpio.REMOTE_PROBE)
-        self.assertIn("269", gpio.REMOTE_PROBE)
-        self.assertNotIn("gpio269/value", gpio.REMOTE_PROBE)
+        for offset in gpio.PROFILE_OFFSETS:
+            self.assertIn(str(offset), gpio.REMOTE_PROBE)
+            self.assertNotIn(f"gpio{offset}/value", gpio.REMOTE_PROBE)
         for forbidden in (
             "gpioget",
             "gpioset",

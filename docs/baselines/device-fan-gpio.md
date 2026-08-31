@@ -35,3 +35,6 @@ The fan capability remains unavailable. Required gates still include physical
 pin tracing, electrical polarity, PWM/frequency and minimum-duty measurement,
 exclusive handoff/rollback, startup/controlled-stop/crash behavior,
 sensor/stall fault injection, and sustained thermal soak.
+
+The later full pinned-line ownership capture is recorded in
+`device-gpio-profile.md`.

@@ -178,6 +178,13 @@ legacy-owner handoff and rollback are proven; logical active-high metadata does
 not replace electrical polarity/PWM/minimum-duty or thermal-soak evidence. See
 `baselines/device-fan-gpio.md`.
 
+Checkpoint: a later metadata-only profile confirmed all pinned offsets without
+line requests or values. KVMD owns Power/Reset and ATX LED lines; legacy sysfs
+owns activity LED and fan; display-button offset 257 is unused input. This
+blocks native second owners and preserves physical Power/Reset, polarity,
+debounce, fan-safety and owner-handoff gates. See
+`baselines/device-gpio-profile.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

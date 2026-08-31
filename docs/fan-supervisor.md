@@ -38,5 +38,8 @@ The live read-only ownership baseline additionally shows that H616 chip0 offset
 requesting it until an exclusive legacy-owner handoff and rollback gate exists;
 see `baselines/device-fan-gpio.md`.
 
+The later full pinned-line ownership map is recorded in
+`baselines/device-gpio-profile.md`.
+
 Host-test and AArch64 codegen evidence is recorded in
 `baselines/fan-supervisor.md`.

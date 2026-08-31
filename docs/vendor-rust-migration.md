@@ -53,6 +53,12 @@ encode these values as production facts until line names/chip offsets are
 confirmed on the test board. Prefer libgpiod line identity over deprecated
 global sysfs numbering.
 
+Read-only live line-info now confirms all seven offsets and current consumers:
+KVMD owns Power/Reset and both ATX LED inputs; legacy sysfs owns activity LED
+and fan outputs; display-button offset 257 is unused input. No line value was
+read. These facts block concurrent ownership but do not establish electrical
+polarity or physical behavior.
+
 ## Broker invariants
 
 1. The network server holds neither root access nor a KVMD credential.

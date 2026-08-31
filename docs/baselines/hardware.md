@@ -44,6 +44,12 @@ This proves API/runtime availability only. It does not prove keyboard events,
 mouse coordinates, ATX pulse timing, media bootability, video quality, or any
 other physical interaction.
 
+A separate metadata-only GPIO profile now confirms the pinned chip0 offsets
+and current consumers without requesting lines or reading values. Power/Reset
+and ATX LED lines are owned by KVMD, activity LED and fan by legacy sysfs, and
+the display-button line is unused input. This is ownership evidence, not
+physical polarity or behavior acceptance.
+
 ## Field-image evidence
 
 - MBR partition layout with separate root, data, and virtual-media roles.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture bounded read-only H616 GPIO chip and fan-line ownership metadata."""
+"""Capture bounded read-only H616 pinned GPIO-profile ownership metadata."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from tools import stage_device_prototype as prototype
 
 
 MAX_OUTPUT_BYTES = 16 * 1024
+PROFILE_OFFSETS = (228, 272, 234, 233, 257, 261, 269)
+LINE_FIELDS = ("status", "info", "legacy_present", "direction", "active_low", "edge")
 FACT_KEYS = {
     "architecture",
     "rootfs_mode",
@@ -33,12 +35,8 @@ FACT_KEYS = {
     "gpioinfo_available",
     "gpioinfo_version",
     "gpioinfo_probe",
-    "line269_status",
-    "line269_info",
-    "legacy_sysfs_line_present",
-    "legacy_direction",
-    "legacy_active_low",
-    "legacy_edge",
+} | {
+    f"line{offset}_{field}" for offset in PROFILE_OFFSETS for field in LINE_FIELDS
 }
 SAFE_ACCOUNT = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
 SAFE_MODE = re.compile(r"^[0-7]{3,4}$")
@@ -86,17 +84,48 @@ else
   emit sysfs_ngpio unavailable
   emit sysfs_base unavailable
 fi
-if [ -e /sys/class/gpio/gpio269 ]; then
-  emit legacy_sysfs_line_present yes
-  emit legacy_direction "$(read_value /sys/class/gpio/gpio269/direction)"
-  emit legacy_active_low "$(read_value /sys/class/gpio/gpio269/active_low)"
-  emit legacy_edge "$(read_value /sys/class/gpio/gpio269/edge)"
-else
-  emit legacy_sysfs_line_present no
-  emit legacy_direction unavailable
-  emit legacy_active_low unavailable
-  emit legacy_edge unavailable
-fi
+emit_legacy_line() {
+  offset=$1
+  legacy="/sys/class/gpio/gpio$offset"
+  if [ -e "$legacy" ]; then
+    emit "line${offset}_legacy_present" yes
+    emit "line${offset}_direction" "$(read_value "$legacy/direction")"
+    emit "line${offset}_active_low" "$(read_value "$legacy/active_low")"
+    emit "line${offset}_edge" "$(read_value "$legacy/edge")"
+  else
+    emit "line${offset}_legacy_present" no
+    emit "line${offset}_direction" unavailable
+    emit "line${offset}_active_low" unavailable
+    emit "line${offset}_edge" unavailable
+  fi
+}
+for offset in 228 272 234 233 257 261 269; do emit_legacy_line "$offset"; done
+emit_line_info() {
+  offset=$1
+  line_info=$(printf '%s\n' "$gpioinfo_output" | awk -v target="$offset" '
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (line ~ ("^line[[:space:]]+" target ":") || line ~ ("^" target ":")) { print line; exit }
+    }
+  ' | tr '\t' ' ' | tr -s ' ' | sed 's/^ //;s/ $//')
+  if [ -z "$line_info" ]; then
+    emit "line${offset}_status" missing
+    emit "line${offset}_info" unavailable
+  elif [ "$(printf '%s' "$line_info" | wc -c | tr -d ' ')" -le 240 ]; then
+    emit "line${offset}_status" captured
+    emit "line${offset}_info" "$line_info"
+  else
+    emit "line${offset}_status" oversized
+    emit "line${offset}_info" unavailable
+  fi
+}
+emit_unavailable_lines() {
+  for offset in 228 272 234 233 257 261 269; do
+    emit "line${offset}_status" unavailable
+    emit "line${offset}_info" unavailable
+  done
+}
 if command -v gpioinfo >/dev/null 2>&1; then
   emit gpioinfo_available yes
   gpioinfo_version=$(gpioinfo --version 2>&1 | head -n 1 | tr -s ' ')
@@ -109,40 +138,22 @@ if command -v gpioinfo >/dev/null 2>&1; then
     gpioinfo_rc=$?
   fi
   if [ "$gpioinfo_rc" -ne 0 ]; then
-    gpioinfo_output=$(gpioinfo -c gpiochip0 269 2>/dev/null)
+    gpioinfo_output=$(gpioinfo -c gpiochip0 228 272 234 233 257 261 269 2>/dev/null)
     gpioinfo_rc=$?
   fi
   set -e
   if [ "$gpioinfo_rc" -eq 0 ]; then
     emit gpioinfo_probe success
-    line269=$(printf '%s\n' "$gpioinfo_output" | awk '
-      {
-        line = $0
-        sub(/^[[:space:]]*/, "", line)
-        if (line ~ /^line[[:space:]]+269:/ || line ~ /^269:/) { print line; exit }
-      }
-    ' | tr '\t' ' ' | tr -s ' ' | sed 's/^ //;s/ $//')
-    if [ -z "$line269" ]; then
-      emit line269_status missing
-      emit line269_info unavailable
-    elif [ "$(printf '%s' "$line269" | wc -c | tr -d ' ')" -le 240 ]; then
-      emit line269_status captured
-      emit line269_info "$line269"
-    else
-      emit line269_status oversized
-      emit line269_info unavailable
-    fi
+    for offset in 228 272 234 233 257 261 269; do emit_line_info "$offset"; done
   else
     emit gpioinfo_probe error
-    emit line269_status unavailable
-    emit line269_info unavailable
+    emit_unavailable_lines
   fi
 else
   emit gpioinfo_available no
   emit gpioinfo_version unavailable
   emit gpioinfo_probe not-run
-  emit line269_status unavailable
-  emit line269_info unavailable
+  emit_unavailable_lines
 fi
 """.strip()
 
@@ -265,35 +276,47 @@ def parse_facts(raw: bytes) -> dict[str, str]:
     ):
         raise ValueError("absent GPIO sysfs exposed contradictory metadata")
 
-    if facts["legacy_sysfs_line_present"] not in {"yes", "no"}:
-        raise ValueError("legacy GPIO line presence is invalid")
-    if facts["legacy_direction"] not in {"in", "out", "high", "low", "unavailable"}:
-        raise ValueError("legacy GPIO direction is invalid")
-    if facts["legacy_active_low"] not in {"0", "1", "unavailable"}:
-        raise ValueError("legacy GPIO active-low flag is invalid")
-    if facts["legacy_edge"] not in {"none", "rising", "falling", "both", "unavailable"}:
-        raise ValueError("legacy GPIO edge is invalid")
-    if facts["legacy_sysfs_line_present"] == "no" and any(
-        facts[key] != "unavailable"
-        for key in ("legacy_direction", "legacy_active_low", "legacy_edge")
-    ):
-        raise ValueError("absent legacy GPIO line exposed contradictory metadata")
-
     if facts["gpioinfo_available"] not in {"yes", "no"}:
         raise ValueError("gpioinfo availability is invalid")
     if facts["gpioinfo_probe"] not in {"success", "error", "not-run"}:
         raise ValueError("gpioinfo probe status is invalid")
-    if facts["line269_status"] not in {"captured", "missing", "oversized", "unavailable"}:
-        raise ValueError("GPIO line status is invalid")
-    line = facts["line269_info"]
-    if line != "unavailable" and not SAFE_INFO.fullmatch(line):
-        raise ValueError("GPIO line metadata is invalid")
-    if (facts["line269_status"] == "captured") != (line != "unavailable"):
-        raise ValueError("GPIO line metadata is contradictory")
+    for offset in PROFILE_OFFSETS:
+        prefix = f"line{offset}_"
+        if facts[prefix + "legacy_present"] not in {"yes", "no"}:
+            raise ValueError("legacy GPIO line presence is invalid")
+        if facts[prefix + "direction"] not in {"in", "out", "high", "low", "unavailable"}:
+            raise ValueError("legacy GPIO direction is invalid")
+        if facts[prefix + "active_low"] not in {"0", "1", "unavailable"}:
+            raise ValueError("legacy GPIO active-low flag is invalid")
+        if facts[prefix + "edge"] not in {
+            "none",
+            "rising",
+            "falling",
+            "both",
+            "unavailable",
+        }:
+            raise ValueError("legacy GPIO edge is invalid")
+        if facts[prefix + "legacy_present"] == "no" and any(
+            facts[prefix + field] != "unavailable"
+            for field in ("direction", "active_low", "edge")
+        ):
+            raise ValueError("absent legacy GPIO line exposed contradictory metadata")
+        if facts[prefix + "status"] not in {
+            "captured",
+            "missing",
+            "oversized",
+            "unavailable",
+        }:
+            raise ValueError("GPIO line status is invalid")
+        line = facts[prefix + "info"]
+        if line != "unavailable" and not SAFE_INFO.fullmatch(line):
+            raise ValueError("GPIO line metadata is invalid")
+        if (facts[prefix + "status"] == "captured") != (line != "unavailable"):
+            raise ValueError("GPIO line metadata is contradictory")
     if facts["gpioinfo_available"] == "no" and (
         facts["gpioinfo_version"] != "unavailable"
         or facts["gpioinfo_probe"] != "not-run"
-        or facts["line269_status"] != "unavailable"
+        or any(facts[f"line{offset}_status"] != "unavailable" for offset in PROFILE_OFFSETS)
     ):
         raise ValueError("unavailable gpioinfo exposed contradictory facts")
     return dict(sorted(facts.items()))
@@ -321,7 +344,7 @@ def execute(options: Options) -> int:
     if result.returncode != 0:
         failed: FailedGpioReceipt = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-read-only-gpio-line-baseline",
+            "probe": "hardened-blikvm-read-only-gpio-profile-baseline",
             "result": "failed",
             "policy": policy_receipt(invoked),
             "failure": {
@@ -337,7 +360,7 @@ def execute(options: Options) -> int:
     except (UnicodeError, ValueError):
         failed = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-read-only-gpio-line-baseline",
+            "probe": "hardened-blikvm-read-only-gpio-profile-baseline",
             "result": "failed",
             "policy": policy_receipt(invoked),
             "failure": {
@@ -350,7 +373,7 @@ def execute(options: Options) -> int:
         return 1
     receipt: GpioReceipt = {
         "schemaVersion": 1,
-        "probe": "hardened-blikvm-read-only-gpio-line-baseline",
+        "probe": "hardened-blikvm-read-only-gpio-profile-baseline",
         "result": "passed",
         "policy": policy_receipt(facts["gpioinfo_available"] == "yes"),
         "facts": facts,
