@@ -25,7 +25,7 @@ const SOURCES: [DiagnosticSource; DIAGNOSTIC_SOURCE_COUNT] = [
     DiagnosticSource::UpdateSupervisor,
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DiagnosticSession {
     instance_id: u64,
     source: DiagnosticSource,
@@ -627,10 +627,10 @@ mod tests {
             DiagnosticRuntimeSourceStatus::Connected { epoch: 1 }
         );
         assert_eq!(manager.live_record_count(), 1);
-        assert_eq!(
+        assert!(matches!(
             manager.connect(DiagnosticSource::Server, 0),
             Err(DiagnosticWindowError::SourceAlreadyConnected)
-        );
+        ));
         assert_eq!(
             manager.disconnect(first, 1),
             Ok(DisconnectOutcome::Recorded)
@@ -830,10 +830,10 @@ mod tests {
         );
         assert_eq!(manager.active_source_count(), 0);
         assert_eq!(manager.live_omitted_lifecycle_events(), 1);
-        assert_eq!(
+        assert!(matches!(
             manager.connect(DiagnosticSource::Server, now),
             Err(DiagnosticWindowError::Backpressure)
-        );
+        ));
         assert_eq!(manager.acknowledge_sealed(1), Ok(()));
         assert_eq!(manager.tick(now), Ok(WindowTickOutcome::Rotated));
         let sealed = manager.sealed_window().unwrap();
@@ -866,10 +866,10 @@ mod tests {
             SourceConnectionState::Disconnected {
                 last_epoch: u32::MAX,
             };
-        assert_eq!(
+        assert!(matches!(
             source_exhausted.connect(DiagnosticSource::Server, 0),
             Err(DiagnosticWindowError::CollectorUnavailable)
-        );
+        ));
     }
 
     #[test]

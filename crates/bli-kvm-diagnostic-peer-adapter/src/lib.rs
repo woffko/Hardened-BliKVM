@@ -3,13 +3,18 @@
 //! Safe fixed-name account resolution and connection-bound peer mapping.
 //!
 //! This crate has no listener, path, configuration, environment, logging,
-//! persistence, or collector runtime. It resolves seven compile-time names,
+//! persistence, or process runtime. It resolves seven compile-time names,
 //! validates the current collector UID, reads credentials only through Tokio's
-//! safe `UnixStream::peer_cred`, maps them once, and returns only the source.
+//! safe `UnixStream::peer_cred`, and composes an in-memory frame/window core.
 
 use bli_kvm_diagnostic_peer_policy::{
     DiagnosticAccount, DiagnosticPeerAssignments, DiagnosticPeerConfigError, DiagnosticPeerError,
     DiagnosticSource, KernelPeerCredentials,
+};
+use bli_kvm_diagnostic_protocol::{DIAGNOSTIC_RESPONSE_FRAME_BYTES, decode_event, encode_response};
+use bli_kvm_diagnostic_window_policy::{
+    DiagnosticSession, DiagnosticWindowError, DiagnosticWindowManager, DiagnosticWindowSnapshot,
+    DisconnectOutcome, WindowTickOutcome,
 };
 use nix::unistd::{Group, User, geteuid};
 use tokio::net::UnixStream;
@@ -45,6 +50,153 @@ pub enum DiagnosticPeerAdapterError {
     PeerRejected(DiagnosticPeerError),
 }
 
+#[derive(PartialEq, Eq)]
+pub struct AuthenticatedDiagnosticPeer {
+    source: DiagnosticSource,
+}
+
+#[derive(PartialEq, Eq)]
+pub struct DiagnosticConnection {
+    session: Option<DiagnosticSession>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticRuntimeError {
+    ConnectionClosed,
+    Window(DiagnosticWindowError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticTerminationReason {
+    InvalidFrame,
+    WindowFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticFrameOutcome {
+    Response([u8; DIAGNOSTIC_RESPONSE_FRAME_BYTES]),
+    Terminated {
+        reason: DiagnosticTerminationReason,
+        disconnect: DisconnectOutcome,
+    },
+}
+
+pub struct DiagnosticRuntimeCore {
+    windows: DiagnosticWindowManager,
+}
+
+impl DiagnosticRuntimeCore {
+    pub fn new(instance_id: u64, now_ms: u64) -> Result<Self, DiagnosticRuntimeError> {
+        Ok(Self {
+            windows: DiagnosticWindowManager::new(instance_id, now_ms)
+                .map_err(DiagnosticRuntimeError::Window)?,
+        })
+    }
+
+    pub fn accept(
+        &mut self,
+        peer: AuthenticatedDiagnosticPeer,
+        now_ms: u64,
+    ) -> Result<DiagnosticConnection, DiagnosticRuntimeError> {
+        let session = self
+            .windows
+            .connect(peer.source, now_ms)
+            .map_err(DiagnosticRuntimeError::Window)?;
+        Ok(DiagnosticConnection {
+            session: Some(session),
+        })
+    }
+
+    pub fn handle_frame(
+        &mut self,
+        connection: &mut DiagnosticConnection,
+        now_ms: u64,
+        frame: &[u8],
+    ) -> Result<DiagnosticFrameOutcome, DiagnosticRuntimeError> {
+        let session = connection
+            .session
+            .ok_or(DiagnosticRuntimeError::ConnectionClosed)?;
+        let event = match decode_event(frame) {
+            Ok(event) => event,
+            Err(_) => {
+                return self.terminate(
+                    connection,
+                    session,
+                    now_ms,
+                    DiagnosticTerminationReason::InvalidFrame,
+                );
+            }
+        };
+        match self.windows.submit(session, now_ms, event) {
+            Ok(response) => Ok(DiagnosticFrameOutcome::Response(encode_response(response))),
+            Err(DiagnosticWindowError::SessionMismatch) => Err(DiagnosticRuntimeError::Window(
+                DiagnosticWindowError::SessionMismatch,
+            )),
+            Err(_) => self.terminate(
+                connection,
+                session,
+                now_ms,
+                DiagnosticTerminationReason::WindowFailure,
+            ),
+        }
+    }
+
+    pub fn disconnect(
+        &mut self,
+        connection: &mut DiagnosticConnection,
+        now_ms: u64,
+    ) -> Result<DisconnectOutcome, DiagnosticRuntimeError> {
+        let session = connection
+            .session
+            .as_ref()
+            .copied()
+            .ok_or(DiagnosticRuntimeError::ConnectionClosed)?;
+        let outcome = self
+            .windows
+            .disconnect(session, now_ms)
+            .map_err(DiagnosticRuntimeError::Window)?;
+        connection.session = None;
+        Ok(outcome)
+    }
+
+    pub fn tick(&mut self, now_ms: u64) -> Result<WindowTickOutcome, DiagnosticRuntimeError> {
+        self.windows
+            .tick(now_ms)
+            .map_err(DiagnosticRuntimeError::Window)
+    }
+
+    pub fn live_snapshot(&self) -> Result<DiagnosticWindowSnapshot, DiagnosticRuntimeError> {
+        self.windows
+            .live_snapshot()
+            .map_err(DiagnosticRuntimeError::Window)
+    }
+
+    pub const fn sealed_window(&self) -> Option<&DiagnosticWindowSnapshot> {
+        self.windows.sealed_window()
+    }
+
+    pub fn acknowledge_sealed(&mut self, window_id: u32) -> Result<(), DiagnosticRuntimeError> {
+        self.windows
+            .acknowledge_sealed(window_id)
+            .map_err(DiagnosticRuntimeError::Window)
+    }
+
+    fn terminate(
+        &mut self,
+        connection: &mut DiagnosticConnection,
+        session: DiagnosticSession,
+        now_ms: u64,
+        reason: DiagnosticTerminationReason,
+    ) -> Result<DiagnosticFrameOutcome, DiagnosticRuntimeError> {
+        let disconnect = self
+            .windows
+            .disconnect(session, now_ms)
+            .map_err(DiagnosticRuntimeError::Window)?;
+        connection.session = None;
+        Ok(DiagnosticFrameOutcome::Terminated { reason, disconnect })
+    }
+}
+
 pub fn resolve_current_assignments() -> Result<DiagnosticPeerAssignments, DiagnosticPeerAdapterError>
 {
     resolve_assignments_with(&NixAccountLookup, geteuid().as_raw())
@@ -53,16 +205,17 @@ pub fn resolve_current_assignments() -> Result<DiagnosticPeerAssignments, Diagno
 pub fn map_tokio_peer(
     assignments: &DiagnosticPeerAssignments,
     stream: &UnixStream,
-) -> Result<DiagnosticSource, DiagnosticPeerAdapterError> {
+) -> Result<AuthenticatedDiagnosticPeer, DiagnosticPeerAdapterError> {
     let credentials = stream
         .peer_cred()
         .map_err(|_| DiagnosticPeerAdapterError::PeerCredentialReadFailed)?;
-    map_credential_values(
+    let source = map_credential_values(
         assignments,
         credentials.pid(),
         credentials.uid(),
         credentials.gid(),
-    )
+    )?;
+    Ok(AuthenticatedDiagnosticPeer { source })
 }
 
 fn map_credential_values(
@@ -163,6 +316,10 @@ const fn account_name(account: DiagnosticAccount) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use bli_kvm_diagnostic_protocol::{
+        DiagnosticEvent, DiagnosticProducerRejection, DiagnosticProducerResponse, encode_event,
+    };
+    use bli_kvm_diagnostic_window_policy::LifecycleGapReason;
     use nix::unistd::{getegid, geteuid};
 
     use super::*;
@@ -405,10 +562,206 @@ mod tests {
             values[0], values[1], values[2], values[3], values[4], values[5], gid,
         )
         .unwrap();
+        let authenticated = map_tokio_peer(&assignments, &stream).unwrap();
+        assert_eq!(authenticated.source, DiagnosticSource::Server);
+    }
+
+    #[test]
+    fn runtime_core_accepts_typed_frame_responds_and_records_eof() {
+        let mut runtime = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let mut connection = runtime.accept(peer(DiagnosticSource::Server), 0).unwrap();
+        let frame = encode_event(DiagnosticEvent::Ready).unwrap();
         assert_eq!(
-            map_tokio_peer(&assignments, &stream),
-            Ok(DiagnosticSource::Server)
+            runtime.handle_frame(&mut connection, 1, &frame),
+            Ok(DiagnosticFrameOutcome::Response(encode_response(
+                DiagnosticProducerResponse::Accepted
+            )))
         );
+        assert_eq!(runtime.live_snapshot().unwrap().bundle().record_count(), 2);
+        assert_eq!(
+            runtime.disconnect(&mut connection, 2),
+            Ok(DisconnectOutcome::Recorded)
+        );
+        assert_eq!(runtime.live_snapshot().unwrap().bundle().record_count(), 3);
+        assert_eq!(
+            runtime.handle_frame(&mut connection, 3, &frame),
+            Err(DiagnosticRuntimeError::ConnectionClosed)
+        );
+    }
+
+    #[test]
+    fn policy_rejection_returns_one_canonical_response_and_keeps_connection() {
+        let mut runtime = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let mut connection = runtime
+            .accept(peer(DiagnosticSource::VideoProxy), 0)
+            .unwrap();
+        let rejected_event = encode_event(DiagnosticEvent::ResourcePressure {
+            resource: bli_kvm_diagnostic_protocol::ResourceKind::Temperature,
+            level: bli_kvm_diagnostic_protocol::PressureLevel::Critical,
+        })
+        .unwrap();
+        assert_eq!(
+            runtime.handle_frame(&mut connection, 1, &rejected_event),
+            Ok(DiagnosticFrameOutcome::Response(encode_response(
+                DiagnosticProducerResponse::Rejected {
+                    reason: DiagnosticProducerRejection::EventNotAllowed,
+                }
+            )))
+        );
+        assert_eq!(runtime.live_snapshot().unwrap().bundle().record_count(), 1);
+        let ready = encode_event(DiagnosticEvent::Ready).unwrap();
+        assert!(matches!(
+            runtime.handle_frame(&mut connection, 1, &ready),
+            Ok(DiagnosticFrameOutcome::Response(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_frame_has_no_response_and_terminates_with_recorded_stop() {
+        let mut runtime = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let mut connection = runtime.accept(peer(DiagnosticSource::Server), 0).unwrap();
+        assert_eq!(
+            runtime.handle_frame(&mut connection, 1, &[1, 1, 0]),
+            Ok(DiagnosticFrameOutcome::Terminated {
+                reason: DiagnosticTerminationReason::InvalidFrame,
+                disconnect: DisconnectOutcome::Recorded,
+            })
+        );
+        assert_eq!(runtime.live_snapshot().unwrap().bundle().record_count(), 2);
+        assert_eq!(
+            runtime.disconnect(&mut connection, 2),
+            Err(DiagnosticRuntimeError::ConnectionClosed)
+        );
+    }
+
+    #[test]
+    fn clock_failure_terminates_and_marks_visible_incomplete_disconnect() {
+        let mut runtime = DiagnosticRuntimeCore::new(7, 10).unwrap();
+        let mut connection = runtime.accept(peer(DiagnosticSource::Server), 10).unwrap();
+        let frame = encode_event(DiagnosticEvent::Ready).unwrap();
+        assert_eq!(
+            runtime.handle_frame(&mut connection, 9, &frame),
+            Ok(DiagnosticFrameOutcome::Terminated {
+                reason: DiagnosticTerminationReason::WindowFailure,
+                disconnect: DisconnectOutcome::Incomplete {
+                    reason: LifecycleGapReason::ClockMovedBackwards,
+                },
+            })
+        );
+        assert_eq!(
+            runtime.live_snapshot().unwrap().omitted_lifecycle_events(),
+            1
+        );
+    }
+
+    #[test]
+    fn duplicate_authenticated_role_is_rejected_without_reusing_peer_token() {
+        let mut runtime = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let _connection = runtime.accept(peer(DiagnosticSource::Server), 0).unwrap();
+        assert!(matches!(
+            runtime.accept(peer(DiagnosticSource::Server), 0),
+            Err(DiagnosticRuntimeError::Window(
+                DiagnosticWindowError::SourceAlreadyConnected
+            ))
+        ));
+    }
+
+    #[test]
+    fn foreign_core_cannot_consume_or_close_a_valid_connection_handle() {
+        let mut owner = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let mut foreign = DiagnosticRuntimeCore::new(8, 0).unwrap();
+        let mut connection = owner.accept(peer(DiagnosticSource::Server), 0).unwrap();
+        assert_eq!(
+            foreign.disconnect(&mut connection, 1),
+            Err(DiagnosticRuntimeError::Window(
+                DiagnosticWindowError::SessionMismatch
+            ))
+        );
+        let frame = encode_event(DiagnosticEvent::Ready).unwrap();
+        assert!(matches!(
+            owner.handle_frame(&mut connection, 1, &frame),
+            Ok(DiagnosticFrameOutcome::Response(_))
+        ));
+    }
+
+    #[test]
+    fn second_full_window_returns_exact_backpressure_and_keeps_connection_open() {
+        let mut runtime = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let mut server = runtime.accept(peer(DiagnosticSource::Server), 0).unwrap();
+        let mut other_connections = Vec::new();
+        for (index, source) in [
+            DiagnosticSource::PlatformBroker,
+            DiagnosticSource::VideoProxy,
+            DiagnosticSource::ControlBroker,
+            DiagnosticSource::UpdateSupervisor,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            other_connections.push(runtime.accept(peer(source), index as u64 + 1).unwrap());
+        }
+        let frame = encode_event(DiagnosticEvent::Ready).unwrap();
+        let mut now = 5;
+        while runtime.live_snapshot().unwrap().bundle().record_count() < 27 {
+            assert!(matches!(
+                runtime.handle_frame(&mut server, now, &frame),
+                Ok(DiagnosticFrameOutcome::Response(_))
+            ));
+            now += 1;
+        }
+        assert_eq!(
+            runtime.handle_frame(&mut server, now, &frame),
+            Ok(DiagnosticFrameOutcome::Response(encode_response(
+                DiagnosticProducerResponse::Accepted
+            )))
+        );
+        now += 1;
+        assert_eq!(runtime.sealed_window().unwrap().window_id(), 1);
+        while runtime.live_snapshot().unwrap().bundle().record_count() < 27 {
+            assert!(matches!(
+                runtime.handle_frame(&mut server, now, &frame),
+                Ok(DiagnosticFrameOutcome::Response(_))
+            ));
+            now += 1;
+        }
+        assert_eq!(
+            runtime.handle_frame(&mut server, now, &frame),
+            Ok(DiagnosticFrameOutcome::Response(encode_response(
+                DiagnosticProducerResponse::Rejected {
+                    reason: DiagnosticProducerRejection::Backpressure,
+                }
+            )))
+        );
+        assert!(matches!(
+            runtime.handle_frame(&mut server, now, &frame),
+            Ok(DiagnosticFrameOutcome::Response(_))
+        ));
+        drop(other_connections);
+    }
+
+    #[test]
+    fn runtime_exposes_only_bounded_snapshot_seal_and_exact_acknowledgement() {
+        const DAY_MS: u64 = 86_400_000;
+        let mut runtime = DiagnosticRuntimeCore::new(7, 0).unwrap();
+        let mut connection = runtime.accept(peer(DiagnosticSource::Server), 0).unwrap();
+        assert_eq!(runtime.tick(DAY_MS + 1), Ok(WindowTickOutcome::Rotated));
+        assert_eq!(runtime.sealed_window().unwrap().window_id(), 1);
+        assert!(matches!(
+            runtime.acknowledge_sealed(2),
+            Err(DiagnosticRuntimeError::Window(
+                DiagnosticWindowError::AcknowledgementMismatch
+            ))
+        ));
+        assert_eq!(runtime.acknowledge_sealed(1), Ok(()));
+        assert!(runtime.sealed_window().is_none());
+        assert_eq!(
+            runtime.disconnect(&mut connection, DAY_MS + 2),
+            Ok(DisconnectOutcome::Recorded)
+        );
+    }
+
+    fn peer(source: DiagnosticSource) -> AuthenticatedDiagnosticPeer {
+        AuthenticatedDiagnosticPeer { source }
     }
 
     const fn account_index(account: DiagnosticAccount) -> usize {

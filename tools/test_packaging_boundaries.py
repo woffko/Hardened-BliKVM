@@ -184,6 +184,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-protocol"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
+        adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -196,6 +197,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 window / "Cargo.toml",
+                adapter / "Cargo.toml",
             }:
                 self.assertNotIn("bli-kvm-diagnostic-protocol", other_manifest.read_text())
         self.assertIn("#![no_std]", source)
@@ -267,6 +269,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_diagnostic_window_policy_is_pure_bounded_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-window-policy"
+        adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -278,7 +281,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(dependency, manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                adapter / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-window-policy",
                     other_manifest.read_text(),
@@ -288,6 +294,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("pub struct DiagnosticWindowManager", source)
         self.assertIn("pub struct DiagnosticSession", source)
         self.assertIn("pub struct DiagnosticWindowSnapshot", source)
+        before_session = production.split("pub struct DiagnosticSession", 1)[0]
+        session_derive = before_session.rsplit("#[derive(", 1)[-1].split(")]", 1)[0]
+        self.assertNotIn("Debug", session_derive)
         for forbidden in (
             "std::",
             "String",
@@ -362,6 +371,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn('"crates/bli-kvm-diagnostic-peer-adapter"', workspace)
         for dependency in (
             'bli-kvm-diagnostic-peer-policy = { path = "../bli-kvm-diagnostic-peer-policy" }',
+            'bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }',
+            'bli-kvm-diagnostic-window-policy = { path = "../bli-kvm-diagnostic-window-policy" }',
             "nix.workspace = true",
             "tokio.workspace = true",
         ):
@@ -376,6 +387,18 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("User::from_name", source)
         self.assertIn("Group::from_name", source)
         self.assertIn(".peer_cred()", source)
+        self.assertIn("pub struct AuthenticatedDiagnosticPeer", source)
+        self.assertIn("pub struct DiagnosticConnection", source)
+        self.assertIn("pub struct DiagnosticRuntimeCore", source)
+        self.assertIn("pub fn handle_frame", source)
+        for handle_type in (
+            "AuthenticatedDiagnosticPeer",
+            "DiagnosticConnection",
+        ):
+            before = production.split(f"pub struct {handle_type}", 1)[0]
+            derive = before.rsplit("#[derive(", 1)[-1].split(")]", 1)[0]
+            self.assertNotIn("Debug", derive)
+            self.assertNotIn("Clone", derive)
         for account in (
             "hardened-blikvm-diagnostics",
             "hardened-blikvm-server",
