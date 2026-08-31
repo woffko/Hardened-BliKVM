@@ -65,6 +65,7 @@ RUN_KEYS = {
     "inventory_sanitized",
     "inventory_schema",
     "inventory_status",
+    "thermal_millidegrees",
     "kvmd_active_after_run",
     "kvmd_nginx_active_after_run",
     "no_new_privs",
@@ -581,11 +582,16 @@ if [ "$inventory_status" != 200 ]; then
   exit 1
 fi
 phase=inventory-schema
-grep -q '"schemaVersion":1' "$stage_root/inventory.json"
+grep -q '"schemaVersion":2' "$stage_root/inventory.json"
 phase=inventory-platform
 grep -q '"platformId":"bli-h616-pikvm"' "$stage_root/inventory.json"
 phase=inventory-backend
 grep -q '"backend":"kvmd_transition"' "$stage_root/inventory.json"
+phase=inventory-thermal
+thermal_millidegrees=$(sed -n 's/.*"temperatureMillidegreesCelsius":\(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$stage_root/inventory.json")
+printf '%s\n' "$thermal_millidegrees" | grep -Eq '^-?[0-9]+$'
+[ "$thermal_millidegrees" -ge -40000 ]
+[ "$thermal_millidegrees" -le 150000 ]
 phase=inventory-sanitizer
 if grep -Eqi '"(password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress)"' "$stage_root/inventory.json"; then exit 1; fi
 phase=inventory-repeat
@@ -638,8 +644,9 @@ emit no_new_privs yes
 emit setup_status "$setup_status"
 emit login_status "$login_status"
 emit inventory_status "$inventory_status"
-emit inventory_schema 1
+emit inventory_schema 2
 emit inventory_backend kvmd_transition
+emit thermal_millidegrees "$thermal_millidegrees"
 emit inventory_sanitized yes
 emit inventory_requests "$inventory_requests"
 emit kvmd_active_after_run active
@@ -793,6 +800,9 @@ def validate_preflight(facts: dict[str, str], required_bytes: int) -> None:
 
 
 def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
+    thermal = facts.get("thermal_millidegrees", "")
+    if not re.fullmatch(r"-?[0-9]+", thermal) or not -40_000 <= int(thermal) <= 150_000:
+        raise ValueError("broker thermal invariant failed")
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
@@ -814,8 +824,9 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "setup_status": "200",
         "login_status": "200",
         "inventory_status": "200",
-        "inventory_schema": "1",
+        "inventory_schema": "2",
         "inventory_backend": "kvmd_transition",
+        "thermal_millidegrees": thermal,
         "inventory_sanitized": "yes",
         "inventory_requests": str(INVENTORY_REQUESTS),
         "kvmd_active_after_run": "active",

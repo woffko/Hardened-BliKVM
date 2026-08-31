@@ -21,7 +21,7 @@ pub use control::{
 };
 pub use inventory::{
     ComponentObservation, InventoryBackend, InventoryError, RUNTIME_INVENTORY_SCHEMA_VERSION,
-    RuntimeInventory, RuntimeVersions,
+    RuntimeInventory, RuntimeVersions, ThermalObservation,
 };
 pub use platform::CapabilityProvider;
 

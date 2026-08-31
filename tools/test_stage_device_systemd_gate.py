@@ -80,8 +80,25 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
         self.assertIn("/api/stream/mjpeg", runtime)
         self.assertIn("phase=video-concurrency", runtime)
         self.assertIn("phase=video-session-revocation", runtime)
+        self.assertIn("phase=inventory-thermal", runtime)
+        self.assertIn('"schemaVersion":2', runtime)
+        self.assertIn("temperatureMillidegreesCelsius", runtime)
+        self.assertIn("phase=thermal-capability", runtime)
+        self.assertIn('"thermal":{"availability":"read_only"', runtime)
         self.assertNotIn("/api/atx", runtime)
         self.assertNotIn("/api/hid", runtime)
+
+    def test_runtime_validator_rejects_out_of_range_thermal_observation(self) -> None:
+        facts = {key: "placeholder" for key in gate.RUN_KEYS}
+        facts.update(
+            {
+                "bundle_sha256": "a" * 64,
+                "video_frames": "2",
+                "thermal_millidegrees": "-40001",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "thermal invariant"):
+            gate.validate_run(facts, "a" * 64)
 
     def test_jpeg_counter_is_executable_with_posix_awk(self) -> None:
         result = subprocess.run(

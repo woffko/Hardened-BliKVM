@@ -38,6 +38,13 @@ Read-only observations and mutating methods are separate interfaces. HID, ATX,
 media, GPIO, or configfs methods stay unavailable until their adapter and
 physical gate pass.
 
+Read-only H616 temperature observation is restricted to the compiled
+`/sys/class/thermal/thermal_zone0/temp` path. The broker uses no-follow open
+semantics, rejects unsafe metadata and malformed or oversized values, bounds
+the accepted result to -40 through 150 degrees Celsius, and exposes no source
+path or raw value. This observation does not authorize fan, PWM, GPIO, or any
+other board mutation.
+
 Future mutations use the separate bounded control protocol described in
 `api/control-v1.md`; they never extend the read-only inventory protocol. Typed
 control messages still require a denial-by-default runtime policy, operation

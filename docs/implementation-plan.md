@@ -122,6 +122,14 @@ latency, CPU/memory, and 24-hour soak gates pass without new kernel alerts.
 Exit gate: BIOS boot from virtual media and physical board tests pass, with
 safe recovery from interruption.
 
+Checkpoint: the first board-function slice observes only the fixed H616 SoC
+thermal source. Its Rust adapter uses no-follow open semantics, rejects unsafe
+metadata, malformed/oversized input, and values outside -40 through 150 degrees
+Celsius, and adds a nullable millidegree observation to inventory schema v2.
+The React interface displays the sanitized value while fan, PWM, GPIO, and all
+other board controls remain unavailable. Host gates pass; H616 systemd and TLS
+browser runtime evidence remain required before promotion from source evidence.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

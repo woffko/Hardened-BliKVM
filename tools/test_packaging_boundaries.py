@@ -69,6 +69,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("hardened-blikvm-update-watchdog.timer", builder)
         self.assertIn("hardened-blikvm-update-confirm.socket", builder)
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-update.conf", builder)
+        self.assertIn("docs/api/inventory-v2.md", builder)
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
 

@@ -1,6 +1,6 @@
 use bli_kvm_core::{
     ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RuntimeInventory,
-    RuntimeVersions,
+    RuntimeVersions, ThermalObservation,
 };
 use bli_kvm_kvmd_client::KvmdInventory;
 
@@ -8,6 +8,13 @@ const PLATFORM_ID: &str = "bli-h616-pikvm";
 
 /// Remove KVMD-specific structure and retain only the public runtime facts.
 pub fn sanitize_kvmd_inventory(source: KvmdInventory) -> RuntimeInventory {
+    sanitize_kvmd_inventory_with_thermal(source, None)
+}
+
+pub fn sanitize_kvmd_inventory_with_thermal(
+    source: KvmdInventory,
+    temperature_millidegrees_celsius: Option<i32>,
+) -> RuntimeInventory {
     let inventory = RuntimeInventory {
         schema_version: RUNTIME_INVENTORY_SCHEMA_VERSION,
         platform_id: PLATFORM_ID.into(),
@@ -36,6 +43,9 @@ pub fn sanitize_kvmd_inventory(source: KvmdInventory) -> RuntimeInventory {
             online: source.msd.online,
             busy: source.msd.busy,
             connected: source.msd.drive.connected,
+        },
+        thermal: ThermalObservation {
+            temperature_millidegrees_celsius,
         },
         power_led: source.atx.leds.power,
         janus_enabled: source.info.extras.janus.enabled,
@@ -99,11 +109,18 @@ mod tests {
                 },
             },
         };
-        let inventory = sanitize_kvmd_inventory(source);
+        let inventory = sanitize_kvmd_inventory(source.clone());
         assert_eq!(inventory.validate(), Ok(()));
         assert_eq!(inventory.video.online, Some(true));
         assert_eq!(inventory.virtual_media.connected, Some(false));
         assert_eq!(inventory.power_led, Some(true));
         assert_eq!(inventory.janus_enabled, Some(false));
+        assert_eq!(inventory.thermal.temperature_millidegrees_celsius, None);
+
+        let inventory = sanitize_kvmd_inventory_with_thermal(source, Some(42_125));
+        assert_eq!(
+            inventory.thermal.temperature_millidegrees_celsius,
+            Some(42_125)
+        );
     }
 }

@@ -58,11 +58,13 @@ RUN_KEYS = {
     "broker_socket_mode",
     "broker_unit",
     "bundle_sha256",
+    "capabilities_status",
     "dedicated_credential",
     "htpasswd_restored",
     "inventory_backend",
     "inventory_requests",
     "inventory_sanitized",
+    "inventory_schema",
     "inventory_status",
     "kvmd_active_after_run",
     "kvmd_nginx_active_after_run",
@@ -77,6 +79,9 @@ RUN_KEYS = {
     "server_unit",
     "setup_status",
     "staging_removed",
+    "thermal_capability",
+    "thermal_evidence",
+    "thermal_millidegrees",
     "units_removed",
     "video_caps",
     "video_content_type",
@@ -679,9 +684,20 @@ rm -f -- "$request"
 phase=inventory
 inventory_status=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output "$test_root/inventory.json" --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
 [ "$inventory_status" = 200 ]
-grep -q '"schemaVersion":1' "$test_root/inventory.json"
+grep -q '"schemaVersion":2' "$test_root/inventory.json"
 grep -q '"backend":"kvmd_transition"' "$test_root/inventory.json"
 if grep -Eqi '"(password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress)"' "$test_root/inventory.json"; then exit 1; fi
+phase=inventory-thermal
+thermal_millidegrees=$(sed -n 's/.*"temperatureMillidegreesCelsius":\(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$test_root/inventory.json")
+printf '%s\n' "$thermal_millidegrees" | grep -Eq '^-?[0-9]+$'
+[ "$thermal_millidegrees" -ge -40000 ]
+[ "$thermal_millidegrees" -le 150000 ]
+phase=thermal-capability
+capabilities_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/capabilities.json" --write-out '%{http_code}' "$origin/api/capabilities" 2>/dev/null)
+[ "$capabilities_status" = 200 ]
+grep -q '"thermal":{"availability":"read_only","evidence":"source_verified"}' "$test_root/capabilities.json"
+thermal_capability=read_only
+thermal_evidence=source_verified
 count=1
 while [ "$count" -lt "$inventory_requests" ]; do
   code=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
@@ -796,10 +812,15 @@ emit server_caps none
 emit no_new_privs yes
 emit setup_status "$setup_status"
 emit login_status "$login_status"
+emit capabilities_status "$capabilities_status"
 emit inventory_status "$inventory_status"
+emit inventory_schema 2
 emit inventory_backend kvmd_transition
 emit inventory_sanitized yes
 emit inventory_requests "$inventory_requests"
+emit thermal_millidegrees "$thermal_millidegrees"
+emit thermal_capability "$thermal_capability"
+emit thermal_evidence "$thermal_evidence"
 emit video_status "$video_status"
 emit video_content_type multipart-mjpeg
 emit video_frames "$video_frames"
@@ -980,6 +1001,9 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
     video_frames = facts.get("video_frames", "")
     if not video_frames.isdecimal() or int(video_frames) < 2:
         raise ValueError("systemd video frame invariant failed")
+    thermal = facts.get("thermal_millidegrees", "")
+    if not re.fullmatch(r"-?[0-9]+", thermal) or not -40_000 <= int(thermal) <= 150_000:
+        raise ValueError("systemd thermal invariant failed")
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
@@ -1004,10 +1028,15 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "no_new_privs": "yes",
         "setup_status": "200",
         "login_status": "200",
+        "capabilities_status": "200",
         "inventory_status": "200",
+        "inventory_schema": "2",
         "inventory_backend": "kvmd_transition",
         "inventory_sanitized": "yes",
         "inventory_requests": str(INVENTORY_REQUESTS),
+        "thermal_millidegrees": thermal,
+        "thermal_capability": "read_only",
+        "thermal_evidence": "source_verified",
         "video_status": "200",
         "video_content_type": "multipart-mjpeg",
         "video_frames": video_frames,

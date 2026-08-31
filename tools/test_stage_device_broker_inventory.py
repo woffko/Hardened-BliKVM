@@ -55,6 +55,9 @@ class StageDeviceBrokerInventoryTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         script = broker.build_runtime_script(paths, bundle, 18081)
         self.assertIn("/api/inventory", script)
+        self.assertIn('"schemaVersion":2', script)
+        self.assertIn("temperatureMillidegreesCelsius", script)
+        self.assertIn("phase=inventory-thermal", script)
         for forbidden in (
             "/api/atx/click",
             "/api/atx/power",
@@ -64,6 +67,19 @@ class StageDeviceBrokerInventoryTests(unittest.TestCase):
             "poweroff",
         ):
             self.assertNotIn(forbidden, script)
+
+    def test_runtime_validator_requires_bounded_thermal_observation(self) -> None:
+        facts = {
+            key: "placeholder" for key in broker.RUN_KEYS
+        }
+        facts.update(
+            {
+                "bundle_sha256": "a" * 64,
+                "thermal_millidegrees": "150001",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "thermal invariant"):
+            broker.validate_run(facts, "a" * 64)
 
     def test_failure_parser_accepts_only_allowlisted_fields(self) -> None:
         self.assertEqual(

@@ -134,8 +134,13 @@ try {
   });
   assert.equal(inventory.status, 200);
   assert.equal(inventory.body.code, 0);
-  assert.equal(inventory.body.data.schemaVersion, 1);
+  assert.equal(inventory.body.data.schemaVersion, 2);
   assert.equal(inventory.body.data.backend, "kvmd_transition");
+  const thermalMillidegrees =
+    inventory.body.data.thermal?.temperatureMillidegreesCelsius;
+  assert.equal(Number.isInteger(thermalMillidegrees), true);
+  assert.ok(thermalMillidegrees >= -40_000);
+  assert.ok(thermalMillidegrees <= 150_000);
   assert.doesNotMatch(
     JSON.stringify(inventory.body.data),
     /password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress/i,
@@ -158,6 +163,19 @@ try {
     capabilities.body.data.virtualMedia.status.availability,
     "read_only",
   );
+  assert.equal(
+    capabilities.body.data.board.features.thermal.availability,
+    "read_only",
+  );
+  assert.equal(
+    capabilities.body.data.board.features.thermal.evidence,
+    "source_verified",
+  );
+
+  phase = "thermal-ui";
+  const thermalText = `${(thermalMillidegrees / 1000).toFixed(1)} °C`;
+  await page.getByText("SoC temperature", { exact: true }).first().waitFor();
+  assert.ok((await page.getByText(thermalText, { exact: true }).count()) >= 1);
 
   phase = "password-page";
   await page.goto(`${baseUrl}/#/auth/password`, { waitUntil: "networkidle" });
@@ -278,7 +296,12 @@ try {
       sessionCookie: "secure-httponly-strict",
       csrfCookie: "secure-readable-strict",
       inventoryStatus: 200,
+      inventorySchema: 2,
       inventoryBackend: "kvmd_transition",
+      thermalObservation: "bounded_millidegrees",
+      thermalCapability: "read_only",
+      thermalEvidence: "source_verified",
+      thermalUi: "rendered",
       videoCapability: "read_only",
       hidCapability: "unavailable",
       powerCapability: "unavailable",

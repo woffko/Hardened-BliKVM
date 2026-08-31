@@ -7,12 +7,14 @@
 
 mod hardware;
 mod inventory;
+mod thermal;
 
 pub use hardware::{
     GpioLineEvidence, GpioRole, H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence,
     VENDOR_SOURCE_REVISION,
 };
-pub use inventory::sanitize_kvmd_inventory;
+pub use inventory::{sanitize_kvmd_inventory, sanitize_kvmd_inventory_with_thermal};
+pub use thermal::{ThermalReadError, read_h616_temperature_millidegrees};
 
 use std::collections::BTreeMap;
 
@@ -38,6 +40,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 FeatureStatus::not_exposed(source_verified),
             );
         }
+        board_features.insert("thermal".into(), FeatureStatus::read_only(source_verified));
 
         CapabilityManifest {
             schema_version: CAPABILITY_SCHEMA_VERSION,
@@ -140,19 +143,13 @@ mod tests {
             manifest.virtual_media.status.availability,
             bli_kvm_core::Availability::ReadOnly
         );
-        assert!(
-            manifest
-                .board
-                .features
-                .values()
-                .all(|item| !item.is_available())
+        assert_eq!(
+            manifest.board.features["thermal"],
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified)
         );
-        assert!(
-            manifest
-                .board
-                .features
-                .values()
-                .all(|item| item.evidence == EvidenceLevel::SourceVerified)
+        assert_eq!(
+            manifest.board.features["fan"],
+            FeatureStatus::not_exposed(EvidenceLevel::SourceVerified)
         );
     }
 

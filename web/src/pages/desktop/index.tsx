@@ -12,6 +12,7 @@ import { isAvailable, normalizeVideoMode } from '@/lib/capabilities.ts';
 import { removeToken } from '@/lib/cookie.ts';
 import { HARDENED_NAME } from '@/lib/hardened.ts';
 import * as storage from '@/lib/localstorage.ts';
+import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
 import { client } from '@/lib/websocket.ts';
 import {
   capabilitiesAtom,
@@ -149,7 +150,7 @@ const AdapterPending = ({ capabilities }: { capabilities: CapabilityManifest }) 
     let cancelled = false;
     getRuntimeInventory()
       .then((response) => {
-        if (!cancelled && response.code === 0 && response.data.schemaVersion === 1) {
+        if (!cancelled && response.code === 0 && response.data.schemaVersion === 2) {
           setInventory(response.data);
         }
       })
@@ -207,6 +208,10 @@ const AdapterPending = ({ capabilities }: { capabilities: CapabilityManifest }) 
               <span>{inventory.hid.online === true ? 'online' : 'not online'}</span>
               <span>Virtual media</span>
               <span>{inventory.virtualMedia.online === true ? 'online' : 'not online'}</span>
+              <span>SoC temperature</span>
+              <span>
+                {formatTemperatureMillidegrees(inventory.thermal.temperatureMillidegreesCelsius)}
+              </span>
             </div>
           ) : (
             <div className="mt-2 text-neutral-500">

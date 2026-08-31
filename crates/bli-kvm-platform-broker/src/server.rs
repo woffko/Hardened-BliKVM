@@ -11,7 +11,9 @@ use bli_kvm_broker_protocol::{
     encode_frame, encode_response,
 };
 use bli_kvm_kvmd_client::{KvmdClientError, KvmdCredentials, KvmdReadClient};
-use bli_kvm_platform_bli::sanitize_kvmd_inventory;
+use bli_kvm_platform_bli::{
+    read_h616_temperature_millidegrees, sanitize_kvmd_inventory_with_thermal,
+};
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -129,9 +131,18 @@ async fn process_request(
 ) -> BrokerResponseEnvelope {
     let response = match request.request {
         BrokerReadRequest::Inventory => match client.inventory(credentials).await {
-            Ok(source) => BrokerReadResponse::Inventory {
-                inventory: sanitize_kvmd_inventory(source),
-            },
+            Ok(source) => {
+                let thermal = match read_h616_temperature_millidegrees() {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        eprintln!("H616 thermal observation failed with {}", error.class());
+                        None
+                    }
+                };
+                BrokerReadResponse::Inventory {
+                    inventory: sanitize_kvmd_inventory_with_thermal(source, thermal),
+                }
+            }
             Err(error) => {
                 let code = map_client_error(&error.source);
                 eprintln!(

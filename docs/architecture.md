@@ -24,10 +24,11 @@ bli-kvm-server
   | permission-restricted Unix socket with fixed request types
   v
 bli-platform-broker
-  - minimal privileged process
-  - exact device allowlist
-  - transition: authenticated allowlisted KVMD Unix-socket client
-  - native: HID, USB configfs, ATX, board I/O, virtual-media LUN actions
+- minimal privileged process
+- exact device allowlist
+- transition: authenticated allowlisted KVMD Unix-socket client
+- read-only platform facts: fixed, bounded H616 thermal sysfs observation
+- native: HID, USB configfs, ATX, board I/O, virtual-media LUN actions
   - credentials supplied by systemd, never by argv or the network process
 
 Separate service users
@@ -40,6 +41,12 @@ The transition broker is logically privileged even when it needs no root UID:
 its KVMD credential can perform hardware actions. Read-only inventory and
 mutating methods use separate traits and policy checks. A runtime observation
 never enables a mutating method by itself.
+
+The H616 thermal adapter is a read-only platform fact rather than a generic
+sysfs facility. It opens one compiled path with no-follow semantics, validates
+source metadata and a bounded integer, and returns only millidegrees Celsius or
+an unavailable observation. No request field can select a path, fan, PWM, or
+GPIO target.
 
 ## Core invariants
 

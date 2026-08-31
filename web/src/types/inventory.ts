@@ -8,7 +8,7 @@ export type ComponentObservation = {
 };
 
 export type RuntimeInventory = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   platformId: string;
   backend: InventoryBackend;
   versions: {
@@ -19,6 +19,9 @@ export type RuntimeInventory = {
   hid: ComponentObservation;
   power: ComponentObservation;
   virtualMedia: ComponentObservation;
+  thermal: {
+    temperatureMillidegreesCelsius: number | null;
+  };
   powerLed?: boolean | null;
   janusEnabled?: boolean | null;
 };

@@ -21,7 +21,9 @@ The reversible H616 prototype and the application-update core are implemented:
   and scoped login lockout;
 - a loopback-only Axum server with protected `/api/inventory`;
 - a credential-isolated read-only platform broker and bounded KVMD Unix-socket
-  client; schema v1 has no mutation variants;
+  client; broker schema v1 has no mutation variants;
+- bounded read-only H616 thermal observation through runtime-inventory schema
+  v2, with no fan, PWM, or GPIO control path;
 - an isolated read-only MJPEG proxy with session-bound browser delivery;
 - fail-closed Rust HID, ATX, and virtual-media transition cores that are not yet
   wired to a hardware-mutating backend;

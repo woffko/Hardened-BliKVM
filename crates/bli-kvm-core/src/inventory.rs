@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const RUNTIME_INVENTORY_SCHEMA_VERSION: u16 = 1;
+pub const RUNTIME_INVENTORY_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +26,12 @@ pub struct RuntimeVersions {
     pub streamer: Option<String>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThermalObservation {
+    pub temperature_millidegrees_celsius: Option<i32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeInventory {
@@ -37,6 +43,7 @@ pub struct RuntimeInventory {
     pub hid: ComponentObservation,
     pub power: ComponentObservation,
     pub virtual_media: ComponentObservation,
+    pub thermal: ThermalObservation,
     pub power_led: Option<bool>,
     pub janus_enabled: Option<bool>,
 }
@@ -49,6 +56,8 @@ pub enum InventoryError {
     EmptyPlatformId,
     #[error("runtime inventory version field is invalid")]
     InvalidVersion,
+    #[error("runtime inventory temperature is outside the accepted range")]
+    InvalidTemperature,
 }
 
 impl RuntimeInventory {
@@ -75,6 +84,13 @@ impl RuntimeInventory {
                 return Err(InventoryError::InvalidVersion);
             }
         }
+        if self
+            .thermal
+            .temperature_millidegrees_celsius
+            .is_some_and(|value| !(-40_000..=150_000).contains(&value))
+        {
+            return Err(InventoryError::InvalidTemperature);
+        }
         Ok(())
     }
 }
@@ -99,6 +115,7 @@ mod tests {
             hid: ComponentObservation::default(),
             power: ComponentObservation::default(),
             virtual_media: ComponentObservation::default(),
+            thermal: ThermalObservation::default(),
             power_led: None,
             janus_enabled: Some(false),
         }
@@ -119,5 +136,17 @@ mod tests {
         let mut inventory = inventory();
         inventory.versions.kvmd = Some("3.291\nleak".into());
         assert_eq!(inventory.validate(), Err(InventoryError::InvalidVersion));
+    }
+
+    #[test]
+    fn thermal_observation_is_bounded() {
+        let mut inventory = inventory();
+        inventory.thermal.temperature_millidegrees_celsius = Some(42_125);
+        assert_eq!(inventory.validate(), Ok(()));
+        inventory.thermal.temperature_millidegrees_celsius = Some(150_001);
+        assert_eq!(
+            inventory.validate(),
+            Err(InventoryError::InvalidTemperature)
+        );
     }
 }

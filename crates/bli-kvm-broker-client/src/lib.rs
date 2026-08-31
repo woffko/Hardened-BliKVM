@@ -107,6 +107,7 @@ mod tests {
     use bli_kvm_broker_protocol::{BrokerResponseEnvelope, encode_response};
     use bli_kvm_core::{
         ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RuntimeVersions,
+        ThermalObservation,
     };
     use tokio::net::UnixListener;
 
@@ -136,6 +137,7 @@ mod tests {
                 hid: ComponentObservation::default(),
                 power: ComponentObservation::default(),
                 virtual_media: ComponentObservation::default(),
+                thermal: ThermalObservation::default(),
                 power_led: None,
                 janus_enabled: Some(false),
             };

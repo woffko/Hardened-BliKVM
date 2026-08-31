@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { getCurrentVersion } from '@/api/application.ts';
 import { getRuntimeInventory } from '@/api/inventory.ts';
 import { formatHardenedVersion } from '@/lib/hardened.ts';
+import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 type InfoRowProps = {
@@ -61,6 +62,10 @@ export const Information = () => {
         <InfoRow
           label="Video source"
           value={inventory?.video.online === true ? 'online' : inventory ? 'not online' : '-'}
+        />
+        <InfoRow
+          label="SoC temperature"
+          value={formatTemperatureMillidegrees(inventory?.thermal.temperatureMillidegreesCelsius)}
         />
         <InfoRow
           label={t('settings.about.application')}
