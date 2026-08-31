@@ -220,6 +220,15 @@ archives, two byte-identical AArch64 rlibs and byte-identical extracted ThinLTO
 codegen passed. Existing SPI/GPIO ownership and every physical display gate
 remain unchanged. See `baselines/st7789-model.md`.
 
+Checkpoint: the unlinked `bli-kvm-display-button-policy` replaces the vendor's
+100-ms sample counter and repeated held-button triggers with explicit bounded
+polarity/debounce/hold configuration, startup-held suppression, a monotonic
+one-shot wake intent, debounced-release rearming, and rollback-safe time
+handling. At source commit `2c4e882`, the full host suite, two byte-identical
+prototype archives, two byte-identical AArch64 rlibs and byte-identical
+extracted ThinLTO codegen passed. No GPIO value or button was tested and no
+capability was enabled. See `baselines/display-button-policy.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

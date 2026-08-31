@@ -26,7 +26,7 @@ the vendor daemon beside a second GPIO owner.
 | H616 GPIO mapping | immutable board profile | source evidence | line identity, polarity, exclusive ownership |
 | ATX socket and GPIO pulses | typed ATX driver | disabled | bounded timing, busy/idempotency, LED polarity |
 | fan loop and thermal sysfs | pure policy plus latched supervisor, then a separate driver | mock supervisor only; no wiring | pin/polarity/frequency/minimum-duty, crash/sensor/stall failure and PWM/temperature soak |
-| button/activity LED loop | debounced input/output driver | observe input only | press duration, bounce, reboot, polarity |
+| button/activity LED loop | pure one-shot button policy, then separate input/output drivers | unlinked no_std policy; no observation | input/LED ownership, pull/polarity, physical bounce/press, display integration and reboot |
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
@@ -72,6 +72,13 @@ The unlinked Rust model now rejects invalid/empty 240x240 windows, emits typed
 RGB565 deterministically, and enforces exact bounded pixel counts. It contains
 no initialization or I/O and does not relax the ownership blocker; see
 `baselines/st7789-model.md`.
+
+The vendor H616 button loop polls source-associated offset257 every 100 ms,
+counts five high samples and can trigger repeatedly while held. The unlinked
+Rust policy replaces sample counts with explicit monotonic debounce/hold
+timing, requires a stable release before arming, emits once per press, and keeps
+polarity configurable. No GPIO observation exists yet; see
+`baselines/display-button-policy.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

@@ -42,3 +42,9 @@ the new owner, verify behavior, and retain a bounded rollback path. Physical
 Power/Reset exclusion, fan thermal-safety gates, LED polarity, button debounce,
 display SPI/GPIO ownership and electrical behavior, crash/power-loss behavior,
 and reboot persistence remain unresolved.
+
+An unlinked pure Rust display-button policy now provides explicit polarity,
+bounded debounce/hold timing, startup-held suppression, one-shot-until-release
+semantics, and clock-rollback rejection. Its evidence is recorded in
+`display-button-policy.md`; it does not read offset257 or change this metadata
+or physical acceptance status.
