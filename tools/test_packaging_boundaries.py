@@ -93,6 +93,32 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_display_button_policy_is_pure_no_std_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-display-button-policy"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        self.assertIn('"crates/bli-kvm-display-button-policy"', workspace)
+        self.assertNotIn("[dependencies]", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-display-button-policy", other_manifest.read_text()
+                )
+        self.assertIn("#![no_std]", source)
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertIn("WakeDisplayCycle", source)
+        self.assertIn("HeldLatchedUntilRelease", source)
+        for forbidden in (
+            "/dev/",
+            "std::",
+            "libc::",
+            "tokio::",
+            "gpiod",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, source)
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
