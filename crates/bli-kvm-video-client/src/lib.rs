@@ -46,13 +46,19 @@ pub struct MjpegStream {
 pub struct VideoBody {
     inner: Pin<Box<Incoming>>,
     connection_task: JoinHandle<()>,
+    _request_sender: http1::SendRequest<Empty<Bytes>>,
 }
 
 impl VideoBody {
-    fn new(inner: Incoming, connection_task: JoinHandle<()>) -> Self {
+    fn new(
+        inner: Incoming,
+        connection_task: JoinHandle<()>,
+        request_sender: http1::SendRequest<Empty<Bytes>>,
+    ) -> Self {
         Self {
             inner: Box::pin(inner),
             connection_task,
+            _request_sender: request_sender,
         }
     }
 }
@@ -131,7 +137,6 @@ impl VideoReadClient {
             .header(header::USER_AGENT, "Hardened-BliKVM-server/0.1")
             .body(Empty::<Bytes>::new())?;
         let response = sender.send_request(request).await?;
-        drop(sender);
         if response.status() != StatusCode::OK {
             connection_task.abort();
             return Err(VideoClientError::Status);
@@ -147,7 +152,7 @@ impl VideoReadClient {
             })?;
         Ok(MjpegStream {
             content_type,
-            body: VideoBody::new(response.into_body(), connection_task),
+            body: VideoBody::new(response.into_body(), connection_task, sender),
         })
     }
 }
@@ -217,6 +222,44 @@ mod tests {
             .to_bytes();
         assert_eq!(bytes, "JPEG");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn keeps_request_side_open_for_the_stream_lifetime() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("video.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&chunk[..read]);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\nJPEG",
+                )
+                .await
+                .unwrap();
+            let mut probe = [0_u8; 1];
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), stream.read(&mut probe))
+                    .await
+                    .is_err(),
+                "request side closed while the response body was still alive"
+            );
+        });
+
+        let stream = VideoReadClient::new(&socket)
+            .unwrap()
+            .mjpeg()
+            .await
+            .unwrap();
+        server.await.unwrap();
+        drop(stream);
     }
 
     #[test]
