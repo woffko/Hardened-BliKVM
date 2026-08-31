@@ -41,3 +41,6 @@ world-writable state, starts PWM before validating the sensor, leaves the last
 duty on read failure, relies on a sleep loop instead of monotonic dwell, and
 mixes configurable hysteresis with a fixed curve. None of those behaviors is
 carried into the policy contract.
+
+Host-test and AArch64 codegen evidence is recorded in
+`baselines/fan-policy.md`.

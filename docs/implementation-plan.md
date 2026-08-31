@@ -154,7 +154,11 @@ minimum on/off dwell; startup, sensor failure, invalid input, timeout, and
 critical heat fail to 100 percent. The crate has no hardware/runtime dependency
 and is not linked into the broker or server. GPIO/PWM ownership, polarity,
 frequency, minimum spinning duty, stall/fault injection, boot/restart behavior,
-and physical thermal soak remain required before any fan capability exists.
+and physical thermal soak remain required before any fan capability exists. At
+source commit `09cd041`, the full host suite, two byte-identical prototype
+archives, and byte-identical extracted AArch64 ThinLTO policy object passed;
+exact hashes and the non-shipped rlib metadata boundary are recorded in
+`baselines/fan-policy.md`.
 
 ## Phase 6: Hardening and updates
 

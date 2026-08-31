@@ -58,3 +58,12 @@ PCF8563 inventory-v3 epoch/offset observation. Its focused systemd and TLS
 Chromium gates passed without opening raw I2C or `/dev/rtc1` and without setting
 either clock. Exact hashes, rollback evidence, and remaining drift/battery/write
 limits are recorded in `device-rtc.md`.
+
+## Host-only fan-policy checkpoint
+
+Source commit `09cd041` added an unlinked pure fan-policy crate. Two independent
+workspace builds still produced byte-identical prototype archives; the archive
+does not contain the library. Separate extraction showed byte-identical AArch64
+ThinLTO policy object code while non-shipped rlib metadata differed. Exact
+hashes and the no-runtime/no-hardware boundary are recorded in
+`fan-policy.md`.
