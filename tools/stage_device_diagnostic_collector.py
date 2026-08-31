@@ -742,14 +742,27 @@ phase=create-transient-identities
 for identity_pair in $identity_pairs; do
   account=${identity_pair%%:*}
   identity_unit=${identity_pair#*:}
+  case "$account" in
+    hardened-blikvm) identity_phase=identity-anchor ;;
+    hardened-blikvm-server) identity_phase=identity-server ;;
+    hardened-blikvm-broker) identity_phase=identity-broker ;;
+    hardened-blikvm-video) identity_phase=identity-video ;;
+    hardened-blikvm-control) identity_phase=identity-control ;;
+    hardened-blikvm-update) identity_phase=identity-update ;;
+    *) exit 1 ;;
+  esac
+  phase="$identity_phase-run"
   systemd-run --quiet --collect --unit="$identity_unit" \
     --property=DynamicUser=yes --property="User=$account" --property="Group=$shared_group" \
     --property=PrivateNetwork=yes --property=NoNewPrivileges=yes \
     --property=ProtectSystem=strict --property=ProtectHome=yes \
     --property=PrivateTmp=yes --property=RuntimeMaxSec=9min /bin/sleep 600
+  phase="$identity_phase-active"
   [ "$(systemctl is-active "$identity_unit" 2>/dev/null || true)" = active ]
+  phase="$identity_phase-nss"
   getent passwd "$account" >/dev/null
 done
+phase=verify-transient-identities
 shared_gid=$(getent group "$shared_group" | awk -F: 'NR == 1 {print $3}')
 case "$shared_gid" in ''|0|*[!0-9]*) exit 1 ;; esac
 seen=:
