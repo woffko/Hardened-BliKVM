@@ -72,6 +72,7 @@ RUN_KEYS = {
     "no_new_privs",
     "payload_checksums",
     "rootfs_mode_after_run",
+    "runtime_profile",
     "server_caps",
     "server_host_network",
     "server_no_credential",
@@ -125,6 +126,7 @@ class PolicyReceipt(TypedDict):
     kvmdRestarted: bool
     rootfsHelpersInvoked: bool
     persistentChangeScope: str
+    runtimeProfile: str
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,7 @@ class Options:
     expected_sha256: str
     output: str
     bind_port: int
+    thermal_only: bool
 
 
 @dataclass(frozen=True)
@@ -187,6 +190,11 @@ def parse_args() -> Options:
     _ = parser.add_argument("--expected-sha256", required=True)
     _ = parser.add_argument("--output", required=True)
     _ = parser.add_argument("--bind-port", type=int, default=18081)
+    _ = parser.add_argument(
+        "--thermal-only",
+        action="store_true",
+        help="stop after the authenticated thermal inventory gate and mark video stream checks skipped",
+    )
     namespace = parser.parse_args()
     return Options(
         endpoint=cast(str, namespace.endpoint),
@@ -196,6 +204,7 @@ def parse_args() -> Options:
         expected_sha256=cast(str, namespace.expected_sha256),
         output=cast(str, namespace.output),
         bind_port=cast(int, namespace.bind_port),
+        thermal_only=cast(bool, namespace.thermal_only),
     )
 
 
@@ -431,7 +440,10 @@ emit ustreamer_socket_group "$ustreamer_group"
 
 
 def build_runtime_script(
-    paths: GatePaths, bundle: prototype.BundleInfo, bind_port: int
+    paths: GatePaths,
+    bundle: prototype.BundleInfo,
+    bind_port: int,
+    thermal_only: bool = False,
 ) -> str:
     values = _assignments(
         {
@@ -461,6 +473,7 @@ def build_runtime_script(
             "inventory_requests": INVENTORY_REQUESTS,
             "video_reconnects": VIDEO_RECONNECTS,
             "jpeg_counter_awk": JPEG_COUNTER_AWK,
+            "runtime_profile": "thermal-only" if thermal_only else "full",
             "rollback_b64": _encoded(build_rollback_script(paths)),
             "broker_dropin_b64": _encoded(build_broker_dropin(paths)),
             "video_dropin_b64": _encoded(build_video_dropin(paths)),
@@ -704,6 +717,14 @@ while [ "$count" -lt "$inventory_requests" ]; do
   [ "$code" = 200 ]
   count=$((count + 1))
 done
+if [ "$runtime_profile" = thermal-only ]; then
+  phase=thermal-only-complete
+  video_status=skipped
+  video_content_type=skipped
+  video_frames=skipped
+  video_reconnects_result=skipped
+  video_session_revocation=skipped
+else
 phase=video-stream
 capture_video() {
   capture_file=$1
@@ -796,6 +817,10 @@ set -e
 case "$revoked_stream_rc" in 0|18|23|56) ;; *) exit 1 ;; esac
 revoked_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/stream/mjpeg" 2>/dev/null)
 [ "$revoked_status" = 401 ]
+video_content_type=multipart-mjpeg
+video_reconnects_result=$video_reconnects
+video_session_revocation=passed
+fi
 phase=verify-existing-services
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
@@ -815,6 +840,7 @@ run_succeeded=yes
 trap - EXIT HUP INT TERM
 emit bundle_sha256 "$actual_sha256"
 emit payload_checksums verified
+emit runtime_profile "$runtime_profile"
 emit dedicated_credential verified
 emit account_created yes
 emit watchdog_armed yes
@@ -846,10 +872,10 @@ emit thermal_millidegrees "$thermal_millidegrees"
 emit thermal_capability "$thermal_capability"
 emit thermal_evidence "$thermal_evidence"
 emit video_status "$video_status"
-emit video_content_type multipart-mjpeg
+emit video_content_type "$video_content_type"
 emit video_frames "$video_frames"
-emit video_reconnects "$video_reconnects"
-emit video_session_revocation passed
+emit video_reconnects "$video_reconnects_result"
+emit video_session_revocation "$video_session_revocation"
 emit htpasswd_restored yes
 emit account_removed yes
 emit units_removed yes
@@ -1021,16 +1047,30 @@ def validate_preflight(facts: dict[str, str]) -> None:
         raise ValueError("systemd preflight invariant failed")
 
 
-def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
-    video_frames = facts.get("video_frames", "")
-    if not video_frames.isdecimal() or int(video_frames) < 2:
-        raise ValueError("systemd video frame invariant failed")
+def validate_run(
+    facts: dict[str, str], bundle_sha256: str, thermal_only: bool = False
+) -> None:
+    if thermal_only:
+        video_status = "skipped"
+        video_content_type = "skipped"
+        video_frames = "skipped"
+        video_reconnects = "skipped"
+        video_session_revocation = "skipped"
+    else:
+        video_status = "200"
+        video_content_type = "multipart-mjpeg"
+        video_frames = facts.get("video_frames", "")
+        if not video_frames.isdecimal() or int(video_frames) < 2:
+            raise ValueError("systemd video frame invariant failed")
+        video_reconnects = str(VIDEO_RECONNECTS)
+        video_session_revocation = "passed"
     thermal = facts.get("thermal_millidegrees", "")
     if not re.fullmatch(r"-?[0-9]+", thermal) or not -40_000 <= int(thermal) <= 150_000:
         raise ValueError("systemd thermal invariant failed")
     expected = {
         "bundle_sha256": bundle_sha256,
         "payload_checksums": "verified",
+        "runtime_profile": "thermal-only" if thermal_only else "full",
         "dedicated_credential": "verified",
         "account_created": "yes",
         "watchdog_armed": "yes",
@@ -1061,11 +1101,11 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "thermal_millidegrees": thermal,
         "thermal_capability": "read_only",
         "thermal_evidence": "runtime_verified",
-        "video_status": "200",
-        "video_content_type": "multipart-mjpeg",
+        "video_status": video_status,
+        "video_content_type": video_content_type,
         "video_frames": video_frames,
-        "video_reconnects": str(VIDEO_RECONNECTS),
-        "video_session_revocation": "passed",
+        "video_reconnects": video_reconnects,
+        "video_session_revocation": video_session_revocation,
         "htpasswd_restored": "yes",
         "account_removed": "yes",
         "units_removed": "yes",
@@ -1094,7 +1134,7 @@ def validate_final(facts: dict[str, str]) -> None:
         raise ValueError("systemd final-state invariant failed")
 
 
-def policy_receipt() -> PolicyReceipt:
+def policy_receipt(thermal_only: bool = False) -> PolicyReceipt:
     return {
         "accountMutation": "temporary-dedicated-kvmd-account",
         "accountRollback": "byte-identical-htpasswd-restore",
@@ -1104,6 +1144,7 @@ def policy_receipt() -> PolicyReceipt:
         "kvmdRestarted": False,
         "rootfsHelpersInvoked": False,
         "persistentChangeScope": "temporary-and-rollback-required",
+        "runtimeProfile": "thermal-only" if thermal_only else "full",
     }
 
 
@@ -1144,6 +1185,11 @@ def execute(options: Options) -> int:
     secret = prototype.read_secret_stdin()
     cleanup_required = False
     stage = "initialization"
+    probe = (
+        "hardened-blikvm-reversible-thermal-systemd-gate"
+        if options.thermal_only
+        else "hardened-blikvm-reversible-systemd-gate"
+    )
     try:
         stage = "preflight"
         preflight_result = require_result(
@@ -1178,12 +1224,12 @@ def execute(options: Options) -> int:
             prototype.run_ssh(
                 target,
                 secret,
-                build_runtime_script(paths, bundle, bind_port),
+                build_runtime_script(paths, bundle, bind_port, options.thermal_only),
                 timeout=300,
             ),
         )
         checks = prototype.parse_facts(run_result.stdout, RUN_KEYS)
-        validate_run(checks, bundle.sha256)
+        validate_run(checks, bundle.sha256, options.thermal_only)
 
         stage = "final-state"
         final_result = require_result(
@@ -1198,14 +1244,14 @@ def execute(options: Options) -> int:
 
         receipt: dict[str, object] = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-reversible-systemd-gate",
+            "probe": probe,
             "result": "passed",
             "bundle": {
                 "sha256": bundle.sha256,
                 "sizeBytes": bundle.size_bytes,
                 "sourceCommit": bundle.source_commit,
             },
-            "policy": policy_receipt(),
+            "policy": policy_receipt(options.thermal_only),
             "preflight": preflight,
             "checks": checks,
             "finalState": final_state,
@@ -1221,14 +1267,14 @@ def execute(options: Options) -> int:
         )
         receipt = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-reversible-systemd-gate",
+            "probe": probe,
             "result": "failed",
             "bundle": {
                 "sha256": bundle.sha256,
                 "sizeBytes": bundle.size_bytes,
                 "sourceCommit": bundle.source_commit,
             },
-            "policy": policy_receipt(),
+            "policy": policy_receipt(options.thermal_only),
             "failure": {
                 "stage": error.stage,
                 "failureType": error.failure_type,
@@ -1249,14 +1295,14 @@ def execute(options: Options) -> int:
         )
         receipt = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-reversible-systemd-gate",
+            "probe": probe,
             "result": "failed",
             "bundle": {
                 "sha256": bundle.sha256,
                 "sizeBytes": bundle.size_bytes,
                 "sourceCommit": bundle.source_commit,
             },
-            "policy": policy_receipt(),
+            "policy": policy_receipt(options.thermal_only),
             "failure": {
                 "stage": stage,
                 "failureType": type(error).__name__,
