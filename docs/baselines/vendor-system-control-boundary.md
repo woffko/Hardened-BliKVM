@@ -55,6 +55,8 @@ This audit changes no runtime capability. The first pure reboot/shutdown state
 policy now implements the non-I/O portion of this boundary; see
 `system-action-policy.md`. Its separate redundant journal model defines
 canonical corruption detection and write ordering; see
-`system-action-journal.md`. Both remain unlinked and publicly disabled, with no
-concrete durable store or privileged adapter, and do not authorize reboot,
-shutdown, hostname, service, filesystem, log, or clock actions.
+`system-action-journal.md`. An unlinked exact-root atomic store now implements
+host-tested metadata, lock, sync and readback semantics; see
+`system-action-store.md`. None is provisioned, packaged, device-accepted or
+connected to a privileged adapter, and none authorizes reboot, shutdown,
+hostname, service, filesystem, log, or clock actions.

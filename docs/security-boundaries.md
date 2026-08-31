@@ -157,10 +157,15 @@ generation to validated policy generation, rejects noncanonical fields,
 split-brain copies, gaps and a caller-supplied rollback floor, and plans the
 non-selected copy first with an expected-generation check. Its SHA-256 is
 corruption detection, not writer authentication or physical rollback
-resistance. No filesystem implementation exists; a future root-owned adapter
-must add no-follow owner/mode checks, exclusive locking, atomic same-directory
-replacement, file and directory sync, exact readback, and an independently
-justified generation floor before system actions can be enabled.
+resistance. Its unlinked filesystem adapter accepts only the compile-time
+root-owned mode-0700 directory and fixed A/B names, rejects POSIX ACLs and
+unsafe type/device/owner/group/mode/link/size metadata, locks the directory FD,
+and uses relative no-follow/nonblocking opens. It syncs and verifies a fixed
+temporary file, atomically renames, syncs the directory, and reopens for exact
+verification, completing the non-selected copy before the selected copy. The
+root is not provisioned or packaged; an independently justified generation
+floor, native filesystem/power-loss tests, confined runtime and device
+acceptance remain mandatory before system actions can be enabled.
 
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,

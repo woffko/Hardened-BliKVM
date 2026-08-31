@@ -275,6 +275,17 @@ metadata and ThinLTO codegen passed. SHA-256 is corruption detection only; no
 filesystem adapter, lock, sync, actuator or enabled capability exists. See
 `baselines/system-action-journal.md`.
 
+Checkpoint: the unlinked `bli-kvm-system-action-store` now owns one compile-time
+root and fixed A/B names, rejects unsafe identity/mode/ACL/type/link/size state,
+locks the directory FD, uses relative no-follow/nonblocking opens, and completes
+file sync, exact pre/post-rename readback, atomic rename and directory sync for
+the non-selected copy before the selected copy. Fifteen host fault/security
+tests pass. An initial AArch64 rmeta mismatch was traced to and removed with the
+direct `thiserror` dependency; at final source commit `5a764fd`, clean archive,
+policy, journal and store rlib/rmeta/ThinLTO pairs are byte-identical. No root
+was provisioned and no runtime was linked; see
+`baselines/system-action-store.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

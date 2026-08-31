@@ -101,9 +101,9 @@ journal is present in the prototype archive. Its manifest identifies exact
 source commit `b9106ab6263edb3c56553fe8b0f849c57931af15` and retains
 `releaseAccepted=false` and `deviceAccepted=false`.
 
-No device or system action was executed. A future adapter still needs an exact
-root-owned path, no-follow and owner/mode checks, exclusive locking, atomic
-same-directory replacement, file and directory sync, exact readback, bounded
-recovery, an independently justified generation floor, crash/fault injection,
-systemd confinement, and separate device acceptance. Until then the journal is
-not durable storage and reboot/shutdown remain unavailable.
+No device or system action was executed. A subsequent unlinked filesystem
+adapter now implements the exact-root, metadata, locking, atomic replacement,
+sync and readback layer in host tests; see `system-action-store.md`. It remains
+unprovisioned, unpackaged and unaccepted on H616, with no independently
+justified generation floor or power-loss proof. Reboot/shutdown remain
+unavailable.
