@@ -202,6 +202,15 @@ exclusive 19200/8N1 ownership, bounded streaming/timeouts, reconnect and
 four-port physical behavior remain mandatory. See
 `baselines/serial-switch-codec.md`.
 
+Checkpoint: metadata-only probes confirmed that the H616 vendor-named `OLED`
+path is an ST7789 240x240 LCD on root-only `/dev/spidev1.0`, with the expected
+SPI child and `sun6i-spi` master present. Source-associated GPIO259/260/262 are
+all used legacy sysfs outputs. No SPI open/ioctl/transfer, GPIO request/value,
+driver binding, or screen action occurred. This blocks a concurrent Rust
+display worker until an explicit SPI/GPIO owner handoff, safe electrical state,
+bounded rendering, crash/reboot and physical-screen gates pass. See
+`baselines/device-oled-topology.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

@@ -55,6 +55,12 @@ no serial/by-id directory. It opened no TTY and read no unique identifiers or
 frames. Serial-switch runtime support remains absent until deliberate hardware
 is attached and physically gated.
 
+A metadata-only display probe confirms that the vendor-named H616 `OLED` path
+is an ST7789 240x240 LCD on root-only `/dev/spidev1.0`, backed by the `sun6i-spi`
+controller. Source-associated control offsets 259, 260, and 262 are already
+used legacy sysfs outputs. No SPI node or GPIO value was opened, no transfer or
+line request occurred, and the display capability remains hidden.
+
 ## Field-image evidence
 
 - MBR partition layout with separate root, data, and virtual-media roles.
@@ -74,7 +80,8 @@ is attached and physically gated.
 - keyboard and absolute/relative mouse behavior;
 - ATX action timing and LED polarity;
 - configfs topology and BIOS boot from virtual media;
-- OLED, fan, buttons, and serial switch;
+- OLED/display behavior, fan, buttons, and serial switch; read-only display
+  topology is recorded separately;
 - RTC calibration, drift, battery retention, alarm/wakeup, and clock-write
   direction; read-only kernel topology is recorded separately;
 - fan GPIO electrical polarity, PWM semantics, minimum spinning duty, exclusive

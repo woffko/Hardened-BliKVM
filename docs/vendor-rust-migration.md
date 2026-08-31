@@ -29,7 +29,7 @@ the vendor daemon beside a second GPIO owner.
 | button/activity LED loop | debounced input/output driver | observe input only | press duration, bounce, reboot, polarity |
 | RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
-| OLED Python/C drivers | bounded I2C/SPI display worker | disabled | model/address, bus contention, display timeout |
+| OLED Python/C drivers | bounded SPI display worker for H616 ST7789 | metadata-only topology; disabled | exclusive SPI/GPIO handoff, electrical identity, rendering/timeout, crash/reboot and physical screen matrix |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -53,11 +53,19 @@ encode these values as production facts until line names/chip offsets are
 confirmed on the test board. Prefer libgpiod line identity over deprecated
 global sysfs numbering.
 
-Read-only live line-info now confirms all seven offsets and current consumers:
-KVMD owns Power/Reset and both ATX LED inputs; legacy sysfs owns activity LED
-and fan outputs; display-button offset 257 is unused input. No line value was
-read. These facts block concurrent ownership but do not establish electrical
+Read-only live line-info now confirms the original seven offsets plus the three
+ST7789 source-associated controls. KVMD owns Power/Reset and both ATX LED
+inputs; legacy sysfs owns display DC/backlight/reset, activity LED, and fan
+outputs; display-button offset 257 is unused input. No line value was read.
+These facts block concurrent ownership but do not establish electrical
 polarity or physical behavior.
+
+The H616 vendor `OLED` path is actually an ST7789 240x240 SPI LCD. Live metadata
+confirms root-only `/dev/spidev1.0`, the `spidev` child and `sun6i-spi` master,
+while GPIO259/260/262 are already used sysfs outputs. The vendor init cannot be
+used for discovery because it opens/configures SPI, requests outputs, toggles
+reset/backlight and transmits commands. See
+`baselines/device-oled-topology.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and
