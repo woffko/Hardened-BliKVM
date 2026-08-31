@@ -63,5 +63,7 @@ other physical interaction.
 - keyboard and absolute/relative mouse behavior;
 - ATX action timing and LED polarity;
 - configfs topology and BIOS boot from virtual media;
-- OLED, fan, RTC, buttons, and serial switch;
+- OLED, fan, buttons, and serial switch;
+- RTC calibration, drift, battery retention, alarm/wakeup, and clock-write
+  direction; read-only kernel topology is recorded separately;
 - update interruption, recovery card, and repeated reboot tests.

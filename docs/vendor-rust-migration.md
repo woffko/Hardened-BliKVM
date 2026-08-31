@@ -27,7 +27,7 @@ the vendor daemon beside a second GPIO owner.
 | ATX socket and GPIO pulses | typed ATX driver | disabled | bounded timing, busy/idempotency, LED polarity |
 | fan loop and thermal sysfs | hysteretic fan controller | observe temperature only | sensor-failure failsafe and PWM/temperature soak |
 | button/activity LED loop | debounced input/output driver | observe input only | press duration, bounce, reboot, polarity |
-| RTC shell commands | direct I2C/RTC ioctl adapter | detection only | address, clock direction, power-loss recovery |
+| RTC shell commands | fixed kernel-RTC sysfs adapter first; ioctl only if later required | detection only | identity/rebind, drift, clock direction, battery and power-loss recovery |
 | serial KVM switch | framed serial protocol adapter | enumerate only | udev identity, framing, timeout, four-port matrix |
 | OLED Python/C drivers | bounded I2C/SPI display worker | disabled | model/address, bus contention, display timeout |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
@@ -42,7 +42,8 @@ the vendor daemon beside a second GPIO owner.
 - Button/activity mapping: button 12 and activity LED 32.
 - Thermal source: `/sys/class/thermal/thermal_zone0/temp`.
 - GPIO chip assumption: `/dev/gpiochip0`.
-- RTC hypothesis: PCF8563 at I2C bus 0, address 0x51.
+- RTC source hypothesis confirmed read-only: kernel-bound PCF8563 identity
+  `0-0051`, exposed as `rtc1`; its clock was stale and `hctosys` was disabled.
 
 The comments mix header positions and global GPIO numbers. Rust code must not
 encode these values as production facts until line names/chip offsets are

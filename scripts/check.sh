@@ -28,6 +28,7 @@ python3 -m unittest \
   tools/test_packaging_boundaries.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_capture_ssh_preflight.py \
+  tools/test_capture_rtc_baseline.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
@@ -38,6 +39,7 @@ python3 -m unittest \
 python3 -m py_compile \
   tools/capture_pikvm_baseline.py \
   tools/capture_ssh_preflight.py \
+  tools/capture_rtc_baseline.py \
   tools/stage_device_broker_inventory.py \
   tools/stage_device_prototype.py \
   tools/stage_device_systemd_gate.py \
@@ -49,6 +51,7 @@ python3 -m py_compile \
   tools/test_packaging_boundaries.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_capture_ssh_preflight.py \
+  tools/test_capture_rtc_baseline.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
   tools/test_stage_device_systemd_gate.py \
@@ -62,6 +65,7 @@ if command -v basedpyright >/dev/null 2>&1; then
   basedpyright \
     tools/capture_pikvm_baseline.py \
     tools/capture_ssh_preflight.py \
+    tools/capture_rtc_baseline.py \
     tools/stage_device_broker_inventory.py \
     tools/stage_device_prototype.py \
     tools/stage_device_systemd_gate.py \
@@ -73,6 +77,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_packaging_boundaries.py \
     tools/test_rust_lld_static_pie.py \
     tools/test_capture_ssh_preflight.py \
+    tools/test_capture_rtc_baseline.py \
     tools/test_stage_device_broker_inventory.py \
     tools/test_stage_device_prototype.py \
     tools/test_stage_device_systemd_gate.py \
