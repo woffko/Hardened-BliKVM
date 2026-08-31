@@ -18,6 +18,11 @@ accounts, require five distinct nonzero UIDs, and reject an unknown, duplicate,
 root, or collector UID. The kernel peer UID, not a producer field, selects the
 source. Only one active connection per role is permitted.
 
+The separate unlinked `bli-kvm-diagnostic-peer-policy` now enforces the numeric
+portion of this boundary: six distinct nonzero UIDs, exact nonzero shared GID,
+positive bounded PID, root/collector/unknown rejection, and source-only output.
+User/group resolution and safe kernel credential retrieval remain adapter work.
+
 The collector assigns lifecycle `Started`/`Stopped`, epoch, sequence, and
 relative monotonic offset at accept, event acceptance, and EOF. A producer
 cannot encode lifecycle events. The four long-running services should retain

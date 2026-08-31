@@ -102,3 +102,7 @@ There is still no `SO_PEERCRED` adapter, Unix socket, collector process, real
 monotonic clock, server export protocol, authenticated API/UI, systemd unit,
 package, or advertised capability. Runtime restart, concurrency, timeout,
 confinement, privacy, browser, and H616 gates remain mandatory.
+
+Peer-policy source `fcfde44543b64f1a93eec05ea47c9f92ea6efe7b`
+now supplies the pure source mapping intended to precede `connect`; it does not
+link a socket or runtime. See `diagnostic-peer-policy.md`.

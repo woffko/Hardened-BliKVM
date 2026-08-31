@@ -222,6 +222,14 @@ EOF cannot be recorded because an overdue window is blocked, the role is still
 released and bounded omission metadata marks the bundle incomplete. Window and
 session state are ephemeral and contain no durable audit claim.
 
+The pure peer policy validates five producer UIDs and one collector UID as
+nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials
+need a positive bounded PID and exact producer UID/GID. Root, collector,
+unknown, missing, duplicate, and wrong-group peers fail closed. Only the
+semantic source leaves the mapper; numeric credentials are discarded. A future
+adapter must use a safe connection-bound `peer_cred` API and cannot accept
+source from the producer frame.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

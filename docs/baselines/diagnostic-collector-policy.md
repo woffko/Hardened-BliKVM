@@ -107,3 +107,7 @@ Window-policy source `a00e1a8eb5942d83cd5590b39fbcf9c5cf055fbf`
 now composes this collector with lifecycle reservation, sealed handoff and
 visible incomplete EOF metadata. It remains pure and unlinked; see
 `diagnostic-window-policy.md`.
+
+Peer-policy source `fcfde44543b64f1a93eec05ea47c9f92ea6efe7b`
+adds the separate pure UID/GID/PID-to-source mapper without changing this event
+matrix. It remains unlinked; see `diagnostic-peer-policy.md`.

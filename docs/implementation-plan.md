@@ -298,6 +298,16 @@ export AArch64 rlib, metadata and ThinLTO pairs passed. No identity adapter,
 socket, process, real clock, persistence, API, UI or capability exists; see
 `baselines/diagnostic-window-policy.md`.
 
+Checkpoint: the unlinked `bli-kvm-diagnostic-peer-policy` validates five
+producer UIDs plus a distinct collector UID, exact nonzero shared GID, and a
+present positive bounded PID. Every zero and duplicate configuration, root,
+collector, unknown and wrong-group peer fails closed; only `DiagnosticSource`
+leaves the mapper. At source commit `fcfde44`, the full host suite, two
+byte-identical prototype archives, and byte-identical peer/collector/export
+AArch64 rlib, metadata and ThinLTO pairs passed. No account lookup,
+`SO_PEERCRED` call, socket, process or capability exists; see
+`baselines/diagnostic-peer-policy.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

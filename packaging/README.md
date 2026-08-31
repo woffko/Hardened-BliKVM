@@ -34,6 +34,13 @@ reverse proxy; the Rust process itself remains loopback-only. Video responses
 remain session-bound: logout, password change, or session expiry closes the
 Rust response body before further MJPEG frames are forwarded.
 
+All five current service identities use the shared primary group
+`hardened-blikvm`, so future diagnostic socket group access cannot identify a
+producer role. The unlinked peer policy instead requires six distinct non-root
+UIDs, exact shared GID and a positive bounded PID, then returns only one semantic
+source. No account resolver, `SO_PEERCRED` adapter, socket, collector user/unit,
+or diagnostic capability is packaged yet.
+
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the
 external Host value required by origin/CSRF checks, and carries WebSocket

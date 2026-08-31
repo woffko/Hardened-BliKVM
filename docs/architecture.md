@@ -80,6 +80,10 @@ lifecycle, sequence and time never cross that wire. A fourth pure layer owns
 one live and one sealed window, reserves every active source's stop record,
 requires exact handoff acknowledgement, and marks an unrecordable disconnect
 as visibly incomplete instead of stranding the source or claiming completeness.
+The pure peer layer validates six distinct non-root UIDs plus the shared GID and
+maps connection-bound PID/UID/GID facts to only one source. Numeric credentials
+are not returned or exported; a future safe adapter must obtain them from the
+kernel for each accepted stream.
 
 ## Core invariants
 
