@@ -220,6 +220,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-diagnostic-producer-client"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-protocol",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-protocol"
 version = "0.1.0"
 dependencies = [

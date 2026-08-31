@@ -1,0 +1,15 @@
+[package]
+name = "bli-kvm-diagnostic-producer-client"
+description = "Fixed typed local diagnostic producer client for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

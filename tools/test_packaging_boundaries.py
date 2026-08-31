@@ -3,6 +3,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parent.parent
+DIAGNOSTIC_SOCKET_LITERAL = "/run/hardened-blikvm-diagnostics/collector.sock"
 
 
 class PackagingBoundaryTests(unittest.TestCase):
@@ -185,6 +186,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         crate = ROOT / "crates/bli-kvm-diagnostic-protocol"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
+        producer = ROOT / "crates/bli-kvm-diagnostic-producer-client"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -198,6 +200,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 crate / "Cargo.toml",
                 window / "Cargo.toml",
                 adapter / "Cargo.toml",
+                producer / "Cargo.toml",
             }:
                 self.assertNotIn("bli-kvm-diagnostic-protocol", other_manifest.read_text())
         self.assertIn("#![no_std]", source)
@@ -221,6 +224,67 @@ class PackagingBoundaryTests(unittest.TestCase):
             "unsafe {",
         ):
             self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_producer_client_is_fixed_bounded_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-producer-client"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        collector = (
+            ROOT / "crates/bli-kvm-diagnostic-collector/src/lib.rs"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-producer-client"', workspace)
+        self.assertIn("bli-kvm-diagnostic-protocol", manifest)
+        self.assertIn("tokio.workspace = true", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-producer-client = {",
+                    other_manifest.read_text(),
+                )
+        for required in (
+            "#![forbid(unsafe_code)]",
+            '"/run/hardened-blikvm-diagnostics/collector.sock"',
+            "pub enum DiagnosticNotSentReason",
+            "pub enum DiagnosticAmbiguousStage",
+            "pub enum DiagnosticSendError",
+            "pub enum DiagnosticSendOutcome",
+            "pub struct DiagnosticProducerClient",
+            "pub fn new()",
+            "pub async fn send",
+            "state.take()",
+            "timeout(write_timeout",
+            "timeout(response_timeout",
+            "decode_response(&response)",
+        ):
+            self.assertIn(required, production)
+        self.assertIn(DIAGNOSTIC_SOCKET_LITERAL, production)
+        self.assertIn(DIAGNOSTIC_SOCKET_LITERAL, collector)
+        self.assertNotRegex(
+            production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticProducerClient",
+        )
+        for forbidden in (
+            "pub fn with_parts",
+            "pub fn with_timeout",
+            "pub fn with_socket",
+            "std::env",
+            "Command",
+            "std::fs",
+            "Tcp",
+            "serde",
+            "tracing",
+            "log::",
+            "println!",
+            "eprintln!",
+            "Io(",
+            "/dev/",
+            "/var/",
+        ):
+            self.assertNotIn(forbidden, production)
+        self.assertNotIn("bli-kvm-diagnostic-producer-client", builder)
 
     def test_diagnostic_collector_policy_has_fixed_pure_sources_and_is_unlinked(
         self,
