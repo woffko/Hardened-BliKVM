@@ -14,7 +14,8 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         return gate.Assets(
             binary=gate.Asset(Path("/tmp/binary"), "a" * 64, 1_500_000),
             unit=gate.Asset(Path("/tmp/unit"), "b" * 64, 2_000),
-            sysusers=gate.Asset(Path("/tmp/sysusers"), "c" * 64, 200),
+            base_sysusers=gate.Asset(Path("/tmp/base-sysusers"), "c" * 64, 1_000),
+            sysusers=gate.Asset(Path("/tmp/sysusers"), "e" * 64, 200),
             source_commit="d" * 40,
         )
 
@@ -34,10 +35,7 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             paths.watchdog,
             "hardened-blikvm-diagnostic-rollback-0123456789abcdef",
         )
-        self.assertEqual(len(paths.identity_units), 6)
-        self.assertTrue(
-            all("0123456789abcdef" in unit for unit in paths.identity_units)
-        )
+        self.assertEqual(paths.account_backup, f"{paths.root}/account-backup")
         with self.assertRaises(ValueError):
             gate.stage_paths("a" * 63, "0123456789abcdef")
 
@@ -74,18 +72,14 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertNotIn("subprocess", client)
         self.assertNotIn("open('/", client)
 
-    def test_runtime_is_dynamic_user_af_unix_only_and_bounded(self) -> None:
+    def test_runtime_uses_restored_sysusers_af_unix_only_and_bounded(self) -> None:
         runtime = gate.build_run_script(self.paths(), self.assets())
         self.assertIn("systemd-sysusers --root=", runtime)
         self.assertIn("failure_phase", runtime)
-        self.assertIn("phase=create-transient-identities", runtime)
-        self.assertIn("identity_phase=identity-anchor", runtime)
-        self.assertIn("identity_phase=identity-update", runtime)
-        self.assertIn('phase="$identity_phase-run"', runtime)
-        self.assertIn('phase="$identity_phase-nss"', runtime)
-        self.assertIn("--property=DynamicUser=yes", runtime)
-        self.assertIn("systemd-run --quiet --collect", runtime)
-        self.assertIn("transient_identities created-and-removed", runtime)
+        self.assertIn("phase=create-static-identities", runtime)
+        self.assertIn('systemd-sysusers "$base_sysusers_source"', runtime)
+        self.assertIn("static_identities created-and-restored", runtime)
+        self.assertIn("account_database_restored yes", runtime)
         self.assertIn("systemctl show -p DynamicUser", runtime)
         self.assertIn("systemctl show -p PrivateNetwork", runtime)
         self.assertIn("five_sources_accepted 5", runtime)
@@ -97,13 +91,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn("graceful_shutdown yes", runtime)
         self.assertIn("--on-active=10min", runtime)
         self.assertIn(gate.BINARY_TARGET, runtime)
+        self.assertIn('cp -a -- "$database" "$account_backup/$name"', runtime)
         self.assertNotIn("useradd", runtime)
         self.assertNotIn("usermod", runtime)
         self.assertIn('"$synthetic_root/etc/passwd"', runtime)
-        self.assertNotRegex(
-            runtime,
-            r"(?m)(?:>|install[^\n]*)[ \t]+/etc/(?:passwd|group)(?:[ \t]|$)",
-        )
 
     def test_rollback_is_hash_bound_and_deletes_only_owned_external_paths(self) -> None:
         paths = self.paths()
@@ -111,6 +102,9 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn('[ "$(cat "$marker")" = "$marker_value" ]', rollback)
         self.assertIn('sha256sum "$unit_target"', rollback)
         self.assertIn('sha256sum "$binary_target"', rollback)
+        self.assertIn('sha256sum "$database"', rollback)
+        self.assertIn('cmp -s "$account_backup/$name" "$database"', rollback)
+        self.assertIn('elif [ "$current" != "$before" ]', rollback)
         self.assertIn('rmdir "$binary_parent"', rollback)
         self.assertIn(
             '[ "$parent_before" = absent ] && [ -e "$binary_parent" ]',
@@ -152,11 +146,12 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
 
     def test_fact_validators_are_exact(self) -> None:
         self.assertEqual(
-            gate.parse_runtime_failure(b"failure_phase=create-transient-identities\n"),
-            "create-transient-identities",
+            gate.parse_runtime_failure(b"failure_phase=create-static-identities\n"),
+            "create-static-identities",
         )
         preflight = {
             "account_absent_before": "yes",
+            "account_database_ready": "yes",
             "architecture": "aarch64",
             "binary_absent_before": "yes",
             "binary_parent_before": "present",
@@ -173,9 +168,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         }
         gate.validate_preflight(dict(sorted(preflight.items())))
         run = {
+            "account_database_restored": "yes",
             "binary_hash_verified": "yes",
             "collector_caps": "none",
-            "collector_dynamic_user": "yes",
+            "collector_identity": "static-sysusers",
             "collector_network_namespace": "private",
             "collector_no_new_privs": "yes",
             "collector_unit": "active-then-stopped",
@@ -190,9 +186,9 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "rollback_confirmed": "yes",
             "runtime_removed": "yes",
             "socket_mode": "660",
-            "socket_owner": "dynamic-shared",
+            "socket_owner": "static-shared",
+            "static_identities": "created-and-restored",
             "sysusers_synthetic": "yes",
-            "transient_identities": "created-and-removed",
             "unit_hash_verified": "yes",
             "unknown_rejected": "yes",
             "watchdog_armed": "yes",

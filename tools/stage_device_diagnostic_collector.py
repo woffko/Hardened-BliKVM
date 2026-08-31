@@ -40,7 +40,8 @@ PRODUCER_ACCOUNTS = (
     "hardened-blikvm-control",
     "hardened-blikvm-update",
 )
-TRANSIENT_IDENTITY_ACCOUNTS = (SHARED_GROUP, *PRODUCER_ACCOUNTS)
+ALL_ACCOUNTS = (*PRODUCER_ACCOUNTS, COLLECTOR_ACCOUNT)
+ACCOUNT_DATABASE_FILES = ("passwd", "group", "shadow", "gshadow")
 MAX_BINARY_BYTES = 16 * 1024 * 1024
 MAX_CONFIG_BYTES = 64 * 1024
 MIN_TMP_HEADROOM_BYTES = 16 * 1024 * 1024
@@ -58,6 +59,7 @@ PREFLIGHT_KEYS = {
     "architecture",
     "binary_absent_before",
     "binary_parent_before",
+    "account_database_ready",
     "identities_absent_before",
     "kvmd_active_before",
     "kvmd_nginx_active_before",
@@ -72,7 +74,7 @@ PREFLIGHT_KEYS = {
 RUN_KEYS = {
     "binary_hash_verified",
     "collector_caps",
-    "collector_dynamic_user",
+    "collector_identity",
     "collector_network_namespace",
     "collector_no_new_privs",
     "collector_unit",
@@ -89,7 +91,8 @@ RUN_KEYS = {
     "socket_mode",
     "socket_owner",
     "sysusers_synthetic",
-    "transient_identities",
+    "static_identities",
+    "account_database_restored",
     "unit_hash_verified",
     "unknown_rejected",
     "watchdog_armed",
@@ -132,6 +135,7 @@ class Options:
     binary: str
     source_commit: str
     unit: str
+    base_sysusers: str
     sysusers: str
     endpoint: str
     known_hosts: str
@@ -149,17 +153,20 @@ class Asset:
 class Assets:
     binary: Asset
     unit: Asset
+    base_sysusers: Asset
     sysusers: Asset
     source_commit: str
 
 
 @dataclass(frozen=True)
 class Paths:
+    run_id: str
     root: str
     marker: str
     marker_value: str
     binary: str
     unit: str
+    base_sysusers: str
     sysusers: str
     client: str
     rollback: str
@@ -171,8 +178,8 @@ class Paths:
     runtime_directory: str
     socket: str
     client_state: str
+    account_backup: str
     watchdog: str
-    identity_units: tuple[str, ...]
 
 
 def parse_args() -> Options:
@@ -182,6 +189,10 @@ def parse_args() -> Options:
     parser.add_argument(
         "--unit",
         default="packaging/systemd/hardened-blikvm-diagnostic-collector.service",
+    )
+    parser.add_argument(
+        "--base-sysusers",
+        default="packaging/sysusers.d/hardened-blikvm.conf",
     )
     parser.add_argument(
         "--sysusers",
@@ -200,6 +211,7 @@ def parse_args() -> Options:
         binary=cast(str, namespace.binary),
         source_commit=cast(str, namespace.source_commit),
         unit=cast(str, namespace.unit),
+        base_sysusers=cast(str, namespace.base_sysusers),
         sysusers=cast(str, namespace.sysusers),
         endpoint=cast(str, namespace.endpoint),
         known_hosts=cast(str, namespace.known_hosts),
@@ -286,6 +298,10 @@ def validate_assets(options: Options) -> Assets:
             options.unit,
             Path("packaging/systemd/hardened-blikvm-diagnostic-collector.service"),
         ),
+        base_sysusers=validate_config(
+            options.base_sysusers,
+            Path("packaging/sysusers.d/hardened-blikvm.conf"),
+        ),
         sysusers=validate_config(
             options.sysusers,
             Path("packaging/sysusers.d/hardened-blikvm-diagnostics.conf"),
@@ -302,16 +318,14 @@ def stage_paths(binary_sha256: str, run_id: str) -> Paths:
         raise ValueError("staging root is invalid")
     marker_value = f"diagnostic-collector:{binary_sha256}:{run_id}"
     unit_target = f"/run/systemd/system/{UNIT_NAME}"
-    identity_units = tuple(
-        f"hardened-blikvm-diagnostic-identity-{run_id}-{role}.service"
-        for role in ("anchor", "server", "broker", "video", "control", "update")
-    )
     return Paths(
+        run_id=run_id,
         root=root,
         marker=f"{root}/.hardened-blikvm-owner",
         marker_value=marker_value,
         binary=f"{root}/collector",
         unit=f"{root}/collector.service",
+        base_sysusers=f"{root}/base.sysusers",
         sysusers=f"{root}/diagnostics.sysusers",
         client=f"{root}/client.py",
         rollback=f"{root}/rollback.sh",
@@ -323,8 +337,8 @@ def stage_paths(binary_sha256: str, run_id: str) -> Paths:
         runtime_directory=RUNTIME_DIRECTORY,
         socket=SOCKET_PATH,
         client_state=f"{root}/client-state",
+        account_backup=f"{root}/account-backup",
         watchdog=f"hardened-blikvm-diagnostic-rollback-{run_id}",
-        identity_units=identity_units,
     )
 
 
@@ -338,7 +352,7 @@ def encode_text(value: str) -> str:
 
 def policy_receipt() -> PolicyReceipt:
     return {
-        "accountMode": "all-dynamic-test-static-template-unshipped",
+        "accountMode": "temporary-sysusers-and-exact-account-db-restore",
         "deviceActionsExecuted": False,
         "networkAccess": "private-af-unix-only",
         "persistentChangeScope": "temporary-binary-and-rollback-required",
@@ -423,8 +437,9 @@ def build_preflight_script(paths: Paths, required_bytes: int) -> str:
             "collector_account": COLLECTOR_ACCOUNT,
             "shared_group": SHARED_GROUP,
             "producer_accounts": " ".join(PRODUCER_ACCOUNTS),
-            "identity_accounts": " ".join(TRANSIENT_IDENTITY_ACCOUNTS),
-            "identity_units": " ".join(paths.identity_units),
+            "all_accounts": " ".join(ALL_ACCOUNTS),
+            "account_files": " ".join(f"/etc/{name}" for name in ACCOUNT_DATABASE_FILES),
+            "run_id": paths.run_id,
             "unit_name": UNIT_NAME,
         }
     )
@@ -455,13 +470,21 @@ if systemctl cat "$unit_name" >/dev/null 2>&1; then exit 1; fi
 if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
-for account in $identity_accounts; do
+for account in $all_accounts; do
   if getent passwd "$account" >/dev/null 2>&1; then exit 1; fi
+  if getent group "$account" >/dev/null 2>&1; then exit 1; fi
 done
-for account in $producer_accounts; do if getent group "$account" >/dev/null 2>&1; then exit 1; fi; done
-for identity_unit in $identity_units; do
-  if systemctl cat "$identity_unit" >/dev/null 2>&1; then exit 1; fi
-  [ "$(systemctl is-active "$identity_unit" 2>/dev/null || true)" != active ]
+for database in $account_files; do
+  [ -f "$database" ]
+  [ ! -L "$database" ]
+  [ "$(stat -c '%u:%h' "$database")" = 0:1 ]
+  mode=$(stat -c '%a' "$database")
+  case "$database:$mode" in
+    /etc/passwd:644|/etc/group:644|/etc/shadow:600|/etc/shadow:640|/etc/gshadow:600|/etc/gshadow:640) ;;
+    *) exit 1 ;;
+  esac
+  name=${database##*/}
+  [ ! -e "/etc/.$name.hardened-blikvm-$run_id" ]
 done
 if [ -e "$binary_parent" ]; then
   [ -d "$binary_parent" ]
@@ -474,11 +497,11 @@ fi
 version=$(systemctl --version | head -n 1 | awk '{print $2}')
 case "$version" in ''|*[!0-9]*) exit 1 ;; esac
 [ "$version" -ge 249 ]
-[ -x /bin/sleep ]
-for tool in awk base64 cat chmod cp cut df find findmnt getent grep head id install kill mkdir mv python3 readlink rm rmdir sed setpriv sha256sum sleep stat systemctl systemd-analyze systemd-run systemd-sysusers tail tr uname wc; do
+for tool in awk base64 cat chmod cmp cp cut df find findmnt getent grep head id install kill mkdir mv python3 readlink rm rmdir sed setpriv sha256sum sleep stat sync systemctl systemd-analyze systemd-run systemd-sysusers tail tr uname wc; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
 emit account_absent_before yes
+emit account_database_ready yes
 emit architecture aarch64
 emit binary_absent_before yes
 emit binary_parent_before "$binary_parent_before"
@@ -562,10 +585,11 @@ def build_rollback_script(paths: Paths, assets: Assets) -> str:
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
             "collector_account": COLLECTOR_ACCOUNT,
-            "producer_accounts": " ".join(PRODUCER_ACCOUNTS),
-            "identity_accounts": " ".join(TRANSIENT_IDENTITY_ACCOUNTS),
+            "all_accounts": " ".join(ALL_ACCOUNTS),
             "shared_group": SHARED_GROUP,
-            "identity_units_stop": " ".join(reversed(paths.identity_units)),
+            "account_files": " ".join(f"/etc/{name}" for name in ACCOUNT_DATABASE_FILES),
+            "account_backup": paths.account_backup,
+            "run_id": paths.run_id,
             "watchdog": paths.watchdog,
         }
     )
@@ -595,20 +619,29 @@ if [ -e "$runtime_directory" ]; then
   fi
   rmdir "$runtime_directory"
 fi
-for identity_unit in $identity_units_stop; do
-  systemctl stop "$identity_unit" 2>/dev/null || true
-  systemctl reset-failed "$identity_unit" 2>/dev/null || true
-done
-count=0
-while [ "$count" -lt 100 ]; do
-  identities_present=no
-  if getent group "$shared_group" >/dev/null 2>&1; then identities_present=yes; fi
-  for account in $identity_accounts; do
-    if getent passwd "$account" >/dev/null 2>&1; then identities_present=yes; fi
-  done
-  [ "$identities_present" = yes ] || break
-  sleep 0.1
-  count=$((count + 1))
+for database in $account_files; do
+  name=${database##*/}
+  before=$(awk -F= -v key="before_$name" '$1 == key {print $2}' "$state_file")
+  modified=$(awk -F= -v key="modified_$name" '$1 == key {print $2}' "$state_file")
+  case "$before" in *[!0-9a-f]*) exit 1 ;; esac
+  [ "${#before}" = 64 ]
+  current=$(sha256sum "$database" | cut -d ' ' -f 1)
+  if [ -z "$modified" ]; then
+    [ "$current" = "$before" ]
+  elif [ "${#modified}" != 64 ]; then
+    exit 1
+  elif [ "$current" = "$modified" ]; then
+    restore_tmp="/etc/.$name.hardened-blikvm-$run_id"
+    [ ! -e "$restore_tmp" ]
+    cp -a -- "$account_backup/$name" "$restore_tmp"
+    sync "$restore_tmp"
+    mv -f -- "$restore_tmp" "$database"
+    sync "$database"
+  elif [ "$current" != "$before" ]; then
+    exit 3
+  fi
+  [ "$(sha256sum "$database" | cut -d ' ' -f 1)" = "$before" ]
+  cmp -s "$account_backup/$name" "$database"
 done
 if [ -e "$unit_target" ]; then
   [ -f "$unit_target" ]
@@ -639,12 +672,9 @@ if [ "$parent_before" = absent ] && [ -e "$binary_parent" ]; then
 fi
 [ ! -e "$runtime_directory" ]
 [ ! -e "$binary_target" ]
-if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
-for account in $identity_accounts; do
+for account in $all_accounts; do
   if getent passwd "$account" >/dev/null 2>&1; then exit 1; fi
-done
-for account in $producer_accounts; do
   if getent group "$account" >/dev/null 2>&1; then exit 1; fi
 done
 systemctl stop "$watchdog.timer" 2>/dev/null || true
@@ -667,6 +697,8 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
             "binary_size": assets.binary.size_bytes,
             "unit_source": paths.unit,
             "unit_sha": assets.unit.sha256,
+            "base_sysusers_source": paths.base_sysusers,
+            "base_sysusers_sha": assets.base_sysusers.sha256,
             "sysusers_source": paths.sysusers,
             "sysusers_sha": assets.sysusers.sha256,
             "client": paths.client,
@@ -683,14 +715,13 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
             "client_state": paths.client_state,
+            "account_backup": paths.account_backup,
+            "account_files": " ".join(f"/etc/{name}" for name in ACCOUNT_DATABASE_FILES),
             "watchdog": paths.watchdog,
             "collector_account": COLLECTOR_ACCOUNT,
             "shared_group": SHARED_GROUP,
             "producer_accounts": " ".join(PRODUCER_ACCOUNTS),
-            "identity_pairs": " ".join(
-                f"{account}:{unit}"
-                for account, unit in zip(TRANSIENT_IDENTITY_ACCOUNTS, paths.identity_units)
-            ),
+            "all_accounts": " ".join(ALL_ACCOUNTS),
         }
     )
     body = r'''
@@ -713,6 +744,7 @@ trap 'exit 1' HUP INT TERM
 [ "$(stat -c %s "$binary")" = "$binary_size" ]
 [ "$(sha256sum "$binary" | cut -d ' ' -f 1)" = "$binary_sha" ]
 [ "$(sha256sum "$unit_source" | cut -d ' ' -f 1)" = "$unit_sha" ]
+[ "$(sha256sum "$base_sysusers_source" | cut -d ' ' -f 1)" = "$base_sysusers_sha" ]
 [ "$(sha256sum "$sysusers_source" | cut -d ' ' -f 1)" = "$sysusers_sha" ]
 kvmd_pid_before=$(systemctl show -p MainPID --value kvmd.service)
 nginx_pid_before=$(systemctl show -p MainPID --value kvmd-nginx.service)
@@ -727,56 +759,43 @@ chmod 700 "$rollback_script"
 phase=verify-sysusers
 synthetic_root="$stage_root/sysusers-root"
 install -d -m 755 "$synthetic_root/etc" "$synthetic_root/usr/lib/sysusers.d"
-printf 'g %s -\n' "$shared_group" > "$synthetic_root/usr/lib/sysusers.d/00-base.conf"
+install -m 0644 "$base_sysusers_source" "$synthetic_root/usr/lib/sysusers.d/40-base.conf"
 install -m 0644 "$sysusers_source" "$synthetic_root/usr/lib/sysusers.d/50-diagnostics.conf"
 systemd-sysusers --root="$synthetic_root" >/dev/null 2>&1
-awk -F: -v account="$collector_account" '$1 == account && $3 != 0 && $6 == "/nonexistent" && $7 == "/usr/sbin/nologin" {found=1} END {exit !found}' "$synthetic_root/etc/passwd"
+for account in $all_accounts; do
+  awk -F: -v account="$account" '$1 == account && $3 != 0 && $6 == "/nonexistent" && $7 == "/usr/sbin/nologin" {found=1} END {exit !found}' "$synthetic_root/etc/passwd"
+done
 awk -F: -v group="$shared_group" -v account="$collector_account" '$1 == group && ("," $4 ",") ~ ("," account ",") {found=1} END {exit !found}' "$synthetic_root/etc/group"
 if [ -e "$binary_parent" ]; then parent_before=present; else parent_before=absent; fi
 printf 'parent_before=%s\n' "$parent_before" > "$rollback_state"
+install -d -m 700 "$account_backup"
+for database in $account_files; do
+  name=${database##*/}
+  cp -a -- "$database" "$account_backup/$name"
+  before=$(sha256sum "$database" | cut -d ' ' -f 1)
+  printf 'before_%s=%s\n' "$name" "$before" >> "$rollback_state"
+done
 chmod 600 "$rollback_state"
 phase=arm-watchdog
 systemd-run --quiet --unit="$watchdog" --on-active=10min --timer-property=AccuracySec=1s /bin/sh "$rollback_script"
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" = active ]
-phase=create-transient-identities
-for identity_pair in $identity_pairs; do
-  account=${identity_pair%%:*}
-  identity_unit=${identity_pair#*:}
-  case "$account" in
-    hardened-blikvm) identity_phase=identity-anchor ;;
-    hardened-blikvm-server) identity_phase=identity-server ;;
-    hardened-blikvm-broker) identity_phase=identity-broker ;;
-    hardened-blikvm-video) identity_phase=identity-video ;;
-    hardened-blikvm-control) identity_phase=identity-control ;;
-    hardened-blikvm-update) identity_phase=identity-update ;;
-    *) exit 1 ;;
-  esac
-  phase="$identity_phase-run"
-  systemd-run --quiet --collect --unit="$identity_unit" \
-    --property=DynamicUser=yes --property="User=$account" --property="Group=$shared_group" \
-    --property=PrivateNetwork=yes --property=NoNewPrivileges=yes \
-    --property=ProtectSystem=strict --property=ProtectHome=yes \
-    --property=PrivateTmp=yes --property=RuntimeMaxSec=9min /bin/sleep 600
-  phase="$identity_phase-active"
-  [ "$(systemctl is-active "$identity_unit" 2>/dev/null || true)" = active ]
-  phase="$identity_phase-nss"
-  getent passwd "$account" >/dev/null
+phase=create-static-identities
+systemd-sysusers "$base_sysusers_source" "$sysusers_source" >/dev/null 2>&1
+for database in $account_files; do
+  name=${database##*/}
+  modified=$(sha256sum "$database" | cut -d ' ' -f 1)
+  printf 'modified_%s=%s\n' "$name" "$modified" >> "$rollback_state"
 done
-phase=verify-transient-identities
+sync "$rollback_state"
+phase=verify-static-identities
 shared_gid=$(getent group "$shared_group" | awk -F: 'NR == 1 {print $3}')
 case "$shared_gid" in ''|0|*[!0-9]*) exit 1 ;; esac
 seen=:
-for identity_pair in $identity_pairs; do
-  account=${identity_pair%%:*}
-  identity_unit=${identity_pair#*:}
+for account in $all_accounts; do
   uid=$(getent passwd "$account" | awk -F: 'NR == 1 {print $3}')
-  pid=$(systemctl show -p MainPID --value "$identity_unit")
-  for value in "$uid" "$pid"; do
-    case "$value" in ''|0|*[!0-9]*) exit 1 ;; esac
-  done
+  case "$uid" in ''|0|*[!0-9]*) exit 1 ;; esac
   case "$seen" in *":$uid:"*) exit 1 ;; esac
   seen="$seen$uid:"
-  [ "$(awk '/^Gid:/ {print $2}' "/proc/$pid/status")" = "$shared_gid" ]
 done
 phase=install-runtime
 if [ "$parent_before" = absent ]; then mkdir -m 755 "$binary_parent"; fi
@@ -877,13 +896,7 @@ done
 [ -f "$shutdown_ready" ]
 systemctl stop "$unit_name"
 wait "$shutdown_client_pid"
-count=0
-while [ "$count" -lt 100 ] && getent passwd "$collector_account" >/dev/null 2>&1; do
-  sleep 0.1
-  count=$((count + 1))
-done
 [ ! -e "$runtime_directory" ]
-if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 [ "$(systemctl show -p MainPID --value kvmd.service)" = "$kvmd_pid_before" ]
 [ "$(systemctl show -p MainPID --value kvmd-nginx.service)" = "$nginx_pid_before" ]
 phase=rollback
@@ -895,7 +908,7 @@ phase=rollback
 run_succeeded=yes
 emit binary_hash_verified yes
 emit collector_caps none
-emit collector_dynamic_user yes
+emit collector_identity static-sysusers
 emit collector_network_namespace private
 emit collector_no_new_privs yes
 emit collector_unit active-then-stopped
@@ -910,9 +923,10 @@ emit root_rejected yes
 emit rollback_confirmed yes
 emit runtime_removed yes
 emit socket_mode 660
-emit socket_owner dynamic-shared
+emit socket_owner static-shared
 emit sysusers_synthetic yes
-emit transient_identities created-and-removed
+emit static_identities created-and-restored
+emit account_database_restored yes
 emit unit_hash_verified yes
 emit unknown_rejected yes
 emit watchdog_armed yes
@@ -930,6 +944,8 @@ def build_cleanup_script(paths: Paths, assets: Assets) -> str:
             "rollback_state": paths.state,
             "binary_parent": paths.binary_parent,
             "binary_target": paths.binary_target,
+            "all_accounts": " ".join(ALL_ACCOUNTS),
+            "shared_group": SHARED_GROUP,
             "rollback_b64": encode_text(build_rollback_script(paths, assets)),
         }
     )
@@ -947,16 +963,17 @@ if [ -e "$stage_root" ]; then
   fi
   if [ ! -f "$rollback_state" ]; then
     [ ! -e "$binary_target" ]
-    if [ -d "$binary_parent" ] && [ ! -L "$binary_parent" ]; then
-      parent_before=present
-    else
-      [ ! -e "$binary_parent" ]
-      parent_before=absent
-    fi
-    printf 'parent_before=%s\n' "$parent_before" > "$rollback_state"
-    chmod 600 "$rollback_state"
+    [ ! -e /run/systemd/system/hardened-blikvm-diagnostic-collector.service ]
+    [ ! -e /run/hardened-blikvm-diagnostics ]
+    if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
+    for account in $all_accounts; do
+      if getent passwd "$account" >/dev/null 2>&1; then exit 1; fi
+      if getent group "$account" >/dev/null 2>&1; then exit 1; fi
+    done
+    rm -rf -- "$stage_root"
+  else
+    /bin/sh "$rollback_script"
   fi
-  /bin/sh "$rollback_script"
 fi
 [ ! -e "$stage_root" ]
 printf 'cleanup_restored=yes\n'
@@ -979,10 +996,8 @@ def build_final_script(paths: Paths, binary_parent_before: str) -> str:
             "socket_path": paths.socket,
             "watchdog": paths.watchdog,
             "collector_account": COLLECTOR_ACCOUNT,
-            "producer_accounts": " ".join(PRODUCER_ACCOUNTS),
-            "identity_accounts": " ".join(TRANSIENT_IDENTITY_ACCOUNTS),
+            "all_accounts": " ".join(ALL_ACCOUNTS),
             "shared_group": SHARED_GROUP,
-            "identity_units": " ".join(paths.identity_units),
         }
     )
     body = r'''
@@ -1006,14 +1021,9 @@ fi
 if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
-for account in $identity_accounts; do
+for account in $all_accounts; do
   if getent passwd "$account" >/dev/null 2>&1; then exit 1; fi
-done
-for account in $producer_accounts; do
   if getent group "$account" >/dev/null 2>&1; then exit 1; fi
-done
-for identity_unit in $identity_units; do
-  [ "$(systemctl is-active "$identity_unit" 2>/dev/null || true)" != active ]
 done
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" != active ]
 [ "$(systemctl is-active "$watchdog.service" 2>/dev/null || true)" != active ]
@@ -1052,6 +1062,7 @@ def parse_runtime_failure(raw: bytes) -> str:
 def validate_preflight(facts: dict[str, str]) -> None:
     expected = {
         "account_absent_before": "yes",
+        "account_database_ready": "yes",
         "architecture": "aarch64",
         "binary_absent_before": "yes",
         "binary_parent_before": facts.get("binary_parent_before", ""),
@@ -1074,9 +1085,10 @@ def validate_preflight(facts: dict[str, str]) -> None:
 
 def validate_run(facts: dict[str, str]) -> None:
     expected = {
+        "account_database_restored": "yes",
         "binary_hash_verified": "yes",
         "collector_caps": "none",
-        "collector_dynamic_user": "yes",
+        "collector_identity": "static-sysusers",
         "collector_network_namespace": "private",
         "collector_no_new_privs": "yes",
         "collector_unit": "active-then-stopped",
@@ -1091,9 +1103,9 @@ def validate_run(facts: dict[str, str]) -> None:
         "rollback_confirmed": "yes",
         "runtime_removed": "yes",
         "socket_mode": "660",
-        "socket_owner": "dynamic-shared",
+        "socket_owner": "static-shared",
+        "static_identities": "created-and-restored",
         "sysusers_synthetic": "yes",
-        "transient_identities": "created-and-removed",
         "unit_hash_verified": "yes",
         "unknown_rejected": "yes",
         "watchdog_armed": "yes",
@@ -1187,6 +1199,12 @@ def execute(options: Options) -> int:
         upload(
             target,
             secret,
+            assets.base_sysusers,
+            build_upload_script(paths, paths.base_sysusers, "600"),
+        )
+        upload(
+            target,
+            secret,
             assets.sysusers,
             build_upload_script(paths, paths.sysusers, "600"),
         )
@@ -1237,6 +1255,7 @@ def execute(options: Options) -> int:
                     "sizeBytes": assets.binary.size_bytes,
                 },
                 "unitSha256": assets.unit.sha256,
+                "baseSysusersSha256": assets.base_sysusers.sha256,
                 "sysusersSha256": assets.sysusers.sha256,
             },
             "policy": policy_receipt(),
