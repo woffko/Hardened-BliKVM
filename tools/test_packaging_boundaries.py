@@ -155,6 +155,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         platform_broker = ROOT / "crates/bli-kvm-platform-broker"
         export_protocol = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
         export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
+        diagnostic_journal = ROOT / "crates/bli-kvm-diagnostic-journal"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
@@ -173,6 +174,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 platform_broker / "Cargo.toml",
                 export_protocol / "Cargo.toml",
                 export_client / "Cargo.toml",
+                diagnostic_journal / "Cargo.toml",
                 export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
@@ -412,6 +414,82 @@ class PackagingBoundaryTests(unittest.TestCase):
             "/var/",
         ):
             self.assertNotIn(forbidden, production)
+
+    def test_diagnostic_journal_is_encrypted_bounded_pure_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-journal"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        design = (ROOT / "docs/design/diagnostic-journal-v1.md").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-journal"', workspace)
+        for dependency in (
+            "bli-kvm-diagnostic-export =",
+            "chacha20poly1305.workspace = true",
+            "zeroize.workspace = true",
+        ):
+            self.assertIn(dependency, manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-journal", other_manifest.read_text()
+                )
+        for required in (
+            "#![no_std]",
+            "#![forbid(unsafe_code)]",
+            "XChaCha20Poly1305",
+            "AeadInOut",
+            "DIAGNOSTIC_JOURNAL_KEY_BYTES: usize = 32",
+            "DIAGNOSTIC_JOURNAL_NONCE_BYTES: usize = 24",
+            "DIAGNOSTIC_JOURNAL_TAG_BYTES: usize = 16",
+            "MAX_DIAGNOSTIC_JOURNAL_ENTRIES: usize = 2",
+            'DIAGNOSTIC_JOURNAL_COPY_MAGIC: [u8; 8] = *b"BLKDJE01"',
+            "DIAGNOSTIC_JOURNAL_COPY_BYTES",
+            "pub struct DiagnosticJournalKey",
+            "self.bytes.zeroize()",
+            "pub struct DiagnosticJournalKeyRing",
+            "pub struct SelectedDiagnosticJournal",
+            "pub fn select_copies",
+            "pub fn plan_initialize",
+            "pub fn plan_update",
+            "pub fn plan_reconcile",
+            "pub fn plan_acknowledgement_result",
+            "DiagnosticBundle::decode",
+            "AcknowledgementAmbiguous",
+            "ReconciliationAction::Acknowledge",
+            "DiagnosticJournalEntryState::Orphaned",
+        ):
+            self.assertIn(required, production)
+        for secret_type in ("DiagnosticJournalKey", "DiagnosticJournalKeyRing"):
+            self.assertNotRegex(
+                production,
+                rf"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct {secret_type}",
+            )
+        self.assertNotIn("bli-kvm-diagnostic-journal", builder)
+        for forbidden in (
+            "std::",
+            "String",
+            "Vec<",
+            "Path",
+            "Command",
+            "std::fs",
+            "tokio::",
+            "serde",
+            "getrandom",
+            "OsRng",
+            "SystemTime",
+            "println!",
+            "eprintln!",
+            "/dev/",
+            "/run/",
+            "/var/",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+        self.assertIn("XChaCha20Poly1305", design)
+        self.assertIn("does not protect", design)
+        self.assertIn("write-before-ack", design)
 
     def test_platform_diagnostic_route_is_feature_gated_exact_peer_and_read_only(
         self,

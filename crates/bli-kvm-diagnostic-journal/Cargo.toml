@@ -1,0 +1,16 @@
+[package]
+name = "bli-kvm-diagnostic-journal"
+description = "Pure encrypted bounded diagnostic journal for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
+chacha20poly1305.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
