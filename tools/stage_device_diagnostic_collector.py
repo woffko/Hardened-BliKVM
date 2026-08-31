@@ -31,6 +31,7 @@ COLLECTOR_ACCOUNT = "hardened-blikvm-diagnostics"
 SHARED_GROUP = "hardened-blikvm"
 RUNTIME_DIRECTORY = "/run/hardened-blikvm-diagnostics"
 SOCKET_PATH = f"{RUNTIME_DIRECTORY}/collector.sock"
+EXPORT_SOCKET_PATH = f"{RUNTIME_DIRECTORY}/export.sock"
 BINARY_PARENT = "/usr/libexec/hardened-blikvm"
 BINARY_TARGET = f"{BINARY_PARENT}/bli-kvm-diagnostic-collector"
 PRODUCER_ACCOUNTS = (
@@ -65,6 +66,7 @@ PREFLIGHT_KEYS = {
     "kvmd_nginx_active_before",
     "rootfs_mode_before",
     "runtime_absent_before",
+    "export_socket_absent_before",
     "stage_absent_before",
     "systemd_ready",
     "tools_ready",
@@ -80,12 +82,25 @@ RUN_KEYS = {
     "collector_unit",
     "control_rejection_accepted",
     "duplicate_rejected",
+    "export_acknowledged",
+    "export_exact_consumer",
+    "export_malformed_rejected",
+    "export_mismatch_preserved",
+    "export_no_sealed_after_ack",
+    "export_over_capacity_rejected",
+    "export_partial_timeout",
+    "export_repeatable",
+    "export_socket_mode",
+    "export_socket_owner",
+    "export_unauthorized_rejected",
     "five_sources_accepted",
+    "graceful_export_shutdown",
     "graceful_shutdown",
     "kvmd_active_after_run",
     "kvmd_nginx_active_after_run",
     "malformed_rejected",
     "partial_timeout",
+    "producer_during_export_stall",
     "root_rejected",
     "rollback_confirmed",
     "runtime_removed",
@@ -106,6 +121,7 @@ FINAL_KEYS = {
     "kvmd_nginx_active_final",
     "rootfs_mode_final",
     "runtime_absent_final",
+    "export_socket_absent_final",
     "stage_absent_final",
     "unit_absent_final",
     "watchdog_inactive_final",
@@ -178,6 +194,7 @@ class Paths:
     binary_part: str
     runtime_directory: str
     socket: str
+    export_socket: str
     client_state: str
     account_backup: str
     watchdog: str
@@ -337,6 +354,7 @@ def stage_paths(binary_sha256: str, run_id: str) -> Paths:
         binary_part=f"{BINARY_TARGET}.part",
         runtime_directory=RUNTIME_DIRECTORY,
         socket=SOCKET_PATH,
+        export_socket=EXPORT_SOCKET_PATH,
         client_state=f"{root}/client-state",
         account_backup=f"{root}/account-backup",
         watchdog=f"hardened-blikvm-diagnostic-rollback-{run_id}",
@@ -372,9 +390,14 @@ import sys
 import time
 
 SOCKET = {paths.socket!r}
+EXPORT_SOCKET = {paths.export_socket!r}
 READY = bytes((1, 1, 0, 0, 0, 0, 0, 0))
 CONTROL_DISABLED = bytes((1, 3, 2, 0, 0, 0, 0, 0))
 ACCEPTED = bytes((1, 1, 0, 0))
+EXPORT_READ = bytes((1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+EXPORT_HEADER_BYTES = 24
+EXPORT_MAX_PAYLOAD = 8192
+STATE_PREFIX = {(paths.client_state + '/')!r}
 
 def receive_exact(stream, size):
     output = bytearray()
@@ -385,21 +408,99 @@ def receive_exact(stream, size):
         output.extend(chunk)
     return bytes(output)
 
+def expect_closed(stream, label):
+    try:
+        value = stream.recv(1)
+    except ConnectionResetError:
+        return
+    if value != b"":
+        raise RuntimeError(label)
+
+def export_response(stream):
+    header = receive_exact(stream, EXPORT_HEADER_BYTES)
+    if header[0] != 1 or any(header[18:24]):
+        raise RuntimeError("invalid export header")
+    length = int.from_bytes(header[16:18], "big")
+    if length > EXPORT_MAX_PAYLOAD:
+        raise RuntimeError("export payload too large")
+    payload = receive_exact(stream, length)
+    return header + payload
+
+def export_binding(response):
+    if len(response) < EXPORT_HEADER_BYTES or response[1] != 2:
+        raise RuntimeError("sealed response missing")
+    instance = int.from_bytes(response[4:12], "big")
+    window = int.from_bytes(response[12:16], "big")
+    length = int.from_bytes(response[16:18], "big")
+    if instance == 0 or window == 0 or response[3] == 0 or length == 0:
+        raise RuntimeError("sealed response invalid")
+    payload = response[EXPORT_HEADER_BYTES:]
+    if len(payload) != length:
+        raise RuntimeError("sealed response length mismatch")
+    text = payload.decode("ascii")
+    if not text.startswith("schema=1 record_count=") or text.count("\\n") < 2:
+        raise RuntimeError("sealed payload invalid")
+    return instance, window
+
+def export_ack(instance, window):
+    if instance == 0 or window == 0:
+        raise RuntimeError("ack binding invalid")
+    return bytes((1, 2, 0, 0)) + instance.to_bytes(8, "big") + window.to_bytes(4, "big")
+
+def load_state(path):
+    if not path.startswith(STATE_PREFIX):
+        raise RuntimeError("state path invalid")
+    with open(path, "rb") as handle:
+        response = handle.read(24 + EXPORT_MAX_PAYLOAD + 1)
+    if len(response) > 24 + EXPORT_MAX_PAYLOAD:
+        raise RuntimeError("state oversized")
+    return response, export_binding(response)
+
+def expect_fixed(response, tag, binding=None):
+    if len(response) != EXPORT_HEADER_BYTES or response[1] != tag:
+        raise RuntimeError("fixed export response mismatch")
+    if response[2] != 0 or response[3] != 0 or response[16:18] != bytes(2):
+        raise RuntimeError("fixed export response payload mismatch")
+    instance = int.from_bytes(response[4:12], "big")
+    window = int.from_bytes(response[12:16], "big")
+    if binding is None:
+        if instance != 0 or window != 0:
+            raise RuntimeError("unexpected export binding")
+    elif (instance, window) != binding:
+        raise RuntimeError("export binding mismatch")
+
+def write_all_descriptor(descriptor, value):
+    view = memoryview(value)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise RuntimeError("state write failed")
+        view = view[written:]
+
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
 stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 stream.settimeout(8)
-stream.connect(SOCKET)
+stream.connect(EXPORT_SOCKET if mode.startswith("export-") else SOCKET)
 if mode == "accepted":
     stream.sendall(READY)
     if receive_exact(stream, 4) != ACCEPTED:
         raise RuntimeError("response mismatch")
+elif mode == "accepted-fast":
+    started = time.monotonic()
+    stream.sendall(READY)
+    if receive_exact(stream, 4) != ACCEPTED or time.monotonic() - started >= 1.0:
+        raise RuntimeError("producer response delayed")
+elif mode == "fill":
+    for _ in range(20):
+        stream.sendall(READY)
+        if receive_exact(stream, 4) != ACCEPTED:
+            raise RuntimeError("fill response mismatch")
 elif mode == "control-disabled":
     stream.sendall(CONTROL_DISABLED)
     if receive_exact(stream, 4) != ACCEPTED:
         raise RuntimeError("response mismatch")
 elif mode == "rejected":
-    if stream.recv(1) != b"":
-        raise RuntimeError("rejected peer received data")
+    expect_closed(stream, "rejected peer received data")
 elif mode == "malformed":
     stream.sendall(bytes(8))
     if stream.recv(1) != b"":
@@ -413,15 +514,70 @@ elif mode == "partial":
     if elapsed < 4.0 or elapsed > 8.0:
         raise RuntimeError("partial timeout out of bounds")
 elif mode == "hold":
-    if len(sys.argv) != 3 or not sys.argv[2].startswith({(paths.client_state + '/')!r}):
+    if len(sys.argv) != 3 or not sys.argv[2].startswith(STATE_PREFIX):
         raise RuntimeError("ready path invalid")
     stream.sendall(READY)
     if receive_exact(stream, 4) != ACCEPTED:
         raise RuntimeError("response mismatch")
     descriptor = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(descriptor)
-    if stream.recv(1) != b"":
-        raise RuntimeError("hold received trailing data")
+    expect_closed(stream, "hold received trailing data")
+elif mode == "export-read":
+    if len(sys.argv) != 3 or not sys.argv[2].startswith(STATE_PREFIX):
+        raise RuntimeError("export state path invalid")
+    stream.sendall(EXPORT_READ)
+    response = export_response(stream)
+    export_binding(response)
+    descriptor = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        write_all_descriptor(descriptor, response)
+    finally:
+        os.close(descriptor)
+elif mode == "export-repeat":
+    expected, _ = load_state(sys.argv[2])
+    stream.sendall(EXPORT_READ)
+    if export_response(stream) != expected:
+        raise RuntimeError("sealed snapshot changed")
+elif mode == "export-ack-mismatch":
+    expected, (instance, window) = load_state(sys.argv[2])
+    wrong_instance = instance + 1 if instance < (1 << 64) - 1 else instance - 1
+    stream.sendall(export_ack(wrong_instance, window))
+    expect_fixed(export_response(stream), 4, (wrong_instance, window))
+elif mode == "export-ack":
+    _, binding = load_state(sys.argv[2])
+    stream.sendall(export_ack(*binding))
+    expect_fixed(export_response(stream), 3, binding)
+elif mode == "export-ack-empty":
+    _, binding = load_state(sys.argv[2])
+    stream.sendall(export_ack(*binding))
+    expect_fixed(export_response(stream), 1)
+elif mode == "export-no-sealed":
+    stream.sendall(EXPORT_READ)
+    expect_fixed(export_response(stream), 1)
+elif mode == "export-rejected":
+    expect_closed(stream, "unauthorized export peer received data")
+elif mode == "export-malformed":
+    stream.sendall(bytes(16))
+    expect_closed(stream, "malformed export request received data")
+elif mode == "export-partial":
+    started = time.monotonic()
+    stream.sendall(EXPORT_READ[:1])
+    expect_closed(stream, "partial export request received data")
+    elapsed = time.monotonic() - started
+    if elapsed < 1.5 or elapsed > 4.0:
+        raise RuntimeError("export partial timeout out of bounds")
+elif mode == "export-hold":
+    if len(sys.argv) != 3 or not sys.argv[2].startswith(STATE_PREFIX):
+        raise RuntimeError("export ready path invalid")
+    stream.sendall(EXPORT_READ[:1])
+    descriptor = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(descriptor)
+    expect_closed(stream, "export hold received data")
+elif mode == "export-over-capacity":
+    started = time.monotonic()
+    expect_closed(stream, "over-capacity export peer received data")
+    if time.monotonic() - started >= 1.0:
+        raise RuntimeError("over-capacity rejection delayed")
 else:
     raise RuntimeError("mode invalid")
 stream.close()
@@ -438,6 +594,7 @@ def build_preflight_script(paths: Paths, required_bytes: int) -> str:
             "binary_part": paths.binary_part,
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
+            "export_socket_path": paths.export_socket,
             "watchdog": paths.watchdog,
             "required_bytes": required_bytes,
             "collector_account": COLLECTOR_ACCOUNT,
@@ -470,6 +627,7 @@ case "$available" in ''|*[!0-9]*) exit 1 ;; esac
 [ ! -e "$binary_part" ]
 [ ! -e "$runtime_directory" ]
 [ ! -e "$socket_path" ]
+[ ! -e "$export_socket_path" ]
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" != active ]
 [ "$(systemctl is-active "$watchdog.service" 2>/dev/null || true)" != active ]
 if systemctl cat "$unit_name" >/dev/null 2>&1; then exit 1; fi
@@ -516,6 +674,7 @@ emit kvmd_active_before active
 emit kvmd_nginx_active_before active
 emit rootfs_mode_before "$rootfs_mode"
 emit runtime_absent_before yes
+emit export_socket_absent_before yes
 emit stage_absent_before yes
 emit systemd_ready yes
 emit tools_ready yes
@@ -590,6 +749,7 @@ def build_rollback_script(paths: Paths, assets: Assets) -> str:
             "binary_size": assets.binary.size_bytes,
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
+            "export_socket_path": paths.export_socket,
             "collector_account": COLLECTOR_ACCOUNT,
             "all_accounts": " ".join(ALL_ACCOUNTS),
             "shared_group": SHARED_GROUP,
@@ -616,12 +776,17 @@ done
 if [ -e "$runtime_directory" ]; then
   [ -d "$runtime_directory" ]
   [ ! -L "$runtime_directory" ]
-  unexpected=$(find "$runtime_directory" -mindepth 1 -maxdepth 1 ! -name collector.sock -print -quit)
+  unexpected=$(find "$runtime_directory" -mindepth 1 -maxdepth 1 ! -name collector.sock ! -name export.sock -print -quit)
   [ -z "$unexpected" ]
   if [ -e "$socket_path" ]; then
     [ -S "$socket_path" ]
     [ "$(stat -c '%a' "$socket_path")" = 660 ]
     rm -f -- "$socket_path"
+  fi
+  if [ -e "$export_socket_path" ]; then
+    [ -S "$export_socket_path" ]
+    [ "$(stat -c '%a' "$export_socket_path")" = 660 ]
+    rm -f -- "$export_socket_path"
   fi
   rmdir "$runtime_directory"
 fi
@@ -677,6 +842,7 @@ if [ "$parent_before" = absent ] && [ -e "$binary_parent" ]; then
   rmdir "$binary_parent"
 fi
 [ ! -e "$runtime_directory" ]
+[ ! -e "$export_socket_path" ]
 [ ! -e "$binary_target" ]
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
 for account in $all_accounts; do
@@ -720,6 +886,7 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
             "binary_part": paths.binary_part,
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
+            "export_socket_path": paths.export_socket,
             "client_state": paths.client_state,
             "account_backup": paths.account_backup,
             "account_files": " ".join(f"/etc/{name}" for name in ACCOUNT_DATABASE_FILES),
@@ -816,12 +983,14 @@ systemd-analyze verify "$unit_name" >/dev/null 2>&1
 phase=start-collector
 systemctl start "$unit_name"
 count=0
-while [ "$count" -lt 100 ] && [ ! -S "$socket_path" ]; do
+while [ "$count" -lt 100 ]; do
+  if [ -S "$socket_path" ] && [ -S "$export_socket_path" ]; then break; fi
   [ "$(systemctl is-active "$unit_name" 2>/dev/null || true)" = active ] || exit 1
   sleep 0.1
   count=$((count + 1))
 done
 [ -S "$socket_path" ]
+[ -S "$export_socket_path" ]
 collector_pid=$(systemctl show -p MainPID --value "$unit_name")
 case "$collector_pid" in ''|0|*[!0-9]*) exit 1 ;; esac
 [ "$(systemctl show -p User --value "$unit_name")" = "$collector_account" ]
@@ -841,6 +1010,7 @@ done
 [ "$(awk '/^Uid:/ {print $2}' "/proc/$collector_pid/status")" = "$collector_uid" ]
 [ "$(stat -c '%a:%u:%g' "$runtime_directory")" = "750:$collector_uid:$shared_gid" ]
 [ "$(stat -c '%a:%u:%g' "$socket_path")" = "660:$collector_uid:$shared_gid" ]
+[ "$(stat -c '%a:%u:%g' "$export_socket_path")" = "660:$collector_uid:$shared_gid" ]
 phase=accepted-sources
 install -d -m 0770 -o root -g "$shared_group" "$client_state"
 run_as() {
@@ -858,6 +1028,46 @@ done
 [ "$accepted_count" = 5 ]
 sleep 0.2
 run_as hardened-blikvm-control control-disabled
+phase=export-connection-pressure
+broker_uid=$(getent passwd hardened-blikvm-broker | awk -F: 'NR == 1 {print $3}')
+export_ready_one="$client_state/export-one.ready"
+export_ready_two="$client_state/export-two.ready"
+setpriv --reuid="$broker_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" export-hold "$export_ready_one" &
+export_holder_one=$!
+setpriv --reuid="$broker_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" export-hold "$export_ready_two" &
+export_holder_two=$!
+count=0
+while [ "$count" -lt 40 ] && { [ ! -f "$export_ready_one" ] || [ ! -f "$export_ready_two" ]; }; do
+  kill -0 "$export_holder_one" 2>/dev/null || exit 1
+  kill -0 "$export_holder_two" 2>/dev/null || exit 1
+  sleep 0.1
+  count=$((count + 1))
+done
+[ -f "$export_ready_one" ]
+[ -f "$export_ready_two" ]
+sleep 0.2
+run_as hardened-blikvm-broker export-over-capacity
+run_as hardened-blikvm-control accepted-fast
+wait "$export_holder_one"
+wait "$export_holder_two"
+rm -f -- "$export_ready_one" "$export_ready_two"
+phase=create-sealed-window
+run_as hardened-blikvm-broker fill
+sleep 0.2
+sealed_state="$client_state/sealed.bin"
+run_as hardened-blikvm-broker export-read "$sealed_state"
+run_as hardened-blikvm-broker export-repeat "$sealed_state"
+phase=export-rejected-peers
+python3 "$client" export-rejected
+run_as hardened-blikvm-server export-rejected
+run_as hardened-blikvm-broker export-malformed
+run_as hardened-blikvm-broker export-partial
+phase=export-acknowledgement
+run_as hardened-blikvm-broker export-ack-mismatch "$sealed_state"
+run_as hardened-blikvm-broker export-repeat "$sealed_state"
+run_as hardened-blikvm-broker export-ack "$sealed_state"
+run_as hardened-blikvm-broker export-no-sealed
+run_as hardened-blikvm-broker export-ack-empty "$sealed_state"
 phase=rejected-peers
 python3 "$client" rejected
 unknown_uid=$(getent passwd nobody | awk -F: 'NR == 1 {print $3}')
@@ -893,17 +1103,23 @@ run_as hardened-blikvm-server malformed
 phase=graceful-shutdown
 update_uid=$(getent passwd hardened-blikvm-update | awk -F: 'NR == 1 {print $3}')
 shutdown_ready="$client_state/shutdown.ready"
+export_shutdown_ready="$client_state/export-shutdown.ready"
 setpriv --reuid="$update_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" hold "$shutdown_ready" &
 shutdown_client_pid=$!
+setpriv --reuid="$broker_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" export-hold "$export_shutdown_ready" &
+export_shutdown_client_pid=$!
 count=0
-while [ "$count" -lt 80 ] && [ ! -f "$shutdown_ready" ]; do
+while [ "$count" -lt 80 ] && { [ ! -f "$shutdown_ready" ] || [ ! -f "$export_shutdown_ready" ]; }; do
   kill -0 "$shutdown_client_pid" 2>/dev/null || exit 1
+  kill -0 "$export_shutdown_client_pid" 2>/dev/null || exit 1
   sleep 0.1
   count=$((count + 1))
 done
 [ -f "$shutdown_ready" ]
+[ -f "$export_shutdown_ready" ]
 systemctl stop "$unit_name"
 wait "$shutdown_client_pid"
+wait "$export_shutdown_client_pid"
 [ ! -e "$runtime_directory" ]
 [ "$(systemctl show -p MainPID --value kvmd.service)" = "$kvmd_pid_before" ]
 [ "$(systemctl show -p MainPID --value kvmd-nginx.service)" = "$nginx_pid_before" ]
@@ -922,12 +1138,25 @@ emit collector_no_new_privs yes
 emit collector_unit active-then-stopped
 emit control_rejection_accepted yes
 emit duplicate_rejected yes
+emit export_acknowledged yes
+emit export_exact_consumer platform-broker
+emit export_malformed_rejected yes
+emit export_mismatch_preserved yes
+emit export_no_sealed_after_ack yes
+emit export_over_capacity_rejected yes
+emit export_partial_timeout bounded
+emit export_repeatable yes
+emit export_socket_mode 660
+emit export_socket_owner static-shared
+emit export_unauthorized_rejected root-and-wrong-role
 emit five_sources_accepted 5
+emit graceful_export_shutdown yes
 emit graceful_shutdown yes
 emit kvmd_active_after_run active
 emit kvmd_nginx_active_after_run active
 emit malformed_rejected yes
 emit partial_timeout bounded
+emit producer_during_export_stall bounded
 emit root_rejected yes
 emit rollback_confirmed yes
 emit runtime_removed yes
@@ -1003,6 +1232,7 @@ def build_final_script(paths: Paths, binary_parent_before: str) -> str:
             "binary_parent_before": binary_parent_before,
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
+            "export_socket_path": paths.export_socket,
             "watchdog": paths.watchdog,
             "collector_account": COLLECTOR_ACCOUNT,
             "all_accounts": " ".join(ALL_ACCOUNTS),
@@ -1027,6 +1257,7 @@ else
 fi
 [ ! -e "$runtime_directory" ]
 [ ! -e "$socket_path" ]
+[ ! -e "$export_socket_path" ]
 if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
@@ -1047,6 +1278,7 @@ emit kvmd_active_final active
 emit kvmd_nginx_active_final active
 emit rootfs_mode_final "$rootfs_mode"
 emit runtime_absent_final yes
+emit export_socket_absent_final yes
 emit stage_absent_final yes
 emit unit_absent_final yes
 emit watchdog_inactive_final yes
@@ -1080,6 +1312,7 @@ def validate_preflight(facts: dict[str, str]) -> None:
         "kvmd_nginx_active_before": "active",
         "rootfs_mode_before": "rw",
         "runtime_absent_before": "yes",
+        "export_socket_absent_before": "yes",
         "stage_absent_before": "yes",
         "systemd_ready": "yes",
         "tools_ready": "yes",
@@ -1103,12 +1336,25 @@ def validate_run(facts: dict[str, str]) -> None:
         "collector_unit": "active-then-stopped",
         "control_rejection_accepted": "yes",
         "duplicate_rejected": "yes",
+        "export_acknowledged": "yes",
+        "export_exact_consumer": "platform-broker",
+        "export_malformed_rejected": "yes",
+        "export_mismatch_preserved": "yes",
+        "export_no_sealed_after_ack": "yes",
+        "export_over_capacity_rejected": "yes",
+        "export_partial_timeout": "bounded",
+        "export_repeatable": "yes",
+        "export_socket_mode": "660",
+        "export_socket_owner": "static-shared",
+        "export_unauthorized_rejected": "root-and-wrong-role",
         "five_sources_accepted": "5",
+        "graceful_export_shutdown": "yes",
         "graceful_shutdown": "yes",
         "kvmd_active_after_run": "active",
         "kvmd_nginx_active_after_run": "active",
         "malformed_rejected": "yes",
         "partial_timeout": "bounded",
+        "producer_during_export_stall": "bounded",
         "root_rejected": "yes",
         "rollback_confirmed": "yes",
         "runtime_removed": "yes",
@@ -1135,6 +1381,7 @@ def validate_final(facts: dict[str, str], binary_parent_before: str) -> None:
         "kvmd_nginx_active_final": "active",
         "rootfs_mode_final": "rw",
         "runtime_absent_final": "yes",
+        "export_socket_absent_final": "yes",
         "stage_absent_final": "yes",
         "unit_absent_final": "yes",
         "watchdog_inactive_final": "yes",

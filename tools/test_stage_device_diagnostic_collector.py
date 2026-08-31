@@ -32,6 +32,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "/run/systemd/system/hardened-blikvm-diagnostic-collector.service",
         )
         self.assertEqual(
+            paths.export_socket,
+            "/run/hardened-blikvm-diagnostics/export.sock",
+        )
+        self.assertEqual(
             paths.watchdog,
             "hardened-blikvm-diagnostic-rollback-0123456789abcdef",
         )
@@ -69,14 +73,31 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn(
             "CONTROL_DISABLED = bytes((1, 3, 2, 0, 0, 0, 0, 0))", client
         )
+        self.assertIn(
+            "EXPORT_READ = bytes((1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))",
+            client,
+        )
         self.assertIn("ACCEPTED = bytes((1, 1, 0, 0))", client)
         for mode in (
             "accepted",
             "control-disabled",
+            "accepted-fast",
+            "fill",
             "rejected",
             "malformed",
             "partial",
             "hold",
+            "export-read",
+            "export-repeat",
+            "export-ack-mismatch",
+            "export-ack",
+            "export-ack-empty",
+            "export-no-sealed",
+            "export-rejected",
+            "export-malformed",
+            "export-partial",
+            "export-hold",
+            "export-over-capacity",
         ):
             self.assertIn(f'mode == "{mode}"', client)
         self.assertNotIn("subprocess", client)
@@ -95,6 +116,15 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn("five_sources_accepted 5", runtime)
         self.assertIn("control_rejection_accepted yes", runtime)
         self.assertIn("run_as hardened-blikvm-control control-disabled", runtime)
+        self.assertIn("phase=export-connection-pressure", runtime)
+        self.assertIn("run_as hardened-blikvm-control accepted-fast", runtime)
+        self.assertIn("run_as hardened-blikvm-broker fill", runtime)
+        self.assertIn("run_as hardened-blikvm-broker export-read", runtime)
+        self.assertIn("run_as hardened-blikvm-broker export-ack-mismatch", runtime)
+        self.assertIn("run_as hardened-blikvm-broker export-ack", runtime)
+        self.assertIn("export_exact_consumer platform-broker", runtime)
+        self.assertIn("producer_during_export_stall bounded", runtime)
+        self.assertIn("graceful_export_shutdown yes", runtime)
         self.assertIn("duplicate_rejected yes", runtime)
         self.assertIn("partial_timeout bounded", runtime)
         self.assertIn("malformed_rejected yes", runtime)
@@ -114,6 +144,8 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn('[ "$(cat "$marker")" = "$marker_value" ]', rollback)
         self.assertIn('sha256sum "$unit_target"', rollback)
         self.assertIn('sha256sum "$binary_target"', rollback)
+        self.assertIn('! -name export.sock', rollback)
+        self.assertIn('rm -f -- "$export_socket_path"', rollback)
         self.assertIn('sha256sum "$database"', rollback)
         self.assertIn('cmp -s "$account_backup/$name" "$database"', rollback)
         self.assertIn('elif [ "$current" != "$before" ]', rollback)
@@ -172,6 +204,7 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "kvmd_nginx_active_before": "active",
             "rootfs_mode_before": "rw",
             "runtime_absent_before": "yes",
+            "export_socket_absent_before": "yes",
             "stage_absent_before": "yes",
             "systemd_ready": "yes",
             "tools_ready": "yes",
@@ -189,12 +222,25 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "collector_unit": "active-then-stopped",
             "control_rejection_accepted": "yes",
             "duplicate_rejected": "yes",
+            "export_acknowledged": "yes",
+            "export_exact_consumer": "platform-broker",
+            "export_malformed_rejected": "yes",
+            "export_mismatch_preserved": "yes",
+            "export_no_sealed_after_ack": "yes",
+            "export_over_capacity_rejected": "yes",
+            "export_partial_timeout": "bounded",
+            "export_repeatable": "yes",
+            "export_socket_mode": "660",
+            "export_socket_owner": "static-shared",
+            "export_unauthorized_rejected": "root-and-wrong-role",
             "five_sources_accepted": "5",
+            "graceful_export_shutdown": "yes",
             "graceful_shutdown": "yes",
             "kvmd_active_after_run": "active",
             "kvmd_nginx_active_after_run": "active",
             "malformed_rejected": "yes",
             "partial_timeout": "bounded",
+            "producer_during_export_stall": "bounded",
             "root_rejected": "yes",
             "rollback_confirmed": "yes",
             "runtime_removed": "yes",
@@ -215,6 +261,7 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "kvmd_nginx_active_final": "active",
             "rootfs_mode_final": "rw",
             "runtime_absent_final": "yes",
+            "export_socket_absent_final": "yes",
             "stage_absent_final": "yes",
             "unit_absent_final": "yes",
             "watchdog_inactive_final": "yes",
