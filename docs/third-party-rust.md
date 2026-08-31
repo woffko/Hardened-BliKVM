@@ -68,6 +68,15 @@ binding. Its host-only tests reuse the already locked `tempfile`. Source commit
 license expression. The refreshed 1,233-advisory RustSec scan accepted the
 exact graph.
 
+The unshipped diagnostic collector adds `signal-hook 0.3.18` and
+`signal-hook-registry 1.4.8` for safe SIGTERM/SIGINT handoff without expanding
+the shared Tokio feature set. Both are permissively licensed; the already
+locked `errno` and `libc` dependencies are reused. At collector/gate source
+`9997c5b`, locked metadata resolves 155 packages: 47 workspace and 108
+external, with no missing external license expression. The refreshed
+1,233-advisory RustSec scan accepted the exact graph. The collector and its
+templates remain outside the prototype archive.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

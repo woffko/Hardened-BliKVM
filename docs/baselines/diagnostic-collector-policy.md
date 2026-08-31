@@ -119,3 +119,9 @@ matrix. It remains unlinked; see `diagnostic-peer-policy.md`.
 Runtime-core source `6de71c28df1eb521108a955d046e098feb3bacb3` now composes the
 collector with authenticated peer tokens, exact frames, and window sessions;
 see `diagnostic-runtime-core.md`. No shipped process links the composition.
+
+Collector source `632c081afcaacdbd7c491e29cdd7bd5ab339c22a` and final gate
+source `28d189a04a7fab3e2b11c1e719b01be0188846cb` now pass the
+unshipped socket/process/service and reversible H616 boundaries; see
+`device-diagnostic-collector.md`. Real producer integration and authenticated
+export remain absent.

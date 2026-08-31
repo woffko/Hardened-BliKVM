@@ -93,8 +93,11 @@ to the window policy. Invalid frames receive no response and terminate through
 the disconnect path. A transient unlinked owner now accepts a caller-bound
 Unix listener, creates a random nonzero instance binding, samples `Instant`
 under the core mutex, bounds partial-frame and response I/O, reaps connection
-tasks, and records graceful shutdown. It has no socket path/bind/permission
-ownership, process, service, API, or advertised capability. Numeric assignment,
+tasks, and records graceful shutdown. A separate unshipped collector now owns
+the single fixed socket path and a hardened local-only service boundary. Its
+reversible H616 gate passed exact peer, timeout, shutdown, and restoration
+checks. No shipped package, producer integration, API, or advertised capability
+exists. Numeric assignment,
 credential, authenticated-peer, and connection handles intentionally expose no
 generic `Debug` output.
 

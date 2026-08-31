@@ -94,3 +94,8 @@ socket ownership, authenticated export, privacy review, packaging, and browser
 tests. Until those gates pass, the vendor
 raw-log route and every Hardened diagnostic-export capability remain
 unavailable.
+
+The later unshipped collector passes the isolated socket/process/service and
+reversible H616 boundary; see `device-diagnostic-collector.md`. Real producers,
+authenticated export, privacy review, packaging, and browser tests remain
+absent, so the capability remains unavailable.

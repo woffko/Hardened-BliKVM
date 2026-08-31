@@ -123,3 +123,9 @@ persistence, authenticated export API/UI, package, or advertised capability.
 The next gate must add those account/socket/process boundaries as unshipped
 templates and pass a fully reversible isolated H616 test before any product
 integration.
+
+Collector source `632c081afcaacdbd7c491e29cdd7bd5ab339c22a` and final gate
+source `28d189a04a7fab3e2b11c1e719b01be0188846cb` later add that
+unshipped process/account/systemd boundary and pass the reversible H616 gate;
+see `device-diagnostic-collector.md`. The result remains outside the product
+bundle and exposes no export API or capability.

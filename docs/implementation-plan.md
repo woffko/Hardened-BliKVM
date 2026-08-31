@@ -342,6 +342,19 @@ lower rlib/metadata/ThinLTO comparison. No socket path, account, process,
 systemd unit, producer integration, persistence, API, UI, package, device gate,
 or capability exists; see `baselines/diagnostic-listener-runtime.md`.
 
+Checkpoint: collector source `632c081`, gate source `9997c5b`, and final gate
+source `28d189a` add the only allowed adapter consumer: an unshipped fixed-socket
+collector, hardened non-installable systemd unit, separate sysusers candidate,
+and marker/watchdog H616 harness. The host matrix passed with 133 Python tests;
+two AArch64 archives and the 666,032-byte collector were byte-identical. The
+native gate accepted all five sources, rejected root/unknown/duplicate peers,
+enforced partial/malformed behavior, closed an acknowledged live connection on
+graceful shutdown, and restored all account DB files and staged paths. DynamicUser-only
+identity lookup is rejected on this H616 because `getent` cannot resolve it;
+temporary exact sysusers plus hash-guarded restoration passed instead. No
+collector artifact is shipped, no raw log was read, and no API/UI/capability is
+enabled; see `baselines/device-diagnostic-collector.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

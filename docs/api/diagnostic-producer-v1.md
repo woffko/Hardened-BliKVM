@@ -95,7 +95,7 @@ seconds, closes partial frames, rejects a second active peer for the same role,
 and never turns protocol bytes into a log message. An idle long-running peer
 may retain its one fixed role slot for its process lifetime.
 
-## Unavailable process runtime
+## Unshipped process runtime
 
 This protocol does not encode window rollover or persistence. The separate
 unlinked `bli-kvm-diagnostic-window-policy` now defines a 32-record live window,
@@ -105,6 +105,9 @@ clock rollback. `DiagnosticCollectorRuntime` now composes a mapped peer, one
 request/response at a time, connection termination, OS-random instance binding,
 real monotonic time, concurrent role sessions, periodic ticks, and graceful
 cleanup around a caller-owned pre-bound Unix listener. A process runtime must
-still own the fixed socket path, mode, account, service lifecycle, and export
-handoff without weakening that policy. No raw vendor log adapter is permitted.
-See `../baselines/diagnostic-listener-runtime.md`.
+own the fixed socket path, mode, account, and service lifecycle without
+weakening that policy. The unshipped collector now implements and has passed
+that isolated H616 boundary; see
+`../baselines/device-diagnostic-collector.md`. Producer integration, export
+handoff, packaging, and an authenticated API/UI remain absent. No raw vendor
+log adapter is permitted.

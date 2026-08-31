@@ -207,8 +207,10 @@ boundary; unknown events and all raw content fail closed.
 The unlinked runtime now composes the already authenticated role, exact frame
 codec, window policy, a caller-bound Unix listener, OS-random instance binding,
 real monotonic time, fixed I/O limits, and graceful task cleanup. It creates no
-socket path, account, service, or process. No diagnostic capability is
-currently advertised.
+socket path or account itself. An unshipped process now supplies one fixed
+socket plus hardened service/account ownership; its rollback-gated H616 test
+passed and restored the exact prior account/runtime state. No diagnostic
+capability is currently advertised.
 
 The unlinked producer protocol contains one canonical eight-byte typed event
 and a mandatory four-byte accepted/rejected response. It has no source,
@@ -246,8 +248,10 @@ not masquerade as acceptance. The transient listener samples `Instant` only
 while holding the core mutex, permits only five fixed role sessions, bounds a
 started partial frame and response write to five seconds, and preserves the
 mandatory response for a frame committed before shutdown. Production code does
-not bind, chmod, unlink, configure, or log a socket. No collector process,
-systemd unit, package, API, or UI is linked.
+not bind, chmod, unlink, configure, or log a socket. The separate collector
+binds only its compile-time path, verifies directory/socket ownership and mode,
+and removes only the same inode. It is linked only into an unshipped binary and
+unit; no product package, authenticated export API, or UI exists.
 
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,

@@ -88,6 +88,9 @@ opaque authenticated peer, composes exact protocol/window operations, and
 terminates invalid frames through bounded EOF accounting; see
 `diagnostic-runtime-core.md`. The later transient owner adds a caller-bound
 Unix listener, real monotonic clock, bounded I/O, and graceful cleanup; see
-`diagnostic-listener-runtime.md`. There is still no collector account,
+`diagnostic-listener-runtime.md`. There was still no collector account,
 socket-path owner, process, systemd unit, API, UI, package, or advertised
-diagnostic capability.
+diagnostic capability at that listener-only checkpoint. The later unshipped
+collector passes those isolated local boundaries and restores all device state;
+see `device-diagnostic-collector.md`. It still adds no package, export API, UI,
+or advertised capability.
