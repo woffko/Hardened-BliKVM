@@ -383,8 +383,11 @@ consecutive runs. Follow-up `bc2e5f0` removes the broker's direct path-dependent
 error derive. The full host matrix, RustSec scan, two byte-identical
 4,795,272-byte archives, all six shipped ELF pairs, and the updated broker
 ThinLTO pair passed. Only non-shipped Rust metadata remains root-dependent
-through the existing Serde/core graph. The reversible H616
-stall/queue-pressure gate is still required before device acceptance.
+through the existing Serde/core graph. Gate source `e4f12ed` then accepted the
+exact control event through the real collector identity policy and 32 bounded
+denials during a seven-second collector-response stall. The browser regression
+and complete rollback passed at bundle/documentation source `34187aa`; see
+`baselines/device-diagnostic-control.md`.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

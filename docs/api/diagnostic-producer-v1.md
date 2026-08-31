@@ -109,7 +109,10 @@ makes one best-effort `try_report` call with
 `RequestRejected(CapabilityDisabled)` and discards the receipt. Reporter startup
 failure disables only diagnostics. No diagnostic outcome can alter the control
 response, broker startup, or process lifetime. The collector remains unshipped
-and no authenticated export API exists.
+and no authenticated export API exists. The H616 gate accepted the exact event
+from the control identity and kept 32 control responses bounded while the
+collector response was withheld for seven seconds; see
+`../baselines/device-diagnostic-control.md`.
 
 Protocol-invalid frames are connection-fatal and receive no response. The
 transient runtime bounds a started partial frame and response write to five

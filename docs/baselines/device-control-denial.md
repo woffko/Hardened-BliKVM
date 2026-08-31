@@ -36,3 +36,9 @@ This checkpoint accepts protocol parsing, process isolation, packaging, and
 denial behavior only. It does not accept a HID lease, report translation,
 pressed-key release on disconnect, an ATX arming/cooldown backend, a media
 catalog/configfs backend, any server control route, or any control capability.
+
+Checkpoint `34187aa` later repeated all three exact denials after the control
+broker linked its bounded diagnostic reporter. Thirty-two responses remained
+bounded while a capture withheld the collector response for seven seconds, and
+the browser still observed no control request surface. See
+`device-diagnostic-control.md`.

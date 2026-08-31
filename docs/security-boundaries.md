@@ -235,8 +235,10 @@ one fixed capability-disabled rejection event only after its response write,
 ignores the receipt, starts without diagnostics on reporter-construction
 failure, and neither observes counters nor awaits reporter shutdown. Collector
 outage, delivery ambiguity, queue pressure, and worker failure therefore have
-no return path into the control decision. Native H616 integration remains a
-separate reversible gate.
+no return path into the control decision. Native H616 gates accepted the exact
+event under the real collector identity policy and 32 denial responses while a
+capture withheld its collector response for seven seconds. Both gates restored
+all temporary state; see `baselines/device-diagnostic-control.md`.
 
 The unlinked window policy keeps one live bundle and at most one sealed bundle
 awaiting exact acknowledgement. `record_count + active_sources <= 32` reserves

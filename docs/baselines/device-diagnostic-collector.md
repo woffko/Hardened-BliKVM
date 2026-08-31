@@ -127,3 +127,9 @@ Producer-client source `49173a76d527aef9e41929acf789ac789ab66495` later adds the
 unlinked Rust client intended to replace the generated gate client; see
 `diagnostic-producer-client.md`. The H616 gate is not evidence that any real
 service uses that crate.
+
+Checkpoint `34187aa` later repeated this full gate with the unchanged exact
+collector binary and added the canonical control-broker rejection event. The
+real collector accepted `RequestRejected(CapabilityDisabled)` from the exact
+`hardened-blikvm-control` identity before all account, runtime, binary, unit,
+watchdog, and stage state was restored. See `device-diagnostic-control.md`.

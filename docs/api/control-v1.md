@@ -73,4 +73,6 @@ read-only inventory and video paths remain unchanged. After the response write,
 the broker may make one non-blocking attempt to report only the fixed semantic
 capability-disabled rejection. Queue state, collector outage, ambiguous
 delivery, or reporter shutdown cannot change or delay the control response and
-cannot enable a control capability.
+cannot enable a control capability. This boundary passed on H616 with 32
+denials during an exact seven-second diagnostic stall; all control backends
+remained absent.

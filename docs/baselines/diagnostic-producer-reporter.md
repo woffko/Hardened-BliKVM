@@ -89,5 +89,6 @@ capability-disabled rejection after the response write. The broker ignores all
 receipts and retains no reporter counter or shutdown await. Follow-up `bc2e5f0`
 removes its direct path-dependent error derive. The final host matrix, two
 byte-identical prototype archives and all shipped AArch64 ELF pairs passed;
-the exact device stall/queue-pressure gate remains pending and no diagnostic
+the exact device stall/queue-pressure gate subsequently passed at source
+`34187aa`. Its full evidence is in `device-diagnostic-control.md`; no diagnostic
 export capability is advertised.

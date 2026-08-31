@@ -51,7 +51,9 @@ uses one fixed eight-event ring, non-blocking typed receipts, one ordered
 no-retry worker, and abort-on-drop ownership. The broker reports only its fixed
 capability-disabled denial after writing the control response and ignores the
 receipt. Because the collector remains excluded, this does not package or
-advertise a diagnostic export capability.
+advertise a diagnostic export capability. The linked path passed a reversible
+H616 exact-event, stalled-response, queue-pressure, shutdown, browser, and
+cleanup gate without adding a unit dependency.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

@@ -104,5 +104,6 @@ separate evidence and the narrowed next gate are recorded in
 Source `a143a75` subsequently linked the client/reporter only into the
 denial-only control broker. It does not change this transport contract: the
 broker ignores every receipt and no automatic retry was added. Follow-up
-`bc2e5f0` is the final host/AArch64 source pending the reversible H616
-stall/queue-pressure gate.
+`bc2e5f0` is the final code-bearing source. The reversible H616
+stall/queue-pressure gate passed at checkpoint `34187aa`; see
+`device-diagnostic-control.md`.

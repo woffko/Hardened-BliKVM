@@ -110,8 +110,9 @@ uncertain streams, and never retries automatically. The reporter still uses
 one fixed eight-event ring, non-blocking submission, one ordered worker,
 bounded semantic counters, and bounded abort-on-drop shutdown. No collector is
 packaged, no service dependency was added, and no diagnostic API or product
-capability is advertised. The reversible H616 integration gate remains
-pending.
+capability is advertised. The reversible H616 exact-event and stalled-collector
+integration gates passed with complete cleanup; see
+`baselines/device-diagnostic-control.md`.
 
 ## Core invariants
 
