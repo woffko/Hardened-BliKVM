@@ -1,0 +1,16 @@
+[package]
+name = "bli-kvm-system-action-store"
+description = "Atomic filesystem storage for Hardened BliKVM system-action journal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-system-action-journal = { path = "../bli-kvm-system-action-journal" }
+libc.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -392,6 +392,16 @@ name = "bli-kvm-system-action-policy"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-system-action-store"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-system-action-journal",
+ "libc",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-system-boot-control"
 version = "0.1.0"
 dependencies = [

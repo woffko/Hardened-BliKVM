@@ -8,11 +8,13 @@
 //! write ordering that preserves one previously valid copy. It has no storage,
 //! filesystem, process, network, clock, or actuator access.
 
-use bli_kvm_system_action_policy::{
-    MAX_OPERATION_RECORDS, STATE_SCHEMA_VERSION, SystemAction, SystemActionPhase,
-    SystemActionPolicyEngine, SystemActionPolicyState, SystemActionRecordSnapshot,
-};
+use bli_kvm_system_action_policy::{STATE_SCHEMA_VERSION, SystemActionPolicyEngine};
 use sha2::{Digest, Sha256};
+
+pub use bli_kvm_system_action_policy::{
+    MAX_OPERATION_RECORDS, SystemAction, SystemActionPhase, SystemActionPolicyState,
+    SystemActionRecordSnapshot,
+};
 
 pub const JOURNAL_COPY_SCHEMA_VERSION: u16 = 1;
 pub const JOURNAL_COPY_MAGIC: [u8; 8] = *b"BLKSAJ01";

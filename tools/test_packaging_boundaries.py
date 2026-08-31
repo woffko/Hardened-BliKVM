@@ -175,14 +175,16 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_system_action_journal_is_pure_no_std_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-system-action-journal"
+        store = ROOT / "crates/bli-kvm-system-action-store/Cargo.toml"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         self.assertIn('"crates/bli-kvm-system-action-journal"', workspace)
         self.assertIn("bli-kvm-system-action-policy", manifest)
         self.assertIn("sha2.workspace = true", manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in (crate / "Cargo.toml", store):
                 self.assertNotIn("bli-kvm-system-action-journal", other_manifest.read_text())
+        self.assertIn("bli-kvm-system-action-journal", store.read_text())
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("JOURNAL_COPY_BYTES", source)
@@ -197,6 +199,40 @@ class PackagingBoundaryTests(unittest.TestCase):
             "tokio::",
             "systemctl",
             "unsafe {",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_system_action_store_is_exact_root_atomic_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-system-action-store"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        self.assertIn('"crates/bli-kvm-system-action-store"', workspace)
+        self.assertIn("bli-kvm-system-action-journal", manifest)
+        self.assertIn("libc.workspace = true", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn("bli-kvm-system-action-store", other_manifest.read_text())
+        self.assertIn(
+            '"/var/lib/hardened-blikvm-system-actions"', source
+        )
+        self.assertIn('c"journal-a.bin"', source)
+        self.assertIn('c"journal-b.bin"', source)
+        self.assertIn("libc::O_NOFOLLOW", source)
+        self.assertIn("libc::O_NONBLOCK", source)
+        self.assertIn("libc::flock", source)
+        self.assertIn("libc::renameat", source)
+        self.assertIn("system.posix_acl_access", source)
+        self.assertIn("system.posix_acl_default", source)
+        self.assertIn("sync_all", source)
+        self.assertIn("verify_written", source)
+        for forbidden in (
+            "/dev/",
+            "std::process",
+            "Command::",
+            "tokio::",
+            "systemctl",
+            "sh -c",
         ):
             self.assertNotIn(forbidden, source)
 
