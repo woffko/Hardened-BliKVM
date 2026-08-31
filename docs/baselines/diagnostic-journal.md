@@ -110,8 +110,9 @@ are respectively:
 - `a38deff3c2159b72a7eb0b72c0ca73954d18e950bb238bbc709561c707a6d8cd`;
 - `5aa52152ae0fa6b9af7b22de3e9486d849c691d35e88d6252e9005531b3c192f`.
 
-No device test was run because the crate has no storage path, random source,
-key, process link, acknowledgement call, or runtime behavior. The next
-checkpoint must implement a fixed-root atomic A/B filesystem store, exact
-owner/mode/type/link/ACL validation, OS-random nonce input, and root-provisioned
-systemd key credential while remaining unlinked from live broker and HTTP/UI.
+No device test was run because this pure crate has no storage path, random
+source, key, process link, acknowledgement call, or runtime behavior. The
+fixed-root atomic A/B filesystem store and OS-random nonce boundary were
+subsequently completed at source `2efe1f7`; see `diagnostic-store.md`. A
+root-provisioned systemd key credential, native store harness, external floor,
+and live write-before-ack coordinator remain separate later gates.

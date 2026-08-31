@@ -150,16 +150,26 @@ collector, and repeated reads preserve the same sealed frame. Host, independent
 AArch64, and reversible H616 evidence passed with the default bundle unchanged
 in scope; see `baselines/device-diagnostic-broker.md`.
 
-The next unlinked layer is a pure fixed-size encrypted journal and
-reconciliation planner. It retains at most two typed windows in two 16,552-byte
-authenticated A/B copies, uses XChaCha20-Poly1305 with caller-supplied key and
-fresh nonce, supports active plus previous key IDs, and detects corruption,
-split brain, generation gaps, nonce reuse, and bounded rollback floors. Only a
-previously decrypted/selected journal can authorize acknowledgement. Ambiguous
-or absent collector state never claims success and becomes `orphaned`. No RNG,
-filesystem, key provisioning, broker link, acknowledgement I/O, API, UI, or
-package exists; see `design/diagnostic-journal-v1.md` and
-`baselines/diagnostic-journal.md`.
+The pure fixed-size encrypted journal and reconciliation planner retain at most
+two typed windows in two 16,552-byte authenticated A/B copies. They use
+XChaCha20-Poly1305 with a caller-supplied key and fresh nonce, support active
+plus previous key IDs, and detect corruption, split brain, generation gaps,
+nonce reuse, and bounded rollback floors. Only a previously decrypted/selected
+journal can authorize acknowledgement. Ambiguous or absent collector state
+never claims success and becomes `orphaned`; see
+`design/diagnostic-journal-v1.md` and `baselines/diagnostic-journal.md`.
+
+A separate unlinked filesystem adapter now owns only the compile-time
+`/var/lib/hardened-blikvm-diagnostics` root and fixed A/B names. It requires the
+exact broker identity, mode/owner/group/ACL/type/link/device invariants, pins and
+locks one no-follow directory descriptor, obtains nonces from `OsRng`, and
+performs authenticated write/readback, file sync, atomic rename, directory
+sync, reopen, and full reselection. It accepts typed caller-owned keys but does
+not load or retain them. No root is provisioned and no broker, collector,
+acknowledgement, HTTP/UI, package, or systemd path links the store; see
+`design/diagnostic-store-v1.md` and `baselines/diagnostic-store.md`. The next
+boundary is fixed-format systemd key credential delivery and a rollback-gated
+native store harness, still without a live acknowledgement path.
 
 ## Core invariants
 

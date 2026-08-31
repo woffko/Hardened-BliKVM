@@ -76,3 +76,14 @@ archive contains neither fan crate. Extracted AArch64 ThinLTO supervisor object
 code was byte-identical while rlib metadata differed. Exact hashes and the
 controlled-shutdown-versus-crash boundary are recorded in
 `fan-supervisor.md`.
+
+## Unlinked diagnostic-store checkpoint
+
+Source commit `2efe1f7` added a fixed-root encrypted diagnostic store without
+linking it into a process or archive. Independent target/output roots produced
+byte-identical 4,799,880-byte prototype archives with SHA-256
+`58b4058352bc54695b58f1384161c64275c4527fe9e44958b9490a1cc738fdc5`.
+Their manifests bind the clean source commit while retaining both acceptance
+flags as false. Separate store/journal rlib, metadata, and ThinLTO comparisons
+also matched; exact hashes and the unprovisioned/no-device boundary are in
+`diagnostic-store.md`.

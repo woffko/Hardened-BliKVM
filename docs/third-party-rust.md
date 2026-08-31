@@ -130,6 +130,14 @@ missing external license expression. Default alloc/getrandom features are
 disabled and no RNG dependency is enabled. A refreshed 1,233-advisory RustSec
 scan accepted the exact graph at source `11ee117`.
 
+The atomic encrypted diagnostic store adds one workspace package and no
+external dependency. It reuses the already locked journal, libc, nix,
+`rand_core`/OS entropy, and host-test-only tempfile graph. Locked metadata at
+source `2efe1f7` contains 170 packages: 53 workspace and 117 external, with no
+missing external license expression. A refreshed 1,233-advisory RustSec scan
+accepted the exact graph. The store remains unlinked and absent from the
+prototype archive.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

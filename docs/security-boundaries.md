@@ -314,6 +314,25 @@ filesystem, credential, network, process, clock, log, or acknowledgement I/O;
 see `design/diagnostic-journal-v1.md` and
 `baselines/diagnostic-journal.md`.
 
+The unlinked diagnostic store supplies only the missing fixed-root filesystem
+and entropy boundary. It opens no caller-selected path: production uses the
+exact broker UID/GID, one canonical mode-0700 root, four allowlisted names, a
+locked no-follow directory descriptor, relative nonblocking no-follow opens,
+single-link same-device mode-0600 files, and explicit POSIX ACL rejection. Each
+replacement completes authenticated readback, file sync, atomic rename,
+directory sync, reopen, equality verification, and final A/B reselection. Safe
+crash-left temporaries can be removed only after the same inode checks; unsafe
+metadata and unexpected entries fail closed.
+
+The store receives a typed caller-owned key ring and never loads, retains,
+derives, serializes, or logs it. Production nonces come from `OsRng`; failure,
+all-zero output, or retained active-key reuse fails closed. Fixed error payloads
+omit paths, identities, I/O details, keys, nonces, ciphertext, and plaintext.
+The root, key credential, external rollback floor, process linkage, and native
+device durability are still absent. Host and reproducible AArch64 evidence is
+in `baselines/diagnostic-store.md`; a systemd credential loader and native
+rollback gate must be accepted before provisioning the fixed root.
+
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials
 need a positive bounded PID and exact producer UID/GID. Root, collector,

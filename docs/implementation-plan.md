@@ -476,6 +476,21 @@ RNG, key, broker link, acknowledgement I/O, HTTP/UI, package, or device gate
 exists; see `design/diagnostic-journal-v1.md` and
 `baselines/diagnostic-journal.md`.
 
+Checkpoint: source `2efe1f7` adds the unlinked
+`bli-kvm-diagnostic-store`. Its production constructor accepts no path and
+opens only the fixed mode-0700 broker-owned diagnostics root. A pinned,
+exclusively locked no-follow directory descriptor, four-name allowlist,
+same-device/single-link/mode-0600/ACL checks, `openat`/`renameat`, authenticated
+readback, file and directory sync, and exact post-write reselection protect the
+two encrypted copies. `OsRng` supplies one fresh nonce per initialization or
+update; keys remain typed caller-owned values and are neither loaded nor
+retained. Eighteen host security/fault tests, the full 142-Python-test matrix,
+RustSec, and two byte-identical AArch64 archive/store/journal rlib, metadata and
+ThinLTO builds passed. The production root, key credential, external rollback
+floor, broker/collector link, acknowledgement I/O, HTTP/UI and package remain
+absent; see `design/diagnostic-store-v1.md` and
+`baselines/diagnostic-store.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

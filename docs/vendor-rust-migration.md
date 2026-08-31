@@ -162,9 +162,12 @@ builds; see `baselines/diagnostic-export-client.md`. A default-off, read-only
 schema-v2 Platform Broker integration subsequently passed exact-peer native H616 gates
 without entering the default bundle or acknowledging state; see
 `baselines/device-diagnostic-broker.md`. Its first pure encrypted journal and
-crash-planning layer is accepted in `baselines/diagnostic-journal.md`; the next
-boundary is the fixed-root atomic filesystem store and OS key/nonce adapter,
-still without HTTP/UI.
+crash-planning layer is accepted in `baselines/diagnostic-journal.md`. The
+separate fixed-root atomic filesystem store and OS nonce adapter are now
+host/AArch64 accepted in `baselines/diagnostic-store.md`, but remain unlinked
+and unprovisioned. The next boundary is fixed-format systemd key credential
+delivery and a rollback-gated native store harness, still without live
+acknowledgement or HTTP/UI.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

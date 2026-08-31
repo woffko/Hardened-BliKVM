@@ -74,11 +74,13 @@ inventory-only. The separately built schema-v2 feature binary has no install
 unit and passed a transient H616 gate, but is not copied into the bundle. It can
 read only for the exact Server peer and has no acknowledgement, persistence,
 server/HTTP/UI call site, retry, or advertised capability.
-The pure encrypted diagnostic journal is also a workspace-only library. It is
-not a dependency of the default or feature broker, no key or store path exists,
-and neither it nor its RustCrypto artifacts are copied into the prototype. A
-future fixed-root store must pass its own ownership/ACL/no-follow/atomic-sync
-and credential gates before this changes.
+The pure encrypted diagnostic journal and its fixed-root atomic store are also
+workspace-only libraries. They are not dependencies of the default or feature
+broker, and neither they nor their RustCrypto artifacts are copied into the
+prototype. The store fixes one production root and uses OS entropy, but no root,
+key credential, maintenance binary, unit, or package is provisioned. A future
+systemd credential loader and native rollback gate must pass before this
+changes.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the
