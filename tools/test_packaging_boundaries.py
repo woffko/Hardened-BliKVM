@@ -67,6 +67,32 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_st7789_model_is_pure_no_std_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-st7789-model"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        self.assertIn('"crates/bli-kvm-st7789-model"', workspace)
+        self.assertNotIn("[dependencies]", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn("bli-kvm-st7789-model", other_manifest.read_text())
+        self.assertIn("#![no_std]", source)
+        self.assertIn("#![forbid(unsafe_code)]", source)
+        self.assertIn("pub const DISPLAY_WIDTH: u16 = 240", source)
+        self.assertIn("pub const MAX_PIXEL_CHUNK_PIXELS", source)
+        for forbidden in (
+            "/dev/",
+            "std::",
+            "libc::",
+            "tokio::",
+            "spidev",
+            "SPI_IOC",
+            "gpiod",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, source)
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)

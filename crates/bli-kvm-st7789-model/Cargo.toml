@@ -1,0 +1,8 @@
+[package]
+name = "bli-kvm-st7789-model"
+description = "Pure bounded ST7789 transaction and RGB565 model for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true

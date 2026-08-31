@@ -10,6 +10,7 @@ members = [
   "crates/bli-kvm-fan-policy",
   "crates/bli-kvm-fan-supervisor",
   "crates/bli-kvm-serial-switch-codec",
+  "crates/bli-kvm-st7789-model",
   "crates/bli-kvm-media-catalog",
   "crates/bli-kvm-media-policy",
   "crates/bli-kvm-update-verifier",
