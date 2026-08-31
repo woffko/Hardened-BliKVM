@@ -167,6 +167,13 @@ root is not provisioned or packaged; an independently justified generation
 floor, native filesystem/power-loss tests, confined runtime and device
 acceptance remain mandatory before system actions can be enabled.
 
+The complete store harness passed natively as a static PIE in a unique
+marker-protected H616 `/tmp` stage and was removed afterwards. The run kept the
+production root absent, rootfs read-write, and existing KVMD services active.
+This verifies temporary-filesystem syscall behavior and cleanup only; it does
+not relax the external-floor, production-filesystem, systemd, power-loss,
+runtime-authorization, actuator, or post-boot boundaries.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

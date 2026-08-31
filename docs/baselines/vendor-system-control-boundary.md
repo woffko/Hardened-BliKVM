@@ -57,6 +57,8 @@ policy now implements the non-I/O portion of this boundary; see
 canonical corruption detection and write ordering; see
 `system-action-journal.md`. An unlinked exact-root atomic store now implements
 host-tested metadata, lock, sync and readback semantics; see
-`system-action-store.md`. None is provisioned, packaged, device-accepted or
-connected to a privileged adapter, and none authorizes reboot, shutdown,
-hostname, service, filesystem, log, or clock actions.
+`system-action-store.md`. Its full harness also passed in a cleaned H616 `/tmp`
+stage, but the production root remained absent. None is provisioned, packaged,
+system-action-accepted or connected to a privileged adapter, and none
+authorizes reboot, shutdown, hostname, service, filesystem, log, or clock
+actions.

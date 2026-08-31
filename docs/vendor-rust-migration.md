@@ -31,7 +31,7 @@ the vendor daemon beside a second GPIO owner.
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
-| system-info/reboot/hostname/log routes | separate sanitized adapters plus guarded typed actions | unlinked policy, redundant journal and exact-root atomic store; every mutation and log route unavailable | external floor, native power-loss/systemd gates, fixed actuator, authenticated UI, update/storage/post-boot; separate hostname/log work |
+| system-info/reboot/hostname/log routes | separate sanitized adapters plus guarded typed actions | unlinked policy/journal/store; 15 store tests passed in cleaned H616 `/tmp`, production root absent; every action/log route unavailable | provisioned root, external floor, systemd/production-fs power-loss, fixed actuator, authenticated UI, update/storage/post-boot; separate hostname/log work |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -106,7 +106,9 @@ generation/floor checks and torn-write ordering. Neither layer exposes an
 actuator or public enabling path. The unlinked filesystem adapter now adds fixed
 root/names, strict metadata and ACL checks, locking, atomic replacement, sync
 and exact readback, but is unprovisioned and has no accepted external floor or
-power-loss proof. All actions remain unavailable; see
+power-loss proof. Its complete store harness passed natively in an isolated
+H616 `/tmp` stage without creating the production root or changing services.
+All actions remain unavailable; see
 `baselines/vendor-system-control-boundary.md`,
 `baselines/system-action-policy.md`, `baselines/system-action-journal.md`, and
 `baselines/system-action-store.md`.

@@ -140,3 +140,42 @@ action was executed. The store remains unavailable until its root provisioning,
 external rollback-floor source, systemd confinement, native filesystem and
 power-loss matrix, runtime authorization/feedback, fixed actuator, post-boot
 acceptance, packaging, and explicit device acceptance pass.
+
+## Native H616 temporary-filesystem gate
+
+The exact 1,006,704-byte AArch64 static-PIE unit harness built from source
+commit `b1c3ad2fbcf7c6f0f2f7d5a81aac9e6833fa0616` has SHA-256:
+
+`8e9206d9475ee0f3a7e23f6a59a26a6e7bd84ac9fd70f8e47b673763bb28c6d3`
+
+The marker-protected staging tool was committed at `f404d03` and hardened for
+hashed known-hosts plus strict local snapshots at `ef7f9de`. Its first
+invocation stopped during local validation before SSH because the Windows build
+mount exposed unsafe POSIX mode bits and the enrolled known-hosts entries were
+hashed. No receipt or remote stage was created. The successful invocation used
+a mode-0555 local `/tmp` snapshot whose filename was bound to the exact hash;
+StrictHostKeyChecking still used the enrolled private known-hosts file.
+
+The H616 run passed all fifteen store tests with zero failures and zero ignored
+tests. This natively exercised directory-FD locking, POSIX ACL rejection,
+special-file and hardlink rejection, canonical and truncated-copy repair,
+atomic rename, file/directory sync, exact readback, rollback floor, root
+identity replacement, and injected write/rename/sync windows. Test-created
+files were restricted to the harness `TMPDIR` beneath its unique `/tmp` stage.
+
+Before, after, and during the separate final-state check:
+
+- the production store root was absent;
+- the root filesystem remained read-write;
+- the existing KVMD and KVMD Nginx services remained active;
+- no rootfs helper or device action was invoked;
+- cleanup was confirmed and the remote stage was absent.
+
+The private allowlisted receipt is mode 0600, Git-ignored, and contains no
+routing, credential, hostname, address, serial, or other device identity. The
+local hash-named harness snapshot was also removed after receipt verification.
+
+This accepts the code path only on the device's executable temporary
+filesystem. It does not prove the uncreated production root, an external
+rollback floor, systemd confinement, storage-controller persistence, sudden
+power loss, reboot/shutdown execution, or post-boot recovery.

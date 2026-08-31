@@ -286,6 +286,14 @@ policy, journal and store rlib/rmeta/ThinLTO pairs are byte-identical. No root
 was provisioned and no runtime was linked; see
 `baselines/system-action-store.md`.
 
+Checkpoint: the exact static-PIE store test harness subsequently passed all 15
+tests natively on H616 inside one marker-protected `/tmp` stage. The production
+root remained absent, rootfs stayed read-write, KVMD services stayed active,
+and remote/local staging was removed. This accepts temporary-filesystem syscall
+behavior only, not production provisioning, an external rollback floor,
+systemd confinement, power-cut durability or any system action. See the native
+section in `baselines/system-action-store.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.
