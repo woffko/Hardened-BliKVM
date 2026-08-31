@@ -150,6 +150,17 @@ collector, and repeated reads preserve the same sealed frame. Host, independent
 AArch64, and reversible H616 evidence passed with the default bundle unchanged
 in scope; see `baselines/device-diagnostic-broker.md`.
 
+The next unlinked layer is a pure fixed-size encrypted journal and
+reconciliation planner. It retains at most two typed windows in two 16,552-byte
+authenticated A/B copies, uses XChaCha20-Poly1305 with caller-supplied key and
+fresh nonce, supports active plus previous key IDs, and detects corruption,
+split brain, generation gaps, nonce reuse, and bounded rollback floors. Only a
+previously decrypted/selected journal can authorize acknowledgement. Ambiguous
+or absent collector state never claims success and becomes `orphaned`. No RNG,
+filesystem, key provisioning, broker link, acknowledgement I/O, API, UI, or
+package exists; see `design/diagnostic-journal-v1.md` and
+`baselines/diagnostic-journal.md`.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

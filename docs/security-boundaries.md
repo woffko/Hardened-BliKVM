@@ -295,6 +295,25 @@ dependency. Native fail-open/read/repeat/auth/rollback evidence is in
 `baselines/device-diagnostic-broker.md`; the standalone transport evidence
 remains in `baselines/diagnostic-export-client.md`.
 
+The unlinked diagnostic journal encrypts the complete fixed-size plaintext and
+authenticates its 64-byte format/key/generation/nonce header as associated data.
+It uses a 32-byte key, 24-byte caller-supplied nonce, and detached 16-byte tag;
+all-zero keys/nonces, retained active-key nonce reuse, wrong/missing keys,
+tampering, noncanonical plaintext, split brain, gaps, and rollback below an
+external floor fail closed. Only two windows are retained so debug/test stacks
+remain bounded on the target; nonterminal entries cannot be evicted. Key and
+cipher material and transient plaintext buffers are zeroized, while every
+`Debug`/error surface omits payload and key bytes.
+
+The threat boundary is deliberately narrow: encryption protects offline file
+confidentiality and integrity, not compromised root/live broker memory, and two
+complete older valid copies cannot be distinguished from full-filesystem
+rollback without a separate monotonic anchor. `NoSealed` after an ambiguous ack
+is recorded as `orphaned`, not falsely acknowledged. The crate performs no RNG,
+filesystem, credential, network, process, clock, log, or acknowledgement I/O;
+see `design/diagnostic-journal-v1.md` and
+`baselines/diagnostic-journal.md`.
+
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials
 need a positive bounded PID and exact producer UID/GID. Root, collector,

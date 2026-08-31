@@ -121,6 +121,15 @@ external package: locked metadata remains 159 total, 51 workspace, and 108
 external packages with no missing external license expression. The refreshed
 1,233-advisory RustSec scan accepted the exact graph at final source `3461d77`.
 
+The pure encrypted diagnostic journal adds one workspace package and nine
+external RustCrypto packages: `chacha20poly1305` 0.11.0, `chacha20` 0.10.2,
+`poly1305` 0.9.1, `aead` 0.6.1, `cipher` 0.5.2, `inout` 0.2.2, `cmov` 0.5.4,
+`ctutils` 0.4.2, and `universal-hash` 0.6.1. All are MIT/Apache-2.0 licensed.
+Locked metadata is 169 total, 52 workspace, and 117 external packages with no
+missing external license expression. Default alloc/getrandom features are
+disabled and no RNG dependency is enabled. A refreshed 1,233-advisory RustSec
+scan accepted the exact graph at source `11ee117`.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

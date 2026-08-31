@@ -460,6 +460,22 @@ complete rollback. The feature is absent from the prototype, server, HTTP/UI,
 capabilities, persistence, and install units; see
 `baselines/device-diagnostic-broker.md` and `api/broker-v1.md`.
 
+Checkpoint: source `11ee117` adds the unlinked pure
+`bli-kvm-diagnostic-journal`. Two fixed 16,552-byte XChaCha20-Poly1305 copies
+hide count/length for at most two canonical windows and authenticate format,
+algorithm, key ID, generation, nonce, and fixed ciphertext size. The active and
+one previous key ID support bounded rotation; new writes use only the active
+key and reject retained nonce reuse. A/B selection, non-selected-first update,
+copy repair, generation gap/split-brain/rollback floor, stable format vector,
+tamper/wrong-key and fixed retention tests pass. The reconciliation planner can
+authorize ack only from authenticated selected state, persists ambiguous state,
+requires reread before retry, and marks unprovable absent/restarted state
+`orphaned`. The full host matrix with 141 Python tests, RustSec and independent
+AArch64 archive/journal/RustCrypto artifact comparisons passed. No filesystem,
+RNG, key, broker link, acknowledgement I/O, HTTP/UI, package, or device gate
+exists; see `design/diagnostic-journal-v1.md` and
+`baselines/diagnostic-journal.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching
