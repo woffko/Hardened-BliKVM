@@ -32,6 +32,8 @@ SHARED_GROUP = "hardened-blikvm"
 RUNTIME_DIRECTORY = "/run/hardened-blikvm-diagnostics"
 SOCKET_PATH = f"{RUNTIME_DIRECTORY}/collector.sock"
 EXPORT_SOCKET_PATH = f"{RUNTIME_DIRECTORY}/export.sock"
+BROKER_RUNTIME_DIRECTORY = "/run/hardened-blikvm"
+BROKER_SOCKET_PATH = f"{BROKER_RUNTIME_DIRECTORY}/platform-broker.sock"
 BINARY_PARENT = "/usr/libexec/hardened-blikvm"
 BINARY_TARGET = f"{BINARY_PARENT}/bli-kvm-diagnostic-collector"
 PRODUCER_ACCOUNTS = (
@@ -55,11 +57,17 @@ STAGE_ROOT = re.compile(
 LOCAL_SNAPSHOT = re.compile(
     r"^hardened-blikvm-diagnostic-collector-[0-9a-f]{64}$"
 )
+LOCAL_BROKER_SNAPSHOT = re.compile(
+    r"^hardened-blikvm-platform-broker-diagnostic-[0-9a-f]{64}$"
+)
 PREFLIGHT_KEYS = {
     "account_absent_before",
     "architecture",
     "binary_absent_before",
     "binary_parent_before",
+    "broker_runtime_absent_before",
+    "broker_socket_absent_before",
+    "broker_unit_absent_before",
     "account_database_ready",
     "identities_absent_before",
     "kvmd_active_before",
@@ -75,6 +83,22 @@ PREFLIGHT_KEYS = {
 }
 RUN_KEYS = {
     "binary_hash_verified",
+    "broker_binary_hash_verified",
+    "broker_caps",
+    "broker_exact_reader",
+    "broker_identity",
+    "broker_matches_export",
+    "broker_network_namespace",
+    "broker_no_ack",
+    "broker_no_new_privs",
+    "broker_repeatable",
+    "broker_runtime_removed",
+    "broker_socket_mode",
+    "broker_socket_owner",
+    "broker_started_without_collector",
+    "broker_unauthorized_rejected",
+    "broker_unavailable_without_collector",
+    "broker_unit",
     "collector_caps",
     "collector_identity",
     "collector_network_namespace",
@@ -117,6 +141,9 @@ FINAL_KEYS = {
     "account_absent_final",
     "binary_absent_final",
     "binary_parent_final",
+    "broker_runtime_absent_final",
+    "broker_socket_absent_final",
+    "broker_unit_absent_final",
     "kvmd_active_final",
     "kvmd_nginx_active_final",
     "rootfs_mode_final",
@@ -150,6 +177,7 @@ class PolicyReceipt(TypedDict):
 @dataclass(frozen=True)
 class Options:
     binary: str
+    broker_binary: str
     source_commit: str
     unit: str
     base_sysusers: str
@@ -169,6 +197,7 @@ class Asset:
 @dataclass(frozen=True)
 class Assets:
     binary: Asset
+    broker_binary: Asset
     unit: Asset
     base_sysusers: Asset
     sysusers: Asset
@@ -182,6 +211,7 @@ class Paths:
     marker: str
     marker_value: str
     binary: str
+    broker_binary: str
     unit: str
     base_sysusers: str
     sysusers: str
@@ -195,6 +225,10 @@ class Paths:
     runtime_directory: str
     socket: str
     export_socket: str
+    broker_runtime_directory: str
+    broker_socket: str
+    broker_credentials: str
+    broker_unit: str
     client_state: str
     account_backup: str
     watchdog: str
@@ -203,6 +237,7 @@ class Paths:
 def parse_args() -> Options:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True)
+    parser.add_argument("--broker-binary", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument(
         "--unit",
@@ -227,6 +262,7 @@ def parse_args() -> Options:
     namespace = parser.parse_args()
     return Options(
         binary=cast(str, namespace.binary),
+        broker_binary=cast(str, namespace.broker_binary),
         source_commit=cast(str, namespace.source_commit),
         unit=cast(str, namespace.unit),
         base_sysusers=cast(str, namespace.base_sysusers),
@@ -250,11 +286,31 @@ def hash_text(value: str) -> str:
 
 
 def validate_binary(path_value: str) -> Asset:
+    return validate_elf_binary(
+        path_value,
+        LOCAL_SNAPSHOT,
+        "hardened-blikvm-diagnostic-collector",
+    )
+
+
+def validate_broker_binary(path_value: str) -> Asset:
+    return validate_elf_binary(
+        path_value,
+        LOCAL_BROKER_SNAPSHOT,
+        "hardened-blikvm-platform-broker-diagnostic",
+    )
+
+
+def validate_elf_binary(
+    path_value: str,
+    snapshot_pattern: re.Pattern[str],
+    expected_prefix: str,
+) -> Asset:
     source = Path(path_value)
     if source.is_symlink():
         raise ValueError("binary must not be a symlink")
     path = source.resolve(strict=True)
-    if path.parent != Path("/tmp") or LOCAL_SNAPSHOT.fullmatch(path.name) is None:
+    if path.parent != Path("/tmp") or snapshot_pattern.fullmatch(path.name) is None:
         raise ValueError("binary must be an exact hash-named local snapshot")
     metadata = path.stat()
     if (
@@ -285,7 +341,7 @@ def validate_binary(path_value: str) -> Asset:
         if 3 in program_types or 1 not in program_types:
             raise ValueError("binary is not static PIE")
     sha256 = hash_file(path)
-    if path.name != f"hardened-blikvm-diagnostic-collector-{sha256}":
+    if path.name != f"{expected_prefix}-{sha256}":
         raise ValueError("binary snapshot name does not match SHA-256")
     return Asset(path, sha256, metadata.st_size)
 
@@ -312,6 +368,7 @@ def validate_assets(options: Options) -> Assets:
         raise ValueError("source commit is invalid")
     return Assets(
         binary=validate_binary(options.binary),
+        broker_binary=validate_broker_binary(options.broker_binary),
         unit=validate_config(
             options.unit,
             Path("packaging/systemd/hardened-blikvm-diagnostic-collector.service"),
@@ -328,13 +385,19 @@ def validate_assets(options: Options) -> Assets:
     )
 
 
-def stage_paths(binary_sha256: str, run_id: str) -> Paths:
-    if SHA256.fullmatch(binary_sha256) is None or RUN_ID.fullmatch(run_id) is None:
+def stage_paths(binary_sha256: str, broker_sha256: str, run_id: str) -> Paths:
+    if (
+        SHA256.fullmatch(binary_sha256) is None
+        or SHA256.fullmatch(broker_sha256) is None
+        or RUN_ID.fullmatch(run_id) is None
+    ):
         raise ValueError("staging identity is invalid")
     root = f"/tmp/hardened-blikvm-diagnostic-collector-{binary_sha256[:12]}-{run_id}"
     if STAGE_ROOT.fullmatch(root) is None:
         raise ValueError("staging root is invalid")
-    marker_value = f"diagnostic-collector:{binary_sha256}:{run_id}"
+    marker_value = (
+        f"diagnostic-collector:{binary_sha256}:{broker_sha256}:{run_id}"
+    )
     unit_target = f"/run/systemd/system/{UNIT_NAME}"
     return Paths(
         run_id=run_id,
@@ -342,6 +405,7 @@ def stage_paths(binary_sha256: str, run_id: str) -> Paths:
         marker=f"{root}/.hardened-blikvm-owner",
         marker_value=marker_value,
         binary=f"{root}/collector",
+        broker_binary=f"{root}/platform-broker",
         unit=f"{root}/collector.service",
         base_sysusers=f"{root}/base.sysusers",
         sysusers=f"{root}/diagnostics.sysusers",
@@ -355,6 +419,10 @@ def stage_paths(binary_sha256: str, run_id: str) -> Paths:
         runtime_directory=RUNTIME_DIRECTORY,
         socket=SOCKET_PATH,
         export_socket=EXPORT_SOCKET_PATH,
+        broker_runtime_directory=BROKER_RUNTIME_DIRECTORY,
+        broker_socket=BROKER_SOCKET_PATH,
+        broker_credentials=f"{root}/broker-credentials",
+        broker_unit=f"hardened-blikvm-diagnostic-broker-{run_id}.service",
         client_state=f"{root}/client-state",
         account_backup=f"{root}/account-backup",
         watchdog=f"hardened-blikvm-diagnostic-rollback-{run_id}",
@@ -385,6 +453,7 @@ def policy_receipt() -> PolicyReceipt:
 def build_client(paths: Paths) -> str:
     return f'''#!/usr/bin/python3
 import os
+import json
 import socket
 import stat
 import sys
@@ -392,6 +461,7 @@ import time
 
 SOCKET = {paths.socket!r}
 EXPORT_SOCKET = {paths.export_socket!r}
+BROKER_SOCKET = {paths.broker_socket!r}
 READY = bytes((1, 1, 0, 0, 0, 0, 0, 0))
 CONTROL_DISABLED = bytes((1, 3, 2, 0, 0, 0, 0, 0))
 ACCEPTED = bytes((1, 1, 0, 0))
@@ -400,6 +470,8 @@ EXPORT_HEADER_BYTES = 24
 EXPORT_MAX_PAYLOAD = 8192
 STATE_PREFIX = {(paths.client_state + '/')!r}
 SEALED_STATE = {(paths.client_state + '/sealed.bin')!r}
+BROKER_STATE = {(paths.client_state + '/broker-sealed.bin')!r}
+BROKER_REQUEST = b'{{"schemaVersion":1,"requestId":71,"request":{{"type":"diagnostics"}}}}'
 
 def receive_exact(stream, size):
     output = bytearray()
@@ -491,10 +563,113 @@ def write_all_descriptor(descriptor, value):
             raise RuntimeError("state write failed")
         view = view[written:]
 
+def strict_object(pairs):
+    output = {{}}
+    for key, value in pairs:
+        if key in output:
+            raise RuntimeError("duplicate broker json key")
+        output[key] = value
+    return output
+
+def broker_response(expected):
+    stream.sendall(len(BROKER_REQUEST).to_bytes(4, "big") + BROKER_REQUEST)
+    size = int.from_bytes(receive_exact(stream, 4), "big")
+    if size == 0 or size > 65536:
+        raise RuntimeError("broker response size invalid")
+    payload = receive_exact(stream, size)
+    expect_closed(stream, "broker response has trailing data")
+    try:
+        envelope = json.loads(payload.decode("utf-8"), object_pairs_hook=strict_object)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise RuntimeError("broker response json invalid") from error
+    if set(envelope) != {{"schemaVersion", "requestId", "response"}}:
+        raise RuntimeError("broker envelope fields invalid")
+    if envelope["schemaVersion"] != 1 or envelope["requestId"] != 71:
+        raise RuntimeError("broker envelope binding invalid")
+    response = envelope["response"]
+    if type(response) is not dict:
+        raise RuntimeError("broker response object invalid")
+    if expected != "snapshot":
+        if response != {{"type": "error", "code": expected}}:
+            raise RuntimeError("broker error response mismatch")
+        return None
+    if set(response) != {{"type", "snapshot"}} or response["type"] != "diagnostics":
+        raise RuntimeError("broker diagnostic response invalid")
+    snapshot = response["snapshot"]
+    if type(snapshot) is not dict or set(snapshot) != {{
+        "instanceId", "windowId", "omittedLifecycleEvents", "recordCount", "bundle"
+    }}:
+        raise RuntimeError("broker snapshot fields invalid")
+    instance = snapshot["instanceId"]
+    window = snapshot["windowId"]
+    omitted = snapshot["omittedLifecycleEvents"]
+    count = snapshot["recordCount"]
+    text = snapshot["bundle"]
+    if (type(instance) is not int or not 0 < instance < (1 << 64)
+            or type(window) is not int or not 0 < window < (1 << 32)
+            or type(omitted) is not int or not 0 <= omitted <= 255
+            or type(count) is not int or not 0 < count <= 32
+            or type(text) is not str):
+        raise RuntimeError("broker snapshot values invalid")
+    try:
+        bundle = text.encode("ascii")
+    except UnicodeEncodeError as error:
+        raise RuntimeError("broker bundle is not ascii") from error
+    if len(bundle) == 0 or len(bundle) > EXPORT_MAX_PAYLOAD or not bundle.endswith(b"\\n"):
+        raise RuntimeError("broker bundle length invalid")
+    lines = text.splitlines()
+    if lines[0] != "schema=1 record_count=" + str(count) or len(lines) != count + 1:
+        raise RuntimeError("broker bundle header invalid")
+    if any(not line.startswith("offset_ms=") for line in lines[1:]):
+        raise RuntimeError("broker bundle record invalid")
+    header = bytearray(EXPORT_HEADER_BYTES)
+    header[0] = 1
+    header[1] = 2
+    header[2] = omitted
+    header[3] = count
+    header[4:12] = instance.to_bytes(8, "big")
+    header[12:16] = window.to_bytes(4, "big")
+    header[16:18] = len(bundle).to_bytes(2, "big")
+    return bytes(header) + bundle
+
+def store_owned(path, value):
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        write_all_descriptor(descriptor, value)
+    finally:
+        os.close(descriptor)
+
+def load_owned(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or metadata.st_uid != os.geteuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_size > EXPORT_HEADER_BYTES + EXPORT_MAX_PAYLOAD):
+            raise RuntimeError("owned state metadata invalid")
+        output = b""
+        while len(output) <= EXPORT_HEADER_BYTES + EXPORT_MAX_PAYLOAD:
+            chunk = os.read(descriptor, 4096)
+            if not chunk:
+                break
+            output += chunk
+    finally:
+        os.close(descriptor)
+    if len(output) > EXPORT_HEADER_BYTES + EXPORT_MAX_PAYLOAD:
+        raise RuntimeError("owned state oversized")
+    return output
+
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
 stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 stream.settimeout(8)
-stream.connect(EXPORT_SOCKET if mode.startswith("export-") else SOCKET)
+if mode.startswith("export-"):
+    target = EXPORT_SOCKET
+elif mode.startswith("broker-"):
+    target = BROKER_SOCKET
+else:
+    target = SOCKET
+stream.connect(target)
 if mode == "accepted":
     stream.sendall(READY)
     if receive_exact(stream, 4) != ACCEPTED:
@@ -594,6 +769,15 @@ elif mode == "export-over-capacity":
     expect_closed(stream, "over-capacity export peer received data")
     if time.monotonic() - started >= 1.0:
         raise RuntimeError("over-capacity rejection delayed")
+elif mode == "broker-read":
+    store_owned(BROKER_STATE, broker_response("snapshot"))
+elif mode == "broker-repeat":
+    if broker_response("snapshot") != load_owned(BROKER_STATE):
+        raise RuntimeError("broker snapshot changed")
+elif mode == "broker-unavailable":
+    broker_response("backend_unavailable")
+elif mode == "broker-rejected":
+    broker_response("unauthorized")
 else:
     raise RuntimeError("mode invalid")
 stream.close()
@@ -611,6 +795,9 @@ def build_preflight_script(paths: Paths, required_bytes: int) -> str:
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
             "export_socket_path": paths.export_socket,
+            "broker_runtime_directory": paths.broker_runtime_directory,
+            "broker_socket_path": paths.broker_socket,
+            "broker_unit": paths.broker_unit,
             "watchdog": paths.watchdog,
             "required_bytes": required_bytes,
             "collector_account": COLLECTOR_ACCOUNT,
@@ -644,6 +831,10 @@ case "$available" in ''|*[!0-9]*) exit 1 ;; esac
 [ ! -e "$runtime_directory" ]
 [ ! -e "$socket_path" ]
 [ ! -e "$export_socket_path" ]
+[ ! -e "$broker_runtime_directory" ]
+[ ! -e "$broker_socket_path" ]
+[ "$(systemctl is-active "$broker_unit" 2>/dev/null || true)" != active ]
+if systemctl cat "$broker_unit" >/dev/null 2>&1; then exit 1; fi
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" != active ]
 [ "$(systemctl is-active "$watchdog.service" 2>/dev/null || true)" != active ]
 if systemctl cat "$unit_name" >/dev/null 2>&1; then exit 1; fi
@@ -685,6 +876,9 @@ emit account_database_ready yes
 emit architecture aarch64
 emit binary_absent_before yes
 emit binary_parent_before "$binary_parent_before"
+emit broker_runtime_absent_before yes
+emit broker_socket_absent_before yes
+emit broker_unit_absent_before yes
 emit identities_absent_before yes
 emit kvmd_active_before active
 emit kvmd_nginx_active_before active
@@ -763,9 +957,15 @@ def build_rollback_script(paths: Paths, assets: Assets) -> str:
             "binary_part": paths.binary_part,
             "binary_sha": assets.binary.sha256,
             "binary_size": assets.binary.size_bytes,
+            "broker_binary": paths.broker_binary,
+            "broker_binary_sha": assets.broker_binary.sha256,
+            "broker_binary_size": assets.broker_binary.size_bytes,
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
             "export_socket_path": paths.export_socket,
+            "broker_runtime_directory": paths.broker_runtime_directory,
+            "broker_socket_path": paths.broker_socket,
+            "broker_unit": paths.broker_unit,
             "collector_account": COLLECTOR_ACCOUNT,
             "all_accounts": " ".join(ALL_ACCOUNTS),
             "shared_group": SHARED_GROUP,
@@ -783,6 +983,7 @@ case "$stage_root" in /tmp/hardened-blikvm-diagnostic-collector-*) ;; *) exit 1 
 [ -f "$state_file" ]
 parent_before=$(awk -F= '$1 == "parent_before" {print $2}' "$state_file")
 case "$parent_before" in present|absent) ;; *) exit 1 ;; esac
+systemctl stop "$broker_unit" 2>/dev/null || true
 systemctl stop "$unit_name" 2>/dev/null || true
 count=0
 while [ "$count" -lt 100 ] && getent passwd "$collector_account" >/dev/null 2>&1; do
@@ -805,6 +1006,18 @@ if [ -e "$runtime_directory" ]; then
     rm -f -- "$export_socket_path"
   fi
   rmdir "$runtime_directory"
+fi
+if [ -e "$broker_runtime_directory" ]; then
+  [ -d "$broker_runtime_directory" ]
+  [ ! -L "$broker_runtime_directory" ]
+  unexpected=$(find "$broker_runtime_directory" -mindepth 1 -maxdepth 1 ! -name platform-broker.sock -print -quit)
+  [ -z "$unexpected" ]
+  if [ -e "$broker_socket_path" ]; then
+    [ -S "$broker_socket_path" ]
+    [ "$(stat -c '%a' "$broker_socket_path")" = 660 ]
+    rm -f -- "$broker_socket_path"
+  fi
+  rmdir "$broker_runtime_directory"
 fi
 for database in $account_files; do
   name=${database##*/}
@@ -838,6 +1051,7 @@ if [ -e "$unit_target" ]; then
 fi
 systemctl daemon-reload
 systemctl reset-failed "$unit_name" 2>/dev/null || true
+systemctl reset-failed "$broker_unit" 2>/dev/null || true
 if [ -e "$binary_part" ]; then
   [ -f "$binary_part" ]
   [ ! -L "$binary_part" ]
@@ -852,6 +1066,12 @@ if [ -e "$binary_target" ]; then
   [ "$(sha256sum "$binary_target" | cut -d ' ' -f 1)" = "$binary_sha" ]
   rm -f -- "$binary_target"
 fi
+if [ -e "$broker_binary" ]; then
+  [ -f "$broker_binary" ]
+  [ ! -L "$broker_binary" ]
+  [ "$(stat -c '%a:%u:%g:%h:%s' "$broker_binary")" = "755:0:0:1:$broker_binary_size" ]
+  [ "$(sha256sum "$broker_binary" | cut -d ' ' -f 1)" = "$broker_binary_sha" ]
+fi
 if [ "$parent_before" = absent ] && [ -e "$binary_parent" ]; then
   [ -d "$binary_parent" ]
   [ ! -L "$binary_parent" ]
@@ -859,6 +1079,8 @@ if [ "$parent_before" = absent ] && [ -e "$binary_parent" ]; then
 fi
 [ ! -e "$runtime_directory" ]
 [ ! -e "$export_socket_path" ]
+[ ! -e "$broker_runtime_directory" ]
+[ ! -e "$broker_socket_path" ]
 [ ! -e "$binary_target" ]
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
 for account in $all_accounts; do
@@ -883,6 +1105,9 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
             "binary": paths.binary,
             "binary_sha": assets.binary.sha256,
             "binary_size": assets.binary.size_bytes,
+            "broker_binary": paths.broker_binary,
+            "broker_binary_sha": assets.broker_binary.sha256,
+            "broker_binary_size": assets.broker_binary.size_bytes,
             "unit_source": paths.unit,
             "unit_sha": assets.unit.sha256,
             "base_sysusers_source": paths.base_sysusers,
@@ -903,6 +1128,10 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
             "export_socket_path": paths.export_socket,
+            "broker_runtime_directory": paths.broker_runtime_directory,
+            "broker_socket_path": paths.broker_socket,
+            "broker_credentials": paths.broker_credentials,
+            "broker_unit": paths.broker_unit,
             "client_state": paths.client_state,
             "account_backup": paths.account_backup,
             "account_files": " ".join(f"/etc/{name}" for name in ACCOUNT_DATABASE_FILES),
@@ -932,6 +1161,8 @@ trap 'exit 1' HUP INT TERM
 [ "$(cat "$marker")" = "$marker_value" ]
 [ "$(stat -c %s "$binary")" = "$binary_size" ]
 [ "$(sha256sum "$binary" | cut -d ' ' -f 1)" = "$binary_sha" ]
+[ "$(stat -c '%a:%u:%g:%h:%s' "$broker_binary")" = "755:0:0:1:$broker_binary_size" ]
+[ "$(sha256sum "$broker_binary" | cut -d ' ' -f 1)" = "$broker_binary_sha" ]
 [ "$(sha256sum "$unit_source" | cut -d ' ' -f 1)" = "$unit_sha" ]
 [ "$(sha256sum "$base_sysusers_source" | cut -d ' ' -f 1)" = "$base_sysusers_sha" ]
 [ "$(sha256sum "$sysusers_source" | cut -d ' ' -f 1)" = "$sysusers_sha" ]
@@ -986,6 +1217,61 @@ for account in $all_accounts; do
   case "$seen" in *":$uid:"*) exit 1 ;; esac
   seen="$seen$uid:"
 done
+phase=start-diagnostic-broker-without-collector
+shared_gid=$(getent group "$shared_group" | awk -F: 'NR == 1 {print $3}')
+broker_uid=$(getent passwd hardened-blikvm-broker | awk -F: 'NR == 1 {print $3}')
+server_uid=$(getent passwd hardened-blikvm-server | awk -F: 'NR == 1 {print $3}')
+for value in "$shared_gid" "$broker_uid" "$server_uid"; do
+  case "$value" in ''|0|*[!0-9]*) exit 1 ;; esac
+done
+install -d -m 0700 -o "$broker_uid" -g "$shared_gid" "$broker_credentials"
+printf '%s\n' unused-local-gate-user > "$broker_credentials/kvmd-user"
+printf '%s\n' unused-local-gate-value > "$broker_credentials/kvmd-password"
+chown "$broker_uid:$shared_gid" "$broker_credentials/kvmd-user" "$broker_credentials/kvmd-password"
+chmod 0400 "$broker_credentials/kvmd-user" "$broker_credentials/kvmd-password"
+systemd-run --quiet --unit="$broker_unit" --service-type=simple \
+  --property=User=hardened-blikvm-broker \
+  --property=Group=hardened-blikvm \
+  --property=UMask=0077 \
+  --property=RuntimeDirectory=hardened-blikvm \
+  --property=RuntimeDirectoryMode=0750 \
+  --property=RuntimeDirectoryPreserve=no \
+  --property=NoNewPrivileges=yes \
+  --property=PrivateDevices=yes \
+  --property=PrivateNetwork=yes \
+  --property=ProtectSystem=strict \
+  --property=ProtectHome=yes \
+  --property=RestrictAddressFamilies=AF_UNIX \
+  "--property=CapabilityBoundingSet=" \
+  "--property=AmbientCapabilities=" \
+  --property=DevicePolicy=closed \
+  --property=IPAddressDeny=any \
+  --property=ReadWritePaths=/run/hardened-blikvm \
+  --setenv=CREDENTIALS_DIRECTORY="$broker_credentials" \
+  "$broker_binary"
+count=0
+while [ "$count" -lt 100 ]; do
+  if [ -S "$broker_socket_path" ]; then break; fi
+  [ "$(systemctl is-active "$broker_unit" 2>/dev/null || true)" = active ] || exit 1
+  sleep 0.1
+  count=$((count + 1))
+done
+[ -S "$broker_socket_path" ]
+broker_pid=$(systemctl show -p MainPID --value "$broker_unit")
+case "$broker_pid" in ''|0|*[!0-9]*) exit 1 ;; esac
+[ "$(systemctl show -p User --value "$broker_unit")" = hardened-blikvm-broker ]
+[ "$(systemctl show -p Group --value "$broker_unit")" = hardened-blikvm ]
+[ "$(systemctl show -p PrivateNetwork --value "$broker_unit")" = yes ]
+[ "$(systemctl show -p DevicePolicy --value "$broker_unit")" = closed ]
+[ "$(awk '/^CapEff:/ {print $2}' "/proc/$broker_pid/status")" = 0000000000000000 ]
+[ "$(awk '/^CapBnd:/ {print $2}' "/proc/$broker_pid/status")" = 0000000000000000 ]
+[ "$(awk '/^NoNewPrivs:/ {print $2}' "/proc/$broker_pid/status")" = 1 ]
+[ "$(readlink "/proc/$broker_pid/ns/net")" != "$(readlink /proc/1/ns/net)" ]
+[ "$(awk '/^Uid:/ {print $2}' "/proc/$broker_pid/status")" = "$broker_uid" ]
+[ "$(readlink -f "/proc/$broker_pid/exe")" = "$broker_binary" ]
+[ "$(stat -c '%a:%u:%g' "$broker_runtime_directory")" = "750:$broker_uid:$shared_gid" ]
+[ "$(stat -c '%a:%u:%g' "$broker_socket_path")" = "660:$broker_uid:$shared_gid" ]
+setpriv --reuid="$server_uid" --regid="$shared_gid" --clear-groups --bounding-set=-all --no-new-privs python3 "$client" broker-unavailable
 phase=install-runtime
 if [ "$parent_before" = absent ]; then mkdir -m 755 "$binary_parent"; fi
 install -m 0755 "$binary" "$binary_part"
@@ -1072,6 +1358,20 @@ run_as hardened-blikvm-broker fill
 sleep 0.2
 run_as hardened-blikvm-broker export-read
 run_as hardened-blikvm-broker export-repeat
+phase=broker-read-only-route
+run_as hardened-blikvm-server broker-read
+cmp -s "$client_state/sealed.bin" "$client_state/broker-sealed.bin"
+run_as hardened-blikvm-server broker-repeat
+cmp -s "$client_state/sealed.bin" "$client_state/broker-sealed.bin"
+python3 "$client" broker-rejected
+run_as hardened-blikvm-broker broker-rejected
+run_as hardened-blikvm-control broker-rejected
+run_as hardened-blikvm-broker export-repeat
+phase=stop-diagnostic-broker
+systemctl stop "$broker_unit"
+[ "$(systemctl is-active "$broker_unit" 2>/dev/null || true)" != active ]
+[ ! -e "$broker_socket_path" ]
+[ ! -e "$broker_runtime_directory" ]
 phase=export-rejected-peers
 python3 "$client" export-rejected
 run_as hardened-blikvm-server export-rejected
@@ -1144,8 +1444,26 @@ phase=rollback
 [ ! -e "$unit_target" ]
 [ ! -e "$binary_target" ]
 [ ! -e "$runtime_directory" ]
+[ ! -e "$broker_runtime_directory" ]
+[ ! -e "$broker_socket_path" ]
 run_succeeded=yes
 emit binary_hash_verified yes
+emit broker_binary_hash_verified yes
+emit broker_caps none
+emit broker_exact_reader server
+emit broker_identity exact-platform-broker
+emit broker_matches_export yes
+emit broker_network_namespace private
+emit broker_no_ack yes
+emit broker_no_new_privs yes
+emit broker_repeatable yes
+emit broker_runtime_removed yes
+emit broker_socket_mode 660
+emit broker_socket_owner static-shared
+emit broker_started_without_collector yes
+emit broker_unauthorized_rejected root-and-wrong-role
+emit broker_unavailable_without_collector typed
+emit broker_unit active-then-stopped
 emit collector_caps none
 emit collector_identity static-sysusers
 emit collector_network_namespace private
@@ -1197,6 +1515,9 @@ def build_cleanup_script(paths: Paths, assets: Assets) -> str:
             "rollback_state": paths.state,
             "binary_parent": paths.binary_parent,
             "binary_target": paths.binary_target,
+            "broker_runtime_directory": paths.broker_runtime_directory,
+            "broker_socket_path": paths.broker_socket,
+            "broker_unit": paths.broker_unit,
             "all_accounts": " ".join(ALL_ACCOUNTS),
             "shared_group": SHARED_GROUP,
             "rollback_b64": encode_text(build_rollback_script(paths, assets)),
@@ -1218,6 +1539,9 @@ if [ -e "$stage_root" ]; then
     [ ! -e "$binary_target" ]
     [ ! -e /run/systemd/system/hardened-blikvm-diagnostic-collector.service ]
     [ ! -e /run/hardened-blikvm-diagnostics ]
+    [ ! -e "$broker_runtime_directory" ]
+    [ ! -e "$broker_socket_path" ]
+    [ "$(systemctl is-active "$broker_unit" 2>/dev/null || true)" != active ]
     if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
     for account in $all_accounts; do
       if getent passwd "$account" >/dev/null 2>&1; then exit 1; fi
@@ -1248,6 +1572,9 @@ def build_final_script(paths: Paths, binary_parent_before: str) -> str:
             "runtime_directory": paths.runtime_directory,
             "socket_path": paths.socket,
             "export_socket_path": paths.export_socket,
+            "broker_runtime_directory": paths.broker_runtime_directory,
+            "broker_socket_path": paths.broker_socket,
+            "broker_unit": paths.broker_unit,
             "watchdog": paths.watchdog,
             "collector_account": COLLECTOR_ACCOUNT,
             "all_accounts": " ".join(ALL_ACCOUNTS),
@@ -1273,6 +1600,9 @@ fi
 [ ! -e "$runtime_directory" ]
 [ ! -e "$socket_path" ]
 [ ! -e "$export_socket_path" ]
+[ ! -e "$broker_runtime_directory" ]
+[ ! -e "$broker_socket_path" ]
+[ "$(systemctl is-active "$broker_unit" 2>/dev/null || true)" != active ]
 if getent passwd "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$collector_account" >/dev/null 2>&1; then exit 1; fi
 if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
@@ -1289,6 +1619,9 @@ case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) exit 1 ;; esac
 emit account_absent_final yes
 emit binary_absent_final yes
 emit binary_parent_final "$binary_parent_final"
+emit broker_runtime_absent_final yes
+emit broker_socket_absent_final yes
+emit broker_unit_absent_final yes
 emit kvmd_active_final active
 emit kvmd_nginx_active_final active
 emit rootfs_mode_final "$rootfs_mode"
@@ -1322,6 +1655,9 @@ def validate_preflight(facts: dict[str, str]) -> None:
         "architecture": "aarch64",
         "binary_absent_before": "yes",
         "binary_parent_before": facts.get("binary_parent_before", ""),
+        "broker_runtime_absent_before": "yes",
+        "broker_socket_absent_before": "yes",
+        "broker_unit_absent_before": "yes",
         "identities_absent_before": "yes",
         "kvmd_active_before": "active",
         "kvmd_nginx_active_before": "active",
@@ -1344,6 +1680,22 @@ def validate_run(facts: dict[str, str]) -> None:
     expected = {
         "account_database_restored": "yes",
         "binary_hash_verified": "yes",
+        "broker_binary_hash_verified": "yes",
+        "broker_caps": "none",
+        "broker_exact_reader": "server",
+        "broker_identity": "exact-platform-broker",
+        "broker_matches_export": "yes",
+        "broker_network_namespace": "private",
+        "broker_no_ack": "yes",
+        "broker_no_new_privs": "yes",
+        "broker_repeatable": "yes",
+        "broker_runtime_removed": "yes",
+        "broker_socket_mode": "660",
+        "broker_socket_owner": "static-shared",
+        "broker_started_without_collector": "yes",
+        "broker_unauthorized_rejected": "root-and-wrong-role",
+        "broker_unavailable_without_collector": "typed",
+        "broker_unit": "active-then-stopped",
         "collector_caps": "none",
         "collector_identity": "static-sysusers",
         "collector_network_namespace": "private",
@@ -1392,6 +1744,9 @@ def validate_final(facts: dict[str, str], binary_parent_before: str) -> None:
         "account_absent_final": "yes",
         "binary_absent_final": "yes",
         "binary_parent_final": binary_parent_before,
+        "broker_runtime_absent_final": "yes",
+        "broker_socket_absent_final": "yes",
+        "broker_unit_absent_final": "yes",
         "kvmd_active_final": "active",
         "kvmd_nginx_active_final": "active",
         "rootfs_mode_final": "rw",
@@ -1444,8 +1799,16 @@ def execute(options: Options) -> int:
     output = prototype.validate_output_path(options.output)
     assets = validate_assets(options)
     target = native.target_from_known_hosts(options.known_hosts, options.endpoint)
-    paths = stage_paths(assets.binary.sha256, secrets.token_hex(8))
-    required_bytes = assets.binary.size_bytes * 4 + MIN_TMP_HEADROOM_BYTES
+    paths = stage_paths(
+        assets.binary.sha256,
+        assets.broker_binary.sha256,
+        secrets.token_hex(8),
+    )
+    required_bytes = (
+        assets.binary.size_bytes * 4
+        + assets.broker_binary.size_bytes * 2
+        + MIN_TMP_HEADROOM_BYTES
+    )
     secret = prototype.read_secret_stdin()
     stage = "preflight"
     cleanup_required = False
@@ -1467,6 +1830,12 @@ def execute(options: Options) -> int:
         stage = "upload"
         cleanup_required = True
         upload(target, secret, assets.binary, build_first_upload_script(paths))
+        upload(
+            target,
+            secret,
+            assets.broker_binary,
+            build_upload_script(paths, paths.broker_binary, "755"),
+        )
         upload(target, secret, assets.unit, build_upload_script(paths, paths.unit, "600"))
         upload(
             target,
@@ -1518,13 +1887,17 @@ def execute(options: Options) -> int:
 
         receipt = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-diagnostic-collector",
+            "probe": "hardened-blikvm-diagnostic-broker-route",
             "result": "passed",
             "sourceCommit": assets.source_commit,
             "artifacts": {
                 "binary": {
                     "sha256": assets.binary.sha256,
                     "sizeBytes": assets.binary.size_bytes,
+                },
+                "brokerBinary": {
+                    "sha256": assets.broker_binary.sha256,
+                    "sizeBytes": assets.broker_binary.size_bytes,
                 },
                 "unitSha256": assets.unit.sha256,
                 "baseSysusersSha256": assets.base_sysusers.sha256,
@@ -1546,7 +1919,7 @@ def execute(options: Options) -> int:
         )
         receipt = {
             "schemaVersion": 1,
-            "probe": "hardened-blikvm-diagnostic-collector",
+            "probe": "hardened-blikvm-diagnostic-broker-route",
             "result": "failed",
             "sourceCommit": assets.source_commit,
             "failure": {"stage": stage, "failureType": type(error).__name__},

@@ -8,11 +8,14 @@ from tools import stage_device_diagnostic_collector as gate
 
 class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
     def paths(self) -> gate.Paths:
-        return gate.stage_paths("a" * 64, "0123456789abcdef")
+        return gate.stage_paths("a" * 64, "b" * 64, "0123456789abcdef")
 
     def assets(self) -> gate.Assets:
         return gate.Assets(
             binary=gate.Asset(Path("/tmp/binary"), "a" * 64, 1_500_000),
+            broker_binary=gate.Asset(
+                Path("/tmp/broker-binary"), "f" * 64, 1_100_000
+            ),
             unit=gate.Asset(Path("/tmp/unit"), "b" * 64, 2_000),
             base_sysusers=gate.Asset(Path("/tmp/base-sysusers"), "c" * 64, 1_000),
             sysusers=gate.Asset(Path("/tmp/sysusers"), "e" * 64, 200),
@@ -36,12 +39,20 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "/run/hardened-blikvm-diagnostics/export.sock",
         )
         self.assertEqual(
+            paths.broker_socket,
+            "/run/hardened-blikvm/platform-broker.sock",
+        )
+        self.assertEqual(
+            paths.broker_unit,
+            "hardened-blikvm-diagnostic-broker-0123456789abcdef.service",
+        )
+        self.assertEqual(
             paths.watchdog,
             "hardened-blikvm-diagnostic-rollback-0123456789abcdef",
         )
         self.assertEqual(paths.account_backup, f"{paths.root}/account-backup")
         with self.assertRaises(ValueError):
-            gate.stage_paths("a" * 63, "0123456789abcdef")
+            gate.stage_paths("a" * 63, "b" * 64, "0123456789abcdef")
 
     def test_generated_remote_scripts_are_valid_posix_shell(self) -> None:
         paths = self.paths()
@@ -102,10 +113,17 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "export-partial",
             "export-hold",
             "export-over-capacity",
+            "broker-read",
+            "broker-repeat",
+            "broker-unavailable",
+            "broker-rejected",
         ):
             self.assertIn(f'mode == "{mode}"', client)
         self.assertNotIn("subprocess", client)
         self.assertNotIn("open('/", client)
+        self.assertIn("BROKER_REQUEST = b'", client)
+        self.assertIn("object_pairs_hook=strict_object", client)
+        self.assertIn("broker response has trailing data", client)
 
     def test_runtime_uses_restored_sysusers_af_unix_only_and_bounded(self) -> None:
         runtime = gate.build_run_script(self.paths(), self.assets())
@@ -124,6 +142,16 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn("run_as hardened-blikvm-control accepted-fast", runtime)
         self.assertIn("run_as hardened-blikvm-broker fill", runtime)
         self.assertIn("run_as hardened-blikvm-broker export-read", runtime)
+        self.assertIn("phase=start-diagnostic-broker-without-collector", runtime)
+        self.assertIn("--property=RuntimeDirectory=hardened-blikvm", runtime)
+        self.assertIn("run_as hardened-blikvm-server broker-read", runtime)
+        self.assertIn("run_as hardened-blikvm-server broker-repeat", runtime)
+        self.assertIn("cmp -s \"$client_state/sealed.bin\"", runtime)
+        self.assertIn("run_as hardened-blikvm-broker broker-rejected", runtime)
+        self.assertIn("broker_started_without_collector yes", runtime)
+        self.assertIn("broker_unavailable_without_collector typed", runtime)
+        self.assertIn("broker_exact_reader server", runtime)
+        self.assertIn("broker_no_ack yes", runtime)
         self.assertIn("run_as hardened-blikvm-broker export-ack-mismatch", runtime)
         self.assertIn("run_as hardened-blikvm-broker export-ack", runtime)
         self.assertIn("export_exact_consumer platform-broker", runtime)
@@ -150,6 +178,10 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         self.assertIn('sha256sum "$binary_target"', rollback)
         self.assertIn('! -name export.sock', rollback)
         self.assertIn('rm -f -- "$export_socket_path"', rollback)
+        self.assertIn('systemctl stop "$broker_unit"', rollback)
+        self.assertIn('rm -f -- "$broker_socket_path"', rollback)
+        self.assertIn('[ ! -e "$broker_runtime_directory" ]', rollback)
+        self.assertIn('sha256sum "$broker_binary"', rollback)
         self.assertIn('sha256sum "$database"', rollback)
         self.assertIn('cmp -s "$account_backup/$name" "$database"', rollback)
         self.assertIn('elif [ "$current" != "$before" ]', rollback)
@@ -203,6 +235,9 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "architecture": "aarch64",
             "binary_absent_before": "yes",
             "binary_parent_before": "present",
+            "broker_runtime_absent_before": "yes",
+            "broker_socket_absent_before": "yes",
+            "broker_unit_absent_before": "yes",
             "identities_absent_before": "yes",
             "kvmd_active_before": "active",
             "kvmd_nginx_active_before": "active",
@@ -219,6 +254,22 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
         run = {
             "account_database_restored": "yes",
             "binary_hash_verified": "yes",
+            "broker_binary_hash_verified": "yes",
+            "broker_caps": "none",
+            "broker_exact_reader": "server",
+            "broker_identity": "exact-platform-broker",
+            "broker_matches_export": "yes",
+            "broker_network_namespace": "private",
+            "broker_no_ack": "yes",
+            "broker_no_new_privs": "yes",
+            "broker_repeatable": "yes",
+            "broker_runtime_removed": "yes",
+            "broker_socket_mode": "660",
+            "broker_socket_owner": "static-shared",
+            "broker_started_without_collector": "yes",
+            "broker_unauthorized_rejected": "root-and-wrong-role",
+            "broker_unavailable_without_collector": "typed",
+            "broker_unit": "active-then-stopped",
             "collector_caps": "none",
             "collector_identity": "static-sysusers",
             "collector_network_namespace": "private",
@@ -261,6 +312,9 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             "account_absent_final": "yes",
             "binary_absent_final": "yes",
             "binary_parent_final": "present",
+            "broker_runtime_absent_final": "yes",
+            "broker_socket_absent_final": "yes",
+            "broker_unit_absent_final": "yes",
             "kvmd_active_final": "active",
             "kvmd_nginx_active_final": "active",
             "rootfs_mode_final": "rw",
@@ -295,6 +349,8 @@ class StageDeviceDiagnosticCollectorTests(unittest.TestCase):
             handle.flush()
             with self.assertRaises(ValueError):
                 gate.validate_binary(handle.name)
+            with self.assertRaises(ValueError):
+                gate.validate_broker_binary(handle.name)
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         script = Path(gate.__file__).resolve()
