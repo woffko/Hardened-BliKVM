@@ -82,8 +82,10 @@ peer for the same role, and never turn protocol text into a log message.
 
 ## Unavailable runtime
 
-This protocol does not define window rollover or persistence. Before a runtime
-can be linked, a separate pure state machine must define the 32-record live
-window, lifecycle reservation, sealed-window handoff and acknowledgement,
-backpressure, disconnect/crash completeness, collector restart, and monotonic
-clock rollback. No raw vendor log adapter is permitted.
+This protocol does not encode window rollover or persistence. The separate
+unlinked `bli-kvm-diagnostic-window-policy` now defines a 32-record live window,
+lifecycle reservation, one sealed-window handoff, exact acknowledgement,
+backpressure, visible incomplete disconnects, manager restart, and monotonic
+clock rollback. A runtime must still supply peer credentials, a fresh instance
+binding, real monotonic time, bounded I/O, and concurrency without weakening
+that policy. No raw vendor log adapter is permitted.

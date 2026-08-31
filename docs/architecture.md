@@ -76,7 +76,10 @@ hard capacity, and a role-specific event matrix. A future runtime must bind a
 local peer to one source and assign collector-owned time without forwarding raw
 log content. Its unlinked producer codec carries one fixed typed event and
 requires one exact accepted/rejected response before another event; source,
-lifecycle, sequence and time never cross that wire.
+lifecycle, sequence and time never cross that wire. A fourth pure layer owns
+one live and one sealed window, reserves every active source's stop record,
+requires exact handoff acknowledgement, and marks an unrecordable disconnect
+as visibly incomplete instead of stranding the source or claiming completeness.
 
 ## Core invariants
 

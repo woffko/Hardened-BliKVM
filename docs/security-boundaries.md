@@ -215,6 +215,13 @@ binding must use kernel `SO_PEERCRED` against five exact resolved non-root UIDs;
 group access alone is insufficient. A producer waits for acceptance before its
 next frame, preventing hard backpressure from looking like success.
 
+The unlinked window policy keeps one live bundle and at most one sealed bundle
+awaiting exact acknowledgement. `record_count + active_sources <= 32` reserves
+one stop record per peer. A second required rotation returns backpressure. If
+EOF cannot be recorded because an overdue window is blocked, the role is still
+released and bounded omission metadata marks the bundle incomplete. Window and
+session state are ephemeral and contain no durable audit claim.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

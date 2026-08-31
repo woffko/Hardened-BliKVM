@@ -102,3 +102,8 @@ Final protocol source `64b256d7bddb6b2c1b609dcd11866036dacdb118`
 adds a separate pure sibling codec for producer events and mandatory
 accepted/rejected responses. It does not link or weaken this policy; a future
 runtime must compose both explicitly. See `diagnostic-protocol.md`.
+
+Window-policy source `a00e1a8eb5942d83cd5590b39fbcf9c5cf055fbf`
+now composes this collector with lifecycle reservation, sealed handoff and
+visible incomplete EOF metadata. It remains pure and unlinked; see
+`diagnostic-window-policy.md`.

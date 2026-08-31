@@ -287,6 +287,17 @@ it could not distinguish backpressure from acceptance. No socket, peer binding,
 runtime or capability exists; see `api/diagnostic-producer-v1.md` and
 `baselines/diagnostic-protocol.md`.
 
+Checkpoint: the unlinked `bli-kvm-diagnostic-window-policy` owns one live and
+one sealed window, exact nonwrapping IDs/acknowledgement, collector-owned
+sessions/time, and the invariant `records + active_sources <= 32`. A second
+required rotation returns typed backpressure without mutation. EOF always
+releases its role; an unrecordable stop increments visible incomplete metadata
+and forces rotation. At source commit `a00e1a8`, the full host suite, two
+byte-identical prototype archives, and byte-identical window/protocol/collector/
+export AArch64 rlib, metadata and ThinLTO pairs passed. No identity adapter,
+socket, process, real clock, persistence, API, UI or capability exists; see
+`baselines/diagnostic-window-policy.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

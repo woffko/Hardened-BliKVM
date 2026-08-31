@@ -81,3 +81,8 @@ still no Unix socket, peer-credential adapter, collector process, window state,
 clock owner, authenticated API/UI, package, or advertised diagnostic
 capability. Those remain separate gates described in
 `api/diagnostic-producer-v1.md`.
+
+Window-policy source `a00e1a8eb5942d83cd5590b39fbcf9c5cf055fbf`
+now consumes the response types for accepted, policy-rejected, backpressured,
+and unavailable outcomes. It remains pure and unlinked; see
+`diagnostic-window-policy.md`.
