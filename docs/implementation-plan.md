@@ -402,7 +402,8 @@ pairs passed. No export listener, consumer identity, persistence, client,
 API/UI, package, or device gate exists yet; see
 `baselines/diagnostic-export-protocol.md` and `api/diagnostic-export-v1.md`.
 
-Checkpoint in progress: a separate unlinked export listener now accepts only a
+Checkpoint: source `19a750f` adds a separate unlinked export listener that
+accepts only a
 caller-bound Unix listener and the semantic platform-broker role returned by
 the existing fixed-name/`SO_PEERCRED` adapter. It uses two non-waiting permits,
 fixed two-/five-second request/response bounds, one exchange per connection,
@@ -411,7 +412,10 @@ updated 25 peer-adapter tests cover all response mappings, invalid/partial and
 unauthorized peers, connection pressure, stalled snapshot/ack responses,
 runtime-lock release, ambiguous acknowledged writes, and shutdown. No collector
 process, fixed export path, client, persistence, API/UI, package, or device gate
-links it yet.
+links it. The full host matrix with 138 Python tests, two byte-identical
+4,796,617-byte archives, and byte-identical listener/adapter/window/protocol/
+export rlib, metadata, and ThinLTO pairs passed; see
+`baselines/diagnostic-export-listener.md`.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

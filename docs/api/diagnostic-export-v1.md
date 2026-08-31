@@ -79,5 +79,6 @@ accepts a caller-owned Unix listener, permits at most two active connections,
 drops excess connections without waiting, bounds request reads to two seconds
 and response writes to five seconds, and closes after one request/response. It
 clones or acknowledges collector state before response I/O, so a stalled
-consumer holds no collector mutex. Listener host/AArch64/device evidence remains
-pending.
+consumer holds no collector mutex. Device/process integration remains pending;
+standalone listener host/AArch64 evidence is recorded in
+`../baselines/diagnostic-export-listener.md`.

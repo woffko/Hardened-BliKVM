@@ -152,7 +152,8 @@ diagnostic receipt and has no collector service dependency. See
 `baselines/diagnostic-producer-reporter.md`, followed by
 `baselines/device-diagnostic-control.md`, `api/diagnostic-export-v1.md`, and
 `baselines/diagnostic-export-protocol.md`. The next unlinked layer is a bounded
-caller-owned listener that accepts only the exact platform-broker peer.
+caller-owned listener that accepts only the exact platform-broker peer; see
+`baselines/diagnostic-export-listener.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and
