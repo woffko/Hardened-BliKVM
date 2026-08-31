@@ -18,7 +18,7 @@ private topology.
 | `POST /api/reboot` | invokes `reboot` through a generic shell helper, with no response, confirmation, idempotency, cooldown, update guard, or audit receipt | unavailable; irreversible action policy required |
 | `GET /api/systeminfo` | returns CPU/memory/storage/time facts together with hostname/FQDN, board serial, MAC and IP addresses, network state, and configuration flags | route rejected; only separately allowlisted sanitized adapters may supply facts |
 | `POST /api/hostname` | may remount root read-write, invokes `hostnamectl`, rewrites `/etc/hosts`, and restores read-only mode only when originally read-only | unavailable; transactional staging, rollback and connectivity/TLS gates required |
-| `POST /api/logs` | reads a path from mutable configuration, shells out to unquoted `tail`, and returns raw log content | unavailable; fixed-source redaction and bounded export policy required |
+| `POST /api/logs` | reads a path from mutable configuration, shells out to unquoted `tail`, and returns raw log content | unavailable; only fixed-source typed events and bounded export may be considered |
 | client `POST /shutdown` | client code exposes shutdown, but the audited server route table has no matching handler | unavailable; never infer server capability from client UI |
 
 The shared `executeCMD` helper accepts arbitrary shell strings. Hostname input
@@ -47,7 +47,8 @@ System mutations remain unavailable. Reboot/shutdown need explicit eligibility,
 confirmation, persisted idempotency/cooldown, update and storage guards, visible
 feedback, and post-boot acceptance. Hostname changes need a typed staged plan,
 atomic file handling, exact rollback, name-resolution/TLS/connectivity checks,
-and reboot persistence. Logs require a fixed local source, redaction, size/time
+and reboot persistence. Arbitrary log text is not accepted for regex redaction;
+diagnostics require a fixed local source mapped to semantic events, size/time
 bounds, authorization, and no shell path. Clock writes retain their separate
 RTC policy and physical gate.
 
@@ -69,3 +70,8 @@ absence after both operations; no system action was introduced.
 The separate trusted-floor audit found no live TPM, TEE/OP-TEE, or RPMB
 interface despite generic TPM kernel support. No same-filesystem floor is
 accepted; see `trusted-floor-topology.md`. Reboot/shutdown stay unavailable.
+
+The first pure diagnostic-export model now enforces the semantic, bounded,
+no-path/no-message portion of the log boundary; see `diagnostic-export.md`. It
+is unlinked and performed no live capture. There is still no collector, source
+adapter, API, UI, package, or advertised diagnostic capability.

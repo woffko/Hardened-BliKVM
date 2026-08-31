@@ -253,8 +253,18 @@ rewrite, raw-log shell path, and client-only shutdown assumption. Existing
 independent adapters already provide the useful sanitized facts, so no broader
 live capture was performed. Reboot, shutdown, hostname, service, filesystem,
 log and clock actions remain unavailable pending typed eligibility,
-confirmation/idempotency, update/storage guards, rollback/redaction, post-boot
+confirmation/idempotency, update/storage guards, rollback/privacy, post-boot
 and persistence gates. See `baselines/vendor-system-control-boundary.md`.
+
+Checkpoint: the unlinked `bli-kvm-diagnostic-export` rejects arbitrary log
+redaction as a trust boundary and accepts only fixed semantic enums with
+monotonic relative offsets. A fresh export is bounded to 32 records, 24 hours
+and 8,192 canonical ASCII bytes, with hard failure instead of truncation. It
+has no message, path, identity or I/O surface. At source commit `071013a`, the
+full host suite, two byte-identical prototype archives, and byte-identical
+AArch64 rlib, metadata and ThinLTO codegen passed. No live log was read and no
+collector, API, UI or capability is linked; see
+`baselines/diagnostic-export.md`.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

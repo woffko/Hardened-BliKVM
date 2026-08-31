@@ -195,6 +195,14 @@ must remain disabled unless different verified hardware/firmware supplies an
 independent monotonic primitive plus reviewed irreversible provisioning, key
 custody, recovery and physical fault gates.
 
+Diagnostic export does not accept raw log lines for post-hoc redaction. Its
+unlinked pure model contains only fixed semantic enums, monotonic relative
+offsets, derived severity, and bounded deterministic ASCII output. It has no
+message, path, identity, filesystem, process, clock, network, or device surface.
+A future non-networked collector must own one reviewed fixed source and perform
+the typed mapping before the authenticated server boundary; unknown events and
+all raw content fail closed. No diagnostic capability is currently advertised.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and

@@ -35,7 +35,7 @@ bli-platform-broker
 Separate service users
   - video capture and Janus during transition
   - future non-networked update worker owning only its canonical slot root
-  - log collector
+  - future fixed-source typed diagnostic collector with no raw-log API
 ```
 
 The transition broker is logically privileged even when it needs no root UID:
@@ -66,6 +66,12 @@ confirmed maximum-cooling startup command, suppresses duplicate commands,
 escalates actuator errors to a maximum-cooling attempt, latches after failures,
 and re-confirms maximum cooling for controlled shutdown. No concrete actuator
 exists, and this does not claim safety after sudden process/kernel/power loss.
+
+Diagnostic export is currently another unlinked pure boundary. It accepts only
+fixed semantic enums and bounded relative offsets, emits deterministic bounded
+ASCII, and has no message, path, identity, filesystem, process, clock, network,
+or device interface. A future collector must own one reviewed fixed source and
+map it to typed events without forwarding raw log content.
 
 ## Core invariants
 
