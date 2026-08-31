@@ -150,7 +150,8 @@ diagnostic receipt and has no collector service dependency. See
 `baselines/device-diagnostic-collector.md`, plus
 `baselines/diagnostic-producer-client.md` and
 `baselines/diagnostic-producer-reporter.md`, followed by
-`baselines/device-diagnostic-control.md` and `api/diagnostic-export-v1.md`.
+`baselines/device-diagnostic-control.md`, `api/diagnostic-export-v1.md`, and
+`baselines/diagnostic-export-protocol.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

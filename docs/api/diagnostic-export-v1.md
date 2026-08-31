@@ -3,7 +3,9 @@
 This is a fixed local Unix-stream contract for one future authenticated
 collector consumer. It is not an HTTP API, does not package the collector, and
 does not expose live-window state. The current crate is a pure unlinked codec
-with no socket, identity lookup, persistence, retry, allocation, or I/O.
+with no socket, identity lookup, persistence, retry, allocation, or I/O. Its
+host/AArch64 evidence is recorded in
+`../baselines/diagnostic-export-protocol.md`.
 
 ## Request frame
 
