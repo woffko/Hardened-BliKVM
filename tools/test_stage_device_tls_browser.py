@@ -123,7 +123,7 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             "inventoryBackend": "kvmd_transition",
             "thermalObservation": "bounded_millidegrees",
             "thermalCapability": "read_only",
-            "thermalEvidence": "source_verified",
+            "thermalEvidence": "runtime_verified",
             "thermalUi": "rendered",
             "videoCapability": "read_only",
             "hidCapability": "unavailable",

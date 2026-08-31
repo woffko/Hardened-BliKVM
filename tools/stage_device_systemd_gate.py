@@ -695,9 +695,9 @@ printf '%s\n' "$thermal_millidegrees" | grep -Eq '^-?[0-9]+$'
 phase=thermal-capability
 capabilities_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/capabilities.json" --write-out '%{http_code}' "$origin/api/capabilities" 2>/dev/null)
 [ "$capabilities_status" = 200 ]
-grep -q '"thermal":{"availability":"read_only","evidence":"source_verified"}' "$test_root/capabilities.json"
+grep -q '"thermal":{"availability":"read_only","evidence":"runtime_verified"}' "$test_root/capabilities.json"
 thermal_capability=read_only
-thermal_evidence=source_verified
+thermal_evidence=runtime_verified
 count=1
 while [ "$count" -lt "$inventory_requests" ]; do
   code=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
@@ -1036,7 +1036,7 @@ def validate_run(facts: dict[str, str], bundle_sha256: str) -> None:
         "inventory_requests": str(INVENTORY_REQUESTS),
         "thermal_millidegrees": thermal,
         "thermal_capability": "read_only",
-        "thermal_evidence": "source_verified",
+        "thermal_evidence": "runtime_verified",
         "video_status": "200",
         "video_content_type": "multipart-mjpeg",
         "video_frames": video_frames,

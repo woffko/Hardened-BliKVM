@@ -169,7 +169,7 @@ try {
   );
   assert.equal(
     capabilities.body.data.board.features.thermal.evidence,
-    "source_verified",
+    "runtime_verified",
   );
 
   phase = "thermal-ui";
@@ -300,7 +300,7 @@ try {
       inventoryBackend: "kvmd_transition",
       thermalObservation: "bounded_millidegrees",
       thermalCapability: "read_only",
-      thermalEvidence: "source_verified",
+      thermalEvidence: "runtime_verified",
       thermalUi: "rendered",
       videoCapability: "read_only",
       hidCapability: "unavailable",
