@@ -23,6 +23,11 @@ portion of this boundary: six distinct nonzero UIDs, exact nonzero shared GID,
 positive bounded PID, root/collector/unknown rejection, and source-only output.
 User/group resolution and safe kernel credential retrieval remain adapter work.
 
+The unlinked `bli-kvm-diagnostic-peer-adapter` now implements that narrow
+adapter with fixed names, safe nix lookup, current effective-UID validation, and
+Tokio `UnixStream::peer_cred`. It returns only the source and has no listener,
+runtime, logging, configuration, or fallback identity.
+
 The collector assigns lifecycle `Started`/`Stopped`, epoch, sequence, and
 relative monotonic offset at accept, event acceptance, and EOF. A producer
 cannot encode lifecycle events. The four long-running services should retain

@@ -31,7 +31,7 @@ the vendor daemon beside a second GPIO owner.
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
-| system-info/reboot/hostname/log routes | separate sanitized adapters, guarded typed actions, and fixed semantic diagnostics | actions lack a trusted floor; pure export/source/protocol/window/peer policies are unlinked, bounded and emit no raw text/path/numeric identity | different accepted floor hardware/firmware and action gates; safe account resolver/SO_PEERCRED runtime, authenticated UI and separate hostname work |
+| system-info/reboot/hostname/log routes | separate sanitized adapters, guarded typed actions, and fixed semantic diagnostics | actions lack a trusted floor; typed policies plus unlinked safe fixed-account/peer_cred adapter emit no raw text/path/numeric identity | different accepted floor hardware/firmware and action gates; collector account/listener/runtime, authenticated UI and separate hostname work |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -121,16 +121,17 @@ no source, lifecycle, sequence, time or identity field. A fourth pure policy
 adds lifecycle reservation, one sealed handoff, exact acknowledgement,
 backpressure and visible incomplete EOF metadata. The peer policy validates six
 distinct UIDs, exact shared GID and bounded PID, returning only the semantic
-source. There is no collector process, account resolver, kernel credential call,
-socket, clock or API. See
+source. The safe adapter resolves fixed names, verifies the collector eUID and
+uses Tokio peer credentials without returning numeric identity. There is no
+collector account/process, listener, clock or API. See
 `baselines/vendor-system-control-boundary.md`,
 `baselines/system-action-policy.md`, `baselines/system-action-journal.md`,
 `baselines/system-action-store.md`, `baselines/system-action-maintenance.md`,
 `baselines/trusted-floor-topology.md`, `baselines/diagnostic-export.md`, and
 `baselines/diagnostic-collector-policy.md`, plus
-`api/diagnostic-producer-v1.md`, `baselines/diagnostic-protocol.md`, and
-`baselines/diagnostic-window-policy.md`, plus
-`baselines/diagnostic-peer-policy.md`.
+`api/diagnostic-producer-v1.md`, `baselines/diagnostic-protocol.md`,
+`baselines/diagnostic-window-policy.md`, `baselines/diagnostic-peer-policy.md`,
+and `baselines/diagnostic-peer-adapter.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

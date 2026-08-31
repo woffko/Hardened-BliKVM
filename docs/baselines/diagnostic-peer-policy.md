@@ -82,3 +82,9 @@ resolve the six exact accounts and shared group, use a safe Unix-stream
 peer per role, and discard numeric credentials. User-database failure, UID
 change, collector restart, concurrency, timeout, systemd confinement, privacy,
 browser, and H616 gates remain mandatory.
+
+Adapter source `b62d827c107d035a9b1580476fc7662054e4e315` removes generic
+`Debug` from both numeric identity containers, re-exports the source type, and
+adds the separate safe fixed-name lookup/peer_cred consumer. Peer codegen stays
+unchanged; updated metadata/reproducibility is recorded in
+`diagnostic-peer-adapter.md`.

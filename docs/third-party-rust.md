@@ -50,6 +50,16 @@ no filesystem, device, bootloader, randomness, network, or system-call crate.
 The recovery-input validator also reuses only Serde/JSON/SHA-256/error crates;
 it does not embed a license parser, SPDX validator, downloader, or scanner.
 
+The unlinked diagnostic peer adapter adds `nix 0.30.1` with default features
+disabled and only `user` enabled. Its only new transitive locked package is the
+build helper `cfg_aliases 0.2.2`; both declare MIT. Existing Tokio, libc,
+bitflags, and cfg-if packages are reused. Locked offline metadata at source
+commit `b62d827` resolves 152 packages: 46 workspace and 106 external, with no
+missing external license expression. The adapter is not present in a shipped
+binary or prototype archive. `cargo audit --deny warnings` refreshed and loaded
+1,233 RustSec advisories, then accepted all 152 locked dependencies on
+2026-08-31.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

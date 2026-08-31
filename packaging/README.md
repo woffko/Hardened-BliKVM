@@ -38,8 +38,9 @@ All five current service identities use the shared primary group
 `hardened-blikvm`, so future diagnostic socket group access cannot identify a
 producer role. The unlinked peer policy instead requires six distinct non-root
 UIDs, exact shared GID and a positive bounded PID, then returns only one semantic
-source. No account resolver, `SO_PEERCRED` adapter, socket, collector user/unit,
-or diagnostic capability is packaged yet.
+source. The unlinked safe adapter now implements fixed-name nix lookup and
+Tokio `peer_cred` without numeric output. No socket, collector user/unit,
+runtime, or diagnostic capability is packaged yet.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

@@ -308,6 +308,16 @@ AArch64 rlib, metadata and ThinLTO pairs passed. No account lookup,
 `SO_PEERCRED` call, socket, process or capability exists; see
 `baselines/diagnostic-peer-policy.md`.
 
+Checkpoint: the unlinked `bli-kvm-diagnostic-peer-adapter` resolves only six
+fixed accounts and one group through safe nix APIs, requires the process eUID
+to match the collector account, obtains connection credentials through Tokio
+`UnixStream::peer_cred`, and returns only the mapped source. Numeric identity
+containers have no `Debug`. At source commit `b62d827`, the full host suite,
+two byte-identical prototype archives, and byte-identical adapter/peer/nix
+AArch64 rlib, metadata and ThinLTO pairs passed. No listener, collector account,
+process, systemd unit or capability exists; see
+`baselines/diagnostic-peer-adapter.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

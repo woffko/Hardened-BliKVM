@@ -106,3 +106,7 @@ confinement, privacy, browser, and H616 gates remain mandatory.
 Peer-policy source `fcfde44543b64f1a93eec05ea47c9f92ea6efe7b`
 now supplies the pure source mapping intended to precede `connect`; it does not
 link a socket or runtime. See `diagnostic-peer-policy.md`.
+
+Adapter source `b62d827c107d035a9b1580476fc7662054e4e315` now provides the
+safe source intended to precede `connect`; it remains unlinked from this state
+machine and from every process. See `diagnostic-peer-adapter.md`.

@@ -81,6 +81,7 @@ or identity; see `diagnostic-protocol.md`. The pure two-window manager adds
 lifecycle reservation, exact handoff acknowledgement, hard backpressure and
 visible incomplete EOF metadata; see `diagnostic-window-policy.md`. The peer
 policy maps validated exact UID/GID/PID facts to only the semantic source; see
-`diagnostic-peer-policy.md`. There is still no account resolver, kernel
-credential call, runtime collector, API, UI, package, or advertised diagnostic
-capability.
+`diagnostic-peer-policy.md`. The unlinked safe adapter adds fixed-name lookup,
+collector eUID validation and Tokio peer credentials; see
+`diagnostic-peer-adapter.md`. There is still no collector account/listener/
+process, API, UI, package, or advertised diagnostic capability.

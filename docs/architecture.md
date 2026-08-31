@@ -85,6 +85,11 @@ maps connection-bound PID/UID/GID facts to only one source. Numeric credentials
 are not returned or exported; a future safe adapter must obtain them from the
 kernel for each accepted stream.
 
+That unlinked adapter now uses fixed-name safe nix account lookup, verifies the
+collector effective UID, and calls Tokio `UnixStream::peer_cred` before
+returning only the mapped source. It has no listener or runtime owner, and the
+numeric assignment/credential containers intentionally have no `Debug` output.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

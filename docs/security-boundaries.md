@@ -230,6 +230,13 @@ semantic source leaves the mapper; numeric credentials are discarded. A future
 adapter must use a safe connection-bound `peer_cred` API and cannot accept
 source from the producer frame.
 
+The unlinked safe adapter resolves only six compile-time account names and one
+group through nix, validates the current effective collector UID, and maps a
+Tokio Unix stream through `peer_cred`. Lookup and peer failures are coarse typed
+errors with no numeric values. PID/UID/GID containers do not implement `Debug`,
+and only the semantic source is returned. No listener or collector process is
+linked.
+
 Recovery images use a separate `recovery-` trust domain and the complete-media
 contract in `api/recovery-image-v1.md`. The truncated field image, live state,
 default credentials, unresolved binaries, `NOASSERTION` components, and
