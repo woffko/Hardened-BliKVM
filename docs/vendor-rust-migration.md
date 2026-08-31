@@ -31,6 +31,7 @@ the vendor daemon beside a second GPIO owner.
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
+| system-info/reboot/hostname/log routes | separate sanitized adapters plus guarded typed actions | source-audited; mutations/log route unavailable | identity filtering, confirmation/idempotency, update/storage guards, rollback/redaction, post-boot and persistence matrix |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -93,6 +94,12 @@ profile mode0777 changes, NetworkManager restart and connection cycling without
 a watchdog rollback. Only fixed-candidate sysfs type/link/driver facts and
 manager active state were retained in the sanitized live baseline; see
 `baselines/device-network-topology.md`.
+
+The system routes similarly combine bounded resource facts with hostname,
+serial, MAC/IP and mutable configuration; reboot is an unconfirmed shell call,
+hostname rewrites root files, and logs return raw content through an unquoted
+shell path. Client shutdown has no matching audited server route. All actions
+remain unavailable; see `baselines/vendor-system-control-boundary.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

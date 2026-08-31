@@ -247,6 +247,15 @@ manager restart and connection cycling are rejected. No Rust adapter or network
 capability exists; typed commit/confirm, watchdog rollback, out-of-band recovery
 and reboot gates remain. See `baselines/device-network-topology.md`.
 
+Checkpoint: the pinned system-control audit rejects the vendor's combined
+identity-bearing system-info route, unconfirmed shell reboot, rootfs/hostname
+rewrite, raw-log shell path, and client-only shutdown assumption. Existing
+independent adapters already provide the useful sanitized facts, so no broader
+live capture was performed. Reboot, shutdown, hostname, service, filesystem,
+log and clock actions remain unavailable pending typed eligibility,
+confirmation/idempotency, update/storage guards, rollback/redaction, post-boot
+and persistence gates. See `baselines/vendor-system-control-boundary.md`.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.
