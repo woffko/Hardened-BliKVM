@@ -722,11 +722,11 @@ phase=thermal-capability
 capabilities_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/capabilities.json" --write-out '%{http_code}' "$origin/api/capabilities" 2>/dev/null)
 [ "$capabilities_status" = 200 ]
 grep -q '"thermal":{"availability":"read_only","evidence":"runtime_verified"}' "$test_root/capabilities.json"
-grep -q '"rtc":{"availability":"read_only","evidence":"source_verified"}' "$test_root/capabilities.json"
+grep -q '"rtc":{"availability":"read_only","evidence":"runtime_verified"}' "$test_root/capabilities.json"
 thermal_capability=read_only
 thermal_evidence=runtime_verified
 rtc_capability=read_only
-rtc_evidence=source_verified
+rtc_evidence=runtime_verified
 count=1
 while [ "$count" -lt "$inventory_requests" ]; do
   code=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output /dev/null --write-out '%{http_code}' "$origin/api/inventory" 2>/dev/null)
@@ -1133,7 +1133,7 @@ def validate_run(
         "rtc_unix_seconds": rtc_unix,
         "rtc_offset_seconds": rtc_offset,
         "rtc_capability": "read_only",
-        "rtc_evidence": "source_verified",
+        "rtc_evidence": "runtime_verified",
         "video_status": video_status,
         "video_content_type": video_content_type,
         "video_frames": video_frames,

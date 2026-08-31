@@ -1037,7 +1037,7 @@ def validate_browser(raw: bytes) -> dict[str, object]:
         "thermalUi": "rendered",
         "rtcObservation": "bounded_epoch_and_offset",
         "rtcCapability": "read_only",
-        "rtcEvidence": "source_verified",
+        "rtcEvidence": "runtime_verified",
         "rtcUi": "rendered",
         "videoCapability": "read_only",
         "hidCapability": "unavailable",

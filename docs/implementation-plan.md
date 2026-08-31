@@ -135,6 +135,15 @@ runtime-verified. Controlled missing-sensor behavior, longer observation,
 permanent packaging, and reboot persistence remain open; exact hashes and the
 separate video-gate limitation are recorded in `baselines/device-thermal.md`.
 
+Checkpoint: the next board-function slice reads only the fixed kernel-bound
+PCF8563 `rtc1` identity and sysfs epoch. Inventory schema v3 carries a paired,
+bounded external epoch and RTC-minus-system offset; Settings/About formats both
+without any raw I2C, RTC character-device open, registration, or clock write.
+At source commit `6c9006a`, two independent AArch64 builds were byte-identical
+and 20 authenticated H616 broker requests returned valid schema v3 observations
+with complete cleanup. The capability is runtime-verified; focused systemd and
+TLS Chromium rendering remain separate gates.
+
 ## Phase 6: Hardening and updates
 
 - Remove broad privilege and default credentials.

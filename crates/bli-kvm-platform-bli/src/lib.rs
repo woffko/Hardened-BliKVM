@@ -46,7 +46,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
             );
         }
         board_features.insert("thermal".into(), FeatureStatus::read_only(runtime_verified));
-        board_features.insert("rtc".into(), FeatureStatus::read_only(source_verified));
+        board_features.insert("rtc".into(), FeatureStatus::read_only(runtime_verified));
 
         CapabilityManifest {
             schema_version: CAPABILITY_SCHEMA_VERSION,
@@ -159,7 +159,7 @@ mod tests {
         );
         assert_eq!(
             manifest.board.features["rtc"],
-            FeatureStatus::read_only(EvidenceLevel::SourceVerified)
+            FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
         );
     }
 

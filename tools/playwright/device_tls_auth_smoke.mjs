@@ -204,7 +204,7 @@ try {
   );
   assert.equal(
     capabilities.body.data.board.features.rtc.evidence,
-    "source_verified",
+    "runtime_verified",
   );
 
   phase = "thermal-ui";
@@ -382,7 +382,7 @@ try {
       thermalUi: "rendered",
       rtcObservation: "bounded_epoch_and_offset",
       rtcCapability: "read_only",
-      rtcEvidence: "source_verified",
+      rtcEvidence: "runtime_verified",
       rtcUi: "rendered",
       videoCapability: "read_only",
       hidCapability: "unavailable",

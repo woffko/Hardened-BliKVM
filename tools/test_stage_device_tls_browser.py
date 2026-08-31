@@ -127,7 +127,7 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             "thermalUi": "rendered",
             "rtcObservation": "bounded_epoch_and_offset",
             "rtcCapability": "read_only",
-            "rtcEvidence": "source_verified",
+            "rtcEvidence": "runtime_verified",
             "rtcUi": "rendered",
             "videoCapability": "read_only",
             "hidCapability": "unavailable",
