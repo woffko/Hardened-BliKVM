@@ -220,6 +220,13 @@ binding must use kernel `SO_PEERCRED` against five exact resolved non-root UIDs;
 group access alone is insufficient. A producer waits for acceptance before its
 next frame, preventing hard backpressure from looking like success.
 
+The unlinked Rust producer client uses only the fixed collector socket and
+serializes one frame/response at a time. Invalid local events and connect
+failures are definitely not sent. Once write begins, write/response failure or
+malformed response is delivery-ambiguous, clears the connection, and is never
+retried automatically. Its errors contain no path, I/O detail, frame, response,
+or identity. No shipped process links the client.
+
 The unlinked window policy keeps one live bundle and at most one sealed bundle
 awaiting exact acknowledgement. `record_count + active_sources <= 32` reserves
 one stop record per peer. A second required rotation returns backpressure. If

@@ -101,6 +101,11 @@ exists. Numeric assignment,
 credential, authenticated-peer, and connection handles intentionally expose no
 generic `Debug` output.
 
+A separate unlinked producer client now owns the fixed collector path and one
+serialized persistent stream. It bounds connect/write/response, distinguishes
+definitely-not-sent from delivery-ambiguous failures, drops uncertain streams,
+and never retries automatically. No service currently depends on it.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

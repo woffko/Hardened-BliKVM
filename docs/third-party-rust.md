@@ -77,6 +77,12 @@ external, with no missing external license expression. The refreshed
 1,233-advisory RustSec scan accepted the exact graph. The collector and its
 templates remain outside the prototype archive.
 
+The unlinked diagnostic producer client reuses only the existing Tokio and
+diagnostic protocol/export graph. Source `49173a7` adds one workspace package
+and no external package: locked metadata is 156 total, 48 workspace, and 108
+external packages with no missing external license expression. The refreshed
+1,233-advisory RustSec scan accepted the exact graph.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

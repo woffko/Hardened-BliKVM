@@ -89,6 +89,14 @@ committed the event and advanced state. A rejection means the event was not
 accepted and state did not advance. Pipelining is forbidden, so no producer
 request identifier or correlation field is needed.
 
+The unlinked `bli-kvm-diagnostic-producer-client` implements this exchange on
+one serialized persistent connection to the fixed collector socket. It returns
+invalid event/connect failures as definitely not sent. Any failure after frame
+writing begins is delivery-ambiguous, discards the stream, and is never retried
+automatically. A new explicit call may reconnect, but cannot claim whether the
+prior ambiguous event was accepted. See
+`../baselines/diagnostic-producer-client.md`.
+
 Protocol-invalid frames are connection-fatal and receive no response. The
 transient runtime bounds a started partial frame and response write to five
 seconds, closes partial frames, rejects a second active peer for the same role,

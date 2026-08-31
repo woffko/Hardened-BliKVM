@@ -355,6 +355,17 @@ temporary exact sysusers plus hash-guarded restoration passed instead. No
 collector artifact is shipped, no raw log was read, and no API/UI/capability is
 enabled; see `baselines/device-diagnostic-collector.md`.
 
+Checkpoint: source `49173a7` adds an unlinked fixed-path Rust producer client.
+It serializes one persistent stream, bounds connect/write/response, preserves
+all typed rejection reasons, and distinguishes definitely-not-sent failures
+from post-write delivery ambiguity. Ambiguous or cancelled exchanges discard
+the stream and never retry automatically; only a later explicit send may
+reconnect. Eleven focused tests, the host matrix with 134 Python tests, two
+byte-identical 4,780,599-byte archives, and byte-identical producer/protocol/
+export AArch64 rlib, metadata and ThinLTO pairs passed. No shipped process,
+unit, package, API/UI or capability links the client; see
+`baselines/diagnostic-producer-client.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

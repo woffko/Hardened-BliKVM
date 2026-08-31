@@ -96,3 +96,7 @@ the connection. The core remains outside every shipped process; see
 Listener source `89050939af218ddbdd7143fb63e320e1ca9eac67` now owns exact
 frame reads and response writes with fixed time limits while preserving the
 same codec contract; see `diagnostic-listener-runtime.md`.
+
+Producer-client source `49173a76d527aef9e41929acf789ac789ab66495` now owns the
+opposite fixed-path exchange and explicit no-retry ambiguity semantics; see
+`diagnostic-producer-client.md`. No shipped process links it.

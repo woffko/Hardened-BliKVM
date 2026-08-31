@@ -122,3 +122,8 @@ This accepts only the isolated local collector process and account/systemd
 boundary. It does not enable or package diagnostics, connect real producers,
 persist bundles, add an authenticated server export, expose UI, or claim
 privacy/browser/soak/reboot acceptance. Those remain later gates.
+
+Producer-client source `49173a76d527aef9e41929acf789ac789ab66495` later adds the
+unlinked Rust client intended to replace the generated gate client; see
+`diagnostic-producer-client.md`. The H616 gate is not evidence that any real
+service uses that crate.

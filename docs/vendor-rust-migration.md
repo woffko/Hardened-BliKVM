@@ -31,7 +31,7 @@ the vendor daemon beside a second GPIO owner.
 | serial KVM switch | bounded pure frame codec before any TTY adapter | metadata absence plus unlinked no_std exact-frame codec | reviewed non-unique identity/routing, streaming, timeout, hotplug/reconnect, four-port matrix |
 | OLED Python/C drivers | pure ST7789 transaction model, then bounded SPI worker | topology plus unlinked no_std model; disabled | exclusive SPI/GPIO handoff, initialization/electrical policy, timeout, crash/reboot and physical screen matrix |
 | NetworkManager/IP/Wi-Fi shell routes | sanitized sysfs inventory, then transactional network policy and privileged adapter | metadata-only topology; no Rust adapter or mutation | typed eligibility, secret handling, commit/confirm watchdog rollback, out-of-band recovery and reboot matrix |
-| system-info/reboot/hostname/log routes | separate sanitized adapters, guarded typed actions, and fixed semantic diagnostics | actions lack a trusted floor; an unshipped fixed-socket collector passed reversible H616 peer, timeout, sandbox and restoration gates without raw text/path/numeric identity | different accepted floor hardware/firmware and action gates; real producer integration, authenticated export/UI, packaging, privacy/soak/reboot and separate hostname work |
+| system-info/reboot/hostname/log routes | separate sanitized adapters, guarded typed actions, and fixed semantic diagnostics | actions lack a trusted floor; collector passed reversible H616 gates and an unlinked Rust producer client has bounded no-retry ambiguity semantics | one non-critical real producer gate, authenticated export/UI, packaging, privacy/soak/reboot and separate hostname work |
 | USB gadget shell scripts | idempotent configfs state machine | inventory only | bind/unbind rollback and host compatibility |
 | public uStreamer command | loopback/Unix-socket media service | read-only proxy | reconnect, resolution, latency, soak |
 | MSD/Ventoy shell bundle | typed configfs virtual-media worker | inventory only | upload/eject, BIOS boot, interruption recovery |
@@ -130,7 +130,9 @@ caller-bound Unix accept loop, random instance ID, real monotonic clock, bounded
 partial-frame/response I/O, concurrent role tasks, and graceful cleanup. A
 separate fixed-socket collector, hardened non-installable unit, and sysusers
 candidate now pass an isolated reversible H616 gate. They remain unshipped and
-there is no real producer integration or authenticated export API. See
+there is no real producer integration or authenticated export API. An unlinked
+fixed-path Rust producer client now adds bounded connect/write/response and
+explicit no-retry delivery ambiguity. See
 `baselines/vendor-system-control-boundary.md`,
 `baselines/system-action-policy.md`, `baselines/system-action-journal.md`,
 `baselines/system-action-store.md`, `baselines/system-action-maintenance.md`,
@@ -140,7 +142,8 @@ there is no real producer integration or authenticated export API. See
 `baselines/diagnostic-window-policy.md`, `baselines/diagnostic-peer-policy.md`,
 `baselines/diagnostic-peer-adapter.md`, `baselines/diagnostic-runtime-core.md`,
 `baselines/diagnostic-listener-runtime.md`, and
-`baselines/device-diagnostic-collector.md`.
+`baselines/device-diagnostic-collector.md`, plus
+`baselines/diagnostic-producer-client.md`.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and
