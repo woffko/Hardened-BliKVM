@@ -9,8 +9,15 @@ pnpm_web() {
 
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
+cargo check --workspace --all-targets --all-features --locked
 cargo test --workspace --all-targets --locked
+cargo test -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export
+cargo test -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export
+cargo test -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
+cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
+cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export -- -D warnings
 
 sh -n scripts/build-aarch64.sh
 sh -n scripts/build-prototype-bundle.sh

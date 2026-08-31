@@ -150,6 +150,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         collector = ROOT / "crates/bli-kvm-diagnostic-collector-policy"
         runtime_collector = ROOT / "crates/bli-kvm-diagnostic-collector"
         protocol = ROOT / "crates/bli-kvm-diagnostic-protocol"
+        broker_protocol = ROOT / "crates/bli-kvm-broker-protocol"
+        broker_client = ROOT / "crates/bli-kvm-broker-client"
+        platform_broker = ROOT / "crates/bli-kvm-platform-broker"
         export_protocol = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
         export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
@@ -165,6 +168,9 @@ class PackagingBoundaryTests(unittest.TestCase):
                 collector / "Cargo.toml",
                 runtime_collector / "Cargo.toml",
                 protocol / "Cargo.toml",
+                broker_protocol / "Cargo.toml",
+                broker_client / "Cargo.toml",
+                platform_broker / "Cargo.toml",
                 export_protocol / "Cargo.toml",
                 export_client / "Cargo.toml",
                 export_listener / "Cargo.toml",
@@ -175,6 +181,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("pub enum DiagnosticEvent", source)
         self.assertIn("MAX_RECORDS", source)
+        self.assertIn("pub fn decode(bytes: &[u8])", source)
+        self.assertIn("InvalidBundle", source)
+        self.assertIn("fn parse_record", source)
         for forbidden in (
             "std::",
             "String",
@@ -242,7 +251,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, production)
 
-    def test_diagnostic_export_client_is_fixed_bounded_owned_and_unlinked(
+    def test_diagnostic_export_client_is_fixed_bounded_and_default_off_broker_only(
         self,
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
@@ -250,15 +259,39 @@ class PackagingBoundaryTests(unittest.TestCase):
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
+        platform_broker = ROOT / "crates/bli-kvm-platform-broker"
+        platform_manifest = (platform_broker / "Cargo.toml").read_text()
+        platform_source = (platform_broker / "src/server.rs").read_text()
+        broker_protocol_manifest = (
+            ROOT / "crates/bli-kvm-broker-protocol/Cargo.toml"
+        ).read_text()
+        broker_client_manifest = (
+            ROOT / "crates/bli-kvm-broker-client/Cargo.toml"
+        ).read_text()
+        server_source = (ROOT / "crates/bli-kvm-server/src/lib.rs").read_text()
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertIn('"crates/bli-kvm-diagnostic-export-client"', workspace)
         self.assertIn("bli-kvm-diagnostic-export-protocol", manifest)
+        self.assertIn("bli-kvm-diagnostic-export =", manifest)
         self.assertIn("tokio.workspace = true", manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                platform_broker / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-export-client", other_manifest.read_text()
                 )
+        self.assertIn('default = []', platform_manifest)
+        self.assertIn('diagnostic-export = [', platform_manifest)
+        self.assertIn('"dep:bli-kvm-diagnostic-export-client"', platform_manifest)
+        self.assertIn('"dep:bli-kvm-diagnostic-peer-policy"', platform_manifest)
+        self.assertIn(
+            'bli-kvm-diagnostic-export-client = { path = "../bli-kvm-diagnostic-export-client", optional = true }',
+            platform_manifest,
+        )
+        self.assertIn('default = []', broker_protocol_manifest)
+        self.assertIn('default = []', broker_client_manifest)
         for required in (
             "#![forbid(unsafe_code)]",
             '"/run/hardened-blikvm-diagnostics/export.sock"',
@@ -277,6 +310,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "timeout(limits.write_timeout",
             "timeout(limits.response_timeout",
             "decode_response(frame.as_bytes())",
+            "DiagnosticBundle::decode(payload)",
             "DeliveryAmbiguous",
         ):
             self.assertIn(required, production)
@@ -285,6 +319,9 @@ class PackagingBoundaryTests(unittest.TestCase):
             r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct DiagnosticExportClient",
         )
         self.assertNotIn("bli-kvm-diagnostic-export-client", builder)
+        self.assertNotIn("diagnostic-export", builder)
+        self.assertNotIn(".acknowledge(", platform_source)
+        self.assertNotIn(".diagnostics()", server_source)
         for forbidden in (
             "pub fn with_parts",
             "pub fn with_timeout",
@@ -375,6 +412,72 @@ class PackagingBoundaryTests(unittest.TestCase):
             "/var/",
         ):
             self.assertNotIn(forbidden, production)
+
+    def test_platform_diagnostic_route_is_feature_gated_exact_peer_and_read_only(
+        self,
+    ) -> None:
+        platform = ROOT / "crates/bli-kvm-platform-broker"
+        source = (platform / "src/server.rs").read_text()
+        protocol = (
+            ROOT / "crates/bli-kvm-broker-protocol/src/lib.rs"
+        ).read_text()
+        client = (ROOT / "crates/bli-kvm-broker-client/src/lib.rs").read_text()
+        server = (ROOT / "crates/bli-kvm-server/src/lib.rs").read_text()
+        check = (ROOT / "scripts/check.sh").read_text()
+        for required in (
+            '#[cfg(feature = "diagnostic-export")]',
+            '"hardened-blikvm-server"',
+            '"hardened-blikvm"',
+            "User::from_name",
+            "Group::from_name",
+            "stream.peer_cred()",
+            "credentials.pid()",
+            "credentials.uid()",
+            "credentials.gid()",
+            "DiagnosticPeerAssignments::new",
+            "DiagnosticSource::PlatformBroker",
+            "DiagnosticSource::Server",
+            "DiagnosticExportClient::new()",
+            "DiagnosticExportClient::read_sealed(self).await",
+            "BrokerReadRequest::Diagnostics",
+            "BrokerErrorCode::Unauthorized",
+            "BrokerDiagnosticSnapshot::from_bundle",
+        ):
+            self.assertIn(required, source)
+        for account in (
+            "hardened-blikvm-diagnostics",
+            "hardened-blikvm-server",
+            "hardened-blikvm-broker",
+            "hardened-blikvm-video",
+            "hardened-blikvm-control",
+            "hardened-blikvm-update",
+        ):
+            self.assertIn(account, source)
+        self.assertIn('#[cfg(feature = "diagnostic-export")]', protocol)
+        self.assertIn("Diagnostics", protocol)
+        self.assertIn("DiagnosticBundle::decode", protocol)
+        self.assertIn('#[cfg(feature = "diagnostic-export")]', client)
+        self.assertIn("pub async fn diagnostics", client)
+        self.assertNotIn(".acknowledge(", source)
+        self.assertNotIn(".diagnostics()", server)
+        self.assertNotIn('route("/diagnostics', server)
+        self.assertNotIn("diagnostic-export", (ROOT / "scripts/build-prototype-bundle.sh").read_text())
+        self.assertIn(
+            "cargo check --workspace --all-targets --all-features --locked", check
+        )
+        for package in (
+            "bli-kvm-broker-protocol",
+            "bli-kvm-broker-client",
+            "bli-kvm-platform-broker",
+        ):
+            self.assertIn(
+                f"cargo test -p {package} --all-targets --locked --features diagnostic-export",
+                check,
+            )
+            self.assertIn(
+                f"cargo clippy -p {package} --all-targets --locked --features diagnostic-export",
+                check,
+            )
 
     def test_diagnostic_protocol_is_fixed_no_std_and_linked_only_to_control_broker(
         self,
@@ -639,12 +742,13 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, production)
 
-    def test_diagnostic_peer_policy_maps_only_kernel_credentials_and_is_unlinked(
+    def test_diagnostic_peer_policy_maps_only_kernel_credentials_and_default_off_broker(
         self,
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-peer-policy"
         adapter = ROOT / "crates/bli-kvm-diagnostic-peer-adapter"
+        platform_broker = ROOT / "crates/bli-kvm-platform-broker"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -657,6 +761,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 adapter / "Cargo.toml",
+                platform_broker / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-peer-policy",

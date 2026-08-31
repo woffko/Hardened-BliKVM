@@ -7,14 +7,27 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+diagnostic-export = [
+  "dep:bli-kvm-diagnostic-export-client",
+  "dep:bli-kvm-diagnostic-peer-policy",
+  "dep:nix",
+  "bli-kvm-broker-protocol/diagnostic-export",
+]
+
 [dependencies]
 bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
+bli-kvm-diagnostic-export-client = { path = "../bli-kvm-diagnostic-export-client", optional = true }
+bli-kvm-diagnostic-peer-policy = { path = "../bli-kvm-diagnostic-peer-policy", optional = true }
 bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
 bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
 libc.workspace = true
+nix = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
 http.workspace = true
 tempfile.workspace = true

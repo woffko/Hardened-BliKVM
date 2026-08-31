@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
 bli-kvm-diagnostic-export-protocol = { path = "../bli-kvm-diagnostic-export-protocol" }
 tokio.workspace = true
 

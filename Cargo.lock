@@ -120,6 +120,7 @@ version = "0.1.0"
 dependencies = [
  "bli-kvm-broker-protocol",
  "bli-kvm-core",
+ "bli-kvm-diagnostic-export",
  "tempfile",
  "thiserror",
  "tokio",
@@ -130,6 +131,7 @@ name = "bli-kvm-broker-protocol"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-core",
+ "bli-kvm-diagnostic-export",
  "serde",
  "serde_json",
  "thiserror",
@@ -205,6 +207,7 @@ version = "0.1.0"
 name = "bli-kvm-diagnostic-export-client"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-diagnostic-export",
  "bli-kvm-diagnostic-export-protocol",
  "tempfile",
  "tokio",
@@ -425,10 +428,14 @@ name = "bli-kvm-platform-broker"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-broker-protocol",
+ "bli-kvm-diagnostic-export",
+ "bli-kvm-diagnostic-export-client",
+ "bli-kvm-diagnostic-peer-policy",
  "bli-kvm-kvmd-client",
  "bli-kvm-platform-bli",
  "http",
  "libc",
+ "nix",
  "tempfile",
  "thiserror",
  "tokio",

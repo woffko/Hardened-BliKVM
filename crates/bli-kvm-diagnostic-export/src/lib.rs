@@ -268,6 +268,7 @@ impl DiagnosticRecord {
 pub enum DiagnosticExportError {
     InvalidTime,
     InvalidEvent,
+    InvalidBundle,
     ClockMovedBackwards,
     CapacityExceeded,
     BufferExceeded,
@@ -341,6 +342,45 @@ pub struct DiagnosticBundle {
 }
 
 impl DiagnosticBundle {
+    /// Decodes and re-encodes one exact canonical typed bundle.
+    ///
+    /// Parsing allocates nothing. Every field is converted back into the
+    /// closed semantic enums and the resulting bundle must be byte-identical
+    /// to the input, which rejects alternate numeric, whitespace, ordering,
+    /// severity, and trailing-data representations.
+    pub fn decode(bytes: &[u8]) -> Result<Self, DiagnosticExportError> {
+        if bytes.len() > MAX_EXPORT_BYTES || !bytes.ends_with(b"\n") {
+            return Err(DiagnosticExportError::InvalidBundle);
+        }
+        let text = core::str::from_utf8(bytes).map_err(|_| DiagnosticExportError::InvalidBundle)?;
+        let mut lines = text.split_terminator('\n');
+        let declared_count = lines
+            .next()
+            .and_then(|header| header.strip_prefix("schema=1 record_count="))
+            .and_then(parse_u32)
+            .and_then(|count| usize::try_from(count).ok())
+            .filter(|count| *count <= MAX_RECORDS)
+            .ok_or(DiagnosticExportError::InvalidBundle)?;
+
+        let mut exporter = DiagnosticExporter::new();
+        for line in lines {
+            let record = parse_record(line)?;
+            exporter
+                .push(record)
+                .map_err(|_| DiagnosticExportError::InvalidBundle)?;
+        }
+        if exporter.record_count() != declared_count {
+            return Err(DiagnosticExportError::InvalidBundle);
+        }
+        let bundle = exporter
+            .export()
+            .map_err(|_| DiagnosticExportError::InvalidBundle)?;
+        if bundle.as_bytes() != bytes {
+            return Err(DiagnosticExportError::InvalidBundle);
+        }
+        Ok(bundle)
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.length]
     }
@@ -352,6 +392,157 @@ impl DiagnosticBundle {
     pub const fn record_count(&self) -> usize {
         self.record_count
     }
+}
+
+fn parse_record(line: &str) -> Result<DiagnosticRecord, DiagnosticExportError> {
+    let mut fields = line.split(' ');
+    let offset_ms = parse_field(&mut fields, "offset_ms=")
+        .and_then(parse_u32)
+        .ok_or(DiagnosticExportError::InvalidBundle)?;
+    let severity = parse_field(&mut fields, "severity=")
+        .and_then(parse_severity)
+        .ok_or(DiagnosticExportError::InvalidBundle)?;
+    let component = parse_field(&mut fields, "component=")
+        .and_then(parse_component)
+        .ok_or(DiagnosticExportError::InvalidBundle)?;
+    let event_name =
+        parse_field(&mut fields, "event=").ok_or(DiagnosticExportError::InvalidBundle)?;
+    let event = match event_name {
+        "started" => DiagnosticEvent::Started,
+        "ready" => DiagnosticEvent::Ready,
+        "stopped" => DiagnosticEvent::Stopped,
+        "unavailable" => DiagnosticEvent::Unavailable,
+        "request_rejected" => DiagnosticEvent::RequestRejected {
+            reason: parse_field(&mut fields, "reason=")
+                .and_then(parse_reject_reason)
+                .ok_or(DiagnosticExportError::InvalidBundle)?,
+        },
+        "retry_scheduled" => DiagnosticEvent::RetryScheduled {
+            attempt: parse_field(&mut fields, "attempt=")
+                .and_then(parse_u8)
+                .ok_or(DiagnosticExportError::InvalidBundle)?,
+        },
+        "operation_finished" => DiagnosticEvent::OperationFinished {
+            result: parse_field(&mut fields, "result=")
+                .and_then(parse_operation_result)
+                .ok_or(DiagnosticExportError::InvalidBundle)?,
+        },
+        "resource_pressure" => DiagnosticEvent::ResourcePressure {
+            resource: parse_field(&mut fields, "resource=")
+                .and_then(parse_resource_kind)
+                .ok_or(DiagnosticExportError::InvalidBundle)?,
+            level: parse_field(&mut fields, "level=")
+                .and_then(parse_pressure_level)
+                .ok_or(DiagnosticExportError::InvalidBundle)?,
+        },
+        "journal_observed" => DiagnosticEvent::JournalObserved {
+            health: parse_field(&mut fields, "health=")
+                .and_then(parse_journal_health)
+                .ok_or(DiagnosticExportError::InvalidBundle)?,
+        },
+        _ => return Err(DiagnosticExportError::InvalidBundle),
+    };
+    if fields.next().is_some() {
+        return Err(DiagnosticExportError::InvalidBundle);
+    }
+    let record = DiagnosticRecord::new(offset_ms, component, event)
+        .map_err(|_| DiagnosticExportError::InvalidBundle)?;
+    if record.severity() != severity {
+        return Err(DiagnosticExportError::InvalidBundle);
+    }
+    Ok(record)
+}
+
+fn parse_field<'a>(fields: &mut impl Iterator<Item = &'a str>, prefix: &str) -> Option<&'a str> {
+    fields
+        .next()?
+        .strip_prefix(prefix)
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_u32(value: &str) -> Option<u32> {
+    if value.bytes().all(|byte| byte.is_ascii_digit()) {
+        value.parse().ok()
+    } else {
+        None
+    }
+}
+
+fn parse_u8(value: &str) -> Option<u8> {
+    parse_u32(value).and_then(|value| u8::try_from(value).ok())
+}
+
+fn parse_component(value: &str) -> Option<DiagnosticComponent> {
+    Some(match value {
+        "server" => DiagnosticComponent::Server,
+        "platform_broker" => DiagnosticComponent::PlatformBroker,
+        "video_proxy" => DiagnosticComponent::VideoProxy,
+        "control_broker" => DiagnosticComponent::ControlBroker,
+        "update_supervisor" => DiagnosticComponent::UpdateSupervisor,
+        "system_action_store" => DiagnosticComponent::SystemActionStore,
+        "network_policy" => DiagnosticComponent::NetworkPolicy,
+        "recovery_verifier" => DiagnosticComponent::RecoveryVerifier,
+        _ => return None,
+    })
+}
+
+fn parse_severity(value: &str) -> Option<DiagnosticSeverity> {
+    Some(match value {
+        "info" => DiagnosticSeverity::Info,
+        "warning" => DiagnosticSeverity::Warning,
+        "error" => DiagnosticSeverity::Error,
+        _ => return None,
+    })
+}
+
+fn parse_reject_reason(value: &str) -> Option<RejectReason> {
+    Some(match value {
+        "unauthorized" => RejectReason::Unauthorized,
+        "capability_disabled" => RejectReason::CapabilityDisabled,
+        "backend_unavailable" => RejectReason::BackendUnavailable,
+        "busy" => RejectReason::Busy,
+        "invalid_input" => RejectReason::InvalidInput,
+        "rate_limited" => RejectReason::RateLimited,
+        "conflict" => RejectReason::Conflict,
+        _ => return None,
+    })
+}
+
+fn parse_operation_result(value: &str) -> Option<OperationResult> {
+    Some(match value {
+        "applied" => OperationResult::Applied,
+        "rejected" => OperationResult::Rejected,
+        "noop" => OperationResult::Noop,
+        "rolled_back" => OperationResult::RolledBack,
+        _ => return None,
+    })
+}
+
+fn parse_resource_kind(value: &str) -> Option<ResourceKind> {
+    Some(match value {
+        "memory" => ResourceKind::Memory,
+        "storage" => ResourceKind::Storage,
+        "temperature" => ResourceKind::Temperature,
+        "sessions" => ResourceKind::Sessions,
+        _ => return None,
+    })
+}
+
+fn parse_pressure_level(value: &str) -> Option<PressureLevel> {
+    Some(match value {
+        "elevated" => PressureLevel::Elevated,
+        "critical" => PressureLevel::Critical,
+        _ => return None,
+    })
+}
+
+fn parse_journal_health(value: &str) -> Option<JournalHealth> {
+    Some(match value {
+        "healthy" => JournalHealth::Healthy,
+        "degraded" => JournalHealth::Degraded,
+        "recovery_required" => JournalHealth::RecoveryRequired,
+        _ => return None,
+    })
 }
 
 fn encode_record(
@@ -488,6 +679,80 @@ mod tests {
     }
 
     #[test]
+    fn canonical_bundle_round_trips_without_allocation_or_loss() {
+        let mut exporter = DiagnosticExporter::new();
+        let events = [
+            DiagnosticEvent::Started,
+            DiagnosticEvent::Ready,
+            DiagnosticEvent::Stopped,
+            DiagnosticEvent::Unavailable,
+            DiagnosticEvent::RequestRejected {
+                reason: RejectReason::Unauthorized,
+            },
+            DiagnosticEvent::RetryScheduled { attempt: 4 },
+            DiagnosticEvent::OperationFinished {
+                result: OperationResult::Applied,
+            },
+            DiagnosticEvent::ResourcePressure {
+                resource: ResourceKind::Storage,
+                level: PressureLevel::Critical,
+            },
+            DiagnosticEvent::JournalObserved {
+                health: JournalHealth::RecoveryRequired,
+            },
+        ];
+        for (offset, event) in events.into_iter().enumerate() {
+            exporter
+                .push(
+                    DiagnosticRecord::new(
+                        offset as u32,
+                        DiagnosticComponent::PlatformBroker,
+                        event,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let expected = exporter.export().unwrap();
+        assert_eq!(DiagnosticBundle::decode(expected.as_bytes()), Ok(expected));
+
+        let empty = DiagnosticExporter::new().export().unwrap();
+        assert_eq!(DiagnosticBundle::decode(empty.as_bytes()), Ok(empty));
+    }
+
+    #[test]
+    fn bundle_decoder_rejects_every_noncanonical_dimension() {
+        let valid = b"schema=1 record_count=1\n\
+offset_ms=7 severity=warning component=control_broker event=request_rejected reason=capability_disabled\n";
+        assert_eq!(DiagnosticBundle::decode(valid).unwrap().record_count(), 1);
+        for invalid in [
+            &b"schema=1 record_count=2\n\
+offset_ms=7 severity=warning component=control_broker event=request_rejected reason=capability_disabled\n"[..],
+            &b"schema=1 record_count=1\n\
+offset_ms=07 severity=warning component=control_broker event=request_rejected reason=capability_disabled\n"[..],
+            &b"schema=1 record_count=1\n\
+offset_ms=7 severity=info component=control_broker event=request_rejected reason=capability_disabled\n"[..],
+            &b"schema=1 record_count=1\n\
+offset_ms=7 severity=warning component=control_broker event=request_rejected reason=capability_disabled extra=value\n"[..],
+            &b"schema=1 record_count=1\n\
+offset_ms=7 severity=warning component=control_broker event=unknown\n"[..],
+            &valid[..valid.len() - 1],
+            &b"schema=1 record_count=0\n\n"[..],
+            &b"schema=1 record_count=0\n\xff"[..],
+        ] {
+            assert_eq!(
+                DiagnosticBundle::decode(invalid),
+                Err(DiagnosticExportError::InvalidBundle)
+            );
+        }
+        let oversized = [b'x'; MAX_EXPORT_BYTES + 1];
+        assert_eq!(
+            DiagnosticBundle::decode(&oversized),
+            Err(DiagnosticExportError::InvalidBundle)
+        );
+    }
+
+    #[test]
     fn invalid_time_attempt_and_clock_rollback_do_not_mutate() {
         assert_eq!(
             DiagnosticRecord::new(
@@ -617,6 +882,10 @@ mod tests {
             offset += 1;
         }
         let bundle = exporter.export().unwrap();
+        assert_eq!(
+            DiagnosticBundle::decode(bundle.as_bytes()),
+            Ok(bundle.clone())
+        );
         let text = core::str::from_utf8(bundle.as_bytes()).unwrap();
         assert_eq!(bundle.record_count(), 31);
         assert!(text.is_ascii());

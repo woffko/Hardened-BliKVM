@@ -18,6 +18,7 @@ use std::{
     time::Duration,
 };
 
+use bli_kvm_diagnostic_export::DiagnosticBundle;
 use bli_kvm_diagnostic_export_protocol::{
     DIAGNOSTIC_EXPORT_REQUEST_BYTES, DIAGNOSTIC_EXPORT_RESPONSE_HEADER_BYTES,
     DecodedDiagnosticExportResponse, DiagnosticExportRequest, MAX_DIAGNOSTIC_EXPORT_RESPONSE_BYTES,
@@ -129,9 +130,7 @@ impl DiagnosticExportBinding {
 pub struct DiagnosticSealedSnapshot {
     binding: DiagnosticExportBinding,
     omitted_lifecycle_events: u8,
-    record_count: u8,
-    bytes: [u8; MAX_DIAGNOSTIC_EXPORT_PAYLOAD_BYTES],
-    length: usize,
+    bundle: DiagnosticBundle,
 }
 
 impl DiagnosticSealedSnapshot {
@@ -144,15 +143,19 @@ impl DiagnosticSealedSnapshot {
     }
 
     pub const fn record_count(&self) -> u8 {
-        self.record_count
+        self.bundle.record_count() as u8
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes[..self.length]
+        self.bundle.as_bytes()
     }
 
     pub const fn length(&self) -> usize {
-        self.length
+        self.bundle.length()
+    }
+
+    pub const fn bundle(&self) -> &DiagnosticBundle {
+        &self.bundle
     }
 }
 
@@ -162,8 +165,8 @@ impl fmt::Debug for DiagnosticSealedSnapshot {
             .debug_struct("DiagnosticSealedSnapshot")
             .field("binding", &self.binding)
             .field("omitted_lifecycle_events", &self.omitted_lifecycle_events)
-            .field("record_count", &self.record_count)
-            .field("length", &self.length)
+            .field("record_count", &self.bundle.record_count())
+            .field("length", &self.bundle.length())
             .finish_non_exhaustive()
     }
 }
@@ -388,15 +391,16 @@ fn decode_read_response(
         } => {
             let binding = DiagnosticExportBinding::new(instance_id, window_id)
                 .ok_or(DiagnosticExportExchangeStage::InvalidResponse)?;
-            let mut bytes = [0_u8; MAX_DIAGNOSTIC_EXPORT_PAYLOAD_BYTES];
-            bytes[..payload.len()].copy_from_slice(payload);
+            let bundle = DiagnosticBundle::decode(payload)
+                .map_err(|_| DiagnosticExportExchangeStage::InvalidResponse)?;
+            if bundle.record_count() != usize::from(record_count) {
+                return Err(DiagnosticExportExchangeStage::InvalidResponse);
+            }
             Ok(DiagnosticExportReadOutcome::Sealed(
                 DiagnosticSealedSnapshot {
                     binding,
                     omitted_lifecycle_events,
-                    record_count,
-                    bytes,
-                    length: payload.len(),
+                    bundle,
                 },
             ))
         }
@@ -452,6 +456,9 @@ mod tests {
         task::{Context, Poll},
     };
 
+    use bli_kvm_diagnostic_export::{
+        DiagnosticComponent, DiagnosticEvent, DiagnosticExporter, DiagnosticRecord, RejectReason,
+    };
     use bli_kvm_diagnostic_export_protocol::{
         DIAGNOSTIC_EXPORT_PROTOCOL_SCHEMA_VERSION, DiagnosticExportResponse, decode_request,
         encode_response,
@@ -467,6 +474,8 @@ mod tests {
 
     const TEST_LIMIT: Duration = Duration::from_millis(30);
     const TEST_WAIT: Duration = Duration::from_millis(500);
+    const ONE_RECORD_BUNDLE: &[u8] = b"schema=1 record_count=1\n\
+offset_ms=9 severity=info component=control_broker event=ready\n";
 
     fn limits() -> ClientLimits {
         ClientLimits {
@@ -519,7 +528,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let responses = [
                 encoded(DiagnosticExportResponse::NoSealed),
-                sealed_response(7, 3, 2, 1, b"schema=1 record_count=1\n"),
+                sealed_response(7, 3, 2, 1, ONE_RECORD_BUNDLE),
                 encoded(DiagnosticExportResponse::CollectorUnavailable),
             ];
             for response in responses {
@@ -546,7 +555,7 @@ mod tests {
         );
         assert_eq!(snapshot.omitted_lifecycle_events(), 2);
         assert_eq!(snapshot.record_count(), 1);
-        assert_eq!(snapshot.as_bytes(), b"schema=1 record_count=1\n");
+        assert_eq!(snapshot.as_bytes(), ONE_RECORD_BUNDLE);
         assert_eq!(snapshot.length(), snapshot.as_bytes().len());
         assert!(!format!("{snapshot:?}").contains("schema="));
         assert_eq!(
@@ -610,23 +619,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn maximum_payload_is_owned_and_zero_bindings_are_unconstructable() {
+    async fn maximum_typed_window_is_owned_and_noncanonical_capacity_is_rejected() {
         assert!(DiagnosticExportBinding::new(0, 3).is_none());
         assert!(DiagnosticExportBinding::new(7, 0).is_none());
-        let payload = vec![b'x'; MAX_DIAGNOSTIC_EXPORT_PAYLOAD_BYTES];
-        let response = sealed_response(9, 4, u8::MAX, 1, &payload);
+        let mut exporter = DiagnosticExporter::new();
+        for offset in 0..32 {
+            exporter
+                .push(
+                    DiagnosticRecord::new(
+                        offset,
+                        DiagnosticComponent::SystemActionStore,
+                        DiagnosticEvent::RequestRejected {
+                            reason: RejectReason::CapabilityDisabled,
+                        },
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let bundle = exporter.export().unwrap();
+        let response = sealed_response(9, 4, u8::MAX, 32, bundle.as_bytes());
         let frame = ResponseFrame {
-            bytes: response.as_slice().try_into().unwrap(),
+            bytes: response_frame(&response).bytes,
             length: response.len(),
         };
         let DiagnosticExportReadOutcome::Sealed(snapshot) = decode_read_response(&frame).unwrap()
         else {
             panic!("expected sealed snapshot");
         };
-        assert_eq!(snapshot.length(), MAX_DIAGNOSTIC_EXPORT_PAYLOAD_BYTES);
-        assert_eq!(snapshot.as_bytes(), payload);
+        assert_eq!(snapshot.record_count(), 32);
+        assert_eq!(snapshot.bundle(), &bundle);
         assert_eq!(snapshot.binding().instance_id(), 9);
         assert_eq!(snapshot.binding().window_id(), 4);
+
+        let arbitrary = vec![b'x'; MAX_DIAGNOSTIC_EXPORT_PAYLOAD_BYTES];
+        let frame = response_frame(&sealed_response(9, 4, 0, 1, &arbitrary));
+        assert_eq!(
+            decode_read_response(&frame),
+            Err(DiagnosticExportExchangeStage::InvalidResponse)
+        );
     }
 
     #[tokio::test]

@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+diagnostic-export = ["bli-kvm-broker-protocol/diagnostic-export"]
+
 [dependencies]
 bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
 bli-kvm-core = { path = "../bli-kvm-core" }
@@ -14,4 +18,5 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
 tempfile.workspace = true

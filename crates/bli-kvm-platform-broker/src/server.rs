@@ -1,3 +1,5 @@
+#[cfg(feature = "diagnostic-export")]
+use std::future::Future;
 use std::{
     fs::{self, Permissions},
     io,
@@ -5,16 +7,29 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "diagnostic-export")]
+use bli_kvm_broker_protocol::BrokerDiagnosticSnapshot;
 use bli_kvm_broker_protocol::{
     BROKER_SCHEMA_VERSION, BrokerErrorCode, BrokerReadRequest, BrokerReadResponse,
     BrokerRequestEnvelope, BrokerResponseEnvelope, MAX_BROKER_MESSAGE_BYTES, decode_request,
     encode_frame, encode_response,
+};
+#[cfg(feature = "diagnostic-export")]
+use bli_kvm_diagnostic_export_client::{
+    DiagnosticExportClient, DiagnosticExportExchangeStage, DiagnosticExportNotSentReason,
+    DiagnosticExportReadError, DiagnosticExportReadOutcome,
+};
+#[cfg(feature = "diagnostic-export")]
+use bli_kvm_diagnostic_peer_policy::{
+    DiagnosticPeerAssignments, DiagnosticSource, KernelPeerCredentials,
 };
 use bli_kvm_kvmd_client::{KvmdClientError, KvmdCredentials, KvmdReadClient};
 use bli_kvm_platform_bli::{
     BliPlatformObservations, read_h616_external_rtc, read_h616_temperature_millidegrees,
     sanitize_kvmd_inventory_with_observations,
 };
+#[cfg(feature = "diagnostic-export")]
+use nix::unistd::{Group, User, getegid, geteuid};
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -24,6 +39,18 @@ use tokio::{
 };
 
 use crate::{BrokerConfig, BrokerConfigError};
+
+#[cfg(feature = "diagnostic-export")]
+const DIAGNOSTIC_ACCOUNTS: [&str; 6] = [
+    "hardened-blikvm-diagnostics",
+    "hardened-blikvm-server",
+    "hardened-blikvm-broker",
+    "hardened-blikvm-video",
+    "hardened-blikvm-control",
+    "hardened-blikvm-update",
+];
+#[cfg(feature = "diagnostic-export")]
+const DIAGNOSTIC_SHARED_GROUP: &str = "hardened-blikvm";
 
 #[derive(Debug, Error)]
 pub enum BrokerServerError {
@@ -37,6 +64,118 @@ pub enum BrokerServerError {
     Io(#[from] io::Error),
 }
 
+#[cfg(feature = "diagnostic-export")]
+#[derive(Clone, PartialEq, Eq)]
+enum BrokerDiagnosticReadOutcome {
+    NoSealed,
+    Sealed(BrokerDiagnosticSnapshot),
+    CollectorUnavailable,
+}
+
+#[cfg(feature = "diagnostic-export")]
+trait DiagnosticReader: Send + Sync + 'static {
+    fn read_sealed(
+        &self,
+    ) -> impl Future<Output = Result<BrokerDiagnosticReadOutcome, BrokerErrorCode>> + Send;
+}
+
+#[cfg(feature = "diagnostic-export")]
+impl DiagnosticReader for DiagnosticExportClient {
+    async fn read_sealed(&self) -> Result<BrokerDiagnosticReadOutcome, BrokerErrorCode> {
+        match DiagnosticExportClient::read_sealed(self).await {
+            Ok(DiagnosticExportReadOutcome::NoSealed) => Ok(BrokerDiagnosticReadOutcome::NoSealed),
+            Ok(DiagnosticExportReadOutcome::Sealed(snapshot)) => {
+                let binding = snapshot.binding();
+                BrokerDiagnosticSnapshot::from_bundle(
+                    binding.instance_id(),
+                    binding.window_id(),
+                    snapshot.omitted_lifecycle_events(),
+                    snapshot.bundle(),
+                )
+                .map(BrokerDiagnosticReadOutcome::Sealed)
+                .map_err(|_| BrokerErrorCode::InvalidBackendResponse)
+            }
+            Ok(DiagnosticExportReadOutcome::CollectorUnavailable) => {
+                Ok(BrokerDiagnosticReadOutcome::CollectorUnavailable)
+            }
+            Err(error) => Err(map_diagnostic_error(error)),
+        }
+    }
+}
+
+#[cfg(feature = "diagnostic-export")]
+trait DiagnosticReaderAuthorizer: Send + Sync + 'static {
+    fn permits(&self, stream: &UnixStream) -> bool;
+}
+
+#[cfg(feature = "diagnostic-export")]
+struct RuntimeDiagnosticReaderAuthorizer {
+    assignments: Option<DiagnosticPeerAssignments>,
+}
+
+#[cfg(feature = "diagnostic-export")]
+impl RuntimeDiagnosticReaderAuthorizer {
+    fn from_system_accounts() -> Self {
+        Self {
+            assignments: resolve_diagnostic_assignments(),
+        }
+    }
+
+    fn permits_values(&self, pid: Option<i32>, uid: u32, gid: u32) -> bool {
+        let Some(assignments) = self.assignments else {
+            return false;
+        };
+        let pid = pid.and_then(|pid| u32::try_from(pid).ok());
+        assignments.map_peer(KernelPeerCredentials::new(pid, uid, gid))
+            == Ok(DiagnosticSource::Server)
+    }
+}
+
+#[cfg(feature = "diagnostic-export")]
+impl DiagnosticReaderAuthorizer for RuntimeDiagnosticReaderAuthorizer {
+    fn permits(&self, stream: &UnixStream) -> bool {
+        stream.peer_cred().is_ok_and(|credentials| {
+            self.permits_values(credentials.pid(), credentials.uid(), credentials.gid())
+        })
+    }
+}
+
+#[cfg(feature = "diagnostic-export")]
+fn resolve_diagnostic_assignments() -> Option<DiagnosticPeerAssignments> {
+    let mut uids = [0_u32; 6];
+    for (index, expected) in DIAGNOSTIC_ACCOUNTS.into_iter().enumerate() {
+        let user = User::from_name(expected).ok().flatten()?;
+        if user.name != expected {
+            return None;
+        }
+        uids[index] = user.uid.as_raw();
+    }
+    let group = Group::from_name(DIAGNOSTIC_SHARED_GROUP).ok().flatten()?;
+    if group.name != DIAGNOSTIC_SHARED_GROUP {
+        return None;
+    }
+    let assignments = DiagnosticPeerAssignments::new(
+        uids[0],
+        uids[1],
+        uids[2],
+        uids[3],
+        uids[4],
+        uids[5],
+        group.gid.as_raw(),
+    )
+    .ok()?;
+    if assignments.map_peer(KernelPeerCredentials::new(
+        Some(std::process::id()),
+        geteuid().as_raw(),
+        getegid().as_raw(),
+    )) != Ok(DiagnosticSource::PlatformBroker)
+    {
+        return None;
+    }
+    Some(assignments)
+}
+
+#[cfg(not(feature = "diagnostic-export"))]
 pub async fn run(
     config: BrokerConfig,
     credentials: KvmdCredentials,
@@ -73,6 +212,73 @@ pub async fn run(
     }
 }
 
+#[cfg(feature = "diagnostic-export")]
+pub async fn run(
+    config: BrokerConfig,
+    credentials: KvmdCredentials,
+) -> Result<(), BrokerServerError> {
+    run_with_parts(
+        config,
+        credentials,
+        Arc::new(DiagnosticExportClient::new()),
+        Arc::new(RuntimeDiagnosticReaderAuthorizer::from_system_accounts()),
+    )
+    .await
+}
+
+#[cfg(feature = "diagnostic-export")]
+async fn run_with_parts<D, A>(
+    config: BrokerConfig,
+    credentials: KvmdCredentials,
+    diagnostics: Arc<D>,
+    diagnostic_authorizer: Arc<A>,
+) -> Result<(), BrokerServerError>
+where
+    D: DiagnosticReader,
+    A: DiagnosticReaderAuthorizer,
+{
+    config.validate()?;
+    validate_runtime_directory(&config)?;
+    if fs::symlink_metadata(&config.broker_socket).is_ok() {
+        return Err(BrokerServerError::SocketAlreadyExists);
+    }
+    let listener = UnixListener::bind(&config.broker_socket)?;
+    fs::set_permissions(&config.broker_socket, Permissions::from_mode(0o660))?;
+
+    let client = Arc::new(
+        KvmdReadClient::new(&config.kvmd_socket)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
+    );
+    let credentials = Arc::new(credentials);
+    let semaphore = Arc::new(Semaphore::new(config.max_connections));
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| io::Error::other("broker semaphore closed"))?;
+        let client = client.clone();
+        let credentials = credentials.clone();
+        let diagnostics = diagnostics.clone();
+        let diagnostics_permitted = diagnostic_authorizer.permits(&stream);
+        let request_timeout = config.request_timeout;
+        tokio::spawn(async move {
+            let _permit = permit;
+            let _ = handle_connection(
+                stream,
+                client,
+                credentials,
+                diagnostics,
+                diagnostics_permitted,
+                request_timeout,
+            )
+            .await;
+        });
+    }
+}
+
 fn validate_runtime_directory(config: &BrokerConfig) -> Result<(), BrokerServerError> {
     let parent = config
         .broker_socket
@@ -89,6 +295,7 @@ fn validate_runtime_directory(config: &BrokerConfig) -> Result<(), BrokerServerE
     Ok(())
 }
 
+#[cfg(not(feature = "diagnostic-export"))]
 async fn handle_connection(
     mut stream: UnixStream,
     client: Arc<KvmdReadClient>,
@@ -99,7 +306,41 @@ async fn handle_connection(
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "broker request timed out"))??;
     let response = process_request(request, &client, &credentials).await;
-    let payload = encode_response(&response)
+    write_response(&mut stream, &response, request_timeout).await
+}
+
+#[cfg(feature = "diagnostic-export")]
+async fn handle_connection<D>(
+    mut stream: UnixStream,
+    client: Arc<KvmdReadClient>,
+    credentials: Arc<KvmdCredentials>,
+    diagnostics: Arc<D>,
+    diagnostics_permitted: bool,
+    request_timeout: std::time::Duration,
+) -> Result<(), io::Error>
+where
+    D: DiagnosticReader,
+{
+    let request = timeout(request_timeout, read_request(&mut stream))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "broker request timed out"))??;
+    let response = process_request(
+        request,
+        &client,
+        &credentials,
+        diagnostics.as_ref(),
+        diagnostics_permitted,
+    )
+    .await;
+    write_response(&mut stream, &response, request_timeout).await
+}
+
+async fn write_response(
+    stream: &mut UnixStream,
+    response: &BrokerResponseEnvelope,
+    request_timeout: std::time::Duration,
+) -> Result<(), io::Error> {
+    let payload = encode_response(response)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "broker response invalid"))?;
     let frame = encode_frame(&payload)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "broker response too large"))?;
@@ -125,56 +366,100 @@ async fn read_request(stream: &mut UnixStream) -> Result<BrokerRequestEnvelope, 
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "broker request invalid"))
 }
 
+#[cfg(not(feature = "diagnostic-export"))]
 async fn process_request(
     request: BrokerRequestEnvelope,
     client: &KvmdReadClient,
     credentials: &KvmdCredentials,
 ) -> BrokerResponseEnvelope {
     let response = match request.request {
-        BrokerReadRequest::Inventory => match client.inventory(credentials).await {
-            Ok(source) => {
-                let thermal = match read_h616_temperature_millidegrees() {
-                    Ok(value) => Some(value),
-                    Err(error) => {
-                        eprintln!("H616 thermal observation failed with {}", error.class());
-                        None
-                    }
-                };
-                let external_rtc = match read_h616_external_rtc() {
-                    Ok(value) => Some(value),
-                    Err(error) => {
-                        eprintln!(
-                            "H616 external RTC observation failed with {}",
-                            error.class()
-                        );
-                        None
-                    }
-                };
-                BrokerReadResponse::Inventory {
-                    inventory: sanitize_kvmd_inventory_with_observations(
-                        source,
-                        BliPlatformObservations {
-                            temperature_millidegrees_celsius: thermal,
-                            external_rtc,
-                        },
-                    ),
-                }
+        BrokerReadRequest::Inventory => inventory_response(client, credentials).await,
+    };
+    BrokerResponseEnvelope {
+        schema_version: BROKER_SCHEMA_VERSION,
+        request_id: request.request_id,
+        response,
+    }
+}
+
+#[cfg(feature = "diagnostic-export")]
+async fn process_request<D>(
+    request: BrokerRequestEnvelope,
+    client: &KvmdReadClient,
+    credentials: &KvmdCredentials,
+    diagnostics: &D,
+    diagnostics_permitted: bool,
+) -> BrokerResponseEnvelope
+where
+    D: DiagnosticReader,
+{
+    let response = match request.request {
+        BrokerReadRequest::Inventory => inventory_response(client, credentials).await,
+        BrokerReadRequest::Diagnostics if !diagnostics_permitted => BrokerReadResponse::Error {
+            code: BrokerErrorCode::Unauthorized,
+        },
+        BrokerReadRequest::Diagnostics => match diagnostics.read_sealed().await {
+            Ok(BrokerDiagnosticReadOutcome::NoSealed) => {
+                BrokerReadResponse::Diagnostics { snapshot: None }
             }
-            Err(error) => {
-                let code = map_client_error(&error.source);
-                eprintln!(
-                    "KVMD inventory request failed with {code:?} at {} with {}",
-                    error.endpoint.as_str(),
-                    client_error_class(&error.source),
-                );
-                BrokerReadResponse::Error { code }
-            }
+            Ok(BrokerDiagnosticReadOutcome::Sealed(snapshot)) => BrokerReadResponse::Diagnostics {
+                snapshot: Some(snapshot),
+            },
+            Ok(BrokerDiagnosticReadOutcome::CollectorUnavailable) => BrokerReadResponse::Error {
+                code: BrokerErrorCode::BackendUnavailable,
+            },
+            Err(code) => BrokerReadResponse::Error { code },
         },
     };
     BrokerResponseEnvelope {
         schema_version: BROKER_SCHEMA_VERSION,
         request_id: request.request_id,
         response,
+    }
+}
+
+async fn inventory_response(
+    client: &KvmdReadClient,
+    credentials: &KvmdCredentials,
+) -> BrokerReadResponse {
+    match client.inventory(credentials).await {
+        Ok(source) => {
+            let thermal = match read_h616_temperature_millidegrees() {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    eprintln!("H616 thermal observation failed with {}", error.class());
+                    None
+                }
+            };
+            let external_rtc = match read_h616_external_rtc() {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    eprintln!(
+                        "H616 external RTC observation failed with {}",
+                        error.class()
+                    );
+                    None
+                }
+            };
+            BrokerReadResponse::Inventory {
+                inventory: sanitize_kvmd_inventory_with_observations(
+                    source,
+                    BliPlatformObservations {
+                        temperature_millidegrees_celsius: thermal,
+                        external_rtc,
+                    },
+                ),
+            }
+        }
+        Err(error) => {
+            let code = map_client_error(&error.source);
+            eprintln!(
+                "KVMD inventory request failed with {code:?} at {} with {}",
+                error.endpoint.as_str(),
+                client_error_class(&error.source),
+            );
+            BrokerReadResponse::Error { code }
+        }
     }
 }
 
@@ -212,14 +497,140 @@ fn map_client_error(error: &KvmdClientError) -> BrokerErrorCode {
     }
 }
 
+#[cfg(feature = "diagnostic-export")]
+fn map_diagnostic_error(error: DiagnosticExportReadError) -> BrokerErrorCode {
+    match error {
+        DiagnosticExportReadError::NotSent {
+            reason:
+                DiagnosticExportNotSentReason::ConnectTimeout
+                | DiagnosticExportNotSentReason::ConnectFailed,
+        }
+        | DiagnosticExportReadError::Retryable {
+            stage:
+                DiagnosticExportExchangeStage::WriteTimeout
+                | DiagnosticExportExchangeStage::WriteFailed
+                | DiagnosticExportExchangeStage::ResponseTimeout
+                | DiagnosticExportExchangeStage::ResponseClosed
+                | DiagnosticExportExchangeStage::ResponseReadFailed,
+        } => BrokerErrorCode::BackendUnavailable,
+        DiagnosticExportReadError::Retryable {
+            stage:
+                DiagnosticExportExchangeStage::ResponseTooLarge
+                | DiagnosticExportExchangeStage::InvalidResponse,
+        } => BrokerErrorCode::InvalidBackendResponse,
+        DiagnosticExportReadError::NotSent {
+            reason: DiagnosticExportNotSentReason::InvalidBinding,
+        } => BrokerErrorCode::Internal,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "diagnostic-export")]
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use std::{path::Path, time::Duration};
 
+    #[cfg(feature = "diagnostic-export")]
+    use bli_kvm_broker_protocol::BrokerDiagnosticSnapshot;
     use bli_kvm_broker_protocol::{BrokerReadResponse, decode_response, encode_frame};
+    #[cfg(feature = "diagnostic-export")]
+    use bli_kvm_diagnostic_export::{
+        DiagnosticComponent, DiagnosticEvent, DiagnosticExporter, DiagnosticRecord,
+    };
     use tokio::time::sleep;
 
     use super::*;
+
+    #[cfg(feature = "diagnostic-export")]
+    #[derive(Clone)]
+    struct MockDiagnosticReader {
+        outcome: Result<BrokerDiagnosticReadOutcome, BrokerErrorCode>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    impl MockDiagnosticReader {
+        fn new(outcome: Result<BrokerDiagnosticReadOutcome, BrokerErrorCode>) -> Self {
+            Self {
+                outcome,
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    impl DiagnosticReader for MockDiagnosticReader {
+        async fn read_sealed(&self) -> Result<BrokerDiagnosticReadOutcome, BrokerErrorCode> {
+            self.calls.fetch_add(1, Ordering::AcqRel);
+            self.outcome.clone()
+        }
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    struct FixedDiagnosticReaderAuthorizer(bool);
+
+    #[cfg(feature = "diagnostic-export")]
+    impl DiagnosticReaderAuthorizer for FixedDiagnosticReaderAuthorizer {
+        fn permits(&self, _stream: &UnixStream) -> bool {
+            self.0
+        }
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    fn diagnostic_snapshot() -> BrokerDiagnosticSnapshot {
+        let mut exporter = DiagnosticExporter::new();
+        exporter
+            .push(
+                DiagnosticRecord::new(
+                    7,
+                    DiagnosticComponent::ControlBroker,
+                    DiagnosticEvent::Ready,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        BrokerDiagnosticSnapshot::from_bundle(9, 4, 1, &exporter.export().unwrap()).unwrap()
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    fn diagnostic_request(request_id: u64) -> BrokerRequestEnvelope {
+        BrokerRequestEnvelope {
+            schema_version: BROKER_SCHEMA_VERSION,
+            request_id,
+            request: BrokerReadRequest::Diagnostics,
+        }
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    fn unused_kvmd_client() -> KvmdReadClient {
+        KvmdReadClient::new("/tmp/hardened-blikvm-unused-kvmd.sock").unwrap()
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    fn test_credentials() -> KvmdCredentials {
+        KvmdCredentials::new("test-user", "not-a-real-password").unwrap()
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    async fn broker_round_trip(
+        socket: &Path,
+        request: BrokerRequestEnvelope,
+    ) -> BrokerResponseEnvelope {
+        let payload = bli_kvm_broker_protocol::encode_request(&request).unwrap();
+        let mut stream = UnixStream::connect(socket).await.unwrap();
+        stream
+            .write_all(&encode_frame(&payload).unwrap())
+            .await
+            .unwrap();
+        let mut prefix = [0_u8; 4];
+        stream.read_exact(&mut prefix).await.unwrap();
+        let mut response = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+        stream.read_exact(&mut response).await.unwrap();
+        decode_response(&response).unwrap()
+    }
 
     #[test]
     fn maps_backend_errors_without_messages_or_payloads() {
@@ -235,6 +646,179 @@ mod tests {
             client_error_class(&KvmdClientError::Status(http::StatusCode::BAD_REQUEST)),
             "status_400"
         );
+        #[cfg(feature = "diagnostic-export")]
+        {
+            assert_eq!(
+                map_diagnostic_error(DiagnosticExportReadError::Retryable {
+                    stage: DiagnosticExportExchangeStage::InvalidResponse,
+                }),
+                BrokerErrorCode::InvalidBackendResponse
+            );
+            assert_eq!(
+                map_diagnostic_error(DiagnosticExportReadError::NotSent {
+                    reason: DiagnosticExportNotSentReason::ConnectFailed,
+                }),
+                BrokerErrorCode::BackendUnavailable
+            );
+        }
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    #[tokio::test]
+    async fn diagnostics_require_exact_authorization_and_never_acknowledge() {
+        let diagnostics = MockDiagnosticReader::new(Ok(BrokerDiagnosticReadOutcome::Sealed(
+            diagnostic_snapshot(),
+        )));
+        let client = unused_kvmd_client();
+        let credentials = test_credentials();
+
+        let denied = process_request(
+            diagnostic_request(10),
+            &client,
+            &credentials,
+            &diagnostics,
+            false,
+        )
+        .await;
+        assert_eq!(
+            denied.response,
+            BrokerReadResponse::Error {
+                code: BrokerErrorCode::Unauthorized,
+            }
+        );
+        assert_eq!(diagnostics.calls.load(Ordering::Acquire), 0);
+
+        let allowed = process_request(
+            diagnostic_request(11),
+            &client,
+            &credentials,
+            &diagnostics,
+            true,
+        )
+        .await;
+        let BrokerReadResponse::Diagnostics {
+            snapshot: Some(snapshot),
+        } = allowed.response
+        else {
+            panic!("expected diagnostic snapshot");
+        };
+        assert_eq!(snapshot.instance_id(), 9);
+        assert_eq!(snapshot.window_id(), 4);
+        assert_eq!(snapshot.record_count(), 1);
+        assert_eq!(diagnostics.calls.load(Ordering::Acquire), 1);
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    #[tokio::test]
+    async fn diagnostic_absence_and_failures_are_typed_and_inventory_independent() {
+        let client = unused_kvmd_client();
+        let credentials = test_credentials();
+        let none = MockDiagnosticReader::new(Ok(BrokerDiagnosticReadOutcome::NoSealed));
+        assert_eq!(
+            process_request(diagnostic_request(12), &client, &credentials, &none, true,)
+                .await
+                .response,
+            BrokerReadResponse::Diagnostics { snapshot: None }
+        );
+
+        let unavailable =
+            MockDiagnosticReader::new(Ok(BrokerDiagnosticReadOutcome::CollectorUnavailable));
+        assert_eq!(
+            process_request(
+                diagnostic_request(13),
+                &client,
+                &credentials,
+                &unavailable,
+                true,
+            )
+            .await
+            .response,
+            BrokerReadResponse::Error {
+                code: BrokerErrorCode::BackendUnavailable,
+            }
+        );
+
+        let invalid = MockDiagnosticReader::new(Err(BrokerErrorCode::InvalidBackendResponse));
+        assert_eq!(
+            process_request(
+                diagnostic_request(14),
+                &client,
+                &credentials,
+                &invalid,
+                true,
+            )
+            .await
+            .response,
+            BrokerReadResponse::Error {
+                code: BrokerErrorCode::InvalidBackendResponse,
+            }
+        );
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    #[tokio::test]
+    async fn exact_peer_reads_same_unacknowledged_snapshot_over_real_broker_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let broker_socket = directory.path().join("broker.sock");
+        let config = BrokerConfig::new(
+            &broker_socket,
+            directory.path().join("unused-kvmd.sock"),
+            directory.path(),
+        )
+        .unwrap();
+        let diagnostics = Arc::new(MockDiagnosticReader::new(Ok(
+            BrokerDiagnosticReadOutcome::Sealed(diagnostic_snapshot()),
+        )));
+        let authorizer = Arc::new(FixedDiagnosticReaderAuthorizer(true));
+        let broker = tokio::spawn(run_with_parts(
+            config,
+            test_credentials(),
+            diagnostics.clone(),
+            authorizer,
+        ));
+        for _ in 0..100 {
+            if broker_socket.exists() {
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        assert!(broker_socket.exists());
+
+        for request_id in [20, 21] {
+            let response = broker_round_trip(&broker_socket, diagnostic_request(request_id)).await;
+            assert_eq!(response.request_id, request_id);
+            let BrokerReadResponse::Diagnostics {
+                snapshot: Some(snapshot),
+            } = response.response
+            else {
+                panic!("expected diagnostic snapshot");
+            };
+            assert_eq!(snapshot.instance_id(), 9);
+            assert_eq!(snapshot.window_id(), 4);
+        }
+        assert_eq!(diagnostics.calls.load(Ordering::Acquire), 2);
+        broker.abort();
+    }
+
+    #[cfg(feature = "diagnostic-export")]
+    #[tokio::test]
+    async fn runtime_authorizer_requires_exact_nonroot_uid_gid_and_live_pid() {
+        let assignments =
+            DiagnosticPeerAssignments::new(100, 101, 102, 103, 104, 105, 200).unwrap();
+        let authorizer = RuntimeDiagnosticReaderAuthorizer {
+            assignments: Some(assignments),
+        };
+        assert!(authorizer.permits_values(Some(7), 101, 200));
+        assert!(!authorizer.permits_values(Some(7), 102, 200));
+        assert!(!authorizer.permits_values(Some(7), 101, 201));
+        assert!(!authorizer.permits_values(None, 101, 200));
+        assert!(!authorizer.permits_values(Some(0), 101, 200));
+        assert!(!authorizer.permits_values(Some(7), 0, 200));
+
+        let (first, _second) = UnixStream::pair().unwrap();
+        assert!(!authorizer.permits(&first));
+        let unavailable = RuntimeDiagnosticReaderAuthorizer { assignments: None };
+        assert!(!unavailable.permits_values(Some(7), 101, 200));
     }
 
     async fn mock_kvmd(socket: &Path) -> tokio::task::JoinHandle<()> {
@@ -314,6 +898,10 @@ mod tests {
         assert_eq!(response.request_id, 42);
         let inventory = match response.response {
             BrokerReadResponse::Inventory { inventory } => inventory,
+            #[cfg(feature = "diagnostic-export")]
+            BrokerReadResponse::Diagnostics { .. } => {
+                panic!("inventory request returned diagnostics")
+            }
             BrokerReadResponse::Error { code } => {
                 panic!("expected inventory response, received {code:?}")
             }
