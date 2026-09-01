@@ -1274,6 +1274,8 @@ def build_orphan_stage_cleanup_script(assets: Assets) -> str:
     )
     body = r"""
 set -eu
+phase=validate-root
+trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then printf "orphan_failure_phase=%s\n" "$phase"; fi; exit "$status"' EXIT
 count=0
 stage_root=
 for candidate in "$prefix"*; do
@@ -1302,6 +1304,7 @@ timer_count=$(systemctl list-units --type=timer --state=active --plain --no-lege
 service_count=$(systemctl list-units --type=service --state=active --plain --no-legend 2>/dev/null | awk '$1 ~ /^hardened-blikvm-diagnostic-rollback-[0-9a-f]+\.service$/ {count++} END {print count+0}')
 [ "$timer_count" = 0 ]
 [ "$service_count" = 0 ]
+phase=validate-top
 unexpected=$(find "$stage_root" -mindepth 1 -maxdepth 1 \
   ! -name maintenance ! -name init.service ! -name inspect.service \
   ! -name tmpfiles.conf ! -name rollback.sh ! -name rollback.state.part \
@@ -1333,6 +1336,7 @@ validate_asset "$stage_root/tmpfiles.conf" "$tmpfiles_sha" "$tmpfiles_size" 600
 validate_private "$stage_root/rollback.sh" 262144
 validate_private "$stage_root/rollback.state.part" 16384
 validate_private "$stage_root/diagnostic-sysusers.conf" 4096
+phase=validate-account-backup
 if [ -e "$stage_root/account-backup" ]; then
   [ -d "$stage_root/account-backup" ]
   [ ! -L "$stage_root/account-backup" ]
@@ -1343,6 +1347,7 @@ if [ -e "$stage_root/account-backup" ]; then
     validate_private "$stage_root/account-backup/$name" 1048576
   done
 fi
+phase=validate-synthetic
 if [ -e "$stage_root/synthetic-root" ]; then
   [ -d "$stage_root/synthetic-root" ]
   [ ! -L "$stage_root/synthetic-root" ]
@@ -1368,15 +1373,18 @@ if [ -e "$stage_root/synthetic-root" ]; then
     validate_private "$path" 1048576
   done
 fi
+phase=remove-top
 rm -f -- "$stage_root/maintenance" "$stage_root/init.service" \
   "$stage_root/inspect.service" "$stage_root/tmpfiles.conf" \
   "$stage_root/rollback.sh" "$stage_root/rollback.state.part" \
   "$stage_root/diagnostic-sysusers.conf"
+phase=remove-account-backup
 if [ -d "$stage_root/account-backup" ]; then
   rm -f -- "$stage_root/account-backup/passwd" "$stage_root/account-backup/group" \
     "$stage_root/account-backup/shadow" "$stage_root/account-backup/gshadow"
   rmdir "$stage_root/account-backup"
 fi
+phase=remove-synthetic
 if [ -d "$stage_root/synthetic-root" ]; then
   rm -f -- "$stage_root/synthetic-root/etc/passwd" \
     "$stage_root/synthetic-root/etc/group" "$stage_root/synthetic-root/etc/shadow" \
@@ -1388,7 +1396,9 @@ if [ -d "$stage_root/synthetic-root" ]; then
     "$stage_root/synthetic-root/usr/lib" "$stage_root/synthetic-root/usr" \
     "$stage_root/synthetic-root/etc" "$stage_root/synthetic-root"
 fi
+phase=remove-root
 rmdir "$stage_root"
+trap - EXIT
 printf 'orphan_stage_removed=yes\n'
 """.strip()
     return f"{values}\n{body}"
@@ -1594,16 +1604,29 @@ def recover_existing(
         if orphan_safe and overview is not None:
             try:
                 stage = "remove-orphan-stage"
+                orphan_result = prototype.run_ssh(
+                    target,
+                    secret,
+                    build_orphan_stage_cleanup_script(assets),
+                    timeout=60,
+                )
+                if len(orphan_result.stdout) > 16 * 1024:
+                    raise ValueError("orphan cleanup output exceeded the size limit")
+                if orphan_result.returncode != 0:
+                    phase = None
+                    for line in orphan_result.stdout.decode("ascii").splitlines():
+                        if line.startswith("orphan_failure_phase="):
+                            candidate = line.split("=", 1)[1]
+                            if re.fullmatch(r"[a-z-]{1,32}", candidate):
+                                phase = candidate
+                    cleanup = {
+                        "attempted": True,
+                        "confirmed": False,
+                        "failurePhase": phase,
+                    }
+                    raise RuntimeError(stage)
                 removed = native.parse_facts(
-                    common.require_result(
-                        stage,
-                        prototype.run_ssh(
-                            target,
-                            secret,
-                            build_orphan_stage_cleanup_script(assets),
-                            timeout=60,
-                        ),
-                    ),
+                    orphan_result.stdout,
                     ORPHAN_CLEANUP_KEYS,
                 )
                 if removed != {"orphan_stage_removed": "yes"}:
