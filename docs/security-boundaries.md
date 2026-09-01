@@ -410,7 +410,10 @@ omitted. History is fixed unavailable while production persistence is not
 provisioned. Other methods are unrouted, and backend failures retain the
 generic sanitized 503 envelope. The network server gains no key/store/floor,
 collector acknowledgement, process, service, or hardware authority; see
-`api/diagnostics-v1.md`.
+`api/diagnostics-v1.md`. The reversible H616 gate accepted unauthenticated 401,
+authenticated typed output, independent bounded sensor samples, privacy
+denylist, session revocation, and complete rollback; see
+`baselines/device-diagnostics-api.md`.
 
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.

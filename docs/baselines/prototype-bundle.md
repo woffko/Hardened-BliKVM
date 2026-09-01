@@ -147,3 +147,13 @@ Their manifests retain both acceptance flags as false. The byte-identical
 AArch64 gate executable subsequently passed the synthetic rollback-gated H616
 flow; exact evidence and production limitations are in
 `device-diagnostic-persistence.md`.
+
+## Authenticated current-only diagnostics API checkpoint
+
+Source commit `f0973ce` added the authenticated current-only diagnostics API
+and TypeScript contract. Independent target/output roots produced
+byte-identical 4,805,206-byte prototype archives with SHA-256
+`0372390059283922e95e4d7163aa83fe60a7be2af764f89b316f1d3288802209`.
+Their static-PIE server binaries also matched. The API subsequently passed a
+reversible H616 auth/privacy/inventory/video gate; exact evidence and the
+explicitly unavailable-history boundary are in `device-diagnostics-api.md`.

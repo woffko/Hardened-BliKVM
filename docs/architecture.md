@@ -230,6 +230,8 @@ platform identity and versions and reports history only as
 `persistence_not_provisioned`. The server links no diagnostic persistence,
 key-loader, store, export-client, floor, or acknowledgement crate; see
 `api/diagnostics-v1.md`.
+The authenticated API passed its reversible H616 auth/privacy/current-health
+gate; see `baselines/device-diagnostics-api.md`.
 
 ## Core invariants
 

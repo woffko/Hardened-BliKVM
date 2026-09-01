@@ -839,7 +839,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "9b7745572aaa41c9b9fbc4177ada3f99",
             "7420391703f7416ca71c5a3aca25b599",
             "seven reads and three acknowledgement requests",
-            "physical Power/Reset",
+            "Power/Reset, reboot",
         ):
             self.assertIn(required, baseline)
 
@@ -1957,6 +1957,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         server_production, server_tests = server.split("#[cfg(test)]", 1)
         server_manifest = (ROOT / "crates/bli-kvm-server/Cargo.toml").read_text()
         api = (ROOT / "docs/api/diagnostics-v1.md").read_text()
+        baseline = (ROOT / "docs/baselines/device-diagnostics-api.md").read_text()
         web_type = (ROOT / "web/src/types/diagnostics.ts").read_text()
         web_api = (ROOT / "web/src/api/diagnostics.ts").read_text()
         device_gate = (ROOT / "tools/stage_device_systemd_gate.py").read_text()
@@ -2040,6 +2041,18 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(required, device_gate)
             self.assertIn(required, device_gate_tests)
         self.assertIn("docs/api/diagnostics-v1.md", builder)
+        for required in (
+            "f0973ce30ce485ca8a4d7cbddae7047498acb76a",
+            "9ce28d88917246d28003d6cba2156a6a",
+            "0372390059283922e95e4d7163aa83fe60a7be2af764f89b316f1d3288802209",
+            "5b9d0904308175fe62c805d3b8dfd0792a58d6b21654ce27996643b22ad729be",
+            "8e76c6656168d01106cae84d506db67c3a23141ac0326658f67af71b165ae094",
+            "8c5ee6fe988f40edaafd9165da90bfdf",
+            "remoteCleanupConfirmed=true",
+            "persistence_not_provisioned",
+            "Power/Reset, reboot",
+        ):
+            self.assertIn(required, baseline)
 
     def test_server_unit_requires_secure_proxy_cookies(self) -> None:
         unit = (

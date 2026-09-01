@@ -81,3 +81,6 @@ does not read the unshipped persistence stack or acknowledge a collector.
 Production history cannot become available until a separate key-custody,
 trusted-floor, daemon/unit, retention, privacy, reboot, and release gate is
 accepted.
+
+Host, reproducible AArch64 and reversible H616 acceptance evidence is recorded
+in `../baselines/device-diagnostics-api.md`.
