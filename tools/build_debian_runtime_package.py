@@ -41,7 +41,7 @@ FILE_MAP = {
     "share/systemd/hardened-blikvm-server.service":
         "lib/systemd/system/hardened-blikvm-server.service",
     "share/sysusers.d/hardened-blikvm.conf":
-        "usr/lib/sysusers.d/hardened-blikvm.conf",
+        "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-sysusers.conf",
     "LICENSE": "usr/share/doc/hardened-blikvm-runtime/copyright",
     "README.md": "usr/share/doc/hardened-blikvm-runtime/README.md",
     "share/docs/packaging-boundary.md":
@@ -109,6 +109,8 @@ def package_manifest(bundle: prototype.BundleInfo) -> dict[str, object]:
         "sourceBundleSha256": bundle.sha256,
         "scope": "inert-read-only-runtime",
         "autoStart": False,
+        "unitTemplatesActive": False,
+        "accountsProvisioned": False,
         "credentialsIncluded": False,
         "nginxConfigActive": False,
         "updateRuntimeIncluded": False,

@@ -18,7 +18,7 @@ class DebianRuntimePackageTests(unittest.TestCase):
             "usr/libexec/hardened-blikvm/bli-kvm-video-proxy",
             "usr/libexec/hardened-blikvm/bli-kvm-control-broker",
             "lib/systemd/system/hardened-blikvm-server.service",
-            "usr/lib/sysusers.d/hardened-blikvm.conf",
+            "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-sysusers.conf",
             "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-nginx.conf",
         ):
             self.assertIn(required, destinations)
@@ -33,6 +33,7 @@ class DebianRuntimePackageTests(unittest.TestCase):
             "system-action",
             "etc/nginx",
             "etc/hardened-blikvm",
+            "usr/lib/sysusers.d",
         ):
             self.assertNotIn(forbidden, rendered)
 
@@ -49,6 +50,8 @@ class DebianRuntimePackageTests(unittest.TestCase):
         self.assertEqual(manifest["scope"], "inert-read-only-runtime")
         for field in (
             "autoStart",
+            "unitTemplatesActive",
+            "accountsProvisioned",
             "credentialsIncluded",
             "nginxConfigActive",
             "updateRuntimeIncluded",
