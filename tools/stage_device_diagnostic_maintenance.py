@@ -167,7 +167,7 @@ def parse_args() -> Options:
         "--tmpfiles",
         default="packaging/tmpfiles.d/hardened-blikvm-diagnostics.conf",
     )
-    parser.add_argument("--endpoint", required=True)
+    parser.add_argument("--endpoint", default="")
     parser.add_argument(
         "--known-hosts", default="evidence/private/ssh-known-hosts"
     )
@@ -1095,7 +1095,9 @@ def upload(
 def execute(options: Options) -> int:
     output = prototype.validate_output_path(options.output)
     assets = validate_assets(options)
-    target = native.target_from_known_hosts(options.known_hosts, options.endpoint)
+    target = native.target_from_known_hosts(
+        options.known_hosts, options.endpoint or None
+    )
     paths = stage_paths(assets.binary.sha256, secrets.token_hex(8))
     required_bytes = assets.binary.size_bytes * 4 + MIN_TMP_HEADROOM_BYTES
     secret = prototype.read_secret_stdin()
