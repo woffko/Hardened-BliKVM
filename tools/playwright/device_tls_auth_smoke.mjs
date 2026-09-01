@@ -374,11 +374,17 @@ try {
   await waitForIncrease(
     diagnosticsResponseCount,
     desktopResponsesBeforeRefresh,
+    12_000,
   );
-  await page.keyboard.press("Escape");
+  phase = "diagnostics-close-button";
+  await settingsDialog.locator("button.ant-modal-close").click();
+  phase = "diagnostics-close-hidden";
   await settingsDialog.waitFor({ state: "hidden" });
+  phase = "diagnostics-desktop-stream-release";
+  await page.goto("about:blank", { waitUntil: "load" });
+  await page.waitForTimeout(250);
 
-  phase = "diagnostics-mobile";
+  phase = "diagnostics-mobile-create";
   const mobilePage = await context.newPage();
   await mobilePage.setViewportSize({ width: 390, height: 844 });
   await mobilePage.addInitScript(() => {
@@ -408,31 +414,40 @@ try {
       responses.push(observed);
     }
   });
+  phase = "diagnostics-mobile-document";
   const mobileDocumentResponse = await mobilePage.goto(`${baseUrl}/#/`, {
     waitUntil: "domcontentloaded",
   });
   assert.equal(mobileDocumentResponse?.status(), 200);
+  phase = "diagnostics-mobile-title";
   await mobilePage.waitForFunction(
     () => document.title === "遠端桌面 - Hardened BliKVM",
   );
+  phase = "diagnostics-mobile-video";
   await mobilePage.waitForFunction(() => {
     const screen = document.querySelector("img#screen");
     return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
   });
+  phase = "diagnostics-mobile-settings";
   await mobilePage.locator("svg.lucide-settings").first().click();
   const mobileSettingsDialog = mobilePage.getByRole("dialog");
+  phase = "diagnostics-mobile-dialog";
   await mobileSettingsDialog.waitFor();
+  phase = "diagnostics-mobile-initial-response";
   const mobileDiagnosticsResponse = mobilePage.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/diagnostics" &&
       response.request().method() === "GET" &&
       response.status() === 200,
   );
+  phase = "diagnostics-mobile-tab";
   await mobileSettingsDialog.getByText("診斷", { exact: true }).click();
+  phase = "diagnostics-mobile-schema";
   assert.equal(
     (await (await mobileDiagnosticsResponse).json()).data.schemaVersion,
     1,
   );
+  phase = "diagnostics-mobile-content";
   await mobileSettingsDialog
     .getByText("目前唯讀裝置狀態", { exact: true })
     .waitFor();
@@ -440,6 +455,7 @@ try {
   await mobileSettingsDialog
     .getByText("此裝置尚未設定持久診斷歷史記錄。", { exact: true })
     .waitFor();
+  phase = "diagnostics-mobile-layout";
   const mobileLayout = await mobilePage.evaluate(() => ({
     innerWidth: window.innerWidth,
     documentWidth: document.documentElement.scrollWidth,
@@ -478,10 +494,17 @@ try {
   phase = "diagnostics-mobile-refresh-request";
   await waitForIncrease(mobileRequestCount, mobileRequestsBeforeRefresh);
   phase = "diagnostics-mobile-refresh-response";
-  await waitForIncrease(mobileResponseCount, mobileResponsesBeforeRefresh);
+  await waitForIncrease(
+    mobileResponseCount,
+    mobileResponsesBeforeRefresh,
+    12_000,
+  );
   await mobilePage.close();
 
   phase = "password-page";
+  await page.addInitScript(() => {
+    localStorage.removeItem("hardened-blikvm-language");
+  });
   await page.goto(`${baseUrl}/#/auth/password`, { waitUntil: "networkidle" });
   await page.waitForFunction(
     () => document.title === "Change Password - Hardened BliKVM",

@@ -195,9 +195,28 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn("diagnostics-refresh-click", script)
         self.assertIn("diagnostics-refresh-request", script)
         self.assertIn("diagnostics-refresh-response", script)
+        self.assertIn("diagnostics-close-button", script)
+        self.assertIn("diagnostics-close-hidden", script)
+        self.assertIn('button.ant-modal-close', script)
+        self.assertIn("diagnostics-desktop-stream-release", script)
+        self.assertIn('page.goto("about:blank"', script)
         self.assertIn('name: "Refresh"', script)
         self.assertIn('setViewportSize({ width: 390, height: 844 })', script)
         self.assertIn('"hardened-blikvm-language", "zh_tw"', script)
+        self.assertIn('localStorage.removeItem("hardened-blikvm-language")', script)
+        for phase in (
+            "diagnostics-mobile-document",
+            "diagnostics-mobile-title",
+            "diagnostics-mobile-video",
+            "diagnostics-mobile-settings",
+            "diagnostics-mobile-dialog",
+            "diagnostics-mobile-initial-response",
+            "diagnostics-mobile-tab",
+            "diagnostics-mobile-schema",
+            "diagnostics-mobile-content",
+            "diagnostics-mobile-layout",
+        ):
+            self.assertIn(phase, script)
         self.assertIn("diagnostics-mobile-refresh-ready", script)
         self.assertIn("diagnostics-mobile-refresh-click", script)
         self.assertIn("diagnostics-mobile-refresh-request", script)
