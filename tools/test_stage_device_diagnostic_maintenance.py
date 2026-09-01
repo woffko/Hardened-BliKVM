@@ -39,6 +39,7 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
             stage.build_run_script(paths, assets),
             stage.build_cleanup_script(paths, assets),
             stage.build_final_script(paths, "present", "absent", "present"),
+            stage.build_recovery_discovery_script("a" * 64),
         )
         for script in scripts:
             result = subprocess.run(
@@ -97,6 +98,17 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
         self.assertIn('current=$(sha256sum "$database"', rollback)
         self.assertIn('cmp -s "$account_backup/$name" "$database"', rollback)
         self.assertNotIn('rm -f -- "$database"', rollback)
+        self.assertIn("rollback_failure_phase=%s", rollback)
+
+    def test_recovery_discovery_returns_only_bounded_nonsecret_routing(self) -> None:
+        script = stage.build_recovery_discovery_script("a" * 64)
+        self.assertIn("[ \"$count\" = 1 ]", script)
+        self.assertIn("[ \"${#run_id}\" = 16 ]", script)
+        self.assertIn("$marker_prefix$run_id", script)
+        self.assertNotIn("cat \"$credential_target\"", script)
+        self.assertNotIn("sha256sum \"$credential_target\"", script)
+        for key in stage.RECOVERY_KEYS:
+            self.assertIn(f'emit {key} "$', script)
 
     def test_account_transition_is_predicted_before_watchdog_and_live_write(self) -> None:
         script = stage.build_run_script(

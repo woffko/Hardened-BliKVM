@@ -99,6 +99,15 @@ FINAL_KEYS = {
     "watchdog_inactive_final",
 }
 CLEANUP_KEYS = {"cleanup_restored"}
+RECOVERY_KEYS = {
+    "binary_parent_before",
+    "credential_parent_before",
+    "identity_state_before",
+    "persistent_state",
+    "run_id",
+    "state_present",
+    "watchdog_state",
+}
 
 
 @dataclass(frozen=True)
@@ -111,6 +120,7 @@ class Options:
     endpoint: str
     known_hosts: str
     output: str
+    recover_only: bool
 
 
 @dataclass(frozen=True)
@@ -149,6 +159,7 @@ class Paths:
 class CleanupReceipt(TypedDict):
     attempted: bool
     confirmed: bool
+    failurePhase: str | None
 
 
 def parse_args() -> Options:
@@ -175,6 +186,7 @@ def parse_args() -> Options:
         "--output",
         default="evidence/private/device-diagnostic-maintenance.json",
     )
+    parser.add_argument("--recover-only", action="store_true")
     namespace = parser.parse_args()
     return Options(
         binary=cast(str, namespace.binary),
@@ -185,6 +197,7 @@ def parse_args() -> Options:
         endpoint=cast(str, namespace.endpoint),
         known_hosts=cast(str, namespace.known_hosts),
         output=cast(str, namespace.output),
+        recover_only=cast(bool, namespace.recover_only),
     )
 
 
@@ -478,6 +491,8 @@ def build_rollback_script(paths: Paths, assets: Assets) -> str:
     )
     body = rf"""
 set -eu
+phase=validate
+trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then printf "rollback_failure_phase=%s\n" "$phase"; fi; exit "$status"' EXIT
 case "$stage_root" in /tmp/hardened-blikvm-diagnostic-maintenance-*) ;; *) exit 1 ;; esac
 [ -f "$marker" ]
 [ "$(cat "$marker")" = "$marker_value" ]
@@ -493,8 +508,10 @@ esac
 broker_uid=$(value broker_uid)
 shared_gid=$(value shared_gid)
 case "$broker_uid:$shared_gid" in *[!0-9:]*|0:*|*:0|:) exit 1 ;; esac
+phase=stop-units
 systemctl stop "$init_name" 2>/dev/null || true
 systemctl stop "$inspect_name" 2>/dev/null || true
+phase=remove-store
 if [ -e "$production_root" ]; then
   [ -d "$production_root" ]
   [ ! -L "$production_root" ]
@@ -517,6 +534,7 @@ if [ -e "$production_root" ]; then
   done
   rmdir "$production_root"
 fi
+phase=remove-credential
 for path in "$credential_part" "$credential_target"; do
   if [ -e "$path" ]; then
     [ -f "$path" ]
@@ -526,6 +544,7 @@ for path in "$credential_part" "$credential_target"; do
     rm -f -- "$path"
   fi
 done
+phase=remove-units
 for spec in "$init_target:$init_sha:$init_size" "$inspect_target:$inspect_sha:$inspect_size"; do
   path=${{spec%%:*}}
   rest=${{spec#*:}}
@@ -549,6 +568,7 @@ for spec in "$init_target:$init_sha:$init_size" "$inspect_target:$inspect_sha:$i
 done
 systemctl daemon-reload
 systemctl reset-failed "$init_name" "$inspect_name" 2>/dev/null || true
+phase=remove-binary
 if [ -e "$binary_target" ]; then
   [ -f "$binary_target" ]
   [ ! -L "$binary_target" ]
@@ -562,6 +582,7 @@ if [ -e "$binary_target.part" ]; then
   [ "$(stat -c %s "$binary_target.part")" -le "$binary_size" ]
   rm -f -- "$binary_target.part"
 fi
+phase=restore-accounts
 if [ "$identity_before" = absent ]; then
   for database in $account_files; do
     name=${{database##*/}}
@@ -588,14 +609,17 @@ if [ "$identity_before" = absent ]; then
   if getent group "$broker_account" >/dev/null 2>&1; then exit 1; fi
   if getent group "$shared_group" >/dev/null 2>&1; then exit 1; fi
 fi
+phase=remove-parents
 if [ "$credential_parent_before" = absent ] && [ -e "$credential_parent" ]; then
   rmdir "$credential_parent"
 fi
 if [ "$parent_before" = absent ] && [ -e "$binary_parent" ]; then
   rmdir "$binary_parent"
 fi
+phase=stop-watchdog
 systemctl stop "$watchdog.timer" 2>/dev/null || true
 if [ -z "${{INVOCATION_ID:-}}" ]; then systemctl stop "$watchdog.service" 2>/dev/null || true; fi
+phase=remove-stage
 rm -f -- "$state_file" "$stage_root/rollback.sh" "$sysusers_file"
 rm -f -- "$stage_root/maintenance" "$stage_root/init.service" \
   "$stage_root/inspect.service" "$stage_root/tmpfiles.conf" "$marker"
@@ -611,6 +635,7 @@ if [ -d "$synthetic_root" ]; then
     "$synthetic_root/usr" "$synthetic_root/etc" "$synthetic_root"
 fi
 rmdir "$stage_root"
+trap - EXIT
 """.strip()
     return f"{values}\n{body}"
 
@@ -1060,6 +1085,84 @@ def validate_final(
         raise ValueError("final-state invariant failed")
 
 
+def build_recovery_discovery_script(binary_sha256: str) -> str:
+    if SHA256.fullmatch(binary_sha256) is None:
+        raise ValueError("binary SHA-256 is invalid")
+    values = common.assignments(
+        {
+            "prefix": (
+                "/tmp/hardened-blikvm-diagnostic-maintenance-"
+                f"{binary_sha256[:12]}-"
+            ),
+            "marker_prefix": f"diagnostic-maintenance:{binary_sha256}:",
+            "production_root": PRODUCTION_ROOT,
+            "credential_target": CREDENTIAL_TARGET,
+            "binary_parent": BINARY_PARENT,
+            "binary_target": BINARY_TARGET,
+            "credential_parent": CREDENTIAL_PARENT,
+            "init_target": INIT_UNIT_TARGET,
+            "inspect_target": INSPECT_UNIT_TARGET,
+            "broker_account": BROKER_ACCOUNT,
+        }
+    )
+    body = r"""
+set -eu
+emit() { printf '%s=%s\n' "$1" "$2"; }
+count=0
+found=
+for candidate in "$prefix"*; do
+  [ -d "$candidate" ] || continue
+  count=$((count + 1))
+  found=$candidate
+done
+[ "$count" = 1 ]
+run_id=${found##*-}
+case "$run_id" in *[!0-9a-f]*|'') exit 1 ;; esac
+[ "${#run_id}" = 16 ]
+[ "$found" = "$prefix$run_id" ]
+marker="$found/.hardened-blikvm-owner"
+state="$found/rollback.state"
+[ -f "$marker" ]
+[ "$(cat "$marker")" = "$marker_prefix$run_id" ]
+if [ -f "$state" ]; then
+  value() { awk -F= -v key="$1" '$1 == key {print $2}' "$state"; }
+  binary_parent_before=$(value parent_before)
+  credential_parent_before=$(value credential_parent_before)
+  identity_state_before=$(value identity_before)
+  state_present=yes
+else
+  if [ -e "$binary_parent" ]; then binary_parent_before=present; else binary_parent_before=absent; fi
+  if [ -e "$credential_parent" ]; then credential_parent_before=present; else credential_parent_before=absent; fi
+  if getent passwd "$broker_account" >/dev/null 2>&1; then identity_state_before=present; else identity_state_before=absent; fi
+  state_present=no
+fi
+for value in "$binary_parent_before" "$credential_parent_before" "$identity_state_before"; do
+  case "$value" in present|absent) ;; *) exit 1 ;; esac
+done
+watchdog="hardened-blikvm-diagnostic-rollback-$run_id"
+if [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" = active ] || \
+   [ "$(systemctl is-active "$watchdog.service" 2>/dev/null || true)" = active ]; then
+  watchdog_state=active
+else
+  watchdog_state=inactive
+fi
+if [ -e "$production_root" ] || [ -e "$credential_target" ] || \
+   [ -e "$binary_target" ] || [ -e "$init_target" ] || [ -e "$inspect_target" ]; then
+  persistent_state=present
+else
+  persistent_state=absent
+fi
+emit binary_parent_before "$binary_parent_before"
+emit credential_parent_before "$credential_parent_before"
+emit identity_state_before "$identity_state_before"
+emit persistent_state "$persistent_state"
+emit run_id "$run_id"
+emit state_present "$state_present"
+emit watchdog_state "$watchdog_state"
+""".strip()
+    return f"{values}\n{body}"
+
+
 def attempt_cleanup(
     target: prototype.RemoteTarget,
     secret: bytearray,
@@ -1067,16 +1170,28 @@ def attempt_cleanup(
     assets: Assets,
 ) -> CleanupReceipt:
     try:
-        output = common.require_result(
-            "cleanup",
-            prototype.run_ssh(
-                target, secret, build_cleanup_script(paths, assets), timeout=60
-            ),
+        result = prototype.run_ssh(
+            target, secret, build_cleanup_script(paths, assets), timeout=60
         )
-        facts = native.parse_facts(output, CLEANUP_KEYS)
-        return {"attempted": True, "confirmed": facts == {"cleanup_restored": "yes"}}
+        if len(result.stdout) > 16 * 1024:
+            raise ValueError("cleanup output exceeded the size limit")
+        if result.returncode == 0:
+            facts = native.parse_facts(result.stdout, CLEANUP_KEYS)
+            return {
+                "attempted": True,
+                "confirmed": facts == {"cleanup_restored": "yes"},
+                "failurePhase": None,
+            }
+        decoded = result.stdout.decode("ascii")
+        phase = None
+        for line in decoded.splitlines():
+            if line.startswith("rollback_failure_phase="):
+                candidate = line.split("=", 1)[1]
+                if re.fullmatch(r"[a-z-]{1,32}", candidate):
+                    phase = candidate
+        return {"attempted": True, "confirmed": False, "failurePhase": phase}
     except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError, ValueError):
-        return {"attempted": True, "confirmed": False}
+        return {"attempted": True, "confirmed": False, "failurePhase": None}
 
 
 def upload(
@@ -1092,15 +1207,120 @@ def upload(
         )
 
 
+def recover_existing(
+    output: Path,
+    assets: Assets,
+    target: prototype.RemoteTarget,
+    secret: bytearray,
+) -> int:
+    stage = "discover-recovery"
+    cleanup: CleanupReceipt = {
+        "attempted": False,
+        "confirmed": False,
+        "failurePhase": None,
+    }
+    try:
+        discovery = native.parse_facts(
+            common.require_result(
+                stage,
+                prototype.run_ssh(
+                    target,
+                    secret,
+                    build_recovery_discovery_script(assets.binary.sha256),
+                    timeout=30,
+                ),
+            ),
+            RECOVERY_KEYS,
+        )
+        run_id = discovery["run_id"]
+        if RUN_ID.fullmatch(run_id) is None:
+            raise ValueError("recovery run ID is invalid")
+        for key in (
+            "binary_parent_before",
+            "credential_parent_before",
+            "identity_state_before",
+        ):
+            if discovery[key] not in {"present", "absent"}:
+                raise ValueError("recovery baseline is invalid")
+        if discovery["state_present"] not in {"yes", "no"}:
+            raise ValueError("recovery state fact is invalid")
+        if discovery["persistent_state"] not in {"present", "absent"}:
+            raise ValueError("recovery persistence fact is invalid")
+        if discovery["watchdog_state"] not in {"active", "inactive"}:
+            raise ValueError("recovery watchdog fact is invalid")
+
+        paths = stage_paths(assets.binary.sha256, run_id)
+        stage = "recover-cleanup"
+        cleanup = attempt_cleanup(target, secret, paths, assets)
+        if not cleanup["confirmed"]:
+            raise RuntimeError(stage)
+
+        stage = "recover-final-state"
+        final_state = native.parse_facts(
+            common.require_result(
+                stage,
+                prototype.run_ssh(
+                    target,
+                    secret,
+                    build_final_script(
+                        paths,
+                        discovery["binary_parent_before"],
+                        discovery["credential_parent_before"],
+                        discovery["identity_state_before"],
+                    ),
+                    timeout=30,
+                ),
+            ),
+            FINAL_KEYS,
+        )
+        validate_final(
+            final_state,
+            discovery["binary_parent_before"],
+            discovery["credential_parent_before"],
+            discovery["identity_state_before"],
+        )
+        receipt = {
+            "schemaVersion": 1,
+            "probe": "hardened-blikvm-diagnostic-maintenance-recovery",
+            "result": "recovered",
+            "sourceCommit": assets.source_commit,
+            "observation": {
+                "persistentStateBefore": discovery["persistent_state"],
+                "rollbackStatePresent": discovery["state_present"],
+                "watchdogBefore": discovery["watchdog_state"],
+            },
+            "finalState": final_state,
+            "cleanup": cleanup,
+        }
+        write_json_0600_atomic(output, receipt)
+        return 0
+    except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError, ValueError) as error:
+        receipt = {
+            "schemaVersion": 1,
+            "probe": "hardened-blikvm-diagnostic-maintenance-recovery",
+            "result": "failed",
+            "sourceCommit": assets.source_commit,
+            "failure": {"stage": stage, "failureType": type(error).__name__},
+            "cleanup": cleanup,
+        }
+        write_json_0600_atomic(output, receipt)
+        return 1
+
+
 def execute(options: Options) -> int:
     output = prototype.validate_output_path(options.output)
     assets = validate_assets(options)
     target = native.target_from_known_hosts(
         options.known_hosts, options.endpoint or None
     )
+    secret = prototype.read_secret_stdin()
+    if options.recover_only:
+        try:
+            return recover_existing(output, assets, target, secret)
+        finally:
+            native.zero(secret)
     paths = stage_paths(assets.binary.sha256, secrets.token_hex(8))
     required_bytes = assets.binary.size_bytes * 4 + MIN_TMP_HEADROOM_BYTES
-    secret = prototype.read_secret_stdin()
     stage = "preflight"
     cleanup_required = False
     try:
@@ -1195,7 +1415,11 @@ def execute(options: Options) -> int:
             "preflight": preflight,
             "checks": checks,
             "finalState": final_state,
-            "cleanup": {"attempted": True, "confirmed": True},
+            "cleanup": {
+                "attempted": True,
+                "confirmed": True,
+                "failurePhase": None,
+            },
         }
         write_json_0600_atomic(output, receipt)
         return 0
@@ -1203,7 +1427,7 @@ def execute(options: Options) -> int:
         cleanup = (
             attempt_cleanup(target, secret, paths, assets)
             if cleanup_required
-            else {"attempted": False, "confirmed": True}
+            else {"attempted": False, "confirmed": True, "failurePhase": None}
         )
         receipt = {
             "schemaVersion": 1,
