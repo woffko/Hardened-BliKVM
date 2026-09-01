@@ -703,6 +703,8 @@ def build_run_script(paths: Paths, assets: Assets) -> str:
     body = rf"""
 set -eu
 export LC_ALL=C
+phase=validate-assets
+trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then printf "run_failure_phase=%s\n" "$phase"; fi; exit "$status"' EXIT
 emit() {{ printf '%s=%s\n' "$1" "$2"; }}
 [ -f "$marker" ]
 [ "$(cat "$marker")" = "$marker_value" ]
@@ -711,6 +713,7 @@ emit() {{ printf '%s=%s\n' "$1" "$2"; }}
 [ "$(sha256sum "$init_source" | cut -d ' ' -f 1)" = "$init_sha" ]
 [ "$(sha256sum "$inspect_source" | cut -d ' ' -f 1)" = "$inspect_sha" ]
 [ "$(sha256sum "$tmpfiles_source" | cut -d ' ' -f 1)" = "$tmpfiles_sha" ]
+phase=prepare-rollback-state
 if [ -e "$binary_parent" ]; then parent_before=present; else parent_before=absent; fi
 if [ -e "$credential_parent" ]; then credential_parent_before=present; else credential_parent_before=absent; fi
 if getent passwd "$broker_account" >/dev/null 2>&1; then identity_before=present; else identity_before=absent; fi
@@ -768,9 +771,11 @@ sync "$rollback_state"
 printf '%s' "$rollback_b64" | base64 -d > "$rollback_script"
 chmod 700 "$rollback_script"
 sync "$rollback_state" "$rollback_script"
+phase=arm-watchdog
 systemd-run --quiet --unit="$watchdog" --on-active=10min \
   --timer-property=AccuracySec=1s /bin/sh "$rollback_script"
 [ "$(systemctl is-active "$watchdog.timer" 2>/dev/null || true)" = active ]
+phase=create-identities
 if [ "$identity_before" = absent ]; then
   systemd-sysusers "$sysusers_file" >/dev/null 2>&1
   for database in $account_files; do
@@ -780,6 +785,7 @@ if [ "$identity_before" = absent ]; then
   done
 fi
 getent group "$shared_group" | awk -F: -v account="$broker_account" '("," $4 ",") ~ ("," account ",") {{ok=1}} END {{exit !ok}}'
+phase=install-runtime
 if [ "$parent_before" = absent ]; then mkdir -m 755 "$binary_parent"; fi
 install -m 0755 "$binary" "$binary_target.part"
 mv "$binary_target.part" "$binary_target"
@@ -790,6 +796,7 @@ install -m 0644 "$inspect_source" "$inspect_target.part"
 [ "$(sha256sum "$inspect_target.part" | cut -d ' ' -f 1)" = "$inspect_sha" ]
 mv "$init_target.part" "$init_target"
 mv "$inspect_target.part" "$inspect_target"
+phase=create-credential
 if [ "$credential_parent_before" = absent ]; then mkdir -m 700 "$credential_parent"; fi
 umask 077
 [ ! -e "$credential_part" ]
@@ -803,10 +810,13 @@ chown 0:0 "$credential_part"
 sync "$credential_part"
 mv "$credential_part" "$credential_target"
 sync "$credential_parent"
+phase=verify-systemd
 systemctl daemon-reload
 systemd-analyze verify "$init_name" "$inspect_name" >/dev/null 2>&1
+phase=create-root
 systemd-tmpfiles --create "$tmpfiles_source"
 [ "$(stat -c '%a:%u:%g' "$production_root")" = "700:$broker_uid:$shared_gid" ]
+phase=initialize-empty
 systemctl start "$init_name"
 [ "$(systemctl show -p Result --value "$init_name")" = success ]
 [ "$(systemctl show -p ExecMainStatus --value "$init_name")" = 0 ]
@@ -824,6 +834,7 @@ copy_b_sha=$(sha256sum "$production_root/journal-b.bin" | cut -d ' ' -f 1)
 [ "$copy_a_sha" = "$copy_b_sha" ]
 meta_a=$(stat -c '%i:%s:%Y:%Z' "$production_root/journal-a.bin")
 meta_b=$(stat -c '%i:%s:%Y:%Z' "$production_root/journal-b.bin")
+phase=inspect-empty
 systemctl start "$inspect_name"
 [ "$(systemctl show -p Result --value "$inspect_name")" = success ]
 [ "$(systemctl show -p ExecMainStatus --value "$inspect_name")" = 0 ]
@@ -831,6 +842,7 @@ systemctl start "$inspect_name"
 [ "$(sha256sum "$production_root/journal-b.bin" | cut -d ' ' -f 1)" = "$copy_b_sha" ]
 [ "$(stat -c '%i:%s:%Y:%Z' "$production_root/journal-a.bin")" = "$meta_a" ]
 [ "$(stat -c '%i:%s:%Y:%Z' "$production_root/journal-b.bin")" = "$meta_b" ]
+phase=inspect-temporary
 printf partial > "$production_root/.journal-a.tmp"
 chown "$broker_uid:$shared_gid" "$production_root/.journal-a.tmp"
 chmod 600 "$production_root/.journal-a.tmp"
@@ -843,12 +855,14 @@ rm -f -- "$production_root/.journal-a.tmp"
 systemctl reset-failed "$inspect_name" 2>/dev/null || true
 systemctl start "$inspect_name"
 [ "$(systemctl show -p Result --value "$inspect_name")" = success ]
+phase=rollback
 /bin/sh "$rollback_script"
 [ ! -e "$production_root" ]
 [ ! -e "$credential_target" ]
 [ ! -e "$binary_target" ]
 [ ! -e "$init_target" ]
 [ ! -e "$inspect_target" ]
+phase=emit-results
 emit account_databases_restored yes
 emit binary_hash_verified yes
 emit copies_equal yes
@@ -862,6 +876,7 @@ emit rollback_confirmed yes
 emit sandbox_sources_verified yes
 emit temporary_rejected_preserved yes
 emit watchdog_armed yes
+trap - EXIT
 """.strip()
     return f"{values}\n{body}"
 
@@ -1708,6 +1723,7 @@ def execute(options: Options) -> int:
     required_bytes = assets.binary.size_bytes * 4 + MIN_TMP_HEADROOM_BYTES
     stage = "preflight"
     cleanup_required = False
+    remote_phase: str | None = None
     try:
         preflight = native.parse_facts(
             common.require_result(
@@ -1736,13 +1752,20 @@ def execute(options: Options) -> int:
         upload(target, secret, assets.tmpfiles, build_upload_script(paths, paths.tmpfiles))
 
         stage = "provision-and-rollback"
+        run_result = prototype.run_ssh(
+            target, secret, build_run_script(paths, assets), timeout=180
+        )
+        if len(run_result.stdout) > 16 * 1024:
+            raise ValueError("runtime output exceeded the size limit")
+        if run_result.returncode != 0:
+            for line in run_result.stdout.decode("ascii").splitlines():
+                if line.startswith("run_failure_phase="):
+                    candidate = line.split("=", 1)[1]
+                    if re.fullmatch(r"[a-z-]{1,32}", candidate):
+                        remote_phase = candidate
+            raise RuntimeError(stage)
         checks = native.parse_facts(
-            common.require_result(
-                stage,
-                prototype.run_ssh(
-                    target, secret, build_run_script(paths, assets), timeout=180
-                ),
-            ),
+            run_result.stdout,
             RUN_KEYS,
         )
         validate_run(checks)
@@ -1819,7 +1842,11 @@ def execute(options: Options) -> int:
             "probe": "hardened-blikvm-diagnostic-maintenance",
             "result": "failed",
             "sourceCommit": assets.source_commit,
-            "failure": {"stage": stage, "failureType": type(error).__name__},
+            "failure": {
+                "stage": stage,
+                "failureType": type(error).__name__,
+                "remotePhase": remote_phase,
+            },
             "cleanup": cleanup,
         }
         write_json_0600_atomic(output, receipt)

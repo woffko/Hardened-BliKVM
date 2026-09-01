@@ -142,6 +142,21 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
         self.assertLess(watchdog, live_write)
         self.assertIn("g hardened-blikvm %s -", script)
         self.assertIn("u hardened-blikvm-broker %s", script)
+        self.assertIn("run_failure_phase=%s", script)
+        for phase in (
+            "prepare-rollback-state",
+            "arm-watchdog",
+            "create-identities",
+            "install-runtime",
+            "create-credential",
+            "verify-systemd",
+            "create-root",
+            "initialize-empty",
+            "inspect-empty",
+            "inspect-temporary",
+            "rollback",
+        ):
+            self.assertIn(f"phase={phase}", script)
 
     def test_preflight_run_and_final_facts_are_exact(self) -> None:
         preflight = {
