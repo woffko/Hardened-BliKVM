@@ -94,9 +94,12 @@ readback mismatch fail closed.
 ## Deferred boundaries
 
 The first implementation is an unlinked library. A sibling unlinked loader now
-parses one fixed systemd credential into the typed caller-owned key ring; see
-`diagnostic-key-credential-v1.md`. Deferred work includes a production key
-ceremony and persistent-source protection, external rollback floor,
-native filesystem gate and maintenance acceptance, Platform Broker feature
-integration, background reconciliation, write-readback-sync-ack coordination,
-HTTP, UI, retention controls, packaging, privacy review, soak, and reboot.
+parses one fixed systemd credential into the typed caller-owned key ring, and a
+separate pure coordinator defines the required post-sync re-selection and
+linear acknowledgement flow; see `diagnostic-key-credential-v1.md` and
+`diagnostic-coordinator-v1.md`. Native filesystem and empty-maintenance gates
+have passed. Deferred work includes a production key ceremony and
+persistent-source protection, a trusted external rollback floor, the concrete
+write-readback-sync-ack store/export-client adapter, Platform Broker feature
+integration, HTTP, the dedicated Diagnostics UI, retention controls,
+packaging, privacy review, soak, and reboot.

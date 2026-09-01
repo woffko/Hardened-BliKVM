@@ -35,9 +35,10 @@ The reversible H616 prototype and the application-update core are implemented:
   unlinked safe fixed-account and Unix-peer adapter, with no raw message, path,
   or identity output;
 - an unlinked fixed-size XChaCha20-Poly1305 diagnostic journal and fixed-root
-  atomic A/B store with OS entropy, plus a fixed 96-byte systemd key loader;
-  all enforce strict inode/ACL/zeroization checks and have no provisioned key,
-  runtime link, acknowledgement, API, or UI;
+  atomic A/B store with OS entropy, a fixed 96-byte systemd key loader, and a
+  cancellation-aware `no_std` write-before-ack coordinator; all enforce strict
+  floor/reselection/inode/ACL/zeroization checks and have no provisioned key,
+  live transport/store link, API, or UI;
 - an unshipped empty-only diagnostic maintenance binary whose static units,
   synthetic systemd credential, encrypted store initialization, nonmutating
   inspection, and full rollback passed on the H616 test device;

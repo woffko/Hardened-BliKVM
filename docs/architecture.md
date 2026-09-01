@@ -188,9 +188,17 @@ only that root; no key source is included. The rollback-gated native H616 test
 accepted real systemd credential delivery, empty initialization, nonmutating
 inspection including crash-temp rejection, and complete restoration; see
 `design/diagnostic-maintenance-v1.md` and
-`baselines/diagnostic-maintenance.md`. The next boundary is the live
-write-readback-sync-ack coordinator, still without production key or HTTP/UI
-authority.
+`baselines/diagnostic-maintenance.md`.
+
+An unlinked `no_std` coordinator now consumes only fresh typed collector
+observations and an abstract journal repository. It requires a nonzero external
+generation floor, clean authenticated selection, exact post-sync re-selection,
+and a second immediate selection before issuing one linear acknowledgement
+permit. A dropped permit blocks normal progress until ambiguity is durably
+recorded or an already selected terminal state is proven. It contains no
+transport, retry loop, timer, concrete store/key link, HTTP/UI, or package; see
+`design/diagnostic-coordinator-v1.md`. A trusted production key/floor and the
+default-off concrete store/export-client adapter remain the next boundary.
 
 ## Core invariants
 

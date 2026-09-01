@@ -359,6 +359,24 @@ identities while KVMD/KVMD Nginx stayed active and rootfs stayed read-write.
 No physical Power/Reset or other device action was invoked; see
 `baselines/diagnostic-maintenance.md`.
 
+The unlinked diagnostic coordinator adds no process or authority. It accepts
+one fresh typed collector observation and a nonzero externally retained
+generation floor, and it can use only an abstract repository returning an
+authenticated `SelectedDiagnosticJournal`. A new mutation is reloaded and
+compared completely. The external floor must then catch up, a fresh collector
+observation must match the selected pending entry, and a second immediate clean
+selection must pass before one linear acknowledgement permit exists.
+
+The coordinator never repairs or retries. Dropping a permit blocks subsequent
+observations until the matching pending entry is durably marked ambiguous or a
+previously completed terminal write is authenticated. A one-copy interrupted
+write requires explicit repair; a two-copy write that returned an error is
+discovered without repeating the acknowledgement. Repository payloads,
+collector bindings, and bundle contents are omitted from coordinator
+`Debug`/`Display`. There is still no concrete store/client adapter, runtime,
+HTTP/UI, unit, package, or enabled feature; see
+`design/diagnostic-coordinator-v1.md`.
+
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
 Production source creation, rotation, backup/recovery, external floor, and

@@ -155,6 +155,13 @@ no missing external license expression. A 1,233-advisory RustSec scan accepted
 the exact graph. The maintenance executable, units, tmpfiles source, loader,
 store, and journal remain absent from the prototype archive.
 
+The diagnostic coordinator adds one `no_std` workspace package and no external
+dependency. It reuses only the diagnostic journal in production; the typed
+diagnostic export crate is a test-only workspace dependency. It remains
+unlinked and absent from every server, broker, unit, package, and prototype
+archive. The locked graph contains 173 packages: 56 workspace and 117 external,
+with no missing external license expression.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

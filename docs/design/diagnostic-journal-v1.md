@@ -131,16 +131,17 @@ previously decrypted and selected journal:
 
 The planner cannot create an acknowledgement action from a newly constructed
 or merely prepared journal. Only state returned by authenticated A/B selection
-can authorize it. The future adapter must still enforce write, readback,
-file/directory sync, and re-selection before invoking that action. The unlinked
-store now enforces those persistence steps; no live caller invokes the action.
+can authorize it. The unlinked coordinator now requires store persistence,
+post-sync authenticated re-selection, an external floor at the selected
+generation, and a second immediate selection before issuing one linear permit;
+see `diagnostic-coordinator-v1.md`. No live caller invokes the action.
 
 ## Deferred boundaries
 
 The first implementation remains a pure `no_std` crate. Sibling unlinked layers
-now supply fixed-root atomic storage, OS randomness, and canonical systemd
-credential parsing. Still-deferred, separately gated work includes a production
-key/rotation ceremony, persistent credential protection, native store gate,
-live broker coordination, acknowledgement ambiguity recovery across process
-crashes, external rollback floor, authenticated HTTP, UI, retention controls,
-packaging, privacy review, soak, and reboot.
+now supply fixed-root atomic storage, OS randomness, canonical systemd
+credential parsing, and cancellation-aware coordination. Still-deferred,
+separately gated work includes a production key/rotation ceremony, persistent
+credential protection, a trusted external rollback floor, concrete live broker
+coordination, authenticated HTTP, the dedicated Diagnostics UI, retention
+controls, packaging, privacy review, soak, and reboot.

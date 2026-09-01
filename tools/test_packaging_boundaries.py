@@ -157,6 +157,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
         diagnostic_journal = ROOT / "crates/bli-kvm-diagnostic-journal"
         diagnostic_store = ROOT / "crates/bli-kvm-diagnostic-store"
+        diagnostic_coordinator = ROOT / "crates/bli-kvm-diagnostic-coordinator"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
@@ -177,6 +178,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 export_client / "Cargo.toml",
                 diagnostic_journal / "Cargo.toml",
                 diagnostic_store / "Cargo.toml",
+                diagnostic_coordinator / "Cargo.toml",
                 export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
@@ -422,6 +424,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         crate = ROOT / "crates/bli-kvm-diagnostic-journal"
         store = ROOT / "crates/bli-kvm-diagnostic-store"
         key_loader = ROOT / "crates/bli-kvm-diagnostic-key-loader"
+        coordinator = ROOT / "crates/bli-kvm-diagnostic-coordinator"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -439,6 +442,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 crate / "Cargo.toml",
                 store / "Cargo.toml",
                 key_loader / "Cargo.toml",
+                coordinator / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-journal", other_manifest.read_text()
@@ -498,6 +502,87 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("XChaCha20Poly1305", design)
         self.assertIn("does not protect", design)
         self.assertIn("write-before-ack", design)
+
+    def test_diagnostic_coordinator_is_floor_gated_linear_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-coordinator"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production, tests = source.split("#[cfg(test)]", 1)
+        design = (
+            ROOT / "docs/design/diagnostic-coordinator-v1.md"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-coordinator"', workspace)
+        self.assertIn("bli-kvm-diagnostic-journal =", manifest)
+        self.assertIn("[dev-dependencies]", manifest)
+        self.assertIn("bli-kvm-diagnostic-export =", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-coordinator", other_manifest.read_text()
+                )
+        for required in (
+            "#![no_std]",
+            "#![forbid(unsafe_code)]",
+            "pub trait DiagnosticJournalRepository",
+            "pub struct DiagnosticGenerationFloor(NonZeroU64)",
+            "pub struct DiagnosticCoordinator",
+            "pub fn observe",
+            "pub fn prepare_acknowledgement",
+            "pub fn recover_cancelled_acknowledgement",
+            "pub struct DiagnosticAcknowledgementPermit",
+            "impl<R: DiagnosticJournalRepository> Drop",
+            "AcknowledgementRecoveryRequired",
+            "AcknowledgementNotReady",
+            "DiagnosticAcknowledgementCompletion::NotSent",
+            "AcknowledgementResult::DeliveryAmbiguous",
+            "selected.generation() > floor.get()",
+            "selected.degraded()",
+            "selected.journal() != mutation.journal()",
+            "self.persist_verified(floor, mutation)",
+        ):
+            self.assertIn(required, production)
+        for required_test in (
+            "floor_must_catch_up_before_acknowledgement_permit",
+            "dropped_permit_blocks_observation_until_ambiguity_is_persisted",
+            "failure_after_first_copy_requires_explicit_repair",
+            "failure_after_both_copies_is_discovered_without_duplicate_write",
+            "failed_ack_persistence_arms_recovery_and_terminal_write_is_discovered",
+            "bounded_repository_operations_have_no_internal_retry",
+        ):
+            self.assertIn(required_test, tests)
+        self.assertNotIn("bli-kvm-diagnostic-coordinator", builder)
+        for forbidden in (
+            "std::",
+            "tokio::",
+            "async fn",
+            "DiagnosticJournalStore",
+            "DiagnosticExportClient",
+            "DiagnosticJournalKey",
+            "LoadCredential",
+            "String",
+            "Vec<",
+            "Path",
+            "Command",
+            "serde",
+            "tracing",
+            "log::",
+            "println!",
+            "eprintln!",
+            "/run/",
+            "/var/",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+        for required_design in (
+            "External rollback floor",
+            "linear acknowledgement permit",
+            "never loops or retries",
+            "full process crash",
+            "dedicated Diagnostics tab",
+        ):
+            self.assertIn(required_design, design)
 
     def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()

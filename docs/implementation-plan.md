@@ -526,6 +526,34 @@ soak/reboot and release remain absent; see
 `design/diagnostic-maintenance-v1.md` and
 `baselines/diagnostic-maintenance.md`.
 
+Checkpoint: the unlinked `no_std` `bli-kvm-diagnostic-coordinator` now composes
+fresh typed collector observations with an abstract journal repository and a
+caller-supplied nonzero external rollback floor. Every mutation is followed by
+a clean authenticated re-selection; the external floor must catch up before a
+fresh observation can establish readiness, and a second immediate selection
+is required before one linear acknowledgement permit is issued. Not-sent and
+mismatch outcomes never mutate or retry. Delivery ambiguity, collector
+unavailability during acknowledgement, dropped permits, partial writes, and
+post-write errors fail closed through explicit recovery, while degraded copies
+require separate repair. The crate contains no concrete store/client link,
+key, runtime, timer, background task, HTTP/UI, unit, package, or enabled
+feature; see `design/diagnostic-coordinator-v1.md`.
+
+Planned diagnostics product gate: after the write-before-ack coordinator and
+an authenticated read-only HTTP API are accepted, add a dedicated
+`Diagnostics` tab to the branded web interface. It must show the already
+sanitized SoC temperature plus capability-gated, typed health observations
+such as fan state when available, RTC/time status, video/input-link state,
+bounded service health, diagnostic-window state, and storage pressure. Missing
+or unsupported sensors remain explicit rather than synthesized. The tab must
+use localized labels and states, bounded refresh with cancellation, and the
+same authenticated session boundary as the rest of the GUI. It must not expose
+raw vendor logs, filesystem paths, account names, device identifiers, network
+topology, secrets, or Power/Reset actions. Acceptance requires schema/privacy
+tests, desktop and mobile browser rendering, unavailable/stale/error states,
+session-expiry behavior, an H616 runtime gate, soak, reboot persistence, and
+complete rollback of temporary test state.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

@@ -210,6 +210,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-diagnostic-coordinator"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-export",
+ "bli-kvm-diagnostic-journal",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-export"
 version = "0.1.0"
 
