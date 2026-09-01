@@ -108,6 +108,22 @@ RECOVERY_KEYS = {
     "state_present",
     "watchdog_state",
 }
+RECOVERY_OVERVIEW_KEYS = {
+    "account_state",
+    "binary_present",
+    "credential_present",
+    "init_unit_present",
+    "inspect_unit_present",
+    "kvmd_active",
+    "kvmd_nginx_active",
+    "marker_count",
+    "production_root_present",
+    "rootfs_mode",
+    "stage_count",
+    "state_count",
+    "watchdog_service_active_count",
+    "watchdog_timer_active_count",
+}
 
 
 @dataclass(frozen=True)
@@ -1163,6 +1179,70 @@ emit watchdog_state "$watchdog_state"
     return f"{values}\n{body}"
 
 
+def build_recovery_overview_script(binary_sha256: str) -> str:
+    if SHA256.fullmatch(binary_sha256) is None:
+        raise ValueError("binary SHA-256 is invalid")
+    values = common.assignments(
+        {
+            "prefix": (
+                "/tmp/hardened-blikvm-diagnostic-maintenance-"
+                f"{binary_sha256[:12]}-"
+            ),
+            "production_root": PRODUCTION_ROOT,
+            "credential_target": CREDENTIAL_TARGET,
+            "binary_target": BINARY_TARGET,
+            "init_target": INIT_UNIT_TARGET,
+            "inspect_target": INSPECT_UNIT_TARGET,
+            "broker_account": BROKER_ACCOUNT,
+            "shared_group": SHARED_GROUP,
+        }
+    )
+    body = r"""
+set -eu
+emit() { printf '%s=%s\n' "$1" "$2"; }
+stage_count=0
+marker_count=0
+state_count=0
+for candidate in "$prefix"*; do
+  [ -d "$candidate" ] || continue
+  stage_count=$((stage_count + 1))
+  if [ -f "$candidate/.hardened-blikvm-owner" ]; then marker_count=$((marker_count + 1)); fi
+  if [ -f "$candidate/rollback.state" ]; then state_count=$((state_count + 1)); fi
+done
+present() { if [ -e "$1" ]; then printf yes; else printf no; fi; }
+user_present=no
+broker_group_present=no
+shared_group_present=no
+if getent passwd "$broker_account" >/dev/null 2>&1; then user_present=yes; fi
+if getent group "$broker_account" >/dev/null 2>&1; then broker_group_present=yes; fi
+if getent group "$shared_group" >/dev/null 2>&1; then shared_group_present=yes; fi
+case "$user_present:$broker_group_present:$shared_group_present" in
+  yes:yes:yes) account_state=present ;;
+  no:no:no) account_state=absent ;;
+  *) account_state=partial ;;
+esac
+watchdog_timer_active_count=$(systemctl list-units --type=timer --state=active --plain --no-legend 2>/dev/null | awk '$1 ~ /^hardened-blikvm-diagnostic-rollback-[0-9a-f]+\.timer$/ {count++} END {print count+0}')
+watchdog_service_active_count=$(systemctl list-units --type=service --state=active --plain --no-legend 2>/dev/null | awk '$1 ~ /^hardened-blikvm-diagnostic-rollback-[0-9a-f]+\.service$/ {count++} END {print count+0}')
+root_options=$(findmnt -n -o OPTIONS /)
+case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) rootfs_mode=other ;; esac
+emit account_state "$account_state"
+emit binary_present "$(present "$binary_target")"
+emit credential_present "$(present "$credential_target")"
+emit init_unit_present "$(present "$init_target")"
+emit inspect_unit_present "$(present "$inspect_target")"
+emit kvmd_active "$(systemctl is-active kvmd.service 2>/dev/null || true)"
+emit kvmd_nginx_active "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)"
+emit marker_count "$marker_count"
+emit production_root_present "$(present "$production_root")"
+emit rootfs_mode "$rootfs_mode"
+emit stage_count "$stage_count"
+emit state_count "$state_count"
+emit watchdog_service_active_count "$watchdog_service_active_count"
+emit watchdog_timer_active_count "$watchdog_timer_active_count"
+""".strip()
+    return f"{values}\n{body}"
+
+
 def attempt_cleanup(
     target: prototype.RemoteTarget,
     secret: bytearray,
@@ -1207,6 +1287,50 @@ def upload(
         )
 
 
+def capture_recovery_overview(
+    assets: Assets,
+    target: prototype.RemoteTarget,
+    secret: bytearray,
+) -> dict[str, str]:
+    overview = native.parse_facts(
+        common.require_result(
+            "recovery-overview",
+            prototype.run_ssh(
+                target,
+                secret,
+                build_recovery_overview_script(assets.binary.sha256),
+                timeout=30,
+            ),
+        ),
+        RECOVERY_OVERVIEW_KEYS,
+    )
+    for key in (
+        "binary_present",
+        "credential_present",
+        "init_unit_present",
+        "inspect_unit_present",
+        "production_root_present",
+    ):
+        if overview[key] not in {"yes", "no"}:
+            raise ValueError("recovery presence fact is invalid")
+    for key in (
+        "marker_count",
+        "stage_count",
+        "state_count",
+        "watchdog_service_active_count",
+        "watchdog_timer_active_count",
+    ):
+        if not overview[key].isdigit() or int(overview[key]) > 8:
+            raise ValueError("recovery count is invalid")
+    if overview["account_state"] not in {"present", "absent", "partial"}:
+        raise ValueError("recovery account state is invalid")
+    if overview["kvmd_active"] != "active" or overview["kvmd_nginx_active"] != "active":
+        raise ValueError("required device service is inactive")
+    if overview["rootfs_mode"] not in {"rw", "other"}:
+        raise ValueError("recovery rootfs fact is invalid")
+    return overview
+
+
 def recover_existing(
     output: Path,
     assets: Assets,
@@ -1219,6 +1343,7 @@ def recover_existing(
         "confirmed": False,
         "failurePhase": None,
     }
+    overview: dict[str, str] | None = None
     try:
         discovery = native.parse_facts(
             common.require_result(
@@ -1295,12 +1420,17 @@ def recover_existing(
         write_json_0600_atomic(output, receipt)
         return 0
     except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError, ValueError) as error:
+        try:
+            overview = capture_recovery_overview(assets, target, secret)
+        except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError, ValueError):
+            overview = None
         receipt = {
             "schemaVersion": 1,
             "probe": "hardened-blikvm-diagnostic-maintenance-recovery",
             "result": "failed",
             "sourceCommit": assets.source_commit,
             "failure": {"stage": stage, "failureType": type(error).__name__},
+            "overview": overview,
             "cleanup": cleanup,
         }
         write_json_0600_atomic(output, receipt)

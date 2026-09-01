@@ -40,6 +40,7 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
             stage.build_cleanup_script(paths, assets),
             stage.build_final_script(paths, "present", "absent", "present"),
             stage.build_recovery_discovery_script("a" * 64),
+            stage.build_recovery_overview_script("a" * 64),
         )
         for script in scripts:
             result = subprocess.run(
@@ -109,6 +110,11 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
         self.assertNotIn("sha256sum \"$credential_target\"", script)
         for key in stage.RECOVERY_KEYS:
             self.assertIn(f'emit {key} "$', script)
+        overview = stage.build_recovery_overview_script("a" * 64)
+        self.assertNotIn("cat \"$credential_target\"", overview)
+        self.assertNotIn("sha256sum \"$credential_target\"", overview)
+        for key in stage.RECOVERY_OVERVIEW_KEYS:
+            self.assertIn(f"emit {key} ", overview)
 
     def test_account_transition_is_predicted_before_watchdog_and_live_write(self) -> None:
         script = stage.build_run_script(
