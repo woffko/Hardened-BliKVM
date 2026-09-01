@@ -163,6 +163,13 @@ archive. The locked graph contains 173 packages: 56 workspace and 117 external,
 with no missing external license expression. A 1,233-advisory RustSec scan at
 source `945eb19` accepted the exact graph.
 
+The diagnostic persistence adapter adds one workspace package and no external
+dependency. It reuses only the accepted coordinator, typed export/client,
+journal, key-loader, and store graph; Tokio is test-only for cancellation
+checks. The adapter remains unlinked and absent from every executable, unit,
+package, and prototype archive. The locked graph contains 174 packages: 57
+workspace and 117 external, with no missing external license expression.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

@@ -158,6 +158,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         diagnostic_journal = ROOT / "crates/bli-kvm-diagnostic-journal"
         diagnostic_store = ROOT / "crates/bli-kvm-diagnostic-store"
         diagnostic_coordinator = ROOT / "crates/bli-kvm-diagnostic-coordinator"
+        diagnostic_persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
@@ -179,6 +180,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 diagnostic_journal / "Cargo.toml",
                 diagnostic_store / "Cargo.toml",
                 diagnostic_coordinator / "Cargo.toml",
+                diagnostic_persistence / "Cargo.toml",
                 export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
@@ -257,7 +259,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, production)
 
-    def test_diagnostic_export_client_is_fixed_bounded_and_default_off_broker_only(
+    def test_diagnostic_export_client_is_fixed_bounded_and_default_off_consumers_only(
         self,
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
@@ -266,6 +268,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
         platform_broker = ROOT / "crates/bli-kvm-platform-broker"
+        persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
         platform_manifest = (platform_broker / "Cargo.toml").read_text()
         platform_source = (platform_broker / "src/server.rs").read_text()
         broker_protocol_manifest = (
@@ -284,6 +287,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 platform_broker / "Cargo.toml",
+                persistence / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-export-client", other_manifest.read_text()
@@ -425,6 +429,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         store = ROOT / "crates/bli-kvm-diagnostic-store"
         key_loader = ROOT / "crates/bli-kvm-diagnostic-key-loader"
         coordinator = ROOT / "crates/bli-kvm-diagnostic-coordinator"
+        persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -443,6 +448,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 store / "Cargo.toml",
                 key_loader / "Cargo.toml",
                 coordinator / "Cargo.toml",
+                persistence / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-journal", other_manifest.read_text()
@@ -520,8 +526,12 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("bli-kvm-diagnostic-journal =", manifest)
         self.assertIn("[dev-dependencies]", manifest)
         self.assertIn("bli-kvm-diagnostic-export =", manifest)
+        persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                persistence / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-coordinator", other_manifest.read_text()
                 )
@@ -597,10 +607,101 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(required_baseline, baseline)
 
+    def test_diagnostic_persistence_is_fixed_one_step_and_unlinked(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-persistence"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production, tests = source.split("#[cfg(test)]", 1)
+        design = (
+            ROOT / "docs/design/diagnostic-persistence-v1.md"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-persistence"', workspace)
+        for dependency in (
+            "bli-kvm-diagnostic-coordinator =",
+            "bli-kvm-diagnostic-export =",
+            "bli-kvm-diagnostic-export-client =",
+            "bli-kvm-diagnostic-journal =",
+            "bli-kvm-diagnostic-key-loader =",
+            "bli-kvm-diagnostic-store =",
+        ):
+            self.assertIn(dependency, manifest)
+        self.assertNotIn("tokio.workspace = true", manifest.split("[dev-dependencies]", 1)[0])
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-persistence", other_manifest.read_text()
+                )
+        for required in (
+            "#![forbid(unsafe_code)]",
+            "pub enum DiagnosticPersistenceStep",
+            "pub enum DiagnosticPersistenceError",
+            "pub struct DiagnosticPersistenceRuntime",
+            "pub fn new(",
+            "keys: LoadedDiagnosticJournalKeys",
+            "store: DiagnosticJournalStore",
+            "DiagnosticExportClient::new()",
+            "pub async fn poll",
+            ".load_read_only(&self.keys.key_ring(), minimum_generation)",
+            ".update(&self.keys.key_ring(), minimum_generation, mutation)",
+            ".recover_cancelled_acknowledgement(floor)",
+            ".prepare_acknowledgement(floor)",
+            "transport.acknowledge_once(binding).await",
+            "DiagnosticAcknowledgementCompletion::DeliveryAmbiguous",
+            "DiagnosticAcknowledgementCompletion::CollectorUnavailable",
+            "DiagnosticPersistenceStep::AcknowledgementNotSent",
+            "#[allow(clippy::large_enum_variant)]",
+        ):
+            self.assertIn(required, production)
+        for required_test in (
+            "new_snapshot_is_persisted_without_ack_until_floor_advances",
+            "read_cancellation_is_nonmutating_and_needs_an_explicit_new_poll",
+            "cancellation_during_ack_blocks_read_until_ambiguity_is_durable",
+            "ack_failure_after_first_copy_requires_repair_and_keeps_marker",
+            "ack_failure_after_both_copies_discovers_terminal_without_read",
+            "export_client_outcomes_map_exhaustively_without_retry",
+            "poll_future_size_is_bounded_for_fake_and_exact_transport",
+        ):
+            self.assertIn(required_test, tests)
+        self.assertNotIn("bli-kvm-diagnostic-persistence", builder)
+        for forbidden in (
+            "load_systemd_diagnostic_journal_keys",
+            "DiagnosticJournalStore::open",
+            "std::path",
+            "std::env",
+            "PathBuf",
+            "Command",
+            "tokio::spawn",
+            "spawn(",
+            "loop {",
+            "retry(",
+            "serde",
+            "tracing",
+            "log::",
+            "println!",
+            "eprintln!",
+            "Tcp",
+            "Http",
+            "/run/",
+            "/var/",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+        for required_design in (
+            "fixed-boundary objects",
+            "One-step runtime",
+            "Async cancellation",
+            "no trusted production floor",
+            "dedicated Diagnostics tab",
+        ):
+            self.assertIn(required_design, design)
+
     def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-store"
         maintenance = ROOT / "crates/bli-kvm-diagnostic-maintenance"
+        persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source
@@ -619,6 +720,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 maintenance / "Cargo.toml",
+                persistence / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-store", other_manifest.read_text()
@@ -699,6 +801,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-key-loader"
         maintenance = ROOT / "crates/bli-kvm-diagnostic-maintenance"
+        persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -720,6 +823,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 maintenance / "Cargo.toml",
+                persistence / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-key-loader", other_manifest.read_text()

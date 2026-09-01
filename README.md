@@ -39,6 +39,9 @@ The reversible H616 prototype and the application-update core are implemented:
   cancellation-aware `no_std` write-before-ack coordinator; all enforce strict
   floor/reselection/inode/ACL/zeroization checks and have no provisioned key,
   live transport/store link, API, or UI;
+- an unlinked default-off diagnostic persistence adapter that composes only
+  the accepted typed keys, fixed store, fixed export client, and coordinator;
+  it has no floor source, executable, service, package, HTTP, or UI;
 - an unshipped empty-only diagnostic maintenance binary whose static units,
   synthetic systemd credential, encrypted store initialization, nonmutating
   inspection, and full rollback passed on the H616 test device;

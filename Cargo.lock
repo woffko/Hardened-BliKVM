@@ -303,6 +303,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-diagnostic-persistence"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-coordinator",
+ "bli-kvm-diagnostic-export",
+ "bli-kvm-diagnostic-export-client",
+ "bli-kvm-diagnostic-journal",
+ "bli-kvm-diagnostic-key-loader",
+ "bli-kvm-diagnostic-store",
+ "tokio",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-producer-client"
 version = "0.1.0"
 dependencies = [

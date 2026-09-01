@@ -198,8 +198,18 @@ permit. A dropped permit blocks normal progress until ambiguity is durably
 recorded or an already selected terminal state is proven. It contains no
 transport, retry loop, timer, concrete store/key link, HTTP/UI, or package; see
 `design/diagnostic-coordinator-v1.md` and
-`baselines/diagnostic-coordinator.md`. A trusted production key/floor and the
-default-off concrete store/export-client adapter remain the next boundary.
+`baselines/diagnostic-coordinator.md`. A trusted production key/floor remains
+unavailable.
+
+That concrete composition now exists as the unlinked
+`bli-kvm-diagnostic-persistence` library. Its only public constructor consumes
+the already validated key-loader output and fixed store object, then creates
+the fixed export client. One cancellation-aware async `poll` maps one read and
+at most one acknowledgement through the coordinator; it never loops, retries,
+spawns, opens a path, loads a credential, or derives a floor. It is not linked
+to Platform Broker or any executable/unit/package and cannot run in production
+without the still-missing trusted floor and key-custody boundary; see
+`design/diagnostic-persistence-v1.md`.
 
 ## Core invariants
 

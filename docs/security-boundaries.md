@@ -377,6 +377,17 @@ collector bindings, and bundle contents are omitted from coordinator
 HTTP/UI, unit, package, or enabled feature; see
 `design/diagnostic-coordinator-v1.md`.
 
+The unlinked persistence adapter now proves the concrete type composition
+without adding runtime authority. It accepts only `LoadedDiagnosticJournalKeys`
+and `DiagnosticJournalStore`, creates the fixed `DiagnosticExportClient`, uses
+nonmutating store loads, and delegates every state change and permit to the
+accepted coordinator. One explicit poll makes at most one read and one
+acknowledgement. It performs no internal retry, and cancellation while awaiting
+acknowledgement drops the armed permit so the next call persists ambiguity
+before reading the collector. It has no loader/store-open call, path, raw key,
+floor source, task spawn, logging, HTTP/UI, executable, unit, or package; see
+`design/diagnostic-persistence-v1.md`.
+
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
 Production source creation, rotation, backup/recovery, external floor, and

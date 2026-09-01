@@ -547,6 +547,16 @@ executables were built and also matched byte-for-byte. They were not run on the
 device, and the source remains unlinked; see
 `baselines/diagnostic-coordinator.md`.
 
+Checkpoint: the unlinked `bli-kvm-diagnostic-persistence` library now composes
+only the accepted loaded-key, fixed-store, fixed-export-client, and coordinator
+types. One bounded poll performs one read and at most one permitted
+acknowledgement with exact not-sent/mismatch/unavailable/ambiguous mapping.
+Read cancellation is nonmutating; acknowledgement cancellation forces durable
+recovery before a later read. The adapter uses nonmutating store selection,
+adds no path/configuration/retry/background task, and remains absent from every
+broker, executable, unit, package, HTTP route, UI, and prototype payload; see
+`design/diagnostic-persistence-v1.md`.
+
 Planned diagnostics product gate: after the write-before-ack coordinator and
 an authenticated read-only HTTP API are accepted, add a dedicated
 `Diagnostics` tab to the branded web interface. It must show the already
