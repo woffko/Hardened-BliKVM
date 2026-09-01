@@ -53,6 +53,10 @@ BasedPyright, frontend build/lint, and formatting matrix. An earlier job stopped
 only at the formatter before running the matrix; the formatted replacement is
 the accepted result.
 
+Final evidence job `d7bb40e780d94af79f258009fee3e1ad` repeated the complete
+matrix from clean evidence commit
+`306f436175fc8d71b2f63f7458fee3c4144db6ce` and exited zero.
+
 The project LSP server was retried for the new Rust source and returned
 `document limit exceeded: 100/100`; LSP diagnostics are not claimed. Compiler,
 tests, Clippy, rustdoc, and source-boundary checks are the authoritative source

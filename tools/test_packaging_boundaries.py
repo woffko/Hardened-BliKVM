@@ -705,6 +705,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "document limit exceeded: 100/100",
             "06164420cfaad73eebc854751e3830386f32c48b34275c2d3a91654b0815922f",
             "32bcbf8df703cc9ed0efb44942ca35eb21b346fcd407524e387d9e4680e2316c",
+            "d7bb40e780d94af79f258009fee3e1ad",
             "deviceAccepted=false",
         ):
             self.assertIn(required_baseline, baseline)
