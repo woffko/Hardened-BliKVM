@@ -70,8 +70,9 @@ export function useDiagnostics() {
         refreshing: false
       }));
     } finally {
-      if (controllerRef.current === controller) controllerRef.current = null;
-      if (mountedRef.current && isDocumentVisible()) {
+      const ownsController = controllerRef.current === controller;
+      if (ownsController) controllerRef.current = null;
+      if (ownsController && mountedRef.current && isDocumentVisible()) {
         if (manualRefreshQueuedRef.current) {
           manualRefreshQueuedRef.current = false;
           void load();
@@ -86,8 +87,22 @@ export function useDiagnostics() {
     if (!mountedRef.current || !isDocumentVisible()) return;
     clearScheduledRefresh();
     if (controllerRef.current) {
+      const activeController = controllerRef.current;
       manualRefreshQueuedRef.current = true;
       setSnapshot((current) => ({ ...current, refreshing: true }));
+      activeController.abort();
+      window.queueMicrotask(() => {
+        if (
+          mountedRef.current &&
+          isDocumentVisible() &&
+          manualRefreshQueuedRef.current &&
+          controllerRef.current === activeController
+        ) {
+          controllerRef.current = null;
+          manualRefreshQueuedRef.current = false;
+          void load();
+        }
+      });
       return;
     }
     void load();

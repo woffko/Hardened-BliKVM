@@ -349,6 +349,18 @@ try {
   );
   phase = "diagnostics-refresh-click";
   await diagnosticsRefreshButton.click();
+  phase = "diagnostics-refresh-started";
+  const diagnosticsRefreshButtonHandle =
+    await diagnosticsRefreshButton.elementHandle();
+  assert.ok(diagnosticsRefreshButtonHandle);
+  await Promise.race([
+    refreshedDiagnosticsResponse,
+    page.waitForFunction(
+      (button) => button instanceof HTMLButtonElement && button.disabled,
+      diagnosticsRefreshButtonHandle,
+      { timeout: 3000 },
+    ),
+  ]);
   phase = "diagnostics-refresh-response";
   const refreshedDiagnostics = await refreshedDiagnosticsResponse;
   assert.equal((await refreshedDiagnostics.json()).data.schemaVersion, 1);
@@ -440,6 +452,18 @@ try {
   );
   phase = "diagnostics-mobile-refresh-click";
   await mobileDiagnosticsRefreshButton.click();
+  phase = "diagnostics-mobile-refresh-started";
+  const mobileDiagnosticsRefreshButtonHandle =
+    await mobileDiagnosticsRefreshButton.elementHandle();
+  assert.ok(mobileDiagnosticsRefreshButtonHandle);
+  await Promise.race([
+    refreshedMobileDiagnosticsResponse,
+    mobilePage.waitForFunction(
+      (button) => button instanceof HTMLButtonElement && button.disabled,
+      mobileDiagnosticsRefreshButtonHandle,
+      { timeout: 3000 },
+    ),
+  ]);
   phase = "diagnostics-mobile-refresh-response";
   assert.equal(
     (await (await refreshedMobileDiagnosticsResponse).json()).data

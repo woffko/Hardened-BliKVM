@@ -2134,6 +2134,10 @@ class PackagingBoundaryTests(unittest.TestCase):
             "controllerRef.current?.abort()",
             "manualRefreshQueuedRef.current = true",
             "manualRefreshQueuedRef.current = false",
+            "const ownsController = controllerRef.current === controller",
+            "activeController.abort()",
+            "window.queueMicrotask",
+            "controllerRef.current === activeController",
             "current.data ? 'stale' : 'error'",
             "isDiagnosticsView(response.data)",
         ):
