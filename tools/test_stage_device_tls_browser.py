@@ -192,6 +192,9 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertNotIn("10.0.", script)
         self.assertIn('"/api/diagnostics"', script)
         self.assertIn('getByRole("button", { name: "Refresh" })', script)
+        self.assertIn('setViewportSize({ width: 390, height: 844 })', script)
+        self.assertIn('"hardened-blikvm-language", "zh_tw"', script)
+        self.assertIn('getByRole("button", { name: "重新整理" })', script)
         self.assertNotRegex(script, r"getByRole\(\"button\", \{ name: \"(?:Power|Reset)")
 
     def test_browser_failure_envelope_is_bounded_and_allowlisted(self) -> None:
@@ -227,6 +230,7 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             "rtcUi": "rendered",
             "diagnosticsApi": "authenticated-current-only",
             "diagnosticsUi": "rendered-action-free",
+            "diagnosticsMobileUi": "zh-tw-responsive-action-free",
             "diagnosticsHistory": "persistence-not-provisioned",
             "videoCapability": "read_only",
             "hidCapability": "unavailable",

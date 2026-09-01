@@ -1220,6 +1220,7 @@ def validate_browser(raw: bytes) -> dict[str, object]:
         "rtcUi": "rendered",
         "diagnosticsApi": "authenticated-current-only",
         "diagnosticsUi": "rendered-action-free",
+        "diagnosticsMobileUi": "zh-tw-responsive-action-free",
         "diagnosticsHistory": "persistence-not-provisioned",
         "videoCapability": "read_only",
         "hidCapability": "unavailable",

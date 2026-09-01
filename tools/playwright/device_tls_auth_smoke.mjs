@@ -348,6 +348,91 @@ try {
   await page.keyboard.press("Escape");
   await settingsDialog.waitFor({ state: "hidden" });
 
+  phase = "diagnostics-mobile";
+  const mobilePage = await context.newPage();
+  await mobilePage.setViewportSize({ width: 390, height: 844 });
+  await mobilePage.addInitScript(() => {
+    localStorage.setItem("hardened-blikvm-language", "zh_tw");
+  });
+  mobilePage.on("pageerror", (error) => pageErrors.push(error.name));
+  mobilePage.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/")) {
+      requests.push({ method: request.method(), path });
+    }
+  });
+  mobilePage.on("websocket", () => {
+    webSocketsObserved += 1;
+  });
+  mobilePage.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.startsWith("/api/")) {
+      responses.push({
+        method: response.request().method(),
+        path,
+        status: response.status(),
+      });
+    }
+  });
+  const mobileDocumentResponse = await mobilePage.goto(`${baseUrl}/#/`, {
+    waitUntil: "domcontentloaded",
+  });
+  assert.equal(mobileDocumentResponse?.status(), 200);
+  await mobilePage.waitForFunction(
+    () => document.title === "遠端桌面 - Hardened BliKVM",
+  );
+  await mobilePage.waitForFunction(() => {
+    const screen = document.querySelector("img#screen");
+    return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
+  });
+  await mobilePage.locator("svg.lucide-settings").first().click();
+  const mobileSettingsDialog = mobilePage.getByRole("dialog");
+  await mobileSettingsDialog.waitFor();
+  const mobileDiagnosticsResponse = mobilePage.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/diagnostics" &&
+      response.request().method() === "GET" &&
+      response.status() === 200,
+  );
+  await mobileSettingsDialog.getByText("診斷", { exact: true }).click();
+  assert.equal(
+    (await (await mobileDiagnosticsResponse).json()).data.schemaVersion,
+    1,
+  );
+  await mobileSettingsDialog
+    .getByText("目前唯讀裝置狀態", { exact: true })
+    .waitFor();
+  await mobileSettingsDialog.getByText("SoC 溫度", { exact: true }).waitFor();
+  await mobileSettingsDialog
+    .getByText("此裝置尚未設定持久診斷歷史記錄。", { exact: true })
+    .waitFor();
+  const mobileLayout = await mobilePage.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+  }));
+  assert.equal(mobileLayout.innerWidth, 390);
+  assert.ok(mobileLayout.documentWidth <= mobileLayout.innerWidth + 1);
+  assert.equal(
+    await mobileSettingsDialog
+      .getByRole("button", { name: /power|reset|電源|重設|重新啟動/i })
+      .count(),
+    0,
+  );
+  phase = "diagnostics-mobile-refresh";
+  const refreshedMobileDiagnosticsResponse = mobilePage.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/diagnostics" &&
+      response.request().method() === "GET" &&
+      response.status() === 200,
+  );
+  await mobileSettingsDialog.getByRole("button", { name: "重新整理" }).click();
+  assert.equal(
+    (await (await refreshedMobileDiagnosticsResponse).json()).data
+      .schemaVersion,
+    1,
+  );
+  await mobilePage.close();
+
   phase = "password-page";
   await page.goto(`${baseUrl}/#/auth/password`, { waitUntil: "networkidle" });
   await page.waitForFunction(
@@ -480,6 +565,7 @@ try {
       rtcUi: "rendered",
       diagnosticsApi: "authenticated-current-only",
       diagnosticsUi: "rendered-action-free",
+      diagnosticsMobileUi: "zh-tw-responsive-action-free",
       diagnosticsHistory: "persistence-not-provisioned",
       videoCapability: "read_only",
       hidCapability: "unavailable",
