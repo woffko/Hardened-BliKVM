@@ -73,6 +73,10 @@ twelve focused tests and clean BasedPyright. Focused Rust tests, Clippy, rustdoc
 with warnings denied, source/systemd boundaries, and a 1,233-advisory RustSec
 scan passed.
 
+Final evidence job `914ababb63eb49ee860095b677eee5bd` exited zero from clean
+evidence commit `e887653` with 156 Python tests and the complete
+Rust/frontend/source/systemd matrix.
+
 Locked metadata contains 172 packages: 55 workspace and 117 external, with no
 missing external license expression. Maintenance adds one workspace package
 and no external dependency.
