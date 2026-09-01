@@ -333,9 +333,10 @@ package_installed() {
 }
 accounts_absent() {
   for account in hardened-blikvm-server hardened-blikvm-broker hardened-blikvm-video hardened-blikvm-control hardened-blikvm-update; do
-    getent passwd "$account" >/dev/null 2>&1 && return 1
+    if getent passwd "$account" >/dev/null 2>&1; then return 1; fi
   done
-  getent group hardened-blikvm >/dev/null 2>&1 && return 1
+  if getent group hardened-blikvm >/dev/null 2>&1; then return 1; fi
+  return 0
 }
 production_paths_absent() {
   for path in /usr/libexec/hardened-blikvm /usr/share/hardened-blikvm /usr/share/doc/hardened-blikvm-runtime \
@@ -374,31 +375,54 @@ def build_preflight_script(paths: RemotePaths, package: PackageInfo) -> str:
 set -eu
 export LC_ALL=C
 emit() { printf '%s=%s\n' "$1" "$2"; }
+phase=identity
+on_exit() {
+  code=$?
+  trap - EXIT
+  if [ "$code" -ne 0 ]; then emit failure_phase "$phase"; fi
+  exit "$code"
+}
+trap on_exit EXIT
 [ "$(id -u)" = 0 ]
 [ "$(uname -m)" = aarch64 ]
+phase=tools
 for tool in awk base64 cat chmod df dpkg dpkg-deb dpkg-query find findmnt getent grep mkdir mv pgrep rm rmdir sha256sum sort stat systemctl systemd-run tail tr wc xargs; do
   command -v "$tool" >/dev/null 2>&1 || exit 1
 done
+phase=package-manager-idle
 for process in dpkg apt apt-get unattended-upgrade; do pgrep -x "$process" >/dev/null 2>&1 && exit 1; done
+phase=dpkg-audit
 [ -z "$(dpkg --audit 2>/dev/null)" ]
+phase=rootfs
 root_options=$(findmnt -n -o OPTIONS /)
 case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) exit 1 ;; esac
+phase=capacity
 available=$(df -B1 --output=avail /tmp | tail -n 1 | tr -d ' ')
 [ "$available" -ge "$required_bytes" ]
+phase=kvmd
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
+phase=stage
 [ ! -e "$stage_root" ]
+phase=watchdog
 [ "$(systemctl show -p LoadState --value "$watchdog_unit" 2>/dev/null || true)" = not-found ]
+phase=package
 package_installed && exit 1
+phase=accounts
 accounts_absent
+phase=production-paths
 production_paths_absent
 persistent_roots_absent
+phase=units
 units_inactive
+phase=ports
 port_in_use 46A0 && exit 1
 port_in_use 480B && exit 1
+phase=htpasswd
 [ -f /etc/kvmd/htpasswd ]
 [ ! -L /etc/kvmd/htpasswd ]
 [ "$(stat -c '%a' /etc/kvmd/htpasswd)" = 600 ]
+phase=complete
 emit architecture aarch64
 emit rootfs_mode_before "$rootfs_mode"
 emit tools_ready yes
@@ -670,6 +694,18 @@ def parse_facts(raw: bytes, expected_keys: set[str]) -> dict[str, str]:
     return dict(sorted(facts.items()))
 
 
+def parse_preflight_failure(raw: bytes) -> str:
+    if len(raw) > 1024:
+        raise ValueError("package preflight failure output exceeded the limit")
+    lines = raw.decode("ascii", errors="strict").splitlines()
+    if len(lines) != 1 or not lines[0].startswith("failure_phase="):
+        raise ValueError("package preflight failure output is invalid")
+    phase = lines[0].removeprefix("failure_phase=")
+    if not re.fullmatch(r"[a-z-]{1,32}", phase):
+        raise ValueError("package preflight failure phase is invalid")
+    return phase
+
+
 def _zero(secret: bytearray) -> None:
     for index in range(len(secret)):
         secret[index] = 0
@@ -696,7 +732,8 @@ def execute(options: Options) -> int:
             target, secret, build_preflight_script(paths, package), timeout=35
         )
         if preflight_result.returncode != 0:
-            raise ValueError("package preflight failed")
+            phase = parse_preflight_failure(preflight_result.stdout)
+            raise ValueError(f"package preflight failed at {phase}")
         preflight = parse_facts(preflight_result.stdout, PREFLIGHT_KEYS)
         cleanup_required = True
         with package.path.open("rb") as stream:

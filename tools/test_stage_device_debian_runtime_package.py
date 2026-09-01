@@ -66,10 +66,21 @@ class StageDeviceDebianRuntimePackageTests(unittest.TestCase):
         self.assertIn("systemd-run --quiet --collect", run)
         self.assertIn("sleep 300", rollback)
         self.assertIn("accounts_absent", run)
+        self.assertIn("if getent passwd", stage.STATE_FUNCTIONS)
+        self.assertIn("if getent group hardened-blikvm", stage.STATE_FUNCTIONS)
+        self.assertIn("return 0", stage.STATE_FUNCTIONS)
         self.assertIn("units_inactive", run)
         self.assertIn("nginx_hash_before", run)
         self.assertIn("account_hash_before", run)
         self.assertIn("emit dpkg_audit_clean yes", preflight)
+        for phase in (
+            "phase=tools",
+            "phase=package-manager-idle",
+            "phase=watchdog",
+            "phase=ports",
+            "phase=htpasswd",
+        ):
+            self.assertIn(phase, preflight)
         for forbidden in (
             "systemctl start hardened-blikvm",
             "systemctl enable hardened-blikvm",
@@ -89,6 +100,12 @@ class StageDeviceDebianRuntimePackageTests(unittest.TestCase):
         self.assertEqual(set(parsed), stage.RUN_KEYS)
         with self.assertRaises(ValueError):
             stage.parse_facts(raw + b"unexpected=yes\n", stage.RUN_KEYS)
+        self.assertEqual(
+            stage.parse_preflight_failure(b"failure_phase=package-manager-idle\n"),
+            "package-manager-idle",
+        )
+        with self.assertRaises(ValueError):
+            stage.parse_preflight_failure(b"failure_phase=private/value\n")
 
     def test_package_name_matches_builder(self) -> None:
         self.assertEqual(debian.PACKAGE_NAME, "hardened-blikvm-runtime")
