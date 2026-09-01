@@ -388,6 +388,16 @@ before reading the collector. It has no loader/store-open call, path, raw key,
 floor source, task spawn, logging, HTTP/UI, executable, unit, or package; see
 `design/diagnostic-persistence-v1.md`.
 
+The synthetic persistence gate is a separate zero-argument executable, not a
+product entry point. It uses the real fixed credential/store/client/adapter
+types with a typed in-process protocol peer and process-memory-only test floor.
+The host orchestrator predicts and CAS-binds temporary account changes before
+arming a rollback watchdog, validates every staged/persistent path by marker,
+hash, metadata and allowlist, and refuses concurrent account-database changes.
+Its result contains only fixed generation/state/request counters. The gate unit
+has no install section and remains absent from the prototype; see
+`design/diagnostic-persistence-gate-v1.md`.
+
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
 Production source creation, rotation, backup/recovery, external floor, and

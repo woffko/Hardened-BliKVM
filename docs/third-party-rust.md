@@ -171,6 +171,13 @@ package, and prototype archive. The locked graph contains 174 packages: 57
 workspace and 117 external, with no missing external license expression. A
 1,233-advisory RustSec scan at source `57959b0` accepted the exact graph.
 
+The synthetic diagnostic persistence gate adds one unshipped workspace binary
+and no external dependency. It reuses the accepted diagnostic graph and Tokio;
+its host rollback tool uses only Python's standard library plus existing local
+helpers. Neither binary nor unit enters the prototype archive. The locked graph
+contains 175 packages: 58 workspace and 117 external, with no missing external
+license expression.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

@@ -212,6 +212,14 @@ without the still-missing trusted floor and key-custody boundary; see
 `design/diagnostic-persistence-v1.md` and
 `baselines/diagnostic-persistence.md`.
 
+A separate unshipped gate executable now composes that exact stack with a
+typed two-window scripted export server. It models generations one through
+seven, including one cancelled acknowledgement and ambiguity recovery, under a
+synthetic process-local floor. Its static unit is intended only for a
+marker/watchdog/CAS rollback-gated H616 test and has no install section. It is
+not a production runtime or part of the prototype; see
+`design/diagnostic-persistence-gate-v1.md`.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

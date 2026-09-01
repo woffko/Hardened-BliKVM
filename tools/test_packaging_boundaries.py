@@ -159,6 +159,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         diagnostic_store = ROOT / "crates/bli-kvm-diagnostic-store"
         diagnostic_coordinator = ROOT / "crates/bli-kvm-diagnostic-coordinator"
         diagnostic_persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
         window = ROOT / "crates/bli-kvm-diagnostic-window-policy"
         manifest = (crate / "Cargo.toml").read_text()
@@ -181,6 +182,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 diagnostic_store / "Cargo.toml",
                 diagnostic_coordinator / "Cargo.toml",
                 diagnostic_persistence / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
                 export_listener / "Cargo.toml",
                 window / "Cargo.toml",
             }:
@@ -213,6 +215,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         crate = ROOT / "crates/bli-kvm-diagnostic-export-protocol"
         export_client = ROOT / "crates/bli-kvm-diagnostic-export-client"
         export_listener = ROOT / "crates/bli-kvm-diagnostic-export-listener"
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -226,6 +229,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 crate / "Cargo.toml",
                 export_client / "Cargo.toml",
                 export_listener / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-export-protocol", other_manifest.read_text()
@@ -430,6 +434,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         key_loader = ROOT / "crates/bli-kvm-diagnostic-key-loader"
         coordinator = ROOT / "crates/bli-kvm-diagnostic-coordinator"
         persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -449,6 +454,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 key_loader / "Cargo.toml",
                 coordinator / "Cargo.toml",
                 persistence / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-journal", other_manifest.read_text()
@@ -527,10 +533,12 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("[dev-dependencies]", manifest)
         self.assertIn("bli-kvm-diagnostic-export =", manifest)
         persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 persistence / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-coordinator", other_manifest.read_text()
@@ -620,6 +628,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             ROOT / "docs/baselines/diagnostic-persistence.md"
         ).read_text()
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         self.assertIn('"crates/bli-kvm-diagnostic-persistence"', workspace)
         for dependency in (
             "bli-kvm-diagnostic-coordinator =",
@@ -632,7 +641,10 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn(dependency, manifest)
         self.assertNotIn("tokio.workspace = true", manifest.split("[dev-dependencies]", 1)[0])
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-persistence", other_manifest.read_text()
                 )
@@ -710,11 +722,119 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(required_baseline, baseline)
 
+    def test_diagnostic_persistence_gate_is_synthetic_confined_and_unshipped(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/main.rs").read_text()
+        production, tests = source.split("#[cfg(test)]", 1)
+        unit = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service"
+        ).read_text()
+        design = (
+            ROOT / "docs/design/diagnostic-persistence-gate-v1.md"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        verifier = (ROOT / "scripts/verify-systemd-units.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-persistence-gate"', workspace)
+        for dependency in (
+            "bli-kvm-diagnostic-coordinator =",
+            "bli-kvm-diagnostic-export =",
+            "bli-kvm-diagnostic-export-protocol =",
+            "bli-kvm-diagnostic-journal =",
+            "bli-kvm-diagnostic-key-loader =",
+            "bli-kvm-diagnostic-persistence =",
+            "bli-kvm-diagnostic-store =",
+            "tokio.workspace = true",
+        ):
+            self.assertIn(dependency, manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-persistence-gate",
+                    other_manifest.read_text(),
+                )
+        for required in (
+            "#![forbid(unsafe_code)]",
+            'const EXPORT_SOCKET: &str = "/run/hardened-blikvm-diagnostics/export.sock"',
+            'const RESULT_FILE: &str = "/run/hardened-blikvm-diagnostics/gate.result"',
+            "load_systemd_diagnostic_journal_keys()",
+            "DiagnosticJournalStore::open()",
+            ".initialize(&keys.key_ring())",
+            "DiagnosticPersistenceRuntime::new(keys, store)",
+            "stall_started.notified()",
+            "EXPECTED_READ_REQUESTS: u32 = 7",
+            "EXPECTED_ACKNOWLEDGEMENT_REQUESTS: u32 = 3",
+            '"automatic_retries=0\\n"',
+            "selected.journal().entry_count() != 2",
+            "DiagnosticJournalEntryState::Acknowledged",
+        ):
+            self.assertIn(required, production)
+        for required_test in (
+            "scripted_collector_sequence_is_exact_and_typed",
+            "mismatch_preserves_the_active_window",
+            "receipt_and_expected_counts_are_fixed",
+            "fixed_paths_and_bindings_are_nonempty",
+        ):
+            self.assertIn(required_test, tests)
+        for forbidden in (
+            "std::env",
+            "args(",
+            "clap",
+            "serde",
+            "Command",
+            "Tcp",
+            "Http",
+            "println!",
+            "eprintln!",
+            "systemctl",
+            "reboot",
+            "Power",
+            "Reset",
+            "unsafe {",
+        ):
+            self.assertNotIn(forbidden, production)
+        for required in (
+            "Type=oneshot",
+            "User=hardened-blikvm-broker",
+            "Group=hardened-blikvm",
+            "RuntimeDirectory=hardened-blikvm-diagnostics",
+            "RuntimeDirectoryPreserve=yes",
+            "LoadCredential=diagnostic-journal-keyring:",
+            "ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-persistence-gate",
+            "PrivateNetwork=yes",
+            "PrivateDevices=yes",
+            "ProtectSystem=strict",
+            "RestrictAddressFamilies=AF_UNIX",
+            "CapabilityBoundingSet=\n",
+            "DevicePolicy=closed",
+            "IPAddressDeny=any",
+            "ReadWritePaths=/var/lib/hardened-blikvm-diagnostics /run/hardened-blikvm-diagnostics",
+        ):
+            self.assertIn(required, unit)
+        self.assertNotIn("[Install]", unit)
+        self.assertNotIn("bli-kvm-diagnostic-persistence-gate", builder)
+        self.assertNotIn("hardened-blikvm-diagnostic-persistence-gate.service", builder)
+        self.assertIn("hardened-blikvm-diagnostic-persistence-gate.service", verifier)
+        for required in (
+            "Starting from a freshly initialized encrypted generation one",
+            "seven reads and three acknowledgement requests",
+            "171-byte semantic result",
+            "ten-minute systemd watchdog",
+            "Power/Reset",
+            "dedicated Diagnostics tab",
+        ):
+            self.assertIn(required, design)
+
     def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-store"
         maintenance = ROOT / "crates/bli-kvm-diagnostic-maintenance"
         persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source
@@ -734,6 +854,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 crate / "Cargo.toml",
                 maintenance / "Cargo.toml",
                 persistence / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-store", other_manifest.read_text()
@@ -815,6 +936,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         crate = ROOT / "crates/bli-kvm-diagnostic-key-loader"
         maintenance = ROOT / "crates/bli-kvm-diagnostic-maintenance"
         persistence = ROOT / "crates/bli-kvm-diagnostic-persistence"
+        persistence_gate = ROOT / "crates/bli-kvm-diagnostic-persistence-gate"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -837,6 +959,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 crate / "Cargo.toml",
                 maintenance / "Cargo.toml",
                 persistence / "Cargo.toml",
+                persistence_gate / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-key-loader", other_manifest.read_text()

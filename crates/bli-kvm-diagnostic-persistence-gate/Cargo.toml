@@ -1,0 +1,18 @@
+[package]
+name = "bli-kvm-diagnostic-persistence-gate"
+description = "Unshipped synthetic H616 diagnostic persistence gate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-coordinator = { path = "../bli-kvm-diagnostic-coordinator" }
+bli-kvm-diagnostic-export = { path = "../bli-kvm-diagnostic-export" }
+bli-kvm-diagnostic-export-protocol = { path = "../bli-kvm-diagnostic-export-protocol" }
+bli-kvm-diagnostic-journal = { path = "../bli-kvm-diagnostic-journal" }
+bli-kvm-diagnostic-key-loader = { path = "../bli-kvm-diagnostic-key-loader" }
+bli-kvm-diagnostic-persistence = { path = "../bli-kvm-diagnostic-persistence" }
+bli-kvm-diagnostic-store = { path = "../bli-kvm-diagnostic-store" }
+tokio.workspace = true

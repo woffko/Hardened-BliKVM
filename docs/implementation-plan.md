@@ -564,6 +564,16 @@ static-PIE AArch64 test executables also matched byte-for-byte. They have not
 yet run on H616, and no live key/store/socket was used; see
 `baselines/diagnostic-persistence.md`.
 
+Checkpoint candidate: the unshipped zero-argument
+`bli-kvm-diagnostic-persistence-gate` now scripts two typed sealed windows
+through the real fixed loader/store/client/adapter stack. It plans generations
+one through seven, deliberately cancels one stalled acknowledgement, requires
+ambiguity recovery without a read, and emits only nine fixed semantic facts.
+The accompanying H616 orchestrator uses a synthetic credential/floor,
+marker/hash/account-CAS rollback, a ten-minute watchdog, and no Power/Reset or
+KVMD restart. Host, reproducible AArch64, and live H616 acceptance remain to be
+recorded; see `design/diagnostic-persistence-gate-v1.md`.
+
 Planned diagnostics product gate: after the write-before-ack coordinator and
 an authenticated read-only HTTP API are accepted, add a dedicated
 `Diagnostics` tab to the branded web interface. It must show the already

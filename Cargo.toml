@@ -19,6 +19,7 @@ members = [
   "crates/bli-kvm-diagnostic-journal",
   "crates/bli-kvm-diagnostic-coordinator",
   "crates/bli-kvm-diagnostic-persistence",
+  "crates/bli-kvm-diagnostic-persistence-gate",
   "crates/bli-kvm-diagnostic-store",
   "crates/bli-kvm-diagnostic-key-loader",
   "crates/bli-kvm-diagnostic-maintenance",

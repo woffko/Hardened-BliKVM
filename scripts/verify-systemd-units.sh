@@ -29,6 +29,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-collector"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-maintenance"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-persistence-gate"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0644 \
@@ -82,6 +83,7 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-diagnostic-collector.service \
   hardened-blikvm-diagnostic-store-init.service \
   hardened-blikvm-diagnostic-store-inspect.service \
+  hardened-blikvm-diagnostic-persistence-gate.service \
   hardened-blikvm-system-action-store-init.service \
   hardened-blikvm-system-action-store-inspect.service
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
@@ -99,6 +101,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-diagnostic-collector.service" \
   "$project_root/packaging/systemd/hardened-blikvm-diagnostic-store-init.service" \
   "$project_root/packaging/systemd/hardened-blikvm-diagnostic-store-inspect.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
   >/dev/null
