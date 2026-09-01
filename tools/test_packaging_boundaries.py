@@ -1959,6 +1959,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         api = (ROOT / "docs/api/diagnostics-v1.md").read_text()
         web_type = (ROOT / "web/src/types/diagnostics.ts").read_text()
         web_api = (ROOT / "web/src/api/diagnostics.ts").read_text()
+        device_gate = (ROOT / "tools/stage_device_systemd_gate.py").read_text()
+        device_gate_tests = (
+            ROOT / "tools/test_stage_device_systemd_gate.py"
+        ).read_text()
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
 
         for required in (
@@ -2025,6 +2029,16 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("opaque HttpOnly session", api)
         self.assertIn("persistence_not_provisioned", api)
         self.assertIn("does not read the unshipped persistence stack", api)
+        for required in (
+            "phase=diagnostics-unauthorized",
+            '"availability":"current_only"',
+            "persistence_not_provisioned",
+            "diagnostics_temperature_matches_inventory=yes",
+            "diagnostics_rtc_matches_inventory=yes",
+            "diagnostics_component_states=typed",
+        ):
+            self.assertIn(required, device_gate)
+            self.assertIn(required, device_gate_tests)
         self.assertIn("docs/api/diagnostics-v1.md", builder)
 
     def test_server_unit_requires_secure_proxy_cookies(self) -> None:

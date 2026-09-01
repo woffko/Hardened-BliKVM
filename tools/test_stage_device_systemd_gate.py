@@ -93,6 +93,13 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
         self.assertIn("offsetFromSystemSeconds", runtime)
         self.assertIn("phase=inventory-rtc", runtime)
         self.assertIn('"rtc":{"availability":"read_only"', runtime)
+        self.assertIn("phase=diagnostics-unauthorized", runtime)
+        self.assertIn("/api/diagnostics", runtime)
+        self.assertIn('"availability":"current_only"', runtime)
+        self.assertIn("persistence_not_provisioned", runtime)
+        self.assertIn("diagnostics_temperature_matches_inventory=yes", runtime)
+        self.assertIn("diagnostics_rtc_matches_inventory=yes", runtime)
+        self.assertIn("diagnostics_component_states=typed", runtime)
         self.assertNotIn("/api/atx", runtime)
         self.assertNotIn("/api/hid", runtime)
 

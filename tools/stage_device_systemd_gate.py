@@ -60,6 +60,15 @@ RUN_KEYS = {
     "bundle_sha256",
     "capabilities_status",
     "dedicated_credential",
+    "diagnostics_availability",
+    "diagnostics_component_states",
+    "diagnostics_history",
+    "diagnostics_rtc_matches_inventory",
+    "diagnostics_sanitized",
+    "diagnostics_schema",
+    "diagnostics_status",
+    "diagnostics_temperature_matches_inventory",
+    "diagnostics_unauthorized_status",
     "htpasswd_restored",
     "inventory_backend",
     "inventory_requests",
@@ -690,6 +699,9 @@ phase=verify-server-unit
 [ "$(readlink "/proc/$server_pid/ns/net")" = "$(readlink /proc/1/ns/net)" ]
 case " $(awk '/^Groups:/ {$1=""; print}' "/proc/$server_pid/status") " in *" $kvmd_gid "*) exit 1 ;; esac
 if tr '\0' '\n' < "/proc/$server_pid/environ" | grep -Eq '^(CREDENTIALS_DIRECTORY|KVMD_)='; then exit 1; fi
+phase=diagnostics-unauthorized
+diagnostics_unauthorized_status=$(curl --noproxy '*' --silent --max-time 3 --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$bind_port/api/diagnostics" 2>/dev/null)
+[ "$diagnostics_unauthorized_status" = 401 ]
 phase=authenticate
 account_password=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
 request="$test_root/account-request.json"
@@ -724,6 +736,24 @@ printf '%s\n' "$rtc_offset_seconds" | grep -Eq '^-?[0-9]+$'
 [ "$rtc_unix_seconds" -le 4102444799 ]
 [ "$rtc_offset_seconds" -ge -315576000 ]
 [ "$rtc_offset_seconds" -le 315576000 ]
+phase=diagnostics
+diagnostics_status=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output "$test_root/diagnostics.json" --write-out '%{http_code}' "$origin/api/diagnostics" 2>/dev/null)
+[ "$diagnostics_status" = 200 ]
+grep -q '"schemaVersion":1' "$test_root/diagnostics.json"
+grep -q '"availability":"current_only"' "$test_root/diagnostics.json"
+grep -q '"history":{"state":"unavailable","reason":"persistence_not_provisioned"}' "$test_root/diagnostics.json"
+grep -q '"temperature":{"state":"available","millidegreesCelsius":'"$thermal_millidegrees" "$test_root/diagnostics.json"
+grep -q '"rtc":{"state":"available","unixSeconds":'"$rtc_unix_seconds"',"offsetFromSystemSeconds":'"$rtc_offset_seconds" "$test_root/diagnostics.json"
+for component in video hid power virtualMedia; do grep -q '"'"$component"'":{"enabled":' "$test_root/diagnostics.json"; done
+grep -q '"powerLed":"\(active\|inactive\|unavailable\)"' "$test_root/diagnostics.json"
+if grep -Eqi '"(platformId|versions|bundle|binding|instanceId|windowId|password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress|address|rawLog)"' "$test_root/diagnostics.json"; then exit 1; fi
+diagnostics_schema=1
+diagnostics_availability=current_only
+diagnostics_history=persistence_not_provisioned
+diagnostics_sanitized=yes
+diagnostics_temperature_matches_inventory=yes
+diagnostics_rtc_matches_inventory=yes
+diagnostics_component_states=typed
 phase=thermal-capability
 capabilities_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/capabilities.json" --write-out '%{http_code}' "$origin/api/capabilities" 2>/dev/null)
 [ "$capabilities_status" = 200 ]
@@ -885,6 +915,15 @@ emit no_new_privs yes
 emit setup_status "$setup_status"
 emit login_status "$login_status"
 emit capabilities_status "$capabilities_status"
+emit diagnostics_status "$diagnostics_status"
+emit diagnostics_unauthorized_status "$diagnostics_unauthorized_status"
+emit diagnostics_schema "$diagnostics_schema"
+emit diagnostics_availability "$diagnostics_availability"
+emit diagnostics_history "$diagnostics_history"
+emit diagnostics_sanitized "$diagnostics_sanitized"
+emit diagnostics_temperature_matches_inventory "$diagnostics_temperature_matches_inventory"
+emit diagnostics_rtc_matches_inventory "$diagnostics_rtc_matches_inventory"
+emit diagnostics_component_states "$diagnostics_component_states"
 emit inventory_status "$inventory_status"
 emit inventory_schema 3
 emit inventory_backend kvmd_transition
@@ -1132,6 +1171,15 @@ def validate_run(
         "setup_status": "200",
         "login_status": "200",
         "capabilities_status": "200",
+        "diagnostics_status": "200",
+        "diagnostics_unauthorized_status": "401",
+        "diagnostics_schema": "1",
+        "diagnostics_availability": "current_only",
+        "diagnostics_history": "persistence_not_provisioned",
+        "diagnostics_sanitized": "yes",
+        "diagnostics_temperature_matches_inventory": "yes",
+        "diagnostics_rtc_matches_inventory": "yes",
+        "diagnostics_component_states": "typed",
         "inventory_status": "200",
         "inventory_schema": "3",
         "inventory_backend": "kvmd_transition",
