@@ -94,6 +94,16 @@ class StageDeviceSystemdGateTests(unittest.TestCase):
         self.assertIn("phase=inventory-rtc", runtime)
         self.assertIn('"rtc":{"availability":"read_only"', runtime)
         self.assertIn("phase=diagnostics-unauthorized", runtime)
+        for phase in (
+            "diagnostics-request",
+            "diagnostics-schema",
+            "diagnostics-history",
+            "diagnostics-temperature",
+            "diagnostics-rtc",
+            "diagnostics-components",
+            "diagnostics-privacy",
+        ):
+            self.assertIn(f"phase={phase}", runtime)
         self.assertIn("/api/diagnostics", runtime)
         self.assertIn('"availability":"current_only"', runtime)
         self.assertIn("persistence_not_provisioned", runtime)

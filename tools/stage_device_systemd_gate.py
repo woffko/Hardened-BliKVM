@@ -736,16 +736,22 @@ printf '%s\n' "$rtc_offset_seconds" | grep -Eq '^-?[0-9]+$'
 [ "$rtc_unix_seconds" -le 4102444799 ]
 [ "$rtc_offset_seconds" -ge -315576000 ]
 [ "$rtc_offset_seconds" -le 315576000 ]
-phase=diagnostics
+phase=diagnostics-request
 diagnostics_status=$(curl --noproxy '*' --silent --max-time 12 --cookie "$cookie" --output "$test_root/diagnostics.json" --write-out '%{http_code}' "$origin/api/diagnostics" 2>/dev/null)
 [ "$diagnostics_status" = 200 ]
+phase=diagnostics-schema
 grep -q '"schemaVersion":1' "$test_root/diagnostics.json"
 grep -q '"availability":"current_only"' "$test_root/diagnostics.json"
+phase=diagnostics-history
 grep -q '"history":{"state":"unavailable","reason":"persistence_not_provisioned"}' "$test_root/diagnostics.json"
+phase=diagnostics-temperature
 grep -q '"temperature":{"state":"available","millidegreesCelsius":'"$thermal_millidegrees" "$test_root/diagnostics.json"
+phase=diagnostics-rtc
 grep -q '"rtc":{"state":"available","unixSeconds":'"$rtc_unix_seconds"',"offsetFromSystemSeconds":'"$rtc_offset_seconds" "$test_root/diagnostics.json"
+phase=diagnostics-components
 for component in video hid power virtualMedia; do grep -q '"'"$component"'":{"enabled":' "$test_root/diagnostics.json"; done
-grep -q '"powerLed":"\(active\|inactive\|unavailable\)"' "$test_root/diagnostics.json"
+grep -Eq '"powerLed":"(active|inactive|unavailable)"' "$test_root/diagnostics.json"
+phase=diagnostics-privacy
 if grep -Eqi '"(platformId|versions|bundle|binding|instanceId|windowId|password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress|address|rawLog)"' "$test_root/diagnostics.json"; then exit 1; fi
 diagnostics_schema=1
 diagnostics_availability=current_only
