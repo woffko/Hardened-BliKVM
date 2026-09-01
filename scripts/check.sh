@@ -24,6 +24,7 @@ sh -n scripts/build-prototype-bundle.sh
 sh -n scripts/check-source-boundary.sh
 sh -n scripts/check.sh
 sh -n scripts/rust-lld-linker.sh
+sh -n scripts/rustc-remap-wrapper.sh
 sh -n scripts/verify-systemd-units.sh
 sh -n scripts/verify-aarch64-elf.sh
 
@@ -34,6 +35,7 @@ python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
   tools/test_rust_lld_static_pie.py \
+  tools/test_rustc_remap_wrapper.py \
   tools/test_capture_ssh_preflight.py \
   tools/test_capture_rtc_baseline.py \
   tools/test_capture_gpio_line_baseline.py \
@@ -81,6 +83,7 @@ python3 -m py_compile \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
   tools/test_rust_lld_static_pie.py \
+  tools/test_rustc_remap_wrapper.py \
   tools/test_capture_ssh_preflight.py \
   tools/test_capture_rtc_baseline.py \
   tools/test_capture_gpio_line_baseline.py \
@@ -130,6 +133,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_pikvm_baseline.py \
     tools/test_packaging_boundaries.py \
     tools/test_rust_lld_static_pie.py \
+    tools/test_rustc_remap_wrapper.py \
     tools/test_capture_ssh_preflight.py \
     tools/test_capture_rtc_baseline.py \
     tools/test_capture_gpio_line_baseline.py \

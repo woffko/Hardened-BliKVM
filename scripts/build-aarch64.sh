@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 target_dir=${1:-/mnt/d/debug/blikvm/hardened-blikvm/target-aarch64}
 case "$target_dir" in
   /*) ;;
@@ -10,7 +11,19 @@ case "$target_dir" in
     ;;
 esac
 
+rust_sysroot=$(rustc --print sysroot)
+cargo_home=$(
+  cargo metadata --format-version 1 --locked \
+    | jq -r '[.packages[].manifest_path | capture("^(?<root>.+)/registry/src/").root][0] // empty'
+)
+case "$rust_sysroot" in /*) ;; *) echo "Rust sysroot must be absolute" >&2; exit 1 ;; esac
+case "$cargo_home" in ""|/*) ;; *) echo "Cargo source root must be absolute" >&2; exit 1 ;; esac
+
 mkdir -p "$target_dir"
+BLI_KVM_REMAP_PROJECT_ROOT="$project_root" \
+BLI_KVM_REMAP_RUST_SYSROOT="$rust_sysroot" \
+BLI_KVM_REMAP_CARGO_HOME="$cargo_home" \
+RUSTC_WRAPPER="$project_root/scripts/rustc-remap-wrapper.sh" \
 CARGO_TARGET_DIR="$target_dir" cargo build \
   --workspace \
   --release \

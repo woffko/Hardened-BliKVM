@@ -71,6 +71,20 @@ class DebianRuntimePackageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 package.validate_output_dir(str(occupied))
 
+    def test_legacy_name_is_allowed_only_in_non_web_documentation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docs = root / "usr/share/doc/hardened-blikvm-runtime"
+            web = root / "usr/share/hardened-blikvm/web"
+            docs.mkdir(parents=True)
+            web.mkdir(parents=True)
+            (docs / "history.md").write_bytes(b"Nano" + b"KVM migration history")
+            (web / "index.html").write_text("Hardened BliKVM")
+            package.audit_package_tree(root)
+            (web / "index.html").write_bytes(b"Nano" + b"KVM")
+            with self.assertRaises(package.BuildError):
+                package.audit_package_tree(root)
+
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(
             [sys.executable, "tools/build_debian_runtime_package.py", "--help"],

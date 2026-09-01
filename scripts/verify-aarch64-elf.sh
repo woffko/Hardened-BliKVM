@@ -28,4 +28,8 @@ for binary in "$@"; do
     echo "unexpected dynamic dependency or search path: $binary" >&2
     exit 1
   fi
+  if strings "$binary" | rg -q '(/home/[^/]+/|/root/|/mnt/[A-Za-z]/|[A-Za-z]:\\Users\\)'; then
+    echo "host-specific build path entered ELF: $binary" >&2
+    exit 1
+  fi
 done

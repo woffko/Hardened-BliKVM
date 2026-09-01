@@ -173,23 +173,31 @@ def _normalize_tree(root: Path) -> None:
     os.utime(root, (0, 0), follow_symlinks=False)
 
 
-def _audit_tree(root: Path) -> None:
+def audit_package_tree(root: Path) -> None:
     names = {path.name for path in root.rglob("*")}
     if names & FORBIDDEN_PACKAGE_NAMES:
         raise BuildError("excluded update, persistence, or system-action artifact entered the package")
-    forbidden_bytes = (
-        b"10." + b"0.",
-        b"/home/" + b"w0w",
-        b"/mnt/" + b"d",
-        b"BEGIN " + b"PRIVATE" + b" KEY",
-        b"NanoKVM",
-        b"Hardened_NanoKVM",
-    )
+    forbidden_bytes = {
+        "network-prefix": b"10." + b"0.",
+        "host-home": b"/home/" + b"w0w",
+        "host-mount": b"/mnt/" + b"d",
+        "private-key": b"BEGIN " + b"PRIVATE" + b" KEY",
+    }
     for path in root.rglob("*"):
         if path.is_file() and path.stat().st_size <= 8 * 1024 * 1024:
             payload = path.read_bytes()
-            if any(marker in payload for marker in forbidden_bytes):
-                raise BuildError("private, legacy, or host-specific content entered the package")
+            for marker_class, marker in forbidden_bytes.items():
+                if marker in payload:
+                    relative = path.relative_to(root)
+                    raise BuildError(
+                        f"{marker_class} content entered package path {relative}"
+                    )
+    web_root = root / "usr/share/hardened-blikvm/web"
+    for path in web_root.rglob("*"):
+        if path.is_file():
+            payload = path.read_bytes()
+            if b"NanoKVM" in payload or b"Hardened_NanoKVM" in payload:
+                raise BuildError("legacy user-visible branding entered the package")
 
 
 def build_package(bundle_value: str, expected_sha256: str, output_value: str) -> Path:
@@ -233,7 +241,7 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
             json.dumps(package_manifest(bundle), sort_keys=True, separators=(",", ":")) + "\n",
         )
         _normalize_tree(package_root)
-        _audit_tree(package_root)
+        audit_package_tree(package_root)
 
         environment = os.environ.copy()
         environment.update({"SOURCE_DATE_EPOCH": "0", "TZ": "UTC", "LC_ALL": "C"})
