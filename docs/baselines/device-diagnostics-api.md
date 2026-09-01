@@ -142,7 +142,8 @@ mapping. Private mode-0600 receipts retain both failed attempts.
 ## Remaining boundary
 
 This accepts the authenticated current-health API on ordinary H616 runtime and
-TLS-independent loopback transport. It does not add persistent history,
-production key/floor/runtime custody, the dedicated Diagnostics tab, browser
-rendering, packaging permanence, privacy/soak, reboot, power-cut, or release
-acceptance.
+TLS-independent loopback transport. The subsequent dedicated localized
+Diagnostics tab and desktop/mobile Chromium gate are accepted separately in
+`device-diagnostics-ui.md`. Persistent history, production key/floor/runtime
+custody, packaging permanence, privacy soak, reboot, power-cut, and release
+acceptance remain outside this API checkpoint.

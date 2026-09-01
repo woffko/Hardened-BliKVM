@@ -37,6 +37,54 @@ async function waitForIncrease(readCount, baseline, timeoutMs = 5000) {
   assert.fail("bounded browser event count did not increase");
 }
 
+const unavailableDiagnostics = {
+  code: 0,
+  msg: "success",
+  data: {
+    schemaVersion: 1,
+    availability: "current_only",
+    current: {
+      temperature: { state: "unavailable", millidegreesCelsius: null },
+      rtc: {
+        state: "unavailable",
+        unixSeconds: null,
+        offsetFromSystemSeconds: null,
+      },
+      components: {
+        video: {
+          enabled: "unavailable",
+          online: "unavailable",
+          busy: "unavailable",
+          connected: "unavailable",
+        },
+        hid: {
+          enabled: "unavailable",
+          online: "unavailable",
+          busy: "unavailable",
+          connected: "unavailable",
+        },
+        power: {
+          enabled: "unavailable",
+          online: "unavailable",
+          busy: "unavailable",
+          connected: "unavailable",
+        },
+        virtualMedia: {
+          enabled: "unavailable",
+          online: "unavailable",
+          busy: "unavailable",
+          connected: "unavailable",
+        },
+        powerLed: "unavailable",
+      },
+    },
+    history: {
+      state: "unavailable",
+      reason: "persistence_not_provisioned",
+    },
+  },
+};
+
 let phase = "browser-launch";
 let browser = null;
 const requests = [];
@@ -380,6 +428,90 @@ try {
   await settingsDialog.locator("button.ant-modal-close").click();
   phase = "diagnostics-close-hidden";
   await settingsDialog.waitFor({ state: "hidden" });
+
+  phase = "diagnostics-state-fixture";
+  let fixtureMode = "unavailable";
+  let releaseUnavailable;
+  const unavailableRelease = new Promise((resolve) => {
+    releaseUnavailable = resolve;
+  });
+  await page.route("**/api/diagnostics", async (route) => {
+    if (fixtureMode === "unavailable") {
+      await unavailableRelease;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(unavailableDiagnostics),
+      });
+    } else {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: -503,
+          msg: "service unavailable",
+        }),
+      });
+    }
+  });
+
+  phase = "diagnostics-loading-settings";
+  await page.locator("svg.lucide-settings").first().click();
+  const stateDialog = page.getByRole("dialog");
+  await stateDialog.waitFor();
+  const unavailableRequest = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/diagnostics",
+  );
+  phase = "diagnostics-loading-tab";
+  await stateDialog.getByText("Diagnostics", { exact: true }).click();
+  await unavailableRequest;
+  phase = "diagnostics-loading-state";
+  await stateDialog
+    .getByText("Loading diagnostics…", { exact: true })
+    .waitFor();
+  releaseUnavailable();
+  phase = "diagnostics-unavailable-state";
+  await stateDialog.getByText("Unavailable", { exact: true }).first().waitFor();
+
+  fixtureMode = "failure";
+  const staleResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/diagnostics" &&
+      response.status() === 503,
+  );
+  phase = "diagnostics-stale-refresh";
+  await stateDialog.getByRole("button", { name: "Refresh" }).click();
+  await staleResponse;
+  phase = "diagnostics-stale-state";
+  await stateDialog
+    .getByText("Showing the last successful values. Refresh failed.", {
+      exact: true,
+    })
+    .waitFor();
+
+  phase = "diagnostics-stale-close";
+  await stateDialog.locator("button.ant-modal-close").click();
+  await stateDialog.waitFor({ state: "hidden" });
+  phase = "diagnostics-error-settings";
+  await page.locator("svg.lucide-settings").first().click();
+  const errorDialog = page.getByRole("dialog");
+  await errorDialog.waitFor();
+  const errorResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/diagnostics" &&
+      response.status() === 503,
+  );
+  phase = "diagnostics-error-tab";
+  await errorDialog.getByText("Diagnostics", { exact: true }).click();
+  await errorResponse;
+  phase = "diagnostics-error-state";
+  await errorDialog
+    .getByText("Diagnostics are unavailable", { exact: true })
+    .waitFor();
+  await errorDialog.locator("button.ant-modal-close").click();
+  await errorDialog.waitFor({ state: "hidden" });
+  await page.unroute("**/api/diagnostics");
+
   phase = "diagnostics-desktop-stream-release";
   await page.goto("about:blank", { waitUntil: "load" });
   await page.waitForTimeout(250);
@@ -637,6 +769,10 @@ try {
       diagnosticsApi: "authenticated-current-only",
       diagnosticsUi: "rendered-action-free",
       diagnosticsMobileUi: "zh-tw-responsive-action-free",
+      diagnosticsLoadingUi: "rendered",
+      diagnosticsUnavailableUi: "rendered",
+      diagnosticsStaleUi: "rendered-last-good",
+      diagnosticsErrorUi: "rendered-sanitized",
       diagnosticsHistory: "persistence-not-provisioned",
       videoCapability: "read_only",
       hidCapability: "unavailable",

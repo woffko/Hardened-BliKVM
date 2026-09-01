@@ -589,20 +589,20 @@ auth/privacy/current-health gate after two fully rolled-back assertion
 refinements. See `api/diagnostics-v1.md` and
 `baselines/device-diagnostics-api.md`.
 
-Planned diagnostics product gate: after the write-before-ack coordinator and
-an authenticated read-only HTTP API are accepted, add a dedicated
-`Diagnostics` tab to the branded web interface. It must show the already
-sanitized SoC temperature plus capability-gated, typed health observations
-such as fan state when available, RTC/time status, video/input-link state,
-bounded service health, diagnostic-window state, and storage pressure. Missing
-or unsupported sensors remain explicit rather than synthesized. The tab must
-use localized labels and states, bounded refresh with cancellation, and the
-same authenticated session boundary as the rest of the GUI. It must not expose
-raw vendor logs, filesystem paths, account names, device identifiers, network
-topology, secrets, or Power/Reset actions. Acceptance requires schema/privacy
-tests, desktop and mobile browser rendering, unavailable/stale/error states,
-session-expiry behavior, an H616 runtime gate, soak, reboot persistence, and
-complete rollback of temporary test state.
+Checkpoint: the branded web interface now has a separately navigable,
+responsive `Diagnostics` tab backed only by authenticated GET
+`/api/diagnostics`. A closed runtime validator gates temperature, RTC, video,
+HID, power observation, virtual media, power LED, and explicitly unprovisioned
+history. Generation-based request ownership aborts the prior GET before manual
+or scheduled refresh; hidden/unmounted views stop, and errors do not start an
+automatic retry. Twenty-three strings have exact tuple parity across all 26
+canonical locales. Source `8339018` passed the complete 172-Python-test host
+matrix, two byte-identical AArch64 archives, and a reversible H616 TLS Chromium
+gate covering desktop, 390x844 `zh_tw`, loading/unavailable/stale/error,
+session revocation, video, privacy, and full rollback with no control request
+or Power/Reset action. See `baselines/device-diagnostics-ui.md`. Permanent
+packaging, production history/key/floor custody, soak, reboot, other browser
+engines, and release acceptance remain.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

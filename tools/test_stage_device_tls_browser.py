@@ -200,6 +200,15 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn('button.ant-modal-close', script)
         self.assertIn("diagnostics-desktop-stream-release", script)
         self.assertIn('page.goto("about:blank"', script)
+        self.assertIn('page.route("**/api/diagnostics"', script)
+        for phase in (
+            "diagnostics-loading-state",
+            "diagnostics-unavailable-state",
+            "diagnostics-stale-state",
+            "diagnostics-error-state",
+        ):
+            self.assertIn(phase, script)
+        self.assertIn('page.unroute("**/api/diagnostics")', script)
         self.assertIn('name: "Refresh"', script)
         self.assertIn('setViewportSize({ width: 390, height: 844 })', script)
         self.assertIn('"hardened-blikvm-language", "zh_tw"', script)
@@ -262,6 +271,10 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             "diagnosticsApi": "authenticated-current-only",
             "diagnosticsUi": "rendered-action-free",
             "diagnosticsMobileUi": "zh-tw-responsive-action-free",
+            "diagnosticsLoadingUi": "rendered",
+            "diagnosticsUnavailableUi": "rendered",
+            "diagnosticsStaleUi": "rendered-last-good",
+            "diagnosticsErrorUi": "rendered-sanitized",
             "diagnosticsHistory": "persistence-not-provisioned",
             "videoCapability": "read_only",
             "hidCapability": "unavailable",

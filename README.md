@@ -47,6 +47,9 @@ The reversible H616 prototype and the application-update core are implemented:
 - an authenticated GET-only `/api/diagnostics` current-health view for
   temperature, RTC, and fixed component states; persistent history is
   explicitly unavailable and the server has no key/store/floor/ACK authority;
+- a dedicated responsive Diagnostics GUI with exact 26-locale coverage,
+  cancellation-safe refresh, explicit loading/unavailable/stale/error states,
+  and reversible desktop/mobile Chromium acceptance on H616;
 - an unshipped empty-only diagnostic maintenance binary whose static units,
   synthetic systemd credential, encrypted store initialization, nonmutating
   inspection, and full rollback passed on the H616 test device;

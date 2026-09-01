@@ -157,3 +157,15 @@ byte-identical 4,805,206-byte prototype archives with SHA-256
 Their static-PIE server binaries also matched. The API subsequently passed a
 reversible H616 auth/privacy/inventory/video gate; exact evidence and the
 explicitly unavailable-history boundary are in `device-diagnostics-api.md`.
+
+## Dedicated localized Diagnostics GUI checkpoint
+
+Source commit `8339018` added the responsive Diagnostics tab, all 26 locale
+packs, generation-owned refresh lifecycle, browser-state coverage, and
+deterministic KVMD read-connection cleanup. Independent target/output roots
+produced byte-identical 4,818,271-byte prototype archives with SHA-256
+`9f13b56432dc0a73e700e881da23d4f31f57400b0cf69b6fd73dbf42fcd7f2e9`.
+Their web trees and all six shipped ELF pairs also match, while both manifests
+retain `releaseAccepted=false` and `deviceAccepted=false`. The exact archive
+passed reversible desktop/mobile TLS Chromium gates on H616; full evidence and
+remaining production boundaries are in `device-diagnostics-ui.md`.

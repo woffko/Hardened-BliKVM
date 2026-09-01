@@ -2089,6 +2089,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         capabilities = (ROOT / "web/src/lib/capabilities.ts").read_text()
         locales = (ROOT / "web/src/i18n/diagnostics-locales.ts").read_text()
         locale_extras = (ROOT / "web/src/i18n/locale-extras.ts").read_text()
+        baseline = (ROOT / "docs/baselines/device-diagnostics-ui.md").read_text()
 
         self.assertIn("id: 'diagnostics'", settings)
         self.assertIn("component: <Diagnostics />", settings)
@@ -2204,6 +2205,19 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("diagnosticsLocaleExtras(key)", locale_extras)
         self.assertIn("no: 'nb'", locale_extras)
         self.assertIn("sv: 'se'", locale_extras)
+        for required in (
+            "8339018c74bdc4edd9889a418d7fdbce633cb769",
+            "e8c485567f6040079ae0ee5b6257a0f6",
+            "f81d30996d7449d689966aea44ecb735",
+            "3311d78ffb304836904d74aa3a4e0f88",
+            "9f13b56432dc0a73e700e881da23d4f31f57400b0cf69b6fd73dbf42fcd7f2e9",
+            "d9d6e3667e4d4ea8ab0b9ef3aa449f3d",
+            "e69c92dc79994a418b4be8baf59cfc12",
+            "diagnosticsMobileUi",
+            "diagnosticsStaleUi",
+            "no Power/Reset",
+        ):
+            self.assertIn(required, baseline)
 
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
