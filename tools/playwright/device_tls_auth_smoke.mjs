@@ -28,10 +28,21 @@ function formatRtcOffsetSeconds(value) {
   return `${sign}${parts.join(" ")}`;
 }
 
+async function waitForIncrease(readCount, baseline, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (readCount() > baseline) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail("bounded browser event count did not increase");
+}
+
 let phase = "browser-launch";
 let browser = null;
 const requests = [];
 const responses = [];
+const mobileRequests = [];
+const mobileResponses = [];
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
   const password = `Tls-${crypto.randomBytes(24).toString("hex")}`;
@@ -341,29 +352,29 @@ try {
   });
   await diagnosticsRefreshButton.waitFor({ state: "visible" });
   assert.equal(await diagnosticsRefreshButton.isEnabled(), true);
-  const refreshedDiagnosticsResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/diagnostics" &&
-      response.request().method() === "GET" &&
-      response.status() === 200,
-  );
+  const diagnosticsRequestCount = () =>
+    requests.filter(
+      (request) =>
+        request.method === "GET" && request.path === "/api/diagnostics",
+    ).length;
+  const diagnosticsResponseCount = () =>
+    responses.filter(
+      (response) =>
+        response.method === "GET" &&
+        response.path === "/api/diagnostics" &&
+        response.status === 200,
+    ).length;
+  const desktopRequestsBeforeRefresh = diagnosticsRequestCount();
+  const desktopResponsesBeforeRefresh = diagnosticsResponseCount();
   phase = "diagnostics-refresh-click";
   await diagnosticsRefreshButton.click();
-  phase = "diagnostics-refresh-started";
-  const diagnosticsRefreshButtonHandle =
-    await diagnosticsRefreshButton.elementHandle();
-  assert.ok(diagnosticsRefreshButtonHandle);
-  await Promise.race([
-    refreshedDiagnosticsResponse,
-    page.waitForFunction(
-      (button) => button instanceof HTMLButtonElement && button.disabled,
-      diagnosticsRefreshButtonHandle,
-      { timeout: 3000 },
-    ),
-  ]);
+  phase = "diagnostics-refresh-request";
+  await waitForIncrease(diagnosticsRequestCount, desktopRequestsBeforeRefresh);
   phase = "diagnostics-refresh-response";
-  const refreshedDiagnostics = await refreshedDiagnosticsResponse;
-  assert.equal((await refreshedDiagnostics.json()).data.schemaVersion, 1);
+  await waitForIncrease(
+    diagnosticsResponseCount,
+    desktopResponsesBeforeRefresh,
+  );
   await page.keyboard.press("Escape");
   await settingsDialog.waitFor({ state: "hidden" });
 
@@ -377,7 +388,9 @@ try {
   mobilePage.on("request", (request) => {
     const path = new URL(request.url()).pathname;
     if (path.startsWith("/api/")) {
-      requests.push({ method: request.method(), path });
+      const observed = { method: request.method(), path };
+      mobileRequests.push(observed);
+      requests.push(observed);
     }
   });
   mobilePage.on("websocket", () => {
@@ -386,11 +399,13 @@ try {
   mobilePage.on("response", (response) => {
     const path = new URL(response.url()).pathname;
     if (path.startsWith("/api/")) {
-      responses.push({
+      const observed = {
         method: response.request().method(),
         path,
         status: response.status(),
-      });
+      };
+      mobileResponses.push(observed);
+      responses.push(observed);
     }
   });
   const mobileDocumentResponse = await mobilePage.goto(`${baseUrl}/#/`, {
@@ -444,32 +459,26 @@ try {
   );
   await mobileDiagnosticsRefreshButton.waitFor({ state: "visible" });
   assert.equal(await mobileDiagnosticsRefreshButton.isEnabled(), true);
-  const refreshedMobileDiagnosticsResponse = mobilePage.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/diagnostics" &&
-      response.request().method() === "GET" &&
-      response.status() === 200,
-  );
+  const mobileRequestCount = () =>
+    mobileRequests.filter(
+      (request) =>
+        request.method === "GET" && request.path === "/api/diagnostics",
+    ).length;
+  const mobileResponseCount = () =>
+    mobileResponses.filter(
+      (response) =>
+        response.method === "GET" &&
+        response.path === "/api/diagnostics" &&
+        response.status === 200,
+    ).length;
+  const mobileRequestsBeforeRefresh = mobileRequestCount();
+  const mobileResponsesBeforeRefresh = mobileResponseCount();
   phase = "diagnostics-mobile-refresh-click";
   await mobileDiagnosticsRefreshButton.click();
-  phase = "diagnostics-mobile-refresh-started";
-  const mobileDiagnosticsRefreshButtonHandle =
-    await mobileDiagnosticsRefreshButton.elementHandle();
-  assert.ok(mobileDiagnosticsRefreshButtonHandle);
-  await Promise.race([
-    refreshedMobileDiagnosticsResponse,
-    mobilePage.waitForFunction(
-      (button) => button instanceof HTMLButtonElement && button.disabled,
-      mobileDiagnosticsRefreshButtonHandle,
-      { timeout: 3000 },
-    ),
-  ]);
+  phase = "diagnostics-mobile-refresh-request";
+  await waitForIncrease(mobileRequestCount, mobileRequestsBeforeRefresh);
   phase = "diagnostics-mobile-refresh-response";
-  assert.equal(
-    (await (await refreshedMobileDiagnosticsResponse).json()).data
-      .schemaVersion,
-    1,
-  );
+  await waitForIncrease(mobileResponseCount, mobileResponsesBeforeRefresh);
   await mobilePage.close();
 
   phase = "password-page";

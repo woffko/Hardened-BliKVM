@@ -206,47 +206,57 @@ impl KvmdReadClient {
         path: &'static str,
         credentials: &KvmdCredentials,
     ) -> Result<T, KvmdClientError> {
-        let stream = UnixStream::connect(&self.socket_path).await?;
-        let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await?;
-        let connection_task = tokio::spawn(connection);
         let mut request = Request::builder()
             .method(Method::GET)
             .uri(path)
             .header(header::ACCEPT, "application/json")
+            .header(header::CONNECTION, "close")
             .header(header::HOST, "localhost")
             .header(header::USER_AGENT, "Hardened-BliKVM-broker/0.1")
             .body(Empty::<Bytes>::new())?;
         credentials.apply_request_headers(request.headers_mut());
-        let response = sender.send_request(request).await?;
+        let stream = UnixStream::connect(&self.socket_path).await?;
+        let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await?;
+        let connection_task = tokio::spawn(connection);
+        let response = match sender.send_request(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                drop(sender);
+                abort_and_join(connection_task).await;
+                return Err(error.into());
+            }
+        };
         drop(sender);
 
-        if response.status() != StatusCode::OK {
-            connection_task.abort();
-            return Err(KvmdClientError::Status(response.status()));
-        }
-        if response
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<usize>().ok())
-            .is_some_and(|length| length > self.max_response_bytes)
-        {
-            connection_task.abort();
-            return Err(KvmdClientError::ResponseTooLarge);
-        }
-
-        let mut body = response.into_body();
-        let mut bytes = Vec::new();
-        while let Some(frame) = body.frame().await {
-            if let Ok(data) = frame?.into_data() {
-                if bytes.len().saturating_add(data.len()) > self.max_response_bytes {
-                    connection_task.abort();
-                    return Err(KvmdClientError::ResponseTooLarge);
-                }
-                bytes.extend_from_slice(&data);
+        let body_result = async {
+            if response.status() != StatusCode::OK {
+                return Err(KvmdClientError::Status(response.status()));
             }
+            if response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<usize>().ok())
+                .is_some_and(|length| length > self.max_response_bytes)
+            {
+                return Err(KvmdClientError::ResponseTooLarge);
+            }
+
+            let mut body = response.into_body();
+            let mut bytes = Vec::new();
+            while let Some(frame) = body.frame().await {
+                if let Ok(data) = frame?.into_data() {
+                    if bytes.len().saturating_add(data.len()) > self.max_response_bytes {
+                        return Err(KvmdClientError::ResponseTooLarge);
+                    }
+                    bytes.extend_from_slice(&data);
+                }
+            }
+            Ok(bytes)
         }
-        connection_task.abort();
+        .await;
+        abort_and_join(connection_task).await;
+        let bytes = body_result?;
 
         let envelope: KvmdEnvelope<T> = serde_json::from_slice(&bytes)?;
         if !envelope.ok {
@@ -254,6 +264,11 @@ impl KvmdReadClient {
         }
         envelope.result.ok_or(KvmdClientError::MissingResult)
     }
+}
+
+async fn abort_and_join<T>(connection_task: tokio::task::JoinHandle<T>) {
+    connection_task.abort();
+    let _ = connection_task.await;
 }
 
 #[cfg(test)]
@@ -290,11 +305,53 @@ mod tests {
                 }
             }
             let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).await.unwrap();
+            let mut trailing = [0_u8; 1];
+            assert_eq!(stream.read(&mut trailing).await.unwrap(), 0);
             String::from_utf8(request).unwrap()
+        })
+    }
+
+    async fn serve_many(
+        socket: &Path,
+        expected_requests: usize,
+    ) -> tokio::task::JoinHandle<Vec<String>> {
+        let listener = UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            let mut handlers = Vec::with_capacity(expected_requests);
+            for _ in 0..expected_requests {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                handlers.push(tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    loop {
+                        let mut chunk = [0_u8; 1024];
+                        let read = stream.read(&mut chunk).await.unwrap();
+                        assert_ne!(read, 0);
+                        request.extend_from_slice(&chunk[..read]);
+                        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let body = r#"{"ok":true,"result":{}}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                    let mut trailing = [0_u8; 1];
+                    assert_eq!(stream.read(&mut trailing).await.unwrap(), 0);
+                    String::from_utf8(request).unwrap()
+                }));
+            }
+
+            let mut requests = Vec::with_capacity(expected_requests);
+            for handler in handlers {
+                requests.push(handler.await.unwrap());
+            }
+            requests
         })
     }
 
@@ -320,6 +377,7 @@ mod tests {
         let request = server.await.unwrap().to_ascii_lowercase();
         assert!(request.starts_with("get /atx http/1.1\r\n"));
         assert!(request.contains("host: localhost\r\n"));
+        assert!(request.contains("connection: close\r\n"));
         assert!(request.contains("x-kvmd-user: test-operator\r\n"));
         assert!(request.contains("x-kvmd-passwd: not-a-real-password\r\n"));
     }
@@ -340,6 +398,36 @@ mod tests {
             Err(KvmdClientError::ResponseTooLarge)
         ));
         let _ = server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_inventory_closes_every_keep_alive_connection() {
+        const INVENTORY_READS: usize = 12;
+        const ENDPOINTS_PER_INVENTORY: usize = 5;
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let server = serve_many(&socket, INVENTORY_READS * ENDPOINTS_PER_INVENTORY).await;
+        let client = KvmdReadClient::with_limits(&socket, Duration::from_secs(1), 4096).unwrap();
+        let credentials = fake_credentials();
+
+        for _ in 0..INVENTORY_READS {
+            timeout(Duration::from_secs(1), client.inventory(&credentials))
+                .await
+                .expect("inventory read stalled")
+                .expect("inventory read failed");
+        }
+
+        let requests = timeout(Duration::from_secs(2), server)
+            .await
+            .expect("keep-alive connections were not released")
+            .unwrap();
+        assert_eq!(requests.len(), INVENTORY_READS * ENDPOINTS_PER_INVENTORY);
+        assert!(requests.iter().all(|request| {
+            request
+                .to_ascii_lowercase()
+                .contains("connection: close\r\n")
+        }));
     }
 
     #[test]

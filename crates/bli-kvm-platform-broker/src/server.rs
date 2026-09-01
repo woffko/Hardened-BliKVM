@@ -855,11 +855,18 @@ mod tests {
                     }
                     _ => panic!("unexpected read-only KVMD path"),
                 };
+                assert!(
+                    request
+                        .to_ascii_lowercase()
+                        .contains("connection: close\r\n")
+                );
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
                     body.len()
                 );
                 stream.write_all(response.as_bytes()).await.unwrap();
+                let mut trailing = [0_u8; 1];
+                assert_eq!(stream.read(&mut trailing).await.unwrap(), 0);
             }
         })
     }
