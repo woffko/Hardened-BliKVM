@@ -147,6 +147,14 @@ packages: 54 workspace and 117 external, with no missing external license
 expression. A 1,233-advisory RustSec scan accepted the exact graph. The loader
 remains unlinked and absent from the prototype archive.
 
+The diagnostic maintenance boundary adds one workspace package and no external
+dependency. It reuses only the workspace key-loader/store graph; its device
+gate is Python/shell development tooling and is not packaged. Locked metadata
+at source `dfb47a2` contains 172 packages: 55 workspace and 117 external, with
+no missing external license expression. A 1,233-advisory RustSec scan accepted
+the exact graph. The maintenance executable, units, tmpfiles source, loader,
+store, and journal remain absent from the prototype archive.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

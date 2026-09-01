@@ -345,14 +345,24 @@ equal inode/content observations are mandatory.
 The format accepts one active and at most one previous distinct ID/key pair;
 both raw and typed key storage zeroize and expose no `Clone`/`Debug` or detailed
 error surface. The loader has no serializer, generator, direct persistent
-source reader, store call, acknowledgement, HTTP/UI, unit, or package; see
+source reader, acknowledgement, HTTP/UI, default broker link, or package. It is
+consumed only by the unshipped empty-only maintenance boundary; see
 `design/diagnostic-key-credential-v1.md` and
 `baselines/diagnostic-key-credential.md`.
+
+The H616 maintenance gate used an on-device ephemeral synthetic credential,
+accepted one real systemd runtime layout, initialized two equal encrypted empty
+copies, and proved inspection cannot clean a crash temporary or repair/change a
+copy. A ten-minute watchdog plus marker/hash/metadata-CAS rollback restored the
+original absence of credential, root, binary, units, stage, and temporary
+identities while KVMD/KVMD Nginx stayed active and rootfs stayed read-write.
+No physical Power/Reset or other device action was invoked; see
+`baselines/diagnostic-maintenance.md`.
 
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
 Production source creation, rotation, backup/recovery, external floor, and
-native rollback gates remain mandatory before provisioning either key or root.
+power-cut/reboot gates remain mandatory before provisioning either key or root.
 
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials

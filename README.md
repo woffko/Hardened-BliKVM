@@ -38,6 +38,9 @@ The reversible H616 prototype and the application-update core are implemented:
   atomic A/B store with OS entropy, plus a fixed 96-byte systemd key loader;
   all enforce strict inode/ACL/zeroization checks and have no provisioned key,
   runtime link, acknowledgement, API, or UI;
+- an unshipped empty-only diagnostic maintenance binary whose static units,
+  synthetic systemd credential, encrypted store initialization, nonmutating
+  inspection, and full rollback passed on the H616 test device;
 - a signed Ed25519 application verifier, immutable stager, anti-rollback
   journal, one-use health credential, watchdog rollback, and transactional
   slot garbage collection;

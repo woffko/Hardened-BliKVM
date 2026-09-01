@@ -77,10 +77,12 @@ server/HTTP/UI call site, retry, or advertised capability.
 The pure encrypted diagnostic journal, fixed-root atomic store, and fixed
 systemd key loader are also workspace-only libraries. They are not dependencies
 of the default or feature broker, and neither they nor their RustCrypto
-artifacts are copied into the prototype. The loader accepts only systemd's
-runtime credential copy; no persistent source, production key, root,
-maintenance binary, unit, or package is provisioned. A root-only maintenance
-boundary and native rollback gate must pass before this changes.
+artifacts are copied into the prototype. A separate empty-only maintenance
+binary, two static unit candidates, and tmpfiles root are likewise excluded.
+Their synthetic credential/store H616 gate passed with full rollback, but no
+persistent source, production key, root, enabled unit, or package is
+provisioned. Live acknowledgement and packaging require later independent
+gates.
 
 `nginx/hardened-blikvm.conf` is the production TLS boundary. It permits TLS
 1.2 and 1.3, proxies only to the fixed loopback server port, preserves the

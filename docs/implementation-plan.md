@@ -507,6 +507,25 @@ broker/ack linkage, HTTP/UI or package exists; see
 `design/diagnostic-key-credential-v1.md` and
 `baselines/diagnostic-key-credential.md`.
 
+Checkpoint: source `dfb47a2` adds the unshipped
+`bli-kvm-diagnostic-maintenance`, a nonmutating store read path, exact
+mode-0700 tmpfiles root, and separate non-enabled init/inspect units. Official
+systemd 249 source review corrected the loader to accept either its exact
+root-owned service-UID ACL layout or no-ACL ownership fallback and narrowed key
+authority to the two action units. The CLI exposes only `initialize-empty` and
+`inspect-empty`; init alone receives one writable path, while inspect rejects
+and preserves crash temporaries and degraded state. The full 144-Python-test
+source matrix, RustSec, two byte-identical AArch64 maintenance executables plus
+archive/maintenance/loader/store/journal artifacts passed. The rollback harness
+then reached 154 Python tests and a reversible H616 gate at job
+`286a6e60c60d4720964eaf8556a6021b`: real systemd credential delivery, two
+equal encrypted empty copies, nonmutating inspection, temporary rejection, and
+complete account/path/service rollback passed without Power/Reset. Production
+key/source ceremony, external floor, live acknowledgement, HTTP/UI, packaging,
+soak/reboot and release remain absent; see
+`design/diagnostic-maintenance-v1.md` and
+`baselines/diagnostic-maintenance.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

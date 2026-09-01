@@ -99,3 +99,15 @@ Their manifests bind the clean source commit while retaining both acceptance
 flags as false. Separate loader/journal rlib, metadata, and ThinLTO comparisons
 also matched; exact hashes and the no-key/no-device boundary are in
 `diagnostic-key-credential.md`.
+
+## Unshipped diagnostic-maintenance checkpoint
+
+Source commit `dfb47a2` added the empty-only maintenance executable, corrected
+systemd credential access, nonmutating store inspection, units, and tmpfiles
+source without copying any of them into the archive. Independent target/output
+roots produced byte-identical 4,800,673-byte prototype archives with SHA-256
+`bc77d8bb555d64306a38d829f0687ee3372c9cd797cf1f35f327e070c834b729`.
+Their manifests retain both acceptance flags as false. Separate executable and
+maintenance/loader/store/journal rlib, metadata, and ThinLTO comparisons plus a
+reversible H616 gate passed; exact evidence is in
+`diagnostic-maintenance.md`.

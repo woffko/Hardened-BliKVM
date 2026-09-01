@@ -166,10 +166,12 @@ crash-planning layer is accepted in `baselines/diagnostic-journal.md`. The
 separate fixed-root atomic filesystem store and OS nonce adapter are now
 host/AArch64 accepted in `baselines/diagnostic-store.md`. Its fixed 96-byte
 systemd key loader is likewise accepted in
-`baselines/diagnostic-key-credential.md`; all remain unlinked and unprovisioned.
-The next boundary is a root-only maintenance binary/unit plus rollback-gated
-native credential/store harness, still without live acknowledgement or
-HTTP/UI.
+`baselines/diagnostic-key-credential.md`. The empty-only maintenance executable,
+action-specific units, corrected v249 ACL/fallback handling, and rollback-gated
+synthetic H616 credential/store test are accepted in
+`baselines/diagnostic-maintenance.md`; all remain unshipped and production-key
+provisioning is absent. The next boundary is live write-readback-sync-ack
+coordination, still without HTTP/UI.
 
 The live metadata-only serial baseline currently has no ttyUSB0-3 nodes or
 serial/by-id directory. Vendor wildcard scan, O_RDWR open, termios changes and

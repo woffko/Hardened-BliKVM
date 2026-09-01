@@ -123,3 +123,9 @@ credential loader was subsequently completed at source `b3266c3`; see
 `diagnostic-key-credential.md`. A root-only maintenance/native store harness,
 production source/rotation ceremony, and external floor remain absent. Live
 write-readback-sync-ack coordination remains a later independent checkpoint.
+
+The empty-only maintenance and native H616 gate subsequently passed at source
+`dfb47a2`; see `diagnostic-maintenance.md`. It initialized exact encrypted
+copies and proved the new read-only load neither removes a valid temporary nor
+repairs/changes state. Production key/floor, nonempty reconciliation, power-cut
+durability, and live acknowledgement remain unaccepted.

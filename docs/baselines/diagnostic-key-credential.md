@@ -144,3 +144,9 @@ a root-only initialize-empty/inspect-empty maintenance binary plus static
 unit/tmpfiles candidates and a synthetic rollback-gated H616 test. It must use
 only ephemeral test key material, restore original absence, preserve KVMD and
 KVMD Nginx, keep rootfs read-write, and never invoke physical Power or Reset.
+
+That replacement checkpoint passed at source `dfb47a2` and live job
+`286a6e60c60d4720964eaf8556a6021b`. It corrected the systemd ACL/fallback
+model, narrowed authorization to the two maintenance units, accepted real H616
+credential delivery, and restored all state. Exact updated loader artifacts and
+remaining production-key limits are in `diagnostic-maintenance.md`.

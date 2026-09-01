@@ -169,7 +169,7 @@ not load or retain them. No root is provisioned and no default broker,
 collector, acknowledgement, HTTP/UI, or package links the store; see
 `design/diagnostic-store-v1.md` and `baselines/diagnostic-store.md`.
 
-A sibling unlinked loader now accepts one exact 96-byte binary key-ring
+A separate loader accepts one exact 96-byte binary key-ring
 credential from systemd 249. The public API has no path argument: the
 non-secret `CREDENTIALS_DIRECTORY` value must equal one of two compile-time
 unit directories and the only filename is fixed. Pinned no-follow descriptors,
@@ -184,9 +184,13 @@ Only an unshipped empty-only maintenance executable now links the loader and
 store. Separate non-enabled init/inspect units run it as the broker identity,
 load the fixed credential, and grant the init command exactly one writable
 root while inspection uses a nonmutating store path. Tmpfiles source can create
-only that root; no key source is included. The next boundary is the
-rollback-gated native credential/store test, still without production key or
-live acknowledgement authority; see `design/diagnostic-maintenance-v1.md`.
+only that root; no key source is included. The rollback-gated native H616 test
+accepted real systemd credential delivery, empty initialization, nonmutating
+inspection including crash-temp rejection, and complete restoration; see
+`design/diagnostic-maintenance-v1.md` and
+`baselines/diagnostic-maintenance.md`. The next boundary is the live
+write-readback-sync-ack coordinator, still without production key or HTTP/UI
+authority.
 
 ## Core invariants
 

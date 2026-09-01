@@ -4,6 +4,8 @@ Status: design boundary for an unshipped empty-only maintenance executable and
 two static one-shot units. This document does not authorize a production key,
 credential source creation, service enablement, live collector coordination,
 acknowledgement, repair/update command, HTTP, UI, package, or release.
+Host, reproducible AArch64, and reversible H616 evidence for this exact
+boundary is recorded in `../baselines/diagnostic-maintenance.md`.
 
 ## Exact commands
 
