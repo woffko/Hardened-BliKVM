@@ -502,6 +502,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-store"
+        maintenance = ROOT / "crates/bli-kvm-diagnostic-maintenance"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source
@@ -517,7 +518,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(dependency, manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                maintenance / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-store", other_manifest.read_text()
                 )
@@ -546,6 +550,8 @@ class PackagingBoundaryTests(unittest.TestCase):
             "plan_repair",
             "select_copies",
             "verify_written",
+            "pub fn load_read_only",
+            "RecoveryRequired",
             "OsRng",
             "try_fill_bytes",
             "pub struct DiagnosticJournalStore",
@@ -582,6 +588,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "active_previous_key_rotation_rewrites_both_copies_under_active_key",
             "unsafe_copy_types_modes_links_sizes_and_acls_are_rejected",
             "nonce_failure_reuse_wrong_key_floor_and_root_replacement_fail_closed",
+            "read_only_load_never_cleans_a_temporary_or_repairs_a_degraded_copy",
         ):
             self.assertIn(required_test, tests)
         self.assertIn("/var/lib/hardened-blikvm-diagnostics", design)
@@ -593,6 +600,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-key-loader"
+        maintenance = ROOT / "crates/bli-kvm-diagnostic-maintenance"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -611,15 +619,18 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(dependency, manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
+            if other_manifest not in {
+                crate / "Cargo.toml",
+                maintenance / "Cargo.toml",
+            }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-key-loader", other_manifest.read_text()
                 )
         for required in (
             '"diagnostic-journal-keyring"',
             '"CREDENTIALS_DIRECTORY"',
-            '"/run/credentials/hardened-blikvm-platform-broker.service"',
-            '"/run/credentials/hardened-blikvm-diagnostic-maintenance.service"',
+            '"/run/credentials/hardened-blikvm-diagnostic-store-init.service"',
+            '"/run/credentials/hardened-blikvm-diagnostic-store-inspect.service"',
             'b"BLIDKEY\\0"',
             "DIAGNOSTIC_KEY_CREDENTIAL_BYTES: usize = 96",
             '"hardened-blikvm-broker"',
@@ -634,6 +645,13 @@ class PackagingBoundaryTests(unittest.TestCase):
             "libc::O_NONBLOCK",
             "libc::openat",
             "libc::fgetxattr",
+            "POSIX_ACL_VERSION",
+            "ACL_USER_OBJ",
+            "ACL_USER",
+            "ACL_GROUP_OBJ",
+            "ACL_MASK",
+            "ACL_OTHER",
+            "validate_systemd_acl",
             "ct_eq",
             "decode_credential_in_place",
             "bytes.zeroize()",
@@ -647,6 +665,10 @@ class PackagingBoundaryTests(unittest.TestCase):
             r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct LoadedDiagnosticJournalKeys",
         )
         self.assertNotIn("bli-kvm-diagnostic-key-loader", builder)
+        self.assertNotIn(
+            '"/run/credentials/hardened-blikvm-platform-broker.service"',
+            production,
+        )
         for forbidden in (
             "pub fn load_from",
             "pub fn with_path",
@@ -673,6 +695,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden, production)
         for required_test in (
             "credential_format_vector_is_stable",
+            "systemd_249_acl_parser_accepts_only_the_exact_service_uid_grant",
             "active_only_credential_loads_and_raw_buffer_is_zeroized",
             "previous_key_rotation_is_typed_and_decrypts_the_old_generation",
             "format_rejects_every_noncanonical_header_and_key_relationship",
@@ -684,6 +707,116 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("96-byte", design)
         self.assertIn("does not protect the persistent source", design)
         self.assertIn("no public", design)
+
+    def test_diagnostic_maintenance_is_empty_only_credential_gated_and_unshipped(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-maintenance"
+        manifest = (crate / "Cargo.toml").read_text()
+        library = (crate / "src/lib.rs").read_text()
+        production = library.split("#[cfg(test)]", 1)[0]
+        main = (crate / "src/main.rs").read_text()
+        design = (
+            ROOT / "docs/design/diagnostic-maintenance-v1.md"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-maintenance"', workspace)
+        self.assertIn("bli-kvm-diagnostic-key-loader", manifest)
+        self.assertIn("bli-kvm-diagnostic-store", manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-maintenance", other_manifest.read_text()
+                )
+        for required in (
+            '"initialize-empty"',
+            '"inspect-empty"',
+            "load_systemd_diagnostic_journal_keys",
+            "DiagnosticJournalStore::open()",
+            ".initialize(&self.keys.key_ring())",
+            ".load_read_only(&self.keys.key_ring(), 1)",
+            "entry_count: selected.journal().entry_count()",
+            "pub struct ExactStoreBackend",
+            "pub fn parse_arguments",
+            "pub fn run_exact",
+            "result=empty generation=1 copies=healthy",
+        ):
+            self.assertIn(required, production)
+        self.assertNotRegex(
+            production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct ExactStoreBackend",
+        )
+        for forbidden in (
+            '"repair"',
+            '"rotate-key"',
+            '"acknowledge"',
+            "std::process",
+            "tokio::",
+            "systemctl",
+            "serde",
+            "Tcp",
+            "Http",
+            "DiagnosticExportClient",
+            ".repair(",
+            ".update(",
+            ".acknowledge(",
+        ):
+            self.assertNotIn(forbidden, production)
+            self.assertNotIn(forbidden, main)
+
+        init_unit = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-diagnostic-store-init.service"
+        ).read_text()
+        inspect_unit = (
+            ROOT
+            / "packaging/systemd/hardened-blikvm-diagnostic-store-inspect.service"
+        ).read_text()
+        credential = (
+            "LoadCredential=diagnostic-journal-keyring:"
+            "/etc/hardened-blikvm/diagnostic-journal-keyring"
+        )
+        for unit in (init_unit, inspect_unit):
+            self.assertIn("User=hardened-blikvm-broker", unit)
+            self.assertIn("Group=hardened-blikvm", unit)
+            self.assertIn(credential, unit)
+            self.assertIn("PrivateMounts=yes", unit)
+            self.assertIn("PrivateNetwork=yes", unit)
+            self.assertIn("PrivateDevices=yes", unit)
+            self.assertIn("ProtectSystem=strict", unit)
+            self.assertIn("RestrictAddressFamilies=AF_UNIX", unit)
+            self.assertIn("CapabilityBoundingSet=\n", unit)
+            self.assertIn("DevicePolicy=closed", unit)
+            self.assertIn("IPAddressDeny=any", unit)
+            self.assertNotIn("[Install]", unit)
+            self.assertNotIn("systemctl", unit)
+        self.assertIn(" initialize-empty", init_unit)
+        self.assertIn(" inspect-empty", inspect_unit)
+        self.assertIn(
+            "ReadWritePaths=/var/lib/hardened-blikvm-diagnostics", init_unit
+        )
+        self.assertNotIn("ReadWritePaths=", inspect_unit)
+
+        tmpfiles = (
+            ROOT / "packaging/tmpfiles.d/hardened-blikvm-diagnostics.conf"
+        ).read_text()
+        self.assertEqual(
+            tmpfiles,
+            "# Type Path Mode User Group Age Argument\n"
+            "d /var/lib/hardened-blikvm-diagnostics 0700 "
+            "hardened-blikvm-broker hardened-blikvm - -\n",
+        )
+        self.assertIn("inspect-empty", design)
+        self.assertIn("never removes", design)
+        self.assertIn("no physical Power or", design)
+        self.assertIn("Reset action is permitted", design)
+        for forbidden in (
+            "bli-kvm-diagnostic-maintenance",
+            "hardened-blikvm-diagnostic-store-init",
+            "hardened-blikvm-diagnostics.conf",
+        ):
+            self.assertNotIn(forbidden, builder)
 
     def test_platform_diagnostic_route_is_feature_gated_exact_peer_and_read_only(
         self,

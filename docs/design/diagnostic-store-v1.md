@@ -30,8 +30,14 @@ NUL-terminated names, `O_NOFOLLOW`, `O_CLOEXEC`, and `O_NONBLOCK`. They must be
 regular files on the root device, have exactly one hard link, exact owner/group
 and mode, no POSIX access ACL, and acceptable exact/bounded length. The root
 also rejects access/default ACLs and every unexpected directory entry. Safe
-partial temporaries are removed and the directory is synced; unsafe ones stop
-recovery.
+partial temporaries can be removed and the directory synced only by an
+explicit recovery-capable operation; unsafe ones stop recovery.
+
+Opening the store is nonmutating. The explicit read-only load rejects even a
+validated crash-left temporary as `RecoveryRequired` and never cleans or
+repairs it. Initialization, update, repair, and the recovery-capable load may
+remove only a validated temporary before their operation. This separates
+inspection from recovery authority.
 
 ## Nonce and key boundary
 
@@ -91,6 +97,6 @@ The first implementation is an unlinked library. A sibling unlinked loader now
 parses one fixed systemd credential into the typed caller-owned key ring; see
 `diagnostic-key-credential-v1.md`. Deferred work includes a production key
 ceremony and persistent-source protection, external rollback floor,
-maintenance CLI and native filesystem gate, Platform Broker feature
+native filesystem gate and maintenance acceptance, Platform Broker feature
 integration, background reconciliation, write-readback-sync-ack coordination,
 HTTP, UI, retention controls, packaging, privacy review, soak, and reboot.

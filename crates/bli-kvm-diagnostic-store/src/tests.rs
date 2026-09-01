@@ -396,6 +396,19 @@ fn unexpected_entries_and_unsafe_temporary_files_fail_closed() {
         COPY_MODE,
     );
     let store = open_test(&safe_temp_root).unwrap();
+    assert!(safe_temp_root.join(".journal-a.tmp").exists());
+    let key = key(1, 7);
+    let keys = DiagnosticJournalKeyRing::new(&key, None).unwrap();
+    assert_eq!(
+        store.load_read_only(&keys, 1).err(),
+        Some(DiagnosticStoreError::RecoveryRequired)
+    );
+    assert!(safe_temp_root.join(".journal-a.tmp").exists());
+    store.inject_nonce([1; 24]);
+    assert_eq!(
+        store.initialize(&keys).unwrap(),
+        PersistedDiagnosticJournal { generation: 1 }
+    );
     assert!(!safe_temp_root.join(".journal-a.tmp").exists());
     drop(store);
 
@@ -407,6 +420,39 @@ fn unexpected_entries_and_unsafe_temporary_files_fail_closed() {
         open_test(&unsafe_temp_root),
         Err(DiagnosticStoreError::UnsafeTemporary(CopyIndex::A))
     ));
+}
+
+#[test]
+fn read_only_load_never_cleans_a_temporary_or_repairs_a_degraded_copy() {
+    let (_directory, path) = root();
+    let store = open_test(&path).unwrap();
+    let key = key(1, 7);
+    let keys = DiagnosticJournalKeyRing::new(&key, None).unwrap();
+    initialize(&store, &keys);
+    drop(store);
+
+    let copy_a = path_for(&path, CopyIndex::A);
+    let clean_a = fs::read(&copy_a).unwrap();
+    let temporary = path.join(".journal-b.tmp");
+    write_raw(&temporary, b"partial", COPY_MODE);
+    let store = open_test(&path).unwrap();
+    assert_eq!(
+        store.load_read_only(&keys, 1).err(),
+        Some(DiagnosticStoreError::RecoveryRequired)
+    );
+    assert_eq!(fs::read(&temporary).unwrap(), b"partial");
+    assert_eq!(fs::read(&copy_a).unwrap(), clean_a);
+    drop(store);
+    fs::remove_file(&temporary).unwrap();
+
+    let mut corrupt_a = clean_a.clone();
+    corrupt_a[DIAGNOSTIC_JOURNAL_COPY_BYTES - 1] ^= 1;
+    write_raw(&copy_a, &corrupt_a, COPY_MODE);
+    let store = open_test(&path).unwrap();
+    let selected = store.load_read_only(&keys, 1).unwrap();
+    assert!(selected.degraded());
+    assert_eq!(selected.repair_target(), Some(CopyIndex::A));
+    assert_eq!(fs::read(&copy_a).unwrap(), corrupt_a);
 }
 
 #[test]

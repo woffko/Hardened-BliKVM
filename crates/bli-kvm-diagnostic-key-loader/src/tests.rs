@@ -20,6 +20,7 @@ use super::*;
 
 static ACL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static FILESYSTEM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const TEST_DIRECTORY_MODE: u32 = 0o700;
 
 fn serialize_filesystem_test() -> std::sync::MutexGuard<'static, ()> {
     FILESYSTEM_TEST_LOCK
@@ -54,7 +55,7 @@ fn root() -> (TempDir, PathBuf) {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("credentials");
     fs::create_dir(&root).unwrap();
-    fs::set_permissions(&root, Permissions::from_mode(DIRECTORY_MODE_OWNER_WRITABLE)).unwrap();
+    fs::set_permissions(&root, Permissions::from_mode(TEST_DIRECTORY_MODE)).unwrap();
     (temporary, root)
 }
 
@@ -70,7 +71,12 @@ fn write_credential(root: &Path, bytes: &[u8]) {
 
 fn load_test(root: &Path) -> Result<LoadedDiagnosticJournalKeys, DiagnosticKeyCredentialError> {
     let (owner, group) = ids();
+    seal_root(root);
     load_from_directory_with_hook(root, owner, group, || {})
+}
+
+fn seal_root(root: &Path) {
+    fs::set_permissions(root, Permissions::from_mode(DIRECTORY_MODE_READ_ONLY)).unwrap();
 }
 
 fn assert_invalid_format(mut bytes: [u8; DIAGNOSTIC_KEY_CREDENTIAL_BYTES]) {
@@ -124,6 +130,23 @@ fn set_zero_named_user_acl(
     guard
 }
 
+fn systemd_acl(owner: u32, permissions: u16) -> [u8; POSIX_ACL_XATTR_BYTES] {
+    fn push_entry(bytes: &mut Vec<u8>, tag: u16, permissions: u16, id: u32) {
+        bytes.extend_from_slice(&tag.to_le_bytes());
+        bytes.extend_from_slice(&permissions.to_le_bytes());
+        bytes.extend_from_slice(&id.to_le_bytes());
+    }
+
+    let mut bytes = Vec::with_capacity(POSIX_ACL_XATTR_BYTES);
+    bytes.extend_from_slice(&POSIX_ACL_VERSION.to_le_bytes());
+    push_entry(&mut bytes, ACL_USER_OBJ, permissions, ACL_UNDEFINED_ID);
+    push_entry(&mut bytes, ACL_USER, permissions, owner);
+    push_entry(&mut bytes, ACL_GROUP_OBJ, 0, ACL_UNDEFINED_ID);
+    push_entry(&mut bytes, ACL_MASK, permissions, ACL_UNDEFINED_ID);
+    push_entry(&mut bytes, ACL_OTHER, 0, ACL_UNDEFINED_ID);
+    bytes.try_into().unwrap()
+}
+
 #[test]
 fn production_contract_is_fixed_and_accepts_only_systemd_unit_directories() {
     assert_eq!(DIAGNOSTIC_KEY_CREDENTIAL_NAME, "diagnostic-journal-keyring");
@@ -132,10 +155,13 @@ fn production_contract_is_fixed_and_accepts_only_systemd_unit_directories() {
     assert_eq!(CREDENTIAL_VERSION, 1);
     assert_eq!(CREDENTIAL_ALGORITHM_XCHACHA20_POLY1305, 1);
     assert!(allowed_systemd_directory(Path::new(
-        PLATFORM_BROKER_CREDENTIAL_DIRECTORY
+        INIT_CREDENTIAL_DIRECTORY
     )));
     assert!(allowed_systemd_directory(Path::new(
-        MAINTENANCE_CREDENTIAL_DIRECTORY
+        INSPECT_CREDENTIAL_DIRECTORY
+    )));
+    assert!(!allowed_systemd_directory(Path::new(
+        "/run/credentials/hardened-blikvm-platform-broker.service"
     )));
     assert!(!allowed_systemd_directory(Path::new(
         "/run/credentials/unrelated.service"
@@ -157,6 +183,29 @@ fn credential_format_vector_is_stable() {
             0xbb, 0xd5, 0xba, 0x29,
         ]
     );
+}
+
+#[test]
+fn systemd_249_acl_parser_accepts_only_the_exact_service_uid_grant() {
+    let (owner, _) = ids();
+    assert!(validate_systemd_acl(&systemd_acl(owner, 0x04), owner, 0x04).is_ok());
+    assert!(validate_systemd_acl(&systemd_acl(owner, 0x05), owner, 0x05).is_ok());
+
+    let mut invalid = systemd_acl(owner, 0x04);
+    invalid[0] = 3;
+    assert!(validate_systemd_acl(&invalid, owner, 0x04).is_err());
+
+    let mut invalid = systemd_acl(owner, 0x04);
+    invalid[16..20].copy_from_slice(&owner.wrapping_add(1).to_le_bytes());
+    assert!(validate_systemd_acl(&invalid, owner, 0x04).is_err());
+
+    let mut invalid = systemd_acl(owner, 0x04);
+    invalid[14..16].copy_from_slice(&0x06_u16.to_le_bytes());
+    assert!(validate_systemd_acl(&invalid, owner, 0x04).is_err());
+
+    let mut invalid = systemd_acl(owner, 0x04);
+    invalid[28..30].copy_from_slice(&ACL_OTHER.to_le_bytes());
+    assert!(validate_systemd_acl(&invalid, owner, 0x04).is_err());
 }
 
 #[test]
@@ -268,7 +317,7 @@ fn directory_path_identity_mode_and_acl_fail_closed() {
 
     fs::set_permissions(&root_path, Permissions::from_mode(0o750)).unwrap();
     assert_eq!(
-        load_test(&root_path).err(),
+        load_from_directory_with_hook(&root_path, owner, group, || {}).err(),
         Some(DiagnosticKeyCredentialError::InvalidCredentialDirectory)
     );
 
@@ -375,9 +424,16 @@ fn inode_replacement_and_same_inode_rewrite_are_concurrent_changes() {
     let replacement = temporary.path().join("replacement");
     fs::write(&replacement, credential(2, 2, None)).unwrap();
     fs::set_permissions(&replacement, Permissions::from_mode(CREDENTIAL_FILE_MODE)).unwrap();
+    seal_root(&replacement_root);
     assert_eq!(
         load_from_directory_with_hook(&replacement_root, owner, group, || {
+            fs::set_permissions(
+                &replacement_root,
+                Permissions::from_mode(TEST_DIRECTORY_MODE),
+            )
+            .unwrap();
             fs::rename(&replacement, credential_path(&replacement_root)).unwrap();
+            seal_root(&replacement_root);
         })
         .err(),
         Some(DiagnosticKeyCredentialError::ConcurrentCredentialChange)
@@ -385,6 +441,7 @@ fn inode_replacement_and_same_inode_rewrite_are_concurrent_changes() {
 
     let (_temporary, rewrite_root) = root();
     write_credential(&rewrite_root, &credential(1, 1, None));
+    seal_root(&rewrite_root);
     assert_eq!(
         load_from_directory_with_hook(&rewrite_root, owner, group, || {
             let path = credential_path(&rewrite_root);

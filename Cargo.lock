@@ -267,6 +267,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-diagnostic-maintenance"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-diagnostic-key-loader",
+ "bli-kvm-diagnostic-store",
+]
+
+[[package]]
 name = "bli-kvm-diagnostic-peer-adapter"
 version = "0.1.0"
 dependencies = [

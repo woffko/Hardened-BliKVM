@@ -19,8 +19,11 @@ The key bytes are never placed in the environment. The production loader has
 one argument-free entrypoint, obtains the non-secret directory path from that
 standard variable, and accepts only these compile-time paths:
 
-- `/run/credentials/hardened-blikvm-platform-broker.service`;
-- `/run/credentials/hardened-blikvm-diagnostic-maintenance.service`.
+- `/run/credentials/hardened-blikvm-diagnostic-store-init.service`;
+- `/run/credentials/hardened-blikvm-diagnostic-store-inspect.service`.
+
+Platform Broker is deliberately not accepted until the later live-coordinator
+gate grants it key authority.
 
 The only accepted filename is `diagnostic-journal-keyring`. There is no public
 path-taking API, fallback directory, command-line option, configuration value,
@@ -69,16 +72,33 @@ reuse protection. New journal writes still use only the active key.
 
 The loader resolves the exact non-root `hardened-blikvm-broker` account and
 `hardened-blikvm` group, then requires the current effective UID/GID to match.
-The credential directory must be absolute, canonical, non-symlink, owned by
-that identity, mode 0500 or 0700, and free of POSIX access/default ACLs. Its
-path metadata and an `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` descriptor must
-identify the same device/inode/owner/group/mode/link/length tuple.
+The credential directory must be absolute, canonical, non-symlink and identify
+the same device/inode/owner/group/mode/link/length tuple through path metadata
+and an `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` descriptor.
+
+Systemd 249 implements two credential access layouts. The loader accepts only
+their canonical forms:
+
+- preferred ACL delivery: root-owned/root-group mode 0500 or 0550 directory
+  and mode 0400 or 0440 file, with one exact Linux POSIX access ACL granting
+  only the service UID `r-x` or `r--` respectively;
+- ramfs/no-ACL fallback: service-UID-owned mode-0500 directory and mode-0400
+  file, root or service GID, and no access ACL.
+
+The exact ACL must contain version 2 and only `USER_OBJ`, the resolved service
+`USER`, zero `GROUP_OBJ`, matching `MASK`, and zero `OTHER` entries in canonical
+order. Default directory ACLs, any extra principal/permission, a foreign owner
+or group, and every writable/world-accessible mode fail closed. This matches
+the v249 `write_credential()`/`acquire_credentials()` implementation rather
+than assuming one filesystem's ACL support:
+
+- <https://github.com/systemd/systemd/blob/v249/src/core/execute.c#L2282-L2441>
 
 The fixed credential name is opened relative to that descriptor with
 `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`. It must be a same-device,
-single-link, exact-owner/group, mode-0400 regular file with no POSIX access ACL
-and exact length 96. Nonblocking open prevents a substituted FIFO from hanging
-the process.
+single-link regular file in one accepted systemd access layout and have exact
+length 96. Nonblocking open prevents a substituted FIFO from hanging the
+process.
 
 The loader reads exactly 96 bytes plus EOF, rechecks metadata and ACL, reopens
 the same fixed name, repeats the complete read, and requires identical inode

@@ -1,0 +1,12 @@
+[package]
+name = "bli-kvm-diagnostic-maintenance"
+description = "Empty-only diagnostic store maintenance for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-key-loader = { path = "../bli-kvm-diagnostic-key-loader" }
+bli-kvm-diagnostic-store = { path = "../bli-kvm-diagnostic-store" }

@@ -165,21 +165,28 @@ exact broker identity, mode/owner/group/ACL/type/link/device invariants, pins an
 locks one no-follow directory descriptor, obtains nonces from `OsRng`, and
 performs authenticated write/readback, file sync, atomic rename, directory
 sync, reopen, and full reselection. It accepts typed caller-owned keys but does
-not load or retain them. No root is provisioned and no broker, collector,
-acknowledgement, HTTP/UI, package, or systemd path links the store; see
+not load or retain them. No root is provisioned and no default broker,
+collector, acknowledgement, HTTP/UI, or package links the store; see
 `design/diagnostic-store-v1.md` and `baselines/diagnostic-store.md`.
 
 A sibling unlinked loader now accepts one exact 96-byte binary key-ring
 credential from systemd 249. The public API has no path argument: the
 non-secret `CREDENTIALS_DIRECTORY` value must equal one of two compile-time
 unit directories and the only filename is fixed. Pinned no-follow descriptors,
-exact UID/GID/mode/type/link/ACL/length checks, two constant-time-equal reads,
-canonical active/previous slots, zeroized buffers, and duplicate key-material
-rejection produce only the typed caller-owned key ring. It creates and links
-nothing; see `design/diagnostic-key-credential-v1.md` and
-`baselines/diagnostic-key-credential.md`. The next boundary is a root-only
-maintenance harness and rollback-gated native credential/store test, still
-without a live acknowledgement path.
+exact systemd root-owned/service-UID-ACL or ownership-fallback layouts,
+mode/type/link/length checks, two constant-time-equal reads, canonical
+active/previous slots, zeroized buffers, and duplicate key-material rejection
+produce only the typed caller-owned key ring; see
+`design/diagnostic-key-credential-v1.md` and
+`baselines/diagnostic-key-credential.md`.
+
+Only an unshipped empty-only maintenance executable now links the loader and
+store. Separate non-enabled init/inspect units run it as the broker identity,
+load the fixed credential, and grant the init command exactly one writable
+root while inspection uses a nonmutating store path. Tmpfiles source can create
+only that root; no key source is included. The next boundary is the
+rollback-gated native credential/store test, still without production key or
+live acknowledgement authority; see `design/diagnostic-maintenance-v1.md`.
 
 ## Core invariants
 

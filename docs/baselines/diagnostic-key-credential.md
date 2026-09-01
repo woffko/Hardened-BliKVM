@@ -28,13 +28,26 @@ diagnostic maintenance unit. The credential name is fixed as
 `diagnostic-journal-keyring`; direct `/etc` reads and fallback paths do not
 exist.
 
-The loader resolves the exact non-root broker UID/shared GID and validates the
-canonical mode-0500/0700 credential directory through both path metadata and a
-pinned `O_DIRECTORY | O_NOFOLLOW` descriptor. It rejects POSIX access/default
-ACLs. The fixed file is opened relative to that descriptor with
-`O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK` and must be a same-device,
-single-link, exact-owner/group, mode-0400 regular file with no access ACL and
-exact length 96.
+The source checkpoint resolved the exact non-root broker UID/shared GID and
+validated a canonical service-owned mode-0500/0700 directory through path and
+pinned `O_DIRECTORY | O_NOFOLLOW` descriptor metadata. It accepted only a
+same-device, single-link, service-owned/group-owned mode-0400 file and rejected
+all POSIX ACLs.
+
+That host model was incomplete for native systemd 249. The official v249
+implementation prefers root-owned credentials with an exact ACL for the
+service UID, then falls back to service ownership only when the backing
+filesystem lacks ACL support:
+
+- <https://github.com/systemd/systemd/blob/v249/src/core/execute.c#L2282-L2441>
+
+This was found before any device gate or production key. Therefore commits
+`b3266c3`/`850495d` remain valid host-format/reproducibility evidence but are
+not accepted as native credential-delivery evidence. The subsequent
+maintenance checkpoint replaces the access validator with exact support for
+both systemd layouts, narrows the unit allowlist to action-specific init and
+inspect services, and must pass the H616 gate before the loader is considered
+native-compatible.
 
 Two complete reads through fresh descriptors must have identical inode
 identity and constant-time-equal bytes; the directory is revalidated after the

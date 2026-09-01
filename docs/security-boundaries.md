@@ -335,9 +335,13 @@ are still absent. Host and reproducible AArch64 evidence is in
 The separate key loader follows systemd 249's standard
 `CREDENTIALS_DIRECTORY` routing without putting key bytes in the environment.
 Only two exact per-unit directory paths and one fixed 96-byte filename are
-accepted. The directory and file require the exact broker identity, canonical
-path, pinned no-follow descriptors, private exact modes, same-device/single-link
-regular-file metadata, no POSIX ACL, and two equal inode/content observations.
+accepted. The process must have the exact broker UID/shared GID. Runtime
+directory/file access must match one of systemd 249's two exact layouts:
+root-owned with one canonical service-UID read/execute or read-only POSIX ACL,
+or service-UID-owned no-ACL fallback when ramfs lacks ACL support. Canonical
+path, pinned no-follow descriptors, private nonwritable modes,
+same-device/single-link regular-file metadata, no default/extra ACL, and two
+equal inode/content observations are mandatory.
 The format accepts one active and at most one previous distinct ID/key pair;
 both raw and typed key storage zeroize and expose no `Clone`/`Debug` or detailed
 error surface. The loader has no serializer, generator, direct persistent

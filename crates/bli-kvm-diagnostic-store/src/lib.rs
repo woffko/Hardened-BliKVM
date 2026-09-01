@@ -59,6 +59,7 @@ pub enum DiagnosticStoreError {
     UnexpectedEntry,
     UnsafeCopy(CopyIndex),
     UnsafeTemporary(CopyIndex),
+    RecoveryRequired,
     AlreadyInitialized,
     ConcurrentStateChange,
     VerificationFailed,
@@ -79,6 +80,7 @@ impl fmt::Display for DiagnosticStoreError {
             Self::UnexpectedEntry => "diagnostic store contains an unexpected entry",
             Self::UnsafeCopy(_) => "diagnostic journal copy is unsafe",
             Self::UnsafeTemporary(_) => "diagnostic temporary copy is unsafe",
+            Self::RecoveryRequired => "diagnostic store recovery is required",
             Self::AlreadyInitialized => "diagnostic store is already initialized",
             Self::ConcurrentStateChange => "diagnostic store changed concurrently",
             Self::VerificationFailed => "diagnostic store verification failed",
@@ -174,6 +176,23 @@ impl DiagnosticJournalStore {
         let _operation = self.lock_operation()?;
         self.prepare_root()?;
         self.load_unlocked(keys, minimum_generation)
+    }
+
+    /// Select the journal without deleting a temporary or repairing a copy.
+    ///
+    /// Any validated crash-left temporary is reported as recovery-required;
+    /// unsafe metadata remains a hard error. This is the only load path used
+    /// by the read-only maintenance command.
+    pub fn load_read_only(
+        &self,
+        keys: &DiagnosticJournalKeyRing<'_>,
+        minimum_generation: u64,
+    ) -> Result<SelectedDiagnosticJournal, DiagnosticStoreError> {
+        let _operation = self.lock_operation()?;
+        self.validate_read_only_entries()?;
+        let selected = self.load_unlocked(keys, minimum_generation)?;
+        self.validate_read_only_entries()?;
+        Ok(selected)
     }
 
     pub fn initialize(
@@ -287,7 +306,13 @@ impl DiagnosticJournalStore {
             #[cfg(test)]
             test_state: Mutex::new(TestState::default()),
         };
-        store.prepare_root()?;
+        store.validate_root()?;
+        let (temporary_a, temporary_b) = store.validate_entries()?;
+        if store.validate_temporary_if_present(CopyIndex::A)? != temporary_a
+            || store.validate_temporary_if_present(CopyIndex::B)? != temporary_b
+        {
+            return Err(DiagnosticStoreError::ConcurrentStateChange);
+        }
         let _ = store.read_copy(CopyIndex::A)?;
         let _ = store.read_copy(CopyIndex::B)?;
         Ok(store)
@@ -355,6 +380,20 @@ impl DiagnosticJournalStore {
         }
         self.validate_root()?;
         Ok((temporary_a, temporary_b))
+    }
+
+    fn validate_read_only_entries(&self) -> Result<(), DiagnosticStoreError> {
+        self.validate_root()?;
+        let (temporary_a, temporary_b) = self.validate_entries()?;
+        let observed_a = self.validate_temporary_if_present(CopyIndex::A)?;
+        let observed_b = self.validate_temporary_if_present(CopyIndex::B)?;
+        if observed_a != temporary_a || observed_b != temporary_b {
+            return Err(DiagnosticStoreError::ConcurrentStateChange);
+        }
+        if temporary_a || temporary_b {
+            return Err(DiagnosticStoreError::RecoveryRequired);
+        }
+        self.validate_root()
     }
 
     fn load_unlocked(
@@ -539,7 +578,7 @@ impl DiagnosticJournalStore {
     }
 
     fn cleanup_temporary_if_present(&self, index: CopyIndex) -> Result<(), DiagnosticStoreError> {
-        if self.open_existing(temporary_name(index), true)?.is_some() {
+        if self.validate_temporary_if_present(index)? {
             self.cleanup_temporary(index)?;
             self.root_directory.sync_all()?;
         }
@@ -548,8 +587,27 @@ impl DiagnosticJournalStore {
 
     fn cleanup_temporary(&self, index: CopyIndex) -> Result<(), DiagnosticStoreError> {
         let file = self
-            .open_existing(temporary_name(index), true)?
+            .open_validated_temporary(index)?
             .ok_or(DiagnosticStoreError::UnsafeTemporary(index))?;
+        drop(file);
+        unlink_at(&self.root_directory, temporary_name(index))
+    }
+
+    fn validate_temporary_if_present(
+        &self,
+        index: CopyIndex,
+    ) -> Result<bool, DiagnosticStoreError> {
+        self.open_validated_temporary(index)
+            .map(|file| file.is_some())
+    }
+
+    fn open_validated_temporary(
+        &self,
+        index: CopyIndex,
+    ) -> Result<Option<File>, DiagnosticStoreError> {
+        let Some(file) = self.open_existing(temporary_name(index), true)? else {
+            return Ok(None);
+        };
         validate_file_metadata(
             &file.metadata()?,
             self.identity,
@@ -563,7 +621,7 @@ impl DiagnosticJournalStore {
         if file.metadata()?.len() > DIAGNOSTIC_JOURNAL_COPY_BYTES as u64 {
             return Err(DiagnosticStoreError::UnsafeTemporary(index));
         }
-        unlink_at(&self.root_directory, temporary_name(index))
+        Ok(Some(file))
     }
 
     fn open_existing(
