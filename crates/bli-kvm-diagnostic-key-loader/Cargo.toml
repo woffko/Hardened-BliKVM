@@ -1,0 +1,19 @@
+[package]
+name = "bli-kvm-diagnostic-key-loader"
+description = "Fixed systemd credential loader for Hardened BliKVM diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-diagnostic-journal = { path = "../bli-kvm-diagnostic-journal" }
+libc.workspace = true
+nix.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+tempfile.workspace = true

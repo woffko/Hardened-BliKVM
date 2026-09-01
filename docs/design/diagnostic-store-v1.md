@@ -87,9 +87,10 @@ readback mismatch fail closed.
 
 ## Deferred boundaries
 
-The first implementation is an unlinked library. Deferred work includes a
-root-provisioned systemd credential parser, production key ceremony, external
-rollback floor, maintenance CLI and native filesystem gate, Platform Broker
-feature integration, background reconciliation, write-readback-sync-ack
-coordination, HTTP, UI, retention controls, packaging, privacy review, soak,
-and reboot.
+The first implementation is an unlinked library. A sibling unlinked loader now
+parses one fixed systemd credential into the typed caller-owned key ring; see
+`diagnostic-key-credential-v1.md`. Deferred work includes a production key
+ceremony and persistent-source protection, external rollback floor,
+maintenance CLI and native filesystem gate, Platform Broker feature
+integration, background reconciliation, write-readback-sync-ack coordination,
+HTTP, UI, retention controls, packaging, privacy review, soak, and reboot.

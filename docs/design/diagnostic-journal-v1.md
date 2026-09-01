@@ -55,12 +55,14 @@ selected for v1:
 - [RustCrypto aes-gcm-siv security warning](https://docs.rs/aes-gcm-siv/latest/aes_gcm_siv/#security-warning)
 - [RFC 8452](https://www.rfc-editor.org/rfc/rfc8452)
 
-The provisioned credential is exactly one uniformly random 32-byte AEAD key
-with a nonzero 32-bit key ID. No password KDF is used. A fixed key ring accepts
-one active and at most one previous distinct key ID so two-copy rotation can be
-read safely. New writes always use the active key. Key and cipher material plus
-transient encode/decrypt plaintext buffers are zeroized; the typed in-memory
-journal is payload-redacted in `Debug` and never appears in errors.
+The provisioned credential contains one uniformly random 32-byte AEAD key with
+a nonzero 32-bit key ID and may carry one previous slot during rotation. No
+password KDF is used. Both IDs and key material must be distinct so changing an
+ID cannot bypass per-key nonce reuse protection. New writes always use the
+active key. Key and cipher material plus transient encode/decrypt plaintext
+buffers are zeroized; the typed in-memory journal is payload-redacted in
+`Debug` and never appears in errors. The fixed systemd credential envelope is
+specified separately in `diagnostic-key-credential-v1.md`.
 
 ## Fixed encrypted copy
 
@@ -130,13 +132,15 @@ previously decrypted and selected journal:
 The planner cannot create an acknowledgement action from a newly constructed
 or merely prepared journal. Only state returned by authenticated A/B selection
 can authorize it. The future adapter must still enforce write, readback,
-file/directory sync, and re-selection before invoking that action.
+file/directory sync, and re-selection before invoking that action. The unlinked
+store now enforces those persistence steps; no live caller invokes the action.
 
 ## Deferred boundaries
 
-The first implementation is a pure `no_std` crate. Deferred, separately gated
-work includes fixed-root ownership/mode/ACL checks, directory locking,
-no-follow opens, atomic replacement and sync, OS randomness, systemd credential
-delivery, live broker coordination, acknowledgement ambiguity recovery across
-process crashes, key rotation ceremony, external rollback floor, authenticated
-HTTP, UI, retention controls, packaging, privacy review, soak, and reboot.
+The first implementation remains a pure `no_std` crate. Sibling unlinked layers
+now supply fixed-root atomic storage, OS randomness, and canonical systemd
+credential parsing. Still-deferred, separately gated work includes a production
+key/rotation ceremony, persistent credential protection, native store gate,
+live broker coordination, acknowledgement ambiguity recovery across process
+crashes, external rollback floor, authenticated HTTP, UI, retention controls,
+packaging, privacy review, soak, and reboot.

@@ -13,6 +13,7 @@ use core::fmt;
 
 use bli_kvm_diagnostic_export::{DiagnosticBundle, MAX_EXPORT_BYTES, MAX_RECORDS};
 use chacha20poly1305::{Key, KeyInit, Tag, XChaCha20Poly1305, XNonce, aead::AeadInOut};
+use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
 pub const DIAGNOSTIC_JOURNAL_SCHEMA_VERSION: u16 = 1;
@@ -121,6 +122,7 @@ impl DiagnosticJournalEntryState {
 pub enum DiagnosticJournalError {
     InvalidKey,
     DuplicateKeyId,
+    DuplicateKeyMaterial,
     InvalidNonce,
     NonceReuse,
     InvalidLength,
@@ -194,6 +196,9 @@ impl<'a> DiagnosticJournalKeyRing<'a> {
     ) -> Result<Self, DiagnosticJournalError> {
         if previous.is_some_and(|previous| previous.key_id == active.key_id) {
             return Err(DiagnosticJournalError::DuplicateKeyId);
+        }
+        if previous.is_some_and(|previous| bool::from(previous.bytes.ct_eq(&active.bytes))) {
+            return Err(DiagnosticJournalError::DuplicateKeyMaterial);
         }
         Ok(Self { active, previous })
     }
@@ -1466,6 +1471,11 @@ mod tests {
         assert!(matches!(
             DiagnosticJournalKeyRing::new(&active, Some(&active)),
             Err(DiagnosticJournalError::DuplicateKeyId)
+        ));
+        let duplicate_material = key(2, 1);
+        assert!(matches!(
+            DiagnosticJournalKeyRing::new(&active, Some(&duplicate_material)),
+            Err(DiagnosticJournalError::DuplicateKeyMaterial)
         ));
     }
 

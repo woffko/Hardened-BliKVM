@@ -421,6 +421,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-diagnostic-journal"
         store = ROOT / "crates/bli-kvm-diagnostic-store"
+        key_loader = ROOT / "crates/bli-kvm-diagnostic-key-loader"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         production = source.split("#[cfg(test)]", 1)[0]
@@ -437,6 +438,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             if other_manifest not in {
                 crate / "Cargo.toml",
                 store / "Cargo.toml",
+                key_loader / "Cargo.toml",
             }:
                 self.assertNotIn(
                     "bli-kvm-diagnostic-journal", other_manifest.read_text()
@@ -585,6 +587,103 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("/var/lib/hardened-blikvm-diagnostics", design)
         self.assertIn("write-readback-sync-ack", design)
         self.assertIn("does not retain", design)
+
+    def test_diagnostic_key_loader_is_fixed_systemd_only_secret_safe_and_unlinked(
+        self,
+    ) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        crate = ROOT / "crates/bli-kvm-diagnostic-key-loader"
+        manifest = (crate / "Cargo.toml").read_text()
+        source = (crate / "src/lib.rs").read_text()
+        production = source.split("#[cfg(test)]", 1)[0]
+        tests = (crate / "src/tests.rs").read_text()
+        design = (
+            ROOT / "docs/design/diagnostic-key-credential-v1.md"
+        ).read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('"crates/bli-kvm-diagnostic-key-loader"', workspace)
+        for dependency in (
+            "bli-kvm-diagnostic-journal =",
+            "libc.workspace = true",
+            "nix.workspace = true",
+            "subtle.workspace = true",
+            "zeroize.workspace = true",
+        ):
+            self.assertIn(dependency, manifest)
+        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other_manifest != crate / "Cargo.toml":
+                self.assertNotIn(
+                    "bli-kvm-diagnostic-key-loader", other_manifest.read_text()
+                )
+        for required in (
+            '"diagnostic-journal-keyring"',
+            '"CREDENTIALS_DIRECTORY"',
+            '"/run/credentials/hardened-blikvm-platform-broker.service"',
+            '"/run/credentials/hardened-blikvm-diagnostic-maintenance.service"',
+            'b"BLIDKEY\\0"',
+            "DIAGNOSTIC_KEY_CREDENTIAL_BYTES: usize = 96",
+            '"hardened-blikvm-broker"',
+            '"hardened-blikvm"',
+            "User::from_name",
+            "Group::from_name",
+            "geteuid()",
+            "getegid()",
+            "env::var_os",
+            "libc::O_DIRECTORY",
+            "libc::O_NOFOLLOW",
+            "libc::O_NONBLOCK",
+            "libc::openat",
+            "libc::fgetxattr",
+            "ct_eq",
+            "decode_credential_in_place",
+            "bytes.zeroize()",
+            "pub struct LoadedDiagnosticJournalKeys",
+            "pub fn load_systemd_diagnostic_journal_keys",
+            "pub fn key_ring",
+        ):
+            self.assertIn(required, production)
+        self.assertNotRegex(
+            production,
+            r"#\[derive\([^]]*(?:Debug|Clone)[^]]*\)\]\s*pub struct LoadedDiagnosticJournalKeys",
+        )
+        self.assertNotIn("bli-kvm-diagnostic-key-loader", builder)
+        for forbidden in (
+            "pub fn load_from",
+            "pub fn with_path",
+            "pub fn parse",
+            "std::env::args",
+            "set_var",
+            '"/etc/',
+            "Command",
+            "serde",
+            "tokio::",
+            "OsRng",
+            "DiagnosticJournalStore",
+            "DiagnosticExportClient",
+            ".acknowledge(",
+            "BrokerReadClient",
+            "Http",
+            "Tcp",
+            "println!",
+            "eprintln!",
+            "log::",
+            "tracing",
+            "encode_credential",
+        ):
+            self.assertNotIn(forbidden, production)
+        for required_test in (
+            "credential_format_vector_is_stable",
+            "active_only_credential_loads_and_raw_buffer_is_zeroized",
+            "previous_key_rotation_is_typed_and_decrypts_the_old_generation",
+            "format_rejects_every_noncanonical_header_and_key_relationship",
+            "unsafe_file_type_mode_link_length_and_acl_are_rejected",
+            "inode_replacement_and_same_inode_rewrite_are_concurrent_changes",
+        ):
+            self.assertIn(required_test, tests)
+        self.assertIn("systemd 249", design)
+        self.assertIn("96-byte", design)
+        self.assertIn("does not protect the persistent source", design)
+        self.assertIn("no public", design)
 
     def test_platform_diagnostic_route_is_feature_gated_exact_peer_and_read_only(
         self,
