@@ -837,6 +837,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "e02729175d8a8f76acd3e2592755b74733dba2d74d039174f2f80713512288a3",
             "f9d5b603ab1499921a356a2be0d9366f3741217e19e87b9005babf108c1d2b22",
             "9b7745572aaa41c9b9fbc4177ada3f99",
+            "7420391703f7416ca71c5a3aca25b599",
             "seven reads and three acknowledgement requests",
             "physical Power/Reset",
         ):

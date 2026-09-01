@@ -53,6 +53,10 @@ complete locked Rust/all-features/Clippy, source/systemd verify/security,
 matrix. The project LSP server was retried for the gate source and returned
 `document limit exceeded: 100/100`; LSP diagnostics are not claimed.
 
+Final evidence job `7420391703f7416ca71c5a3aca25b599` repeated the complete
+matrix from clean native-evidence commit
+`d50032b834783d51a4e537918e119994385c2d99` and exited zero.
+
 The locked graph contains 175 packages: 58 workspace and 117 external, with no
 missing external license expression. The gate adds one workspace package and
 no external dependency. `cargo audit` loaded 1,233 RustSec advisories and
