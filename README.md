@@ -44,6 +44,9 @@ The reversible H616 prototype and the application-update core are implemented:
   it has no floor source, executable, service, package, HTTP, or UI;
 - an unshipped zero-argument synthetic persistence gate and rollback harness,
   accepted reversibly on H616 and absent from the prototype payload;
+- an authenticated GET-only `/api/diagnostics` current-health view for
+  temperature, RTC, and fixed component states; persistent history is
+  explicitly unavailable and the server has no key/store/floor/ACK authority;
 - an unshipped empty-only diagnostic maintenance binary whose static units,
   synthetic systemd credential, encrypted store initialization, nonmutating
   inspection, and full rollback passed on the H616 test device;

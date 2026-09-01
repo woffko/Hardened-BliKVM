@@ -9,7 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use bli_kvm_broker_client::BrokerReadClient;
-use bli_kvm_core::{CapabilityManifest, CapabilityProvider, RuntimeInventory};
+use bli_kvm_core::{CapabilityManifest, CapabilityProvider, DiagnosticsView, RuntimeInventory};
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
 use bli_kvm_video_client::VideoReadClient;
 use serde::Serialize;
@@ -138,6 +138,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(auth::routes::password_state).post(auth::routes::change_password),
         )
         .route("/inventory", get(runtime_inventory))
+        .route("/diagnostics", get(diagnostics_view))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let api = public.merge(protected_routes).fallback(api_not_found);
@@ -175,6 +176,19 @@ async fn runtime_inventory(
         .await
         .map_err(|_| AppError::ServiceUnavailable("platform broker unavailable".into()))?;
     Ok(Json(ApiResponse::ok(inventory)))
+}
+
+async fn diagnostics_view(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<DiagnosticsView>>> {
+    let inventory = state
+        .inventory
+        .inventory()
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("platform broker unavailable".into()))?;
+    let diagnostics = DiagnosticsView::from_inventory(&inventory)
+        .map_err(|_| AppError::ServiceUnavailable("diagnostics view unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(diagnostics)))
 }
 
 async fn current_application_version() -> Json<ApiResponse<CurrentApplicationVersion>> {
@@ -217,6 +231,14 @@ mod tests {
         body::{Body, to_bytes},
         extract::ConnectInfo,
         http::{Method, Request, StatusCode, header},
+    };
+    use bli_kvm_broker_protocol::{
+        BROKER_SCHEMA_VERSION, BrokerReadRequest, BrokerReadResponse, BrokerResponseEnvelope,
+        decode_request, encode_frame, encode_response,
+    };
+    use bli_kvm_core::{
+        ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RtcObservation,
+        RuntimeVersions, ThermalObservation,
     };
     use serde_json::Value;
     use tempfile::tempdir;
@@ -296,6 +318,74 @@ mod tests {
         (cookie, csrf)
     }
 
+    fn diagnostics_inventory() -> RuntimeInventory {
+        RuntimeInventory {
+            schema_version: RUNTIME_INVENTORY_SCHEMA_VERSION,
+            platform_id: "bli-h616-pikvm".into(),
+            backend: InventoryBackend::KvmdTransition,
+            versions: RuntimeVersions {
+                kvmd: Some("3.291".into()),
+                streamer: Some("6.11".into()),
+            },
+            video: ComponentObservation {
+                enabled: Some(true),
+                online: Some(true),
+                busy: Some(false),
+                connected: None,
+            },
+            hid: ComponentObservation {
+                online: Some(true),
+                ..ComponentObservation::default()
+            },
+            power: ComponentObservation {
+                enabled: Some(true),
+                online: Some(true),
+                ..ComponentObservation::default()
+            },
+            virtual_media: ComponentObservation {
+                enabled: Some(true),
+                online: Some(true),
+                busy: Some(false),
+                connected: Some(false),
+            },
+            thermal: ThermalObservation {
+                temperature_millidegrees_celsius: Some(42_125),
+            },
+            rtc: RtcObservation {
+                unix_seconds: Some(1_759_489_393),
+                offset_from_system_seconds: Some(-28_647_995),
+            },
+            power_led: Some(true),
+            janus_enabled: Some(false),
+        }
+    }
+
+    fn spawn_inventory_broker(
+        listener: UnixListener,
+        inventory: RuntimeInventory,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut prefix = [0_u8; 4];
+            stream.read_exact(&mut prefix).await.unwrap();
+            let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut payload).await.unwrap();
+            let request = decode_request(&payload).unwrap();
+            assert_eq!(request.schema_version, BROKER_SCHEMA_VERSION);
+            assert_eq!(request.request, BrokerReadRequest::Inventory);
+            let response = BrokerResponseEnvelope {
+                schema_version: BROKER_SCHEMA_VERSION,
+                request_id: request.request_id,
+                response: BrokerReadResponse::Inventory { inventory },
+            };
+            let payload = encode_response(&response).unwrap();
+            stream
+                .write_all(&encode_frame(&payload).unwrap())
+                .await
+                .unwrap();
+        })
+    }
+
     #[tokio::test]
     async fn health_is_small_and_platform_specific() {
         let response = app()
@@ -373,6 +463,118 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_require_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/diagnostics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authenticated_diagnostics_are_current_only_typed_and_private() {
+        let directory = tempdir().unwrap();
+        let broker_socket = directory.path().join("broker.sock");
+        let listener = UnixListener::bind(&broker_socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            broker_socket,
+            secure_cookies: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&app).await;
+        let broker = spawn_inventory_broker(listener, diagnostics_inventory());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/diagnostics")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = json_body(response).await;
+        let data = &value["data"];
+        assert_eq!(data["schemaVersion"], 1);
+        assert_eq!(data["availability"], "current_only");
+        assert_eq!(data["current"]["temperature"]["state"], "available");
+        assert_eq!(
+            data["current"]["temperature"]["millidegreesCelsius"],
+            42_125
+        );
+        assert_eq!(data["current"]["components"]["video"]["online"], "active");
+        assert_eq!(data["history"]["reason"], "persistence_not_provisioned");
+        assert!(data.get("platformId").is_none());
+        assert!(data.get("versions").is_none());
+        let serialized = serde_json::to_string(data).unwrap().to_ascii_lowercase();
+        for forbidden in [
+            "bli-h616-pikvm",
+            "3.291",
+            "6.11",
+            "bundle",
+            "binding",
+            "instance_id",
+            "window_id",
+            "password",
+            "credential",
+            "serial",
+            "address",
+            "raw_log",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+        broker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn diagnostics_are_get_only_and_backend_errors_are_sanitized() {
+        let directory = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            broker_socket: directory.path().join("missing-broker.sock"),
+            secure_cookies: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let mut request = json_request(Method::POST, "/api/diagnostics", serde_json::json!({}));
+        request.headers_mut().insert(
+            header::COOKIE,
+            header::HeaderValue::from_str(&cookie).unwrap(),
+        );
+        request.headers_mut().insert(
+            "x-csrf-token",
+            header::HeaderValue::from_str(&csrf).unwrap(),
+        );
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/diagnostics")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let value = json_body(response).await;
+        assert_eq!(value["code"], -503);
+        assert_eq!(value["msg"], "service unavailable");
+        assert!(value.get("data").is_none());
     }
 
     #[tokio::test]

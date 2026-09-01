@@ -1218,7 +1218,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("pub async fn diagnostics", client)
         self.assertNotIn(".acknowledge(", source)
         self.assertNotIn(".diagnostics()", server)
-        self.assertNotIn('route("/diagnostics', server)
+        self.assertIn('route("/diagnostics", get(diagnostics_view))', server)
+        self.assertIn("DiagnosticsView::from_inventory(&inventory)", server)
         self.assertNotIn("diagnostic-export", (ROOT / "scripts/build-prototype-bundle.sh").read_text())
         self.assertIn(
             "cargo check --workspace --all-targets --all-features --locked", check
@@ -1949,6 +1950,83 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("proxy_pass http://0.0.0.0", config)
         self.assertNotIn("BEGIN PRIVATE KEY", config)
 
+    def test_diagnostics_view_is_authenticated_current_only_and_store_free(self) -> None:
+        core = (ROOT / "crates/bli-kvm-core/src/diagnostics.rs").read_text()
+        core_production, core_tests = core.split("#[cfg(test)]", 1)
+        server = (ROOT / "crates/bli-kvm-server/src/lib.rs").read_text()
+        server_production, server_tests = server.split("#[cfg(test)]", 1)
+        server_manifest = (ROOT / "crates/bli-kvm-server/Cargo.toml").read_text()
+        api = (ROOT / "docs/api/diagnostics-v1.md").read_text()
+        web_type = (ROOT / "web/src/types/diagnostics.ts").read_text()
+        web_api = (ROOT / "web/src/api/diagnostics.ts").read_text()
+        builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+
+        for required in (
+            "DIAGNOSTICS_VIEW_SCHEMA_VERSION: u16 = 1",
+            "pub struct DiagnosticsView",
+            "pub struct DiagnosticsCurrent",
+            "pub struct DiagnosticComponents",
+            "pub enum DiagnosticBooleanState",
+            "pub enum DiagnosticMetricState",
+            "PersistenceNotProvisioned",
+            "pub fn from_inventory",
+            ".validate()",
+            "pub fn validate",
+        ):
+            self.assertIn(required, core_production)
+        for forbidden in (
+            "DiagnosticBundle",
+            "DiagnosticBinding",
+            "instance_id",
+            "window_id",
+            "Path",
+            "Command",
+            "tokio::",
+            "std::fs",
+            "raw_log",
+            "credential",
+        ):
+            self.assertNotIn(forbidden, core_production)
+        for required_test in (
+            "sanitized_inventory_maps_to_current_only_view",
+            "absent_temperature_and_rtc_are_explicitly_unavailable",
+            "serialized_view_excludes_identity_version_log_and_persistence_payloads",
+            "decoding_rejects_unknown_fields_and_invalid_metric_coherence",
+        ):
+            self.assertIn(required_test, core_tests)
+
+        protected = server_production.index("let protected_routes")
+        route = server_production.index('.route("/diagnostics", get(diagnostics_view))')
+        layer = server_production.index(".route_layer(", route)
+        self.assertLess(protected, route)
+        self.assertLess(route, layer)
+        self.assertIn("DiagnosticsView::from_inventory(&inventory)", server_production)
+        self.assertIn(".inventory()", server_production)
+        for forbidden in (
+            "bli-kvm-diagnostic-persistence",
+            "bli-kvm-diagnostic-key-loader",
+            "bli-kvm-diagnostic-store",
+            "bli-kvm-diagnostic-export-client",
+        ):
+            self.assertNotIn(forbidden, server_manifest)
+        for required_test in (
+            "diagnostics_require_an_authenticated_session",
+            "authenticated_diagnostics_are_current_only_typed_and_private",
+            "diagnostics_are_get_only_and_backend_errors_are_sanitized",
+        ):
+            self.assertIn(required_test, server_tests)
+
+        self.assertIn("schemaVersion: 1", web_type)
+        self.assertIn("availability: 'current_only'", web_type)
+        self.assertIn("reason: 'persistence_not_provisioned'", web_type)
+        self.assertIn("http.get<DiagnosticsView>('/api/diagnostics')", web_api)
+        self.assertNotIn("http.post", web_api)
+        self.assertIn("GET /api/diagnostics", api)
+        self.assertIn("opaque HttpOnly session", api)
+        self.assertIn("persistence_not_provisioned", api)
+        self.assertIn("does not read the unshipped persistence stack", api)
+        self.assertIn("docs/api/diagnostics-v1.md", builder)
+
     def test_server_unit_requires_secure_proxy_cookies(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-server.service"
@@ -2004,6 +2082,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-update.conf", builder)
         self.assertIn("docs/api/inventory-v2.md", builder)
         self.assertIn("docs/api/inventory-v3.md", builder)
+        self.assertIn("docs/api/diagnostics-v1.md", builder)
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
 

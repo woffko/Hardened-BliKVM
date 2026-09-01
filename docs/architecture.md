@@ -222,6 +222,15 @@ not a production runtime or part of the prototype; see
 `baselines/device-diagnostic-persistence.md`. Its reversible H616 gate passed
 with full state removal; production key/floor/runtime authority remains absent.
 
+The network server now exposes a separate authenticated GET-only diagnostics
+view derived solely from its existing read-only inventory broker call. The
+platform-neutral contract maps temperature, RTC, video, HID, power observation,
+virtual-media state, and power LED into closed current-health enums. It omits
+platform identity and versions and reports history only as
+`persistence_not_provisioned`. The server links no diagnostic persistence,
+key-loader, store, export-client, floor, or acknowledgement crate; see
+`api/diagnostics-v1.md`.
+
 ## Core invariants
 
 1. Merely rendering a page cannot acquire or mutate hardware.

@@ -26,5 +26,6 @@ tokio.workspace = true
 tower-http.workspace = true
 
 [dev-dependencies]
+bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
 http-body-util.workspace = true
 tower.workspace = true

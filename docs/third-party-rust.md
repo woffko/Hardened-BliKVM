@@ -179,6 +179,11 @@ contains 175 packages: 58 workspace and 117 external, with no missing external
 license expression. A 1,233-advisory RustSec scan at source `7bef2bc` accepted
 the exact graph.
 
+The authenticated current-only diagnostics view adds no workspace or external
+dependency. The server reuses its existing core and read-only broker client;
+the broker protocol is referenced only by server tests to provide an exact
+framed inventory fixture.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

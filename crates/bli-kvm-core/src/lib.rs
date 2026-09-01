@@ -6,6 +6,7 @@
 
 mod capabilities;
 mod control;
+mod diagnostics;
 mod inventory;
 mod platform;
 
@@ -18,6 +19,12 @@ pub use capabilities::{
 pub use control::{
     AtxControlAction, ControlValidationError, HidReport, PlatformControlRequest,
     VirtualMediaCommand, VirtualMediaControlMode,
+};
+pub use diagnostics::{
+    DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,
+    DiagnosticComponents, DiagnosticHistory, DiagnosticHistoryReason, DiagnosticHistoryState,
+    DiagnosticMetricState, DiagnosticRtc, DiagnosticTemperature, DiagnosticsAvailability,
+    DiagnosticsCurrent, DiagnosticsView, DiagnosticsViewError,
 };
 pub use inventory::{
     ComponentObservation, InventoryBackend, InventoryError, RUNTIME_INVENTORY_SCHEMA_VERSION,

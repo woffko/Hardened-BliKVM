@@ -401,6 +401,17 @@ generation seven with two acknowledged entries, one confirmed-started cancelled
 ACK, no automatic retry, and complete rollback; see
 `baselines/device-diagnostic-persistence.md`.
 
+`GET /api/diagnostics` is inside the existing opaque-session protected router
+and makes one ordinary read-only inventory request. Its closed schema contains
+only current temperature/RTC and fixed boolean component observations; missing
+values are explicit. Platform ID, versions, bundle text, collector bindings,
+paths, identities, addresses, credentials, raw errors, and vendor logs are
+omitted. History is fixed unavailable while production persistence is not
+provisioned. Other methods are unrouted, and backend failures retain the
+generic sanitized 503 envelope. The network server gains no key/store/floor,
+collector acknowledgement, process, service, or hardware authority; see
+`api/diagnostics-v1.md`.
+
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
 Production source creation, rotation, backup/recovery, external floor, and

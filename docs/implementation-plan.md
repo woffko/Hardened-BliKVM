@@ -577,6 +577,15 @@ gate/bundle builds, and rollback-gated live H616 execution through generation
 seven with complete cleanup; see `design/diagnostic-persistence-gate-v1.md`
 and `baselines/device-diagnostic-persistence.md`.
 
+Checkpoint candidate: `bli-kvm-core` now defines a closed diagnostics-view v1
+derived only from validated runtime inventory, and the server exposes it at
+authenticated GET-only `/api/diagnostics`. Temperature, RTC and fixed component
+observations are current-only; missing values are explicit and persistent
+history is fixed `persistence_not_provisioned`. The server links no diagnostic
+key/store/floor/export-client/acknowledgement authority. Core/server auth,
+privacy, method, backend-error, Rust, TypeScript and package-boundary tests
+remain to be recorded; see `api/diagnostics-v1.md`.
+
 Planned diagnostics product gate: after the write-before-ack coordinator and
 an authenticated read-only HTTP API are accepted, add a dedicated
 `Diagnostics` tab to the branded web interface. It must show the already

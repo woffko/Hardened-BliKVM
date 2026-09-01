@@ -552,6 +552,7 @@ dependencies = [
  "axum",
  "base64",
  "bli-kvm-broker-client",
+ "bli-kvm-broker-protocol",
  "bli-kvm-core",
  "bli-kvm-platform-bli",
  "bli-kvm-video-client",
