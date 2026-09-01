@@ -60,6 +60,10 @@ Focused tests, Clippy and rustdoc with warnings denied passed. Full Longrun job
 Rust/all-features/Clippy, source/systemd, 157-Python-test, TypeScript,
 BasedPyright, frontend build/lint, and formatting matrix.
 
+Final evidence job `737554ec4fdd4acd99836e8326a245e8` repeated that complete
+matrix from clean evidence commit
+`f41bb000c6217e555410cba748ca648e2d7f09ee` and exited zero.
+
 The project LSP server was retried for the journal type graph. Workspace symbol
 search returned no semantic match, and document symbols failed with
 `document limit exceeded: 100/100`; LSP diagnostics are therefore not claimed.
