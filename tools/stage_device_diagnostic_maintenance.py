@@ -1325,7 +1325,7 @@ validate_private() {
   if [ -e "$path" ]; then
     [ -f "$path" ]
     [ ! -L "$path" ]
-    [ "$(stat -c '%u:%g:%h' "$path")" = 0:0:1 ]
+    [ "$(stat -c '%u:%h' "$path")" = 0:1 ]
     [ "$(stat -c %s "$path")" -le "$maximum" ]
   fi
 }

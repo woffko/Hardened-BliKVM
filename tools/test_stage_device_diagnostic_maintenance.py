@@ -125,6 +125,8 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
         self.assertIn('[ ! -e "$production_root" ]', script)
         self.assertIn("! -name synthetic-root", script)
         self.assertIn("synthetic-root/etc/.pwd.lock", script)
+        self.assertIn("stat -c '%u:%h'", script)
+        self.assertNotIn("stat -c '%u:%g:%h'", script)
         self.assertIn('sha256sum "$path"', script)
         self.assertNotIn("rm -rf", script)
         self.assertNotIn('rm -f -- "$production_root"', script)
