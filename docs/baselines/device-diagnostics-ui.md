@@ -59,6 +59,11 @@ Clippy with warnings denied, source/systemd checks, 172 Python tests,
 BasedPyright with zero diagnostics, the production TypeScript/Vite build,
 ESLint, and both Prettier checks.
 
+Final evidence job `da1368ab1e484a3d9ea8d9475f5e27bc` repeated the complete
+matrix from clean evidence commit
+`756ca101b9f24127a29b0a7c3955ec45b2ec7d56` after the public baseline,
+extended browser-state gate, and exact regression assertions were added.
+
 Focused evidence also includes:
 
 - 17 core and 27 server tests for the accepted API boundary;

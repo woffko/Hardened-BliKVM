@@ -2208,6 +2208,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         for required in (
             "8339018c74bdc4edd9889a418d7fdbce633cb769",
             "e8c485567f6040079ae0ee5b6257a0f6",
+            "756ca101b9f24127a29b0a7c3955ec45b2ec7d56",
+            "da1368ab1e484a3d9ea8d9475f5e27bc",
             "f81d30996d7449d689966aea44ecb735",
             "3311d78ffb304836904d74aa3a4e0f88",
             "9f13b56432dc0a73e700e881da23d4f31f57400b0cf69b6fd73dbf42fcd7f2e9",
