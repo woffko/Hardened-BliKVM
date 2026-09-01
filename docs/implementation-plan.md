@@ -539,6 +539,14 @@ require separate repair. The crate contains no concrete store/client link,
 key, runtime, timer, background task, HTTP/UI, unit, package, or enabled
 feature; see `design/diagnostic-coordinator-v1.md`.
 
+Source `945eb19` passed 26 focused coordinator tests, the complete host matrix
+with 157 Python tests, a 1,233-advisory RustSec scan, and two independent
+byte-identical AArch64 archive/rlib/rmeta/ThinLTO builds. Because coordinator
+methods are generic, two additional fully instantiated static-PIE AArch64 test
+executables were built and also matched byte-for-byte. They were not run on the
+device, and the source remains unlinked; see
+`baselines/diagnostic-coordinator.md`.
+
 Planned diagnostics product gate: after the write-before-ack coordinator and
 an authenticated read-only HTTP API are accepted, add a dedicated
 `Diagnostics` tab to the branded web interface. It must show the already

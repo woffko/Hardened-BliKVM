@@ -197,7 +197,8 @@ and a second immediate selection before issuing one linear acknowledgement
 permit. A dropped permit blocks normal progress until ambiguity is durably
 recorded or an already selected terminal state is proven. It contains no
 transport, retry loop, timer, concrete store/key link, HTTP/UI, or package; see
-`design/diagnostic-coordinator-v1.md`. A trusted production key/floor and the
+`design/diagnostic-coordinator-v1.md` and
+`baselines/diagnostic-coordinator.md`. A trusted production key/floor and the
 default-off concrete store/export-client adapter remain the next boundary.
 
 ## Core invariants

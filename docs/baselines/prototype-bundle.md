@@ -111,3 +111,15 @@ Their manifests retain both acceptance flags as false. Separate executable and
 maintenance/loader/store/journal rlib, metadata, and ThinLTO comparisons plus a
 reversible H616 gate passed; exact evidence is in
 `diagnostic-maintenance.md`.
+
+## Unlinked diagnostic-coordinator checkpoint
+
+Source commit `945eb19` added the floor-gated, cancellation-aware coordinator
+without linking it or any diagnostic persistence layer into the archive.
+Independent target/output roots produced byte-identical 4,802,264-byte
+prototype archives with SHA-256
+`7ef8812480c939dab37ac3efa479f651837cf86a7c9a3eb07185f86637b3362b`.
+Their manifests retain both acceptance flags as false. Coordinator rlib,
+metadata, ThinLTO, and a fully instantiated AArch64 test executable also
+matched; exact evidence and the no-device boundary are in
+`diagnostic-coordinator.md`.

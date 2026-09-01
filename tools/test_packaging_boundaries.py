@@ -512,6 +512,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         design = (
             ROOT / "docs/design/diagnostic-coordinator-v1.md"
         ).read_text()
+        baseline = (
+            ROOT / "docs/baselines/diagnostic-coordinator.md"
+        ).read_text()
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertIn('"crates/bli-kvm-diagnostic-coordinator"', workspace)
         self.assertIn("bli-kvm-diagnostic-journal =", manifest)
@@ -583,6 +586,15 @@ class PackagingBoundaryTests(unittest.TestCase):
             "dedicated Diagnostics tab",
         ):
             self.assertIn(required_design, design)
+        for required_baseline in (
+            "945eb19098639c733f3f630eb41750b7c1f0d936",
+            "Twenty-six focused Rust tests",
+            "document limit exceeded: 100/100",
+            "7ef8812480c939dab37ac3efa479f651837cf86a7c9a3eb07185f86637b3362b",
+            "6355407a9dfddb2b945e9cd4be064ded39f04fed886e88c0027e4f846ab87e5f",
+            "deviceAccepted=false",
+        ):
+            self.assertIn(required_baseline, baseline)
 
     def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()

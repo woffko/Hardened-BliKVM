@@ -160,7 +160,8 @@ dependency. It reuses only the diagnostic journal in production; the typed
 diagnostic export crate is a test-only workspace dependency. It remains
 unlinked and absent from every server, broker, unit, package, and prototype
 archive. The locked graph contains 173 packages: 56 workspace and 117 external,
-with no missing external license expression.
+with no missing external license expression. A 1,233-advisory RustSec scan at
+source `945eb19` accepted the exact graph.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
