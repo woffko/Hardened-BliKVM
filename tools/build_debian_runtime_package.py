@@ -26,6 +26,7 @@ PACKAGE_VERSION = "0.1.0~dev1"
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 BUNDLE_ROOT = "hardened-blikvm-prototype-0.1.0-dev-aarch64"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 FILE_MAP = {
     "bin/bli-kvm-server": "usr/libexec/hardened-blikvm/bli-kvm-server",
@@ -99,7 +100,9 @@ def validate_output_dir(value: str) -> Path:
     return output
 
 
-def package_manifest(bundle: prototype.BundleInfo) -> dict[str, object]:
+def package_manifest(
+    bundle: prototype.BundleInfo, builder_commit: str
+) -> dict[str, object]:
     return {
         "schemaVersion": 1,
         "package": PACKAGE_NAME,
@@ -107,6 +110,7 @@ def package_manifest(bundle: prototype.BundleInfo) -> dict[str, object]:
         "architecture": PACKAGE_ARCHITECTURE,
         "sourceCommit": bundle.source_commit,
         "sourceBundleSha256": bundle.sha256,
+        "builderCommit": builder_commit,
         "scope": "inert-read-only-runtime",
         "autoStart": False,
         "unitTemplatesActive": False,
@@ -117,6 +121,31 @@ def package_manifest(bundle: prototype.BundleInfo) -> dict[str, object]:
         "diagnosticPersistenceIncluded": False,
         "hardwareMutationIncluded": False,
     }
+
+
+def clean_builder_commit() -> str:
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if status.returncode != 0 or status.stdout:
+        raise BuildError("package builder worktree is not clean")
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    commit = revision.stdout.decode("ascii", errors="strict").strip()
+    if revision.returncode != 0 or len(commit) != 40 or any(
+        character not in "0123456789abcdef" for character in commit
+    ):
+        raise BuildError("package builder commit is invalid")
+    return commit
 
 
 def _extract_regular_member(archive: tarfile.TarFile, source: str, destination: Path) -> None:
@@ -206,6 +235,7 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
     output_dir = validate_output_dir(output_value)
     expected = prototype.validate_sha256(expected_sha256)
     bundle = prototype.validate_bundle(bundle_value, expected)
+    builder_commit = clean_builder_commit()
     dpkg_deb = shutil.which("dpkg-deb")
     if not dpkg_deb:
         raise BuildError("dpkg-deb is unavailable")
@@ -240,7 +270,12 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
         _write_text(package_root / "DEBIAN/control", control)
         _write_text(
             package_root / "usr/share/doc/hardened-blikvm-runtime/PACKAGE-MANIFEST.json",
-            json.dumps(package_manifest(bundle), sort_keys=True, separators=(",", ":")) + "\n",
+            json.dumps(
+                package_manifest(bundle, builder_commit),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
         )
         _normalize_tree(package_root)
         audit_package_tree(package_root)

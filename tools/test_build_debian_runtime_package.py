@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import tools.build_debian_runtime_package as package
 import tools.stage_device_prototype as prototype
@@ -44,9 +45,10 @@ class DebianRuntimePackageTests(unittest.TestCase):
             1024,
             "b" * 40,
         )
-        manifest = package.package_manifest(bundle)
+        manifest = package.package_manifest(bundle, "c" * 40)
         self.assertEqual(manifest["sourceCommit"], "b" * 40)
         self.assertEqual(manifest["sourceBundleSha256"], "a" * 64)
+        self.assertEqual(manifest["builderCommit"], "c" * 40)
         self.assertEqual(manifest["scope"], "inert-read-only-runtime")
         for field in (
             "autoStart",
@@ -59,6 +61,21 @@ class DebianRuntimePackageTests(unittest.TestCase):
             "hardwareMutationIncluded",
         ):
             self.assertIs(manifest[field], False)
+
+    def test_builder_requires_clean_git_commit(self) -> None:
+        clean = subprocess.CompletedProcess(["git", "status"], 0, b"", b"")
+        revision = subprocess.CompletedProcess(
+            ["git", "rev-parse"], 0, b"c" * 40 + b"\n", b""
+        )
+        with mock.patch.object(package.subprocess, "run", side_effect=[clean, revision]):
+            self.assertEqual(package.clean_builder_commit(), "c" * 40)
+
+        dirty = subprocess.CompletedProcess(
+            ["git", "status"], 0, b" M tracked-file\n", b""
+        )
+        with mock.patch.object(package.subprocess, "run", return_value=dirty):
+            with self.assertRaises(package.BuildError):
+                package.clean_builder_commit()
 
     def test_output_directory_must_be_new_absolute_and_empty(self) -> None:
         with self.assertRaises(ValueError):
