@@ -123,3 +123,15 @@ Their manifests retain both acceptance flags as false. Coordinator rlib,
 metadata, ThinLTO, and a fully instantiated AArch64 test executable also
 matched; exact evidence and the no-device boundary are in
 `diagnostic-coordinator.md`.
+
+## Unlinked diagnostic-persistence checkpoint
+
+Source commit `57959b0` added the one-step fixed-type persistence adapter
+without linking it or the lower diagnostic persistence graph into the archive.
+Independent target/output roots produced byte-identical 4,802,698-byte
+prototype archives with SHA-256
+`06164420cfaad73eebc854751e3830386f32c48b34275c2d3a91654b0815922f`.
+Their manifests retain both acceptance flags as false. Persistence rlib,
+metadata, ThinLTO, and a fully instantiated AArch64 test executable also
+matched; exact evidence and the no-device boundary are in
+`diagnostic-persistence.md`.

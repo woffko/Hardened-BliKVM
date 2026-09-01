@@ -209,7 +209,8 @@ at most one acknowledgement through the coordinator; it never loops, retries,
 spawns, opens a path, loads a credential, or derives a floor. It is not linked
 to Platform Broker or any executable/unit/package and cannot run in production
 without the still-missing trusted floor and key-custody boundary; see
-`design/diagnostic-persistence-v1.md`.
+`design/diagnostic-persistence-v1.md` and
+`baselines/diagnostic-persistence.md`.
 
 ## Core invariants
 

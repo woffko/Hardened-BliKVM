@@ -168,7 +168,8 @@ dependency. It reuses only the accepted coordinator, typed export/client,
 journal, key-loader, and store graph; Tokio is test-only for cancellation
 checks. The adapter remains unlinked and absent from every executable, unit,
 package, and prototype archive. The locked graph contains 174 packages: 57
-workspace and 117 external, with no missing external license expression.
+workspace and 117 external, with no missing external license expression. A
+1,233-advisory RustSec scan at source `57959b0` accepted the exact graph.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 

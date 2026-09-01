@@ -557,6 +557,13 @@ adds no path/configuration/retry/background task, and remains absent from every
 broker, executable, unit, package, HTTP route, UI, and prototype payload; see
 `design/diagnostic-persistence-v1.md`.
 
+Source `57959b0` passed 19 focused adapter tests, the complete host matrix with
+158 Python tests, a 1,233-advisory RustSec scan, and two independent
+byte-identical AArch64 archive/rlib/rmeta/ThinLTO builds. Two fully instantiated
+static-PIE AArch64 test executables also matched byte-for-byte. They have not
+yet run on H616, and no live key/store/socket was used; see
+`baselines/diagnostic-persistence.md`.
+
 Planned diagnostics product gate: after the write-before-ack coordinator and
 an authenticated read-only HTTP API are accepted, add a dedicated
 `Diagnostics` tab to the branded web interface. It must show the already
