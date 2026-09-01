@@ -31,6 +31,7 @@ export function useDiagnostics() {
   const controllerRef = useRef<AbortController | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const mountedRef = useRef(false);
+  const manualRefreshQueuedRef = useRef(false);
 
   const clearScheduledRefresh = useCallback(() => {
     if (timeoutRef.current !== null) {
@@ -71,16 +72,33 @@ export function useDiagnostics() {
     } finally {
       if (controllerRef.current === controller) controllerRef.current = null;
       if (mountedRef.current && isDocumentVisible()) {
-        timeoutRef.current = window.setTimeout(() => void load(), DIAGNOSTICS_REFRESH_MS);
+        if (manualRefreshQueuedRef.current) {
+          manualRefreshQueuedRef.current = false;
+          void load();
+        } else {
+          timeoutRef.current = window.setTimeout(() => void load(), DIAGNOSTICS_REFRESH_MS);
+        }
       }
     }
   }, [clearScheduledRefresh]);
+
+  const refresh = useCallback(() => {
+    if (!mountedRef.current || !isDocumentVisible()) return;
+    clearScheduledRefresh();
+    if (controllerRef.current) {
+      manualRefreshQueuedRef.current = true;
+      setSnapshot((current) => ({ ...current, refreshing: true }));
+      return;
+    }
+    void load();
+  }, [clearScheduledRefresh, load]);
 
   useEffect(() => {
     mountedRef.current = true;
     const onVisibilityChange = () => {
       clearScheduledRefresh();
       if (document.visibilityState === 'hidden') {
+        manualRefreshQueuedRef.current = false;
         controllerRef.current?.abort();
         setSnapshot((current) =>
           current.data ? { ...current, state: 'stale', refreshing: false } : current
@@ -94,6 +112,7 @@ export function useDiagnostics() {
     void load();
     return () => {
       mountedRef.current = false;
+      manualRefreshQueuedRef.current = false;
       clearScheduledRefresh();
       controllerRef.current?.abort();
       controllerRef.current = null;
@@ -103,6 +122,6 @@ export function useDiagnostics() {
 
   return {
     ...snapshot,
-    refresh: load
+    refresh
   };
 }

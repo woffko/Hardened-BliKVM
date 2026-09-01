@@ -146,6 +146,8 @@ class TlsGateError(Exception):
         stdout_bytes: int = 0,
         remote_phase: str | None = None,
         remote_cleanup_confirmed: bool | None = None,
+        diagnostics_get_requests: int | None = None,
+        diagnostics_response_statuses: list[int] | None = None,
     ) -> None:
         super().__init__(stage)
         self.stage: str = stage
@@ -154,6 +156,8 @@ class TlsGateError(Exception):
         self.stdout_bytes: int = stdout_bytes
         self.remote_phase: str | None = remote_phase
         self.remote_cleanup_confirmed: bool | None = remote_cleanup_confirmed
+        self.diagnostics_get_requests: int | None = diagnostics_get_requests
+        self.diagnostics_response_statuses: list[int] | None = diagnostics_response_statuses
 
 
 def parse_args() -> Options:
@@ -1246,7 +1250,7 @@ def validate_browser(raw: bytes) -> dict[str, object]:
     return dict(sorted(summary.items()))
 
 
-def validate_browser_failure(raw: bytes) -> tuple[str, str]:
+def validate_browser_failure(raw: bytes) -> tuple[str, str, int, list[int]]:
     if len(raw) > 4096:
         raise ValueError("browser failure output exceeded the limit")
     decoded = cast(object, json.loads(raw))
@@ -1255,15 +1259,52 @@ def validate_browser_failure(raw: bytes) -> tuple[str, str]:
     summary = cast(dict[str, object], decoded)
     phase = summary.get("phase")
     error_type = summary.get("errorType")
+    diagnostic_requests = summary.get("diagnosticsGetRequests")
+    diagnostic_statuses = summary.get("diagnosticsResponseStatuses")
     if (
-        summary.get("schemaVersion") != 1
+        set(summary)
+        != {
+            "schemaVersion",
+            "result",
+            "phase",
+            "errorType",
+            "diagnosticsGetRequests",
+            "diagnosticsResponseStatuses",
+        }
+        or summary.get("schemaVersion") != 1
         or summary.get("result") != "failed"
         or not isinstance(phase, str)
         or not re.fullmatch(r"[a-z-]{1,64}", phase)
         or error_type not in {"AssertionError", "Error", "TimeoutError", "TypeError"}
     ):
         raise ValueError("browser failure envelope is invalid")
-    return phase, cast(str, error_type)
+    if (
+        isinstance(diagnostic_requests, bool)
+        or not isinstance(diagnostic_requests, int)
+        or diagnostic_requests < 0
+        or diagnostic_requests > 32
+        or not isinstance(diagnostic_statuses, list)
+    ):
+        raise ValueError("browser failure diagnostics are invalid")
+    raw_statuses = cast(list[object], diagnostic_statuses)
+    validated_statuses: list[int] = []
+    for status in raw_statuses:
+        if (
+            isinstance(status, bool)
+            or not isinstance(status, int)
+            or status < 100
+            or status > 599
+        ):
+            raise ValueError("browser failure diagnostic status is invalid")
+        validated_statuses.append(status)
+    if len(validated_statuses) > 8 or len(validated_statuses) > diagnostic_requests:
+        raise ValueError("browser failure diagnostic status count is invalid")
+    return (
+        phase,
+        cast(str, error_type),
+        diagnostic_requests,
+        validated_statuses,
+    )
 
 
 def _zero(value: bytearray) -> None:
@@ -1363,13 +1404,20 @@ def execute(options: Options) -> int:
             timeout=120,
         )
         if browser_result.returncode != 0:
-            browser_phase, browser_error = validate_browser_failure(
+            (
+                browser_phase,
+                browser_error,
+                diagnostics_get_requests,
+                diagnostics_response_statuses,
+            ) = validate_browser_failure(
                 browser_result.stdout
             )
             raise TlsGateError(
                 stage,
                 f"browser-{browser_phase}-{browser_error.casefold()}",
                 return_code=browser_result.returncode,
+                diagnostics_get_requests=diagnostics_get_requests,
+                diagnostics_response_statuses=diagnostics_response_statuses,
             )
         browser_summary = validate_browser(browser_result.stdout)
 
@@ -1474,6 +1522,12 @@ def execute(options: Options) -> int:
                 "remotePhase": getattr(error, "remote_phase", None),
                 "remoteCleanupConfirmed": getattr(
                     error, "remote_cleanup_confirmed", None
+                ),
+                "diagnosticsGetRequests": getattr(
+                    error, "diagnostics_get_requests", None
+                ),
+                "diagnosticsResponseStatuses": getattr(
+                    error, "diagnostics_response_statuses", None
                 ),
             },
             "cleanup": cleanup,

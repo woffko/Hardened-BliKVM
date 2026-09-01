@@ -2132,6 +2132,8 @@ class PackagingBoundaryTests(unittest.TestCase):
             "window.setTimeout",
             "window.clearTimeout",
             "controllerRef.current?.abort()",
+            "manualRefreshQueuedRef.current = true",
+            "manualRefreshQueuedRef.current = false",
             "current.data ? 'stale' : 'error'",
             "isDiagnosticsView(response.data)",
         ):

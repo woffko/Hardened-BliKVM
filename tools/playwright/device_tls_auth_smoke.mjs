@@ -30,6 +30,8 @@ function formatRtcOffsetSeconds(value) {
 
 let phase = "browser-launch";
 let browser = null;
+const requests = [];
+const responses = [];
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
   const password = `Tls-${crypto.randomBytes(24).toString("hex")}`;
@@ -42,8 +44,6 @@ try {
     locale: "en-US",
   });
   const page = await context.newPage();
-  const requests = [];
-  const responses = [];
   const pageErrors = [];
   let webSocketsObserved = 0;
   let activeStreamResponse = null;
@@ -335,14 +335,21 @@ try {
     0,
   );
 
-  phase = "diagnostics-refresh";
+  phase = "diagnostics-refresh-ready";
+  const diagnosticsRefreshButton = settingsDialog.getByRole("button", {
+    name: "Refresh",
+  });
+  await diagnosticsRefreshButton.waitFor({ state: "visible" });
+  assert.equal(await diagnosticsRefreshButton.isEnabled(), true);
   const refreshedDiagnosticsResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/diagnostics" &&
       response.request().method() === "GET" &&
       response.status() === 200,
   );
-  await settingsDialog.getByRole("button", { name: "Refresh" }).click();
+  phase = "diagnostics-refresh-click";
+  await diagnosticsRefreshButton.click();
+  phase = "diagnostics-refresh-response";
   const refreshedDiagnostics = await refreshedDiagnosticsResponse;
   assert.equal((await refreshedDiagnostics.json()).data.schemaVersion, 1);
   await page.keyboard.press("Escape");
@@ -418,14 +425,22 @@ try {
       .count(),
     0,
   );
-  phase = "diagnostics-mobile-refresh";
+  phase = "diagnostics-mobile-refresh-ready";
+  const mobileDiagnosticsRefreshButton = mobileSettingsDialog.getByRole(
+    "button",
+    { name: "重新整理" },
+  );
+  await mobileDiagnosticsRefreshButton.waitFor({ state: "visible" });
+  assert.equal(await mobileDiagnosticsRefreshButton.isEnabled(), true);
   const refreshedMobileDiagnosticsResponse = mobilePage.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/diagnostics" &&
       response.request().method() === "GET" &&
       response.status() === 200,
   );
-  await mobileSettingsDialog.getByRole("button", { name: "重新整理" }).click();
+  phase = "diagnostics-mobile-refresh-click";
+  await mobileDiagnosticsRefreshButton.click();
+  phase = "diagnostics-mobile-refresh-response";
   assert.equal(
     (await (await refreshedMobileDiagnosticsResponse).json()).data
       .schemaVersion,
@@ -591,12 +606,25 @@ try {
     "TypeError",
   ]);
   const errorType = allowedTypes.has(error?.name) ? error.name : "Error";
+  const diagnosticsGetRequests = requests.filter(
+    (request) =>
+      request.method === "GET" && request.path === "/api/diagnostics",
+  ).length;
+  const diagnosticsResponseStatuses = responses
+    .filter(
+      (response) =>
+        response.method === "GET" && response.path === "/api/diagnostics",
+    )
+    .map((response) => response.status)
+    .slice(-8);
   console.log(
     JSON.stringify({
       schemaVersion: 1,
       result: "failed",
       phase,
       errorType,
+      diagnosticsGetRequests,
+      diagnosticsResponseStatuses,
     }),
   );
   process.exitCode = 1;

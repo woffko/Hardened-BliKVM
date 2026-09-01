@@ -191,22 +191,32 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertNotIn("admin1234", script)
         self.assertNotIn("10.0.", script)
         self.assertIn('"/api/diagnostics"', script)
-        self.assertIn('getByRole("button", { name: "Refresh" })', script)
+        self.assertIn("diagnostics-refresh-ready", script)
+        self.assertIn("diagnostics-refresh-click", script)
+        self.assertIn("diagnostics-refresh-response", script)
+        self.assertIn('name: "Refresh"', script)
         self.assertIn('setViewportSize({ width: 390, height: 844 })', script)
         self.assertIn('"hardened-blikvm-language", "zh_tw"', script)
-        self.assertIn('getByRole("button", { name: "重新整理" })', script)
+        self.assertIn("diagnostics-mobile-refresh-ready", script)
+        self.assertIn("diagnostics-mobile-refresh-click", script)
+        self.assertIn("diagnostics-mobile-refresh-response", script)
+        self.assertIn('name: "重新整理"', script)
         self.assertNotRegex(script, r"getByRole\(\"button\", \{ name: \"(?:Power|Reset)")
 
     def test_browser_failure_envelope_is_bounded_and_allowlisted(self) -> None:
         self.assertEqual(
             tls.validate_browser_failure(
-                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"AssertionError"}'
+                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"AssertionError","diagnosticsGetRequests":2,"diagnosticsResponseStatuses":[200]}'
             ),
-            ("cookies", "AssertionError"),
+            ("cookies", "AssertionError", 2, [200]),
         )
         with self.assertRaises(ValueError):
             _ = tls.validate_browser_failure(
-                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"SecretError"}'
+                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"SecretError","diagnosticsGetRequests":2,"diagnosticsResponseStatuses":[200]}'
+            )
+        with self.assertRaises(ValueError):
+            _ = tls.validate_browser_failure(
+                b'{"schemaVersion":1,"result":"failed","phase":"cookies","errorType":"Error","diagnosticsGetRequests":1,"diagnosticsResponseStatuses":[200,500]}'
             )
 
     def test_browser_success_requires_decoded_reconnected_read_only_video(self) -> None:
