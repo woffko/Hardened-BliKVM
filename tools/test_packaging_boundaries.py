@@ -2033,8 +2033,8 @@ class PackagingBoundaryTests(unittest.TestCase):
             "phase=diagnostics-unauthorized",
             '"availability":"current_only"',
             "persistence_not_provisioned",
-            "diagnostics_temperature_matches_inventory=yes",
-            "diagnostics_rtc_matches_inventory=yes",
+            "diagnostics_temperature_bounded=yes",
+            "diagnostics_rtc_bounded=yes",
             "diagnostics_component_states=typed",
         ):
             self.assertIn(required, device_gate)

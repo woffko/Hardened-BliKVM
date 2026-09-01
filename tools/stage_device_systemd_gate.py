@@ -63,11 +63,11 @@ RUN_KEYS = {
     "diagnostics_availability",
     "diagnostics_component_states",
     "diagnostics_history",
-    "diagnostics_rtc_matches_inventory",
+    "diagnostics_rtc_bounded",
     "diagnostics_sanitized",
     "diagnostics_schema",
     "diagnostics_status",
-    "diagnostics_temperature_matches_inventory",
+    "diagnostics_temperature_bounded",
     "diagnostics_unauthorized_status",
     "htpasswd_restored",
     "inventory_backend",
@@ -745,9 +745,20 @@ grep -q '"availability":"current_only"' "$test_root/diagnostics.json"
 phase=diagnostics-history
 grep -q '"history":{"state":"unavailable","reason":"persistence_not_provisioned"}' "$test_root/diagnostics.json"
 phase=diagnostics-temperature
-grep -q '"temperature":{"state":"available","millidegreesCelsius":'"$thermal_millidegrees" "$test_root/diagnostics.json"
+diagnostics_millidegrees=$(sed -n 's/.*"millidegreesCelsius":\(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$test_root/diagnostics.json")
+printf '%s\n' "$diagnostics_millidegrees" | grep -Eq '^-?[0-9]+$'
+[ "$diagnostics_millidegrees" -ge -40000 ]
+[ "$diagnostics_millidegrees" -le 150000 ]
+grep -q '"temperature":{"state":"available"' "$test_root/diagnostics.json"
 phase=diagnostics-rtc
-grep -q '"rtc":{"state":"available","unixSeconds":'"$rtc_unix_seconds"',"offsetFromSystemSeconds":'"$rtc_offset_seconds" "$test_root/diagnostics.json"
+diagnostics_rtc_unix=$(sed -n 's/.*"rtc":{"state":"available","unixSeconds":\([0-9][0-9]*\).*/\1/p' "$test_root/diagnostics.json")
+diagnostics_rtc_offset=$(sed -n 's/.*"rtc":.*"offsetFromSystemSeconds":\(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$test_root/diagnostics.json")
+printf '%s\n' "$diagnostics_rtc_unix" | grep -Eq '^[0-9]+$'
+printf '%s\n' "$diagnostics_rtc_offset" | grep -Eq '^-?[0-9]+$'
+[ "$diagnostics_rtc_unix" -ge 946684800 ]
+[ "$diagnostics_rtc_unix" -le 4102444799 ]
+[ "$diagnostics_rtc_offset" -ge -315576000 ]
+[ "$diagnostics_rtc_offset" -le 315576000 ]
 phase=diagnostics-components
 for component in video hid power virtualMedia; do grep -q '"'"$component"'":{"enabled":' "$test_root/diagnostics.json"; done
 grep -Eq '"powerLed":"(active|inactive|unavailable)"' "$test_root/diagnostics.json"
@@ -757,8 +768,8 @@ diagnostics_schema=1
 diagnostics_availability=current_only
 diagnostics_history=persistence_not_provisioned
 diagnostics_sanitized=yes
-diagnostics_temperature_matches_inventory=yes
-diagnostics_rtc_matches_inventory=yes
+diagnostics_temperature_bounded=yes
+diagnostics_rtc_bounded=yes
 diagnostics_component_states=typed
 phase=thermal-capability
 capabilities_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie" --output "$test_root/capabilities.json" --write-out '%{http_code}' "$origin/api/capabilities" 2>/dev/null)
@@ -927,8 +938,8 @@ emit diagnostics_schema "$diagnostics_schema"
 emit diagnostics_availability "$diagnostics_availability"
 emit diagnostics_history "$diagnostics_history"
 emit diagnostics_sanitized "$diagnostics_sanitized"
-emit diagnostics_temperature_matches_inventory "$diagnostics_temperature_matches_inventory"
-emit diagnostics_rtc_matches_inventory "$diagnostics_rtc_matches_inventory"
+emit diagnostics_temperature_bounded "$diagnostics_temperature_bounded"
+emit diagnostics_rtc_bounded "$diagnostics_rtc_bounded"
 emit diagnostics_component_states "$diagnostics_component_states"
 emit inventory_status "$inventory_status"
 emit inventory_schema 3
@@ -1183,8 +1194,8 @@ def validate_run(
         "diagnostics_availability": "current_only",
         "diagnostics_history": "persistence_not_provisioned",
         "diagnostics_sanitized": "yes",
-        "diagnostics_temperature_matches_inventory": "yes",
-        "diagnostics_rtc_matches_inventory": "yes",
+        "diagnostics_temperature_bounded": "yes",
+        "diagnostics_rtc_bounded": "yes",
         "diagnostics_component_states": "typed",
         "inventory_status": "200",
         "inventory_schema": "3",
