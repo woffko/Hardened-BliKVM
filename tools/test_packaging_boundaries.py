@@ -2048,6 +2048,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "5b9d0904308175fe62c805d3b8dfd0792a58d6b21654ce27996643b22ad729be",
             "8e76c6656168d01106cae84d506db67c3a23141ac0326658f67af71b165ae094",
             "8c5ee6fe988f40edaafd9165da90bfdf",
+            "de66f771b2bc48479c711aca37312358",
             "remoteCleanupConfirmed=true",
             "persistence_not_provisioned",
             "Power/Reset, reboot",

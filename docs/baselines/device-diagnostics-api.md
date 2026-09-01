@@ -54,6 +54,10 @@ TypeScript, BasedPyright, frontend build/lint, and formatting matrix. Tooling
 job `cf7eb08aa4184541a1d0cea1c17ac2e5` repeated that matrix after adding the
 reversible device assertions and also exited zero.
 
+Final evidence job `de66f771b2bc48479c711aca37312358` repeated the complete
+matrix from clean API-evidence commit
+`3a486608fd9b84ba56439ea10f89ed2398743aac` and exited zero.
+
 The project LSP server was retried for the new Rust contract and returned
 `document limit exceeded: 100/100`; LSP diagnostics are not claimed. Compiler,
 tests, Clippy, TypeScript and direct boundary checks are authoritative here.
