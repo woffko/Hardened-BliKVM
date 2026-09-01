@@ -113,6 +113,8 @@ are respectively:
 No device test was run because this pure crate has no storage path, random
 source, key, process link, acknowledgement call, or runtime behavior. The
 fixed-root atomic A/B filesystem store and OS-random nonce boundary were
-subsequently completed at source `2efe1f7`; see `diagnostic-store.md`. A
-root-provisioned systemd key credential, native store harness, external floor,
-and live write-before-ack coordinator remain separate later gates.
+subsequently completed at source `2efe1f7`; see `diagnostic-store.md`. The fixed
+systemd credential parser followed at source `b3266c3`; see
+`diagnostic-key-credential.md`. A production key/source ceremony, native store
+harness, external floor, and live write-before-ack coordinator remain separate
+later gates.

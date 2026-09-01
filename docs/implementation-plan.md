@@ -491,6 +491,22 @@ floor, broker/collector link, acknowledgement I/O, HTTP/UI and package remain
 absent; see `design/diagnostic-store-v1.md` and
 `baselines/diagnostic-store.md`.
 
+Checkpoint: source `b3266c3` adds the unlinked
+`bli-kvm-diagnostic-key-loader` and rejects duplicate journal key material even
+under distinct IDs. One canonical 96-byte binary envelope carries active plus
+fixed optional previous slots. The argument-free production API accepts only
+the standard systemd environment directory when it equals one of two exact
+unit paths, opens one fixed filename through pinned no-follow descriptors,
+requires exact identity/mode/type/link/ACL/length state, and compares two reads
+in constant time. Raw and typed keys zeroize and expose no payload-bearing
+`Debug`, error, serializer, generator, or path API. Ten loader tests, twelve
+journal tests, the full 143-Python-test matrix, RustSec, and two byte-identical
+AArch64 archive/loader/journal rlib, metadata and ThinLTO builds passed. No
+credential source, production key, root, maintenance binary/unit, store call,
+broker/ack linkage, HTTP/UI or package exists; see
+`design/diagnostic-key-credential-v1.md` and
+`baselines/diagnostic-key-credential.md`.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

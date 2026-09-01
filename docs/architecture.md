@@ -167,9 +167,19 @@ performs authenticated write/readback, file sync, atomic rename, directory
 sync, reopen, and full reselection. It accepts typed caller-owned keys but does
 not load or retain them. No root is provisioned and no broker, collector,
 acknowledgement, HTTP/UI, package, or systemd path links the store; see
-`design/diagnostic-store-v1.md` and `baselines/diagnostic-store.md`. The next
-boundary is fixed-format systemd key credential delivery and a rollback-gated
-native store harness, still without a live acknowledgement path.
+`design/diagnostic-store-v1.md` and `baselines/diagnostic-store.md`.
+
+A sibling unlinked loader now accepts one exact 96-byte binary key-ring
+credential from systemd 249. The public API has no path argument: the
+non-secret `CREDENTIALS_DIRECTORY` value must equal one of two compile-time
+unit directories and the only filename is fixed. Pinned no-follow descriptors,
+exact UID/GID/mode/type/link/ACL/length checks, two constant-time-equal reads,
+canonical active/previous slots, zeroized buffers, and duplicate key-material
+rejection produce only the typed caller-owned key ring. It creates and links
+nothing; see `design/diagnostic-key-credential-v1.md` and
+`baselines/diagnostic-key-credential.md`. The next boundary is a root-only
+maintenance harness and rollback-gated native credential/store test, still
+without a live acknowledgement path.
 
 ## Core invariants
 

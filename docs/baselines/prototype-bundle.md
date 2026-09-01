@@ -87,3 +87,15 @@ Their manifests bind the clean source commit while retaining both acceptance
 flags as false. Separate store/journal rlib, metadata, and ThinLTO comparisons
 also matched; exact hashes and the unprovisioned/no-device boundary are in
 `diagnostic-store.md`.
+
+## Unlinked diagnostic-key-loader checkpoint
+
+Source commit `b3266c3` added the fixed systemd diagnostic key loader without
+linking it, the store, or journal into a process or archive. Independent
+target/output roots produced byte-identical 4,800,533-byte prototype archives
+with SHA-256
+`0f2b1c0886ddf08d497300e28e0da5e81900a7c95812aef5a504587c84ed2484`.
+Their manifests bind the clean source commit while retaining both acceptance
+flags as false. Separate loader/journal rlib, metadata, and ThinLTO comparisons
+also matched; exact hashes and the no-key/no-device boundary are in
+`diagnostic-key-credential.md`.

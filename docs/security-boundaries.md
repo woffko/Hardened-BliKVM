@@ -328,10 +328,27 @@ The store receives a typed caller-owned key ring and never loads, retains,
 derives, serializes, or logs it. Production nonces come from `OsRng`; failure,
 all-zero output, or retained active-key reuse fails closed. Fixed error payloads
 omit paths, identities, I/O details, keys, nonces, ciphertext, and plaintext.
-The root, key credential, external rollback floor, process linkage, and native
-device durability are still absent. Host and reproducible AArch64 evidence is
-in `baselines/diagnostic-store.md`; a systemd credential loader and native
-rollback gate must be accepted before provisioning the fixed root.
+The root, external rollback floor, process linkage, and native device durability
+are still absent. Host and reproducible AArch64 evidence is in
+`baselines/diagnostic-store.md`.
+
+The separate key loader follows systemd 249's standard
+`CREDENTIALS_DIRECTORY` routing without putting key bytes in the environment.
+Only two exact per-unit directory paths and one fixed 96-byte filename are
+accepted. The directory and file require the exact broker identity, canonical
+path, pinned no-follow descriptors, private exact modes, same-device/single-link
+regular-file metadata, no POSIX ACL, and two equal inode/content observations.
+The format accepts one active and at most one previous distinct ID/key pair;
+both raw and typed key storage zeroize and expose no `Clone`/`Debug` or detailed
+error surface. The loader has no serializer, generator, direct persistent
+source reader, store call, acknowledgement, HTTP/UI, unit, or package; see
+`design/diagnostic-key-credential-v1.md` and
+`baselines/diagnostic-key-credential.md`.
+
+Systemd's runtime copy does not protect the persistent source at rest. The
+target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
+Production source creation, rotation, backup/recovery, external floor, and
+native rollback gates remain mandatory before provisioning either key or root.
 
 The pure peer policy validates five producer UIDs and one collector UID as
 nonzero and pairwise distinct, plus one nonzero shared GID. Kernel credentials

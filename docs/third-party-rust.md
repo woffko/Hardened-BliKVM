@@ -138,6 +138,15 @@ missing external license expression. A refreshed 1,233-advisory RustSec scan
 accepted the exact graph. The store remains unlinked and absent from the
 prototype archive.
 
+The diagnostic key loader adds one workspace package and no external
+dependency. It reuses the already locked journal, libc, nix, subtle, zeroize,
+and host-test-only SHA-256/tempfile graph. Making subtle a direct journal
+dependency supports constant-time duplicate-key-material rejection without a
+lockfile version change. Locked metadata at source `b3266c3` contains 171
+packages: 54 workspace and 117 external, with no missing external license
+expression. A 1,233-advisory RustSec scan accepted the exact graph. The loader
+remains unlinked and absent from the prototype archive.
+
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 
 1. run the inventory from the exact locked dependency graph;

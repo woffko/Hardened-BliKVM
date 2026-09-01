@@ -118,9 +118,8 @@ byte-identical with SHA-256, respectively:
 `1bef8d5ba87c041248108973b1f95f2569fdae34470dbdfebf81ca7029c7af00`
 
 No device test was run for this source checkpoint. The production root is
-unprovisioned, there is no systemd key credential parser or maintenance/native
-store harness, and no live process links the crate. The next boundary is a
-root-provisioned, fixed-format systemd credential loader that keeps key bytes
-out of argv, environment, source, logs, and network processes, followed by a
-rollback-gated native store harness. Live write-readback-sync-ack coordination
-remains a later independent checkpoint.
+unprovisioned and no live process links the crate. The fixed-format systemd
+credential loader was subsequently completed at source `b3266c3`; see
+`diagnostic-key-credential.md`. A root-only maintenance/native store harness,
+production source/rotation ceremony, and external floor remain absent. Live
+write-readback-sync-ack coordination remains a later independent checkpoint.
