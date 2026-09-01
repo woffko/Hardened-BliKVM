@@ -124,6 +124,7 @@ RECOVERY_OVERVIEW_KEYS = {
     "watchdog_service_active_count",
     "watchdog_timer_active_count",
 }
+ORPHAN_CLEANUP_KEYS = {"orphan_stage_removed"}
 
 
 @dataclass(frozen=True)
@@ -646,6 +647,9 @@ fi
 if [ -d "$synthetic_root" ]; then
   rm -f -- "$synthetic_root/etc/passwd" "$synthetic_root/etc/group" \
     "$synthetic_root/etc/shadow" "$synthetic_root/etc/gshadow" \
+    "$synthetic_root/etc/passwd-" "$synthetic_root/etc/group-" \
+    "$synthetic_root/etc/shadow-" "$synthetic_root/etc/gshadow-" \
+    "$synthetic_root/etc/.pwd.lock" \
     "$synthetic_root/usr/lib/sysusers.d/50-diagnostics.conf"
   rmdir "$synthetic_root/usr/lib/sysusers.d" "$synthetic_root/usr/lib" \
     "$synthetic_root/usr" "$synthetic_root/etc" "$synthetic_root"
@@ -906,6 +910,9 @@ if [ -d "$stage_root" ]; then
     if [ -d "$synthetic_root" ]; then
       rm -f -- "$synthetic_root/etc/passwd" "$synthetic_root/etc/group" \
         "$synthetic_root/etc/shadow" "$synthetic_root/etc/gshadow" \
+        "$synthetic_root/etc/passwd-" "$synthetic_root/etc/group-" \
+        "$synthetic_root/etc/shadow-" "$synthetic_root/etc/gshadow-" \
+        "$synthetic_root/etc/.pwd.lock" \
         "$synthetic_root/usr/lib/sysusers.d/50-diagnostics.conf"
       for directory in "$synthetic_root/usr/lib/sysusers.d" \
         "$synthetic_root/usr/lib" "$synthetic_root/usr" \
@@ -1243,6 +1250,150 @@ emit watchdog_timer_active_count "$watchdog_timer_active_count"
     return f"{values}\n{body}"
 
 
+def build_orphan_stage_cleanup_script(assets: Assets) -> str:
+    values = common.assignments(
+        {
+            "prefix": (
+                "/tmp/hardened-blikvm-diagnostic-maintenance-"
+                f"{assets.binary.sha256[:12]}-"
+            ),
+            "production_root": PRODUCTION_ROOT,
+            "credential_target": CREDENTIAL_TARGET,
+            "binary_target": BINARY_TARGET,
+            "init_target": INIT_UNIT_TARGET,
+            "inspect_target": INSPECT_UNIT_TARGET,
+            "binary_sha": assets.binary.sha256,
+            "binary_size": assets.binary.size_bytes,
+            "init_sha": assets.init_unit.sha256,
+            "init_size": assets.init_unit.size_bytes,
+            "inspect_sha": assets.inspect_unit.sha256,
+            "inspect_size": assets.inspect_unit.size_bytes,
+            "tmpfiles_sha": assets.tmpfiles.sha256,
+            "tmpfiles_size": assets.tmpfiles.size_bytes,
+        }
+    )
+    body = r"""
+set -eu
+count=0
+stage_root=
+for candidate in "$prefix"*; do
+  [ -d "$candidate" ] || continue
+  count=$((count + 1))
+  stage_root=$candidate
+done
+[ "$count" = 1 ]
+run_id=${stage_root##*-}
+case "$run_id" in *[!0-9a-f]*|'') exit 1 ;; esac
+[ "${#run_id}" = 16 ]
+[ "$stage_root" = "$prefix$run_id" ]
+[ "$(stat -c '%a:%u:%g' "$stage_root")" = 700:0:0 ]
+[ ! -e "$stage_root/.hardened-blikvm-owner" ]
+[ ! -e "$stage_root/rollback.state" ]
+[ ! -e "$production_root" ]
+[ ! -e "$credential_target" ]
+[ ! -e "$binary_target" ]
+[ ! -e "$init_target" ]
+[ ! -e "$inspect_target" ]
+[ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
+[ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]
+root_options=$(findmnt -n -o OPTIONS /)
+case ",$root_options," in *,rw,*) ;; *) exit 1 ;; esac
+timer_count=$(systemctl list-units --type=timer --state=active --plain --no-legend 2>/dev/null | awk '$1 ~ /^hardened-blikvm-diagnostic-rollback-[0-9a-f]+\.timer$/ {count++} END {print count+0}')
+service_count=$(systemctl list-units --type=service --state=active --plain --no-legend 2>/dev/null | awk '$1 ~ /^hardened-blikvm-diagnostic-rollback-[0-9a-f]+\.service$/ {count++} END {print count+0}')
+[ "$timer_count" = 0 ]
+[ "$service_count" = 0 ]
+unexpected=$(find "$stage_root" -mindepth 1 -maxdepth 1 \
+  ! -name maintenance ! -name init.service ! -name inspect.service \
+  ! -name tmpfiles.conf ! -name rollback.sh ! -name rollback.state.part \
+  ! -name diagnostic-sysusers.conf ! -name account-backup \
+  ! -name synthetic-root -print -quit)
+[ -z "$unexpected" ]
+validate_asset() {
+  path=$1 expected_sha=$2 expected_size=$3 expected_mode=$4
+  if [ -e "$path" ]; then
+    [ -f "$path" ]
+    [ ! -L "$path" ]
+    [ "$(stat -c '%a:%u:%g:%h:%s' "$path")" = "$expected_mode:0:0:1:$expected_size" ]
+    [ "$(sha256sum "$path" | cut -d ' ' -f 1)" = "$expected_sha" ]
+  fi
+}
+validate_private() {
+  path=$1 maximum=$2
+  if [ -e "$path" ]; then
+    [ -f "$path" ]
+    [ ! -L "$path" ]
+    [ "$(stat -c '%u:%g:%h' "$path")" = 0:0:1 ]
+    [ "$(stat -c %s "$path")" -le "$maximum" ]
+  fi
+}
+validate_asset "$stage_root/maintenance" "$binary_sha" "$binary_size" 700
+validate_asset "$stage_root/init.service" "$init_sha" "$init_size" 600
+validate_asset "$stage_root/inspect.service" "$inspect_sha" "$inspect_size" 600
+validate_asset "$stage_root/tmpfiles.conf" "$tmpfiles_sha" "$tmpfiles_size" 600
+validate_private "$stage_root/rollback.sh" 262144
+validate_private "$stage_root/rollback.state.part" 16384
+validate_private "$stage_root/diagnostic-sysusers.conf" 4096
+if [ -e "$stage_root/account-backup" ]; then
+  [ -d "$stage_root/account-backup" ]
+  [ ! -L "$stage_root/account-backup" ]
+  unexpected=$(find "$stage_root/account-backup" -mindepth 1 -maxdepth 1 \
+    ! -name passwd ! -name group ! -name shadow ! -name gshadow -print -quit)
+  [ -z "$unexpected" ]
+  for name in passwd group shadow gshadow; do
+    validate_private "$stage_root/account-backup/$name" 1048576
+  done
+fi
+if [ -e "$stage_root/synthetic-root" ]; then
+  [ -d "$stage_root/synthetic-root" ]
+  [ ! -L "$stage_root/synthetic-root" ]
+  unexpected=$(find "$stage_root/synthetic-root" -mindepth 1 \
+    ! -type d ! -path "$stage_root/synthetic-root/etc/passwd" \
+    ! -path "$stage_root/synthetic-root/etc/group" \
+    ! -path "$stage_root/synthetic-root/etc/shadow" \
+    ! -path "$stage_root/synthetic-root/etc/gshadow" \
+    ! -path "$stage_root/synthetic-root/etc/passwd-" \
+    ! -path "$stage_root/synthetic-root/etc/group-" \
+    ! -path "$stage_root/synthetic-root/etc/shadow-" \
+    ! -path "$stage_root/synthetic-root/etc/gshadow-" \
+    ! -path "$stage_root/synthetic-root/etc/.pwd.lock" \
+    ! -path "$stage_root/synthetic-root/usr/lib/sysusers.d/50-diagnostics.conf" \
+    -print -quit)
+  [ -z "$unexpected" ]
+  for path in "$stage_root/synthetic-root/etc/passwd" \
+    "$stage_root/synthetic-root/etc/group" "$stage_root/synthetic-root/etc/shadow" \
+    "$stage_root/synthetic-root/etc/gshadow" "$stage_root/synthetic-root/etc/passwd-" \
+    "$stage_root/synthetic-root/etc/group-" "$stage_root/synthetic-root/etc/shadow-" \
+    "$stage_root/synthetic-root/etc/gshadow-" "$stage_root/synthetic-root/etc/.pwd.lock" \
+    "$stage_root/synthetic-root/usr/lib/sysusers.d/50-diagnostics.conf"; do
+    validate_private "$path" 1048576
+  done
+fi
+rm -f -- "$stage_root/maintenance" "$stage_root/init.service" \
+  "$stage_root/inspect.service" "$stage_root/tmpfiles.conf" \
+  "$stage_root/rollback.sh" "$stage_root/rollback.state.part" \
+  "$stage_root/diagnostic-sysusers.conf"
+if [ -d "$stage_root/account-backup" ]; then
+  rm -f -- "$stage_root/account-backup/passwd" "$stage_root/account-backup/group" \
+    "$stage_root/account-backup/shadow" "$stage_root/account-backup/gshadow"
+  rmdir "$stage_root/account-backup"
+fi
+if [ -d "$stage_root/synthetic-root" ]; then
+  rm -f -- "$stage_root/synthetic-root/etc/passwd" \
+    "$stage_root/synthetic-root/etc/group" "$stage_root/synthetic-root/etc/shadow" \
+    "$stage_root/synthetic-root/etc/gshadow" "$stage_root/synthetic-root/etc/passwd-" \
+    "$stage_root/synthetic-root/etc/group-" "$stage_root/synthetic-root/etc/shadow-" \
+    "$stage_root/synthetic-root/etc/gshadow-" "$stage_root/synthetic-root/etc/.pwd.lock" \
+    "$stage_root/synthetic-root/usr/lib/sysusers.d/50-diagnostics.conf"
+  rmdir "$stage_root/synthetic-root/usr/lib/sysusers.d" \
+    "$stage_root/synthetic-root/usr/lib" "$stage_root/synthetic-root/usr" \
+    "$stage_root/synthetic-root/etc" "$stage_root/synthetic-root"
+fi
+rmdir "$stage_root"
+printf 'orphan_stage_removed=yes\n'
+""".strip()
+    return f"{values}\n{body}"
+
+
 def attempt_cleanup(
     target: prototype.RemoteTarget,
     secret: bytearray,
@@ -1424,6 +1575,85 @@ def recover_existing(
             overview = capture_recovery_overview(assets, target, secret)
         except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError, ValueError):
             overview = None
+        orphan_safe = overview is not None and all(
+            (
+                overview["stage_count"] == "1",
+                overview["marker_count"] == "0",
+                overview["state_count"] == "0",
+                overview["binary_present"] == "no",
+                overview["credential_present"] == "no",
+                overview["init_unit_present"] == "no",
+                overview["inspect_unit_present"] == "no",
+                overview["production_root_present"] == "no",
+                overview["watchdog_service_active_count"] == "0",
+                overview["watchdog_timer_active_count"] == "0",
+                overview["rootfs_mode"] == "rw",
+                overview["account_state"] in {"present", "absent"},
+            )
+        )
+        if orphan_safe and overview is not None:
+            try:
+                stage = "remove-orphan-stage"
+                removed = native.parse_facts(
+                    common.require_result(
+                        stage,
+                        prototype.run_ssh(
+                            target,
+                            secret,
+                            build_orphan_stage_cleanup_script(assets),
+                            timeout=60,
+                        ),
+                    ),
+                    ORPHAN_CLEANUP_KEYS,
+                )
+                if removed != {"orphan_stage_removed": "yes"}:
+                    raise ValueError("orphan cleanup was not confirmed")
+                after = capture_recovery_overview(assets, target, secret)
+                if not all(
+                    (
+                        after["stage_count"] == "0",
+                        after["marker_count"] == "0",
+                        after["state_count"] == "0",
+                        after["binary_present"] == "no",
+                        after["credential_present"] == "no",
+                        after["init_unit_present"] == "no",
+                        after["inspect_unit_present"] == "no",
+                        after["production_root_present"] == "no",
+                        after["watchdog_service_active_count"] == "0",
+                        after["watchdog_timer_active_count"] == "0",
+                        after["rootfs_mode"] == "rw",
+                        after["account_state"] == overview["account_state"],
+                    )
+                ):
+                    raise ValueError("orphan cleanup final state is invalid")
+                receipt = {
+                    "schemaVersion": 1,
+                    "probe": "hardened-blikvm-diagnostic-maintenance-recovery",
+                    "result": "orphan-stage-removed",
+                    "sourceCommit": assets.source_commit,
+                    "observation": {
+                        "accountState": overview["account_state"],
+                        "persistentStateBefore": "absent",
+                        "rollbackStatePresent": "no",
+                        "watchdogBefore": "inactive",
+                    },
+                    "finalOverview": after,
+                    "cleanup": {
+                        "attempted": True,
+                        "confirmed": True,
+                        "failurePhase": None,
+                    },
+                }
+                write_json_0600_atomic(output, receipt)
+                return 0
+            except (
+                OSError,
+                RuntimeError,
+                subprocess.SubprocessError,
+                UnicodeError,
+                ValueError,
+            ) as orphan_error:
+                error = orphan_error
         receipt = {
             "schemaVersion": 1,
             "probe": "hardened-blikvm-diagnostic-maintenance-recovery",

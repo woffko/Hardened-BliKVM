@@ -41,6 +41,7 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
             stage.build_final_script(paths, "present", "absent", "present"),
             stage.build_recovery_discovery_script("a" * 64),
             stage.build_recovery_overview_script("a" * 64),
+            stage.build_orphan_stage_cleanup_script(assets),
         )
         for script in scripts:
             result = subprocess.run(
@@ -62,6 +63,7 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
                 stage.build_run_script(paths, assets),
                 stage.build_cleanup_script(paths, assets),
                 stage.build_final_script(paths, "present", "absent", "present"),
+                stage.build_orphan_stage_cleanup_script(assets),
             )
         )
         self.assertNotRegex(
@@ -115,6 +117,17 @@ class StageDeviceDiagnosticMaintenanceTests(unittest.TestCase):
         self.assertNotIn("sha256sum \"$credential_target\"", overview)
         for key in stage.RECOVERY_OVERVIEW_KEYS:
             self.assertIn(f"emit {key} ", overview)
+
+    def test_orphan_cleanup_requires_clean_persistent_state_and_exact_allowlist(self) -> None:
+        script = stage.build_orphan_stage_cleanup_script(self.assets())
+        self.assertIn('[ "$count" = 1 ]', script)
+        self.assertIn('[ ! -e "$stage_root/.hardened-blikvm-owner" ]', script)
+        self.assertIn('[ ! -e "$production_root" ]', script)
+        self.assertIn("! -name synthetic-root", script)
+        self.assertIn("synthetic-root/etc/.pwd.lock", script)
+        self.assertIn('sha256sum "$path"', script)
+        self.assertNotIn("rm -rf", script)
+        self.assertNotIn('rm -f -- "$production_root"', script)
 
     def test_account_transition_is_predicted_before_watchdog_and_live_write(self) -> None:
         script = stage.build_run_script(
