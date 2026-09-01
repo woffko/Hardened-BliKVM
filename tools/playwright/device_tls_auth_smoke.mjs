@@ -252,6 +252,99 @@ try {
     (await settingsDialog.getByText(rtcOffsetText, { exact: true }).count()) >=
       1,
   );
+
+  phase = "diagnostics-tab";
+  const diagnosticsResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/diagnostics" &&
+      response.request().method() === "GET" &&
+      response.status() === 200,
+  );
+  await settingsDialog.getByText("Diagnostics", { exact: true }).click();
+  const diagnostics = await (await diagnosticsResponse).json();
+  assert.equal(diagnostics.code, 0);
+  assert.equal(diagnostics.data.schemaVersion, 1);
+  assert.equal(diagnostics.data.availability, "current_only");
+  assert.deepEqual(diagnostics.data.history, {
+    state: "unavailable",
+    reason: "persistence_not_provisioned",
+  });
+  assert.deepEqual(Object.keys(diagnostics.data).sort(), [
+    "availability",
+    "current",
+    "history",
+    "schemaVersion",
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(diagnostics.data),
+    /password|credential|username|serial|ssid|token|cookie|endpoint|socketPath|macAddress|binding|instanceId|windowId|log|bundle/i,
+  );
+
+  const diagnosticTemperature =
+    diagnostics.data.current.temperature.millidegreesCelsius;
+  assert.equal(Number.isInteger(diagnosticTemperature), true);
+  assert.ok(diagnosticTemperature >= -40_000);
+  assert.ok(diagnosticTemperature <= 150_000);
+  const diagnosticRtc = diagnostics.data.current.rtc.unixSeconds;
+  const diagnosticRtcOffset =
+    diagnostics.data.current.rtc.offsetFromSystemSeconds;
+  assert.equal(Number.isInteger(diagnosticRtc), true);
+  assert.ok(diagnosticRtc >= 946_684_800);
+  assert.ok(diagnosticRtc <= 4_102_444_799);
+  assert.equal(Number.isInteger(diagnosticRtcOffset), true);
+  assert.ok(diagnosticRtcOffset >= -315_576_000);
+  assert.ok(diagnosticRtcOffset <= 315_576_000);
+
+  await settingsDialog
+    .getByText("Current read-only device health", { exact: true })
+    .waitFor();
+  await settingsDialog
+    .getByText(
+      "Persistent diagnostic history is not provisioned on this device.",
+      {
+        exact: true,
+      },
+    )
+    .waitFor();
+  const diagnosticTemperatureText = `${(diagnosticTemperature / 1000).toFixed(
+    1,
+  )} °C`;
+  const diagnosticRtcText = new Date(diagnosticRtc * 1000)
+    .toISOString()
+    .replace("T", " ")
+    .replace(".000Z", " UTC");
+  const diagnosticRtcOffsetText = formatRtcOffsetSeconds(diagnosticRtcOffset);
+  await settingsDialog
+    .getByText(diagnosticTemperatureText, { exact: true })
+    .waitFor();
+  await settingsDialog.getByText(diagnosticRtcText, { exact: true }).waitFor();
+  await settingsDialog
+    .getByText(diagnosticRtcOffsetText, { exact: true })
+    .waitFor();
+  for (const label of [
+    "Video",
+    "Keyboard and mouse (HID)",
+    "Power monitoring",
+    "Virtual media",
+    "Power LED",
+  ]) {
+    await settingsDialog.getByText(label, { exact: true }).waitFor();
+  }
+  assert.equal(
+    await settingsDialog.getByRole("button", { name: /power|reset/i }).count(),
+    0,
+  );
+
+  phase = "diagnostics-refresh";
+  const refreshedDiagnosticsResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/diagnostics" &&
+      response.request().method() === "GET" &&
+      response.status() === 200,
+  );
+  await settingsDialog.getByRole("button", { name: "Refresh" }).click();
+  const refreshedDiagnostics = await refreshedDiagnosticsResponse;
+  assert.equal((await refreshedDiagnostics.json()).data.schemaVersion, 1);
   await page.keyboard.press("Escape");
   await settingsDialog.waitFor({ state: "hidden" });
 
@@ -350,6 +443,7 @@ try {
     ["POST", "/api/auth/login", 200],
     ["GET", "/api/inventory", 200],
     ["GET", "/api/capabilities", 200],
+    ["GET", "/api/diagnostics", 200],
     ["GET", "/api/stream/mjpeg", 200],
     ["POST", "/api/auth/password", 200],
   ]) {
@@ -384,6 +478,9 @@ try {
       rtcCapability: "read_only",
       rtcEvidence: "runtime_verified",
       rtcUi: "rendered",
+      diagnosticsApi: "authenticated-current-only",
+      diagnosticsUi: "rendered-action-free",
+      diagnosticsHistory: "persistence-not-provisioned",
       videoCapability: "read_only",
       hidCapability: "unavailable",
       powerCapability: "unavailable",

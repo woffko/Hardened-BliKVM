@@ -13,6 +13,7 @@ export type CapabilityMenuItem =
   | 'collapse';
 export type CapabilitySettingsTab =
   | 'about'
+  | 'diagnostics'
   | 'appearance'
   | 'device'
   | 'system'
@@ -70,6 +71,7 @@ export function supportsSettingsTab(
 ): boolean {
   switch (tab) {
     case 'about':
+    case 'diagnostics':
     case 'appearance':
     case 'account':
       return true;

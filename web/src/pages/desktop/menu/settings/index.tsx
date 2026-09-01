@@ -3,6 +3,7 @@ import { Badge, Modal, Tooltip } from 'antd';
 import clsx from 'clsx';
 import { useAtomValue, useSetAtom } from 'jotai';
 import {
+  ActivityIcon,
   BadgeInfoIcon,
   CircleArrowUpIcon,
   PaletteIcon,
@@ -28,6 +29,7 @@ import { About } from './about';
 import { Account } from './account';
 import { Appearance } from './appearance';
 import { Device } from './device';
+import { Diagnostics } from './diagnostics';
 import { System } from './system';
 import { Tailscale } from './tailscale';
 import { Update } from './update';
@@ -48,6 +50,7 @@ export const Settings = () => {
 
   const tabs = [
     { id: 'about', icon: <BadgeInfoIcon size={16} />, component: <About /> },
+    { id: 'diagnostics', icon: <ActivityIcon size={16} />, component: <Diagnostics /> },
     { id: 'appearance', icon: <PaletteIcon size={16} />, component: <Appearance /> },
     { id: 'device', icon: <SmartphoneIcon size={16} />, component: <Device /> },
     { id: 'system', icon: <ServerCogIcon size={16} />, component: <System /> },

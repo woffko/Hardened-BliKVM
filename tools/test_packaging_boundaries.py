@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -2024,7 +2025,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("schemaVersion: 1", web_type)
         self.assertIn("availability: 'current_only'", web_type)
         self.assertIn("reason: 'persistence_not_provisioned'", web_type)
-        self.assertIn("http.get<DiagnosticsView>('/api/diagnostics')", web_api)
+        self.assertIn("http.request<DiagnosticsView>", web_api)
+        self.assertIn("method: 'get'", web_api)
+        self.assertIn("url: '/api/diagnostics'", web_api)
+        self.assertIn("signal", web_api)
         self.assertNotIn("http.post", web_api)
         self.assertIn("GET /api/diagnostics", api)
         self.assertIn("opaque HttpOnly session", api)
@@ -2070,6 +2074,133 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("SocketBindDeny=any", unit)
         self.assertIn("SocketBindAllow=tcp:18080", unit)
         self.assertNotIn("SupplementaryGroups=kvmd", unit)
+
+    def test_diagnostics_tab_is_localized_bounded_and_action_free(self) -> None:
+        settings = (
+            ROOT / "web/src/pages/desktop/menu/settings/index.tsx"
+        ).read_text()
+        page = (
+            ROOT
+            / "web/src/pages/desktop/menu/settings/diagnostics/index.tsx"
+        ).read_text()
+        hook = (ROOT / "web/src/hooks/useDiagnostics.ts").read_text()
+        validator = (ROOT / "web/src/lib/diagnostics.ts").read_text()
+        api = (ROOT / "web/src/api/diagnostics.ts").read_text()
+        capabilities = (ROOT / "web/src/lib/capabilities.ts").read_text()
+        locales = (ROOT / "web/src/i18n/diagnostics-locales.ts").read_text()
+        locale_extras = (ROOT / "web/src/i18n/locale-extras.ts").read_text()
+
+        self.assertIn("id: 'diagnostics'", settings)
+        self.assertIn("component: <Diagnostics />", settings)
+        self.assertIn("| 'diagnostics'", capabilities)
+        self.assertRegex(
+            capabilities,
+            r"case 'about':\s+case 'diagnostics':\s+case 'appearance':",
+        )
+        for required in (
+            "useDiagnostics()",
+            "settings.diagnostics.title",
+            "settings.diagnostics.temperature",
+            "settings.diagnostics.externalRtc",
+            "settings.diagnostics.components",
+            "settings.diagnostics.historyNotProvisioned",
+            "primaryComponentState",
+            "grid-cols-1 gap-3 sm:grid-cols-2",
+        ):
+            self.assertIn(required, page)
+        for forbidden in (
+            "getRuntimeInventory",
+            "system-log",
+            "rawLog",
+            "bundle",
+            "binding",
+            "instanceId",
+            "windowId",
+            "PowerIcon",
+            "Reset",
+            "reboot",
+            "shutdown",
+        ):
+            self.assertNotIn(forbidden, page)
+
+        for required in (
+            "DIAGNOSTICS_REFRESH_MS = 10_000",
+            "new AbortController()",
+            "controllerRef.current",
+            "document.visibilityState",
+            "visibilitychange",
+            "window.setTimeout",
+            "window.clearTimeout",
+            "controllerRef.current?.abort()",
+            "current.data ? 'stale' : 'error'",
+            "isDiagnosticsView(response.data)",
+        ):
+            self.assertIn(required, hook)
+        self.assertNotIn("setInterval", hook)
+        self.assertNotIn("getRuntimeInventory", hook)
+        self.assertIn("method: 'get'", api)
+        self.assertIn("signal", api)
+        self.assertNotIn("method: 'post'", api)
+
+        for required in (
+            "hasExactKeys",
+            "millidegreesCelsius, -40_000, 150_000",
+            "unixSeconds, 946_684_800, 4_102_444_799",
+            "offsetFromSystemSeconds, -315_576_000, 315_576_000",
+            "persistence_not_provisioned",
+            "cz: 'cs'",
+            "pt_br: 'pt-BR'",
+            "se: 'sv'",
+            "zh_tw: 'zh-TW'",
+            "new Intl.DateTimeFormat(locale",
+            "toISOString().slice(11, 19) + ' UTC'",
+        ):
+            self.assertIn(required, validator)
+        canonical_locales = (
+            "ca",
+            "cz",
+            "da",
+            "de",
+            "en",
+            "es",
+            "et",
+            "fi",
+            "fr",
+            "hu",
+            "id",
+            "it",
+            "ja",
+            "ko",
+            "nb",
+            "nl",
+            "pl",
+            "pt_br",
+            "ru",
+            "se",
+            "th",
+            "tr",
+            "uk",
+            "vi",
+            "zh",
+            "zh_tw",
+        )
+        declared_locales_match = re.search(
+            r"export const DIAGNOSTICS_LOCALES = \[(.*?)\] as const;",
+            locales,
+            re.DOTALL,
+        )
+        if declared_locales_match is None:
+            self.fail("diagnostics locale declaration is missing")
+        declared_locales = re.findall(r"'([^']+)'", declared_locales_match.group(1))
+        self.assertEqual(declared_locales, list(canonical_locales))
+        for locale in canonical_locales:
+            self.assertIn(f"  {locale}: [", locales)
+        self.assertEqual(locales.count("'settings.diagnostics."), 23)
+        self.assertIn("type DiagnosticsPack = readonly [", locales)
+        self.assertEqual(locales.count("  string,"), 22)
+        self.assertIn("diagnosticsLocaleExtras(key)", locale_extras)
+        self.assertIn("no: 'nb'", locale_extras)
+        self.assertIn("sv: 'se'", locale_extras)
 
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (

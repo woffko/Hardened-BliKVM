@@ -190,6 +190,9 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
         self.assertIn("crypto.randomBytes", script)
         self.assertNotIn("admin1234", script)
         self.assertNotIn("10.0.", script)
+        self.assertIn('"/api/diagnostics"', script)
+        self.assertIn('getByRole("button", { name: "Refresh" })', script)
+        self.assertNotRegex(script, r"getByRole\(\"button\", \{ name: \"(?:Power|Reset)")
 
     def test_browser_failure_envelope_is_bounded_and_allowlisted(self) -> None:
         self.assertEqual(
@@ -222,6 +225,9 @@ class StageDeviceTlsBrowserTests(unittest.TestCase):
             "rtcCapability": "read_only",
             "rtcEvidence": "runtime_verified",
             "rtcUi": "rendered",
+            "diagnosticsApi": "authenticated-current-only",
+            "diagnosticsUi": "rendered-action-free",
+            "diagnosticsHistory": "persistence-not-provisioned",
             "videoCapability": "read_only",
             "hidCapability": "unavailable",
             "powerCapability": "unavailable",

@@ -1,5 +1,7 @@
 import type { ResourceLanguage } from 'i18next';
 
+import { diagnosticsLocaleExtras } from './diagnostics-locales';
+
 type TranslationMap = Record<string, string>;
 
 const languageAliases: Record<string, string> = {
@@ -7044,6 +7046,7 @@ export function applyLocaleExtras(language: string, resource: ResourceLanguage) 
     firewallNoWebrtcModeDescriptionLocalizedExtras[key] ||
     firewallNoWebrtcModeDescriptionFallbackExtras;
   const extras = {
+    ...diagnosticsLocaleExtras(key),
     ...(downloadExtras[key] || {}),
     ...(downloadOkExtras[key] || {}),
     ...downloadTransferExtras,
