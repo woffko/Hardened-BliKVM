@@ -1392,9 +1392,11 @@ if [ -d "$stage_root/synthetic-root" ]; then
     "$stage_root/synthetic-root/etc/group-" "$stage_root/synthetic-root/etc/shadow-" \
     "$stage_root/synthetic-root/etc/gshadow-" "$stage_root/synthetic-root/etc/.pwd.lock" \
     "$stage_root/synthetic-root/usr/lib/sysusers.d/50-diagnostics.conf"
-  rmdir "$stage_root/synthetic-root/usr/lib/sysusers.d" \
+  for directory in "$stage_root/synthetic-root/usr/lib/sysusers.d" \
     "$stage_root/synthetic-root/usr/lib" "$stage_root/synthetic-root/usr" \
-    "$stage_root/synthetic-root/etc" "$stage_root/synthetic-root"
+    "$stage_root/synthetic-root/etc" "$stage_root/synthetic-root"; do
+    if [ -d "$directory" ]; then rmdir "$directory"; fi
+  done
 fi
 phase=remove-root
 rmdir "$stage_root"
