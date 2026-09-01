@@ -176,7 +176,8 @@ and no external dependency. It reuses the accepted diagnostic graph and Tokio;
 its host rollback tool uses only Python's standard library plus existing local
 helpers. Neither binary nor unit enters the prototype archive. The locked graph
 contains 175 packages: 58 workspace and 117 external, with no missing external
-license expression.
+license expression. A 1,233-advisory RustSec scan at source `7bef2bc` accepted
+the exact graph.
 
 This is an inventory checkpoint, not final legal acceptance. Before a release:
 

@@ -571,8 +571,11 @@ one through seven, deliberately cancels one stalled acknowledgement, requires
 ambiguity recovery without a read, and emits only nine fixed semantic facts.
 The accompanying H616 orchestrator uses a synthetic credential/floor,
 marker/hash/account-CAS rollback, a ten-minute watchdog, and no Power/Reset or
-KVMD restart. Host, reproducible AArch64, and live H616 acceptance remain to be
-recorded; see `design/diagnostic-persistence-gate-v1.md`.
+KVMD restart. Source `7bef2bc` passed four Rust and eleven orchestration tests,
+the complete 170-Python-test host matrix, RustSec, two byte-identical AArch64
+gate/bundle builds, and rollback-gated live H616 execution through generation
+seven with complete cleanup; see `design/diagnostic-persistence-gate-v1.md`
+and `baselines/device-diagnostic-persistence.md`.
 
 Planned diagnostics product gate: after the write-before-ack coordinator and
 an authenticated read-only HTTP API are accepted, add a dedicated

@@ -737,6 +737,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         design = (
             ROOT / "docs/design/diagnostic-persistence-gate-v1.md"
         ).read_text()
+        baseline = (
+            ROOT / "docs/baselines/device-diagnostic-persistence.md"
+        ).read_text()
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         verifier = (ROOT / "scripts/verify-systemd-units.sh").read_text()
         self.assertIn('"crates/bli-kvm-diagnostic-persistence-gate"', workspace)
@@ -828,6 +831,16 @@ class PackagingBoundaryTests(unittest.TestCase):
             "dedicated Diagnostics tab",
         ):
             self.assertIn(required, design)
+        for required in (
+            "7bef2bc827c4d660b00a9700e16cef39a58cde86",
+            "e55709c19a30438fb9f66d047e946a9c",
+            "e02729175d8a8f76acd3e2592755b74733dba2d74d039174f2f80713512288a3",
+            "f9d5b603ab1499921a356a2be0d9366f3741217e19e87b9005babf108c1d2b22",
+            "9b7745572aaa41c9b9fbc4177ada3f99",
+            "seven reads and three acknowledgement requests",
+            "physical Power/Reset",
+        ):
+            self.assertIn(required, baseline)
 
     def test_diagnostic_store_is_fixed_atomic_keyless_and_unlinked(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()

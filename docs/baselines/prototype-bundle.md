@@ -135,3 +135,15 @@ Their manifests retain both acceptance flags as false. Persistence rlib,
 metadata, ThinLTO, and a fully instantiated AArch64 test executable also
 matched; exact evidence and the no-device boundary are in
 `diagnostic-persistence.md`.
+
+## Synthetic diagnostic-persistence H616 checkpoint
+
+Source commit `7bef2bc` added an unshipped test-only gate binary/unit and
+rollback orchestrator without copying them into the archive. Independent
+target/output roots produced byte-identical 4,803,076-byte prototype archives
+with SHA-256
+`e02729175d8a8f76acd3e2592755b74733dba2d74d039174f2f80713512288a3`.
+Their manifests retain both acceptance flags as false. The byte-identical
+AArch64 gate executable subsequently passed the synthetic rollback-gated H616
+flow; exact evidence and production limitations are in
+`device-diagnostic-persistence.md`.

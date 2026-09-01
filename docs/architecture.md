@@ -218,7 +218,9 @@ seven, including one cancelled acknowledgement and ambiguity recovery, under a
 synthetic process-local floor. Its static unit is intended only for a
 marker/watchdog/CAS rollback-gated H616 test and has no install section. It is
 not a production runtime or part of the prototype; see
-`design/diagnostic-persistence-gate-v1.md`.
+`design/diagnostic-persistence-gate-v1.md` and
+`baselines/device-diagnostic-persistence.md`. Its reversible H616 gate passed
+with full state removal; production key/floor/runtime authority remains absent.
 
 ## Core invariants
 

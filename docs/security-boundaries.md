@@ -396,7 +396,10 @@ arming a rollback watchdog, validates every staged/persistent path by marker,
 hash, metadata and allowlist, and refuses concurrent account-database changes.
 Its result contains only fixed generation/state/request counters. The gate unit
 has no install section and remains absent from the prototype; see
-`design/diagnostic-persistence-gate-v1.md`.
+`design/diagnostic-persistence-gate-v1.md`. The synthetic H616 run reached clean
+generation seven with two acknowledged entries, one confirmed-started cancelled
+ACK, no automatic retry, and complete rollback; see
+`baselines/device-diagnostic-persistence.md`.
 
 Systemd's runtime copy does not protect the persistent source at rest. The
 target has no accepted `systemd-creds` ceremony or usable TPM/TEE/RPMB anchor.
