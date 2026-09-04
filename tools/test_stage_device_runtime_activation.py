@@ -154,6 +154,15 @@ class StageDeviceRuntimeActivationTests(unittest.TestCase):
             "session_revoked_stream",
         ):
             self.assertIn(required, script)
+        for phase in (
+            "video-revocation-start",
+            "video-revocation-warmup",
+            "video-revocation-csrf",
+            "video-revocation-logout",
+            "video-revocation-stop",
+            "video-revocation-session",
+        ):
+            self.assertIn(f"phase={phase}", script)
         for forbidden in (
             "systemctl enable",
             "systemctl restart kvmd",

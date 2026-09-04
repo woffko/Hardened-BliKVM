@@ -892,26 +892,31 @@ phase=video-first
 capture_video "$video_first"
 phase=video-reconnect
 capture_video "$video_second"
-phase=video-revocation
+phase=video-revocation-start
 curl --noproxy '*' --silent --max-time 15 --cookie "$cookie_file" --output "$video_revoked" "$origin/api/stream/mjpeg" 2>/dev/null &
 stream_pid=$!
+phase=video-revocation-warmup
 count=0
 while [ "$count" -lt 50 ] && { [ ! -f "$video_revoked" ] || [ "$(stat -c '%s' "$video_revoked")" -lt 1024 ]; }; do
   sleep 0.1
   count=$((count + 1))
 done
 [ "$count" -lt 50 ]
+phase=video-revocation-csrf
 csrf=$(python3 -c 'import json,sys; value=json.load(open(sys.argv[1],encoding="utf-8"))["data"]["csrfToken"]; assert isinstance(value,str) and 16 <= len(value) <= 256; print(value,end="")' "$login_response")
 printf 'header = "X-CSRF-Token: %s"\n' "$csrf" > "$logout_config"
 chmod 600 "$logout_config"
+phase=video-revocation-logout
 logout_status=$(curl --noproxy '*' --silent --max-time 5 --config "$logout_config" --cookie "$cookie_file" \
   --request POST --output /dev/null --write-out '%{http_code}' "$origin/api/auth/logout" 2>/dev/null)
 [ "$logout_status" = 200 ]
+phase=video-revocation-stop
 count=0
 while [ "$count" -lt 50 ] && kill -0 "$stream_pid" 2>/dev/null; do sleep 0.1; count=$((count + 1)); done
 [ "$count" -lt 50 ]
 wait "$stream_pid" 2>/dev/null || true
 stream_pid=
+phase=video-revocation-session
 revoked_status=$(curl --noproxy '*' --silent --max-time 3 --cookie "$cookie_file" --output /dev/null --write-out '%{http_code}' "$origin/api/diagnostics" 2>/dev/null)
 [ "$revoked_status" = 401 ]
 phase=state
