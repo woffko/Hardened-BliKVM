@@ -112,6 +112,14 @@ each predicted-after file is restored atomically from its matching backup.
 Any third hash is a hard stop, because overwriting an unknown concurrent account
 change would be less safe than retaining bounded recovery evidence.
 
+`recover_device_runtime_provision.py` may be used only when discovery finds one
+marker-bound rollback root with a complete state file, exact before/after or
+mixed account databases, exact before/after htpasswd, an allowed config phase,
+the retained package, inactive product units, active KVMD, and a read-write
+rootfs. It replaces only that root's hash-verified rollback script, executes it,
+and requires the independent retained-package-only final state. It has no apply
+or commit path.
+
 Htpasswd is left unchanged when already equal to the backup. Otherwise it must
 contain exactly one dedicated account line and filtering only that line must
 equal the backup before atomic restoration. Configuration and credential files

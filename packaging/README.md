@@ -44,6 +44,12 @@ tracking, early-boot rollback, and a timed watchdog protect the mutation. This
 boundary never starts or enables a product unit and never changes Nginx. Native
 H616 acceptance first exercises prediction/rollback without production
 mutation, then remains required for the live provisioned state.
+`tools/recover_device_runtime_provision.py` is a separate marker-bound recovery
+path for a failed provisioning run. It emits only a bounded state overview,
+accepts only exact before/after database and htpasswd states, replaces only the
+owned rollback script with reviewed local bytes, executes rollback, and then
+requires the independent retained-package-only validator. It cannot apply or
+commit provisioning.
 
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime

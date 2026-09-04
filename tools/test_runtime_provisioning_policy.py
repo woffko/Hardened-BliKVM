@@ -36,6 +36,7 @@ class RuntimeProvisioningPolicyTests(unittest.TestCase):
         self.assertEqual(len(policy.GROUP_NAMES), 6)
         self.assertIn("hardened-blikvm-update", policy.ACCOUNT_NAMES)
         self.assertEqual(policy.KVMD_ACCOUNT, "hardened-blikvm-broker")
+        self.assertEqual(policy.USERNAME_BYTES, 23)
         self.assertEqual(policy.SHARED_GROUP, "hardened-blikvm")
 
     def test_altered_or_reordered_sysusers_source_is_rejected(self) -> None:

@@ -21,6 +21,7 @@ EXPECTED_SYSUSERS_SHA256 = (
 )
 SHARED_GROUP = "hardened-blikvm"
 KVMD_ACCOUNT = "hardened-blikvm-broker"
+USERNAME_BYTES = len(KVMD_ACCOUNT.encode("ascii")) + 1
 ACCOUNT_NAMES = (
     "hardened-blikvm-broker",
     "hardened-blikvm-video",

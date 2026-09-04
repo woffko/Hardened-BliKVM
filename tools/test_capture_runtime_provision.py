@@ -42,11 +42,25 @@ class CaptureRuntimeProvisionTests(unittest.TestCase):
         self.assertIn('"productionMutation": False', source)
         self.assertIn('"secretEmitted": False', source)
 
+    def test_recovery_wrapper_only_replaces_and_executes_owned_rollback(self) -> None:
+        source = (ROOT / "tools/recover_device_runtime_provision.py").read_text()
+        self.assertIn("provision.build_recovery_discovery_script", source)
+        self.assertIn("provision.build_rollback_replacement_script", source)
+        self.assertIn("provision.build_execute_recovery_script", source)
+        self.assertIn("retain.build_final_script", source)
+        self.assertIn("tempfile.TemporaryFile", source)
+        self.assertNotIn("io.BytesIO", source)
+        self.assertNotIn("provision.build_apply_script", source)
+        self.assertNotIn("provision.build_commit_script", source)
+        self.assertIn('"rollbackOnly": True', source)
+        self.assertIn('"secretEmitted": False', source)
+
     def test_direct_entrypoints_load_project_package(self) -> None:
         for path in (
             "tools/capture_runtime_provision_preflight.py",
             "tools/capture_runtime_provisioned.py",
             "tools/stage_device_runtime_provision_prepare.py",
+            "tools/recover_device_runtime_provision.py",
         ):
             result = subprocess.run(
                 [sys.executable, path, "--help"],

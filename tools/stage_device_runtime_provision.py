@@ -88,6 +88,22 @@ FINAL_KEYS = {
     "unit_templates_inactive_final",
 }
 CLEANUP_KEYS = {"cleanup_restored"}
+RECOVERY_EXECUTE_KEYS = {"recovery_executed"}
+RECOVERY_KEYS = {
+    "account_state",
+    "boot_state",
+    "config_state",
+    "database_state",
+    "htpasswd_state",
+    "kvmd_state",
+    "package_state",
+    "phase",
+    "rollback_state",
+    "rootfs_mode",
+    "run_id",
+    "unit_state",
+    "watchdog_state",
+}
 ALLOWED_FACT_VALUES = {"yes", "active", "aarch64", "rw"}
 PASSWORD_HEX_BYTES = 64
 MAX_ACCOUNT_DATABASE_BYTES = 1024 * 1024
@@ -265,6 +281,41 @@ def parse_failure_phase(raw: bytes, prefix: str) -> tuple[str, bool | None]:
     else:
         raise ValueError("runtime provisioning cleanup fact is invalid")
     return phase, cleanup
+
+
+def parse_recovery_facts(raw: bytes) -> dict[str, str]:
+    if len(raw) > 4096:
+        raise ValueError("runtime provisioning recovery output exceeded the limit")
+    allowed: dict[str, set[str] | None] = {
+        "account_state": {"absent", "present", "partial"},
+        "boot_state": {"armed", "absent", "partial"},
+        "config_state": {"absent", "staged", "present", "both", "partial"},
+        "database_state": {"before", "after", "mixed", "other"},
+        "htpasswd_state": {"before", "after", "other"},
+        "kvmd_state": {"active", "other"},
+        "package_state": {"installed", "other"},
+        "phase": {"prepared", "sysusers", "htpasswd", "config"},
+        "rollback_state": {"ready", "partial"},
+        "rootfs_mode": {"rw", "other"},
+        "run_id": None,
+        "unit_state": {"inactive", "other"},
+        "watchdog_state": {"active", "inactive"},
+    }
+    facts: dict[str, str] = {}
+    for line in raw.decode("ascii", errors="strict").splitlines():
+        key, separator, value = line.partition("=")
+        if separator != "=" or key not in allowed or key in facts:
+            raise ValueError("runtime provisioning recovery returned an invalid field")
+        domain = allowed[key]
+        if domain is None:
+            if not re.fullmatch(r"[0-9a-f]{16}", value):
+                raise ValueError("runtime provisioning recovery run ID is invalid")
+        elif value not in domain:
+            raise ValueError("runtime provisioning recovery enum is invalid")
+        facts[key] = value
+    if set(facts) != RECOVERY_KEYS:
+        raise ValueError("runtime provisioning recovery result was incomplete")
+    return dict(sorted(facts.items()))
 
 
 def _zero(secret: bytearray) -> None:
@@ -477,7 +528,8 @@ remove_rollback_tree() {
     ! -name .owner ! -name state ! -name state.part ! -name phase ! -name phase.part \
     ! -name runtime-sysusers.conf ! -name pinned-sysusers.conf \
     ! -name kvmd-password ! -name htpasswd.filtered \
-    ! -name rollback.sh ! -name watchdog.sh ! -name account-backup ! -name synthetic-root \
+    ! -name rollback.sh ! -name rollback.sh.part ! -name watchdog.sh \
+    ! -name account-backup ! -name synthetic-root \
     -print -quit)
   [ -z "$unexpected" ]
   if [ -e "$account_backup" ]; then
@@ -511,7 +563,7 @@ remove_rollback_tree() {
   fi
   rm -f -- "$filtered_htpasswd" "$password_file" "$sysusers_file" "$pinned_sysusers" \
     "$state_file" "$rollback_root/state.part" "$phase_file" "$rollback_root/phase.part" \
-    "$watchdog_script" "$rollback_script" "$marker"
+    "$watchdog_script" "$rollback_script" "$rollback_root/rollback.sh.part" "$marker"
   rmdir "$rollback_root"
 }
 """.strip()
@@ -546,6 +598,7 @@ def build_rollback_script(paths: RemotePaths, assets: Assets) -> str:
             "username_path": policy.USERNAME_PATH,
             "password_path": policy.PASSWORD_PATH,
             "kvmd_account": policy.KVMD_ACCOUNT,
+            "username_bytes": policy.USERNAME_BYTES,
             "package_name": debian.PACKAGE_NAME,
             "package_version": debian.PACKAGE_VERSION,
             "package_architecture": debian.PACKAGE_ARCHITECTURE,
@@ -583,7 +636,7 @@ validate_config_dir() {
     [ ! -L "$path" ]
     [ "$(stat -c '%a:%u:%g:%h' "$path")" = 400:0:0:1 ]
   done
-  [ "$(wc -c < "$user" | tr -d ' ')" = 24 ]
+  [ "$(wc -c < "$user" | tr -d ' ')" = "$username_bytes" ]
   [ "$(cat "$user")" = "$kvmd_account" ]
   [ "$(wc -c < "$password" | tr -d ' ')" = 64 ]
   cmp -s "$password_file" "$password"
@@ -1131,7 +1184,7 @@ verify_config() {
     [ ! -L "$path" ]
     [ "$(stat -c '%a:%u:%g:%h' "$path")" = 400:0:0:1 ]
   done
-  [ "$(wc -c < "$username_path" | tr -d ' ')" = 24 ]
+  [ "$(wc -c < "$username_path" | tr -d ' ')" = "$username_bytes" ]
   [ "$(cat "$username_path")" = "$kvmd_account" ]
   [ "$(wc -c < "$password_path" | tr -d ' ')" = 64 ]
   grep -Eq '^[0-9a-f]{64}$' "$password_path"
@@ -1180,6 +1233,7 @@ def build_apply_script(paths: RemotePaths, assets: Assets) -> str:
             "username_path": policy.USERNAME_PATH,
             "password_path": policy.PASSWORD_PATH,
             "kvmd_account": policy.KVMD_ACCOUNT,
+            "username_bytes": policy.USERNAME_BYTES,
             "package_name": debian.PACKAGE_NAME,
             "package_version": debian.PACKAGE_VERSION,
             "package_architecture": debian.PACKAGE_ARCHITECTURE,
@@ -1316,6 +1370,7 @@ def build_commit_script(paths: RemotePaths, assets: Assets) -> str:
             "username_path": policy.USERNAME_PATH,
             "password_path": policy.PASSWORD_PATH,
             "kvmd_account": policy.KVMD_ACCOUNT,
+            "username_bytes": policy.USERNAME_BYTES,
             "package_name": debian.PACKAGE_NAME,
             "package_version": debian.PACKAGE_VERSION,
             "package_architecture": debian.PACKAGE_ARCHITECTURE,
@@ -1419,7 +1474,7 @@ verify_config_final() {
     [ ! -L "$path" ]
     [ "$(stat -c '%a:%u:%g:%h' "$path")" = 400:0:0:1 ]
   done
-  [ "$(wc -c < "$username_path" | tr -d ' ')" = 24 ]
+  [ "$(wc -c < "$username_path" | tr -d ' ')" = "$username_bytes" ]
   [ "$(cat "$username_path")" = "$kvmd_account" ]
   [ "$(wc -c < "$password_path" | tr -d ' ')" = 64 ]
   grep -Eq '^[0-9a-f]{64}$' "$password_path"
@@ -1459,6 +1514,7 @@ def build_final_script(paths: RemotePaths, assets: Assets) -> str:
             "username_path": policy.USERNAME_PATH,
             "password_path": policy.PASSWORD_PATH,
             "kvmd_account": policy.KVMD_ACCOUNT,
+            "username_bytes": policy.USERNAME_BYTES,
             "package_name": debian.PACKAGE_NAME,
             "package_version": debian.PACKAGE_VERSION,
             "package_architecture": debian.PACKAGE_ARCHITECTURE,
@@ -1619,6 +1675,209 @@ emit cleanup_restored yes
         f"{values}\n{PORT_FUNCTION}\n{STATE_FUNCTIONS}\n"
         f"{REMOVE_ROLLBACK_TREE}\n{body}"
     )
+
+
+def build_recovery_discovery_script(assets: Assets) -> str:
+    values = _assignments(
+        {
+            "prefix": (
+                "/var/lib/hardened-blikvm-provision-rollback-"
+                f"{assets.sysusers.sha256[:12]}-"
+            ),
+            "package_sha256": assets.package.sha256,
+            "sysusers_sha256": assets.sysusers.sha256,
+            "package_name": debian.PACKAGE_NAME,
+            "package_version": debian.PACKAGE_VERSION,
+            "package_architecture": debian.PACKAGE_ARCHITECTURE,
+            "kvmd_account": policy.KVMD_ACCOUNT,
+            "config_root": policy.CONFIG_ROOT,
+        }
+    )
+    body = r"""
+set -eu
+export LC_ALL=C
+emit() { printf '%s=%s\n' "$1" "$2"; }
+count=0
+rollback_root=
+for candidate in "$prefix"*; do
+  [ -d "$candidate" ] || continue
+  count=$((count + 1))
+  rollback_root=$candidate
+done
+[ "$count" = 1 ]
+run_id=${rollback_root##*-}
+case "$run_id" in *[!0-9a-f]*|'') exit 1 ;; esac
+[ "${#run_id}" = 16 ]
+[ "$rollback_root" = "$prefix$run_id" ]
+marker="$rollback_root/.owner"
+state_file="$rollback_root/state"
+phase_file="$rollback_root/phase"
+rollback_script="$rollback_root/rollback.sh"
+account_backup="$rollback_root/account-backup"
+[ -f "$marker" ]
+[ "$(cat "$marker")" = "$run_id:$package_sha256:$sysusers_sha256" ]
+phase=$(cat "$phase_file" 2>/dev/null || true)
+case "$phase" in prepared|sysusers|htpasswd|config) ;; *) exit 1 ;; esac
+if [ -f "$state_file" ] && [ -f "$rollback_script" ] && [ -x "$rollback_script" ]; then rollback_state=ready; else rollback_state=partial; fi
+value() {
+  awk -F= -v key="$1" '$1 == key {value=$2; count++} END {if (count == 1) print value; else exit 1}' "$state_file"
+}
+before_count=0
+after_count=0
+database_state=other
+if [ "$rollback_state" = ready ]; then
+  valid=yes
+  for name in passwd group shadow gshadow; do
+    current=$(sha256sum "/etc/$name" | awk '{print $1}')
+    if [ "$current" = "$(value "before_$name")" ]; then
+      before_count=$((before_count + 1))
+    elif [ "$current" = "$(value "after_$name")" ]; then
+      after_count=$((after_count + 1))
+    else
+      valid=no
+    fi
+  done
+  if [ "$valid" = yes ]; then
+    if [ "$before_count" = 4 ]; then database_state=before
+    elif [ "$after_count" = 4 ]; then database_state=after
+    else database_state=mixed
+    fi
+  fi
+fi
+users=0
+groups=0
+for name in hardened-blikvm-broker hardened-blikvm-video hardened-blikvm-control hardened-blikvm-server hardened-blikvm-update; do
+  if getent passwd "$name" >/dev/null 2>&1; then users=$((users + 1)); fi
+  if getent group "$name" >/dev/null 2>&1; then groups=$((groups + 1)); fi
+done
+if getent group hardened-blikvm >/dev/null 2>&1; then groups=$((groups + 1)); fi
+if [ "$users:$groups" = 0:0 ]; then account_state=absent
+elif [ "$users:$groups" = 5:6 ]; then account_state=present
+else account_state=partial
+fi
+config_stage="/etc/.hardened-blikvm-$run_id"
+if [ -e "$config_stage" ] && [ -e "$config_root" ]; then config_state=both
+elif [ -d "$config_stage" ]; then config_state=staged
+elif [ -d "$config_root" ]; then config_state=present
+elif [ ! -e "$config_stage" ] && [ ! -e "$config_root" ]; then config_state=absent
+else config_state=partial
+fi
+htpasswd_before=$(value htpasswd_before 2>/dev/null || true)
+current_htpasswd=$(sha256sum /etc/kvmd/htpasswd | awk '{print $1}')
+if [ "$current_htpasswd" = "$htpasswd_before" ]; then
+  htpasswd_state=before
+else
+  count=$(awk -F: -v account="$kvmd_account" '$1 == account {count++} END {print count+0}' /etc/kvmd/htpasswd)
+  if [ "$count" = 1 ] && \
+     awk -F: -v account="$kvmd_account" '$1 != account {print $0}' /etc/kvmd/htpasswd | cmp -s "$account_backup/htpasswd" -; then
+    htpasswd_state=after
+  else
+    htpasswd_state=other
+  fi
+fi
+boot_unit="hardened-blikvm-provision-rollback-$run_id.service"
+boot_path="/etc/systemd/system/$boot_unit"
+boot_link="/etc/systemd/system/sysinit.target.wants/$boot_unit"
+if [ -f "$boot_path" ] && [ -L "$boot_link" ]; then boot_state=armed
+elif [ ! -e "$boot_path" ] && [ ! -e "$boot_link" ]; then boot_state=absent
+else boot_state=partial
+fi
+watchdog_unit="hardened-blikvm-provision-watchdog-$run_id.service"
+if [ "$(systemctl is-active "$watchdog_unit" 2>/dev/null || true)" = active ]; then watchdog_state=active; else watchdog_state=inactive; fi
+if package_installed_exact; then package_state=installed; else package_state=other; fi
+if units_loaded_disabled_inactive; then unit_state=inactive; else unit_state=other; fi
+if [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ] && \
+   [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = active ]; then kvmd_state=active; else kvmd_state=other; fi
+root_options=$(findmnt -n -o OPTIONS /)
+case ",$root_options," in *,rw,*) rootfs_mode=rw ;; *) rootfs_mode=other ;; esac
+emit run_id "$run_id"
+emit phase "$phase"
+emit rollback_state "$rollback_state"
+emit database_state "$database_state"
+emit account_state "$account_state"
+emit htpasswd_state "$htpasswd_state"
+emit config_state "$config_state"
+emit boot_state "$boot_state"
+emit watchdog_state "$watchdog_state"
+emit package_state "$package_state"
+emit unit_state "$unit_state"
+emit kvmd_state "$kvmd_state"
+emit rootfs_mode "$rootfs_mode"
+""".strip()
+    return f"{values}\n{STATE_FUNCTIONS}\n{body}"
+
+
+def build_rollback_replacement_script(
+    paths: RemotePaths, assets: Assets, rollback_sha256: str, rollback_size: int
+) -> str:
+    if not re.fullmatch(r"[0-9a-f]{64}", rollback_sha256) or not (
+        0 < rollback_size <= 128 * 1024
+    ):
+        raise ValueError("replacement rollback metadata is invalid")
+    values = _assignments(
+        {
+            "rollback_root": paths.root,
+            "marker": paths.marker,
+            "marker_value": (
+                f"{paths.run_id}:{assets.package.sha256}:{assets.sysusers.sha256}"
+            ),
+            "state_file": paths.state,
+            "rollback_script": paths.rollback_script,
+            "expected_sha256": rollback_sha256,
+            "expected_size": rollback_size,
+        }
+    )
+    body = r"""
+set -eu
+[ -d "$rollback_root" ]
+[ ! -L "$rollback_root" ]
+[ "$(stat -c '%a:%u:%g' "$rollback_root")" = 700:0:0 ]
+[ -f "$marker" ]
+[ "$(cat "$marker")" = "$marker_value" ]
+[ -f "$state_file" ]
+[ -f "$rollback_script" ]
+[ ! -L "$rollback_script" ]
+[ "$(stat -c '%a:%u:%g:%h' "$rollback_script")" = 700:0:0:1 ]
+[ "$(stat -c '%s' "$rollback_script")" -le 131072 ]
+cat > "$rollback_script.part"
+[ "$(wc -c < "$rollback_script.part" | tr -d ' ')" = "$expected_size" ]
+[ "$(sha256sum "$rollback_script.part" | awk '{print $1}')" = "$expected_sha256" ]
+chmod 700 "$rollback_script.part"
+mv "$rollback_script.part" "$rollback_script"
+sync "$rollback_script"
+printf 'rollback_replaced=yes\n'
+""".strip()
+    return f"{values}\n{body}"
+
+
+def build_execute_recovery_script(
+    paths: RemotePaths, assets: Assets, rollback_sha256: str
+) -> str:
+    if not re.fullmatch(r"[0-9a-f]{64}", rollback_sha256):
+        raise ValueError("replacement rollback SHA-256 is invalid")
+    values = _assignments(
+        {
+            "rollback_root": paths.root,
+            "marker": paths.marker,
+            "marker_value": (
+                f"{paths.run_id}:{assets.package.sha256}:{assets.sysusers.sha256}"
+            ),
+            "rollback_script": paths.rollback_script,
+            "expected_sha256": rollback_sha256,
+        }
+    )
+    body = r"""
+set -eu
+[ -f "$marker" ]
+[ "$(cat "$marker")" = "$marker_value" ]
+[ -f "$rollback_script" ]
+[ ! -L "$rollback_script" ]
+[ "$(sha256sum "$rollback_script" | awk '{print $1}')" = "$expected_sha256" ]
+/bin/sh "$rollback_script" explicit
+[ ! -e "$rollback_root" ]
+printf 'recovery_executed=yes\n'
+""".strip()
+    return f"{values}\n{body}"
 
 
 def execute(options: Options) -> int:

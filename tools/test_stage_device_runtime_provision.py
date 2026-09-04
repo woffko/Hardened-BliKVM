@@ -97,6 +97,13 @@ class StageDeviceRuntimeProvisionTests(unittest.TestCase):
             provision.build_commit_script(self.paths(), self.assets()),
             provision.build_cleanup_script(self.paths(), self.assets()),
             provision.build_final_script(self.paths(), self.assets()),
+            provision.build_recovery_discovery_script(self.assets()),
+            provision.build_rollback_replacement_script(
+                self.paths(), self.assets(), "f" * 64, 1024
+            ),
+            provision.build_execute_recovery_script(
+                self.paths(), self.assets(), "f" * 64
+            ),
         )
         for script in scripts:
             result = subprocess.run(
@@ -148,6 +155,7 @@ class StageDeviceRuntimeProvisionTests(unittest.TestCase):
 
     def test_apply_uses_stdin_credential_and_never_activates_services(self) -> None:
         script = provision.build_apply_script(self.paths(), self.assets())
+        self.assertIn("username_bytes=23", script)
         self.assertIn('systemd-sysusers "$pinned_sysusers"', script)
         self.assertIn(
             'kvmd-htpasswd set -i -q "$kvmd_account" < "$password_file"', script
@@ -173,6 +181,7 @@ class StageDeviceRuntimeProvisionTests(unittest.TestCase):
 
     def test_rollback_is_per_file_cas_and_concurrency_safe(self) -> None:
         script = provision.build_rollback_script(self.paths(), self.assets())
+        self.assertIn("username_bytes=23", script)
         self.assertIn('[ "$current" = "$before" ]', script)
         self.assertIn('[ "$current" = "$after" ]', script)
         self.assertIn("exit 3", script)
@@ -239,6 +248,43 @@ class StageDeviceRuntimeProvisionTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             provision.parse_failure_phase(b"apply_failure_phase=private/value\n", "apply")
+
+    def test_recovery_is_marker_bound_and_accepts_only_bounded_state(self) -> None:
+        discovery = provision.build_recovery_discovery_script(self.assets())
+        replacement = provision.build_rollback_replacement_script(
+            self.paths(), self.assets(), "f" * 64, 1024
+        )
+        execute = provision.build_execute_recovery_script(
+            self.paths(), self.assets(), "f" * 64
+        )
+        self.assertIn('[ "$count" = 1 ]', discovery)
+        self.assertIn('[ "${#run_id}" = 16 ]', discovery)
+        self.assertIn("database_state", discovery)
+        self.assertIn("htpasswd_state", discovery)
+        self.assertIn('"$marker_value"', replacement)
+        self.assertIn('cat > "$rollback_script.part"', replacement)
+        self.assertIn('sha256sum "$rollback_script.part"', replacement)
+        self.assertIn('/bin/sh "$rollback_script" explicit', execute)
+        self.assertNotIn("kvmd-password", replacement)
+        facts = {
+            "account_state": "present",
+            "boot_state": "armed",
+            "config_state": "present",
+            "database_state": "after",
+            "htpasswd_state": "after",
+            "kvmd_state": "active",
+            "package_state": "installed",
+            "phase": "htpasswd",
+            "rollback_state": "ready",
+            "rootfs_mode": "rw",
+            "run_id": "0" * 16,
+            "unit_state": "inactive",
+            "watchdog_state": "active",
+        }
+        raw = "".join(f"{key}={value}\n" for key, value in facts.items()).encode()
+        self.assertEqual(provision.parse_recovery_facts(raw), dict(sorted(facts.items())))
+        with self.assertRaises(ValueError):
+            provision.parse_recovery_facts(raw + b"private=value\n")
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(

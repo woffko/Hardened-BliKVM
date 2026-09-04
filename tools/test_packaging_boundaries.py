@@ -2397,6 +2397,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         prepare = (
             ROOT / "tools/stage_device_runtime_provision_prepare.py"
         ).read_text()
+        recovery = (ROOT / "tools/recover_device_runtime_provision.py").read_text()
         preflight = (ROOT / "tools/capture_runtime_provision_preflight.py").read_text()
         inspector = (ROOT / "tools/capture_runtime_provisioned.py").read_text()
         checks = (ROOT / "scripts/check.sh").read_text()
@@ -2440,6 +2441,11 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("provision.build_apply_script", prepare)
         self.assertNotIn("provision.build_commit_script", prepare)
         self.assertIn("provision.build_final_script", inspector)
+        self.assertIn("provision.build_recovery_discovery_script", recovery)
+        self.assertIn("provision.build_rollback_replacement_script", recovery)
+        self.assertIn("provision.build_execute_recovery_script", recovery)
+        self.assertNotIn("provision.build_apply_script", recovery)
+        self.assertNotIn("provision.build_commit_script", recovery)
         for path in (
             "tools/stage_device_runtime_provision.py",
             "tools/stage_device_runtime_provision_prepare.py",
@@ -2447,6 +2453,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "tools/capture_runtime_provisioned.py",
             "tools/test_stage_device_runtime_provision.py",
             "tools/test_capture_runtime_provision.py",
+            "tools/recover_device_runtime_provision.py",
         ):
             self.assertIn(path, checks)
 

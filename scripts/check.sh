@@ -78,6 +78,7 @@ python3 -m py_compile \
   tools/capture_runtime_provisioned.py \
   tools/stage_device_runtime_provision.py \
   tools/stage_device_runtime_provision_prepare.py \
+  tools/recover_device_runtime_provision.py \
   tools/capture_debian_runtime_retain_preflight.py \
   tools/capture_debian_runtime_retained.py \
   tools/build_debian_runtime_package.py \
@@ -145,6 +146,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_runtime_provisioned.py \
     tools/stage_device_runtime_provision.py \
     tools/stage_device_runtime_provision_prepare.py \
+    tools/recover_device_runtime_provision.py \
     tools/capture_debian_runtime_retain_preflight.py \
     tools/capture_debian_runtime_retained.py \
     tools/build_debian_runtime_package.py \
