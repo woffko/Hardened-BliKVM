@@ -86,6 +86,8 @@ The reversible H616 prototype and the application-update core are implemented:
 - persistent TLS 1.2/1.3 on public 80/443 using the unchanged device
   certificate, split-privilege Nginx, disabled vendor web service, and zero
   browser control requests;
+- direct-LAN operator-account login/logout plus a 30-sample persistent
+  resource/TLS/auth-denial soak with stable service PIDs and restart counters;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 

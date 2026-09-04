@@ -670,6 +670,17 @@ passed. See `baselines/device-persistent-web-cutover.md`. Operator first-account
 creation, soak, guarded reboot persistence, update/recovery and release
 acceptance remain.
 
+Checkpoint: the operator-created test account passed direct-LAN Chromium
+login, authenticated inventory/Diagnostics, secure-cookie and logout checks
+without changing the account or retaining a session. The persistent runtime
+then passed a 30-sample, ten-second-interval read-only soak with stable service
+PIDs/restart counters, bounded cgroup RSS, 42.101–49.634 degrees Celsius,
+continuous exact 80/443 ownership, 30 health/setup checks, 90 expected
+unauthenticated denials, and TLS 1.2/1.3 before and after. No persistent write,
+device reboot, or target Power/Reset action occurred. See
+`baselines/device-persistent-account-soak.md`. Guarded software reboot of the
+BliKVM device is next; target power controls remain excluded.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching
