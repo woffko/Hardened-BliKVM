@@ -56,6 +56,19 @@ This establishes repeatable target code generation for the public-only
 contract without implying that the library is shipped in the current inert
 update package.
 
+Source `14a8dc8` then added the stateless stdin/stdout CLI with exact request
+hash and explicit reviewed-public-key confirmation. Full host job
+`093e24d5d64e4e88964124828c7f2cc0` passed. Independent AArch64 jobs
+`1ad61b9db4724114a8f0d4b0c303178c` and
+`092304f1f774476188a91f743d3e89d1` produced byte-identical 503,800-byte
+stripped static-PIE executables with SHA-256:
+
+`f468ff8eec21a28e97acb6efc4ed6c2ca2fdcced1f1a778aa9ac9bcc70682071`
+
+Both executables passed the AArch64 ELF and host-path privacy gate. The normal
+AArch64 workspace builder verifies this CLI, but the prototype bundle and
+installed update-runtime package intentionally do not ship it.
+
 ## Remaining boundary
 
 This checkpoint defines validation and rendering only. It does not identify a

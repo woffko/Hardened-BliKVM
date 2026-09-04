@@ -2679,6 +2679,15 @@ class PackagingBoundaryTests(unittest.TestCase):
             "private_key_hex",
         ):
             self.assertNotIn(forbidden, baseline + contract + source)
+        aarch64_builder = (ROOT / "scripts/build-aarch64.sh").read_text()
+        prototype_builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn(
+            '"$release_dir/bli-kvm-update-trust-config"', aarch64_builder
+        )
+        self.assertNotIn(
+            'install -m 0755 "$release_dir/bli-kvm-update-trust-config"',
+            prototype_builder,
+        )
 
     def test_update_supervisor_is_local_health_only_and_sandboxed(self) -> None:
         watchdog = (

@@ -870,6 +870,13 @@ was byte-identical. See `baselines/application-trust-enrollment.md`. No real
 production key or device configuration was created. Reviewed public-key
 provisioning with rollback remains next.
 
+The companion source `14a8dc8` CLI reads only the bounded request from stdin,
+requires its exact SHA-256 plus explicit reviewed-public-key confirmation, and
+writes only canonical config to stdout. Two independent 503,800-byte AArch64
+static-PIE binaries matched byte-for-byte. The standard target builder verifies
+it, but it is intentionally absent from shipped runtime packages; a later
+provisioning gate may use it only as a transient validator.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
