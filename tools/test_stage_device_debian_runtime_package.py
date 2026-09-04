@@ -1,6 +1,7 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
+import tarfile
 import unittest
 
 import tools.build_debian_runtime_package as debian
@@ -109,6 +110,40 @@ class StageDeviceDebianRuntimePackageTests(unittest.TestCase):
 
     def test_package_name_matches_builder(self) -> None:
         self.assertEqual(debian.PACKAGE_NAME, "hardened-blikvm-runtime")
+
+    def test_privileged_modes_and_extended_attributes_are_rejected(self) -> None:
+        privileged = tarfile.TarInfo("usr/libexec/hardened-blikvm/binary")
+        privileged.mode = 0o4755
+        with self.assertRaisesRegex(ValueError, "privileged mode"):
+            stage.validate_tar_metadata(privileged)
+
+        attributed = tarfile.TarInfo("usr/libexec/hardened-blikvm/binary")
+        attributed.mode = 0o755
+        attributed.pax_headers = {"SCHILY.xattr.security.capability": "value"}
+        with self.assertRaisesRegex(ValueError, "extended attribute"):
+            stage.validate_tar_metadata(attributed)
+
+    def test_data_members_are_restricted_to_inert_payload_roots(self) -> None:
+        stage.validate_data_member_path(
+            PurePosixPath("usr/libexec/hardened-blikvm/bli-kvm-server"), False
+        )
+        stage.validate_data_member_path(
+            PurePosixPath("usr/share/hardened-blikvm/web/assets/app.js"), False
+        )
+        stage.validate_data_member_path(
+            PurePosixPath(
+                "lib/systemd/system/hardened-blikvm-platform-broker.service"
+            ),
+            False,
+        )
+        with self.assertRaisesRegex(ValueError, "payload allowlist"):
+            stage.validate_data_member_path(PurePosixPath("usr/bin/unexpected"), False)
+        with self.assertRaisesRegex(ValueError, "payload allowlist"):
+            stage.validate_data_member_path(
+                PurePosixPath("usr/libexec/hardened-blikvm/unexpected"), False
+            )
+        with self.assertRaisesRegex(ValueError, "payload allowlist"):
+            stage.validate_data_member_path(PurePosixPath("root/payload"), False)
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(

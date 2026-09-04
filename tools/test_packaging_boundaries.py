@@ -2284,6 +2284,64 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(required, baseline)
 
+    def test_retained_debian_package_gate_is_separate_crash_safe_and_inert(
+        self,
+    ) -> None:
+        ephemeral = (ROOT / "tools/stage_device_debian_runtime_package.py").read_text()
+        retained = (ROOT / "tools/stage_device_debian_runtime_retain.py").read_text()
+        inspector = (ROOT / "tools/capture_debian_runtime_retained.py").read_text()
+        checks = (ROOT / "scripts/check.sh").read_text()
+
+        self.assertNotIn("packageRetained", ephemeral)
+        for required in (
+            "package_gate.validate_package(",
+            '"packageRetained": True',
+            '"servicesActive": False',
+            '"servicesEnabled": False',
+            '"bootSafe": True',
+            "WantedBy=sysinit.target",
+            "Before=kvmd.service kvmd-nginx.service",
+            "systemd-run --quiet --collect",
+            "dpkg --audit",
+            "other_package_hash",
+            "df -i --output=iavail",
+            "getcap",
+            "installed_tree_exact",
+            "units_loaded_disabled_inactive",
+            "sync",
+        ):
+            self.assertIn(required, retained)
+        for forbidden in (
+            "systemctl start hardened-blikvm",
+            "systemctl enable hardened-blikvm",
+            "systemctl restart kvmd",
+            "systemctl stop kvmd",
+            "systemd-sysusers",
+            "systemd-tmpfiles",
+            "rm -rf",
+            "reboot",
+            "shutdown",
+            "poweroff",
+        ):
+            self.assertNotIn(forbidden, retained)
+        self.assertIn("tools/test_stage_device_debian_runtime_retain.py", checks)
+        self.assertIn("tools/stage_device_debian_runtime_retain.py", checks)
+        self.assertIn("tools/test_capture_debian_runtime_retained.py", checks)
+        self.assertIn("tools/capture_debian_runtime_retained.py", checks)
+        self.assertIn("retain.build_final_script", inspector)
+        self.assertIn('"readOnly": True', inspector)
+        for forbidden in (
+            "dpkg -i",
+            "dpkg --purge",
+            "systemctl start",
+            "systemctl stop",
+            "systemctl enable",
+            "systemctl disable",
+            "systemd-sysusers",
+            "systemd-tmpfiles",
+        ):
+            self.assertNotIn(forbidden, inspector)
+
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"

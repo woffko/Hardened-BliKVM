@@ -29,6 +29,33 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 MAX_PACKAGE_BYTES = 16 * 1024 * 1024
 MAX_PACKAGE_MEMBERS = 256
 MAX_PACKAGE_UNCOMPRESSED_BYTES = 32 * 1024 * 1024
+ALLOWED_DATA_FILE_PREFIXES = (
+    PurePosixPath("usr/share/hardened-blikvm/web"),
+    PurePosixPath("usr/share/doc/hardened-blikvm-runtime"),
+)
+ALLOWED_DATA_DIRECTORY_PREFIXES = (
+    PurePosixPath("usr/libexec/hardened-blikvm"),
+    *ALLOWED_DATA_FILE_PREFIXES,
+)
+ALLOWED_RUNTIME_FILES = {
+    PurePosixPath(path) for path in debian.EXECUTABLE_DESTINATIONS
+}
+ALLOWED_UNIT_FILES = {
+    PurePosixPath("lib/systemd/system/hardened-blikvm-platform-broker.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-video-proxy.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-control-broker.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-server.service"),
+}
+ALLOWED_DATA_PARENT_DIRECTORIES = {
+    PurePosixPath("usr"),
+    PurePosixPath("usr/libexec"),
+    PurePosixPath("usr/share"),
+    PurePosixPath("usr/share/doc"),
+    PurePosixPath("usr/share/hardened-blikvm"),
+    PurePosixPath("lib"),
+    PurePosixPath("lib/systemd"),
+    PurePosixPath("lib/systemd/system"),
+}
 PREFLIGHT_KEYS = {
     "accounts_absent_before",
     "architecture",
@@ -168,6 +195,30 @@ def _member_path(name: str) -> PurePosixPath:
     return PurePosixPath(*parts)
 
 
+def validate_tar_metadata(member: tarfile.TarInfo) -> None:
+    if member.mode & 0o7000:
+        raise ValueError("package member has a privileged mode bit")
+    if any(
+        key.startswith(("SCHILY.xattr.", "LIBARCHIVE.xattr."))
+        for key in member.pax_headers
+    ):
+        raise ValueError("package member contains an extended attribute")
+
+
+def validate_data_member_path(path: PurePosixPath, is_directory: bool) -> None:
+    if is_directory:
+        if path in ALLOWED_DATA_PARENT_DIRECTORIES or any(
+            path == prefix or prefix in path.parents
+            for prefix in ALLOWED_DATA_DIRECTORY_PREFIXES
+        ):
+            return
+    elif path in ALLOWED_RUNTIME_FILES or path in ALLOWED_UNIT_FILES or any(
+        prefix in path.parents for prefix in ALLOWED_DATA_FILE_PREFIXES
+    ):
+        return
+    raise ValueError("package member is outside the inert payload allowlist")
+
+
 def validate_package(
     path_value: str,
     expected_sha256: str,
@@ -201,11 +252,20 @@ def validate_package(
     with tarfile.open(
         fileobj=io.BytesIO(_run_dpkg_deb(path, "--ctrl-tarfile")), mode="r:"
     ) as archive:
-        control_members = {
-            str(_member_path(member.name))
-            for member in archive.getmembers()
-            if member.name not in (".", "./")
-        }
+        members = archive.getmembers()
+        control_members: set[str] = set()
+        for member in members:
+            validate_tar_metadata(member)
+            if member.name in (".", "./"):
+                continue
+            control_members.add(str(_member_path(member.name)))
+            if (
+                not member.isfile()
+                or member.uid != 0
+                or member.gid != 0
+                or member.mode != 0o644
+            ):
+                raise ValueError("package control member metadata is invalid")
     if control_members != {"control"}:
         raise ValueError("package contains maintainer scripts")
 
@@ -221,11 +281,20 @@ def validate_package(
         for member in members:
             if member.name in (".", "./"):
                 continue
+            validate_tar_metadata(member)
             relative = _member_path(member.name)
             if member.issym() or member.islnk() or not (member.isdir() or member.isfile()):
                 raise ValueError("package member type is invalid")
+            validate_data_member_path(relative, member.isdir())
             if member.uid != 0 or member.gid != 0:
                 raise ValueError("package member ownership is invalid")
+            expected_mode = (
+                0o755
+                if member.isdir() or relative in ALLOWED_RUNTIME_FILES
+                else 0o644
+            )
+            if member.mode != expected_mode:
+                raise ValueError("package member mode is invalid")
             if relative.parts[0] == "etc" or relative.parts[:3] == (
                 "usr",
                 "lib",

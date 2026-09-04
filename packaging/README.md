@@ -14,6 +14,21 @@ excluded. `tools/stage_device_debian_runtime_package.py` proves a guarded
 install/hash/mode check/purge transaction; it does not authorize retained
 installation or provisioning.
 
+`tools/stage_device_debian_runtime_retain.py` is a separate two-phase boundary
+for retaining that same exact inert package. Before `dpkg -i`, it persists and
+syncs a marker-bound early-boot rollback unit and also starts a five-minute
+transient watchdog. Prepare verifies the closed installed tree, every file
+hash/mode/root owner, absent file capabilities, unchanged account/Nginx/KVMD
+credential state and unchanged non-target package inventory. Commit rechecks
+those facts, removes staging, then disarms both rollback paths while leaving
+only the package installed. It still creates no account, credential, state
+root, listener, active Nginx configuration, enabled unit, or running service.
+Any failed phase with a reachable device purges only the exact package and
+validates the prior clean state; loss while rollback is armed is covered by the
+watchdog or early-boot unit. A separate read-only
+`tools/capture_debian_runtime_retained.py` probe resolves a lost final response
+after rollback has already been safely disarmed.
+
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group
