@@ -53,6 +53,7 @@ python3 -m unittest \
   tools/test_stage_device_web_cutover.py \
   tools/test_device_existing_account_browser.py \
   tools/test_capture_device_persistent_soak.py \
+  tools/test_stage_device_persistent_reboot.py \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
@@ -91,6 +92,7 @@ python3 -m py_compile \
   tools/capture_device_web_cutover_preflight.py \
   tools/capture_device_web_cutover_failure.py \
   tools/capture_device_persistent_soak.py \
+  tools/stage_device_persistent_reboot.py \
   tools/stage_device_web_cutover.py \
   tools/capture_debian_runtime_retain_preflight.py \
   tools/capture_debian_runtime_retained.py \
@@ -131,6 +133,7 @@ python3 -m py_compile \
   tools/test_stage_device_web_cutover.py \
   tools/test_device_existing_account_browser.py \
   tools/test_capture_device_persistent_soak.py \
+  tools/test_stage_device_persistent_reboot.py \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
@@ -174,6 +177,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_device_web_cutover_preflight.py \
     tools/capture_device_web_cutover_failure.py \
     tools/capture_device_persistent_soak.py \
+    tools/stage_device_persistent_reboot.py \
     tools/stage_device_web_cutover.py \
     tools/capture_debian_runtime_retain_preflight.py \
     tools/capture_debian_runtime_retained.py \
@@ -213,6 +217,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_web_cutover.py \
     tools/test_device_existing_account_browser.py \
     tools/test_capture_device_persistent_soak.py \
+    tools/test_stage_device_persistent_reboot.py \
     tools/test_capture_debian_runtime_retain_preflight.py \
     tools/test_capture_debian_runtime_retained.py \
     tools/test_build_debian_runtime_package.py \
