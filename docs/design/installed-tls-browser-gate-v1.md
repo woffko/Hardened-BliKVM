@@ -1,10 +1,10 @@
 # Installed-runtime shadow TLS browser gate design
 
-Status: design boundary only. Retained package, permanent identities and KVMD
-credential, and reversible native installed-unit activation are accepted on
-H616. This design does not authorize a persistent certificate, production
-listener cutover, service enablement, reboot, update trust, diagnostic
-persistence, or hardware action.
+Status: host and reversible installed-runtime H616 Chromium acceptance
+complete; evidence is recorded in
+`../baselines/device-installed-tls-browser.md`. This design does not authorize a
+persistent certificate, production listener cutover, service enablement,
+reboot, update trust, diagnostic persistence, or hardware action.
 
 ## Shadow boundary
 

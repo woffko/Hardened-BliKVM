@@ -2543,6 +2543,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         gate = (ROOT / "tools/stage_device_installed_tls_browser.py").read_text()
         design = (ROOT / "docs/design/installed-tls-browser-gate-v1.md").read_text()
+        baseline = (ROOT / "docs/baselines/device-installed-tls-browser.md").read_text()
         checks = (ROOT / "scripts/check.sh").read_text()
 
         for required in (
@@ -2585,6 +2586,16 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden, gate)
         self.assertIn("tools/stage_device_installed_tls_browser.py", checks)
         self.assertIn("tools/test_stage_device_installed_tls_browser.py", checks)
+        for required in (
+            "7fc49ad78c24749fbc889c5f9ab848590f28d014",
+            "43e531fd7ba143e4b4399969d13f6f18",
+            "08fcd876a4664a6e9e970fc056b07385",
+            "38 API responses",
+            "zero control requests",
+            "zero WebSockets",
+            "MJPEG decoded and reconnected four times",
+        ):
+            self.assertIn(required, baseline)
 
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (

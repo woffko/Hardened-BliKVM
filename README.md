@@ -79,6 +79,9 @@ The reversible H616 prototype and the application-update core are implemented:
 - reversible installed-unit activation for platform broker, MJPEG proxy, and
   loopback server, including systemd isolation, Diagnostics, video reconnect,
   session revocation, and complete state/drop-in/cgroup cleanup;
+- installed-runtime TLS 1.2/1.3 and full desktop/mobile Chromium acceptance
+  behind an unprivileged loopback-only shadow Nginx, with the working PiKVM
+  proxy unchanged and complete rollback;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 

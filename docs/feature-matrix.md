@@ -6,8 +6,8 @@ passed a physical interaction gate.
 
 | Feature | Existing test baseline | BLi-KVM status | Required gate |
 | --- | --- | --- | --- |
-| HTTPS/login | Reachable; authenticated boundary verified | H616 TLS 1.2/1.3 Chromium setup/login, secure cookies, rotation, logout, and 390x844 mobile Diagnostics rendering passed | Certificate enrollment and other browser engines |
-| Loopback server runtime | Not applicable | Unprivileged H616 server, systemd sandbox, Nginx loopback, SSH-forward gates, privacy-remapped retained package/identities/credential, and reversible installed-unit activation passed | Persistent start/enablement, Nginx integration, soak, and reboot persistence |
+| HTTPS/login | Reachable; authenticated boundary verified | Installed-runtime H616 shadow TLS 1.2/1.3 Chromium setup/login, secure cookies, rotation, logout, and 390x844 mobile Diagnostics rendering passed | Production certificate/listener enrollment and other browser engines |
+| Loopback server runtime | Not applicable | Unprivileged H616 server, systemd sandbox, privacy-remapped retained package/identities/credential, reversible installed-unit activation, and installed shadow Nginx/SSH-forward browser gate passed | Persistent start/enablement, production Nginx integration, soak, and reboot persistence |
 | Read-only inventory | Five authenticated GET endpoints verified | Distinct-UID installed broker, permanent dedicated credential, `LoadCredential`, sanitizer, and authenticated installed-unit H616 inventory passed | Persistent activation and reboot persistence |
 | MJPEG | Streamer source online through authenticated API | Read-only Rust proxy/server path and TLS Chromium decode/reconnect passed on H616: 74 frames, 5 reconnects, 2 concurrent streams, session revocation, systemd isolation, and full rollback | Longer latency, hotplug, mode-switch, and soak matrix |
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |

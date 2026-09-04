@@ -74,7 +74,9 @@ transient Nginx process is unprivileged, capability-free, localhost-restricted,
 and writable only inside its marker-owned state. Existing PiKVM Nginx files,
 units, listeners, and certificates are hash-checked but never changed. Browser
 account state, TLS material, services, cgroups, listeners, and rollback are
-fully removed. Native H616 acceptance is still required.
+fully removed. Native H616 acceptance is recorded in
+`../docs/baselines/device-installed-tls-browser.md`; no production listener or
+certificate is retained.
 
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime

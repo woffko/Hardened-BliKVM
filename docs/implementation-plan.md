@@ -647,6 +647,17 @@ logout Origin header; both restored the provisioned-inactive state. See
 `baselines/device-runtime-activation.md`. Persistent start/enablement,
 production Nginx/TLS, soak, reboot, update trust, and release acceptance remain.
 
+Checkpoint: the same installed units now pass the full established
+desktop/mobile Chromium flow behind an unprivileged transient Nginx at only
+`127.0.0.1:18443`, reached exclusively through strict SSH forwarding. TLS
+1.2/1.3, secure cookies, setup/login/password rotation/logout, installed
+inventory/Diagnostics, responsive localized UI states, MJPEG reconnect/session
+revocation, zero control/WebSocket requests, unchanged PiKVM Nginx, empty
+cgroups and complete certificate/state/rollback cleanup passed. See
+`baselines/device-installed-tls-browser.md`. Production certificate/listener
+enrollment, persistent app account/service activation, soak, reboot, update
+trust, and release acceptance remain.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching
