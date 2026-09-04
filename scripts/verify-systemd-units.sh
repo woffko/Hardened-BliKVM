@@ -15,6 +15,7 @@ install -d -m 0755 \
   "$test_root/bin" \
   "$test_root/etc" \
   "$test_root/usr/bin" \
+  "$test_root/usr/sbin" \
   "$test_root/usr/lib/systemd/system" \
   "$test_root/usr/lib/sysusers.d" \
   "$test_root/usr/lib/tmpfiles.d" \
@@ -32,6 +33,8 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagno
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-persistence-gate"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
+install -m 0755 /bin/true "$test_root/usr/bin/install"
+install -m 0755 /bin/true "$test_root/usr/sbin/nginx"
 install -m 0644 \
   "$project_root"/packaging/systemd/*.service \
   "$project_root"/packaging/systemd/*.socket \
@@ -52,6 +55,11 @@ printf '%s\n' \
   'Type=simple' \
   'ExecStart=/bin/true' \
   > "$test_root/usr/lib/systemd/system/kvmd.service"
+printf '%s\n' \
+  '[Service]' \
+  'Type=simple' \
+  'ExecStart=/bin/true' \
+  > "$test_root/usr/lib/systemd/system/kvmd-nginx.service"
 printf '%s\n' 'g kvmd -' > "$test_root/usr/lib/sysusers.d/kvmd-test.conf"
 for target in sysinit.target basic.target shutdown.target multi-user.target sockets.target timers.target; do
   printf '%s\n' '[Unit]' "Description=Synthetic $target" \
@@ -71,6 +79,7 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-control-broker.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service \
+  hardened-blikvm-nginx.service \
   hardened-blikvm-update-watchdog.service \
   hardened-blikvm-update-watchdog.timer \
   hardened-blikvm-update-confirm.socket \
@@ -91,6 +100,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-activate@.service" \

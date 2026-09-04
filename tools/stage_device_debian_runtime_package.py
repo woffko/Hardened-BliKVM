@@ -45,6 +45,7 @@ ALLOWED_UNIT_FILES = {
     PurePosixPath("lib/systemd/system/hardened-blikvm-video-proxy.service"),
     PurePosixPath("lib/systemd/system/hardened-blikvm-control-broker.service"),
     PurePosixPath("lib/systemd/system/hardened-blikvm-server.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-nginx.service"),
 }
 ALLOWED_DATA_PARENT_DIRECTORIES = {
     PurePosixPath("usr"),

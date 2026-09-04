@@ -1,0 +1,67 @@
+[Unit]
+Description=Hardened BliKVM HTTPS reverse proxy
+Documentation=https://github.com/woffko/Hardened-BliKVM
+Requires=hardened-blikvm-server.service
+After=hardened-blikvm-server.service
+Conflicts=kvmd-nginx.service
+ConditionPathExists=/etc/hardened-blikvm/nginx.conf
+ConditionPathExists=/etc/hardened-blikvm/tls.crt
+ConditionPathExists=/etc/hardened-blikvm/tls.key
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+UMask=0077
+RuntimeDirectory=hardened-blikvm-nginx
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=no
+LoadCredential=tls-certificate:/etc/hardened-blikvm/tls.crt
+LoadCredential=tls-key:/etc/hardened-blikvm/tls.key
+LoadCredential=nginx-config:/etc/hardened-blikvm/nginx.conf
+ExecStartPre=/usr/bin/install -d -m 0700 /run/hardened-blikvm-nginx/client-temp /run/hardened-blikvm-nginx/proxy-temp
+ExecStartPre=/usr/sbin/nginx -t -c /run/credentials/hardened-blikvm-nginx.service/nginx-config
+ExecStart=/usr/sbin/nginx -c /run/credentials/hardened-blikvm-nginx.service/nginx-config -g "daemon off;"
+ExecReload=/usr/sbin/nginx -t -c /run/credentials/hardened-blikvm-nginx.service/nginx-config
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+KillSignal=SIGQUIT
+TimeoutStartSec=15s
+TimeoutStopSec=15s
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+DevicePolicy=closed
+IPAddressDeny=multicast
+SocketBindDeny=any
+SocketBindAllow=tcp:80
+SocketBindAllow=tcp:443
+ReadWritePaths=/run/hardened-blikvm-nginx
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -398,17 +398,6 @@ def browser_runtime() -> BrowserRuntime:
 
 
 def render_test_nginx(paths: TlsPaths, bind_port: int) -> str:
-    template = (
-        Path(__file__).resolve().parent.parent
-        / "packaging/nginx/hardened-blikvm.conf"
-    ).read_text()
-    template = template.replace("    listen 443 ssl;", f"    listen 127.0.0.1:{TLS_PORT} ssl;")
-    template = template.replace("    listen [::]:443 ssl;\n", "")
-    template = template.replace(
-        "/etc/hardened-blikvm/tls.crt", paths.tls_certificate
-    )
-    template = template.replace("/etc/hardened-blikvm/tls.key", paths.tls_key)
-    template = template.replace("http://127.0.0.1:18080", f"http://127.0.0.1:{bind_port}")
     state = paths.nginx_state
     return f"""worker_processes 1;
 pid {state}/nginx.pid;
@@ -420,10 +409,39 @@ events {{
 
 http {{
     access_log off;
-    include /etc/nginx/mime.types;
+    server_tokens off;
     client_body_temp_path {state}/client-body;
     proxy_temp_path {state}/proxy;
-{template}
+    map $http_upgrade $hardened_blikvm_connection_upgrade {{
+        default upgrade;
+        '' close;
+    }}
+    map $http_host $hardened_blikvm_forwarded_host {{
+        default $http_host;
+        '' $host;
+    }}
+    server {{
+        listen 127.0.0.1:{TLS_PORT} ssl;
+        server_name _;
+        ssl_certificate {paths.tls_certificate};
+        ssl_certificate_key {paths.tls_key};
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache off;
+        ssl_session_tickets off;
+        client_max_body_size 16m;
+        add_header X-Content-Type-Options nosniff always;
+        location / {{
+            proxy_pass http://127.0.0.1:{bind_port};
+            proxy_http_version 1.1;
+            proxy_set_header Host $hardened_blikvm_forwarded_host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $hardened_blikvm_connection_upgrade;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+        }}
+    }}
 }}
 """
 

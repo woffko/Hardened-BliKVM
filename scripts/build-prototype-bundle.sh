@@ -68,6 +68,7 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-control-broker.service \
   packaging/systemd/hardened-blikvm-video-proxy.service \
   packaging/systemd/hardened-blikvm-server.service \
+  packaging/systemd/hardened-blikvm-nginx.service \
   packaging/systemd/hardened-blikvm-update-watchdog.service \
   packaging/systemd/hardened-blikvm-update-confirm@.service \
   packaging/systemd/hardened-blikvm-update-activate@.service \

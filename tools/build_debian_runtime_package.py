@@ -41,6 +41,8 @@ FILE_MAP = {
         "lib/systemd/system/hardened-blikvm-control-broker.service",
     "share/systemd/hardened-blikvm-server.service":
         "lib/systemd/system/hardened-blikvm-server.service",
+    "share/systemd/hardened-blikvm-nginx.service":
+        "lib/systemd/system/hardened-blikvm-nginx.service",
     "share/sysusers.d/hardened-blikvm.conf":
         "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-sysusers.conf",
     "LICENSE": "usr/share/doc/hardened-blikvm-runtime/copyright",

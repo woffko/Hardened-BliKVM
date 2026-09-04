@@ -78,6 +78,18 @@ fully removed. Native H616 acceptance is recorded in
 `../docs/baselines/device-installed-tls-browser.md`; no production listener or
 certificate is retained.
 
+`tools/capture_device_web_cutover_preflight.py` and
+`tools/stage_device_web_cutover.py` define the separate persistent listener
+cutover. The first probe binds the active vendor Nginx unit, alternate config,
+80/443 listener scope, and the single live certificate/key pair without
+returning their contents. The mutation gate then arms early-boot and timed
+rollback before disabling only `kvmd-nginx`, enabling the installed Rust
+broker/video/server and a non-root capability-bounded Hardened Nginx, and
+checking the account-free First Setup page in Chromium. The existing root-only
+TLS pair and root-only Nginx config are delivered through systemd credentials;
+their persistent files and permissions are not changed. See
+`../docs/design/persistent-web-cutover-v1.md`.
+
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group

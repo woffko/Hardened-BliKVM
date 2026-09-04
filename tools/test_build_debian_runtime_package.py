@@ -19,6 +19,7 @@ class DebianRuntimePackageTests(unittest.TestCase):
             "usr/libexec/hardened-blikvm/bli-kvm-video-proxy",
             "usr/libexec/hardened-blikvm/bli-kvm-control-broker",
             "lib/systemd/system/hardened-blikvm-server.service",
+            "lib/systemd/system/hardened-blikvm-nginx.service",
             "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-sysusers.conf",
             "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-nginx.conf",
         ):
