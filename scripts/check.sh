@@ -51,6 +51,7 @@ python3 -m unittest \
   tools/test_capture_device_web_cutover_preflight.py \
   tools/test_capture_device_web_cutover_failure.py \
   tools/test_stage_device_web_cutover.py \
+  tools/test_device_existing_account_browser.py \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
@@ -126,6 +127,7 @@ python3 -m py_compile \
   tools/test_capture_device_web_cutover_preflight.py \
   tools/test_capture_device_web_cutover_failure.py \
   tools/test_stage_device_web_cutover.py \
+  tools/test_device_existing_account_browser.py \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
@@ -146,6 +148,7 @@ python3 -m py_compile \
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
 node --check tools/playwright/device_cutover_setup_smoke.mjs
+node --check tools/playwright/device_existing_account_smoke.mjs
 
 if command -v basedpyright >/dev/null 2>&1; then
   basedpyright \
@@ -204,6 +207,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_device_web_cutover_preflight.py \
     tools/test_capture_device_web_cutover_failure.py \
     tools/test_stage_device_web_cutover.py \
+    tools/test_device_existing_account_browser.py \
     tools/test_capture_debian_runtime_retain_preflight.py \
     tools/test_capture_debian_runtime_retained.py \
     tools/test_build_debian_runtime_package.py \
