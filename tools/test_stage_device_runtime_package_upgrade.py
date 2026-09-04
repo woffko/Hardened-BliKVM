@@ -162,6 +162,16 @@ class StageDeviceRuntimePackageUpgradeTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"--preflight-only", result.stdout)
+
+    def test_preflight_only_returns_before_any_upload(self) -> None:
+        source = Path("tools/stage_device_runtime_package_upgrade.py").read_text()
+        branch = source.index("if options.preflight_only:")
+        upload = source.index('stage = "upload-new"')
+        self.assertLess(branch, upload)
+        between = source[branch:upload]
+        self.assertIn('"deviceChanged": False', between)
+        self.assertNotIn("build_upload_script", between)
 
     def test_design_records_the_separate_acceptance_boundaries(self) -> None:
         design = Path("docs/design/runtime-package-upgrade-gate-v1.md").read_text()

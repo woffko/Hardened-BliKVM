@@ -107,6 +107,7 @@ class Options:
     expected_rollback_builder_commit: str
     baseline: str
     output: str
+    preflight_only: bool
 
 
 @dataclass(frozen=True)
@@ -160,8 +161,34 @@ def parse_args() -> Options:
     parser.add_argument("--expected-rollback-builder-commit", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--output", required=True)
-    values = vars(parser.parse_args())
-    return Options(**cast(dict[str, str], values))
+    parser.add_argument("--preflight-only", action="store_true")
+    namespace = parser.parse_args()
+    return Options(
+        endpoint=cast(str, namespace.endpoint),
+        username=cast(str, namespace.username),
+        known_hosts=cast(str, namespace.known_hosts),
+        package=cast(str, namespace.package),
+        expected_sha256=cast(str, namespace.expected_sha256),
+        expected_source_commit=cast(str, namespace.expected_source_commit),
+        expected_source_bundle_sha256=cast(
+            str, namespace.expected_source_bundle_sha256
+        ),
+        expected_builder_commit=cast(str, namespace.expected_builder_commit),
+        rollback_package=cast(str, namespace.rollback_package),
+        expected_rollback_sha256=cast(str, namespace.expected_rollback_sha256),
+        expected_rollback_source_commit=cast(
+            str, namespace.expected_rollback_source_commit
+        ),
+        expected_rollback_source_bundle_sha256=cast(
+            str, namespace.expected_rollback_source_bundle_sha256
+        ),
+        expected_rollback_builder_commit=cast(
+            str, namespace.expected_rollback_builder_commit
+        ),
+        baseline=cast(str, namespace.baseline),
+        output=cast(str, namespace.output),
+        preflight_only=cast(bool, namespace.preflight_only),
+    )
 
 
 def paths(package_sha256: str, run_id: str) -> Paths:
@@ -978,6 +1005,27 @@ def main() -> int:
             raise ValueError("runtime upgrade preflight failed")
         preflight = parse_facts(result.stdout, PRE_KEYS)
         account_sha256 = preflight["account_sha256"]
+        if options.preflight_only:
+            write_json_0600_atomic(
+                output,
+                {
+                    "schemaVersion": 1,
+                    "probe": "hardened-blikvm-runtime-package-upgrade-preflight",
+                    "result": "passed",
+                    "sourceCommit": new_package.source_commit,
+                    "oldPackageSha256": old_package.sha256,
+                    "newPackageSha256": new_package.sha256,
+                    "facts": preflight,
+                    "policy": {
+                        "packageUploaded": False,
+                        "deviceChanged": False,
+                        "deviceReboot": False,
+                        "targetPowerControl": False,
+                        "secretEmitted": False,
+                    },
+                },
+            )
+            return 0
         stage = "upload-new"
         with new_package.path.open("rb") as stream:
             result = prototype.run_ssh(

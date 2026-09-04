@@ -31,6 +31,11 @@ The live state must match the bounded fail-closed result of the rejected reboot:
   and no web-cutover, reboot, or runtime-upgrade guard is present; and
 - the control broker remains disabled and no control socket exists.
 
+`--preflight-only` executes these same package and device checks, writes a
+mode-0600 receipt, and returns before creating a staging directory or changing
+the device. The mutating run is allowed only after that separate receipt is
+reviewed.
+
 ## Transaction and rollback
 
 Both packages are uploaded into one root-owned mode-0700 directory under
