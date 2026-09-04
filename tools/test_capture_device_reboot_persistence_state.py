@@ -15,6 +15,7 @@ class CaptureDeviceRebootPersistenceStateTests(unittest.TestCase):
             "activation emergency rollback",
             "web cutover emergency rollback",
             "reboot confirmation guard",
+            "hardened-blikvm-web-cutover-*-rollback.service",
             "journalctl -b 0",
         ):
             if required == "multi-user.target":

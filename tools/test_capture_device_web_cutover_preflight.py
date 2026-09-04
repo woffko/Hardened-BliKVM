@@ -20,6 +20,8 @@ class CaptureDeviceWebCutoverPreflightTests(unittest.TestCase):
             "hardened_units",
             "control_boundary",
             "staging_absent",
+            "hardened-blikvm-web-cutover-*",
+            "/etc/systemd/system",
         ):
             self.assertIn(required, script)
         for forbidden in (

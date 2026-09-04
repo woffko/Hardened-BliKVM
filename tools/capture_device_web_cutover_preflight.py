@@ -217,7 +217,8 @@ if [ "$(systemctl is-active hardened-blikvm-control-broker.service 2>/dev/null |
 else
   emit control_boundary present
 fi
-if find /var/lib -maxdepth 1 -type d -name 'hardened-blikvm-*-rollback-*' -print -quit | grep -q .; then
+if find /var/lib -maxdepth 1 -type d \( -name 'hardened-blikvm-*-rollback-*' -o -name 'hardened-blikvm-web-cutover-*' \) -print -quit | grep -q . ||
+   find /etc/systemd/system -maxdepth 3 \( -name 'hardened-blikvm-web-cutover-*' -o -name 'hardened-blikvm-*-rollback-*' \) -print -quit | grep -q .; then
   emit staging_absent no
 else
   emit staging_absent yes

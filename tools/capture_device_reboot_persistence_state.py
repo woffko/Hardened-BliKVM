@@ -45,6 +45,10 @@ FACT_KEYS = {
     "var_lib_same_root_fs",
     "vendor_nginx_state",
     "video_state",
+    "web_cutover_artifacts",
+    "web_cutover_boot_links",
+    "web_cutover_boot_units",
+    "web_cutover_roots",
 }
 SAFE_VALUE = re.compile(r"^[a-z0-9_.:+-]{1,96}$")
 
@@ -93,6 +97,10 @@ if [ -f /var/lib/hardened-blikvm/account.json ]; then account_state=present; els
 if [ "$(systemctl show -p LoadState --value hardened-blikvm-control-broker.socket 2>/dev/null || true)" = not-found ] &&
    [ "$(systemctl is-active hardened-blikvm-control-broker.service 2>/dev/null || true)" = inactive ]; then control=absent; else control=present; fi
 if find /var/lib /etc/systemd/system -maxdepth 3 -name 'hardened-blikvm-reboot-guard-*' -print -quit 2>/dev/null | grep -q .; then guard_artifacts=present; else guard_artifacts=absent; fi
+web_roots=$(find /var/lib -maxdepth 1 -type d -name 'hardened-blikvm-web-cutover-*' -print 2>/dev/null | wc -l)
+web_units=$(find /etc/systemd/system -maxdepth 1 -type f -name 'hardened-blikvm-web-cutover-*-rollback.service' -print 2>/dev/null | wc -l)
+web_links=$(find /etc/systemd/system/sysinit.target.wants -maxdepth 1 -type l -name 'hardened-blikvm-web-cutover-*-rollback.service' -print 2>/dev/null | wc -l)
+if [ "$web_roots" = 0 ] && [ "$web_units" = 0 ] && [ "$web_links" = 0 ]; then web_artifacts=absent; else web_artifacts=present; fi
 journal=$(journalctl -b 0 --no-pager -o cat 2>/dev/null | grep -i 'hardened blikvm\|hardened-blikvm' || true)
 lines=$(printf '%s\n' "$journal" | awk 'NF { count++ } END { print count + 0 }')
 [ "$lines" -le 9999 ]
@@ -115,6 +123,10 @@ emit hardened_nginx_state "$(unit_state hardened-blikvm-nginx.service)"
 emit vendor_nginx_state "$(unit_state kvmd-nginx.service)"
 emit control_boundary "$control"
 emit reboot_guard_artifacts "$guard_artifacts"
+emit web_cutover_roots "$web_roots"
+emit web_cutover_boot_units "$web_units"
+emit web_cutover_boot_links "$web_links"
+emit web_cutover_artifacts "$web_artifacts"
 emit journal_hardened_lines "$lines"
 flag activation_rollback_seen 'activation emergency rollback'
 flag runtime_activation_rollback_seen 'activation-rollback|activation rollback'
