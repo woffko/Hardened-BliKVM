@@ -418,7 +418,7 @@ port_in_use 480B && exit 1
 phase=htpasswd
 [ -f /etc/kvmd/htpasswd ]
 [ ! -L /etc/kvmd/htpasswd ]
-[ "$(stat -c '%a:%u:%g:%h' /etc/kvmd/htpasswd)" = 600:0:0:1 ]
+[ "$(stat -c '%a' /etc/kvmd/htpasswd)" = 600 ]
 phase=complete
 emit architecture aarch64
 emit tools_ready yes

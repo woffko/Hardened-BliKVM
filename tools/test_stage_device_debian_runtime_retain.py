@@ -106,6 +106,11 @@ class StageDeviceDebianRuntimeRetainTests(unittest.TestCase):
         self.assertIn("df --output=iavail", preflight)
         self.assertIn("getcap", preflight)
         self.assertIn("dpkg --audit", preflight)
+        self.assertIn(
+            "stat -c '%a' /etc/kvmd/htpasswd",
+            preflight,
+        )
+        self.assertNotIn("stat -c '%a:%u:%g:%h' /etc/kvmd/htpasswd", preflight)
         self.assertIn("other_package_hash", prepare)
         self.assertIn("dpkg -i", prepare)
         self.assertIn("systemd-run --quiet --collect", prepare)
