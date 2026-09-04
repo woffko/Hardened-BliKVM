@@ -2289,6 +2289,9 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         ephemeral = (ROOT / "tools/stage_device_debian_runtime_package.py").read_text()
         retained = (ROOT / "tools/stage_device_debian_runtime_retain.py").read_text()
+        preflight = (
+            ROOT / "tools/capture_debian_runtime_retain_preflight.py"
+        ).read_text()
         inspector = (ROOT / "tools/capture_debian_runtime_retained.py").read_text()
         checks = (ROOT / "scripts/check.sh").read_text()
 
@@ -2328,6 +2331,12 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("tools/stage_device_debian_runtime_retain.py", checks)
         self.assertIn("tools/test_capture_debian_runtime_retained.py", checks)
         self.assertIn("tools/capture_debian_runtime_retained.py", checks)
+        self.assertIn(
+            "tools/test_capture_debian_runtime_retain_preflight.py", checks
+        )
+        self.assertIn("tools/capture_debian_runtime_retain_preflight.py", checks)
+        self.assertIn("retain.build_preflight_script", preflight)
+        self.assertIn('"readOnly": True', preflight)
         self.assertIn("retain.build_final_script", inspector)
         self.assertIn('"readOnly": True', inspector)
         for forbidden in (
@@ -2340,6 +2349,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "systemd-sysusers",
             "systemd-tmpfiles",
         ):
+            self.assertNotIn(forbidden, preflight)
             self.assertNotIn(forbidden, inspector)
 
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:

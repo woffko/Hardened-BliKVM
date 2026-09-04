@@ -21,6 +21,8 @@ dependency. Preflight requires idle package-manager processes, clean
 `dpkg --audit`, sufficient bytes and inodes on `/usr`, `/var`, and `/tmp`, a
 read-write rootfs, absent package/production paths/accounts/state and gate
 artifacts, free loopback ports, and active existing KVMD services.
+`capture_debian_runtime_retain_preflight.py` runs exactly this boundary and
+writes only a private allowlisted receipt; it has no mutation path.
 
 ## Prepare and commit
 

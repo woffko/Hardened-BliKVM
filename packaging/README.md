@@ -14,6 +14,8 @@ excluded. `tools/stage_device_debian_runtime_package.py` proves a guarded
 install/hash/mode check/purge transaction; it does not authorize retained
 installation or provisioning.
 
+`tools/capture_debian_runtime_retain_preflight.py` runs the exact retained
+prerequisite boundary without changing the device.
 `tools/stage_device_debian_runtime_retain.py` is a separate two-phase boundary
 for retaining that same exact inert package. Before `dpkg -i`, it persists and
 syncs a marker-bound early-boot rollback unit and also starts a five-minute

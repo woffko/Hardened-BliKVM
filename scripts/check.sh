@@ -43,6 +43,7 @@ python3 -m unittest \
   tools/test_capture_oled_spi_topology.py \
   tools/test_capture_network_topology.py \
   tools/test_capture_packaging_preflight.py \
+  tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_package.py \
@@ -69,6 +70,7 @@ python3 -m py_compile \
   tools/capture_oled_spi_topology.py \
   tools/capture_network_topology.py \
   tools/capture_packaging_preflight.py \
+  tools/capture_debian_runtime_retain_preflight.py \
   tools/capture_debian_runtime_retained.py \
   tools/build_debian_runtime_package.py \
   tools/stage_device_debian_runtime_package.py \
@@ -97,6 +99,7 @@ python3 -m py_compile \
   tools/test_capture_oled_spi_topology.py \
   tools/test_capture_network_topology.py \
   tools/test_capture_packaging_preflight.py \
+  tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_package.py \
@@ -126,6 +129,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_oled_spi_topology.py \
     tools/capture_network_topology.py \
     tools/capture_packaging_preflight.py \
+    tools/capture_debian_runtime_retain_preflight.py \
     tools/capture_debian_runtime_retained.py \
     tools/build_debian_runtime_package.py \
     tools/stage_device_debian_runtime_package.py \
@@ -153,6 +157,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_oled_spi_topology.py \
     tools/test_capture_network_topology.py \
     tools/test_capture_packaging_preflight.py \
+    tools/test_capture_debian_runtime_retain_preflight.py \
     tools/test_capture_debian_runtime_retained.py \
     tools/test_build_debian_runtime_package.py \
     tools/test_stage_device_debian_runtime_package.py \
