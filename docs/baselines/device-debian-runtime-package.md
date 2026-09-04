@@ -130,10 +130,62 @@ tests, Clippy with warnings denied, source and systemd boundary checks, 191
 Python tests, Python compilation, BasedPyright with zero diagnostics, frontend
 production build, ESLint with zero warnings, and both Prettier checks.
 
+## Retained inert installation
+
+On 2026-09-04, retained-gate source commit
+`aa12cc4ee7107a73ad4ce45b154a0bd02b6b77c7` passed complete host Longrun job
+`f95700b0a866428499672ff68b937248`, including 208 Python tests and the complete
+Rust, source/systemd boundary, BasedPyright, frontend, lint, and formatting
+matrix.
+
+Read-only H616 preflight job `eeef03b316c14f608c001dc9cb9c27ad` then
+confirmed the original clean package boundary plus sufficient bytes/inodes,
+the file-capability inspection tool, and absence of any retained-gate stage,
+rollback root, unit, link, or process. Its private mode-0600 receipt is
+`evidence/private/device-debian-runtime-retain-preflight.json`.
+
+Two earlier read-only preflights made no mutation. Job
+`2c76788a8eb642a1b097794f0aaa879f` exposed mutually exclusive GNU `df` inode
+arguments; commit `2dee5f1` replaced them with the executable
+`df --output=iavail` contract and added a regression test. Job
+`5ba71f12ef8b4361874fb1b22db8a380` then rejected an unnecessary root-owner
+assumption for the existing KVMD htpasswd; commit `aa12cc4` restored the
+previously accepted regular non-symlink mode-0600 and hash-stability boundary.
+
+Longrun job `d8b9e7a0bb6f483eb2b6d733e611fab4` installed and deliberately retained the
+same exact package under a synchronized early-boot rollback unit plus an
+independent five-minute transient watchdog. Prepare and commit proved:
+
+- every one of the 38 regular files retained the package hash, canonical mode,
+  root ownership, and single-link count;
+- the three dedicated payload trees were closed and byte-for-byte enumerable,
+  their directories were root-owned mode 0755, and all four binaries had no
+  file capability;
+- the target package was the only package-record change and `dpkg --audit`
+  remained clean;
+- account databases, the complete Nginx file tree, and KVMD htpasswd content
+  remained unchanged;
+- all runtime accounts, credentials, configuration/state/update roots, and
+  loopback listeners remained absent;
+- all four package unit templates were loaded, disabled, and inactive; and
+- KVMD/KVMD Nginx stayed active while rootfs stayed read-write.
+
+Only after those checks did commit remove the upload stage, transient
+watchdog, early-boot link/unit, rollback scripts/state/root, and marker. The
+package and normal dpkg audit history are the only intentional retained state.
+The private mode-0600 receipt is
+`evidence/private/device-debian-runtime-retained.json`.
+
+Independent read-only Longrun job `db45b25705f2423abd0ed52579d582b2` opened a
+new SSH session and repeated the exact package, tree, mode, capability, unit,
+account, listener, audit, and KVMD checks without a mutation path. Its private
+mode-0600 receipt is
+`evidence/private/device-debian-runtime-retained-inspection.json`.
+
 ## Remaining boundary
 
-This accepts the deterministic inert `.deb` and reversible package-manager
-transaction. It does not retain the package, provision service accounts or a
-dedicated KVMD credential, start/enable services, activate Nginx, install the
-application update runtime/trust root, run a long resource soak, reboot,
-power-cut, or publish a release.
+This accepts the deterministic inert `.deb`, reversible package-manager
+transaction, and retained inactive package. It does not provision service
+accounts or a dedicated KVMD credential, start/enable services, activate
+Nginx, install the application update runtime/trust root, run a long resource
+soak, reboot, power-cut, or publish a release.

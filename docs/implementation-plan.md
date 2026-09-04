@@ -613,9 +613,15 @@ independent `.deb` files matched byte-for-byte. A five-minute-watchdog H616
 gate installed the package, verified all 38 file hashes/modes/root ownership
 with units inactive and accounts/config/state absent, then purged it and
 confirmed complete functional cleanup while retaining normal dpkg audit
-history. See `baselines/device-debian-runtime-package.md`. Retained
-account/credential provisioning, service activation, Nginx integration, soak,
-reboot, update trust, and release acceptance remain.
+history. A separate two-phase gate then synchronized early-boot and transient
+rollback before reinstalling the exact package, repeated the closed-tree,
+file-capability, mode/owner, package-database, account/Nginx/KVMD, unit and port
+checks, disarmed rollback only after revalidation, and deliberately retained
+the inactive package. A new SSH session independently confirmed that state
+through a read-only inspector. See
+`baselines/device-debian-runtime-package.md`. Account/credential provisioning,
+service activation, Nginx integration, soak, reboot, update trust, and release
+acceptance remain.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,

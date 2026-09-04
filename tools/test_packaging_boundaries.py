@@ -2280,6 +2280,12 @@ class PackagingBoundaryTests(unittest.TestCase):
             "c0edad8fc26ccbc3199e5714e92860c39c15fcb0",
             "53a4d4bfc062057954634e0421a2ec7801e917a488d22c957cd8244d36dba6a5",
             "20c5ec588bb94ddcb6250d926ea11260",
+            "aa12cc4ee7107a73ad4ce45b154a0bd02b6b77c7",
+            "f95700b0a866428499672ff68b937248",
+            "eeef03b316c14f608c001dc9cb9c27ad",
+            "d8b9e7a0bb6f483eb2b6d733e611fab4",
+            "db45b25705f2423abd0ed52579d582b2",
+            "package and normal dpkg audit history are the only intentional retained state",
             "dpkg audit-log entries",
         ):
             self.assertIn(required, baseline)

@@ -7,7 +7,7 @@ passed a physical interaction gate.
 | Feature | Existing test baseline | BLi-KVM status | Required gate |
 | --- | --- | --- | --- |
 | HTTPS/login | Reachable; authenticated boundary verified | H616 TLS 1.2/1.3 Chromium setup/login, secure cookies, rotation, logout, and 390x844 mobile Diagnostics rendering passed | Certificate enrollment and other browser engines |
-| Loopback server runtime | Not applicable | Unprivileged H616 server, systemd sandbox, Nginx loopback, SSH-forward gates, privacy-remapped artifacts, and deterministic inert Debian install/purge passed | Retained account/credential provisioning, service activation, Nginx integration, soak, and reboot persistence |
+| Loopback server runtime | Not applicable | Unprivileged H616 server, systemd sandbox, Nginx loopback, SSH-forward gates, privacy-remapped artifacts, deterministic inert Debian install/purge, and crash-guarded retained inactive package passed | Account/credential provisioning, service activation, Nginx integration, soak, and reboot persistence |
 | Read-only inventory | Five authenticated GET endpoints verified | Distinct-UID broker, dedicated-account rollback, `LoadCredential`, sanitizer, and repeated H616 inventory passed | Permanent least-privilege provisioning and reboot persistence |
 | MJPEG | Streamer source online through authenticated API | Read-only Rust proxy/server path and TLS Chromium decode/reconnect passed on H616: 74 frames, 5 reconnects, 2 concurrent streams, session revocation, systemd isolation, and full rollback | Longer latency, hotplug, mode-switch, and soak matrix |
 | Janus WebRTC | Disabled on current PiKVM baseline | Not advertised | Deliberate adapter decision and browser matrix |

@@ -1,9 +1,10 @@
 # Retained inert Debian runtime gate design
 
-Status: host-side deployment and read-only inspection harnesses only. This
-design authorizes retaining one already validated inert package; it does not
-authorize account or credential provisioning, service start/enablement, active
-Nginx configuration, update trust, diagnostic persistence, reboot, or hardware
+Status: host and reversible H616 retained-package acceptance complete; evidence
+is recorded in `../baselines/device-debian-runtime-package.md`. This design
+authorizes retaining one already validated inert package; it does not authorize
+account or credential provisioning, service start/enablement, active Nginx
+configuration, update trust, diagnostic persistence, reboot, or hardware
 action.
 
 ## Exact package boundary
