@@ -4,7 +4,6 @@ Documentation=https://github.com/woffko/Hardened-BliKVM
 Requires=kvmd.service
 After=kvmd.service
 Before=hardened-blikvm-server.service
-ConditionPathExists=/run/kvmd/ustreamer.sock
 
 [Service]
 Type=simple

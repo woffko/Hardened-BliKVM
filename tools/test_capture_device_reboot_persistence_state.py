@@ -17,6 +17,11 @@ class CaptureDeviceRebootPersistenceStateTests(unittest.TestCase):
             "reboot confirmation guard",
             "hardened-blikvm-web-cutover-*-rollback.service",
             "journalctl -b 0",
+            "ConditionResult",
+            "ExecMainStatus",
+            "NRestarts",
+            "socket_state /run/kvmd/kvmd.sock",
+            "socket_state /run/kvmd/ustreamer.sock",
         ):
             if required == "multi-user.target":
                 continue

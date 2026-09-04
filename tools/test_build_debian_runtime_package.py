@@ -10,6 +10,9 @@ import tools.stage_device_prototype as prototype
 
 
 class DebianRuntimePackageTests(unittest.TestCase):
+    def test_development_package_revision_is_dev2(self) -> None:
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev2")
+
     def test_file_map_is_read_only_runtime_only(self) -> None:
         destinations = set(package.FILE_MAP.values())
         self.assertEqual(len(destinations), len(package.FILE_MAP))

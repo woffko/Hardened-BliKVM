@@ -96,6 +96,13 @@ only to connect to `/run/kvmd/kvmd.sock`. Its additional H616 thermal and RTC
 inputs are compiled, read-only sysfs paths; no request can select a path,
 synchronize a clock, or control a fan, PWM channel, or GPIO line.
 
+The broker and video proxy are ordered after and require `kvmd.service`, but
+their startup is not conditioned on KVMD's transient `/run` sockets. Both
+processes create their own restricted listeners first and connect to KVMD only
+while servicing a request. This prevents a one-shot boot race where systemd
+permanently skips an enabled unit just before KVMD publishes its sockets; a
+missing backend still fails closed at the individual request boundary.
+
 `hardened-blikvm-video-proxy.service` is a second, distinct non-root identity.
 It joins the `kvmd` supplementary group only to read the existing uStreamer
 Unix socket, has no network or device namespace, and accepts only `GET /mjpeg`

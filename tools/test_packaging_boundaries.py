@@ -2610,6 +2610,19 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("ReadWritePaths=/run/hardened-blikvm-video", unit)
         self.assertNotIn("AF_INET", unit)
 
+    def test_read_only_services_do_not_skip_boot_on_late_kvmd_sockets(self) -> None:
+        broker = (
+            ROOT / "packaging/systemd/hardened-blikvm-platform-broker.service"
+        ).read_text()
+        video = (
+            ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"
+        ).read_text()
+        for unit in (broker, video):
+            self.assertIn("Requires=kvmd.service", unit)
+            self.assertIn("After=kvmd.service", unit)
+            self.assertIn("Restart=on-failure", unit)
+            self.assertNotIn("ConditionPathExists=/run/kvmd/", unit)
+
     def test_control_broker_is_denied_and_has_no_backend_privilege(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-control-broker.service"

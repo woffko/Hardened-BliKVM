@@ -22,7 +22,7 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-runtime"
-PACKAGE_VERSION = "0.1.0~dev1"
+PACKAGE_VERSION = "0.1.0~dev2"
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 BUNDLE_ROOT = "hardened-blikvm-prototype-0.1.0-dev-aarch64"

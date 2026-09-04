@@ -20,6 +20,12 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 FACT_KEYS = {
     "account_state",
     "activation_rollback_seen",
+    "broker_active",
+    "broker_condition",
+    "broker_enabled",
+    "broker_exec_status",
+    "broker_restarts",
+    "broker_result",
     "broker_state",
     "config_credentials",
     "control_boundary",
@@ -32,6 +38,9 @@ FACT_KEYS = {
     "identity_set",
     "installed_tls_rollback_seen",
     "journal_hardened_lines",
+    "kvmd_active",
+    "kvmd_enabled",
+    "kvmd_socket",
     "package_state",
     "reboot_guard_artifacts",
     "reboot_guard_seen",
@@ -41,9 +50,16 @@ FACT_KEYS = {
     "server_state",
     "state_cleanup_seen",
     "systemd_failure_seen",
+    "ustreamer_socket",
     "var_lib_fstype",
     "var_lib_same_root_fs",
     "vendor_nginx_state",
+    "video_active",
+    "video_condition",
+    "video_enabled",
+    "video_exec_status",
+    "video_restarts",
+    "video_result",
     "video_state",
     "web_cutover_artifacts",
     "web_cutover_boot_links",
@@ -64,6 +80,29 @@ unit_state() {
     active:enabled|inactive:disabled|failed:enabled|failed:disabled) printf '%s:%s' "$active" "$enabled" ;;
     *) printf 'other' ;;
   esac
+}
+unit_active() {
+  value=$(systemctl show -p ActiveState --value "$1" 2>/dev/null || true)
+  case "$value" in active|inactive|failed|activating|deactivating|reloading|maintenance) printf '%s' "$value" ;; *) printf 'other' ;; esac
+}
+unit_enabled() {
+  value=$(systemctl is-enabled "$1" 2>/dev/null || true)
+  case "$value" in enabled|enabled-runtime|disabled|static|indirect|alias|generated|linked|linked-runtime|masked|masked-runtime|transient|bad) printf '%s' "$value" ;; *) printf 'other' ;; esac
+}
+unit_condition() {
+  value=$(systemctl show -p ConditionResult --value "$1" 2>/dev/null || true)
+  case "$value" in yes|no) printf '%s' "$value" ;; *) printf 'unknown' ;; esac
+}
+unit_result() {
+  value=$(systemctl show -p Result --value "$1" 2>/dev/null || true)
+  case "$value" in success|exit-code|signal|core-dump|watchdog|start-limit-hit|resources|timeout|protocol|dependency|assert|condition|skip-condition|oom-kill) printf '%s' "$value" ;; *) printf 'other' ;; esac
+}
+unit_number() {
+  value=$(systemctl show -p "$2" --value "$1" 2>/dev/null || true)
+  case "$value" in ''|*[!0-9]*) printf 'other' ;; *) [ "$value" -le 999999 ] && printf '%s' "$value" || printf 'other' ;; esac
+}
+socket_state() {
+  if [ -S "$1" ]; then printf 'present'; elif [ -e "$1" ]; then printf 'wrong-type'; else printf 'absent'; fi
 }
 flag() {
   name=$1 pattern=$2
@@ -117,11 +156,27 @@ emit hardened_config "$hardened_config"
 emit hardened_unit_file "$hardened_unit"
 emit account_state "$account_state"
 emit broker_state "$(unit_state hardened-blikvm-platform-broker.service)"
+emit broker_active "$(unit_active hardened-blikvm-platform-broker.service)"
+emit broker_enabled "$(unit_enabled hardened-blikvm-platform-broker.service)"
+emit broker_condition "$(unit_condition hardened-blikvm-platform-broker.service)"
+emit broker_result "$(unit_result hardened-blikvm-platform-broker.service)"
+emit broker_exec_status "$(unit_number hardened-blikvm-platform-broker.service ExecMainStatus)"
+emit broker_restarts "$(unit_number hardened-blikvm-platform-broker.service NRestarts)"
 emit video_state "$(unit_state hardened-blikvm-video-proxy.service)"
+emit video_active "$(unit_active hardened-blikvm-video-proxy.service)"
+emit video_enabled "$(unit_enabled hardened-blikvm-video-proxy.service)"
+emit video_condition "$(unit_condition hardened-blikvm-video-proxy.service)"
+emit video_result "$(unit_result hardened-blikvm-video-proxy.service)"
+emit video_exec_status "$(unit_number hardened-blikvm-video-proxy.service ExecMainStatus)"
+emit video_restarts "$(unit_number hardened-blikvm-video-proxy.service NRestarts)"
 emit server_state "$(unit_state hardened-blikvm-server.service)"
 emit hardened_nginx_state "$(unit_state hardened-blikvm-nginx.service)"
 emit vendor_nginx_state "$(unit_state kvmd-nginx.service)"
 emit control_boundary "$control"
+emit kvmd_active "$(unit_active kvmd.service)"
+emit kvmd_enabled "$(unit_enabled kvmd.service)"
+emit kvmd_socket "$(socket_state /run/kvmd/kvmd.sock)"
+emit ustreamer_socket "$(socket_state /run/kvmd/ustreamer.sock)"
 emit reboot_guard_artifacts "$guard_artifacts"
 emit web_cutover_roots "$web_roots"
 emit web_cutover_boot_units "$web_units"
