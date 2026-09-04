@@ -43,6 +43,7 @@ JOURNAL_KEYS = {
     "nginx_config_failure",
     "nginx_emergency",
     "operation_not_permitted",
+    "ownership_change_failure",
     "open_failure",
     "oom_failure",
     "prctl_failure",
@@ -99,6 +100,7 @@ flag runtime_directory_failure 'RuntimeDirectory|hardened-blikvm-nginx.*(No such
 flag ambient_capability_failure 'ambient capabilit.*(failed|[Pp]ermission denied|[Oo]peration not permitted)'
 flag system_call_filter_failure '(seccomp|system call filter).*(failed|killed|denied)'
 flag operation_not_permitted '[Oo]peration not permitted'
+flag ownership_change_failure '(changing ownership|failed to change ownership).*[Oo]peration not permitted'
 flag setrlimit_failure 'setrlimit.*[Oo]peration not permitted'
 flag setuid_failure 'setuid.*[Oo]peration not permitted'
 flag setgid_failure 'setgid.*[Oo]peration not permitted'

@@ -65,6 +65,11 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             "CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID",
             unit,
         )
+        self.assertIn(
+            "ExecStartPre=+/usr/bin/install -d -o www-data -g www-data -m 0700",
+            unit,
+        )
+        self.assertNotIn("CAP_CHOWN", unit)
         self.assertIn("AmbientCapabilities=\n", unit)
         self.assertIn("SocketBindAllow=tcp:80", unit)
         self.assertIn("SocketBindAllow=tcp:443", unit)

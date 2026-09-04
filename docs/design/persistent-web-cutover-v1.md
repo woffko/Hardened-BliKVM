@@ -15,7 +15,9 @@ transition backends for the Rust platform broker and MJPEG proxy.
   master reads the root-only TLS key and binds low ports, then a `www-data`
   worker handles requests with zero effective capabilities. The master keeps
   only `CAP_NET_BIND_SERVICE`, `CAP_SETUID`, and `CAP_SETGID`; its writable
-  filesystem is limited to its systemd runtime directory.
+  filesystem is limited to its systemd runtime directory. A fixed privileged
+  `ExecStartPre` creates only the two worker-owned temporary subdirectories;
+  `CAP_CHOWN` is not retained by the Nginx master.
 - The existing device certificate/key files, modes, owners, hashes, and paths
   are not changed or copied. The Nginx configuration is root-owned, mode 0600,
   hash-bound, and parsed only by the master.
