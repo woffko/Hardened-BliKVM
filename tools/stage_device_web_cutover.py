@@ -840,12 +840,17 @@ for worker in $(pgrep -P "$nginx_pid" 2>/dev/null || true); do
   workers=$((workers + 1))
 done
 [ "$workers" -ge 1 ]
-phase=tls
+phase=tls-certificate
 [ "$(served_certificate_hash)" = "$certificate_sha256" ]
+phase=tls12
 curl --noproxy '*' --insecure --silent --fail --max-time 5 --tlsv1.2 --tls-max 1.2 --output /dev/null https://127.0.0.1/api/health
+phase=tls13
 curl --noproxy '*' --insecure --silent --fail --max-time 5 --tlsv1.3 --tls-max 1.3 --output /dev/null https://127.0.0.1/api/health
+phase=http-redirect
 [ "$(curl --noproxy '*' --silent --max-time 5 --output /dev/null --write-out '%{http_code}' http://127.0.0.1/api/health)" = 308 ]
+phase=first-setup-tls
 first_setup_required
+phase=backend-final
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
 control_boundary_absent
 sync
@@ -968,8 +973,14 @@ def build_cleanup_script(
     body = r"""
 set -eu
 emit() { printf '%s=%s\n' "$1" "$2"; }
+systemctl stop "$watchdog_unit" >/dev/null 2>&1 || true
+systemctl reset-failed "$watchdog_unit" >/dev/null 2>&1 || true
+count=0
+while [ "$count" -lt 50 ] && [ "$(systemctl show -p LoadState --value "$watchdog_unit" 2>/dev/null || true)" != not-found ]; do
+  sleep 0.1
+  count=$((count + 1))
+done
 if [ -f "$marker" ] && [ -f "$rollback_script" ]; then
-  systemctl stop "$watchdog_unit" >/dev/null 2>&1 || true
   /bin/sh "$rollback_script" explicit >/dev/null 2>&1
   emit cleanup_state restored
   exit 0
