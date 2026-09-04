@@ -47,6 +47,7 @@ members = [
   "crates/bli-kvm-update-runtime",
   "crates/bli-kvm-update-supervisor",
   "crates/bli-kvm-update-health-reporter",
+  "crates/bli-kvm-update-trust-config",
   "crates/bli-kvm-kvmd-media-client",
   "crates/bli-kvm-broker-protocol",
   "crates/bli-kvm-broker-client",
