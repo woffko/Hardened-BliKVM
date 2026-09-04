@@ -88,13 +88,18 @@ The reversible H616 prototype and the application-update core are implemented:
   browser control requests;
 - direct-LAN operator-account login/logout plus a 30-sample persistent
   resource/TLS/auth-denial soak with stable service PIDs and restart counters;
+- a rollback-gated upgrade to the reproducible `0.1.0~dev2` runtime package,
+  followed by a real guarded BliKVM software reboot, preserved account/TLS,
+  persistent services, decoded/reconnected MJPEG, Diagnostics, and final
+  zero-restart/zero-guard inspection;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 
 No hardware-mutating backend, production updater installation, production
 signing key, full-system image, H616 A/B recovery path, or production release
-is accepted yet. Host builds and isolated device gates do not establish the
-remaining physical, interruption, reboot, or power-cut matrices. The
+is accepted yet. One guarded software reboot is accepted, but host builds and
+isolated device gates do not establish the remaining repeated/interrupted
+reboot, physical, or power-cut matrices. The
 user-supplied field image is truncated relative to its partition table and is
 explicitly rejected as a recovery/release image.
 

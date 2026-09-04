@@ -94,6 +94,23 @@ class StageDevicePersistentRebootTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
 
+    def test_public_baseline_records_upgrade_reboot_and_remaining_boundary(self) -> None:
+        baseline = Path(
+            "docs/baselines/device-runtime-upgrade-reboot.md"
+        ).read_text(encoding="utf-8")
+        for required in (
+            "0.1.0~dev2",
+            "17e02a8c01cf43a390528faf90e8aba8",
+            "a32930d6eeb640af933726b794fed65b",
+            "zero retained",
+            "video connections",
+            "physical",
+            "Power/Reset action",
+        ):
+            self.assertIn(required, baseline)
+        for forbidden in ("10.0.", "admin1234", "ssh_password", "gui_password"):
+            self.assertNotIn(forbidden, baseline)
+
 
 if __name__ == "__main__":
     unittest.main()

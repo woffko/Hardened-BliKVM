@@ -678,8 +678,25 @@ PIDs/restart counters, bounded cgroup RSS, 42.101–49.634 degrees Celsius,
 continuous exact 80/443 ownership, 30 health/setup checks, 90 expected
 unauthenticated denials, and TLS 1.2/1.3 before and after. No persistent write,
 device reboot, or target Power/Reset action occurred. See
-`baselines/device-persistent-account-soak.md`. Guarded software reboot of the
-BliKVM device is next; target power controls remain excluded.
+`baselines/device-persistent-account-soak.md`.
+
+Checkpoint: a real guarded software reboot of the test BliKVM now passes. The
+first attempt failed closed because two enabled read-only units used one-shot
+`ConditionPathExists` checks for KVMD runtime sockets; systemd skipped them just
+before KVMD published the paths, and the guard restored vendor web. Source
+`531f5f1` removed only those transient conditions and produced two
+byte-identical AArch64 bundles plus two byte-identical `0.1.0~dev2` packages.
+A package-aware early-boot/timed rollback gate upgraded the persistent device
+while preserving its account, TLS, configuration, and exact revision 1
+rollback package. Source `79ff492` then bound reboot acceptance to revision 2
+and the corrected unit semantics. The changed boot ID, service persistence,
+TLS 1.2/1.3, exact listeners, account hash, zero cutover orphans and guard
+cleanup passed; source `9350739` subsequently passed post-reboot Chromium
+login, inventory/Diagnostics, four MJPEG responses, decode/reconnect, logout
+stream revocation, zero control/WebSocket requests, and an independent final
+zero-restart audit. See `baselines/device-runtime-upgrade-reboot.md`.
+Repeated/interrupted reboot, power-cut, production update/recovery and release
+acceptance remain; target power controls stay excluded.
 
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
