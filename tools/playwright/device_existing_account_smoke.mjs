@@ -44,6 +44,7 @@ let phase = "launch";
 const requests = [];
 const responses = [];
 let webSockets = 0;
+let streamResponses = 0;
 
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -73,6 +74,7 @@ try {
         status: response.status(),
       });
     }
+    if (route === "/api/stream/mjpeg") streamResponses += 1;
   });
 
   phase = "login-document";
@@ -109,12 +111,56 @@ try {
       new URL(response.url()).pathname === "/api/auth/login" &&
       response.request().method() === "POST",
   );
+  const initialStreamResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/stream/mjpeg" &&
+      response.request().method() === "GET",
+  );
   await page.getByRole("button", { name: "Login" }).click();
   assert.equal((await loginResponse).status(), 200);
   await page.waitForURL(`${baseUrl}/#/`);
   await page.waitForFunction(
     () => document.title === "Remote Desktop - Hardened BliKVM",
   );
+  phase = "video-initial";
+  const initialStream = await initialStreamResponse;
+  assert.equal(initialStream.status(), 200);
+  assert.match(
+    initialStream.headers()["content-type"] || "",
+    /^multipart\/x-mixed-replace\s*;/i,
+  );
+  await page.waitForFunction(() => {
+    const screen = document.querySelector("img#screen");
+    return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
+  });
+  const initialStreamFinished = initialStream.finished();
+
+  phase = "video-reconnect";
+  const reconnectedStreamResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/stream/mjpeg" &&
+      response.request().method() === "GET",
+  );
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const reconnectedStream = await reconnectedStreamResponse;
+  assert.equal(reconnectedStream.status(), 200);
+  assert.match(
+    reconnectedStream.headers()["content-type"] || "",
+    /^multipart\/x-mixed-replace\s*;/i,
+  );
+  await page.waitForFunction(() => {
+    const screen = document.querySelector("img#screen");
+    return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
+  });
+  await Promise.race([
+    initialStreamFinished,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("initial MJPEG stream survived reload")),
+        5000,
+      ),
+    ),
+  ]);
 
   phase = "authenticated";
   const inventory = await page.evaluate(async () => {
@@ -152,11 +198,17 @@ try {
   assert.equal(csrf.sameSite, "Strict");
 
   phase = "logout";
-  await page.goto("about:blank", { waitUntil: "load" });
+  const activeStreamFinished = reconnectedStream.finished();
   const logout = await context.request.post(`${baseUrl}/api/auth/logout`, {
     headers: { Origin: baseUrl, "x-csrf-token": csrf.value },
   });
   assert.equal(logout.status(), 200);
+  await Promise.race([
+    activeStreamFinished,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("MJPEG stream survived logout")), 5000),
+    ),
+  ]);
   cookies = await context.cookies(baseUrl);
   assert.equal(
     cookies.some((cookie) => cookie.name === "hardened-blikvm-session"),
@@ -166,8 +218,11 @@ try {
   phase = "audit";
   assert.deepEqual(pageErrors, []);
   assert.equal(webSockets, 0);
+  assert.ok(streamResponses >= 2, "MJPEG reconnect was not observed");
   assert.equal(
-    requests.some((request) => request.route.startsWith("/api/control")),
+    requests.some((request) =>
+      /^\/api\/(?:control|hid|atx|vm|msd|ws)(?:\/|$)/.test(request.route),
+    ),
     false,
   );
   assert.equal(
@@ -184,6 +239,10 @@ try {
     loginStatus: 200,
     inventoryStatus: inventory.status,
     diagnosticsStatus: diagnostics.status,
+    videoStatus: initialStream.status(),
+    videoDecoded: true,
+    videoReconnects: streamResponses,
+    streamRevoked: true,
     secureSessionCookie: true,
     secureCsrfCookie: true,
     logoutStatus: logout.status(),
@@ -192,6 +251,7 @@ try {
     apiResponses: responses.length,
     controlRequests: 0,
     webSockets,
+    videoResponses: streamResponses,
     legacyBrandingAbsent: true,
     secretEmitted: false,
   });
