@@ -59,3 +59,10 @@ independently verify the file. State/slot initialization, enabling units,
 candidate signing/staging, interruption/reboot, update GUI, recovery, and
 release acceptance remain separate. ATX Power/Reset and equivalent
 attached-target power control are outside this contract.
+
+The companion CLI is also public-only and stateless. It accepts exactly
+`--expected-sha256 HASH --confirm-reviewed-public-key`, reads the bounded
+request from stdin, rejects a mismatched document hash before validation, and
+writes only the canonical supervisor configuration to stdout. It accepts no
+request/config path, output path, private-key field, environment override,
+network location, or device selector.
