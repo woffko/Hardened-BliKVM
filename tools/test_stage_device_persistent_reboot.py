@@ -52,6 +52,7 @@ class StageDevicePersistentRebootTests(unittest.TestCase):
         self.assertIn("WantedBy=timers.target", timer)
         self.assertIn("persistent_state", guard)
         self.assertIn("account_state_valid", guard)
+        self.assertIn("cutover_orphans_absent", guard)
         self.assertIn("systemctl disable --now hardened-blikvm-nginx.service", guard)
         self.assertIn("systemctl enable kvmd-nginx.service", guard)
         self.assertNotIn("systemctl stop kvmd.service", guard)

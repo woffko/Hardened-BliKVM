@@ -32,6 +32,7 @@ PRE_KEYS = {
     "boot_id_sha256",
     "control_boundary_absent",
     "kvmd_active",
+    "orphan_cutover_artifacts_absent",
     "ports_exact",
     "rootfs_mode",
     "setup_closed",
@@ -45,6 +46,7 @@ POST_KEYS = {
     "control_boundary_absent",
     "guard_armed",
     "kvmd_active",
+    "orphan_cutover_artifacts_absent",
     "ports_exact",
     "setup_closed",
     "tls12",
@@ -57,6 +59,7 @@ FINAL_KEYS = {
     "control_boundary_absent",
     "guard_removed",
     "kvmd_active",
+    "orphan_cutover_artifacts_absent",
     "ports_exact",
     "setup_closed",
     "units_persistent",
@@ -182,6 +185,10 @@ setup_closed() {{
   response=$(curl --noproxy '*' --insecure --silent --max-time 5 https://127.0.0.1/api/auth/setup)
   case "$response" in *'"required":false'*) return 0 ;; *) return 1 ;; esac
 }}
+cutover_orphans_absent() {{
+  [ -z "$(find /var/lib -maxdepth 1 -type d -name 'hardened-blikvm-web-cutover-*' -print -quit)" ]
+  [ -z "$(find /etc/systemd/system -maxdepth 3 -name 'hardened-blikvm-web-cutover-*' -print -quit)" ]
+}}
 persistent_state() {{
   product_active_enabled &&
   [ "$(systemctl is-active hardened-blikvm-nginx.service 2>/dev/null || true)" = active ] &&
@@ -189,7 +196,7 @@ persistent_state() {{
   [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = inactive ] &&
   [ "$(service_enabled kvmd-nginx.service)" = disabled ] &&
   [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ] &&
-  control_boundary_absent && ports_exact && setup_closed &&
+  control_boundary_absent && ports_exact && setup_closed && cutover_orphans_absent &&
   curl --noproxy '*' --insecure --silent --fail --max-time 5 --output /dev/null https://127.0.0.1/api/health
 }}
 """.strip()
@@ -242,6 +249,7 @@ emit vendor_nginx_disabled yes
 emit ports_exact yes
 emit setup_closed yes
 emit kvmd_active active
+emit orphan_cutover_artifacts_absent yes
 emit control_boundary_absent yes
 emit rootfs_mode rw
 """.strip()
@@ -429,6 +437,7 @@ emit setup_closed yes
 emit tls12 passed
 emit tls13 passed
 emit kvmd_active active
+emit orphan_cutover_artifacts_absent yes
 emit control_boundary_absent yes
 """.strip()
     return f"{_assignments(values)}\n{REMOTE_HELPERS}\n{body}"
@@ -469,6 +478,7 @@ emit vendor_nginx_disabled yes
 emit ports_exact yes
 emit setup_closed yes
 emit kvmd_active active
+emit orphan_cutover_artifacts_absent yes
 emit control_boundary_absent yes
 """.strip()
     return f"{_assignments(values)}\n{REMOTE_HELPERS}\n{body}"
