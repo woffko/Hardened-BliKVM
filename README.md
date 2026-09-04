@@ -74,14 +74,18 @@ The reversible H616 prototype and the application-update core are implemented:
   install/hash/mode verification/purge transaction and crash-guarded retained
   installation passed;
 - rollback-gated fixed service identities and a separate device-generated KVMD
-  credential; the package and credentials remain provisioned while every
-  product service and listener remains inactive;
+  credential, followed by a rollback-gated persistent web cutover: PiKVM Nginx
+  is disabled, the Hardened broker/video/server/Nginx units are enabled, and
+  the account-free First Setup page passed tunneled and direct-LAN Chromium;
 - reversible installed-unit activation for platform broker, MJPEG proxy, and
   loopback server, including systemd isolation, Diagnostics, video reconnect,
   session revocation, and complete state/drop-in/cgroup cleanup;
 - installed-runtime TLS 1.2/1.3 and full desktop/mobile Chromium acceptance
   behind an unprivileged loopback-only shadow Nginx, with the working PiKVM
   proxy unchanged and complete rollback;
+- persistent TLS 1.2/1.3 on public 80/443 using the unchanged device
+  certificate, split-privilege Nginx, disabled vendor web service, and zero
+  browser control requests;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 

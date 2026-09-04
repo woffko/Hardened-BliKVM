@@ -658,6 +658,18 @@ cgroups and complete certificate/state/rollback cleanup passed. See
 enrollment, persistent app account/service activation, soak, reboot, update
 trust, and release acceptance remain.
 
+Checkpoint: the persistent web listener cutover is now accepted on the test
+H616. A synchronized early-boot rollback and ten-minute watchdog protected the
+transaction that disabled only `kvmd-nginx`, enabled the installed Rust
+broker/video/server and split-privilege Hardened Nginx, reused the unchanged
+device TLS pair, and moved exact wildcard 80/443 ownership to the Hardened
+frontend. TLS 1.2/1.3, redirect, loopback isolation, capability bounds,
+account-free First Setup, zero control/WebSocket requests, strict-forwarded and
+direct-LAN Chromium, rollback removal, and an independent final SSH check
+passed. See `baselines/device-persistent-web-cutover.md`. Operator first-account
+creation, soak, guarded reboot persistence, update/recovery and release
+acceptance remain.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching
