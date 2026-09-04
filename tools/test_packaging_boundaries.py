@@ -2479,6 +2479,7 @@ class PackagingBoundaryTests(unittest.TestCase):
     ) -> None:
         gate = (ROOT / "tools/stage_device_runtime_activation.py").read_text()
         design = (ROOT / "docs/design/runtime-activation-gate-v1.md").read_text()
+        baseline = (ROOT / "docs/baselines/device-runtime-activation.md").read_text()
         checks = (ROOT / "scripts/check.sh").read_text()
 
         for required in (
@@ -2521,6 +2522,21 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden, gate)
         self.assertIn("tools/stage_device_runtime_activation.py", checks)
         self.assertIn("tools/test_stage_device_runtime_activation.py", checks)
+        for required in (
+            "795d2639e8f07e8c1d07772776fdf64592e24b13",
+            "f1ac7387abde40d58dd15349d28effd6",
+            "05ba8c0c32aa4f39abd52fd707cb4fcf",
+            "17b7e0a8147c490fa1897ab29e24b52a",
+            "4a83f5e",
+            "51106cd86da24182938d1c6264dff605",
+            "d296470e2c05417eb49635d305da71e6",
+            "eb5d08b9f0f764a4a02164dba2d9eb88c268bfac",
+            "6c4c31dd79874fcaafac18de189967ad",
+            "28bd2fea56244731b2d621d1f73396fe",
+            "CLOSE_WAIT",
+            "FIN_WAIT2",
+        ):
+            self.assertIn(required, baseline)
 
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (

@@ -635,6 +635,18 @@ remain disabled/inactive and ports remain free. See
 `baselines/device-runtime-provisioning.md`. Loopback activation, Nginx/TLS,
 soak, reboot, update trust, and release acceptance remain.
 
+Checkpoint: the installed platform broker, MJPEG proxy, and loopback server now
+pass a complete reversible native activation gate using the retained package,
+permanent identities, and dedicated KVMD credential. The gate verified exact
+systemd users/groups/credentials/sandboxes, zero capabilities, network
+namespaces, loopback-only TCP, no UDP/abstract sockets, absent control
+service/socket, authenticated inventory/Diagnostics, MJPEG reconnect, session
+revocation, empty cgroups, and complete state/drop-in/private-artifact cleanup.
+Two fail-closed runs refined revocation phase reporting and the mandatory
+logout Origin header; both restored the provisioned-inactive state. See
+`baselines/device-runtime-activation.md`. Persistent start/enablement,
+production Nginx/TLS, soak, reboot, update trust, and release acceptance remain.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

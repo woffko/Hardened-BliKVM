@@ -1,10 +1,10 @@
 # Reversible installed-runtime activation gate design
 
-Status: design and host implementation boundary only. The retained package,
-fixed service identities, and dedicated KVMD credential are accepted on H616;
-the installed product services remain disabled and inactive. This design does
-not authorize persistent enablement, production Nginx/TLS activation, reboot,
-update trust, diagnostic persistence, or hardware action.
+Status: host and reversible installed-unit H616 activation accepted; evidence
+is recorded in `../baselines/device-runtime-activation.md`. The installed
+product services remain disabled and inactive. This design does not authorize
+persistent enablement, production Nginx/TLS activation, reboot, update trust,
+diagnostic persistence, or hardware action.
 
 ## Exact native scope
 

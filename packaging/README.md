@@ -61,7 +61,9 @@ systemd identities/sandboxing, capabilities, network namespaces, TCP/UDP/Unix
 sockets, account setup/login, inventory, Diagnostics, MJPEG reconnect, session
 revocation, temporary artifacts, empty cgroups, and exact cleanup. Production
 secure cookies and Nginx/TLS remain unchanged and require the next gate. Native
-H616 acceptance for this installed-unit activation is not yet recorded.
+H616 acceptance is recorded in
+`../docs/baselines/device-runtime-activation.md`; services remain disabled and
+inactive after cleanup.
 
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime

@@ -76,6 +76,9 @@ The reversible H616 prototype and the application-update core are implemented:
 - rollback-gated fixed service identities and a separate device-generated KVMD
   credential; the package and credentials remain provisioned while every
   product service and listener remains inactive;
+- reversible installed-unit activation for platform broker, MJPEG proxy, and
+  loopback server, including systemd isolation, Diagnostics, video reconnect,
+  session revocation, and complete state/drop-in/cgroup cleanup;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 
