@@ -133,12 +133,22 @@ class CutoverError(Exception):
         *,
         return_code: int | None = None,
         remote_phase: str | None = None,
+        browser_phase: str | None = None,
+        browser_error_type: str | None = None,
+        browser_api_requests: int | None = None,
+        browser_control_requests: int | None = None,
+        browser_websockets: int | None = None,
     ) -> None:
         super().__init__(f"{stage}: {failure_type}")
         self.stage = stage
         self.failure_type = failure_type
         self.return_code = return_code
         self.remote_phase = remote_phase
+        self.browser_phase = browser_phase
+        self.browser_error_type = browser_error_type
+        self.browser_api_requests = browser_api_requests
+        self.browser_control_requests = browser_control_requests
+        self.browser_websockets = browser_websockets
 
 
 def parse_args() -> Options:
@@ -1062,6 +1072,40 @@ def validate_browser(raw: bytes) -> dict[str, object]:
     return result
 
 
+def validate_browser_failure(raw: bytes) -> dict[str, object]:
+    if len(raw) > 16 * 1024:
+        raise ValueError("cutover browser failure output exceeded the limit")
+    decoded = cast(object, json.loads(raw))
+    if not isinstance(decoded, dict):
+        raise ValueError("cutover browser failure root is invalid")
+    result = cast(dict[str, object], decoded)
+    if set(result) != {
+        "schemaVersion",
+        "result",
+        "phase",
+        "errorType",
+        "apiRequests",
+        "controlRequests",
+        "webSockets",
+    }:
+        raise ValueError("cutover browser failure envelope is invalid")
+    if result.get("schemaVersion") != 1 or result.get("result") != "failed":
+        raise ValueError("cutover browser failure result is invalid")
+    phase = result.get("phase")
+    error_type = result.get("errorType")
+    if phase not in {"launch", "document", "first-setup", "setup-api", "invariants"}:
+        raise ValueError("cutover browser failure phase is invalid")
+    if not isinstance(error_type, str) or not re.fullmatch(
+        r"[A-Za-z][A-Za-z0-9]{0,63}", error_type
+    ):
+        raise ValueError("cutover browser failure type is invalid")
+    for key in ("apiRequests", "controlRequests", "webSockets"):
+        value = result.get(key)
+        if not isinstance(value, int) or not 0 <= value <= 64:
+            raise ValueError("cutover browser failure count is invalid")
+    return result
+
+
 def _zero(value: bytearray) -> None:
     for index in range(len(value)):
         value[index] = 0
@@ -1178,8 +1222,18 @@ def execute(options: Options) -> int:
             timeout=90,
         )
         if browser_result.returncode != 0:
+            browser_failure = validate_browser_failure(browser_result.stdout)
             raise CutoverError(
-                stage, "browser", return_code=browser_result.returncode
+                stage,
+                "browser",
+                return_code=browser_result.returncode,
+                browser_phase=cast(str, browser_failure["phase"]),
+                browser_error_type=cast(str, browser_failure["errorType"]),
+                browser_api_requests=cast(int, browser_failure["apiRequests"]),
+                browser_control_requests=cast(
+                    int, browser_failure["controlRequests"]
+                ),
+                browser_websockets=cast(int, browser_failure["webSockets"]),
             )
         browser_summary = validate_browser(browser_result.stdout)
         tls.stop_process(tunnel)
@@ -1284,6 +1338,15 @@ def execute(options: Options) -> int:
                 "failureType": getattr(error, "failure_type", type(error).__name__),
                 "returnCode": getattr(error, "return_code", None),
                 "remotePhase": getattr(error, "remote_phase", None),
+                "browserPhase": getattr(error, "browser_phase", None),
+                "browserErrorType": getattr(error, "browser_error_type", None),
+                "browserApiRequests": getattr(
+                    error, "browser_api_requests", None
+                ),
+                "browserControlRequests": getattr(
+                    error, "browser_control_requests", None
+                ),
+                "browserWebSockets": getattr(error, "browser_websockets", None),
             },
             "cleanup": cleanup,
         }

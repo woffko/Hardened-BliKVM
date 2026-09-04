@@ -174,6 +174,17 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         self.assertNotIn('name: "Create account" }).click', source)
         self.assertNotIn('method() === "POST"', source)
 
+    def test_browser_failure_parser_is_exact_and_bounded(self) -> None:
+        raw = (
+            b'{"schemaVersion":1,"result":"failed","phase":"invariants",'
+            b'"errorType":"AssertionError","apiRequests":2,'
+            b'"controlRequests":0,"webSockets":0}'
+        )
+        parsed = cutover.validate_browser_failure(raw)
+        self.assertEqual(parsed["phase"], "invariants")
+        with self.assertRaises(ValueError):
+            cutover.validate_browser_failure(raw[:-1] + b',"detail":"raw"}')
+
     def test_package_maps_the_disabled_nginx_unit_template(self) -> None:
         self.assertEqual(
             debian.FILE_MAP["share/systemd/hardened-blikvm-nginx.service"],
