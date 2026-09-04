@@ -905,6 +905,7 @@ done
 phase=video-revocation-csrf
 csrf=$(python3 -c 'import json,sys; value=json.load(open(sys.argv[1],encoding="utf-8"))["data"]["csrfToken"]; assert isinstance(value,str) and 16 <= len(value) <= 256; print(value,end="")' "$login_response")
 printf 'header = "X-CSRF-Token: %s"\n' "$csrf" > "$logout_config"
+printf 'header = "Origin: %s"\n' "$origin" >> "$logout_config"
 chmod 600 "$logout_config"
 phase=video-revocation-logout
 logout_status=$(curl --noproxy '*' --silent --max-time 5 --config "$logout_config" --cookie "$cookie_file" \

@@ -150,6 +150,7 @@ class StageDeviceRuntimeActivationTests(unittest.TestCase):
             "/api/diagnostics",
             "/api/stream/mjpeg",
             "/api/auth/logout",
+            'header = "Origin: %s"',
             "persistence_not_provisioned",
             "session_revoked_stream",
         ):
