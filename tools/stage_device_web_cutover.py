@@ -37,7 +37,7 @@ NGINX_UNIT_SOURCE = (
     PROJECT_ROOT / "packaging/systemd/hardened-blikvm-nginx.service"
 )
 BROWSER_SCRIPT = PROJECT_ROOT / "tools/playwright/device_cutover_setup_smoke.mjs"
-CONFIG_TARGET = "/etc/hardened-blikvm/nginx.conf"
+CONFIG_TARGET = "/etc/hardened-blikvm-nginx.conf"
 UNIT_NAME = "hardened-blikvm-nginx.service"
 UNIT_TARGET = f"/etc/systemd/system/{UNIT_NAME}"
 UNIT_LINK = f"/etc/systemd/system/multi-user.target.wants/{UNIT_NAME}"
@@ -790,7 +790,7 @@ printf '%s' "$nginx_validation_b64" | base64 -d > "$validation_config"
 [ "$(sha256sum "$config_part" | awk '{print $1}')" = "$nginx_config_sha256" ]
 [ "$(sha256sum "$unit_part" | awk '{print $1}')" = "$nginx_unit_sha256" ]
 [ "$(sha256sum "$validation_config" | awk '{print $1}')" = "$nginx_validation_sha256" ]
-chmod 600 "$config_part"
+chmod 644 "$config_part"
 chmod 644 "$unit_part"
 chmod 600 "$validation_config"
 mv "$config_part" "$config_target"
@@ -906,7 +906,7 @@ product_active_enabled
 control_boundary_absent
 ports_exact
 [ -f "$config_target" ] && [ ! -L "$config_target" ]
-[ "$(stat -c '%a:%u:%g:%h' "$config_target")" = 600:0:0:1 ]
+[ "$(stat -c '%a:%u:%g:%h' "$config_target")" = 644:0:0:1 ]
 [ "$(sha256sum "$config_target" | awk '{print $1}')" = "$nginx_config_sha256" ]
 [ -f "$unit_target" ] && [ ! -L "$unit_target" ]
 [ "$(stat -c '%a:%u:%g:%h' "$unit_target")" = 644:0:0:1 ]

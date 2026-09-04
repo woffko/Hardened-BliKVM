@@ -62,13 +62,8 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         self.assertIn(
             "LoadCredential=tls-key:/etc/kvmd/nginx/ssl/server.key", unit
         )
-        self.assertIn(
-            "LoadCredential=nginx-config:/etc/hardened-blikvm/nginx.conf", unit
-        )
-        self.assertIn(
-            "-c /run/credentials/hardened-blikvm-nginx.service/nginx-config",
-            unit,
-        )
+        self.assertIn("-c /etc/hardened-blikvm-nginx.conf", unit)
+        self.assertNotIn("LoadCredential=nginx-config", unit)
         self.assertNotIn("-c /etc/hardened-blikvm/nginx.conf", unit)
         self.assertIn("Conflicts=kvmd-nginx.service", unit)
         self.assertIn("User=www-data", unit)
@@ -123,6 +118,7 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             "nginx_validation_b64",
             "phase=validate-nginx-config",
             'mkdir -m 700 "$validation_root/client-temp"',
+            'chmod 644 "$config_part"',
             "0000000000000400",
             "control_boundary_absent",
         ):

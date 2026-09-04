@@ -15,10 +15,11 @@ transition backends for the Rust platform broker and MJPEG proxy.
   `CAP_NET_BIND_SERVICE`. Its writable filesystem is limited to its systemd
   runtime directory.
 - PID 1 loads the existing root-only device certificate and key through
-  `LoadCredential`. The root-only Nginx configuration is delivered through the
-  same mechanism. Their persistent files, modes, owners, hashes, and paths are
-  not changed, copied to another persistent path, or included in the package;
-  only systemd's ephemeral credential view is exposed to Nginx.
+  `LoadCredential`. Their persistent files, modes, owners, hashes, and paths
+  are not changed, copied to another persistent path, or included in the
+  package; only systemd's ephemeral credential view is exposed to Nginx. The
+  separate non-secret Nginx configuration is root-owned, mode 0644, hash-bound,
+  and read-only to the service.
 - HTTP redirects to HTTPS. HTTPS permits TLS 1.2 and 1.3 and proxies only to
   the fixed loopback Rust server.
 - Platform broker, video proxy, server, and Hardened Nginx are enabled. The
