@@ -22,6 +22,9 @@ class CaptureDeviceRebootPersistenceStateTests(unittest.TestCase):
             "NRestarts",
             "socket_state /run/kvmd/kvmd.sock",
             "socket_state /run/kvmd/ustreamer.sock",
+            "ss -H -xnp",
+            "video_proxy_connections",
+            "package_version",
         ):
             if required == "multi-user.target":
                 continue
@@ -53,8 +56,12 @@ class CaptureDeviceRebootPersistenceStateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_parser_requires_exact_schema(self) -> None:
+        values = {
+            "journal_hardened_lines": "0",
+            "package_version": "0.1.0~dev2",
+        }
         raw = b"".join(
-            f"{key}={'0' if key == 'journal_hardened_lines' else 'yes'}\n".encode()
+            f"{key}={values.get(key, 'yes')}\n".encode()
             for key in sorted(audit.FACT_KEYS)
         )
         self.assertEqual(set(audit.parse_facts(raw)), audit.FACT_KEYS)

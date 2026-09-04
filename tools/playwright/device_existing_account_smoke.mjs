@@ -45,6 +45,8 @@ const requests = [];
 const responses = [];
 let webSockets = 0;
 let streamResponses = 0;
+let inventoryVideoOnline = null;
+let inventoryVideoBusy = null;
 
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -122,20 +124,32 @@ try {
   await page.waitForFunction(
     () => document.title === "Remote Desktop - Hardened BliKVM",
   );
-  phase = "video-initial";
+  phase = "inventory-before-video";
+  const inventoryBeforeVideo = await page.evaluate(async () => {
+    const result = await fetch("/api/inventory", { credentials: "include" });
+    return { status: result.status, body: await result.json() };
+  });
+  assert.equal(inventoryBeforeVideo.status, 200);
+  assert.equal(inventoryBeforeVideo.body.code, 0);
+  assert.equal(inventoryBeforeVideo.body.data.schemaVersion, 3);
+  inventoryVideoOnline = inventoryBeforeVideo.body.data.video?.online ?? null;
+  inventoryVideoBusy = inventoryBeforeVideo.body.data.video?.busy ?? null;
+
+  phase = "video-initial-response";
   const initialStream = await initialStreamResponse;
   assert.equal(initialStream.status(), 200);
   assert.match(
     initialStream.headers()["content-type"] || "",
     /^multipart\/x-mixed-replace\s*;/i,
   );
+  phase = "video-initial-decode";
   await page.waitForFunction(() => {
     const screen = document.querySelector("img#screen");
     return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
   });
   const initialStreamFinished = initialStream.finished();
 
-  phase = "video-reconnect";
+  phase = "video-reconnect-response";
   const reconnectedStreamResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/stream/mjpeg" &&
@@ -148,6 +162,7 @@ try {
     reconnectedStream.headers()["content-type"] || "",
     /^multipart\/x-mixed-replace\s*;/i,
   );
+  phase = "video-reconnect-decode";
   await page.waitForFunction(() => {
     const screen = document.querySelector("img#screen");
     return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
@@ -252,6 +267,8 @@ try {
     controlRequests: 0,
     webSockets,
     videoResponses: streamResponses,
+    inventoryVideoOnline,
+    inventoryVideoBusy,
     legacyBrandingAbsent: true,
     secretEmitted: false,
   });
@@ -268,6 +285,9 @@ try {
       request.route.startsWith("/api/control"),
     ).length,
     webSockets,
+    videoResponses: streamResponses,
+    inventoryVideoOnline,
+    inventoryVideoBusy,
     secretEmitted: false,
   });
   process.exitCode = 1;

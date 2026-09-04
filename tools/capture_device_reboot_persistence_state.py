@@ -42,6 +42,7 @@ FACT_KEYS = {
     "kvmd_enabled",
     "kvmd_socket",
     "package_state",
+    "package_version",
     "reboot_guard_artifacts",
     "reboot_guard_seen",
     "root_fstype",
@@ -60,13 +61,14 @@ FACT_KEYS = {
     "video_exec_status",
     "video_restarts",
     "video_result",
+    "video_proxy_connections",
     "video_state",
     "web_cutover_artifacts",
     "web_cutover_boot_links",
     "web_cutover_boot_units",
     "web_cutover_roots",
 }
-SAFE_VALUE = re.compile(r"^[a-z0-9_.:+-]{1,96}$")
+SAFE_VALUE = re.compile(r"^[a-z0-9_.:+~-]{1,96}$")
 
 
 REMOTE_PROBE = r"""
@@ -108,7 +110,7 @@ flag() {
   name=$1 pattern=$2
   if printf '%s\n' "$journal" | grep -Eqi "$pattern"; then emit "$name" yes; else emit "$name" no; fi
 }
-for tool in awk dpkg-query find findmnt getent grep journalctl sha256sum stat systemctl wc; do
+for tool in awk dpkg-query find findmnt getent grep journalctl sha256sum ss stat systemctl wc; do
   command -v "$tool" >/dev/null 2>&1
 done
 [ "$(id -u)" = 0 ]
@@ -125,6 +127,8 @@ root_options=$(findmnt -n -T / -o OPTIONS)
 case ",$root_options," in *,rw,*) root_mode=rw ;; *) root_mode=ro ;; esac
 package_status=$(dpkg-query -W -f='${db:Status-Abbrev}:${Architecture}' hardened-blikvm-runtime 2>/dev/null || true)
 [ "$package_status" = 'ii :arm64' ] && package_state=installed || package_state=other
+package_version=$(dpkg-query -W -f='${Version}' hardened-blikvm-runtime 2>/dev/null || true)
+printf '%s\n' "$package_version" | grep -Eq '^[0-9A-Za-z.+:~_-]{1,64}$' || package_version=other
 identities=yes
 for name in hardened-blikvm-broker hardened-blikvm-video hardened-blikvm-control hardened-blikvm-server hardened-blikvm-update; do
   getent passwd "$name" >/dev/null 2>&1 || identities=no
@@ -143,6 +147,8 @@ if [ "$web_roots" = 0 ] && [ "$web_units" = 0 ] && [ "$web_links" = 0 ]; then we
 journal=$(journalctl -b 0 --no-pager -o cat 2>/dev/null | grep -i 'hardened blikvm\|hardened-blikvm' || true)
 lines=$(printf '%s\n' "$journal" | awk 'NF { count++ } END { print count + 0 }')
 [ "$lines" -le 9999 ]
+video_connections=$(ss -H -xnp 2>/dev/null | awk '$0 ~ /\/run\/hardened-blikvm-video\/mjpeg[.]sock/ {count++} END {print count+0}')
+[ "$video_connections" -le 9999 ]
 emit root_fstype "$root_fstype"
 emit etc_fstype "$etc_fstype"
 emit var_lib_fstype "$var_lib_fstype"
@@ -150,6 +156,7 @@ emit etc_same_root_fs "$etc_same"
 emit var_lib_same_root_fs "$var_lib_same"
 emit rootfs_mode "$root_mode"
 emit package_state "$package_state"
+emit package_version "$package_version"
 emit identity_set "$identities"
 emit config_credentials "$credentials"
 emit hardened_config "$hardened_config"
@@ -169,6 +176,7 @@ emit video_condition "$(unit_condition hardened-blikvm-video-proxy.service)"
 emit video_result "$(unit_result hardened-blikvm-video-proxy.service)"
 emit video_exec_status "$(unit_number hardened-blikvm-video-proxy.service ExecMainStatus)"
 emit video_restarts "$(unit_number hardened-blikvm-video-proxy.service NRestarts)"
+emit video_proxy_connections "$video_connections"
 emit server_state "$(unit_state hardened-blikvm-server.service)"
 emit hardened_nginx_state "$(unit_state hardened-blikvm-nginx.service)"
 emit vendor_nginx_state "$(unit_state kvmd-nginx.service)"
