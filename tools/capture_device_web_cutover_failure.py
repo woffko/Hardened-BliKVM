@@ -22,12 +22,15 @@ JOURNAL_KEYS = {
     "address_in_use",
     "ambient_capability_failure",
     "bind_permission_denied",
+    "capset_failure",
+    "chown_failure",
     "condition_failure",
     "config_credential_permission_denied",
     "config_permission_denied",
     "credential_failure",
     "credential_missing",
     "exec_failure",
+    "fork_failure",
     "invalid_argument",
     "journal_lines",
     "namespace_failure",
@@ -35,6 +38,12 @@ JOURNAL_KEYS = {
     "nginx_config_failure",
     "nginx_emergency",
     "operation_not_permitted",
+    "setgid_failure",
+    "setgroups_failure",
+    "setrlimit_failure",
+    "setsockopt_failure",
+    "setuid_failure",
+    "socketpair_failure",
     "runtime_directory_failure",
     "runtime_root_permission_denied",
     "status_1_failure",
@@ -75,6 +84,15 @@ flag runtime_directory_failure 'RuntimeDirectory|hardened-blikvm-nginx.*(No such
 flag ambient_capability_failure 'ambient capabilit.*(failed|[Pp]ermission denied|[Oo]peration not permitted)'
 flag system_call_filter_failure '(seccomp|system call filter).*(failed|killed|denied)'
 flag operation_not_permitted '[Oo]peration not permitted'
+flag setrlimit_failure 'setrlimit.*[Oo]peration not permitted'
+flag setuid_failure 'setuid.*[Oo]peration not permitted'
+flag setgid_failure 'setgid.*[Oo]peration not permitted'
+flag setgroups_failure '(setgroups|initgroups).*[Oo]peration not permitted'
+flag chown_failure 'chown.*[Oo]peration not permitted'
+flag socketpair_failure 'socketpair.*[Oo]peration not permitted'
+flag setsockopt_failure 'setsockopt.*[Oo]peration not permitted'
+flag fork_failure '(fork|clone).*[Oo]peration not permitted'
+flag capset_failure '(capset|capabilit).*[Oo]peration not permitted'
 flag invalid_argument '[Ii]nvalid argument'
 flag unit_parse_failure '(unknown lvalue|failed to parse|bad unit setting|unknown key)'
 flag condition_failure 'Condition.*failed|start condition failed'
