@@ -100,7 +100,6 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
-  "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-activate@.service" \
@@ -114,4 +113,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
+  >/dev/null
+systemd-analyze security --offline=yes --threshold=22 --no-pager \
+  "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
   >/dev/null

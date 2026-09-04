@@ -37,7 +37,7 @@ NGINX_UNIT_SOURCE = (
     PROJECT_ROOT / "packaging/systemd/hardened-blikvm-nginx.service"
 )
 BROWSER_SCRIPT = PROJECT_ROOT / "tools/playwright/device_cutover_setup_smoke.mjs"
-CONFIG_TARGET = "/etc/hardened-blikvm-nginx.conf"
+CONFIG_TARGET = "/etc/hardened-blikvm/nginx.conf"
 UNIT_NAME = "hardened-blikvm-nginx.service"
 UNIT_TARGET = f"/etc/systemd/system/{UNIT_NAME}"
 UNIT_LINK = f"/etc/systemd/system/multi-user.target.wants/{UNIT_NAME}"
@@ -329,15 +329,12 @@ def load_baseline(value: str) -> dict[str, str]:
 
 def render_nginx(baseline: Mapping[str, str]) -> str:
     source = NGINX_CONFIG_SOURCE.read_text(encoding="utf-8")
-    if baseline["certificate_path"] == baseline["key_path"]:
-        raise ValueError("certificate and key paths must remain distinct")
-    for required in (
-        "/run/credentials/hardened-blikvm-nginx.service/tls-certificate",
-        "/run/credentials/hardened-blikvm-nginx.service/tls-key",
-    ):
-        if required not in source:
-            raise ValueError("Nginx credential path is missing")
-    return source
+    rendered = source.replace(
+        "/etc/hardened-blikvm/tls.crt", baseline["certificate_path"]
+    ).replace("/etc/hardened-blikvm/tls.key", baseline["key_path"])
+    if "/etc/hardened-blikvm/tls." in rendered:
+        raise ValueError("Nginx TLS placeholders were not fully rendered")
+    return rendered
 
 
 def render_validation_nginx(
@@ -345,18 +342,15 @@ def render_validation_nginx(
 ) -> str:
     if not validation_root.startswith("/var/lib/hardened-blikvm-web-cutover-"):
         raise ValueError("validation Nginx root is outside the cutover root")
-    rendered = nginx_config.replace(
-        "/run/credentials/hardened-blikvm-nginx.service/tls-certificate",
-        baseline["certificate_path"],
-    ).replace(
-        "/run/credentials/hardened-blikvm-nginx.service/tls-key",
-        baseline["key_path"],
-    )
+    rendered = nginx_config
     rendered = rendered.replace(
         "/run/hardened-blikvm-nginx/", f"{validation_root}/"
     )
-    if "/run/credentials/hardened-blikvm-nginx.service/" in rendered:
-        raise ValueError("validation Nginx credential paths were not rendered")
+    if (
+        baseline["certificate_path"] not in rendered
+        or baseline["key_path"] not in rendered
+    ):
+        raise ValueError("validation Nginx TLS paths are missing")
     if "/run/hardened-blikvm-nginx/" in rendered:
         raise ValueError("validation Nginx runtime paths were not rendered")
     return rendered
@@ -790,7 +784,7 @@ printf '%s' "$nginx_validation_b64" | base64 -d > "$validation_config"
 [ "$(sha256sum "$config_part" | awk '{print $1}')" = "$nginx_config_sha256" ]
 [ "$(sha256sum "$unit_part" | awk '{print $1}')" = "$nginx_unit_sha256" ]
 [ "$(sha256sum "$validation_config" | awk '{print $1}')" = "$nginx_validation_sha256" ]
-chmod 644 "$config_part"
+chmod 600 "$config_part"
 chmod 644 "$unit_part"
 chmod 600 "$validation_config"
 mv "$config_part" "$config_target"
@@ -834,14 +828,15 @@ phase=nginx-sandbox
 nginx_pid=$(systemctl show -p MainPID --value "$nginx_unit")
 case "$nginx_pid" in ''|0|*[!0-9]*) exit 1 ;; esac
 www_uid=$(getent passwd www-data | awk -F: '{print $3}')
-[ "$(awk '/^Uid:/ {print $2}' "/proc/$nginx_pid/status")" = "$www_uid" ]
-[ "$(awk '/^CapBnd:/ {print $2}' "/proc/$nginx_pid/status")" = 0000000000000400 ]
+[ "$(awk '/^Uid:/ {print $2}' "/proc/$nginx_pid/status")" = 0 ]
+[ "$(awk '/^CapBnd:/ {print $2}' "/proc/$nginx_pid/status")" = 00000000000004c0 ]
 nginx_effective_caps=$(awk '/^CapEff:/ {print $2}' "/proc/$nginx_pid/status")
-case "$nginx_effective_caps" in 0000000000000000|0000000000000400) ;; *) exit 1 ;; esac
+case "$nginx_effective_caps" in 0000000000000000|00000000000004c0) ;; *) exit 1 ;; esac
 [ "$(awk '/^NoNewPrivs:/ {print $2}' "/proc/$nginx_pid/status")" = 1 ]
 workers=0
 for worker in $(pgrep -P "$nginx_pid" 2>/dev/null || true); do
   [ "$(awk '/^Uid:/ {print $2}' "/proc/$worker/status")" = "$www_uid" ]
+  [ "$(awk '/^CapEff:/ {print $2}' "/proc/$worker/status")" = 0000000000000000 ]
   workers=$((workers + 1))
 done
 [ "$workers" -ge 1 ]
@@ -906,7 +901,7 @@ product_active_enabled
 control_boundary_absent
 ports_exact
 [ -f "$config_target" ] && [ ! -L "$config_target" ]
-[ "$(stat -c '%a:%u:%g:%h' "$config_target")" = 644:0:0:1 ]
+[ "$(stat -c '%a:%u:%g:%h' "$config_target")" = 600:0:0:1 ]
 [ "$(sha256sum "$config_target" | awk '{print $1}')" = "$nginx_config_sha256" ]
 [ -f "$unit_target" ] && [ ! -L "$unit_target" ]
 [ "$(stat -c '%a:%u:%g:%h' "$unit_target")" = 644:0:0:1 ]

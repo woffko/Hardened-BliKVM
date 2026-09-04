@@ -11,15 +11,14 @@ transition backends for the Rust platform broker and MJPEG proxy.
   `127.0.0.1:18080` with secure cookies and strict Origin handling.
 - `hardened-blikvm-nginx.service` conflicts with `kvmd-nginx.service` and is
   the only Hardened process allowed to bind public TCP 80 and 443.
-- Nginx runs as `www-data`, not root, with only
-  `CAP_NET_BIND_SERVICE`. Its writable filesystem is limited to its systemd
-  runtime directory.
-- PID 1 loads the existing root-only device certificate and key through
-  `LoadCredential`. Their persistent files, modes, owners, hashes, and paths
-  are not changed, copied to another persistent path, or included in the
-  package; only systemd's ephemeral credential view is exposed to Nginx. The
-  separate non-secret Nginx configuration is root-owned, mode 0644, hash-bound,
-  and read-only to the service.
+- Nginx uses the standard split-privilege model: a tightly sandboxed root
+  master reads the root-only TLS key and binds low ports, then a `www-data`
+  worker handles requests with zero effective capabilities. The master keeps
+  only `CAP_NET_BIND_SERVICE`, `CAP_SETUID`, and `CAP_SETGID`; its writable
+  filesystem is limited to its systemd runtime directory.
+- The existing device certificate/key files, modes, owners, hashes, and paths
+  are not changed or copied. The Nginx configuration is root-owned, mode 0600,
+  hash-bound, and parsed only by the master.
 - HTTP redirects to HTTPS. HTTPS permits TLS 1.2 and 1.3 and proxies only to
   the fixed loopback Rust server.
 - Platform broker, video proxy, server, and Hardened Nginx are enabled. The

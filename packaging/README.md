@@ -84,11 +84,10 @@ cutover. The first probe binds the active vendor Nginx unit, alternate config,
 80/443 listener scope, and the single live certificate/key pair without
 returning their contents. The mutation gate then arms early-boot and timed
 rollback before disabling only `kvmd-nginx`, enabling the installed Rust
-broker/video/server and a non-root capability-bounded Hardened Nginx, and
-checking the account-free First Setup page in Chromium. The existing root-only
-TLS pair is delivered through systemd credentials; its persistent files and
-permissions are not changed. The separate non-secret Nginx config is root-owned
-and read-only to the service. See `../docs/design/persistent-web-cutover-v1.md`.
+broker/video/server and a split-privilege Hardened Nginx, and checking the
+account-free First Setup page in Chromium. A capability-bounded root master
+reads the unchanged root-only TLS key and a zero-capability `www-data` worker
+handles requests. See `../docs/design/persistent-web-cutover-v1.md`.
 
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime

@@ -52,23 +52,20 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         self.assertIn("listen 80 default_server;", config)
         self.assertIn("listen 443 ssl default_server;", config)
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
-        self.assertIn(
-            "/run/credentials/hardened-blikvm-nginx.service/tls-key", config
-        )
+        self.assertIn("/etc/kvmd/nginx/ssl/server.key", config)
         self.assertIn("/etc/kvmd/nginx/ssl/server.key", validation)
         self.assertNotIn("/run/credentials/", validation)
         self.assertIn(self.paths().validation_root, validation)
         self.assertNotIn("/run/hardened-blikvm-nginx/", validation)
-        self.assertIn(
-            "LoadCredential=tls-key:/etc/kvmd/nginx/ssl/server.key", unit
-        )
-        self.assertIn("-c /etc/hardened-blikvm-nginx.conf", unit)
-        self.assertNotIn("LoadCredential=nginx-config", unit)
-        self.assertNotIn("-c /etc/hardened-blikvm/nginx.conf", unit)
+        self.assertIn("User=root", unit)
+        self.assertIn("-c /etc/hardened-blikvm/nginx.conf", unit)
+        self.assertNotIn("LoadCredential=", unit)
         self.assertIn("Conflicts=kvmd-nginx.service", unit)
-        self.assertIn("User=www-data", unit)
-        self.assertIn("CapabilityBoundingSet=CAP_NET_BIND_SERVICE", unit)
-        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE", unit)
+        self.assertIn(
+            "CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID",
+            unit,
+        )
+        self.assertIn("AmbientCapabilities=\n", unit)
         self.assertIn("SocketBindAllow=tcp:80", unit)
         self.assertIn("SocketBindAllow=tcp:443", unit)
         self.assertNotIn("IPAddressAllow=localhost", unit)
@@ -118,8 +115,8 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             "nginx_validation_b64",
             "phase=validate-nginx-config",
             'mkdir -m 700 "$validation_root/client-temp"',
-            'chmod 644 "$config_part"',
-            "0000000000000400",
+            'chmod 600 "$config_part"',
+            "00000000000004c0",
             "control_boundary_absent",
         ):
             self.assertIn(required, script)
@@ -169,6 +166,15 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         self.assertEqual(
             debian.FILE_MAP["share/systemd/hardened-blikvm-nginx.service"],
             "lib/systemd/system/hardened-blikvm-nginx.service",
+        )
+
+    def test_root_master_has_a_separate_bounded_security_threshold(self) -> None:
+        verifier = Path("scripts/verify-systemd-units.sh").read_text(encoding="utf-8")
+        self.assertIn("--threshold=20", verifier)
+        self.assertIn("--threshold=22", verifier)
+        self.assertIn(
+            '"$project_root/packaging/systemd/hardened-blikvm-nginx.service"',
+            verifier,
         )
 
 
