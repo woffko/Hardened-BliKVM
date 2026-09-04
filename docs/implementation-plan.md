@@ -858,6 +858,18 @@ state without mutation. See `baselines/device-update-runtime-package.md`.
 Production trust enrollment, state/slot initialization, activation,
 interruption/reboot and update GUI remain separate gates.
 
+Checkpoint: source `0ee863d` adds a pure Rust initial application-trust
+enrollment contract. Its closed public-only request binds product, target,
+generation 1, null replacement, verifier-compatible Ed25519 key ID/point, and
+the SHA-256 fingerprint of the exact public bytes. It rejects private-key,
+path, timeout, sequence, URL, command, rotation, and unknown fields, then
+renders only the existing supervisor schema with compile-time paths, initial
+system sequence, and health timeout. The complete host matrix and two
+independent AArch64 workspace builds passed; the 118,044-byte ThinLTO member
+was byte-identical. See `baselines/application-trust-enrollment.md`. No real
+production key or device configuration was created. Reviewed public-key
+provisioning with rollback remains next.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

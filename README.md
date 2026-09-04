@@ -56,6 +56,8 @@ The reversible H616 prototype and the application-update core are implemented:
 - a signed Ed25519 application verifier, immutable stager, anti-rollback
   journal, one-use health credential, watchdog rollback, and transactional
   slot garbage collection;
+- a pure Rust public-only application trust enrollment contract that validates
+  the Ed25519 point/fingerprint and renders only fixed supervisor configuration;
 - a host-only, separately keyed system-image verifier bound to an explicit
   recovery/boot-control/layout policy and incapable of selecting a disk;
 - a recovery-only geometry validator that requires equal A/B roots, redundant

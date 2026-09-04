@@ -2653,6 +2653,33 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("tls.key", builder)
         self.assertNotIn("tls.crt", builder)
 
+    def test_public_trust_enrollment_baseline_is_bounded_and_nonsecret(self) -> None:
+        baseline = (
+            ROOT / "docs/baselines/application-trust-enrollment.md"
+        ).read_text()
+        contract = (
+            ROOT / "docs/api/application-trust-enrollment-v1.md"
+        ).read_text()
+        source = (
+            ROOT / "crates/bli-kvm-update-trust-config/src/lib.rs"
+        ).read_text()
+        for required in (
+            "c70f8ff99d4a5a917adb014fd1e7b50d7563d5622363de5f478983d38a51af38",
+            "No real production key",
+            "public-only",
+            "ApplicationTrustRoot",
+            "ATX Power/Reset",
+        ):
+            self.assertIn(required, baseline + contract + source)
+        for forbidden in (
+            "10.0.",
+            "admin1234",
+            "ssh_password",
+            "gui_password",
+            "private_key_hex",
+        ):
+            self.assertNotIn(forbidden, baseline + contract + source)
+
     def test_update_supervisor_is_local_health_only_and_sandboxed(self) -> None:
         watchdog = (
             ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.service"
