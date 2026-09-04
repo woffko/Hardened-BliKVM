@@ -150,7 +150,9 @@ def clean_builder_commit() -> str:
     return commit
 
 
-def _extract_regular_member(archive: tarfile.TarFile, source: str, destination: Path) -> None:
+def extract_regular_member(
+    archive: tarfile.TarFile, source: str, destination: Path
+) -> None:
     member = archive.getmember(f"{BUNDLE_ROOT}/{source}")
     if not member.isfile() or member.issym() or member.islnk():
         raise BuildError(f"package source member is not a regular file: {source}")
@@ -190,17 +192,24 @@ def _extract_web_tree(archive: tarfile.TarFile, package_root: Path) -> None:
         raise BuildError("web tree is missing index.html")
 
 
-def _write_text(path: Path, value: str, mode: int = 0o644) -> None:
+def write_text(path: Path, value: str, mode: int = 0o644) -> None:
     path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     path.write_text(value, encoding="utf-8", newline="\n")
     path.chmod(mode)
 
 
-def _normalize_tree(root: Path) -> None:
+def normalize_tree(
+    root: Path, executable_destinations: set[str] = EXECUTABLE_DESTINATIONS
+) -> None:
     for path in sorted(root.rglob("*"), key=lambda item: (len(item.parts), str(item))):
         if path.is_symlink():
             raise BuildError("package tree contains a symlink")
-        path.chmod(0o755 if path.is_dir() or str(path.relative_to(root)) in EXECUTABLE_DESTINATIONS else 0o644)
+        path.chmod(
+            0o755
+            if path.is_dir()
+            or str(path.relative_to(root)) in executable_destinations
+            else 0o644
+        )
     for path in sorted(root.rglob("*"), reverse=True):
         os.utime(path, (0, 0), follow_symlinks=False)
     os.utime(root, (0, 0), follow_symlinks=False)
@@ -250,7 +259,7 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
         package_root.mkdir(mode=0o755)
         with tarfile.open(bundle.path, mode="r:gz") as archive:
             for source, destination in FILE_MAP.items():
-                _extract_regular_member(archive, source, package_root / destination)
+                extract_regular_member(archive, source, package_root / destination)
             _extract_web_tree(archive, package_root)
 
         control = "\n".join(
@@ -269,8 +278,8 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
                 "",
             )
         )
-        _write_text(package_root / "DEBIAN/control", control)
-        _write_text(
+        write_text(package_root / "DEBIAN/control", control)
+        write_text(
             package_root / "usr/share/doc/hardened-blikvm-runtime/PACKAGE-MANIFEST.json",
             json.dumps(
                 package_manifest(bundle, builder_commit),
@@ -279,7 +288,7 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
             )
             + "\n",
         )
-        _normalize_tree(package_root)
+        normalize_tree(package_root)
         audit_package_tree(package_root)
 
         environment = os.environ.copy()
@@ -307,7 +316,7 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
         package_path.chmod(0o644)
 
     digest = hashlib.sha256(package_path.read_bytes()).hexdigest()
-    _write_text(output_dir / f"{PACKAGE_FILENAME}.sha256", f"{digest}  {PACKAGE_FILENAME}\n")
+    write_text(output_dir / f"{PACKAGE_FILENAME}.sha256", f"{digest}  {PACKAGE_FILENAME}\n")
     return package_path
 
 
