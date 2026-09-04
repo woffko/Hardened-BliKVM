@@ -2538,6 +2538,54 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(required, baseline)
 
+    def test_installed_tls_browser_gate_is_shadowed_unprivileged_and_reversible(
+        self,
+    ) -> None:
+        gate = (ROOT / "tools/stage_device_installed_tls_browser.py").read_text()
+        design = (ROOT / "docs/design/installed-tls-browser-gate-v1.md").read_text()
+        checks = (ROOT / "scripts/check.sh").read_text()
+
+        for required in (
+            "listen 127.0.0.1:{TLS_PORT} ssl;",
+            "proxy_pass http://127.0.0.1:18080;",
+            "ssl_protocols TLSv1.2 TLSv1.3;",
+            "ssl_session_tickets off;",
+            "--property=User=www-data",
+            "--property=IPAddressDeny=any",
+            "--property=IPAddressAllow=localhost",
+            "--property=SocketBindAllow=tcp:18443",
+            "--property=CapabilityBoundingSet=",
+            "tls.browser_runtime()",
+            "tls.tunnel_command",
+            "tls.validate_browser",
+            "provision.build_final_script",
+            "nginx_tree_hash",
+            "control_boundary_absent",
+            "socket_tail_clean",
+            '"workingNginxMutation": False',
+            '"servicesEnabled": False',
+            '"secretEmitted": False',
+            "WantedBy=sysinit.target",
+        ):
+            self.assertIn(required, gate + design)
+        for forbidden in (
+            "systemctl start hardened-blikvm-control",
+            "systemctl enable hardened-blikvm",
+            "systemctl restart kvmd",
+            "systemctl stop kvmd",
+            "dpkg -i",
+            "dpkg --purge",
+            "rm -rf",
+            "/etc/nginx/",
+            "/etc/hardened-blikvm/tls",
+            "reboot",
+            "shutdown",
+            "poweroff",
+        ):
+            self.assertNotIn(forbidden, gate)
+        self.assertIn("tools/stage_device_installed_tls_browser.py", checks)
+        self.assertIn("tools/test_stage_device_installed_tls_browser.py", checks)
+
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"

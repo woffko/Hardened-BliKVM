@@ -65,6 +65,17 @@ H616 acceptance is recorded in
 `../docs/baselines/device-runtime-activation.md`; services remain disabled and
 inactive after cleanup.
 
+`tools/stage_device_installed_tls_browser.py` is the next shadow-proxy gate. It
+starts the same installed units with production secure cookies, renders an
+ephemeral `127.0.0.1:18443` Nginx proxy to the fixed installed
+`127.0.0.1:18080` server, and exposes it only through strict SSH local
+forwarding to the established Chromium desktop/mobile Diagnostics test. The
+transient Nginx process is unprivileged, capability-free, localhost-restricted,
+and writable only inside its marker-owned state. Existing PiKVM Nginx files,
+units, listeners, and certificates are hash-checked but never changed. Browser
+account state, TLS material, services, cgroups, listeners, and rollback are
+fully removed. Native H616 acceptance is still required.
+
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group
