@@ -2307,7 +2307,7 @@ class PackagingBoundaryTests(unittest.TestCase):
             "systemd-run --quiet --collect",
             "dpkg --audit",
             "other_package_hash",
-            "df -i --output=iavail",
+            "df --output=iavail",
             "getcap",
             "installed_tree_exact",
             "units_loaded_disabled_inactive",

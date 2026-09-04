@@ -385,7 +385,7 @@ for path in /usr /var /tmp; do
 done
 phase=inodes
 for path in /usr /var /tmp; do
-  available=$(df -i --output=iavail "$path" | tail -n 1 | tr -d ' ')
+  available=$(df --output=iavail "$path" | tail -n 1 | tr -d ' ')
   [ "$available" -ge "$required_inodes" ]
 done
 phase=kvmd

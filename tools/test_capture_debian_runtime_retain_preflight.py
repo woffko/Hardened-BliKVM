@@ -59,7 +59,7 @@ class CaptureDebianRuntimeRetainPreflightTests(unittest.TestCase):
         script = retain.build_preflight_script(paths, self.package())
         for required in (
             "getcap",
-            "df -i --output=iavail",
+            "df --output=iavail",
             "dpkg --audit",
             "package_absent_before",
             "gates_absent_before",

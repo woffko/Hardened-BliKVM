@@ -103,7 +103,7 @@ class StageDeviceDebianRuntimeRetainTests(unittest.TestCase):
         preflight = retain.build_preflight_script(self.paths(), self.package())
         prepare = retain.build_prepare_script(self.paths(), self.package())
         boot_unit = retain.build_boot_unit(self.paths())
-        self.assertIn("df -i --output=iavail", preflight)
+        self.assertIn("df --output=iavail", preflight)
         self.assertIn("getcap", preflight)
         self.assertIn("dpkg --audit", preflight)
         self.assertIn("other_package_hash", prepare)
@@ -127,6 +127,18 @@ class StageDeviceDebianRuntimeRetainTests(unittest.TestCase):
             "poweroff",
         ):
             self.assertNotIn(forbidden, prepare)
+
+    def test_inode_capacity_command_is_executable(self) -> None:
+        result = subprocess.run(
+            ["df", "--output=iavail", "/tmp"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        lines = result.stdout.decode("ascii").splitlines()
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertRegex(lines[-1].strip(), r"^[1-9][0-9]*$")
 
     def test_commit_retains_package_and_removes_stage_before_watchdog(self) -> None:
         commit = retain.build_commit_script(self.paths(), self.package())
