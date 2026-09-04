@@ -877,6 +877,18 @@ static-PIE binaries matched byte-for-byte. The standard target builder verifies
 it, but it is intentionally absent from shipped runtime packages; a later
 provisioning gate may use it only as a transient validator.
 
+Checkpoint: source `c26f0a8` added the guarded public-trust provisioning gate,
+and source `3721e3a` added an interactive non-overwriting encrypted Ed25519 key
+ceremony helper. The operator separately backed up and explicitly reviewed the
+public request for `app-production-2026-09-01`. A read-only H616 preflight then
+passed before a rollback-gated run atomically published only the canonical
+mode-0600 supervisor configuration. Independent final verification found all
+guards/staging removed, state/slots/runtime absent, update units inert, and the
+persistent runtime, account, Nginx, TLS, PIDs, and restart counters unchanged.
+No private key, restart, reboot, or target power-control action entered the
+gate. See `baselines/device-application-trust-enrollment.md`. State/slot
+initialization remains the next separate application-update authority gate.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
