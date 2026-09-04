@@ -1,8 +1,8 @@
 # Runtime identity and credential provisioning gate design
 
-Status: design and host implementation boundary only. The retained inert
-package is accepted on H616, but no permanent service identity or dedicated
-KVMD credential has yet passed this gate. This design does not authorize
+Status: host, prepare/rollback, marker-bound recovery, permanent H616
+provisioning, and independent read-only inspection accepted. Evidence is in
+`../baselines/device-runtime-provisioning.md`. This design does not authorize
 service start/enablement, Nginx activation, reboot, update trust, diagnostic
 persistence, or hardware action.
 

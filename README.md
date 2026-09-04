@@ -72,8 +72,10 @@ The reversible H616 prototype and the application-update core are implemented:
   rejected by the ELF privacy gate;
 - a deterministic inert `arm64` Debian runtime package whose real H616
   install/hash/mode verification/purge transaction and crash-guarded retained
-  installation passed; the package remains installed without accounts,
-  credentials, state, listeners, or active services;
+  installation passed;
+- rollback-gated fixed service identities and a separate device-generated KVMD
+  credential; the package and credentials remain provisioned while every
+  product service and listener remains inactive;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 

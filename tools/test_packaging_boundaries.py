@@ -2400,6 +2400,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         recovery = (ROOT / "tools/recover_device_runtime_provision.py").read_text()
         preflight = (ROOT / "tools/capture_runtime_provision_preflight.py").read_text()
         inspector = (ROOT / "tools/capture_runtime_provisioned.py").read_text()
+        baseline = (ROOT / "docs/baselines/device-runtime-provisioning.md").read_text()
         checks = (ROOT / "scripts/check.sh").read_text()
 
         for required in (
@@ -2456,6 +2457,22 @@ class PackagingBoundaryTests(unittest.TestCase):
             "tools/recover_device_runtime_provision.py",
         ):
             self.assertIn(path, checks)
+        for required in (
+            "e60f37c90bcb7d837050b1c22f2c6d541454c0e6",
+            "fff0cf4d8fb043ed90f5895247178727",
+            "548af6f081d048a0bf7620f0d4862571",
+            "7747aac04c5044f59c1a9bbb5cf2a574",
+            "be45ac08a8e9406cb5158cca5d58c2a6",
+            "320a52c91f735e9681c106054cbd7c3b72f2eb79",
+            "a9cb3a05d23f4a0b9ec7a5dcaaee00d5",
+            "4fac25c173ea43d2bdb75a31a7f02736",
+            "3dd45ee8ab954ab88792e6eb7baf0d8d",
+            "5210974a13af4c3bbdb27f0d6d059d58",
+            "e609c6fbcf884862bd0f85579f2ecff4",
+            "290b2dd8acdb4bdb9ce1b98f5840d30b",
+            "password that never entered host output",
+        ):
+            self.assertIn(required, baseline)
 
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (

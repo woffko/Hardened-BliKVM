@@ -623,6 +623,18 @@ through a read-only inspector. See
 service activation, Nginx integration, soak, reboot, update trust, and release
 acceptance remain.
 
+Checkpoint: the retained package now has its complete fixed sysusers identity
+set and a separate device-generated KVMD credential. Two-pass synthetic ID
+prediction, all account and auxiliary-file hashes/metadata, exact htpasswd-line
+rollback, CSPRNG readiness, same-filesystem root-only credential publication,
+early-boot rollback, timed watchdog, marker-bound recovery, and independent
+read-only inspection passed on H616. The first live attempt exposed a
+23-versus-24-byte username validation defect; the bounded recovery path restored
+the package-only state before the fixed gate was rerun. All product services
+remain disabled/inactive and ports remain free. See
+`baselines/device-runtime-provisioning.md`. Loopback activation, Nginx/TLS,
+soak, reboot, update trust, and release acceptance remain.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

@@ -34,7 +34,7 @@ after rollback has already been safely disarmed.
 `tools/capture_runtime_provision_preflight.py`,
 `tools/stage_device_runtime_provision_prepare.py`,
 `tools/stage_device_runtime_provision.py`, and
-`tools/capture_runtime_provisioned.py` define the next, still separately gated
+`tools/capture_runtime_provisioned.py` implement the accepted
 identity/credential boundary. They bind the fixed sysusers source to the copy
 inside the retained package, predict the complete five-user/shared-group
 transition twice in a synthetic root, and place an on-device generated
@@ -43,7 +43,8 @@ account/htpasswd backups, per-file before/after CAS, auxiliary sysusers-file
 tracking, early-boot rollback, and a timed watchdog protect the mutation. This
 boundary never starts or enables a product unit and never changes Nginx. Native
 H616 acceptance first exercises prediction/rollback without production
-mutation, then remains required for the live provisioned state.
+mutation, then commits the live state and verifies it through an independent
+read-only SSH session; see `../docs/baselines/device-runtime-provisioning.md`.
 `tools/recover_device_runtime_provision.py` is a separate marker-bound recovery
 path for a failed provisioning run. It emits only a bounded state overview,
 accepts only exact before/after database and htpasswd states, replaces only the
