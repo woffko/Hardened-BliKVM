@@ -45,8 +45,10 @@ const requests = [];
 const responses = [];
 let webSockets = 0;
 let streamResponses = 0;
+let activeStreamResponse = null;
 let inventoryVideoOnline = null;
 let inventoryVideoBusy = null;
+let logoutStatus = null;
 
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -76,7 +78,10 @@ try {
         status: response.status(),
       });
     }
-    if (route === "/api/stream/mjpeg") streamResponses += 1;
+    if (route === "/api/stream/mjpeg" && response.status() === 200) {
+      streamResponses += 1;
+      activeStreamResponse = response;
+    }
   });
 
   phase = "login-document";
@@ -212,18 +217,23 @@ try {
   assert.equal(csrf.secure, true);
   assert.equal(csrf.sameSite, "Strict");
 
-  phase = "logout";
-  const activeStreamFinished = reconnectedStream.finished();
+  phase = "logout-request";
+  assert.ok(activeStreamResponse, "missing active MJPEG response");
+  const activeStreamFinished = activeStreamResponse.finished();
   const logout = await context.request.post(`${baseUrl}/api/auth/logout`, {
     headers: { Origin: baseUrl, "x-csrf-token": csrf.value },
   });
-  assert.equal(logout.status(), 200);
+  logoutStatus = logout.status();
+  phase = "logout-status";
+  assert.equal(logoutStatus, 200);
+  phase = "logout-stream-revocation";
   await Promise.race([
     activeStreamFinished,
     new Promise((_, reject) =>
       setTimeout(() => reject(new Error("MJPEG stream survived logout")), 5000),
     ),
   ]);
+  phase = "logout-cookies";
   cookies = await context.cookies(baseUrl);
   assert.equal(
     cookies.some((cookie) => cookie.name === "hardened-blikvm-session"),
@@ -288,6 +298,7 @@ try {
     videoResponses: streamResponses,
     inventoryVideoOnline,
     inventoryVideoBusy,
+    logoutStatus,
     secretEmitted: false,
   });
   process.exitCode = 1;

@@ -40,6 +40,8 @@ class DeviceExistingAccountBrowserTests(unittest.TestCase):
             "inventoryVideoBusy",
             'phase = "video-initial-response"',
             'phase = "video-initial-decode"',
+            'phase = "logout-stream-revocation"',
+            "activeStreamResponse = response",
             "streamRevoked: true",
             "initial MJPEG stream survived reload",
             "MJPEG stream survived logout",
