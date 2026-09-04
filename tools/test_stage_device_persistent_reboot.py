@@ -66,6 +66,7 @@ class StageDevicePersistentRebootTests(unittest.TestCase):
         self.assertIn("boot_id_changed", source)
         self.assertIn('"targetPowerControl": False', source)
         self.assertIn('"atxPowerReset": False', source)
+        self.assertIn("subprocess.SubprocessError", source)
         for forbidden in (
             "/api/control",
             "/api/atx",

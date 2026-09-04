@@ -12,6 +12,7 @@ import re
 import secrets
 import shlex
 import socket
+import subprocess
 import sys
 import time
 from typing import Mapping, TypedDict, cast
@@ -610,7 +611,7 @@ def main() -> int:
         }
         write_json_0600_atomic(output, receipt)
         return 0
-    except (OSError, UnicodeError, ValueError) as error:
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError) as error:
         write_json_0600_atomic(
             output,
             {
