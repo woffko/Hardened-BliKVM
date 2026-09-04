@@ -20,6 +20,7 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 JOURNAL_KEYS = {
     "address_in_use",
+    "aio_failure",
     "ambient_capability_failure",
     "bind_permission_denied",
     "capset_failure",
@@ -29,6 +30,9 @@ JOURNAL_KEYS = {
     "config_permission_denied",
     "credential_failure",
     "credential_missing",
+    "cgroup_failure",
+    "error_log_failure",
+    "event_method_failure",
     "exec_failure",
     "fork_failure",
     "invalid_argument",
@@ -38,12 +42,16 @@ JOURNAL_KEYS = {
     "nginx_config_failure",
     "nginx_emergency",
     "operation_not_permitted",
+    "open_failure",
+    "oom_failure",
+    "prctl_failure",
     "setgid_failure",
     "setgroups_failure",
     "setrlimit_failure",
     "setsockopt_failure",
     "setuid_failure",
     "socketpair_failure",
+    "stderr_failure",
     "runtime_directory_failure",
     "runtime_root_permission_denied",
     "status_1_failure",
@@ -52,6 +60,8 @@ JOURNAL_KEYS = {
     "tls_certificate_permission_denied",
     "tls_key_permission_denied",
     "unit_parse_failure",
+    "worker_failure",
+    "bpf_failure",
 }
 SAFE_VALUE = re.compile(r"^(?:yes|no|[0-9]{1,3}|[0-9a-f]{64})$")
 
@@ -93,6 +103,16 @@ flag socketpair_failure 'socketpair.*[Oo]peration not permitted'
 flag setsockopt_failure 'setsockopt.*[Oo]peration not permitted'
 flag fork_failure '(fork|clone).*[Oo]peration not permitted'
 flag capset_failure '(capset|capabilit).*[Oo]peration not permitted'
+flag open_failure 'open(at)?[(].*[Oo]peration not permitted'
+flag error_log_failure 'error log|error_log'
+flag stderr_failure '/dev/stderr|standard error|stderr'
+flag aio_failure '(io_setup|aio).*[Oo]peration not permitted'
+flag event_method_failure '(epoll|eventfd|select|poll).*[Oo]peration not permitted'
+flag prctl_failure 'prctl.*[Oo]peration not permitted'
+flag oom_failure '(OOM|oom_score|out of memory).*[Oo]peration not permitted'
+flag cgroup_failure '(cgroup|control group).*[Oo]peration not permitted'
+flag bpf_failure '(BPF|bpf).*[Oo]peration not permitted'
+flag worker_failure '(worker|master process).*[Oo]peration not permitted'
 flag invalid_argument '[Ii]nvalid argument'
 flag unit_parse_failure '(unknown lvalue|failed to parse|bad unit setting|unknown key)'
 flag condition_failure 'Condition.*failed|start condition failed'
