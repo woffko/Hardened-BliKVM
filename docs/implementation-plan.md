@@ -843,6 +843,21 @@ physical action occurred. Two independent AArch64 builds at source commit
 the sandbox finding, and the remaining installation/interruption/recovery gates
 are recorded in `baselines/device-update-process-orchestration.md`.
 
+Checkpoint: the Rust application-update process boundary is now also packaged
+separately from the working runtime. `hardened-blikvm-update-runtime` contains
+only the supervisor/reporter, nine disabled systemd templates, public
+specifications, and documentation-only sysusers/tmpfiles examples; it depends
+exactly on runtime `0.1.0~dev2` and carries no trust/configuration/state/slot or
+route. Source `17d8562` produced two byte-identical canonical-mode `.deb`
+files. A package-aware early-boot/timed rollback gate then retained the exact
+package on H616 while keeping every update unit inactive/not-enabled, all
+update authority absent, the persistent service PIDs/restart counters and
+account/Nginx/TLS hashes unchanged, and the browser login/Diagnostics/decoded
+MJPEG flow healthy. An independent receipt-bound SSH verification repeated the
+state without mutation. See `baselines/device-update-runtime-package.md`.
+Production trust enrollment, state/slot initialization, activation,
+interruption/reboot and update GUI remain separate gates.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

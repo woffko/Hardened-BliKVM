@@ -73,6 +73,9 @@ The reversible H616 prototype and the application-update core are implemented:
 - a deterministic inert `arm64` Debian runtime package whose real H616
   install/hash/mode verification/purge transaction and crash-guarded retained
   installation passed;
+- a separate reproducible inert application-update package, retained on H616
+  with its Rust supervisor/reporter and systemd templates disabled/inactive,
+  no trust/configuration/state/slots, and no restart of the working GUI;
 - rollback-gated fixed service identities and a separate device-generated KVMD
   credential, followed by a rollback-gated persistent web cutover: PiKVM Nginx
   is disabled, the Hardened broker/video/server/Nginx units are enabled, and

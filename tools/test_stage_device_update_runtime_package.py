@@ -160,6 +160,21 @@ class StageDeviceUpdateRuntimePackageTests(unittest.TestCase):
         self.assertIn(b"--verify-only", result.stdout)
         self.assertIn(b"--accepted-receipt", result.stdout)
 
+    def test_public_baseline_records_inert_retained_boundary(self) -> None:
+        baseline = Path(
+            "docs/baselines/device-update-runtime-package.md"
+        ).read_text(encoding="utf-8")
+        for required in (
+            "a42ebcc0ee9e0f4c2e0ad3ca313e783261a41fad3317358da7a0bd0effa9da20",
+            "b6fe4337a3b74ceeab867d31d4a0a08c",
+            "532afbf4c30e45f484bef9aaac751540",
+            "authority remained",
+            "ATX Power/Reset",
+        ):
+            self.assertIn(required, baseline)
+        for forbidden in ("10.0.", "admin1234", "ssh_password", "gui_password"):
+            self.assertNotIn(forbidden, baseline)
+
 
 if __name__ == "__main__":
     unittest.main()
