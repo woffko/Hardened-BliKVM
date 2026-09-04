@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -64,6 +65,10 @@ JOURNAL_KEYS = {
     "bpf_failure",
 }
 SAFE_VALUE = re.compile(r"^(?:yes|no|[0-9]{1,3}|[0-9a-f]{64})$")
+SENSITIVE_TEXT = re.compile(
+    r"password|passwd|authorization|cookie|token|private[ -]?key|begin [a-z ]*key",
+    re.IGNORECASE,
+)
 
 
 REMOTE_JOURNAL_PROBE = r"""
@@ -122,6 +127,16 @@ flag status_1_failure 'status=1/FAILURE'
 flag nginx_config_failure 'nginx: configuration file .* test failed'
 flag nginx_emergency 'nginx: \[emerg\]'
 printf '%s\n' "$journal" | sha256sum | awk '{print "journal_sha256=" $1}'
+redacted=$(printf '%s\n' "$journal" | sed -E \
+  -e 's#/[A-Za-z0-9_.+@%:/=-]+#<path>#g' \
+  -e 's/[0-9a-fA-F]{12,}/<hex>/g' \
+  -e 's/[0-9]+/<n>/g' | \
+  sed -E '/password|passwd|authorization|cookie|token|private[ -]?key|begin [A-Za-z ]*key/Ic\\<redacted-sensitive-line>' | \
+  head -n 20)
+[ "$(printf '%s' "$redacted" | wc -c)" -le 4096 ]
+printf 'journal_redacted_b64='
+printf '%s' "$redacted" | base64 -w 0
+printf '\n'
 """.strip()
 
 
@@ -131,6 +146,7 @@ class FailureOutput(TypedDict):
     recoveryFacts: dict[str, str]
     journalClasses: dict[str, str]
     journalSha256: str
+    sanitizedJournal: list[str]
 
 
 @dataclass(frozen=True)
@@ -156,16 +172,40 @@ def parse_args() -> Options:
     )
 
 
-def parse_journal_facts(raw: bytes) -> tuple[dict[str, str], str]:
+def parse_journal_facts(raw: bytes) -> tuple[dict[str, str], str, list[str]]:
     if len(raw) > 8 * 1024:
         raise ValueError("journal classification output exceeded the limit")
     facts: dict[str, str] = {}
     journal_sha256 = ""
+    sanitized_journal: list[str] | None = None
     for line in raw.decode("ascii", errors="strict").splitlines():
         key, separator, value = line.partition("=")
-        if separator != "=" or not SAFE_VALUE.fullmatch(value):
+        if separator != "=":
             raise ValueError("journal classifier returned an invalid fact")
-        if key == "journal_sha256":
+        if key == "journal_redacted_b64":
+            if sanitized_journal is not None or len(value) > 8192:
+                raise ValueError("journal classifier redaction is invalid")
+            try:
+                decoded = base64.b64decode(value, validate=True).decode(
+                    "ascii", errors="strict"
+                )
+            except (ValueError, UnicodeError):
+                raise ValueError("journal classifier redaction is invalid") from None
+            if len(decoded) > 4096 or any(
+                ord(character) < 0x20 and character not in "\n\t"
+                for character in decoded
+            ):
+                raise ValueError("journal classifier redaction is invalid")
+            if SENSITIVE_TEXT.search(decoded) or "/" in decoded or re.search(
+                r"\b[0-9]+\b|[0-9a-fA-F]{12,}", decoded
+            ):
+                raise ValueError("journal classifier redaction is incomplete")
+            sanitized_journal = decoded.splitlines()
+            if len(sanitized_journal) > 20:
+                raise ValueError("journal classifier redaction is too long")
+        elif not SAFE_VALUE.fullmatch(value):
+            raise ValueError("journal classifier returned an invalid fact")
+        elif key == "journal_sha256":
             if journal_sha256 or not re.fullmatch(r"[0-9a-f]{64}", value):
                 raise ValueError("journal classifier digest is invalid")
             journal_sha256 = value
@@ -173,11 +213,11 @@ def parse_journal_facts(raw: bytes) -> tuple[dict[str, str], str]:
             facts[key] = value
         else:
             raise ValueError("journal classifier returned an unexpected field")
-    if set(facts) != JOURNAL_KEYS or not journal_sha256:
+    if set(facts) != JOURNAL_KEYS or not journal_sha256 or sanitized_journal is None:
         raise ValueError("journal classifier result was incomplete")
     if int(facts["journal_lines"]) > 120:
         raise ValueError("journal classifier line count is invalid")
-    return dict(sorted(facts.items())), journal_sha256
+    return dict(sorted(facts.items())), journal_sha256, sanitized_journal
 
 
 def _zero(secret: bytearray) -> None:
@@ -205,13 +245,16 @@ def main() -> int:
         )
         if journal_result.returncode != 0:
             raise ValueError("journal classification probe failed")
-        classes, journal_sha256 = parse_journal_facts(journal_result.stdout)
+        classes, journal_sha256, sanitized_journal = parse_journal_facts(
+            journal_result.stdout
+        )
         receipt: FailureOutput = {
             "schemaVersion": 1,
             "probe": "hardened-blikvm-web-cutover-failure-classification",
             "recoveryFacts": recovery,
             "journalClasses": classes,
             "journalSha256": journal_sha256,
+            "sanitizedJournal": sanitized_journal,
         }
         write_json_0600_atomic(output, receipt)
         return 0

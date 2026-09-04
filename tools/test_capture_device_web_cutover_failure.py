@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import unittest
+import base64
 
 import tools.capture_device_web_cutover_failure as failure
 
@@ -28,13 +29,17 @@ class CaptureDeviceWebCutoverFailureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_parser_requires_exact_bounded_schema(self) -> None:
+        redacted = base64.b64encode(
+            b"Started Hardened BliKVM.\nFailed with status=<n>."
+        )
         raw = b"".join(
             f"{key}={'1' if key == 'journal_lines' else 'no'}\n".encode()
             for key in sorted(failure.JOURNAL_KEYS)
-        ) + f"journal_sha256={'a' * 64}\n".encode()
-        facts, digest = failure.parse_journal_facts(raw)
+        ) + f"journal_sha256={'a' * 64}\n".encode() + b"journal_redacted_b64=" + redacted + b"\n"
+        facts, digest, lines = failure.parse_journal_facts(raw)
         self.assertEqual(set(facts), failure.JOURNAL_KEYS)
         self.assertEqual(digest, "a" * 64)
+        self.assertEqual(lines, ["Started Hardened BliKVM.", "Failed with status=<n>."])
         with self.assertRaises(ValueError):
             failure.parse_journal_facts(raw + b"raw=value\n")
 
