@@ -66,3 +66,12 @@ request from stdin, rejects a mismatched document hash before validation, and
 writes only the canonical supervisor configuration to stdout. It accepts no
 request/config path, output path, private-key field, environment override,
 network location, or device selector.
+
+The later device orchestrator must accept only an exact hash-named mode-0600
+reviewed request and exact hash-named static-PIE validator snapshot. Its
+read-only preflight stops before upload. A mutating run may validate both only
+in a unique `/tmp` directory, arm an early-boot and ten-minute rollback, and
+atomically publish only `/etc/hardened-blikvm/update-supervisor.json` as a
+root-owned mode-0600 regular file. Rollback may remove that file only while its
+hash matches the validator output. State/slots/runtime and every update unit
+remain absent or inert through this enrollment boundary.
