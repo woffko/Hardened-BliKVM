@@ -201,6 +201,7 @@ def write_text(path: Path, value: str, mode: int = 0o644) -> None:
 def normalize_tree(
     root: Path, executable_destinations: set[str] = EXECUTABLE_DESTINATIONS
 ) -> None:
+    root.chmod(0o755)
     for path in sorted(root.rglob("*"), key=lambda item: (len(item.parts), str(item))):
         if path.is_symlink():
             raise BuildError("package tree contains a symlink")

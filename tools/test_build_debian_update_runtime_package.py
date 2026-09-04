@@ -78,6 +78,17 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
             (runtime_package.EXECUTABLE_DESTINATIONS,),
         )
 
+    def test_normalizer_overrides_umask_for_package_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "package"
+            root.mkdir(mode=0o700)
+            binary = root / next(iter(package.EXECUTABLE_DESTINATIONS))
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"binary")
+            runtime_package.normalize_tree(root, package.EXECUTABLE_DESTINATIONS)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
+
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(
             [sys.executable, "tools/build_debian_update_runtime_package.py", "--help"],
