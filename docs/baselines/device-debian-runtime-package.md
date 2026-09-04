@@ -120,6 +120,16 @@ detail. The second identified an `accounts` check whose final negative
 `getent group` status was accidentally returned as failure. Explicit `if`
 branches and `return 0` fixed the harness before the accepted run.
 
+## Final host matrix
+
+Clean evidence source commit
+`f32aa80b0e3b2dc09dd901fa1fa7dd052e2c8513` passed complete Longrun job
+`14bdd1ce78b946b1b7017355557fb822`. The job exited zero after the locked
+default and all-features Rust workspace checks/tests, all required feature
+tests, Clippy with warnings denied, source and systemd boundary checks, 191
+Python tests, Python compilation, BasedPyright with zero diagnostics, frontend
+production build, ESLint with zero warnings, and both Prettier checks.
+
 ## Remaining boundary
 
 This accepts the deterministic inert `.deb` and reversible package-manager
