@@ -176,7 +176,7 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _run_dpkg_deb(path: Path, option: str) -> bytes:
+def read_dpkg_deb_archive(path: Path, option: str) -> bytes:
     result = subprocess.run(
         ["dpkg-deb", option, str(path)],
         stdout=subprocess.PIPE,
@@ -188,7 +188,7 @@ def _run_dpkg_deb(path: Path, option: str) -> bytes:
     return result.stdout
 
 
-def _member_path(name: str) -> PurePosixPath:
+def package_member_path(name: str) -> PurePosixPath:
     original = PurePosixPath(name)
     parts = tuple(part for part in original.parts if part != ".")
     if not parts or original.is_absolute() or ".." in parts:
@@ -226,6 +226,8 @@ def validate_package(
     expected_source_commit: str,
     expected_source_bundle_sha256: str,
     expected_builder_commit: str,
+    *,
+    expected_version: str | None = None,
 ) -> PackageInfo:
     path = Path(path_value)
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
@@ -241,17 +243,23 @@ def validate_package(
         if not re.fullmatch(r"[0-9a-f]{40}", commit):
             raise ValueError("package commit binding is invalid")
 
-    control = _run_dpkg_deb(path, "--field").decode("utf-8", errors="strict")
+    package_version = expected_version or debian.PACKAGE_VERSION
+    if not re.fullmatch(r"[0-9A-Za-z.+:~_-]{1,64}", package_version):
+        raise ValueError("package version binding is invalid")
+    control = read_dpkg_deb_archive(path, "--field").decode(
+        "utf-8", errors="strict"
+    )
     for required in (
         f"Package: {debian.PACKAGE_NAME}\n",
-        f"Version: {debian.PACKAGE_VERSION}\n",
+        f"Version: {package_version}\n",
         f"Architecture: {debian.PACKAGE_ARCHITECTURE}\n",
     ):
         if required not in control:
             raise ValueError("package control metadata is invalid")
 
     with tarfile.open(
-        fileobj=io.BytesIO(_run_dpkg_deb(path, "--ctrl-tarfile")), mode="r:"
+        fileobj=io.BytesIO(read_dpkg_deb_archive(path, "--ctrl-tarfile")),
+        mode="r:",
     ) as archive:
         members = archive.getmembers()
         control_members: set[str] = set()
@@ -259,7 +267,7 @@ def validate_package(
             validate_tar_metadata(member)
             if member.name in (".", "./"):
                 continue
-            control_members.add(str(_member_path(member.name)))
+            control_members.add(str(package_member_path(member.name)))
             if (
                 not member.isfile()
                 or member.uid != 0
@@ -274,7 +282,8 @@ def validate_package(
     total_size = 0
     manifest: dict[str, object] | None = None
     with tarfile.open(
-        fileobj=io.BytesIO(_run_dpkg_deb(path, "--fsys-tarfile")), mode="r:"
+        fileobj=io.BytesIO(read_dpkg_deb_archive(path, "--fsys-tarfile")),
+        mode="r:",
     ) as archive:
         members = archive.getmembers()
         if not members or len(members) > MAX_PACKAGE_MEMBERS:
@@ -283,7 +292,7 @@ def validate_package(
             if member.name in (".", "./"):
                 continue
             validate_tar_metadata(member)
-            relative = _member_path(member.name)
+            relative = package_member_path(member.name)
             if member.issym() or member.islnk() or not (member.isdir() or member.isfile()):
                 raise ValueError("package member type is invalid")
             validate_data_member_path(relative, member.isdir())
@@ -340,7 +349,7 @@ def validate_package(
     expected_manifest = {
         "schemaVersion": 1,
         "package": debian.PACKAGE_NAME,
-        "version": debian.PACKAGE_VERSION,
+        "version": package_version,
         "architecture": debian.PACKAGE_ARCHITECTURE,
         "sourceCommit": expected_source_commit,
         "sourceBundleSha256": expected_bundle,
@@ -561,7 +570,7 @@ fi
     return f"#!/bin/sh\nset -eu\n{values}\n{body}\n"
 
 
-def _installed_checks(package: PackageInfo) -> str:
+def installed_checks(package: PackageInfo) -> str:
     lines: list[str] = []
     for path, (digest, mode) in sorted(package.installed_files.items()):
         quoted = shlex.quote(path)
@@ -620,7 +629,7 @@ package_installed
 [ "$(dpkg-deb -f "$package_file" Version)" = "$package_version" ]
 [ "$(dpkg-deb -f "$package_file" Architecture)" = "$package_architecture" ]
 """.strip()
-    checks = _installed_checks(package)
+    checks = installed_checks(package)
     tail = r"""
 accounts_absent
 units_inactive

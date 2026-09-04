@@ -62,6 +62,7 @@ python3 -m unittest \
   tools/test_build_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_retain.py \
+  tools/test_stage_device_runtime_package_upgrade.py \
   tools/test_capture_trusted_floor_topology.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
@@ -104,6 +105,7 @@ python3 -m py_compile \
   tools/build_debian_runtime_package.py \
   tools/stage_device_debian_runtime_package.py \
   tools/stage_device_debian_runtime_retain.py \
+  tools/stage_device_runtime_package_upgrade.py \
   tools/capture_trusted_floor_topology.py \
   tools/stage_device_broker_inventory.py \
   tools/stage_device_prototype.py \
@@ -147,6 +149,7 @@ python3 -m py_compile \
   tools/test_build_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_retain.py \
+  tools/test_stage_device_runtime_package_upgrade.py \
   tools/test_capture_trusted_floor_topology.py \
   tools/test_stage_device_broker_inventory.py \
   tools/test_stage_device_prototype.py \
@@ -195,6 +198,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/build_debian_runtime_package.py \
     tools/stage_device_debian_runtime_package.py \
     tools/stage_device_debian_runtime_retain.py \
+    tools/stage_device_runtime_package_upgrade.py \
     tools/capture_trusted_floor_topology.py \
     tools/stage_device_broker_inventory.py \
     tools/stage_device_prototype.py \
@@ -237,6 +241,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_build_debian_runtime_package.py \
     tools/test_stage_device_debian_runtime_package.py \
     tools/test_stage_device_debian_runtime_retain.py \
+    tools/test_stage_device_runtime_package_upgrade.py \
     tools/test_capture_trusted_floor_topology.py \
     tools/test_stage_device_broker_inventory.py \
     tools/test_stage_device_prototype.py \
