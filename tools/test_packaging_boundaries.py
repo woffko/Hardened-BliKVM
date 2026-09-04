@@ -2390,6 +2390,66 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("tools/runtime_provisioning_policy.py", checks)
         self.assertIn("tools/test_runtime_provisioning_policy.py", checks)
 
+    def test_runtime_provisioning_gate_is_boot_safe_secret_private_and_inactive(
+        self,
+    ) -> None:
+        gate = (ROOT / "tools/stage_device_runtime_provision.py").read_text()
+        prepare = (
+            ROOT / "tools/stage_device_runtime_provision_prepare.py"
+        ).read_text()
+        preflight = (ROOT / "tools/capture_runtime_provision_preflight.py").read_text()
+        inspector = (ROOT / "tools/capture_runtime_provisioned.py").read_text()
+        checks = (ROOT / "scripts/check.sh").read_text()
+
+        for required in (
+            "policy.load_sysusers_source(package)",
+            "systemd-sysusers --root=",
+            'systemd-sysusers "$pinned_sysusers"',
+            "os.getrandom(32, os.GRND_NONBLOCK).hex()",
+            'kvmd-htpasswd set -i -q "$kvmd_account" < "$password_file"',
+            "before_meta_%s",
+            "after_meta_%s",
+            "precheck_aux pwd_lock .pwd.lock",
+            "restore_aux pwd_lock .pwd.lock",
+            "WantedBy=sysinit.target",
+            "systemd-run --quiet --collect",
+            'mv "$config_stage" "$config_root"',
+            "setpriv --reuid",
+            '"secretEmitted": False',
+            '"servicesActive": False',
+            '"servicesEnabled": False',
+        ):
+            self.assertIn(required, gate)
+        for forbidden in (
+            "kvmd-htpasswd del",
+            "rm -rf",
+            "systemctl start hardened-blikvm",
+            "systemctl enable hardened-blikvm",
+            "systemctl restart kvmd",
+            "systemctl stop kvmd",
+            "dpkg --purge",
+            "reboot",
+            "shutdown",
+            "poweroff",
+        ):
+            self.assertNotIn(forbidden, gate)
+        self.assertIn("retain.build_final_script", preflight)
+        self.assertIn("provision.build_preflight_script", preflight)
+        self.assertIn("provision.build_prepare_script", prepare)
+        self.assertIn("provision.build_cleanup_script", prepare)
+        self.assertNotIn("provision.build_apply_script", prepare)
+        self.assertNotIn("provision.build_commit_script", prepare)
+        self.assertIn("provision.build_final_script", inspector)
+        for path in (
+            "tools/stage_device_runtime_provision.py",
+            "tools/stage_device_runtime_provision_prepare.py",
+            "tools/capture_runtime_provision_preflight.py",
+            "tools/capture_runtime_provisioned.py",
+            "tools/test_stage_device_runtime_provision.py",
+            "tools/test_capture_runtime_provision.py",
+        ):
+            self.assertIn(path, checks)
+
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"

@@ -255,7 +255,7 @@ nginx_tree_hash() {
 """.strip()
 
 
-def _dedicated_tree(package: package_gate.PackageInfo) -> tuple[str, list[str]]:
+def dedicated_tree(package: package_gate.PackageInfo) -> tuple[str, list[str]]:
     entries: set[str] = set()
     directories: set[str] = set()
     for path_value in package.installed_files:
@@ -277,7 +277,7 @@ def _dedicated_tree(package: package_gate.PackageInfo) -> tuple[str, list[str]]:
     return hashlib.sha256(listing.encode("utf-8")).hexdigest(), sorted(directories)
 
 
-def _installed_checks(package: package_gate.PackageInfo) -> str:
+def installed_checks(package: package_gate.PackageInfo) -> str:
     lines: list[str] = []
     for path, (digest, mode) in sorted(package.installed_files.items()):
         quoted = shlex.quote(path)
@@ -287,7 +287,7 @@ def _installed_checks(package: package_gate.PackageInfo) -> str:
         lines.append(
             f'[ "$(stat -c \'%a:%u:%g:%h\' {quoted})" = "{mode:o}:0:0:1" ]'
         )
-    _, directories = _dedicated_tree(package)
+    _, directories = dedicated_tree(package)
     for path in directories:
         lines.append(
             f'[ "$(stat -c \'%a:%u:%g\' {shlex.quote(path)})" = "755:0:0" ]'
@@ -295,7 +295,7 @@ def _installed_checks(package: package_gate.PackageInfo) -> str:
     return "\n".join(lines)
 
 
-def _capability_checks() -> str:
+def capability_checks() -> str:
     return "\n".join(
         f'[ -z "$(getcap {shlex.quote(path)})" ]' for path in EXECUTABLE_PATHS
     )
@@ -543,7 +543,7 @@ def _prepare_material(paths: RemotePaths, package: package_gate.PackageInfo) -> 
 
 def build_prepare_script(paths: RemotePaths, package: package_gate.PackageInfo) -> str:
     boot_unit, rollback, watchdog = _prepare_material(paths, package)
-    tree_sha256, _ = _dedicated_tree(package)
+    tree_sha256, _ = dedicated_tree(package)
     values = _assignments(
         {
             "stage_root": paths.stage_root,
@@ -572,8 +572,8 @@ def build_prepare_script(paths: RemotePaths, package: package_gate.PackageInfo) 
             "watchdog_b64": base64.b64encode(watchdog.encode()).decode("ascii"),
         }
     )
-    checks = _installed_checks(package)
-    capability_checks = _capability_checks()
+    checks = installed_checks(package)
+    cap_checks = capability_checks()
     body = r"""
 set -eu
 export LC_ALL=C
@@ -685,7 +685,7 @@ emit dpkg_audit_clean_after_install yes
 emit boot_rollback_armed yes
 emit watchdog_active yes
 emit ports_free_after_install yes
-""".strip().replace("CAPABILITY_CHECKS", capability_checks)
+""".strip().replace("CAPABILITY_CHECKS", cap_checks)
     return f"{values}\n{PORT_FUNCTION}\n{STATE_FUNCTIONS}\n{body}\n{checks}\n{tail}"
 
 
@@ -714,7 +714,7 @@ done
 
 def build_commit_script(paths: RemotePaths, package: package_gate.PackageInfo) -> str:
     boot_unit = build_boot_unit(paths)
-    tree_sha256, _ = _dedicated_tree(package)
+    tree_sha256, _ = dedicated_tree(package)
     values = _assignments(
         {
             "stage_root": paths.stage_root,
@@ -740,8 +740,8 @@ def build_commit_script(paths: RemotePaths, package: package_gate.PackageInfo) -
             "boot_unit_sha256": hashlib.sha256(boot_unit.encode()).hexdigest(),
         }
     )
-    checks = _installed_checks(package)
-    capability_checks = _capability_checks()
+    checks = installed_checks(package)
+    cap_checks = capability_checks()
     body = r"""
 set -eu
 export LC_ALL=C
@@ -829,7 +829,7 @@ emit account_databases_unchanged yes
 emit nginx_tree_unchanged yes
 emit other_packages_unchanged yes
 emit dpkg_audit_clean_after_commit yes
-""".strip().replace("CAPABILITY_CHECKS", capability_checks)
+""".strip().replace("CAPABILITY_CHECKS", cap_checks)
     return f"{values}\n{PORT_FUNCTION}\n{STATE_FUNCTIONS}\n{body}\n{checks}\n{tail}"
 
 
@@ -944,7 +944,7 @@ emit cleanup_removed yes
 
 
 def build_final_script(paths: RemotePaths, package: package_gate.PackageInfo) -> str:
-    tree_sha256, _ = _dedicated_tree(package)
+    tree_sha256, _ = dedicated_tree(package)
     values = _assignments(
         {
             "stage_root": paths.stage_root,
@@ -959,8 +959,8 @@ def build_final_script(paths: RemotePaths, package: package_gate.PackageInfo) ->
             "expected_tree_sha256": tree_sha256,
         }
     )
-    checks = _installed_checks(package)
-    capability_checks = _capability_checks()
+    checks = installed_checks(package)
+    cap_checks = capability_checks()
     body = r"""
 set -eu
 export LC_ALL=C
@@ -1006,7 +1006,7 @@ emit dpkg_audit_clean_final yes
 emit kvmd_active_final active
 emit kvmd_nginx_active_final active
 emit rootfs_mode_final "$rootfs_mode"
-""".strip().replace("CAPABILITY_CHECKS", capability_checks)
+""".strip().replace("CAPABILITY_CHECKS", cap_checks)
     return f"{values}\n{PORT_FUNCTION}\n{STATE_FUNCTIONS}\n{body}\n{checks}\n{tail}"
 
 

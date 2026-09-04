@@ -31,6 +31,20 @@ watchdog or early-boot unit. A separate read-only
 `tools/capture_debian_runtime_retained.py` probe resolves a lost final response
 after rollback has already been safely disarmed.
 
+`tools/capture_runtime_provision_preflight.py`,
+`tools/stage_device_runtime_provision_prepare.py`,
+`tools/stage_device_runtime_provision.py`, and
+`tools/capture_runtime_provisioned.py` define the next, still separately gated
+identity/credential boundary. They bind the fixed sysusers source to the copy
+inside the retained package, predict the complete five-user/shared-group
+transition twice in a synthetic root, and place an on-device generated
+dedicated KVMD credential only in root-owned mode-0400 sources. Persistent
+account/htpasswd backups, per-file before/after CAS, auxiliary sysusers-file
+tracking, early-boot rollback, and a timed watchdog protect the mutation. This
+boundary never starts or enables a product unit and never changes Nginx. Native
+H616 acceptance first exercises prediction/rollback without production
+mutation, then remains required for the live provisioned state.
+
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group

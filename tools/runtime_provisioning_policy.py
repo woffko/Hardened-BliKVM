@@ -30,6 +30,7 @@ ACCOUNT_NAMES = (
 )
 GROUP_NAMES = (SHARED_GROUP, *ACCOUNT_NAMES)
 ACCOUNT_DATABASE_NAMES = ("passwd", "group", "shadow", "gshadow")
+ACCOUNT_AUXILIARY_NAMES = ("passwd-", "group-", "shadow-", "gshadow-", ".pwd.lock")
 CONFIG_ROOT = "/etc/hardened-blikvm"
 USERNAME_PATH = f"{CONFIG_ROOT}/kvmd-user"
 PASSWORD_PATH = f"{CONFIG_ROOT}/kvmd-password"

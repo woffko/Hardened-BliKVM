@@ -86,6 +86,14 @@ publishes the two credential sources. A synchronized allowlisted phase marker
 follows each completed mutation, but rollback derives safety from content and
 metadata rather than trusting the marker alone.
 
+Before the first live apply, `stage_device_runtime_provision_prepare.py` must
+execute prepare and the exact rollback script without calling the live
+sysusers, htpasswd, config, apply, or commit paths. Its final state is the same
+retained inert package with no service identity or credential. This separately
+accepts numeric-ID prediction, auxiliary-file modeling, CSPRNG generation,
+boot-unit installation, watchdog operation, and complete sensitive-stage
+cleanup on the real device.
+
 Before commit, the gate repeats identity, htpasswd, credential, package, unit,
 listener, dpkg-audit, Nginx, KVMD, and rootfs checks. All four product units
 must remain loaded, disabled, and inactive. Commit stops the timed watchdog,
