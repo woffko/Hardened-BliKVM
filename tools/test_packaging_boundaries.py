@@ -2358,6 +2358,38 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden, preflight)
             self.assertNotIn(forbidden, inspector)
 
+    def test_runtime_provisioning_policy_is_fixed_complete_and_not_activated(
+        self,
+    ) -> None:
+        policy = (ROOT / "tools/runtime_provisioning_policy.py").read_text()
+        design = (ROOT / "docs/design/runtime-provision-gate-v1.md").read_text()
+        checks = (ROOT / "scripts/check.sh").read_text()
+
+        for required in (
+            'KVMD_ACCOUNT = "hardened-blikvm-broker"',
+            'SHARED_GROUP = "hardened-blikvm"',
+            '"hardened-blikvm-server"',
+            '"hardened-blikvm-broker"',
+            '"hardened-blikvm-video"',
+            '"hardened-blikvm-control"',
+            '"hardened-blikvm-update"',
+            'CONFIG_ROOT = "/etc/hardened-blikvm"',
+            "validate_sysusers_payload",
+            "retained package sysusers documentation does not match source",
+            "8685ad67a137da51a1640db06ef630a4ddaf3d09663640dd081d8a90c1997620",
+        ):
+            self.assertIn(required, policy + design)
+        for forbidden in (
+            'KVMD_ACCOUNT = "admin"',
+            'KVMD_ACCOUNT = "root"',
+            "systemctl start hardened-blikvm",
+            "systemctl enable hardened-blikvm",
+            "physical Power/Reset",
+        ):
+            self.assertNotIn(forbidden, policy)
+        self.assertIn("tools/runtime_provisioning_policy.py", checks)
+        self.assertIn("tools/test_runtime_provisioning_policy.py", checks)
+
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"
