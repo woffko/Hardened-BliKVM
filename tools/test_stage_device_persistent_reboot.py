@@ -53,6 +53,12 @@ class StageDevicePersistentRebootTests(unittest.TestCase):
         self.assertIn("persistent_state", guard)
         self.assertIn("account_state_valid", guard)
         self.assertIn("cutover_orphans_absent", guard)
+        self.assertIn("runtime_package_ready", guard)
+        self.assertIn("0.1.0~dev2", guard)
+        self.assertIn(
+            "! grep -Fq 'ConditionPathExists=/run/kvmd/'",
+            reboot.REMOTE_HELPERS,
+        )
         self.assertIn("systemctl disable --now hardened-blikvm-nginx.service", guard)
         self.assertIn("systemctl enable kvmd-nginx.service", guard)
         self.assertNotIn("systemctl stop kvmd.service", guard)

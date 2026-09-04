@@ -20,6 +20,7 @@ from typing import Mapping, TypedDict, cast
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools import build_debian_runtime_package as debian
 from tools import stage_device_prototype as prototype
 from tools import stage_device_web_cutover as cutover
 from tools.capture_pikvm_baseline import write_json_0600_atomic
@@ -35,6 +36,7 @@ PRE_KEYS = {
     "orphan_cutover_artifacts_absent",
     "ports_exact",
     "rootfs_mode",
+    "runtime_package_ready",
     "setup_closed",
     "units_persistent",
     "vendor_nginx_disabled",
@@ -48,6 +50,7 @@ POST_KEYS = {
     "kvmd_active",
     "orphan_cutover_artifacts_absent",
     "ports_exact",
+    "runtime_package_ready",
     "setup_closed",
     "tls12",
     "tls13",
@@ -61,6 +64,7 @@ FINAL_KEYS = {
     "kvmd_active",
     "orphan_cutover_artifacts_absent",
     "ports_exact",
+    "runtime_package_ready",
     "setup_closed",
     "units_persistent",
     "vendor_nginx_disabled",
@@ -189,6 +193,11 @@ cutover_orphans_absent() {{
   [ -z "$(find /var/lib -maxdepth 1 -type d -name 'hardened-blikvm-web-cutover-*' -print -quit)" ]
   [ -z "$(find /etc/systemd/system -maxdepth 3 -name 'hardened-blikvm-web-cutover-*' -print -quit)" ]
 }}
+runtime_package_ready() {{
+  [ "$(dpkg-query -W -f='${{db:Status-Abbrev}}:${{Version}}:${{Architecture}}' "$package_name" 2>/dev/null || true)" = "ii :$package_version:arm64" ]
+  ! grep -Fq 'ConditionPathExists=/run/kvmd/' /lib/systemd/system/hardened-blikvm-platform-broker.service
+  ! grep -Fq 'ConditionPathExists=/run/kvmd/' /lib/systemd/system/hardened-blikvm-video-proxy.service
+}}
 persistent_state() {{
   product_active_enabled &&
   [ "$(systemctl is-active hardened-blikvm-nginx.service 2>/dev/null || true)" = active ] &&
@@ -196,7 +205,7 @@ persistent_state() {{
   [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = inactive ] &&
   [ "$(service_enabled kvmd-nginx.service)" = disabled ] &&
   [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ] &&
-  control_boundary_absent && ports_exact && setup_closed && cutover_orphans_absent &&
+  control_boundary_absent && ports_exact && setup_closed && cutover_orphans_absent && runtime_package_ready &&
   curl --noproxy '*' --insecure --silent --fail --max-time 5 --output /dev/null https://127.0.0.1/api/health
 }}
 """.strip()
@@ -215,6 +224,8 @@ def _path_values(paths_value: Paths) -> dict[str, str]:
         "guard_timer_part": paths_value.timer_part,
         "guard_timer_link": paths_value.timer_link,
         "state_root": STATE_ROOT,
+        "package_name": debian.PACKAGE_NAME,
+        "package_version": debian.PACKAGE_VERSION,
     }
 
 
@@ -252,6 +263,7 @@ emit kvmd_active active
 emit orphan_cutover_artifacts_absent yes
 emit control_boundary_absent yes
 emit rootfs_mode rw
+emit runtime_package_ready yes
 """.strip()
     return f"{_assignments(values)}\n{REMOTE_HELPERS}\n{body}"
 
@@ -439,6 +451,7 @@ emit tls13 passed
 emit kvmd_active active
 emit orphan_cutover_artifacts_absent yes
 emit control_boundary_absent yes
+emit runtime_package_ready yes
 """.strip()
     return f"{_assignments(values)}\n{REMOTE_HELPERS}\n{body}"
 
@@ -480,6 +493,7 @@ emit setup_closed yes
 emit kvmd_active active
 emit orphan_cutover_artifacts_absent yes
 emit control_boundary_absent yes
+emit runtime_package_ready yes
 """.strip()
     return f"{_assignments(values)}\n{REMOTE_HELPERS}\n{body}"
 
@@ -617,6 +631,7 @@ def main() -> int:
                 "atxPowerReset": False,
                 "accountChanged": False,
                 "secretEmitted": False,
+                "runtimePackage": debian.PACKAGE_VERSION,
             },
         }
         write_json_0600_atomic(output, receipt)
