@@ -26,7 +26,13 @@ class RecoverDeviceWebCutoverFallbackTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertIn('rm -f -- "$config_target" "$unit_target"', script)
         self.assertIn("product_inactive_disabled", script)
-        self.assertIn("orphan_absent", script)
+        self.assertIn("validate_orphan", script)
+        self.assertIn("remove_orphan", script)
+        self.assertIn(
+            "hardened-blikvm-web-cutover-[0-9a-f]{12}-[0-9a-f]{16}",
+            script,
+        )
+        self.assertIn("root_count", script)
         self.assertNotIn("systemctl stop", script)
         self.assertNotIn("systemctl disable", script)
         self.assertNotIn("rm -rf", script)

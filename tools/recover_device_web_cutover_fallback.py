@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
 import shlex
 import sys
 from typing import Mapping, TypedDict, cast
@@ -26,6 +27,8 @@ FACT_KEYS = {
     "hardened_units_inactive",
     "kvmd_active",
     "orphan_cutover_artifacts_absent",
+    "orphan_cutover_artifacts_removed",
+    "orphan_roots_removed",
     "ports_restored",
     "unit_removed",
     "vendor_nginx_active",
@@ -108,6 +111,82 @@ orphan_absent() {
   [ -z "$(find /var/lib -maxdepth 1 -type d -name 'hardened-blikvm-web-cutover-*' -print -quit)" ]
   [ -z "$(find /etc/systemd/system -maxdepth 3 -name 'hardened-blikvm-web-cutover-*' -print -quit)" ]
 }
+validate_orphan() {
+  root=$1
+  printf '%s\n' "$root" | grep -Eq '^/var/lib/hardened-blikvm-web-cutover-[0-9a-f]{12}-[0-9a-f]{16}$'
+  base=${root##*/}
+  suffix=${base#hardened-blikvm-web-cutover-}
+  digest_prefix=${suffix%-*}
+  run_id=${suffix##*-}
+  unit_name="$base-rollback.service"
+  unit_path="/etc/systemd/system/$unit_name"
+  unit_link="/etc/systemd/system/sysinit.target.wants/$unit_name"
+  marker="$root/.owner"
+  [ -d "$root" ] && [ ! -L "$root" ]
+  [ "$(stat -c '%a:%u:%g' "$root")" = 700:0:0 ]
+  [ -f "$marker" ] && [ ! -L "$marker" ]
+  [ "$(stat -c '%a:%u:%g:%h' "$marker")" = 600:0:0:1 ]
+  marker_value=$(cat "$marker")
+  printf '%s\n' "$marker_value" | grep -Eq '^[0-9a-f]{16}:[0-9a-f]{64}$'
+  [ "${marker_value%%:*}" = "$run_id" ]
+  marker_digest=${marker_value#*:}
+  [ "$(printf '%s' "$marker_digest" | cut -c 1-12)" = "$digest_prefix" ]
+  [ -f "$unit_path" ] && [ ! -L "$unit_path" ]
+  [ "$(stat -c '%a:%u:%g:%h' "$unit_path")" = 644:0:0:1 ]
+  [ "$(stat -c '%s' "$unit_path")" -le 8192 ]
+  grep -Fqx "ConditionPathExists=$marker" "$unit_path"
+  grep -Fqx "ExecStart=/bin/sh $root/rollback.sh boot" "$unit_path"
+  [ -L "$unit_link" ] && [ "$(readlink "$unit_link")" = "../$unit_name" ]
+  unexpected=$(find "$root" -mindepth 1 -maxdepth 1 \
+    ! -name .owner ! -name rollback.sh ! -name watchdog.sh ! -name setup.json \
+    ! -name nginx-validation.conf ! -name nginx.conf.part ! -name nginx.service.part \
+    ! -name nginx-validation -print -quit)
+  [ -z "$unexpected" ]
+  for name in rollback.sh watchdog.sh setup.json nginx-validation.conf nginx.conf.part nginx.service.part; do
+    path="$root/$name"
+    [ -e "$path" ] || continue
+    [ -f "$path" ] && [ ! -L "$path" ]
+    [ "$(stat -c '%u:%g:%h' "$path")" = 0:0:1 ]
+    [ "$(stat -c '%s' "$path")" -le 8388608 ]
+  done
+  validation="$root/nginx-validation"
+  if [ -e "$validation" ]; then
+    [ -d "$validation" ] && [ ! -L "$validation" ]
+    [ "$(stat -c '%u:%g' "$validation")" = 0:0 ]
+    unexpected=$(find "$validation" -mindepth 1 -maxdepth 1 ! -name client-temp ! -name proxy-temp ! -name nginx.pid -print -quit)
+    [ -z "$unexpected" ]
+    for directory in "$validation/client-temp" "$validation/proxy-temp"; do
+      [ -e "$directory" ] || continue
+      [ -d "$directory" ] && [ ! -L "$directory" ]
+      [ -z "$(find "$directory" -mindepth 1 -print -quit)" ]
+    done
+    if [ -e "$validation/nginx.pid" ]; then
+      [ -f "$validation/nginx.pid" ] && [ ! -L "$validation/nginx.pid" ]
+      [ "$(stat -c '%u:%g:%h' "$validation/nginx.pid")" = 0:0:1 ]
+      [ "$(stat -c '%s' "$validation/nginx.pid")" -le 32 ]
+    fi
+  fi
+}
+remove_orphan() {
+  root=$1
+  validate_orphan "$root"
+  base=${root##*/}
+  unit_name="$base-rollback.service"
+  unit_path="/etc/systemd/system/$unit_name"
+  unit_link="/etc/systemd/system/sysinit.target.wants/$unit_name"
+  validation="$root/nginx-validation"
+  if [ -e "$validation/nginx.pid" ]; then rm -f -- "$validation/nginx.pid"; fi
+  for directory in "$validation/client-temp" "$validation/proxy-temp"; do
+    if [ -d "$directory" ]; then rmdir "$directory"; fi
+  done
+  if [ -d "$validation" ]; then rmdir "$validation"; fi
+  for name in setup.json nginx-validation.conf nginx.conf.part nginx.service.part watchdog.sh rollback.sh .owner; do
+    path="$root/$name"
+    if [ -e "$path" ]; then rm -f -- "$path"; fi
+  done
+  rmdir "$root"
+  rm -f -- "$unit_link" "$unit_path"
+}
 [ "$(id -u)" = 0 ]
 root_options=$(findmnt -n -T / -o OPTIONS)
 case ",$root_options," in *,rw,*) ;; *) exit 1 ;; esac
@@ -117,7 +196,6 @@ case ",$root_options," in *,rw,*) ;; *) exit 1 ;; esac
 product_inactive_disabled
 control_boundary_absent
 ports_restored
-orphan_absent
 [ ! -e "$state_root" ]
 [ -f "$config_target" ] && [ ! -L "$config_target" ]
 [ "$(stat -c '%a:%u:%g:%h' "$config_target")" = 600:0:0:1 ]
@@ -129,7 +207,15 @@ orphan_absent
 [ "$(service_enabled hardened-blikvm-nginx.service)" = disabled ]
 [ "$(sha256sum "$certificate_path" | awk '{print $1}')" = "$certificate_sha256" ]
 [ "$(sha256sum "$key_path" | awk '{print $1}')" = "$key_sha256" ]
+roots=$(find /var/lib -maxdepth 1 -type d -name 'hardened-blikvm-web-cutover-*' -print | sort)
+root_count=$(printf '%s\n' "$roots" | awk 'NF {count++} END {print count+0}')
+unit_count=$(find /etc/systemd/system -maxdepth 1 -type f -name 'hardened-blikvm-web-cutover-*-rollback.service' -print | wc -l)
+link_count=$(find /etc/systemd/system/sysinit.target.wants -maxdepth 1 -type l -name 'hardened-blikvm-web-cutover-*-rollback.service' -print | wc -l)
+[ "$root_count" -ge 1 ] && [ "$root_count" -le 16 ]
+[ "$unit_count" = "$root_count" ] && [ "$link_count" = "$root_count" ]
+for root in $roots; do validate_orphan "$root"; done
 rm -f -- "$config_target" "$unit_target"
+for root in $roots; do remove_orphan "$root"; done
 systemctl daemon-reload
 [ "$(systemctl show -p LoadState --value hardened-blikvm-nginx.service 2>/dev/null || true)" = not-found ]
 product_inactive_disabled
@@ -144,6 +230,8 @@ emit vendor_nginx_active yes
 emit kvmd_active active
 emit ports_restored yes
 emit orphan_cutover_artifacts_absent yes
+emit orphan_cutover_artifacts_removed yes
+emit orphan_roots_removed "$root_count"
 emit control_boundary_absent yes
 """.strip()
     return f"{_assignments(values)}\n{body}"
@@ -155,7 +243,15 @@ def parse_facts(raw: bytes) -> dict[str, str]:
     facts: dict[str, str] = {}
     for line in raw.decode("ascii", errors="strict").splitlines():
         key, separator, value = line.partition("=")
-        if separator != "=" or key not in FACT_KEYS or key in facts or value not in {"yes", "active"}:
+        if (
+            separator != "="
+            or key not in FACT_KEYS
+            or key in facts
+            or (
+                value not in {"yes", "active"}
+                and not re.fullmatch(r"[0-9]{1,2}", value)
+            )
+        ):
             raise ValueError("fallback recovery returned an invalid fact")
         facts[key] = value
     if set(facts) != FACT_KEYS:
