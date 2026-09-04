@@ -3,6 +3,17 @@
 These files describe the intended service boundary; they are not installed by
 the host development build.
 
+`tools/build_debian_runtime_package.py` creates the first deterministic
+`arm64` package slice from one exact prototype bundle. The package is inert: it
+has no maintainer scripts and installs only the four read-only runtime
+binaries, web tree, disabled unit templates, and documentation. Nginx and
+sysusers fragments are documentation examples rather than active `/etc` or
+`/usr/lib/sysusers.d` inputs. Update, diagnostic persistence, credentials,
+accounts, tmpfiles, state roots, service activation, and hardware mutation are
+excluded. `tools/stage_device_debian_runtime_package.py` proves a guarded
+install/hash/mode check/purge transaction; it does not authorize retained
+installation or provisioning.
+
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group

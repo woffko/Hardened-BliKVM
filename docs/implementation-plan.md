@@ -604,6 +604,19 @@ or Power/Reset action. See `baselines/device-diagnostics-ui.md`. Permanent
 packaging, production history/key/floor custody, soak, reboot, other browser
 engines, and release acceptance remain.
 
+Checkpoint: the first permanent-format package slice is a deterministic inert
+`arm64` Debian package. A read-only H616 preflight confirmed Jammy/dpkg/systemd,
+clean production paths/accounts/units, free loopback ports, and sufficient
+space. The AArch64 build now remaps project/Cargo/Rust source roots and rejects
+host paths in every shipped ELF. Two independent remapped archives and two
+independent `.deb` files matched byte-for-byte. A five-minute-watchdog H616
+gate installed the package, verified all 38 file hashes/modes/root ownership
+with units inactive and accounts/config/state absent, then purged it and
+confirmed complete functional cleanup while retaining normal dpkg audit
+history. See `baselines/device-debian-runtime-package.md`. Retained
+account/credential provisioning, service activation, Nginx integration, soak,
+reboot, update trust, and release acceptance remain.
+
 Checkpoint: the unlinked `bli-kvm-system-action-policy` now models only semantic
 reboot/shutdown requests with local-admin/reauthentication/confirmation, boot,
 update, storage, recovery and post-boot guards. Separate prepared/dispatching

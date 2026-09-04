@@ -68,7 +68,11 @@ The reversible H616 prototype and the application-update core are implemented:
   confirmation, rejected candidate timeout, rollback, and restored service;
 - a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;
 - reproducible stripped AArch64 static-PIE builds for all shipped Rust
-  processes and the prototype bundle;
+  processes and the prototype bundle, with host build paths remapped and
+  rejected by the ELF privacy gate;
+- a deterministic inert `arm64` Debian runtime package whose real H616
+  install/hash/mode verification/purge transaction passed without creating
+  accounts, credentials, state, listeners, or active services;
 - architecture, field-image, upstream, licensing, and security baselines;
 - project-scoped semantic LSP smoke fixtures.
 

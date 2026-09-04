@@ -2221,6 +2221,69 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(required, baseline)
 
+    def test_debian_runtime_package_is_inert_private_and_evidenced(self) -> None:
+        builder = (ROOT / "tools/build_debian_runtime_package.py").read_text()
+        gate = (ROOT / "tools/stage_device_debian_runtime_package.py").read_text()
+        remap = (ROOT / "scripts/rustc-remap-wrapper.sh").read_text()
+        verifier = (ROOT / "scripts/verify-aarch64-elf.sh").read_text()
+        baseline = (ROOT / "docs/baselines/device-debian-runtime-package.md").read_text()
+
+        for required in (
+            'PACKAGE_NAME = "hardened-blikvm-runtime"',
+            '"autoStart": False',
+            '"unitTemplatesActive": False',
+            '"accountsProvisioned": False',
+            '"credentialsIncluded": False',
+            '"nginxConfigActive": False',
+            '"updateRuntimeIncluded": False',
+            '"diagnosticPersistenceIncluded": False',
+            '"hardwareMutationIncluded": False',
+            "clean_builder_commit()",
+            "audit_package_tree(package_root)",
+        ):
+            self.assertIn(required, builder)
+        for forbidden in (
+            '"usr/lib/sysusers.d/',
+            '"etc/nginx/',
+            '"etc/hardened-blikvm/',
+        ):
+            self.assertNotIn(forbidden, builder)
+
+        self.assertIn("--remap-path-prefix=", remap)
+        self.assertIn("/usr/src/hardened-blikvm", remap)
+        self.assertIn("host-specific build path entered ELF", verifier)
+        for required in (
+            "dpkg -i",
+            "dpkg --purge",
+            "sleep 300",
+            "installed_hashes_verified",
+            "account_databases_unchanged",
+            "nginx_tree_unchanged",
+            '"dpkgAuditTrailRetained": True',
+            '"physicalActionsInvoked": False',
+        ):
+            self.assertIn(required, gate)
+        for forbidden in (
+            "systemctl start hardened-blikvm",
+            "systemctl enable hardened-blikvm",
+            "systemctl restart kvmd",
+            "systemd-sysusers",
+            "systemd-tmpfiles",
+        ):
+            self.assertNotIn(forbidden, gate)
+
+        for required in (
+            "6b1add8dfe1abf01cf62d606b712e4f7e77a3ec1",
+            "d3e9f393f9714300b33a50fdc0769153",
+            "fc544c445d944df7ac095d9afa416b42",
+            "7fbe7d27828f929ba614214860d015b2fb8bed316ea7274828fe1710c88dea21",
+            "c0edad8fc26ccbc3199e5714e92860c39c15fcb0",
+            "53a4d4bfc062057954634e0421a2ec7801e917a488d22c957cd8244d36dba6a5",
+            "20c5ec588bb94ddcb6250d926ea11260",
+            "dpkg audit-log entries",
+        ):
+            self.assertIn(required, baseline)
+
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"
