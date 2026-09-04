@@ -58,7 +58,9 @@ all update units disabled/inactive, absent configuration/state/slots/runtime,
 unchanged account/TLS/Nginx hashes, unchanged running service PIDs and restart
 counters, exact public listener ownership, and clean `dpkg --audit`. It then
 retains the inert package and independently repeats the checks in a new SSH
-session.
+session. The independent `--verify-only` path consumes the accepted private
+receipt only to bind the original PID/restart/account/configuration/TLS facts;
+it performs no upload, package-manager operation, unit transition, or staging.
 
 Production public-key enrollment, state/slot initialization, unit activation,
 signed candidate staging, interruption, repeated reboot, rollback, update GUI,

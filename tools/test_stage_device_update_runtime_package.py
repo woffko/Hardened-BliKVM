@@ -132,6 +132,16 @@ class StageDeviceUpdateRuntimePackageTests(unittest.TestCase):
         self.assertNotIn("build_upload_script", source[branch:upload])
         self.assertIn('"deviceChanged": False', source[branch:upload])
 
+    def test_verify_only_uses_accepted_receipt_before_preflight(self) -> None:
+        source = Path(stage.__file__).read_text(encoding="utf-8")
+        verify = source.index("if options.verify_only:", source.index("def main()"))
+        preflight = source.index("build_preflight_script", verify)
+        between = source[verify:preflight]
+        self.assertIn("load_accepted_receipt", between)
+        self.assertIn("remove_guard=False", between)
+        self.assertIn('"deviceChanged": False', between)
+        self.assertNotIn("build_upload_script", between)
+
     def test_fact_parser_is_exact(self) -> None:
         raw = "".join(f"{key}=yes\n" for key in sorted(stage.APPLY_KEYS)).encode()
         self.assertEqual(set(stage.parse_facts(raw, stage.APPLY_KEYS)), stage.APPLY_KEYS)
@@ -147,6 +157,8 @@ class StageDeviceUpdateRuntimePackageTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertIn(b"--preflight-only", result.stdout)
+        self.assertIn(b"--verify-only", result.stdout)
+        self.assertIn(b"--accepted-receipt", result.stdout)
 
 
 if __name__ == "__main__":

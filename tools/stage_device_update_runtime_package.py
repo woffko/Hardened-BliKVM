@@ -165,6 +165,8 @@ class Options:
     baseline: str
     output: str
     preflight_only: bool
+    verify_only: bool
+    accepted_receipt: str | None
 
 
 class InstallReceipt(TypedDict):
@@ -192,7 +194,10 @@ def parse_args() -> Options:
     parser.add_argument("--expected-builder-commit", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--preflight-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--preflight-only", action="store_true")
+    mode.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--accepted-receipt")
     namespace = parser.parse_args()
     return Options(
         endpoint=cast(str, namespace.endpoint),
@@ -208,6 +213,8 @@ def parse_args() -> Options:
         baseline=cast(str, namespace.baseline),
         output=cast(str, namespace.output),
         preflight_only=cast(bool, namespace.preflight_only),
+        verify_only=cast(bool, namespace.verify_only),
+        accepted_receipt=cast(str | None, namespace.accepted_receipt),
     )
 
 
@@ -410,6 +417,44 @@ def parse_facts(raw: bytes, expected: set[str]) -> dict[str, str]:
     if set(facts) != expected:
         raise ValueError("update package gate result was incomplete")
     return dict(sorted(facts.items()))
+
+
+def load_accepted_receipt(path_value: str | None, package: PackageInfo) -> dict[str, str]:
+    if not path_value:
+        raise ValueError("accepted update package receipt is required")
+    path = Path(path_value)
+    private_root = (Path(__file__).resolve().parent.parent / "evidence/private").resolve()
+    resolved = path.resolve()
+    if (
+        resolved.parent != private_root
+        or path.is_symlink()
+        or not path.is_file()
+        or path.stat().st_mode & 0o777 != 0o600
+        or path.stat().st_size > 64 * 1024
+    ):
+        raise ValueError("accepted update package receipt is unsafe")
+    decoded = cast(object, json.loads(path.read_text(encoding="utf-8")))
+    if not isinstance(decoded, dict):
+        raise ValueError("accepted update package receipt root is invalid")
+    receipt = cast(dict[str, object], decoded)
+    if (
+        receipt.get("schemaVersion") != 1
+        or receipt.get("probe")
+        != "hardened-blikvm-update-runtime-package-install"
+        or receipt.get("result") != "passed"
+        or receipt.get("packageSha256") != package.sha256
+        or receipt.get("sourceCommit") != package.source_commit
+    ):
+        raise ValueError("accepted update package receipt identity is invalid")
+    preflight_value = receipt.get("preflight")
+    if not isinstance(preflight_value, dict):
+        raise ValueError("accepted update package receipt preflight is invalid")
+    lines: list[str] = []
+    for key, value in cast(dict[object, object], preflight_value).items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError("accepted update package receipt fact is invalid")
+        lines.append(f"{key}={value}\n")
+    return parse_facts("".join(lines).encode("ascii", errors="strict"), PRE_KEYS)
 
 
 REMOTE_HELPERS = rf"""
@@ -980,6 +1025,8 @@ def _zero(secret: bytearray) -> None:
 
 def main() -> int:
     options = parse_args()
+    if options.accepted_receipt and not options.verify_only:
+        raise ValueError("accepted receipt is valid only for verify-only mode")
     output = prototype.validate_output_path(options.output)
     package = validate_package(
         options.package,
@@ -1000,6 +1047,43 @@ def main() -> int:
     stage = "preflight"
     preflight: dict[str, str] = {}
     try:
+        if options.verify_only:
+            preflight = load_accepted_receipt(options.accepted_receipt, package)
+            result = prototype.run_ssh(
+                target,
+                secret,
+                build_final_script(
+                    paths_value,
+                    package,
+                    baseline,
+                    preflight,
+                    remove_guard=False,
+                ),
+                timeout=90,
+            )
+            if result.returncode != 0:
+                raise ValueError("update package independent verification failed")
+            final_state = parse_facts(result.stdout, FINAL_KEYS)
+            write_json_0600_atomic(
+                output,
+                {
+                    "schemaVersion": 1,
+                    "probe": "hardened-blikvm-update-runtime-package-verification",
+                    "result": "passed",
+                    "packageSha256": package.sha256,
+                    "sourceCommit": package.source_commit,
+                    "facts": final_state,
+                    "policy": {
+                        "packageRetained": True,
+                        "deviceChanged": False,
+                        "updateAuthorityCreated": False,
+                        "deviceReboot": False,
+                        "targetPowerControl": False,
+                        "secretEmitted": False,
+                    },
+                },
+            )
+            return 0
         result = prototype.run_ssh(
             target,
             secret,
