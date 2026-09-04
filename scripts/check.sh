@@ -46,6 +46,7 @@ python3 -m unittest \
   tools/test_runtime_provisioning_policy.py \
   tools/test_capture_runtime_provision.py \
   tools/test_stage_device_runtime_provision.py \
+  tools/test_stage_device_runtime_activation.py \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
@@ -79,6 +80,7 @@ python3 -m py_compile \
   tools/stage_device_runtime_provision.py \
   tools/stage_device_runtime_provision_prepare.py \
   tools/recover_device_runtime_provision.py \
+  tools/stage_device_runtime_activation.py \
   tools/capture_debian_runtime_retain_preflight.py \
   tools/capture_debian_runtime_retained.py \
   tools/build_debian_runtime_package.py \
@@ -111,6 +113,7 @@ python3 -m py_compile \
   tools/test_runtime_provisioning_policy.py \
   tools/test_capture_runtime_provision.py \
   tools/test_stage_device_runtime_provision.py \
+  tools/test_stage_device_runtime_activation.py \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
@@ -147,6 +150,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_runtime_provision.py \
     tools/stage_device_runtime_provision_prepare.py \
     tools/recover_device_runtime_provision.py \
+    tools/stage_device_runtime_activation.py \
     tools/capture_debian_runtime_retain_preflight.py \
     tools/capture_debian_runtime_retained.py \
     tools/build_debian_runtime_package.py \
@@ -178,6 +182,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_runtime_provisioning_policy.py \
     tools/test_capture_runtime_provision.py \
     tools/test_stage_device_runtime_provision.py \
+    tools/test_stage_device_runtime_activation.py \
     tools/test_capture_debian_runtime_retain_preflight.py \
     tools/test_capture_debian_runtime_retained.py \
     tools/test_build_debian_runtime_package.py \

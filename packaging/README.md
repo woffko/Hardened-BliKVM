@@ -52,6 +52,17 @@ owned rollback script with reviewed local bytes, executes rollback, and then
 requires the independent retained-package-only validator. It cannot apply or
 commit provisioning.
 
+`tools/stage_device_runtime_activation.py` is the next reversible native gate.
+It arms boot/timed rollback, applies one marker-owned `/run` drop-in that
+disables secure cookies only for direct loopback testing, and starts the
+installed platform broker, video proxy, and server without enabling them. The
+control service/socket boundary remains inactive and absent. The gate checks
+systemd identities/sandboxing, capabilities, network namespaces, TCP/UDP/Unix
+sockets, account setup/login, inventory, Diagnostics, MJPEG reconnect, session
+revocation, temporary artifacts, empty cgroups, and exact cleanup. Production
+secure cookies and Nginx/TLS remain unchanged and require the next gate. Native
+H616 acceptance for this installed-unit activation is not yet recorded.
+
 `hardened-blikvm-platform-broker.service` has no TCP address family, no device
 namespace access, no capabilities, and no writable path outside its runtime
 directory. During the KVMD transition it joins the `kvmd` supplementary group

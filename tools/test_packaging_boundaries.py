@@ -2474,6 +2474,54 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(required, baseline)
 
+    def test_runtime_activation_gate_is_reversible_loopback_and_control_free(
+        self,
+    ) -> None:
+        gate = (ROOT / "tools/stage_device_runtime_activation.py").read_text()
+        design = (ROOT / "docs/design/runtime-activation-gate-v1.md").read_text()
+        checks = (ROOT / "scripts/check.sh").read_text()
+
+        for required in (
+            'systemctl start "$broker_unit"',
+            'systemctl start "$video_unit"',
+            'systemctl start "$server_unit"',
+            "BLI_KVM_SECURE_COOKIES=0",
+            "hardened-blikvm-control-broker.socket",
+            "control_boundary_absent",
+            "process_no_udp_or_abstract",
+            "server_listener_exact",
+            "cgroup_empty",
+            "socket_tail_clean",
+            "CREDENTIALS_DIRECTORY",
+            "setpriv --reuid",
+            "/api/inventory",
+            "/api/diagnostics",
+            "/api/stream/mjpeg",
+            "/api/auth/logout",
+            '"controlServiceStarted": False',
+            '"servicesEnabled": False',
+            '"nginxMutation": False',
+            '"secretEmitted": False',
+            "WantedBy=sysinit.target",
+        ):
+            self.assertIn(required, gate + design)
+        for forbidden in (
+            "systemctl start hardened-blikvm-control",
+            "systemctl enable hardened-blikvm",
+            "systemctl restart kvmd",
+            "systemctl stop kvmd",
+            "dpkg -i",
+            "dpkg --purge",
+            "rm -rf",
+            "/etc/nginx/",
+            "reboot",
+            "shutdown",
+            "poweroff",
+        ):
+            self.assertNotIn(forbidden, gate)
+        self.assertIn("tools/stage_device_runtime_activation.py", checks)
+        self.assertIn("tools/test_stage_device_runtime_activation.py", checks)
+
     def test_video_proxy_has_a_distinct_unprivileged_unix_only_boundary(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-video-proxy.service"
