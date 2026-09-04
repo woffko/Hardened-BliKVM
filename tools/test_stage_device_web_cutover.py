@@ -117,6 +117,7 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             "systemctl enable hardened-blikvm-platform-broker.service",
             "first_setup_required",
             "served_certificate_hash",
+            "source_certificate_der_hash",
             "nginx_validation_b64",
             "phase=validate-nginx-config",
             "phase=tls-certificate",
@@ -138,6 +139,7 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             "poweroff",
             "shutdown",
             "rm -rf",
+            'served_certificate_hash)" = "$certificate_sha256"',
         ):
             self.assertNotIn(forbidden, script)
 

@@ -454,6 +454,9 @@ served_certificate_hash() {
   [ -n "$certificate" ]
   printf '%s\n' "$certificate" | openssl x509 -outform DER 2>/dev/null | sha256sum | awk '{print $1}'
 }
+source_certificate_der_hash() {
+  openssl x509 -in "$certificate_path" -outform DER 2>/dev/null | sha256sum | awk '{print $1}'
+}
 first_setup_required() {
   [ ! -e "$state_root/account.json" ]
   response=$(mktemp /tmp/hardened-blikvm-setup-check.XXXXXX)
@@ -611,7 +614,7 @@ if [ "$1" != boot ]; then
     count=$((count + 1))
   done
   [ "$count" -lt 100 ]
-  [ "$(served_certificate_hash)" = "$certificate_sha256" ]
+  [ "$(served_certificate_hash)" = "$(source_certificate_der_hash)" ]
 fi
 [ "$(service_enabled kvmd-nginx.service)" = enabled ]
 [ "$(systemctl is-active kvmd.service 2>/dev/null || true)" = active ]
@@ -841,7 +844,7 @@ for worker in $(pgrep -P "$nginx_pid" 2>/dev/null || true); do
 done
 [ "$workers" -ge 1 ]
 phase=tls-certificate
-[ "$(served_certificate_hash)" = "$certificate_sha256" ]
+[ "$(served_certificate_hash)" = "$(source_certificate_der_hash)" ]
 phase=tls12
 curl --noproxy '*' --insecure --silent --fail --max-time 5 --tlsv1.2 --tls-max 1.2 --output /dev/null https://127.0.0.1/api/health
 phase=tls13
@@ -913,7 +916,7 @@ ports_exact
 [ "$(sha256sum "$unit_target" | awk '{print $1}')" = "$nginx_unit_sha256" ]
 [ "$(sha256sum "$certificate_path" | awk '{print $1}')" = "$certificate_sha256" ]
 [ "$(sha256sum "$key_path" | awk '{print $1}')" = "$key_sha256" ]
-[ "$(served_certificate_hash)" = "$certificate_sha256" ]
+[ "$(served_certificate_hash)" = "$(source_certificate_der_hash)" ]
 first_setup_required
 if [ "$commit_mode" = yes ]; then
   [ -f "$marker" ] && [ -f "$rollback_script" ]
@@ -992,7 +995,7 @@ if product_inactive_disabled &&
    [ ! -e "$config_target" ] && [ ! -e "$unit_target" ] && [ ! -e "$state_root" ] &&
    [ ! -e "$rollback_root" ] && [ ! -e "$boot_unit_path" ] && [ ! -e "$boot_unit_link" ] &&
    [ "$(systemctl show -p LoadState --value "$watchdog_unit" 2>/dev/null || true)" = not-found ] &&
-   ports_exact && [ "$(served_certificate_hash)" = "$certificate_sha256" ] &&
+   ports_exact && [ "$(served_certificate_hash)" = "$(source_certificate_der_hash)" ] &&
    [ "$(sha256sum "$certificate_path" | awk '{print $1}')" = "$certificate_sha256" ] &&
    [ "$(sha256sum "$key_path" | awk '{print $1}')" = "$key_sha256" ] &&
    control_boundary_absent; then
@@ -1004,7 +1007,7 @@ if product_active_enabled &&
    [ "$(service_enabled "$nginx_unit")" = enabled ] &&
    [ "$(systemctl is-active kvmd-nginx.service 2>/dev/null || true)" = inactive ] &&
    [ "$(service_enabled kvmd-nginx.service)" = disabled ] &&
-   ports_exact && [ "$(served_certificate_hash)" = "$certificate_sha256" ] &&
+   ports_exact && [ "$(served_certificate_hash)" = "$(source_certificate_der_hash)" ] &&
    [ ! -e "$rollback_root" ] && [ ! -e "$boot_unit_path" ] && [ ! -e "$boot_unit_link" ]; then
   emit cleanup_state committed
   exit 0
