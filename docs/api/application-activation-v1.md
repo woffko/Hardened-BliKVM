@@ -108,7 +108,7 @@ time, zeroizes token buffers, and reconciles challenge state with the manager.
 `bli-kvm-update-supervisor` exposes only fixed local commands. `validate-config`
 parses the public configuration without touching state, slots, or runtime.
 Packaged unprivileged services receive the root-only source through systemd
-`LoadCredential` and pass `%d/update-supervisor-config` to the existing config
+`LoadCredential` and pass `/run/credentials/%n/update-supervisor-config` to the existing config
 argument. Service-owned configuration is accepted only on the checked read-only
 credential mount under root-controlled `/run/credentials`; direct root-owned
 administrative configuration retains its existing validation.

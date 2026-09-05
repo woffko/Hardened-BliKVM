@@ -194,7 +194,8 @@ and private runtime directories. It reads the fixed root-owned
 `/etc/hardened-blikvm/update-supervisor.json`, which contains an Ed25519 public
 key and non-secret paths but no signing key. PID 1 delivers this root-owned
 mode-0600 file using `LoadCredential=update-supervisor-config:...`; the three
-update units read `%d/update-supervisor-config`. The Rust loader accepts a
+update units read `/run/credentials/%n/update-supervisor-config`. The explicit
+unit-name path also works with the target parser that rejects `%d`. The Rust loader accepts a
 service-owned credential only as the fixed direct child of a service directory
 under `/run/credentials`, with mode 0400, a single link, private parent,
 root-controlled ancestors, and a read-only mount verified on open descriptors.

@@ -87,7 +87,7 @@ The slots root is created mode 0750 and the state root mode 0700, both owned by
 the dedicated update identity with the accepted shared group. The supervisor
 runs as that identity under a bounded transient systemd sandbox. PID 1 must
 deliver the root-owned config using `LoadCredential=update-supervisor-config:`;
-the process reads `%d/update-supervisor-config`, not the inaccessible root-only
+the process reads `/run/credentials/%n/update-supervisor-config`, not the inaccessible root-only
 source path. Verify `validate-config` under that identity before staging.
 `stage`
 publishes the immutable signed slot without selecting it. `initialize` accepts

@@ -2711,7 +2711,8 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn("DevicePolicy=closed", unit)
             self.assertNotIn("AF_INET", unit)
             self.assertIn("LoadCredential=update-supervisor-config:/etc/hardened-blikvm/update-supervisor.json", unit)
-            self.assertIn("--config %d/update-supervisor-config", unit)
+            self.assertIn("--config /run/credentials/%n/update-supervisor-config", unit)
+            self.assertNotIn("%d", unit)
         self.assertIn("StandardInput=socket", confirmation)
         self.assertIn("confirm-stdin", confirmation)
         self.assertIn(
@@ -2780,7 +2781,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         )
         self.assertIn("ConditionPathExists=/run/hardened-blikvm-update/confirmed-apply-request.json", apply_confirmed)
         self.assertIn("User=hardened-blikvm-update", apply_confirmed)
-        self.assertIn("StandardInput=file:%d/confirmed-apply-request", apply_confirmed)
+        self.assertIn("StandardInput=file:/run/credentials/%n/confirmed-apply-request", apply_confirmed)
         self.assertIn("ack-confirmed-apply", apply_confirmed)
         self.assertIn("ExecStart=+/usr/bin/systemctl", apply_confirmed)
         watchdog = (ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.service").read_text()

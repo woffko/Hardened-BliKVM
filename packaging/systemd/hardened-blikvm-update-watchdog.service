@@ -18,7 +18,7 @@ RuntimeDirectory=hardened-blikvm-update
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 LoadCredential=update-supervisor-config:/etc/hardened-blikvm/update-supervisor.json
-ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor --config %d/update-supervisor-config watchdog-once
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor --config /run/credentials/%n/update-supervisor-config watchdog-once
 TimeoutStartSec=10s
 
 NoNewPrivileges=yes

@@ -52,3 +52,9 @@ an injected ExecStartPre failure must retain the request until a later retry
 successfully applies and acknowledges it. A separate deadline cleans abandoned
 fixture services, and the SSH wrapper verifies the production serving runtime
 before and after the test.
+
+The target parser rejected `%d` in ExecStart/ExecStartPost and StandardInput.
+The packaged templates now use `/run/credentials/%n/...`, preserving the
+actual credential mount while using the supported unit-name specifier. Earlier
+transient credential tests supplied the expanded path directly and therefore
+did not prove compatibility of `%d` in installed unit files.
