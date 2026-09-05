@@ -42,3 +42,36 @@ floor and refuses regression after confirmation, including subsequent cleanup
 checks. A confirmation that reached the manager before the auxiliary marker
 was saved remains recoverable. These are local consistency checks, not a claim
 of hardware-backed rollback protection against an attacker rewriting all state.
+
+## Device checkpoint: confirmation accepted, finalization awaiting approval
+
+Gate source `758de79` passed full host job
+`9bdd9f3fb89447b99fe37ff73218d9d6`. Device rehearsal
+`062537effa334281bbeffd58f00f5911` returned to sequence two with floor two,
+generation thirteen and `health_timeout`. Phase-bound browser job
+`0e8ff16caa394ce187396d74ec39a2a2` passed on the restored server.
+
+Activation `1ffb5944757d47f9ac65f6d801d085d3` then confirmed sequence four,
+floor four and generation sixteen with no pending operation. Account, TLS,
+trust and peer state were preserved. New-server browser job
+`a29748d129b54f2c8bbd8501bad481b8` passed login, inventory, Diagnostics,
+video decode, stream revocation and logout without control/WebSocket traffic.
+
+The subsequent commit submission was rejected by the approval service before
+job registration. No commit or cleanup success is claimed. Explicit user
+approval was requested before finalizing the transaction and removing its
+temporary files. The previously armed deadline recovery may change the guard
+phase; inspect authoritative device state before any approved continuation.
+Recovery must preserve confirmed floor four, not restore sequence-two state.
+Status-socket configuration and status API/GUI acceptance remain unfinished.
+
+The user subsequently explicitly authorized finalization and removal of the
+transaction's temporary files while retaining slot four. Post-approval
+inspection `d0e6c3195361444eaa1071c0e17dbcd8` found that the existing deadline
+had already settled the marker to `recovered`, preserving floor four,
+generation sixteen and the same serving PID. Approved cleanup
+`24c7568ca4eb4072a90629934f61f657` then passed: the exact guard directory and
+temporary transaction files were removed, with unchanged confirmed slot four,
+no pending update and preserved account/TLS/trust/peer state. No separate
+commit was needed after this authoritative recovered state. Source artifacts
+and host evidence were retained; no application slot or journal was deleted.
