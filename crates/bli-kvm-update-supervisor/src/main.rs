@@ -46,6 +46,7 @@ enum SupervisorCliError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliCommand {
+    ValidateConfig,
     Status,
     Stage(PathBuf),
     GarbageCollect(usize),
@@ -127,6 +128,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
     let (config_path, command) = parse_arguments(arguments)?;
     let config = load_config(&config_path)?;
     let receipt = match command {
+        CliCommand::ValidateConfig => json!({"command": "validate_config", "result": "valid"}),
         CliCommand::Stage(source) => {
             let stager = ApplicationSlotStager::open(config.slot_root)?;
             let abandoned_staging_removed = stager.cleanup_abandoned_staging()?.removed;
@@ -191,7 +193,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                             let mut locked = stdin.lock();
                             confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
                         }
-                        CliCommand::Stage(_) | CliCommand::GarbageCollect(_) => {
+                        CliCommand::Stage(_)
+                        | CliCommand::GarbageCollect(_)
+                        | CliCommand::ValidateConfig => {
                             unreachable!("command handled before supervisor creation")
                         }
                     }
@@ -227,6 +231,7 @@ fn parse_arguments(
         .and_then(|value| value.into_string().ok())
         .ok_or(SupervisorCliError::InvalidArguments)?;
     let command = match command.as_str() {
+        "validate-config" => CliCommand::ValidateConfig,
         "status" => CliCommand::Status,
         "watchdog-once" => CliCommand::WatchdogOnce,
         "confirm-stdin" => CliCommand::ConfirmStdin,

@@ -915,6 +915,13 @@ resolve the root-only config versus unprivileged updater access mismatch and
 verify configuration delivery under the actual service identity. Device
 state/slots have not been initialized by this host-only step.
 
+Configuration delivery is now implemented in source through systemd
+credentials with read-only mount and ownership checks in the Rust loader.
+The new local `validate-config` command validates the public config without
+creating state. Runtime verification under the service identity, AArch64
+rebuild and replacement of the inert updater package must pass before live
+state/slot initialization.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

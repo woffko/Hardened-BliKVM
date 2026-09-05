@@ -192,7 +192,16 @@ It is a development gate, not certificate provisioning.
 identity. Its watchdog service can write only the systemd-managed slots, state,
 and private runtime directories. It reads the fixed root-owned
 `/etc/hardened-blikvm/update-supervisor.json`, which contains an Ed25519 public
-key and non-secret paths but no signing key or credential. The source bundle
+key and non-secret paths but no signing key. PID 1 delivers this root-owned
+mode-0600 file using `LoadCredential=update-supervisor-config:...`; the three
+update units read `%d/update-supervisor-config`. The Rust loader accepts a
+service-owned credential only as the fixed direct child of a service directory
+under `/run/credentials`, with mode 0400, a single link, private parent,
+root-controlled ancestors, and a read-only mount verified on open descriptors.
+An ordinary writable-mount file cannot substitute for that credential. Direct
+root-owned configuration remains supported for administrative invocations.
+The local `validate-config` command checks configuration without opening or
+creating slots, journal, or runtime roots. The source bundle
 does not ship this file: production key selection and provisioning require a
 separate reviewed key ceremony.
 

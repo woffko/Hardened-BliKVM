@@ -67,5 +67,18 @@ loader contract and service-identity regression before persistent state/slot
 initialization. Do not work around it by running the updater as root or broadly
 opening the configuration directory.
 
+The subsequent source change implements `LoadCredential` for activation,
+watchdog, and confirmation, retaining the root-owned mode-0600 source. The
+loader permits service-owned copies only in `/run/credentials/<unit>/` with
+the fixed credential name, mode 0400, private same-owner parent, single link,
+root-controlled ancestors and kernel-confirmed read-only file/directory
+mounts. `validate-config` performs the load without opening application state.
+Rust tests and source/unit checks pass; runtime service-identity acceptance
+and a new updater package remain pending. The local systemd regression helper
+is `tools/verify_update_config_credential.py`; its attempted execution on WSL
+stopped before any fixture/service creation because noninteractive sudo was
+unavailable. Use the already authorized test device for the runtime check
+after rebuilding the AArch64 supervisor.
+
 No new package was uploaded, installed, or activated on H616 during this
 checkpoint. Device state/slots remain outside this host verification scope.

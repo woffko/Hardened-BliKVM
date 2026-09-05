@@ -1,7 +1,10 @@
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::Read,
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
 };
 
@@ -13,6 +16,8 @@ use crate::SupervisorCliError;
 
 const CONFIG_SCHEMA_VERSION: u32 = 1;
 const MAX_CONFIG_BYTES: u64 = 16 * 1024;
+const CREDENTIAL_ROOT: &str = "/run/credentials";
+const CREDENTIAL_NAME: &str = "update-supervisor-config";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -56,11 +61,16 @@ pub(crate) fn load_config(path: &Path) -> Result<LoadedConfig, SupervisorCliErro
         .metadata()
         .map_err(|_| SupervisorCliError::UnsafeConfigFile)?;
     let owner = metadata.uid();
+    let trusted_owner = if path.starts_with(CREDENTIAL_ROOT) {
+        trusted_credential(&file, path, effective_uid())?
+    } else {
+        trusted_config_owner(owner)
+    };
     if !metadata.is_file()
         || metadata.nlink() != 1
         || metadata.permissions().mode() & 0o022 != 0
         || metadata.permissions().mode() & 0o7000 != 0
-        || !trusted_config_owner(owner)
+        || !trusted_owner
         || metadata.len() == 0
         || metadata.len() > MAX_CONFIG_BYTES
     {
@@ -74,6 +84,58 @@ pub(crate) fn load_config(path: &Path) -> Result<LoadedConfig, SupervisorCliErro
     let document: ConfigDocument =
         serde_json::from_slice(&bytes).map_err(|_| SupervisorCliError::InvalidConfig)?;
     validate_document(document)
+}
+
+// Unlike an ordinary root-owned config, systemd's credential copy belongs to
+// the service UID. Accept it only beneath root-controlled ancestors and on a
+// read-only credential mount. Mode 0400 alone is not a trust boundary.
+fn trusted_credential(file: &File, path: &Path, uid: u32) -> Result<bool, SupervisorCliError> {
+    let Some(directory) = path.parent() else {
+        return Ok(false);
+    };
+    if path.file_name() != Some(std::ffi::OsStr::new(CREDENTIAL_NAME))
+        || directory.parent() != Some(Path::new(CREDENTIAL_ROOT))
+    {
+        return Ok(false);
+    }
+    let directory_file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(directory)
+        .map_err(|_| SupervisorCliError::UnsafeConfigFile)?;
+    let metadata = file.metadata()?;
+    let parent_metadata = directory_file.metadata()?;
+    if !metadata.is_file()
+        || metadata.uid() != uid
+        || metadata.nlink() != 1
+        || metadata.permissions().mode() & 0o7777 != 0o400
+        || !parent_metadata.is_dir()
+        || parent_metadata.uid() != uid
+        || parent_metadata.permissions().mode() & 0o7077 != 0
+        || metadata.dev() != parent_metadata.dev()
+        || !read_only_mount(file)?
+        || !read_only_mount(&directory_file)?
+    {
+        return Ok(false);
+    }
+    for ancestor in Path::new(CREDENTIAL_ROOT).ancestors() {
+        let metadata = fs::symlink_metadata(ancestor)?;
+        if !metadata.is_dir() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn read_only_mount(file: &File) -> Result<bool, SupervisorCliError> {
+    let mut result = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: fd is borrowed from a live File, and result points to writable
+    // storage of the required type. It is read only after fstatvfs succeeds.
+    if unsafe { libc::fstatvfs(file.as_raw_fd(), result.as_mut_ptr()) } != 0 {
+        return Err(SupervisorCliError::Io(std::io::Error::last_os_error()));
+    }
+    // SAFETY: fstatvfs returned success and initialized the structure.
+    Ok(unsafe { result.assume_init() }.f_flag & libc::ST_RDONLY != 0)
 }
 
 fn validate_document(document: ConfigDocument) -> Result<LoadedConfig, SupervisorCliError> {
@@ -153,6 +215,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn owner_read_only_file_on_writable_mount_is_not_a_credential() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(CREDENTIAL_NAME);
+        fs::write(&path, b"public config").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+        let file = File::open(&path).unwrap();
+        assert!(!read_only_mount(&file).unwrap());
+        assert!(!trusted_credential(&file, &path, effective_uid()).unwrap());
+        assert!(
+            !trusted_credential(
+                &file,
+                Path::new("/run/credentials/config.json"),
+                effective_uid()
+            )
+            .unwrap()
+        );
+    }
 
     fn valid_document(root: &Path) -> serde_json::Value {
         let signing = SigningKey::from_bytes(&[47; 32]);

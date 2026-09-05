@@ -85,7 +85,11 @@ synchronized early-boot rollback and a ten-minute timer.
 
 The slots root is created mode 0750 and the state root mode 0700, both owned by
 the dedicated update identity with the accepted shared group. The supervisor
-runs as that identity under a bounded transient systemd sandbox. `stage`
+runs as that identity under a bounded transient systemd sandbox. PID 1 must
+deliver the root-owned config using `LoadCredential=update-supervisor-config:`;
+the process reads `%d/update-supervisor-config`, not the inaccessible root-only
+source path. Verify `validate-config` under that identity before staging.
+`stage`
 publishes the immutable signed slot without selecting it. `initialize` accepts
 only that exact slot, writes generation-one state durably, and atomically sets
 `current` to the same slot. A read-only `status` must report identical active

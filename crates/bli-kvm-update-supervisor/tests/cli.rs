@@ -20,6 +20,41 @@ use tar::{Builder, EntryType, Header};
 const KEY_ID: &str = "app-supervisor-cli-test-key-1";
 
 #[test]
+fn validate_config_does_not_open_or_create_state_roots() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config.json");
+    fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "schemaVersion": 1, "product": APPLICATION_PRODUCT, "target": APPLICATION_TARGET,
+            "keyId": KEY_ID,
+            "publicKeyHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            "slotRoot": root.path().join("absent-slots"),
+            "stateRoot": root.path().join("absent-state"),
+            "runtimeRoot": root.path().join("absent-runtime"),
+            "systemSequence": 1, "healthTimeoutMs": 60_000,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&config, Permissions::from_mode(0o600)).unwrap();
+    let binary = env!("CARGO_BIN_EXE_bli-kvm-update-supervisor");
+    let result = command(binary, &config, &["validate-config"])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert_eq!(
+        json_output(&result),
+        json!({"command": "validate_config", "result": "valid"})
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    let extra = command(binary, &config, &["validate-config", "extra"])
+        .output()
+        .unwrap();
+    assert_eq!(extra.status.code(), Some(2));
+}
+
+#[test]
 fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() {
     let root = tempfile::tempdir().unwrap();
     let slots = create_private_directory(root.path(), "slots");

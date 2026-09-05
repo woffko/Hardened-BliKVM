@@ -105,7 +105,15 @@ ID twice around `CLOCK_BOOTTIME`, generates one-use 32-byte health credentials,
 stores them only in a mode-0400 runtime file, compares responses in constant
 time, zeroizes token buffers, and reconciles challenge state with the manager.
 
-`bli-kvm-update-supervisor` exposes only fixed local commands. `stage` accepts
+`bli-kvm-update-supervisor` exposes only fixed local commands. `validate-config`
+parses the public configuration without touching state, slots, or runtime.
+Packaged unprivileged services receive the root-only source through systemd
+`LoadCredential` and pass `%d/update-supervisor-config` to the existing config
+argument. Service-owned configuration is accepted only on the checked read-only
+credential mount under root-controlled `/run/credentials`; direct root-owned
+administrative configuration retains its existing validation.
+
+`stage` accepts
 one absolute local archive path and can publish a verified slot but cannot
 select it. `initialize`, `activate`, `status`, `gc`, and `watchdog-once` accept
 only their bounded non-secret values. Slot IDs, archive/config paths, and a

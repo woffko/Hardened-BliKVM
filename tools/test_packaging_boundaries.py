@@ -2710,7 +2710,8 @@ class PackagingBoundaryTests(unittest.TestCase):
             self.assertIn("CapabilityBoundingSet=\n", unit)
             self.assertIn("DevicePolicy=closed", unit)
             self.assertNotIn("AF_INET", unit)
-            self.assertNotIn("LoadCredential", unit)
+            self.assertIn("LoadCredential=update-supervisor-config:/etc/hardened-blikvm/update-supervisor.json", unit)
+            self.assertIn("--config %d/update-supervisor-config", unit)
         self.assertIn("StandardInput=socket", confirmation)
         self.assertIn("confirm-stdin", confirmation)
         self.assertIn(

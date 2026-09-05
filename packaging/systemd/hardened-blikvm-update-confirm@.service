@@ -18,7 +18,8 @@ RuntimeDirectoryPreserve=yes
 StandardInput=socket
 StandardOutput=journal
 StandardError=journal
-ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor --config /etc/hardened-blikvm/update-supervisor.json confirm-stdin
+LoadCredential=update-supervisor-config:/etc/hardened-blikvm/update-supervisor.json
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor --config %d/update-supervisor-config confirm-stdin
 TimeoutStartSec=10s
 
 NoNewPrivileges=yes
