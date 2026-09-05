@@ -9,9 +9,22 @@ from unittest.mock import patch
 
 from tools import upgrade_initialized_updater as gate
 from tools import stage_initialized_updater_upgrade as driver
+from tools import status_api_wiring as status_api
+from tools import persistent_status_wiring as persistent
 
 
 class InitializedUpdaterTests(unittest.TestCase):
+    def test_upgrade_preserves_retained_status_with_variant_bound_binaries(self) -> None:
+        for variant in ("old", "new"):
+            with patch.object(persistent, "validate_dropins") as validate, \
+                 patch.object(status_api, "snapshot", return_value={}) as snapshot, \
+                 patch.object(gate, "digest", return_value="a" * 64), patch.object(gate, "status_transport_inert") as inert:
+                value = gate.snapshot(variant)
+                validate.assert_called_once_with(True)
+                snapshot.assert_called_once_with(True, expected_version=gate.VERSIONS[variant], expected_supervisor_sha=gate.SUPERVISOR_HASHES[variant])
+                self.assertEqual(len(cast(dict[str, str], value["persistentDropinHashes"])), 2)
+                inert.assert_not_called()
+
     def test_status_transport_must_remain_disabled_without_active_workers(self) -> None:
         with patch.object(gate.serving, "inactive"), patch.object(gate.serving, "enabled", return_value="disabled"), \
              patch.object(Path, "exists", return_value=False), patch.object(Path, "is_symlink", return_value=False), \

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native, rollback-gated dev5 to dev6 replacement with operational state preserved."""
+"""Native, rollback-gated dev6 to dev7 replacement with retained status preserved."""
 
 from __future__ import annotations
 
@@ -30,16 +30,17 @@ sync_directory = serving.sync_directory
 PREFIX = "hardened-blikvm-updater-upgrade-"
 PACKAGE = "hardened-blikvm-update-runtime"
 PACKAGE_HASHES = {
-    "old": "da88afb8c4b97d1f71318f04afa44445b1f64d76c6bf6580ecfa4200e67099f4",
-    "new": "1634b7e42ff7ef8f10894b212bf635c6e23851d58bab5f69096705aed52cb939",
+    "old": "1634b7e42ff7ef8f10894b212bf635c6e23851d58bab5f69096705aed52cb939",
+    "new": "41cef0e7c5d8839a343ba2bf6a16f255e250659510f3cdb89b7f38870202e2a1",
 }
 SUPERVISOR_HASHES = {
-    "old": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
-    "new": "2a1fe1ca3b255c6b93b8b89b8cb2f85476fbed7453344cb0ec60fbe64033c181",
+    "old": "2a1fe1ca3b255c6b93b8b89b8cb2f85476fbed7453344cb0ec60fbe64033c181",
+    "new": "120add7f7086164709d5b1f9c5be7280b060a7c86e537741aa060bc85052471b",
 }
-VERSIONS = {"old": "0.1.0~dev5", "new": "0.1.0~dev6"}
+VERSIONS = {"old": "0.1.0~dev6", "new": "0.1.0~dev7"}
 HELPERS = ("switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py",
-           "enable_update_services.py", "upgrade_initialized_updater.py")
+           "enable_update_services.py", "upgrade_initialized_updater.py", "status_api_wiring.py",
+           "persistent_status_wiring.py", "persistent_status_contract.py")
 STATE_ROOTS = (Path("/var/lib/hardened-blikvm-slots"), Path("/var/lib/hardened-blikvm-update"))
 UNIT_ROOT = Path("/etc/systemd/system")
 
@@ -121,18 +122,19 @@ def snapshot(variant: str) -> dict[str, object]:
     # Lazy import avoids a module-initialization cycle; the guard carries both
     # this module and its operational observer as reviewed local helpers.
     if not __package__:
-        import enable_update_services as infrastructure
+        import status_api_wiring as status_api
+        import persistent_status_wiring as persistent
     else:
-        from tools import enable_update_services as infrastructure
-    status_transport_inert()
-    return infrastructure.enabled_snapshot(
-        expected_slot="app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53",
-        expected_floor=2, check_initial=False, expected_supervisor_sha=SUPERVISOR_HASHES[variant])
+        from tools import status_api_wiring as status_api
+        from tools import persistent_status_wiring as persistent
+    persistent.validate_dropins(True)
+    value = status_api.snapshot(True, expected_version=VERSIONS[variant], expected_supervisor_sha=SUPERVISOR_HASHES[variant])
+    value["persistentDropinHashes"] = {str(path): digest(path) for path in persistent.dropins()}
+    return value
 
 
 def verify(root: Path, plan: dict[str, object], variant: str, boot: bool = False) -> None:
     installed(root, variant)
-    status_transport_inert()
     before = cast(dict[str, object], plan["before"])
     if boot:
         require(tree_fingerprint(STATE_ROOTS) == before["state"], "persistent update state changed")
@@ -140,6 +142,8 @@ def verify(root: Path, plan: dict[str, object], variant: str, boot: bool = False
         require(all(digest(path) == runtime[name] for name, path in serving.CHECKED_FILES.items()),
                 "preserved configuration changed")
         require(digest(serving.UNIT) == before["nginxUnit"], "local Nginx unit changed")
+        require(all(digest(Path(name)) == value for name, value in cast(dict[str, str], before["persistentDropinHashes"]).items()),
+                "persistent status wiring changed")
     else:
         require(snapshot(variant) == before, "serving runtime or persistent state changed")
 

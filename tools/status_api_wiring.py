@@ -62,9 +62,9 @@ def runtime_environment(wired: bool) -> None:
     require(found == ([ENVIRONMENT.encode()] if wired else []), "running status environment mismatch")
 
 
-def snapshot(wired: bool) -> dict[str, object]:
+def snapshot(wired: bool, *, expected_version: str = "0.1.0~dev7", expected_supervisor_sha: str | None = None) -> dict[str, object]:
     require(checked(["dpkg-query", "-W", "-f=${db:Status-Abbrev}:${Version}", "hardened-blikvm-update-runtime"]).decode()
-            == "ii :0.1.0~dev6", "unexpected installed updater version")
+            == "ii :" + expected_version, "unexpected installed updater version")
     for unit, digest in UNIT_HASHES.items():
         require(u.digest(Path("/lib/systemd/system") / unit) == digest, "installed status unit changed")
     runtime_environment(wired)
@@ -78,7 +78,8 @@ def snapshot(wired: bool) -> dict[str, object]:
                 and meta.st_gid == grp.getgrnam("hardened-blikvm").gr_gid, "unsafe status socket")
     else:
         u.status_transport_inert()
-    value = infrastructure.enabled_snapshot(expected_slot=SLOT, expected_floor=5, check_initial=False)
+    value = infrastructure.enabled_snapshot(expected_slot=SLOT, expected_floor=5, check_initial=False,
+                                            expected_supervisor_sha=expected_supervisor_sha)
     # Restarting only the confirmed server is the intended runtime change.
     serving = cast(dict[str, object], value["serving"])
     serving.pop("serverPid")

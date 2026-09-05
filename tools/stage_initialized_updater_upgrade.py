@@ -26,10 +26,10 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 require = native.require
 SOURCE_BINDINGS = {
-    "old": ("17eb3c42c9cfc30cd474e66316bd97a5c396a684",
-            "c704dbd223cda0dd0025677d3abdf497f19323071a92ca7e7c3bcb34b08fe9de"),
-    "new": ("f22615d98ec69ff61fb49def0847df36c0ebb690",
+    "old": ("f22615d98ec69ff61fb49def0847df36c0ebb690",
             "21436994ad8f57db2ddf97e37fd241288cf56bc700efb8c7339ae7c5dd8e9d1c"),
+    "new": ("4d47974a13eea1e563107c6611a52d520d90ccf0",
+            "a8b1d9ec9150baf8f6f67d57a3d268fa5854c8415b13ccce58a53091077d91cc"),
 }
 
 
