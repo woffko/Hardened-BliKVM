@@ -935,6 +935,14 @@ runtime, inert update services and complete guard cleanup. The next task is
 installed-supervisor rehearsal with the actual signed bundle, followed by
 persistent state/slot initialization.
 
+Installed-supervisor rehearsal with the actual current-key bundle now passed
+on H616, including staging, initialization, pointer/status, all 27 installed
+payload files, repeat-stage idempotency and payload tamper rejection. Fixture
+group ownership was corrected to match systemd's explicit shared group;
+temporary roots were removed and the serving runtime/trust rechecked. The
+remaining initial-state gate must publish only identity-bound prepared roots
+and quarantine those same roots on rollback before any activation work.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

@@ -103,12 +103,23 @@ surface and performs no application transition.
 
 ## Rollback and acceptance
 
-Before retention, rollback may remove only roots and staging owned by the
-exact run marker. It validates path, filesystem, owner, type, link count,
-bounded tree shape, signed slot proof, journal hash, and current pointer before
-making read-only slot contents owner-writable for deletion. It refuses foreign,
-unexpected, or concurrently changed material and retains evidence instead of
-guessing.
+Before retention, rollback may detach only roots owned by the exact run
+marker. Empty directories are prepared beneath the private rollback root;
+their device/inode/owner/group identities are durably recorded before atomic
+publication at the two fixed state/slot paths. Rollback stops only its named
+transient services, verifies those directory identities, and atomically moves
+them back beneath the closed rollback root as quarantined evidence. Directory
+contents are preserved, including partial extraction or journal writes.
+Foreign or replaced roots are a hard stop. This avoids relying on a complete
+signed proof to recover a crash during the first extraction. Existing
+application/account state is never a candidate for this operation.
+
+The transient command unit uses `RuntimeDirectory=hardened-blikvm-update`
+without preservation, so PID 1 owns runtime-directory creation and cleanup.
+Persistent roots are owned by the updater UID and the explicit shared group,
+not the account's private primary group. The archive and its traversal parent
+must also be readable under the exact configured service group, as verified
+by the installed-supervisor rehearsal.
 
 Success removes all guards and transient assets, opens a new SSH transaction,
 revalidates the signed slot, journal, pointer, package equivalence, inert units,

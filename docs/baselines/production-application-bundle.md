@@ -115,5 +115,25 @@ directories under the real updater identity, verifies every payload file
 against the installed application, and cleans those directories. Persistent
 state initialization and application activation remain separate work.
 
+Installed-supervisor rehearsal then passed on H616 in job
+`2d648a841dd8425299c94bf7746eb89b`. The current signed bundle was staged and
+initialized under updater UID 984 / shared GID 989 in disposable directories.
+All 27 files matched the installed runtime and read-only slot metadata;
+generation-one state, current-pointer agreement, idempotency, and rejection of
+tampered payload passed. The original config, serving processes, and absence
+of production update roots were independently rechecked after cleanup.
+
+Two preliminary attempts failed before successful staging. The harness first
+lost the failure detail by trying to slice discarded SSH stderr; `9a7f9c2`
+introduced bounded runner JSON diagnostics. This then identified stage refusal
+in a fixture whose parent/archive used the account's private primary group,
+although the unit explicitly selected shared group `hardened-blikvm`.
+`a79efe4` aligned fixture ownership with the actual service group. The failing
+attempts cleaned up their temporary files; the diagnostic retry also proved
+the existing runtime unchanged. These were harness corrections; the retained
+supervisor and signed bundle were unchanged between the failing and passing
+runs. Final receipt:
+`evidence/private/device-installed-bundle-rehearsal-groupfix.json`.
+
 No new package was uploaded, installed, or activated on H616 during this
 checkpoint. Device state/slots remain outside this host verification scope.
