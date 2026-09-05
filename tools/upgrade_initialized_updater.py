@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native, rollback-gated dev2 to dev3 package replacement with state preserved."""
+"""Native, rollback-gated dev3 to dev4 package replacement with state preserved."""
 
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ sync_directory = serving.sync_directory
 PREFIX = "hardened-blikvm-updater-upgrade-"
 PACKAGE = "hardened-blikvm-update-runtime"
 PACKAGE_HASHES = {
-    "old": "b3c385adfbcdbe9d1932982b71a9551f7325f9b8467fc632e194009fc822c4e8",
-    "new": "688718d3adecddc61c6e183c0cd2a5888dc1dfa443ce8fc7b0170f4e249d9779",
+    "old": "688718d3adecddc61c6e183c0cd2a5888dc1dfa443ce8fc7b0170f4e249d9779",
+    "new": "fc63f2ee439fc5504526ba644544335a8f7e7eaea2cce95254fa39cd5ad98a3a",
 }
 SUPERVISOR_HASHES = {
-    "old": serving.bootstrap.CURRENT_SUPERVISOR_SHA,
+    "old": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
     "new": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
 }
-VERSIONS = {"old": "0.1.0~dev2", "new": "0.1.0~dev3"}
+VERSIONS = {"old": "0.1.0~dev3", "new": "0.1.0~dev4"}
 HELPERS = ("switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py")
 STATE_ROOTS = (Path("/var/lib/hardened-blikvm-slots"), Path("/var/lib/hardened-blikvm-update"))
 UNIT_ROOT = Path("/etc/systemd/system")

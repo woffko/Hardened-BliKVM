@@ -1,4 +1,22 @@
-# State-preserving updater dev2 to dev3 upgrade
+# State-preserving updater package upgrade
+
+The first dev2-to-dev3 transition below passed and its guards were removed;
+see `../baselines/device-updater-dev3.md`. The same controller is now explicitly
+bound to dev3-to-dev4. Existing receipts for the earlier package pair cannot
+authorize retaining the new pair; a new rollback rehearsal is required.
+
+Current dev4 source/builder: `bf956b16f752fa53e950bd9ee01339cd665e52ed`.
+Two independent source bundles match SHA-256
+`17b7d77b3696da6ba83ebd8abb77377280a627a731c8d6b30856f55ce5157737`;
+both dev4 packages match
+`fc63f2ee439fc5504526ba644544335a8f7e7eaea2cce95254fa39cd5ad98a3a`.
+The previous retained dev3 package remains the exact rollback artifact.
+The supervisor is unchanged; candidate reporter/template compatibility is the
+new deployed behavior. Paths use `updater-dev4-bf956b1-{a,b}/` beneath the
+approved external build root. Build jobs are `b9ce492e2b674506990ef2606666bf00`
+and `098a7c99298e4a1bb5967ef54307b63b`.
+
+## Original dev2-to-dev3 procedure and artifact history
 
 This gate changes only the inert application-updater Debian package, while the
 GUI continues executing the already confirmed signed application slot. It
