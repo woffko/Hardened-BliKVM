@@ -5,15 +5,15 @@ import { validateStatus } from "./playwright/status_api_acceptance.mjs";
 function fixture() {
   const slot = {
     slotId:
-      "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c",
-    version: "0.1.0-dev3",
-    sequence: "4",
+      "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc",
+    version: "0.1.0-dev4",
+    sequence: "5",
     minimumSystemSequence: "1",
   };
   return {
     schemaVersion: 1,
-    generation: "16",
-    floorSequence: "4",
+    generation: "22",
+    floorSequence: "5",
     systemSequence: "1",
     selected: slot,
     confirmed: { ...slot },
@@ -25,8 +25,9 @@ function fixture() {
 test("status acceptance binds exact string counters and confirmed slot", () => {
   validateStatus(fixture());
   for (const override of [
-    { floorSequence: 4 },
-    { generation: "17" },
+    { floorSequence: 5 },
+    { floorSequence: "4" },
+    { generation: "23" },
     { pending: {} },
     { lastRollback: "health_timeout" },
   ]) {

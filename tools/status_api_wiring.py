@@ -31,7 +31,7 @@ s = u.serving
 require = u.require
 checked = u.checked
 PREFIX = "hardened-blikvm-status-api-"
-SLOT = "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c"
+SLOT = "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc"
 SOCKET = "hardened-blikvm-update-status.socket"
 ENDPOINT = Path("/run/hardened-blikvm-update-api/status.sock")
 ENVIRONMENT = "BLI_KVM_UPDATE_STATUS_SOCKET=" + str(ENDPOINT)
@@ -78,12 +78,12 @@ def snapshot(wired: bool) -> dict[str, object]:
                 and meta.st_gid == grp.getgrnam("hardened-blikvm").gr_gid, "unsafe status socket")
     else:
         u.status_transport_inert()
-    value = infrastructure.enabled_snapshot(expected_slot=SLOT, expected_floor=4, check_initial=False)
+    value = infrastructure.enabled_snapshot(expected_slot=SLOT, expected_floor=5, check_initial=False)
     # Restarting only the confirmed server is the intended runtime change.
     serving = cast(dict[str, object], value["serving"])
     serving.pop("serverPid")
     status = infrastructure.current_status()
-    require(status.get("generation") == 16, "application journal generation changed")
+    require(status.get("generation") == 22, "application journal generation changed")
     value["managerStatus"] = status
     return value
 

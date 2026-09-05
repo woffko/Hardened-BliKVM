@@ -2,19 +2,19 @@ import assert from "node:assert/strict";
 
 export const statusRoute = "/api/application-update/status";
 const slot =
-  "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c";
+  "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc";
 
 export function validateStatus(value) {
   assert.equal(value.schemaVersion, 1);
-  assert.equal(value.generation, "16");
-  assert.equal(value.floorSequence, "4");
+  assert.equal(value.generation, "22");
+  assert.equal(value.floorSequence, "5");
   assert.equal(value.systemSequence, "1");
   assert.equal(value.pending, null);
   assert.equal(value.lastRollback, null);
   assert.deepEqual(value.selected, value.confirmed);
   assert.equal(value.confirmed.slotId, slot);
-  assert.equal(value.confirmed.version, "0.1.0-dev3");
-  assert.equal(value.confirmed.sequence, "4");
+  assert.equal(value.confirmed.version, "0.1.0-dev4");
+  assert.equal(value.confirmed.sequence, "5");
   assert.equal(value.confirmed.minimumSystemSequence, "1");
 }
 
@@ -49,7 +49,7 @@ export async function verifyStatusPanel(page, enabled) {
         .getByText("No update awaiting confirmation", { exact: true })
         .waitFor();
       assert.equal(
-        await panel.getByText("0.1.0-dev3 · #4", { exact: true }).count(),
+        await panel.getByText("0.1.0-dev4 · #5", { exact: true }).count(),
         2,
       );
       await panel

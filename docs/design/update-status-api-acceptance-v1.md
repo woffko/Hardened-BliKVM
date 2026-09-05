@@ -3,7 +3,7 @@
 ## Fixed starting state
 
 Require updater dev6 and the accepted supervisor hash, confirmed application
-sequence four and generation sixteen, no pending update, active confirmed
+sequence five and generation twenty-two, no pending update, active confirmed
 server/Nginx, unchanged account/TLS/trust/broker/video state, and no unfinished
 application transaction. The installed status socket must be disabled/inactive
 with no active status-worker instance or endpoint. Its installed worker/socket
@@ -38,8 +38,8 @@ installed Playwright Chromium. Bind every report to the guard and test phase.
 Never record passwords, cookies, tokens, endpoint credentials or private paths.
 
 Before login and after logout, GET `/api/application-update/status` must return
-401. After login, require exact string counters, generation `16`, floor `4`,
-equal selected/confirmed sequence-four metadata and no pending operation.
+401. After login, require exact string counters, generation `22`, floor `5`,
+equal selected/confirmed sequence-five metadata and no pending operation.
 Compare this view to the independently observed native manager status. Repeated
 reads must not change any updater state or dispatch apply services.
 

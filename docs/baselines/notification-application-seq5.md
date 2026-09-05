@@ -27,3 +27,32 @@ desktop/mobile/logout browser sequence remain required. The previous status
 test was safely restored; failed-test cleanup
 `bcf543f4dac04e2eb3370067d1d7b7d2` removed only its controller/guard files and
 preserved operational state. Its browser failure remains recorded, not accepted.
+
+## Live checkpoint: confirmed, finalization awaiting approval
+
+Profile source `c3be5f8` passed full host job
+`fc445097c23247a8b3853439ce3d2cbf`. Rehearsal
+`dc65beeae1ca4607bf7bb76f628b3e2d` returned to sequence four with floor four,
+generation nineteen and `health_timeout`; browser verification
+`0d232ea65bfc4c9989beb862d332e4b8` passed on the restored server.
+
+Activation `b900f66712c9412592da481c80496eaa` confirmed sequence five,
+floor five and generation twenty-two with no pending operation. The previously
+failing desktop/mobile/logout scenario passed on the corrected artifact in
+job `259eda9393b142628e4eadc8d1af72d1` without suppressing page errors.
+Video decode, stream revocation, account/TLS/trust/peer preservation also passed.
+
+The commit submission was rejected before job registration. Explicit user
+approval was requested to finalize and clean this transaction while preserving
+confirmed sequence five. No commit/cleanup result is claimed. The armed
+deadline may settle the marker through authoritative recovery; inspect the
+current device phase before any approved continuation. Never restore an older
+journal or lower the confirmed floor. Permanent status wiring remains absent.
+
+The user subsequently authorized finalization of slot five and subsequent
+slots after successful checks. Inspection `a150a910e1e941f1996324440f8d77ca`
+found the existing deadline had already settled the transaction to `recovered`,
+preserving confirmed floor five, generation twenty-two and the same server PID.
+Approved cleanup `33f80d32f9a14ebaa4632765cf654701` removed the exact temporary
+transaction files and preserved account/TLS/trust/peer and application state.
+No slot, journal, source artifact or host evidence was deleted.
