@@ -40,7 +40,7 @@ def checkpoint(path: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "inspect", "restore", "cleanup"))
+    parser.add_argument("action", choices=("prepare", "inspect", "restore", "cleanup", "verify-clean"))
     for name in ("endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--guard-receipt")
@@ -48,7 +48,7 @@ def main() -> int:
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new status receipt required")
     guard = None if args.action == "prepare" else checkpoint(args.guard_receipt)
-    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in native.HELPERS} if args.action == "prepare" else {}
+    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in native.HELPERS} if args.action in ("prepare", "verify-clean") else {}
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
@@ -61,6 +61,8 @@ def main() -> int:
     def invoke(action: str) -> tuple[int, dict[str, object]]:
         argv = ["python3", "-B", stage + "/status_api_wiring.py", "prepare", "--assets", stage] if action == "prepare" else [
             "python3", "-B", cast(str, guard) + "/controller.py", action, "--guard-root", cast(str, guard)]
+        if action == "verify-clean":
+            argv = ["python3", "-B", stage + "/status_api_wiring.py", action, "--guard-root", cast(str, guard)]
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=180)
         return result.returncode, cast(dict[str, object], json.loads(result.stdout)) if result.stdout else {}
 

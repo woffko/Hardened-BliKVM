@@ -236,14 +236,29 @@ def transition(action: str, root: Path) -> dict[str, object]:
         os.close(descriptor)
 
 
+def verify_clean(value: str) -> dict[str, object]:
+    root = Path(value)
+    require(root.parent == Path("/var/lib") and re.fullmatch(PREFIX + "[a-f0-9]{24}", root.name) is not None,
+            "invalid absent guard namespace")
+    require(not infrastructure.exists(root), "status guard remains")
+    for path in (*dropins(), *(UNIT_ROOT / name for name in units(root))):
+        require(not infrastructure.exists(path), "status runtime file remains")
+    observed = snapshot(False)
+    return {"result": "verify-clean", "guardRoot": str(root), "guardRemoved": True,
+            "runtimeWiringAbsent": True, "status": observed["managerStatus"]}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "inspect", "restore", "cleanup"))
+    parser.add_argument("action", choices=("prepare", "inspect", "restore", "cleanup", "verify-clean"))
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--guard-root")
     args = parser.parse_args()
     require(os.geteuid() == 0, "root orchestration required")
-    result = prepare(args.assets) if args.action == "prepare" else transition(args.action, guard_root(args.guard_root))
+    if args.action == "verify-clean":
+        result = verify_clean(args.guard_root)
+    else:
+        result = prepare(args.assets) if args.action == "prepare" else transition(args.action, guard_root(args.guard_root))
     print(json.dumps(result, sort_keys=True))
     if result["result"] == "failed":
         raise SystemExit(1)

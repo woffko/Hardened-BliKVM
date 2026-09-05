@@ -11,6 +11,19 @@ from tools import stage_status_api_wiring as driver
 
 
 class StatusApiWiringTests(unittest.TestCase):
+    def test_clean_verifier_never_mutates_and_rejects_leftovers(self) -> None:
+        root = "/var/lib/" + gate.PREFIX + "a" * 24
+        with patch.object(gate.infrastructure, "exists", return_value=False), \
+             patch.object(gate, "snapshot", return_value={"managerStatus": {"floorSequence": 5}}) as snapshot, \
+             patch.object(gate, "checked") as command:
+            self.assertTrue(gate.verify_clean(root)["guardRemoved"])
+            snapshot.assert_called_once_with(False)
+            command.assert_not_called()
+            with patch.object(gate.infrastructure, "exists", return_value=True), self.assertRaises(ValueError):
+                gate.verify_clean(root)
+            with self.assertRaises(ValueError):
+                gate.verify_clean("/var/lib")
+
     def test_driver_entrypoint_and_checkpoint_binding(self) -> None:
         result = subprocess.run([sys.executable, "tools/stage_status_api_wiring.py", "--help"], capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr.decode())

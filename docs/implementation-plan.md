@@ -1033,6 +1033,13 @@ serving state (`baselines/updater-dev6-package.md`). Status transport is still
 disabled. The updated signed server/UI and configured HTTP/browser acceptance
 remain the next steps; an updater-only package upgrade does not supply them.
 
+The signed application is now confirmed at sequence five after the GUI
+notification lifecycle fix. The complete temporary installed status API/GUI
+cycle passed on desktop/mobile, including authenticated exact counters,
+Refresh, restoration, logout and independent cleanup verification
+(`baselines/status-api-seq5-acceptance.md`). Persistent status wiring and its
+interruption/reboot gates remain next; status transport is currently disabled.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
