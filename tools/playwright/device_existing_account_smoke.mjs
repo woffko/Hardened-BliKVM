@@ -66,6 +66,8 @@ let inventoryVideoOnline = null;
 let inventoryVideoBusy = null;
 let logoutStatus = null;
 let statusAcceptance = null;
+let pageErrorCount = 0;
+const pageErrorFacts = [];
 
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -76,7 +78,34 @@ try {
   });
   const page = await context.newPage();
   const pageErrors = [];
-  page.on("pageerror", (error) => pageErrors.push(error.name));
+  page.on("pageerror", (error) => {
+    pageErrorCount += 1;
+    pageErrors.push(error.name);
+    pageErrorFacts.push({
+      phase,
+      kind: /ResizeObserver loop/.test(error.message)
+        ? "resize-observer-loop"
+        : /Cannot read properties of (?:null|undefined)/.test(error.message)
+          ? "null-property-access"
+          : "unclassified",
+      name: ["Error", "TypeError", "ReferenceError", "SyntaxError"].includes(
+        error.name,
+      )
+        ? error.name
+        : "other",
+      locations: [
+        ...(error.stack || "").matchAll(
+          /\/assets\/([A-Za-z0-9_-]+\.js):(\d+):(\d+)/g,
+        ),
+      ]
+        .slice(0, 4)
+        .map((match) => ({
+          asset: match[1],
+          line: match[2],
+          column: match[3],
+        })),
+    });
+  });
   page.on("websocket", () => {
     webSockets += 1;
   });
@@ -329,6 +358,22 @@ try {
     runTag: runTag || null,
     result: "failed",
     phase,
+    statusAcceptance,
+    pageErrorCount,
+    pageErrorFacts,
+    serverErrors: responses
+      .filter((response) => response.status >= 500)
+      .map((response) => ({
+        status: response.status,
+        route: [
+          statusRoute,
+          "/api/inventory",
+          "/api/diagnostics",
+          "/api/stream/mjpeg",
+        ].includes(response.route)
+          ? response.route
+          : "other-api",
+      })),
     errorType: error?.name || "Error",
     apiRequests: requests.length,
     apiResponses: responses.length,
