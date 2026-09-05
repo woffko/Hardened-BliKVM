@@ -28,7 +28,7 @@ def main() -> None:
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     code = r'''
-import hashlib,json,pathlib,subprocess,sys
+import hashlib,json,pathlib,re,subprocess,sys
 root=pathlib.Path(sys.argv[1])
 result={"guardExists":root.is_dir(),"bootIdSha256":hashlib.sha256(pathlib.Path("/proc/sys/kernel/random/boot_id").read_bytes().strip()).hexdigest()}
 result["uptimeSeconds"]=int(float(pathlib.Path("/proc/uptime").read_text().split()[0]))
@@ -44,6 +44,12 @@ for unit in units:
 p=subprocess.run(["journalctl","-b","--no-pager","-o","cat","-n","80","-u",root.name+"-boot.service"],capture_output=True,timeout=10)
 known=("not executing in the bound boot guard","boot recovery requested without a new boot","persistent application state changed","protected configuration changed","Nginx unit changed","foreign server override directory","foreign status override","command failed: systemctl","PermissionError","FileNotFoundError","ModuleNotFoundError","NameError","KeyError")
 result["bootErrorClasses"]=[label for label in known if label in p.stdout.decode(errors="replace")]
+result["serviceFailureClasses"]={}
+for unit in ("hardened-blikvm-server-current.service","hardened-blikvm-update-recover.service","hardened-blikvm-nginx.service","hardened-blikvm-platform-broker.service"):
+ p=subprocess.run(["journalctl","-b","--no-pager","-o","cat","-n","40","-u",unit],capture_output=True,timeout=10)
+ log=p.stdout.decode(errors="replace")
+ labels=("Permission denied","Address already in use","No such file or directory","Dependency failed","ordering cycle","start-limit-hit","Failed at step","Failed to start","Invalid argument","Too many open files","update status socket","panicked","verification failed")
+ result["serviceFailureClasses"][unit]={"classes":[label for label in labels if label in log],"exitStatuses":re.findall(r"status=([0-9]+/[A-Z_]+)",log)[-4:]}
 result["dropinsPresent"]={name:(pathlib.Path("/etc/systemd/system")/(name+".d")/"85-status-api-rehearsal.conf").exists() for name in ("hardened-blikvm-server-current.service","hardened-blikvm-server-candidate.service")}
 print(json.dumps(result,sort_keys=True))
 '''

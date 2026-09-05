@@ -80,7 +80,7 @@ impl SupervisorCliError {
             Self::InvalidConfigPath => 10,
             Self::UnsafeConfigFile => 11,
             Self::InvalidConfig => 12,
-            Self::Manager(_) => 20,
+            Self::Manager(error) => manager_runtime_exit_code(error),
             Self::Runtime(UpdateRuntimeError::Manager(error)) => manager_runtime_exit_code(error),
             Self::Runtime(UpdateRuntimeError::InvalidHealthResponseLength) => 32,
             Self::Runtime(UpdateRuntimeError::ChallengeMissing) => 33,
@@ -520,6 +520,21 @@ mod tests {
 
     #[test]
     fn command_failure_layers_have_stable_exit_codes() {
+        assert_eq!(
+            SupervisorCliError::Manager(UpdateManagerError::ManagerBusy).exit_code(),
+            66
+        );
+        assert_eq!(
+            SupervisorCliError::Manager(UpdateManagerError::UnsafeStateRoot).exit_code(),
+            63
+        );
+        assert_eq!(
+            SupervisorCliError::Manager(UpdateManagerError::Stager(
+                ApplicationStageError::StagerBusy
+            ))
+            .exit_code(),
+            87
+        );
         assert_eq!(SupervisorCliError::InvalidArguments.exit_code(), 2);
         assert_eq!(SupervisorCliError::InvalidConfig.exit_code(), 12);
         assert_eq!(

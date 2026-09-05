@@ -157,7 +157,7 @@ def retained_reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]],
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean", "verify-boot", "reboot-test", "inspect-retained", "retained-reboot"))
+    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean", "verify-boot", "reboot-test", "inspect-retained", "retained-reboot", "recover-serving"))
     parser.add_argument("--persistent", action="store_true")
     parser.add_argument("--browser-receipt")
     parser.add_argument("--boot-recovery-receipt")
@@ -168,7 +168,7 @@ def main() -> int:
     parser.add_argument("--guard-receipt")
     args = parser.parse_args()
     backend = persistent_native if args.persistent else native
-    require(args.action not in ("preflight", "commit", "verify-boot", "reboot-test", "inspect-retained", "retained-reboot") or args.persistent, "action requires persistent mode")
+    require(args.action not in ("preflight", "commit", "verify-boot", "reboot-test", "inspect-retained", "retained-reboot", "recover-serving") or args.persistent, "action requires persistent mode")
     require(args.action != "verify-clean" or not args.persistent, "persistent clean verification is not implemented")
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new status receipt required")
@@ -176,8 +176,8 @@ def main() -> int:
     if args.action == "commit":
         boot_acceptance(args.boot_recovery_receipt, args.boot_browser_receipt, args.boot_cleanup_receipt)
         persistent_browser_gate(args.browser_receipt, cast(str, guard))
-    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in backend.HELPERS} if args.action in ("prepare", "preflight", "verify-clean", "inspect-retained", "retained-reboot") else {}
-    if args.action in ("inspect-retained", "retained-reboot"):
+    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in backend.HELPERS} if args.action in ("prepare", "preflight", "verify-clean", "inspect-retained", "retained-reboot", "recover-serving") else {}
+    if args.action in ("inspect-retained", "retained-reboot", "recover-serving"):
         uploads["capture_retained_status.py"] = Path(__file__).with_name("capture_retained_status.py").read_bytes()
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
@@ -194,11 +194,25 @@ def main() -> int:
             "python3", "-B", cast(str, guard) + "/controller.py", action, "--guard-root", cast(str, guard)]
         if action == "verify-clean":
             argv = ["python3", "-B", stage + "/status_api_wiring.py", action, "--guard-root", cast(str, guard)]
-        if action == "inspect-retained":
+        if action in ("inspect-retained", "recover-serving"):
             argv = ["python3", "-B", stage + "/capture_retained_status.py", "--guard-root", cast(str, guard)]
+            if action == "recover-serving":
+                argv.append("--recover-serving")
         if action == "commit":
             argv.append("--browser-verified")
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=30 if action in ("verify-boot", "inspect-retained") else 180)
+        if action == "inspect-retained" and result.returncode != 0:
+            known = ("persistent guard remains", "persistent recovery unit remains", "runtime overrides remain",
+                     "foreign persistent override directory", "persistent override changed", "unexpected installed updater version",
+                     "installed status unit changed", "loaded status environment mismatch", "running status environment mismatch",
+                     "status socket was enabled", "status socket not active", "unsafe status socket",
+                     "application journal generation changed", "status or recovery did not precede server",
+                     "operational application state changed", "updater service not enabled/active", "watchdog invocation failed",
+                     "unsafe updater runtime ownership/mode", "unexpected active update transaction", "tmpfiles configuration changed",
+                     "serving service unavailable", "serving executable changed", "ModuleNotFoundError", "FileNotFoundError")
+            stderr = (result.stderr or b"").decode(errors="replace")
+            receipt["observerErrorClasses"] = [label for label in known if label in stderr]
+            receipt["observerExitCode"] = result.returncode
         return result.returncode, cast(dict[str, object], json.loads(result.stdout)) if result.stdout else {}
 
     try:

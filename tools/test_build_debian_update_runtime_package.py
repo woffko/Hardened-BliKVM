@@ -10,13 +10,14 @@ import tools.stage_device_prototype as prototype
 
 
 class DebianUpdateRuntimePackageTests(unittest.TestCase):
-    def test_status_units_are_only_in_dev6_and_remain_read_only(self) -> None:
+    def test_status_units_are_available_from_dev6_and_remain_read_only(self) -> None:
         units = {
             "lib/systemd/system/hardened-blikvm-update-status.socket",
             "lib/systemd/system/hardened-blikvm-update-status@.service",
         }
         self.assertTrue(units <= set(package.file_map("0.1.0~dev6").values()))
-        for version in package.SUPPORTED_PACKAGE_VERSIONS[:-1]:
+        self.assertTrue(units <= set(package.file_map("0.1.0~dev7").values()))
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[:5]:
             self.assertFalse(units & set(package.file_map(version).values()))
         worker = Path("packaging/systemd/hardened-blikvm-update-status@.service").read_text()
         for forbidden in ("ReadWritePaths=", "OnSuccess=", "Requires=", "StateDirectory=", "RuntimeDirectory="):
@@ -32,7 +33,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev6")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev7")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -80,7 +81,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev6")
+        self.assertEqual(current["version"], "0.1.0~dev7")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertEqual({**previous, "version": current["version"]}, current)
         with self.assertRaises(package.BuildError):

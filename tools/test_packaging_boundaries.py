@@ -2706,6 +2706,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         watchdog = (
             ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.service"
         ).read_text()
+        for directive in ("Requires=", "After="):
+            self.assertTrue(any(line.startswith(directive) and "hardened-blikvm-update-recover.service" in line.split("=", 1)[1].split()
+                                for line in watchdog.splitlines()))
         confirmation = (
             ROOT / "packaging/systemd/hardened-blikvm-update-confirm@.service"
         ).read_text()

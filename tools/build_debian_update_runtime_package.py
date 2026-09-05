@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev6"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev7"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -105,12 +105,14 @@ class BuildError(Exception):
 def file_map(version: str) -> dict[str, str]:
     if version not in SUPPORTED_PACKAGE_VERSIONS:
         raise BuildError("unsupported update package version")
-    return {
-        source: destination for source, destination in FILE_MAP.items()
-        if (version in ("0.1.0~dev5", PACKAGE_VERSION)
-            or not source.endswith("hardened-blikvm-update-recover.service"))
-        and (version == PACKAGE_VERSION or "hardened-blikvm-update-status" not in source)
+    revision = SUPPORTED_PACKAGE_VERSIONS.index(version) + 1
+    introduced = {
+        "hardened-blikvm-update-recover.service": 5,
+        "hardened-blikvm-update-status.socket": 6,
+        "hardened-blikvm-update-status@.service": 6,
     }
+    return {source: destination for source, destination in FILE_MAP.items()
+            if revision >= introduced.get(source.rsplit("/", 1)[-1], 1)}
 
 
 def parse_args() -> tuple[str, str, str]:

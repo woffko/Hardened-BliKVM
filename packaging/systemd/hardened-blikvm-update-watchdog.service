@@ -1,7 +1,8 @@
 [Unit]
 Description=Hardened BliKVM application update watchdog
 Documentation=https://github.com/woffko/Hardened-BliKVM
-After=local-fs.target
+Requires=hardened-blikvm-update-recover.service
+After=local-fs.target hardened-blikvm-update-recover.service
 OnSuccess=hardened-blikvm-update-apply-confirmed.service
 ConditionPathExists=/etc/hardened-blikvm/update-supervisor.json
 ConditionPathExists=/var/lib/hardened-blikvm-update/application-state.json
