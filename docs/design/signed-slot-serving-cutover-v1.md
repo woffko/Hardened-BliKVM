@@ -30,3 +30,19 @@ This operation restarts the serving backend but does not activate a new bundle,
 advance the anti-rollback floor, enable candidate confirmation/watchdog timers,
 change broker binaries, reboot, or invoke attached-target Power/Reset. Those
 are later acceptance boundaries.
+
+The source implementation is split between the native
+`tools/switch_signed_slot_server.py` controller and SSH transport
+`tools/stage_device_signed_slot_server.py`. `prepare` retains a guard for the
+browser-check interval; `rollback` restores the old serving arrangement;
+`inspect`, `commit` and `cleanup` are separate transactions. Commit requires a
+passed private browser receipt tagged with this exact serving guard ID. The
+browser harness takes the optional tag as its final non-secret positional
+argument, preventing an earlier unrelated browser result from accepting the
+new transition.
+
+Early-boot recovery queues backend startup without waiting for basic.target
+while its sysinit recovery unit is still running. Normal deadline or explicit
+recovery waits for service restoration and verifies it. A committed marker
+prevents late recovery from reverting a retained switch. Until live rehearsal
+and browser acceptance pass, this is source readiness only.

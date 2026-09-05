@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, executablePath, baseUrl, username, outputValue] =
+const [modulePath, executablePath, baseUrl, username, outputValue, runTag] =
   process.argv.slice(2);
 assert.ok(
   modulePath && executablePath && baseUrl && username && outputValue,
@@ -11,6 +11,7 @@ assert.ok(
 );
 assert.equal(new URL(baseUrl).protocol, "https:");
 assert.match(username, /^[a-z_][a-z0-9_-]{0,31}$/);
+if (runTag) assert.match(runTag, /^hardened-blikvm-slot-serving-[a-f0-9]{24}$/);
 
 const outputPath = path.resolve(outputValue);
 const privateRoot = path.resolve("evidence/private");
@@ -257,6 +258,7 @@ try {
   writeReceipt({
     schemaVersion: 1,
     probe: "hardened-blikvm-existing-account-browser",
+    runTag: runTag || null,
     result: "passed",
     transport: "direct-lan-https",
     title: "Remote Desktop - Hardened BliKVM",
@@ -286,6 +288,7 @@ try {
   writeReceipt({
     schemaVersion: 1,
     probe: "hardened-blikvm-existing-account-browser",
+    runTag: runTag || null,
     result: "failed",
     phase,
     errorType: error?.name || "Error",
