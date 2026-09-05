@@ -1027,6 +1027,12 @@ native socket-worker gate passed after fixing a duplicate slot-lock acquisition
 deployment remain required. Signed upload
 and activation from the GUI are the following slices, not completed features.
 
+Updater dev6 now includes the read-only status worker and socket and is retained
+after an exact-package rollback rehearsal, preserving signed slot two and all
+serving state (`baselines/updater-dev6-package.md`). Status transport is still
+disabled. The updated signed server/UI and configured HTTP/browser acceptance
+remain the next steps; an updater-only package upgrade does not supply them.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

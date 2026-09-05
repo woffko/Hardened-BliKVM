@@ -19,7 +19,12 @@ rollback package, including their exact file maps, manifests, modes and absence
 of maintainer scripts. The dev5 package hash remains
 `da88afb8c4b97d1f71318f04afa44445b1f64d76c6bf6580ecfa4200e67099f4`.
 
-Device preflight, guarded dev5-to-dev6 rollback rehearsal and retention are
-not yet accepted. The gate must preserve operational sequence two and service
-state, and must leave status transport disabled without active workers. HTTP,
-GUI and status-socket enablement remain subsequent gates.
+Device gate source `3a4e4bc` passed full host job
+`f382df12bd454b0e9c145e9c1a4a8f88`, preflight
+`7570f776df904c8dbcb43d5d21c6eab7`, guarded dev5-to-dev6-to-dev5 rollback
+rehearsal `4923b65373bf40db8cab49eb13204f5e`, and retaining upgrade
+`b74f97d2b6144608aadef5b170349de7`. The independent final session verified
+dev6, preserved operational sequence two, unchanged serving/configuration/TLS
+and application state, and removed guards/controller staging. Status transport
+remains disabled without active workers. HTTP, GUI and status-socket enablement
+remain subsequent gates; the signed slot-two server was not replaced.
