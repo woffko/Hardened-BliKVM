@@ -40,7 +40,7 @@ def names(token: str) -> dict[str, str]:
 
 
 def cleanup(root: Path) -> None:
-    require(root.parent == Path("/run") and re.fullmatch(r"blikvm-apply-events-[a-f0-9]{24}", root.name) is not None,
+    require(root.parent == Path("/var/lib") and re.fullmatch(r"blikvm-apply-events-[a-f0-9]{24}", root.name) is not None,
             "invalid fixture root")
     require(not root.is_symlink() and root.stat().st_uid == 0, "unsafe fixture root")
     units = names(root.name.removeprefix("blikvm-apply-events-"))
@@ -71,13 +71,13 @@ def main() -> None:
     account = pwd.getpwnam("hardened-blikvm-update")
     group = grp.getgrnam("hardened-blikvm").gr_gid
     token = secrets.token_hex(12)
-    root = Path("/run") / ("blikvm-apply-events-" + token)
+    root = Path("/var/lib") / ("blikvm-apply-events-" + token)
     root.mkdir(mode=0o750)
     root.chmod(0o750)
     os.chown(root, 0, group)
     units = names(token)
     phase = "prepare"
-    facts: dict[str, object] = {}
+    facts: dict[str, object] = {"runMountNoexec": bool(os.statvfs("/run").f_flag & os.ST_NOEXEC)}
     receipt: dict[str, object]
     try:
         for name in ("slots", "state", "runtime"):

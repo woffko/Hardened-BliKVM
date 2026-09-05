@@ -42,7 +42,8 @@ CLI stdin flow. Real systemd delivery, repeated-tick PID stability, failed
 application retry and dev3 package installation still require device acceptance.
 
 The native acceptance runner is `tools/verify_apply_events.py`. It renders the
-actual apply/watchdog units into an isolated `/run` fixture, retaining their
+actual apply/watchdog units into an isolated `/var/lib` fixture (the device
+does not permit executing the test binary from `/run`), retaining their
 credential, privilege and sandbox settings while redirecting only paths and
 the literal restarted service to a temporary sleep process. Three ephemeral
 signed fixture bundles exercise confirmation and missing-health recovery.

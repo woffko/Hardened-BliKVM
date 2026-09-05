@@ -64,6 +64,7 @@ def main() -> int:
     staged = False
     result: dict[str, object] = {"probe": "device-isolated-apply-events", "supervisorSha256": args["expected_sha256"]}
     phase = "stage"
+    observer: str | None = None
     try:
         require(transport.run_ssh(target, secret, f"set -eu\ntest ! -e {q(stage)}\ntest ! -e {q(remote_output)}\nmkdir -m 700 {q(stage)}").returncode == 0,
                 "staging failed")
@@ -95,6 +96,12 @@ def main() -> int:
         result.update({"result": "failed", "phase": phase, "errorType": type(error).__name__})
         return 1
     finally:
+        if result.get("result") != "passed" and observer is not None and "before" in result:
+            try:
+                after = transport.run_ssh(target, secret, observer, timeout=60)
+                result["failureRuntimeUnchanged"] = after.returncode == 0 and json.loads(after.stdout) == result["before"]
+            except (OSError, ValueError, subprocess.SubprocessError):
+                result["failureRuntimeUnchanged"] = False
         if staged:
             allowed = " ".join("! -name " + q(name) for name in uploads)
             paths = " ".join(q(stage + "/" + name) for name in uploads)
