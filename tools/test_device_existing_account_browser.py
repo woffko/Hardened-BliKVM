@@ -42,6 +42,8 @@ class DeviceExistingAccountBrowserTests(unittest.TestCase):
             'phase = "video-initial-decode"',
             'phase = "logout-stream-revocation"',
             "activeStreamResponse = response",
+            "const initialStreamFinished = activeStreamResponse.finished()",
+            'phase = "video-reconnect-old-stream-release"',
             "streamRevoked: true",
             "initial MJPEG stream survived reload",
             "MJPEG stream survived logout",

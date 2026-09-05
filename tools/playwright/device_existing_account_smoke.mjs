@@ -153,7 +153,11 @@ try {
     const screen = document.querySelector("img#screen");
     return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
   });
-  const initialStreamFinished = initialStream.finished();
+  assert.ok(
+    activeStreamResponse,
+    "missing active MJPEG response before reload",
+  );
+  const initialStreamFinished = activeStreamResponse.finished();
 
   phase = "video-reconnect-response";
   const reconnectedStreamResponse = page.waitForResponse(
@@ -173,6 +177,7 @@ try {
     const screen = document.querySelector("img#screen");
     return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
   });
+  phase = "video-reconnect-old-stream-release";
   await Promise.race([
     initialStreamFinished,
     new Promise((_, reject) =>
