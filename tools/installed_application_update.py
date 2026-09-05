@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import fcntl
 import grp
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,7 @@ import secrets
 import stat
 import subprocess
 import sys
+import tarfile
 import time
 from typing import cast
 
@@ -33,6 +36,39 @@ BUNDLE_SHA = "fe3680eb1607b2ec5c957916b0b343c55390171e873ad978f0f521b0c2d42778"
 SLOT_ONE = s.bootstrap.SLOT
 SLOT_TWO = "app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53"
 SLOTS = {1: SLOT_ONE, 2: SLOT_TWO}
+
+
+@dataclass(frozen=True)
+class UpdateProfile:
+    name: str
+    bundle_sha: str
+    bundle_bytes: int
+    source_sequence: int
+    source_slot: str
+    target_sequence: int
+    target_slot: str
+
+
+PROFILES = {
+    "seq1-to-seq2": UpdateProfile("seq1-to-seq2", BUNDLE_SHA, 8499200, 1, SLOT_ONE, 2, SLOT_TWO),
+    "seq2-to-seq4-status": UpdateProfile(
+        "seq2-to-seq4-status", "4ae41c49d2a4dcc0cab041516e3591d89d2da4342484123467f70e19d19a7b12",
+        8591360, 2, SLOT_TWO, 4,
+        "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c"),
+}
+active_profile = PROFILES["seq1-to-seq2"]
+
+
+def select_profile(name: str) -> None:
+    global active_profile
+    require(name in PROFILES, "unknown application transition profile")
+    active_profile = PROFILES[name]
+
+
+def profile_slots() -> dict[int, str]:
+    return {active_profile.source_sequence: active_profile.source_slot, active_profile.target_sequence: active_profile.target_slot}
+
+
 DROPIN_ROOT = Path("/run/systemd/system/hardened-blikvm-server-candidate.service.d")
 DROPIN = DROPIN_ROOT / "90-health-timeout-rehearsal.conf"
 DROPIN_BYTES = b"[Service]\nExecStartPost=\nExecStartPost=/usr/bin/false\n"
@@ -54,7 +90,8 @@ def load(root: Path) -> dict[str, object]:
     require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
             and stat.S_IMODE(meta.st_mode) == 0o600 and meta.st_size <= 2 * 1024 * 1024, "unsafe update marker")
     value = cast(dict[str, object], json.loads(path.read_bytes()))
-    require(value.get("schemaVersion") == 1 and value.get("bundleSha256") == BUNDLE_SHA
+    require(value.get("schemaVersion") == 1 and value.get("bundleSha256") == active_profile.bundle_sha
+            and value.get("profile", "seq1-to-seq2") == active_profile.name
             and value.get("phase") in ("prepared", "staged", "rehearsed", "confirmed", "recovered", "committed-rehearsal", "committed-update"), "invalid update marker")
     return value
 
@@ -89,7 +126,7 @@ def remove_source(root: Path) -> None:
     require(stat.S_ISDIR(meta.st_mode) and meta.st_uid == 0 and stat.S_IMODE(meta.st_mode) == 0o750
             and {p.name for p in source.iterdir()} == {"application.tar"}, "unsafe staged source")
     archive = source / "application.tar"
-    require(not archive.is_symlink() and archive.stat().st_nlink == 1 and u.digest(archive) == BUNDLE_SHA, "staged source changed")
+    require(not archive.is_symlink() and archive.stat().st_nlink == 1 and u.digest(archive) == active_profile.bundle_sha, "staged source changed")
     archive.unlink()
     source.rmdir()
 
@@ -110,7 +147,7 @@ def remove_override() -> None:
 def preserved(plan: dict[str, object]) -> None:
     require(s.snapshot() == plan["runtime"], "accounts, trust, TLS, Nginx or peers changed")
     require(u.digest(s.UNIT) == plan["nginxUnitSha256"], "local Nginx unit changed")
-    original = u.STATE_ROOTS[0] / SLOT_ONE
+    original = u.STATE_ROOTS[0] / active_profile.source_slot
     require(u.tree_fingerprint((original,)) == plan["originalSlot"], "original signed slot changed")
 
 
@@ -119,8 +156,9 @@ def stable(root: Path, plan: dict[str, object], expected_floor: int | None = Non
     infrastructure.audit_enabled(check_initial=False)
     status = infrastructure.current_status()
     floor = status.get("floorSequence")
-    require(isinstance(floor, int) and floor in SLOTS and (expected_floor is None or floor == expected_floor), "unexpected confirmed floor")
-    slot = SLOTS[cast(int, floor)]
+    require(isinstance(floor, int) and floor in profile_slots() and (expected_floor is None or floor == expected_floor), "unexpected confirmed floor")
+    require(cast(int, floor) >= minimum_recovery_floor(plan), "confirmed floor is below previous observation")
+    slot = profile_slots()[cast(int, floor)]
     require(status.get("pending") is None and status.get("activeSlotId") == slot and status.get("confirmedSlotId") == slot,
             "update has not converged")
     require(os.readlink(u.STATE_ROOTS[0] / "current") == slot, "authoritative pointer mismatch")
@@ -147,7 +185,7 @@ def await_stable(root: Path, plan: dict[str, object], expected_floor: int | None
 
 def guard_units(root: Path) -> dict[str, str]:
     service = "[Service]\nType=oneshot\nUser=root\nUMask=0077\nTimeoutStartSec=150\nNoNewPrivileges=yes\nProtectHome=yes\n"
-    command = f"ExecStart=/usr/bin/python3 -B {root}/controller.py recover --guard-root {root}"
+    command = f"ExecStart=/usr/bin/python3 -B {root}/controller.py recover --guard-root {root} --profile {active_profile.name}"
     return {
         root.name + "-boot.service": ("[Unit]\nDescription=Application transaction boot handoff\nDefaultDependencies=no\n"
             f"Wants={infrastructure.WATCHDOG}\nAfter=basic.target {infrastructure.WATCHDOG}\n"
@@ -184,6 +222,33 @@ def disarm(root: Path, boot: bool = False) -> None:
     u.sync_directory(u.UNIT_ROOT)
 
 
+def verify_staged_payload(archive_path: Path, slot: Path) -> None:
+    require(archive_path.stat().st_size == active_profile.bundle_bytes and u.digest(archive_path) == active_profile.bundle_sha,
+            "staged archive binding changed")
+    expected: set[str] = set()
+    with tarfile.open(archive_path, mode="r:") as archive:
+        for member in archive:
+            if not member.name.startswith("payload/") or member.isdir():
+                continue
+            relative = Path(member.name).relative_to("payload")
+            require(member.isfile() and relative.parts[0] in ("bin", "libexec", "share")
+                    and ".." not in relative.parts and str(relative) not in expected, "unsafe payload entry")
+            expected.add(str(relative))
+            stream = archive.extractfile(member)
+            require(stream is not None and 0 < member.size <= 32 * 1024 * 1024, "invalid payload length")
+            if stream is None:
+                raise ValueError("missing payload stream")
+            digest = hashlib.sha256(stream.read()).hexdigest()
+            target = slot / relative
+            meta = target.lstat()
+            require(stat.S_ISREG(meta.st_mode) and meta.st_nlink == 1 and meta.st_size == member.size
+                    and stat.S_IMODE(meta.st_mode) == member.mode & ~0o222
+                    and u.digest(target) == digest, "staged payload differs from signed archive")
+    actual = {str(path.relative_to(slot)) for name in ("bin", "libexec", "share")
+              for path in (slot / name).rglob("*") if not path.is_dir()}
+    require(bool(expected) and actual == expected, "staged payload file set differs")
+
+
 def stage(root: Path) -> None:
     source = source_root(root)
     name = "blikvm-production-stage-" + secrets.token_hex(10) + ".service"
@@ -195,22 +260,14 @@ def stage(root: Path) -> None:
                str(s.bootstrap.SUPERVISOR), "--config", "/run/credentials/" + name + "/update-supervisor-config",
                "stage", str(source / "application.tar")]
     result = cast(dict[str, object], json.loads(checked(command)))
-    require(result.get("slotId") == SLOT_TWO and result.get("sequence") == 2
+    require(result.get("slotId") == active_profile.target_slot and result.get("sequence") == active_profile.target_sequence
             and result.get("result") in ("published", "already_present"), "unexpected staged application")
-    original = u.STATE_ROOTS[0] / SLOT_ONE
-    new = u.STATE_ROOTS[0] / SLOT_TWO
-    for path in original.rglob("*"):
-        if path.is_file() and path.name not in ("manifest.json", "manifest.sig"):
-            relative = path.relative_to(original)
-            # Manifest/signature storage names are checked by the Rust manager;
-            # compare only actual executable/web payload roots here.
-            if relative.parts[0] in ("bin", "libexec", "share"):
-                require(u.digest(path) == u.digest(new / relative), "sequence-two payload differs from serving application")
+    verify_staged_payload(source / "application.tar", u.STATE_ROOTS[0] / active_profile.target_slot)
     remove_source(root)
 
 
 def activate_slot() -> None:
-    unit = "hardened-blikvm-update-activate@" + SLOT_TWO + ".service"
+    unit = "hardened-blikvm-update-activate@" + active_profile.target_slot + ".service"
     checked(["systemctl", "start", unit])
 
 
@@ -221,20 +278,20 @@ def prepare(assets: Path) -> dict[str, object]:
     u.installed(assets, "new")
     s.bootstrap.trusted_code_and_config(expected_supervisor_sha=u.SUPERVISOR_HASHES["new"])
     infrastructure.audit_enabled(check_initial=False)
-    require(u.digest(assets / "application.tar") == BUNDLE_SHA, "application bundle hash mismatch")
+    require(u.digest(assets / "application.tar") == active_profile.bundle_sha, "application bundle hash mismatch")
     root = Path("/var/lib") / (PREFIX + secrets.token_hex(12))
     root.mkdir(mode=0o700)
     for name in ("new.deb", "bindings.json", *HELPERS):
         u.new_file(root / name, (assets / name).read_bytes())
     u.new_file(root / "controller.py", Path(__file__).read_bytes())
-    plan: dict[str, object] = {"schemaVersion": 1, "bundleSha256": BUNDLE_SHA, "phase": "prepared",
+    plan: dict[str, object] = {"schemaVersion": 1, "bundleSha256": active_profile.bundle_sha, "profile": active_profile.name, "phase": "prepared",
                                "runtime": s.snapshot(), "nginxUnitSha256": u.digest(s.UNIT),
-                               "originalSlot": u.tree_fingerprint((u.STATE_ROOTS[0] / SLOT_ONE,))}
+                               "originalSlot": u.tree_fingerprint((u.STATE_ROOTS[0] / active_profile.source_slot,))}
     save(root, plan)
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        stable(root, plan, 1)
+        stable(root, plan, active_profile.source_sequence)
         arm(root)
         source = source_root(root)
         source.mkdir(mode=0o750)
@@ -244,14 +301,14 @@ def prepare(assets: Path) -> dict[str, object]:
         u.new_file(source / "application.tar", (assets / "application.tar").read_bytes(), 0o640)
         os.chown(source / "application.tar", 0, group)
         stage(root)
-        stable(root, plan, 1)
+        stable(root, plan, active_profile.source_sequence)
         plan["phase"] = "staged"
         save(root, plan)
         DROPIN_ROOT.mkdir(mode=0o755)
         u.new_file(DROPIN, DROPIN_BYTES, 0o644)
         checked(["systemctl", "daemon-reload"])
         activate_slot()
-        verified = await_stable(root, plan, 1)
+        verified = await_stable(root, plan, active_profile.source_sequence)
         require(cast(dict[str, object], verified["status"]).get("lastRollback") == "health_timeout", "timeout rehearsal failed")
         remove_override()
         plan["phase"] = "rehearsed"
@@ -263,28 +320,40 @@ def prepare(assets: Path) -> dict[str, object]:
         os.close(descriptor)
 
 
+def minimum_recovery_floor(plan: dict[str, object]) -> int:
+    observed = plan.get("observedFloor", active_profile.source_sequence)
+    require(type(observed) is int and observed in profile_slots(), "invalid observed recovery floor")
+    confirmed = active_profile.target_sequence if plan["phase"] in ("confirmed", "committed-update") else active_profile.source_sequence
+    return max(cast(int, observed), confirmed)
+
+
 def recover(root: Path, plan: dict[str, object], boot: bool) -> dict[str, object]:
+    minimum = minimum_recovery_floor(plan)
     remove_override()
     remove_source(root)
     if boot:
         # Ordered after the installed watchdog. Do not wait for GUI/apply jobs
         # here: they are deliberately ordered after this boot handoff.
         status = infrastructure.current_status()
-        require(status.get("pending") is None and status.get("floorSequence") in SLOTS, "boot manager recovery incomplete")
-        require(status.get("activeSlotId") == status.get("confirmedSlotId") == SLOTS[cast(int, status["floorSequence"])], "boot pointer authority mismatch")
+        require(status.get("pending") is None and status.get("floorSequence") in profile_slots(), "boot manager recovery incomplete")
+        require(status.get("activeSlotId") == status.get("confirmedSlotId") == profile_slots()[cast(int, status["floorSequence"])], "boot pointer authority mismatch")
         verified: dict[str, object] = {"status": status, "browserVerificationRequired": True}
     else:
         checked(["systemctl", "start", infrastructure.WATCHDOG])
         if infrastructure.current_status().get("pending") is None:
             checked(["systemctl", "start", s.CURRENT_SERVER])
         verified = await_stable(root, plan)
+    floor = cast(dict[str, object], verified["status"]).get("floorSequence")
+    require(type(floor) is int and floor in profile_slots() and floor >= minimum,
+            "recovery regressed an already observed confirmed floor")
+    plan["observedFloor"] = floor
     plan["phase"] = "recovered"
     save(root, plan)
     disarm(root, boot)
     return {"result": "recovered", "guardRoot": str(root), "verification": verified, "journalRestoredFromBackup": False}
 
 
-def transition(action: str, root: Path, boot: bool) -> dict[str, object]:
+def transition(action: str, root: Path, boot: bool, browser_phase: str | None = None) -> dict[str, object]:
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
@@ -293,18 +362,20 @@ def transition(action: str, root: Path, boot: bool) -> dict[str, object]:
             return recover(root, plan, boot)
         if action == "activate":
             require(plan["phase"] == "rehearsed", "timeout rehearsal has not passed")
-            stable(root, plan, 1)
+            stable(root, plan, active_profile.source_sequence)
             require(not infrastructure.exists(DROPIN_ROOT), "candidate override remains")
             activate_slot()
-            verified = await_stable(root, plan, 2)
+            verified = await_stable(root, plan, active_profile.target_sequence)
             plan["phase"] = "confirmed"
             save(root, plan)
         else:
-            expected = 1 if plan["phase"] in ("rehearsed", "committed-rehearsal") else 2 if plan["phase"] in ("confirmed", "committed-update") else None
+            expected = active_profile.source_sequence if plan["phase"] in ("rehearsed", "committed-rehearsal") else active_profile.target_sequence if plan["phase"] in ("confirmed", "committed-update") else None
             verified = stable(root, plan, expected)
             if action == "commit":
                 require(plan["phase"] in ("rehearsed", "confirmed", "committed-rehearsal", "committed-update"), "transaction not ready")
-                plan["phase"] = "committed-rehearsal" if cast(dict[str, object], verified["status"])["floorSequence"] == 1 else "committed-update"
+                required_browser = "rehearsal" if plan["phase"] in ("rehearsed", "committed-rehearsal") else "confirmed"
+                require(browser_phase == required_browser, "browser receipt phase differs from device transaction")
+                plan["phase"] = "committed-rehearsal" if cast(dict[str, object], verified["status"])["floorSequence"] == active_profile.source_sequence else "committed-update"
                 save(root, plan)
                 disarm(root)
             elif action == "cleanup":
@@ -331,9 +402,12 @@ def main() -> None:
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--guard-root")
     parser.add_argument("--boot", action="store_true")
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="seq1-to-seq2")
+    parser.add_argument("--browser-phase", choices=("rehearsal", "confirmed"))
     args = parser.parse_args()
+    select_profile(args.profile)
     require(os.geteuid() == 0 and (not args.boot or args.action == "recover"), "invalid execution mode")
-    result = prepare(args.assets) if args.action == "prepare" else transition(args.action, plan_path(args.guard_root), args.boot)
+    result = prepare(args.assets) if args.action == "prepare" else transition(args.action, plan_path(args.guard_root), args.boot, args.browser_phase)
     print(json.dumps(result, sort_keys=True))
     if result.get("result") == "failed":
         raise SystemExit(1)
