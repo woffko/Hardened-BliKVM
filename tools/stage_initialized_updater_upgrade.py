@@ -21,6 +21,7 @@ if not __package__:
 from tools import stage_device_prototype as transport
 from tools import stage_device_update_runtime_package as package
 from tools import upgrade_initialized_updater as native
+from tools import enable_update_services as infrastructure
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 require = native.require
@@ -32,20 +33,21 @@ SOURCE_BINDINGS = {
 }
 
 
-def validate_guard(value: object) -> str:
+def validate_guard(value: object, *, prefix: str = native.PREFIX) -> str:
     require(isinstance(value, str), "missing guard root")
     root = cast(str, value)
-    require(re.fullmatch(r"/var/lib/" + native.PREFIX + r"[a-f0-9]{24}", root) is not None,
+    require(re.fullmatch(r"/var/lib/" + prefix + r"[a-f0-9]{24}", root) is not None,
             "invalid returned guard namespace")
     return root
 
 
-def validate_rehearsal(path: str | None) -> None:
+def validate_rehearsal(path: str | None, *, enable_services: bool = False) -> None:
     require(path is not None, "retention requires successful rollback rehearsal")
     receipt = cast(dict[str, object], json.loads(transport.validate_private_file(cast(str, path)).read_bytes()))
-    require(receipt.get("probe") == "initialized-updater-upgrade" and receipt.get("action") == "rehearse"
+    expected_probe = "updater-infrastructure" if enable_services else "initialized-updater-upgrade"
+    require(receipt.get("probe") == expected_probe and receipt.get("action") == "rehearse"
             and receipt.get("result") == "passed" and receipt.get("packageHashes") == native.PACKAGE_HASHES
-            and receipt.get("retainedVersion") == native.VERSIONS["old"]
+            and receipt.get("retainedVersion") == native.VERSIONS["new" if enable_services else "old"]
             and receipt.get("guardRemoved") is True and receipt.get("controllerStagingRemoved") is True,
             "rollback rehearsal receipt mismatch")
 
@@ -71,12 +73,17 @@ def main() -> int:
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--rehearsal-receipt")
+    parser.add_argument("--infrastructure", action="store_true", help="Enable idle updater services instead of changing the package")
     args = parser.parse_args()
     if args.action == "retain":
-        validate_rehearsal(args.rehearsal_receipt)
+        validate_rehearsal(args.rehearsal_receipt, enable_services=args.infrastructure)
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new private receipt required")
     uploads = upload_payloads(args.old_package, args.new_package)
+    controller_name = "enable_update_services.py" if args.infrastructure else "upgrade_initialized_updater.py"
+    guard_prefix = infrastructure.PREFIX if args.infrastructure else native.PREFIX
+    if args.infrastructure:
+        uploads[controller_name] = Path(__file__).with_name(controller_name).read_bytes()
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
@@ -85,11 +92,11 @@ def main() -> int:
     staged = False
     guard: str | None = None
     phase = "stage"
-    receipt: dict[str, object] = {"probe": "initialized-updater-upgrade", "action": args.action,
+    receipt: dict[str, object] = {"probe": "updater-infrastructure" if args.infrastructure else "initialized-updater-upgrade", "action": args.action,
                                   "packageHashes": native.PACKAGE_HASHES, "targetPowerControl": False}
 
     def invoke(action: str, *, variant: str = "old") -> tuple[int, dict[str, object]]:
-        script = stage + "/upgrade_initialized_updater.py" if action in ("preflight", "prepare") else cast(str, guard) + "/controller.py"
+        script = stage + "/" + controller_name if action in ("preflight", "prepare") else cast(str, guard) + "/controller.py"
         argv = ["python3", "-B", script, action]
         argv += ["--assets", stage, "--variant", variant] if action in ("preflight", "prepare") else ["--guard-root", cast(str, guard)]
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=240)
@@ -112,13 +119,13 @@ def main() -> int:
         receipt["before"] = before
         require(code == 0 and before.get("result") == "preflight", "preflight failed")
         if args.action == "preflight":
-            receipt.update({"result": "passed", "retainedVersion": native.VERSIONS["old"], "guardRemoved": True})
+            receipt.update({"result": "passed", "retainedVersion": native.VERSIONS["new" if args.infrastructure else "old"], "guardRemoved": True})
             return 0
         phase = "prepare"
         code, prepared = invoke("prepare")
         receipt["prepare"] = prepared
         if "guardRoot" in prepared:
-            guard = validate_guard(prepared["guardRoot"])
+            guard = validate_guard(prepared["guardRoot"], prefix=guard_prefix)
         require(code == 0 and prepared.get("result") == "prepared" and guard is not None, "guarded preparation failed")
         phase = "independent-inspect"
         code, inspected = invoke("inspect")
@@ -138,7 +145,8 @@ def main() -> int:
         variant = "old" if args.action == "rehearse" else "new"
         code, final = invoke("preflight", variant=variant)
         require(code == 0 and final == before, "final runtime or state differs")
-        receipt.update({"result": "passed", "retainedVersion": native.VERSIONS[variant], "stateAndServingPreserved": True})
+        receipt.update({"result": "passed", "retainedVersion": native.VERSIONS["new" if args.infrastructure else variant],
+                        "stateAndServingPreserved": True, "infrastructureEnabled": bool(args.infrastructure and args.action == "retain")})
         return 0
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt.update({"result": "failed", "phase": phase, "errorType": type(error).__name__})
