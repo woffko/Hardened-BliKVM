@@ -19,6 +19,7 @@ use zeroize::Zeroize;
 
 const CREDENTIALS_DIRECTORY_ENV: &str = "CREDENTIALS_DIRECTORY";
 const CREDENTIAL_FILE_NAME: &str = "application-health-token";
+const CREDENTIAL_ALIAS_ROOT: &str = "/run/hardened-blikvm-candidate-credentials";
 const HEALTH_ATTEMPTS: usize = 30;
 const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(200);
 const IO_TIMEOUT: Duration = Duration::from_millis(500);
@@ -46,6 +47,7 @@ enum ReporterError {
 struct ReporterConfig {
     health_endpoint: SocketAddr,
     confirmation_socket: PathBuf,
+    credential_directory: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -77,8 +79,10 @@ impl ReporterError {
 
 fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), ReporterError> {
     let config = parse_arguments(arguments)?;
-    let credential_directory = env::var_os(CREDENTIALS_DIRECTORY_ENV)
-        .map(PathBuf::from)
+    let credential_directory = config
+        .credential_directory
+        .clone()
+        .or_else(|| env::var_os(CREDENTIALS_DIRECTORY_ENV).map(PathBuf::from))
         .ok_or(ReporterError::InvalidCredentialDirectory)?;
     report(&config, &credential_directory)
 }
@@ -104,12 +108,29 @@ fn parse_arguments(
     }
     let confirmation_socket =
         PathBuf::from(arguments.next().ok_or(ReporterError::InvalidArguments)?);
-    if arguments.next().is_some() || !valid_runtime_socket(&confirmation_socket) {
+    if !valid_runtime_socket(&confirmation_socket) {
+        return Err(ReporterError::InvalidArguments);
+    }
+    let credential_directory = match arguments.next() {
+        None => None,
+        Some(option) if option == "--credential-directory" => {
+            let path = PathBuf::from(arguments.next().ok_or(ReporterError::InvalidArguments)?);
+            if path.parent() != Some(Path::new(CREDENTIAL_ALIAS_ROOT))
+                || !matches!(path.components().next_back(), Some(Component::Normal(_)))
+            {
+                return Err(ReporterError::InvalidArguments);
+            }
+            Some(path)
+        }
+        Some(_) => return Err(ReporterError::InvalidArguments),
+    };
+    if arguments.next().is_some() {
         return Err(ReporterError::InvalidArguments);
     }
     Ok(ReporterConfig {
         health_endpoint: endpoint,
         confirmation_socket,
+        credential_directory,
     })
 }
 
@@ -328,6 +349,7 @@ mod tests {
             &ReporterConfig {
                 health_endpoint: health_address,
                 confirmation_socket: socket_path,
+                credential_directory: None,
             },
             &credentials,
         )
@@ -335,6 +357,62 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), token);
         health_thread.join().unwrap();
         confirmation_thread.join().unwrap();
+    }
+
+    #[test]
+    fn explicit_credential_directory_is_confined_to_the_fixed_alias_root() {
+        let base = [
+            "reporter",
+            "--health-endpoint",
+            "127.0.0.1:18080",
+            "--confirm-socket",
+            "/run/confirm.sock",
+        ];
+        let valid = format!("{CREDENTIAL_ALIAS_ROOT}/candidate.service");
+        let parse = |path: &str| {
+            parse_arguments(
+                base.into_iter()
+                    .chain(["--credential-directory", path])
+                    .map(OsString::from),
+            )
+        };
+        assert_eq!(
+            parse(&valid).unwrap().credential_directory,
+            Some(PathBuf::from(&valid))
+        );
+        for invalid in [
+            "/tmp/credentials",
+            CREDENTIAL_ALIAS_ROOT,
+            "/run/hardened-blikvm-candidate-credentials/../other",
+            "/run/hardened-blikvm-candidate-credentials/unit/nested",
+        ] {
+            assert!(matches!(
+                parse(invalid),
+                Err(ReporterError::InvalidArguments)
+            ));
+        }
+        assert!(
+            parse_arguments(
+                base.into_iter()
+                    .chain(["--credential-directory", valid.as_str(), "unexpected"])
+                    .map(OsString::from)
+            )
+            .is_err()
+        );
+        assert!(
+            parse_arguments(
+                base.into_iter()
+                    .chain(["--credential-directory"])
+                    .map(OsString::from)
+            )
+            .is_err()
+        );
+        assert!(
+            parse_arguments(base.into_iter().map(OsString::from))
+                .unwrap()
+                .credential_directory
+                .is_none()
+        );
     }
 
     #[test]

@@ -79,3 +79,14 @@ The packaged templates now use `/run/credentials/%n/...`, preserving the
 actual credential mount while using the supported unit-name specifier. Earlier
 transient credential tests supplied the expanded path directly and therefore
 did not prove compatibility of `%d` in installed unit files.
+
+The candidate health reporter has the same post-command namespace constraint.
+Its source template binds only its own credential mount read-only at
+`/run/hardened-blikvm-candidate-credentials/%n` and passes that path with the
+reporter's optional `--credential-directory` argument. This override accepts
+only a direct child of that fixed root; canonical directory, service identity,
+private permissions and exact single-link 32-byte credential checks still
+apply. Without the override, standalone use retains `CREDENTIALS_DIRECTORY`.
+The override contains only a path, never the credential itself. Candidate
+delivery still requires native acceptance and updated package deployment;
+the retained dev3 package does not include this later candidate fix.

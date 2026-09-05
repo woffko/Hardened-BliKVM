@@ -974,9 +974,12 @@ and repeated clean ticks. Native isolated systemd verification now passed,
 including confirmation, failed-apply request retention, retry and fifteen
 clean ticks without restarts. Exact-unit rerun preserved the real serving
 runtime and removed all fixture/controller staging. See
-`baselines/device-update-apply-events.md`. Installed dev2 and its disabled timer
-are unchanged; next are reproducible dev3 packaging, a state-preserving guarded
-upgrade and real candidate/rollback acceptance before updater activation.
+`baselines/device-update-apply-events.md`. Reproducible dev3 packaging and a
+state-preserving guarded upgrade are now accepted, including an explicit
+dev3-to-dev2 rollback rehearsal and a second retaining installation. See
+`baselines/device-updater-dev3.md`. The watchdog and confirmation socket remain
+disabled. Next fix the candidate reporter's systemd 249 post-command credential
+access, then prove real candidate/rollback acceptance before updater activation.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

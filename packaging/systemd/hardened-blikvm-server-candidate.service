@@ -25,7 +25,7 @@ Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
 LoadCredential=application-health-token:/run/hardened-blikvm-update/health-token
 ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
-ExecStartPost=/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter --health-endpoint 127.0.0.1:18080 --confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock
+ExecStartPost=/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter --health-endpoint 127.0.0.1:18080 --confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock --credential-directory /run/hardened-blikvm-candidate-credentials/%n
 Restart=no
 TimeoutStartSec=15s
 TimeoutStopSec=10s
@@ -42,6 +42,7 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
+BindReadOnlyPaths=/run/credentials/%n:/run/hardened-blikvm-candidate-credentials/%n
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes
 RestrictRealtime=yes

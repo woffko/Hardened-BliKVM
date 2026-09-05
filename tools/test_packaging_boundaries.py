@@ -2757,6 +2757,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("bli-kvm-update-health-reporter", candidate)
         self.assertIn("--health-endpoint 127.0.0.1:18080", candidate)
         self.assertIn("--confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock", candidate)
+        self.assertIn("--credential-directory /run/hardened-blikvm-candidate-credentials/%n", candidate)
+        self.assertIn("BindReadOnlyPaths=/run/credentials/%n:/run/hardened-blikvm-candidate-credentials/%n", candidate)
         self.assertIn(
             "ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server",
             candidate,
