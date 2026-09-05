@@ -74,3 +74,20 @@ signed candidate staging, interruption, repeated reboot, rollback, update GUI,
 and release acceptance remain separate later gates. ATX Power/Reset and other
 attached-target power-control actions are not part of this package or its
 device tests.
+
+## Dev6 status transport addition
+
+Dev6 adds the fixed status socket and its per-connection read-only worker to
+the inert package. It retains dev5's recovery service. Historical package maps
+exclude status units before dev6 and recovery before dev5, so rollback package
+validation does not require files that those versions never shipped.
+
+The status worker uses the kernel peer UID and the existing supervisor
+credential, with `ProtectSystem=strict` and no writable paths or apply/recovery
+dependencies. Packaging does not enable its socket, alter server environment,
+replace a signed application slot, or restart the serving stack. Installing
+dev6 over the retained operational dev5 requires a separate rollback-bound
+upgrade gate preserving initialized state and existing service enablement;
+the original fresh-install absence checks above must not be used for that
+operational upgrade. HTTP/GUI acceptance needs the new signed server/UI and
+explicit status-socket configuration after that gate.

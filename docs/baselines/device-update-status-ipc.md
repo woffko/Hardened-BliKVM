@@ -8,6 +8,8 @@ not installed HTTP/GUI acceptance or permission to enable update mutations.
 
 - Full host suite: `748e54470d1f4a4e9b904e9c9b5e493e`, exit zero.
 - AArch64 build and ELF checks: `5cf09361fe334562bdbf616c8b99c22f`, exit zero.
+- Independent AArch64 build: `f06cb66d06b5471081c21cfe6b329404`, exit zero;
+  supervisor bytes compared equal with `cmp`.
 - Supervisor SHA-256:
   `2a1fe1ca3b255c6b93b8b89b8cb2f85476fbed7453344cb0ec60fbe64033c181`.
 - Native gate: `f1843b32a6b04c3483397eef4fe75a42`, exit zero.
@@ -34,7 +36,7 @@ the diagnosis; the successful native socket test supplies the full-path proof.
 
 ## Remaining gates
 
-Independent-build byte comparison, installed status socket/API wiring,
+Installed status socket/API wiring,
 authenticated HTTP and desktop/mobile rendering, and retained-package upgrade
 acceptance remain. Signed upload and activation IPC are separate unfinished
 work. Status has no apply/recovery dependency or writable filesystem allowance.

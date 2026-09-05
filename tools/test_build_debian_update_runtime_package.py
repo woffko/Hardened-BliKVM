@@ -10,6 +10,20 @@ import tools.stage_device_prototype as prototype
 
 
 class DebianUpdateRuntimePackageTests(unittest.TestCase):
+    def test_status_units_are_only_in_dev6_and_remain_read_only(self) -> None:
+        units = {
+            "lib/systemd/system/hardened-blikvm-update-status.socket",
+            "lib/systemd/system/hardened-blikvm-update-status@.service",
+        }
+        self.assertTrue(units <= set(package.file_map("0.1.0~dev6").values()))
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[:-1]:
+            self.assertFalse(units & set(package.file_map(version).values()))
+        worker = Path("packaging/systemd/hardened-blikvm-update-status@.service").read_text()
+        for forbidden in ("ReadWritePaths=", "OnSuccess=", "Requires=", "StateDirectory=", "RuntimeDirectory="):
+            self.assertNotIn(forbidden, worker)
+        self.assertIn("ProtectSystem=strict", worker)
+        self.assertIn("status-socket --peer-user hardened-blikvm-server", worker)
+
     def test_legacy_package_maps_do_not_require_later_recovery_unit(self) -> None:
         recovery = "lib/systemd/system/hardened-blikvm-update-recover.service"
         self.assertIn(recovery, package.file_map("0.1.0~dev5").values())
@@ -18,7 +32,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev5")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev6")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -29,6 +43,8 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
             "usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter",
             "lib/systemd/system/hardened-blikvm-update-watchdog.timer",
             "lib/systemd/system/hardened-blikvm-update-confirm.socket",
+            "lib/systemd/system/hardened-blikvm-update-status.socket",
+            "lib/systemd/system/hardened-blikvm-update-status@.service",
             "lib/systemd/system/hardened-blikvm-server-current.service",
             "lib/systemd/system/hardened-blikvm-server-candidate.service",
         ):
@@ -64,7 +80,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev5")
+        self.assertEqual(current["version"], "0.1.0~dev6")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertEqual({**previous, "version": current["version"]}, current)
         with self.assertRaises(package.BuildError):
