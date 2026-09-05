@@ -2,12 +2,25 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools import switch_signed_slot_server as native
 from tools.stage_device_signed_slot_server import browser_accepted
 
 
 class SignedSlotServingTests(unittest.TestCase):
+    def test_template_activity_checks_instances_without_querying_empty_template(self) -> None:
+        def activity(unit: str) -> None:
+            self.assertNotIn("@.", unit)
+        expected = "dd3d529561a1e3699d1eec9d48b07921067de3242b1f87251945d519b63644d1"
+        with patch.object(native, "inactive", side_effect=activity), patch.object(native, "enabled", return_value="static"), \
+                patch.object(native, "digest", return_value=expected), patch.object(native, "checked", return_value=b"") as query:
+            native.updater_inert()
+            self.assertIn("hardened-blikvm-update-confirm@*.service", query.call_args.args[0])
+            query.return_value = b"hardened-blikvm-update-confirm@1.service loaded active running\n"
+            with self.assertRaises(ValueError):
+                native.updater_inert()
+
     def test_proxy_service_and_tls_settings_survive_dependency_change(self) -> None:
         source = Path("packaging/systemd/hardened-blikvm-nginx.service").read_bytes()
         changed = native.slot_nginx_unit(source)

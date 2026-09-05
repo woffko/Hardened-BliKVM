@@ -88,8 +88,15 @@ def updater_inert() -> None:
                  "hardened-blikvm-update-confirm.socket", "hardened-blikvm-update-confirm@.service",
                  "hardened-blikvm-update-activate@.service", "hardened-blikvm-update-apply-candidate.service",
                  "hardened-blikvm-update-apply-confirmed.service", CANDIDATE_SERVER):
-        inactive(unit)
+        if "@." not in unit:
+            inactive(unit)
         require(enabled(unit) not in ("enabled", "enabled-runtime", "linked", "linked-runtime"), "update infrastructure enabled")
+    active_instances = checked([
+        "systemctl", "list-units", "--all", "--no-legend", "--plain",
+        "--state=active,activating,deactivating,reloading",
+        "hardened-blikvm-update-confirm@*.service", "hardened-blikvm-update-activate@*.service",
+    ])
+    require(not active_instances.strip(), "update template instance is active")
     require(not Path("/run/hardened-blikvm-update/health-token").exists(), "candidate activation is pending")
     require(digest(Path("/lib/systemd/system") / CURRENT_SERVER) == "dd3d529561a1e3699d1eec9d48b07921067de3242b1f87251945d519b63644d1",
             "current server template changed")
