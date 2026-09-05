@@ -1,9 +1,9 @@
 [Unit]
 Description=Hardened BliKVM health-gated candidate application server
 Documentation=https://github.com/woffko/Hardened-BliKVM
-Requires=hardened-blikvm-platform-broker.service hardened-blikvm-update-confirm.socket
+Requires=hardened-blikvm-platform-broker.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover.service
 Wants=hardened-blikvm-video-proxy.service
-After=hardened-blikvm-platform-broker.service hardened-blikvm-video-proxy.service hardened-blikvm-update-confirm.socket
+After=hardened-blikvm-platform-broker.service hardened-blikvm-video-proxy.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover.service
 Conflicts=hardened-blikvm-server.service hardened-blikvm-server-current.service
 ConditionPathExists=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
 ConditionPathExists=/var/lib/hardened-blikvm-slots/current/share/web/index.html

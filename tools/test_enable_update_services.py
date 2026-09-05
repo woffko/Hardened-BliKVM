@@ -10,6 +10,12 @@ from tools import stage_initialized_updater_upgrade as driver
 
 
 class EnableUpdateServicesTests(unittest.TestCase):
+    def test_operational_snapshot_rejects_invalid_slot_floor_binding_before_io(self) -> None:
+        for slot, floor in (("../../untrusted", 2), (gate.s.bootstrap.SLOT, 2)):
+            with patch.object(gate.s.bootstrap, "trusted_code_and_config") as load, self.assertRaises(ValueError):
+                gate.enabled_snapshot(expected_slot=slot, expected_floor=floor, check_initial=False)
+            load.assert_not_called()
+
     def test_status_query_does_not_own_or_remove_watchdog_runtime_directory(self) -> None:
         source = inspect.getsource(gate.current_status)
         self.assertNotIn("--property=RuntimeDirectory=", source)

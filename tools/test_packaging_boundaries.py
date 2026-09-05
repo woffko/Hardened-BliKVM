@@ -2690,6 +2690,19 @@ class PackagingBoundaryTests(unittest.TestCase):
         )
 
     def test_update_supervisor_is_local_health_only_and_sandboxed(self) -> None:
+        recovery = (ROOT / "packaging/systemd/hardened-blikvm-update-recover.service").read_text()
+        self.assertIn("Type=oneshot", recovery)
+        self.assertIn("RemainAfterExit=yes", recovery)
+        self.assertIn("User=hardened-blikvm-update", recovery)
+        self.assertIn("watchdog-once", recovery)
+        self.assertIn("LoadCredential=update-supervisor-config:", recovery)
+        self.assertNotIn("Condition", recovery)
+        self.assertNotIn("OnSuccess=", recovery)
+        for name in ("current", "candidate"):
+            server = (ROOT / f"packaging/systemd/hardened-blikvm-server-{name}.service").read_text()
+            for directive in ("Requires=", "After="):
+                self.assertTrue(any(line.startswith(directive) and "hardened-blikvm-update-recover.service" in line.split("=", 1)[1].split()
+                                    for line in server.splitlines()))
         watchdog = (
             ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.service"
         ).read_text()

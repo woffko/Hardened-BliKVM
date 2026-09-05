@@ -39,6 +39,7 @@ class CandidateHealthTests(unittest.TestCase):
         self.assertNotIn("Conflicts=", rendered)
         self.assertNotIn("StateDirectory=", rendered)
         self.assertNotIn("hardened-blikvm-update-confirm.socket", rendered)
+        self.assertNotIn("hardened-blikvm-update-recover.service", rendered)
         self.assertIn(f"BLI_KVM_STATE_DIR={root}/server-state", rendered)
         self.assertIn(f"ExecStart={root}/server", rendered)
         self.assertIn(f"--confirm-socket {runtime}/confirm.sock", rendered)

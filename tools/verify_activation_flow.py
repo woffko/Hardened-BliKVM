@@ -23,6 +23,7 @@ PREFIX = "blikvm-activation-flow-"
 PORT = 18482
 UNIT_ROOT = Path("/run/systemd/system")
 TEMPLATES = {
+    "recover": "hardened-blikvm-update-recover.service",
     "current": "hardened-blikvm-server-current.service",
     "candidate": "hardened-blikvm-server-candidate.service",
     "apply-confirmed": "hardened-blikvm-update-apply-confirmed.service",
@@ -53,6 +54,7 @@ def checked(argv: list[str]) -> bytes:
 def names(token: str) -> dict[str, str]:
     base = PREFIX + token + "-"
     return {"current": base + "current.service", "candidate": base + "candidate.service",
+            "recover": base + "recover.service",
             "apply-confirmed": base + "apply-confirmed.service", "apply-candidate": base + "apply-candidate.service",
             "watchdog": base + "watchdog.service", "timer": base + "watchdog.timer",
             "activate": base + "activate@.service", "confirm": base + "confirm@.service", "socket": base + "confirm.socket",
@@ -89,7 +91,7 @@ def cleanup(root: Path) -> None:
             "invalid fixture namespace")
     require(not root.is_symlink() and root.stat().st_uid == 0, "unsafe fixture root")
     units = names(root.name.removeprefix(PREFIX))
-    for key in ("timer", "deadline", "socket", "apply-candidate", "apply-confirmed", "candidate", "current", "watchdog"):
+    for key in ("timer", "deadline", "socket", "apply-candidate", "apply-confirmed", "candidate", "current", "watchdog", "recover"):
         command(["systemctl", "stop", units[key]])
     instances = checked(["systemctl", "list-units", "--all", "--plain", "--no-legend", root.name + "-*@*.service"])
     for line in instances.decode().splitlines():
@@ -202,6 +204,38 @@ def main() -> None:
 
         phase = "initial"
         await_current(slots[0], 1)
+        # Test the mandatory dependency with the timer stopped so it cannot
+        # repair state or hide which service prevented application execution.
+        checked(["systemctl", "stop", units["timer"], units["watchdog"], units["recover"]])
+        phase = "missing-trust-blocks-server"
+        config_path = root / "config.json"
+        saved_config = root / "config.saved"
+        config_path.rename(saved_config)
+        try:
+            attempted = command(["systemctl", "start", units["current"]])
+            require(attempted.returncode != 0 and prop("current", "MainPID") == "0"
+                    and prop("recover", "Result") != "success", "missing trust did not block serving")
+        finally:
+            saved_config.rename(config_path)
+        facts["missingTrustBlockedServing"] = True
+        checked(["systemctl", "reset-failed", units["recover"], units["current"]])
+        phase = "tampered-web-blocks-server"
+        web = root / "slots" / slots[0] / "share/web/index.html"
+        original_web = web.read_bytes()
+        # Alter only fixture web bytes, not the executable: without mandatory
+        # verification the same Rust server would still be able to start.
+        web.write_bytes(b"X" + original_web[1:])
+        try:
+            attempted = command(["systemctl", "start", units["current"]])
+            require(attempted.returncode != 0 and prop("current", "MainPID") == "0"
+                    and prop("recover", "Result") != "success", "tampered signed tree did not block serving")
+        finally:
+            web.write_bytes(original_web)
+        facts["tamperedTreeBlockedServing"] = True
+        checked(["systemctl", "reset-failed", units["recover"], units["current"]])
+        checked(["systemctl", "start", units["current"], units["timer"]])
+        await_current(slots[0], 1)
+        require(prop("recover", "ActiveState") == "active", "verified recovery gate did not remain active")
         phase = "candidate-confirmation"
         checked(["systemctl", "start", units["activate"].replace("@.", "@" + slots[1] + ".")])
         await_current(slots[1], 2)
@@ -224,7 +258,7 @@ def main() -> None:
         receipt = {"result": "passed", "checks": facts}
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         journals: dict[str, str] = {}
-        for key in ("candidate", "current", "apply-candidate", "apply-confirmed", "watchdog"):
+        for key in ("candidate", "current", "apply-candidate", "apply-confirmed", "watchdog", "recover"):
             log = command(["journalctl", "--no-pager", "-n", "6", "-o", "cat", "-u", units[key]])
             journals[key] = log.stdout.decode(errors="replace")[-1800:]
         receipt = {"result": "failed", "phase": phase, "errorType": type(error).__name__, "checks": facts, "journals": journals}

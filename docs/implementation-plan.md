@@ -987,6 +987,14 @@ also retained after explicit disabling/restoration and a second verified
 enablement: `baselines/device-updater-infrastructure.md`. Next are the
 production-key application update flow and browser/recovery acceptance.
 
+The installed production-key sequence-two update now passed, including a real
+health-timeout return to slot one, phase-bound browser acceptance, normal
+confirmation to floor two/generation seven and independent guard cleanup.
+See `baselines/device-installed-application-update.md`. Next add mandatory
+boot-time journal/slot verification before starting current/candidate servers,
+then prove confirmed and interrupted-update reboot behavior. The signed-update
+API/GUI and remaining hardware-adapter work are not completed by this gate.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

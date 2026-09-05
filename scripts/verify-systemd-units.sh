@@ -81,6 +81,7 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-server.service \
   hardened-blikvm-nginx.service \
   hardened-blikvm-update-watchdog.service \
+  hardened-blikvm-update-recover.service \
   hardened-blikvm-update-watchdog.timer \
   hardened-blikvm-update-confirm.socket \
   hardened-blikvm-update-confirm@.service \
@@ -101,6 +102,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-recover.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-activate@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-apply-candidate.service" \

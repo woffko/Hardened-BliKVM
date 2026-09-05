@@ -51,6 +51,9 @@ def render_candidate(template: str, root: Path, runtime: Path, *, alias: bool) -
     text = "\n".join(line for line in template.splitlines()
                      if not line.startswith(("Conflicts=", "StateDirectory"))) + "\n"
     text = text.replace(" hardened-blikvm-update-confirm.socket", "")
+    # This component gate tests reporter delivery only. The separate full-flow
+    # gate retains the recovery dependency in its isolated unit graph.
+    text = text.replace(" hardened-blikvm-update-recover.service", "")
     replacements = {
         "/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server": str(root / "server"),
         "/var/lib/hardened-blikvm-slots/current/share/web": "/usr/share/hardened-blikvm/web",

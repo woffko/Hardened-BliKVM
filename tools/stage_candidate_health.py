@@ -33,6 +33,7 @@ def main() -> int:
     for name in ("build-dir", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--fixture", help="Run full isolated activation using these public-only signed fixtures")
+    parser.add_argument("--operational", action="store_true", help="Verify the retained sequence-two application with updater enabled")
     args = parser.parse_args()
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new receipt required")
@@ -45,6 +46,9 @@ def main() -> int:
         uploads[name] = data
     for name in ("verify_candidate_health.py", "switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py"):
         uploads[name] = Path(__file__).with_name(name).read_bytes()
+    if args.operational:
+        for name in ("enable_update_services.py", "upgrade_initialized_updater.py"):
+            uploads[name] = Path(__file__).with_name(name).read_bytes()
     uploads["candidate.service"] = (Path(__file__).resolve().parent.parent / "packaging/systemd/hardened-blikvm-server-candidate.service").read_bytes()
     test_script = "verify_candidate_health.py"
     if args.fixture:
@@ -87,9 +91,14 @@ def main() -> int:
     phase = "stage"
     receipt: dict[str, object] = {"probe": "isolated-activation-flow" if args.fixture else "isolated-candidate-health",
                                   "reporterSha256": native.REPORTER_HASH}
-    observer_code = ("import json,sys;sys.path.insert(0," + repr(stage) + ");import switch_signed_slot_server as s;"
-                     "v=s.snapshot();r=s.verify(v,True,expected_supervisor_sha=" + repr(INSTALLED_SUPERVISOR_SHA)
-                     + ");print(json.dumps({'snapshot':v,'verification':r},sort_keys=True))")
+    if args.operational:
+        observer_code = ("import json,sys;sys.path.insert(0," + repr(stage) + ");import enable_update_services as e;"
+                         "v=e.enabled_snapshot(expected_slot='app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53',"
+                         "expected_floor=2,check_initial=False);print(json.dumps(v,sort_keys=True))")
+    else:
+        observer_code = ("import json,sys;sys.path.insert(0," + repr(stage) + ");import switch_signed_slot_server as s;s.updater_inert();"
+                         "v=s.snapshot();r=s.verify(v,True,expected_supervisor_sha=" + repr(INSTALLED_SUPERVISOR_SHA)
+                         + ");print(json.dumps({'snapshot':v,'verification':r},sort_keys=True))")
     observer = shlex.join(["python3", "-B", "-c", observer_code])
     try:
         require(transport.run_ssh(target, secret, f"set -eu\ntest ! -e {q(stage)} && test ! -L {q(stage)}\nmkdir -m 700 {q(stage)}").returncode == 0,

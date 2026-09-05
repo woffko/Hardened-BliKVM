@@ -88,9 +88,16 @@ def audit_enabled(*, check_initial: bool = True) -> None:
         initial_status()
 
 
-def enabled_snapshot() -> dict[str, object]:
+def enabled_snapshot(*, expected_slot: str = s.bootstrap.SLOT, expected_floor: int = 1,
+                     check_initial: bool = True) -> dict[str, object]:
+    require(re.fullmatch(r"app-[0-9]{20}-[a-f0-9]{64}", expected_slot) is not None
+            and int(expected_slot.split("-", 2)[1]) == expected_floor, "invalid expected application binding")
     s.bootstrap.trusted_code_and_config(expected_supervisor_sha=upgrade.SUPERVISOR_HASHES["new"])
-    audit_enabled()
+    audit_enabled(check_initial=check_initial)
+    if not check_initial:
+        status = current_status()
+        require(status.get("floorSequence") == expected_floor and status.get("pending") is None
+                and status.get("activeSlotId") == status.get("confirmedSlotId") == expected_slot, "operational application state changed")
     before = s.snapshot()
     for unit in (s.CURRENT_SERVER, s.NGINX):
         require(s.property_value(unit, "ActiveState") == "active" and s.enabled(unit) == "enabled", "serving service unavailable")
@@ -99,7 +106,7 @@ def enabled_snapshot() -> dict[str, object]:
     pid = s.property_value(s.CURRENT_SERVER, "MainPID")
     require(pid.isdecimal() and int(pid) > 0, "invalid serving PID")
     executable = Path("/proc") / pid / "exe"
-    expected = upgrade.STATE_ROOTS[0] / s.bootstrap.SLOT / "bin/bli-kvm-server"
+    expected = upgrade.STATE_ROOTS[0] / expected_slot / "bin/bli-kvm-server"
     require(executable.resolve(strict=True) == expected and upgrade.digest(executable) == upgrade.digest(expected), "serving executable changed")
     require(bool(checked(["curl", "--noproxy", "*", "--insecure", "--silent", "--fail", "--max-time", "5", "https://127.0.0.1/api/health"])), "HTTPS unavailable")
     verified = {"result": "verified", "server": s.CURRENT_SERVER, "serverPid": pid,

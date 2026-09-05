@@ -38,6 +38,7 @@ SLOT_ROOT = "/var/lib/hardened-blikvm-slots"
 UPDATE_RUNTIME = "/run/hardened-blikvm-update"
 UPDATE_SOCKET_RUNTIME = "/run/hardened-blikvm-update-confirm"
 UNIT_NAMES = (
+    "hardened-blikvm-update-recover.service",
     "hardened-blikvm-update-watchdog.service",
     "hardened-blikvm-update-watchdog.timer",
     "hardened-blikvm-update-confirm.socket",
@@ -284,7 +285,7 @@ def validate_package(
                 raise ValueError("update control member metadata is invalid")
         if control_members != ["control"]:
             raise ValueError("update package contains maintainer scripts")
-    expected_files = set(update_builder.FILE_MAP.values())
+    expected_files = set(update_builder.file_map(expected_version).values())
     manifest_path = (
         "usr/share/doc/hardened-blikvm-update-runtime/PACKAGE-MANIFEST.json"
     )
