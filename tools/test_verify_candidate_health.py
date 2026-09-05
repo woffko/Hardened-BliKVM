@@ -23,6 +23,12 @@ class CandidateHealthTests(unittest.TestCase):
                 other = units["candidate" if key == "current" else "current"]
                 self.assertIn("Conflicts=" + other, rendered)
                 self.assertIn(f"ReadWritePaths={root}/server-state", rendered)
+                section = ""
+                for line in rendered.splitlines():
+                    if line.startswith("["):
+                        section = line
+                    if line.startswith(("ReadWritePaths=", "RuntimeMaxSec=")):
+                        self.assertEqual(section, "[Service]")
             if key == "socket":
                 self.assertIn(f"ListenStream={runtime}/confirm.sock", rendered)
             if key == "confirm":

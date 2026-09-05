@@ -47,7 +47,7 @@ def command(argv: list[str], *, timeout: int = 25) -> subprocess.CompletedProces
 
 def checked(argv: list[str]) -> bytes:
     result = command(argv)
-    require(result.returncode == 0, "command failed: " + argv[0])
+    require(result.returncode == 0, "command failed: " + " ".join(argv[:4]) + ": " + result.stderr.decode(errors="replace")[:512])
     return result.stdout
 
 
@@ -80,7 +80,7 @@ def render(template: str, key: str, root: Path, runtime: Path, units: dict[str, 
     for original in sorted(replacements, key=len, reverse=True):
         text = text.replace(original, replacements[original])
     if key in ("current", "candidate"):
-        text += f"ReadWritePaths={root}/server-state\nRuntimeMaxSec=120\n"
+        text += f"[Service]\nReadWritePaths={root}/server-state\nRuntimeMaxSec=120\n"
     require("hardened-blikvm-server.service" not in text and "/var/lib/hardened-blikvm-" not in text
             and "/run/hardened-blikvm-update" not in text, "production mutation path remained")
     return text
@@ -218,7 +218,9 @@ def main() -> None:
         finally:
             saved_config.rename(config_path)
         facts["missingTrustBlockedServing"] = True
-        checked(["systemctl", "reset-failed", units["recover"], units["current"]])
+        # A dependency-failed current service may have been garbage-collected;
+        # only the failed recovery service needs its start limit reset.
+        checked(["systemctl", "reset-failed", units["recover"]])
         phase = "tampered-web-blocks-server"
         web = root / "slots" / slots[0] / "share/web/index.html"
         original_web = web.read_bytes()
@@ -232,7 +234,7 @@ def main() -> None:
         finally:
             web.write_bytes(original_web)
         facts["tamperedTreeBlockedServing"] = True
-        checked(["systemctl", "reset-failed", units["recover"], units["current"]])
+        checked(["systemctl", "reset-failed", units["recover"]])
         checked(["systemctl", "start", units["current"], units["timer"]])
         await_current(slots[0], 1)
         require(prop("recover", "ActiveState") == "active", "verified recovery gate did not remain active")

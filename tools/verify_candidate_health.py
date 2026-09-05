@@ -69,7 +69,7 @@ def render_candidate(template: str, root: Path, runtime: Path, *, alias: bool) -
         text = text.replace(original, replacement)
     if not alias:
         text = "\n".join(line for line in text.splitlines() if not line.startswith("BindReadOnlyPaths=")) + "\n"
-    text += f"ReadWritePaths={root}/server-state\nRuntimeMaxSec=60\n"
+    text += f"[Service]\nReadWritePaths={root}/server-state\nRuntimeMaxSec=60\n"
     require("Conflicts=" not in text and "/run/hardened-blikvm-update/" not in text
             and "BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm\n" not in text,
             "production mutation path remained")
