@@ -199,8 +199,16 @@ def main() -> None:
                       "productionServicesTouched": False})
         receipt = {"probe": "isolated-apply-events", "result": "passed", "checks": facts}
     except (OSError, ValueError, subprocess.SubprocessError) as error:
+        diagnostics: dict[str, object] = {}
+        for key in ("watchdog", "apply", "current", "timer", "deadline"):
+            properties = subprocess.run(["systemctl", "show", "-p", "LoadState,ActiveState,SubState,Result,ExecMainStatus,LoadError",
+                                         units[key]], capture_output=True, timeout=10, check=False)
+            journal = subprocess.run(["journalctl", "--no-pager", "-n", "8", "-o", "cat", "-u", units[key]],
+                                     capture_output=True, timeout=10, check=False)
+            diagnostics[key] = {"properties": properties.stdout.decode(errors="replace")[:2048],
+                                "journal": journal.stdout.decode(errors="replace")[-2048:]}
         receipt = {"probe": "isolated-apply-events", "result": "failed", "phase": phase,
-                   "error": str(error)[:2048], "checks": facts}
+                   "error": str(error)[:2048], "checks": facts, "unitDiagnostics": diagnostics}
     finally:
         cleanup(root)
     receipt["fixtureRemoved"] = True
