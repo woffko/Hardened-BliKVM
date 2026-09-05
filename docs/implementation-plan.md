@@ -889,6 +889,19 @@ No private key, restart, reboot, or target power-control action entered the
 gate. See `baselines/device-application-trust-enrollment.md`. State/slot
 initialization remains the next separate application-update authority gate.
 
+The first encrypted key passphrase was subsequently unavailable before any
+state or slot existed. Source `091866a` added an explicit owner-only
+passwordless-key policy, and source `14562c2` added a narrowly bounded
+unused-trust removal gate. The old exact config was removed only after a
+read-only H616 preflight proved it unused; independent final verification then
+proved the no-trust state. A separately backed up and reviewed passwordless
+`app-production-2026-09-05-01` request passed another read-only preflight and
+ordinary rollback-gated enrollment. The new mode-0600 config is persistent,
+all guards/staging are absent, state/slots/runtime remain absent, update units
+remain inert, and the running application is unchanged. The retired encrypted
+key files were not read, modified, or deleted. State/slot initialization is
+still the next gate, but work is paused before production bundle signing.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

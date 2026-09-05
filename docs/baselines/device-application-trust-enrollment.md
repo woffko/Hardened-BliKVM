@@ -4,6 +4,11 @@ On 2026-09-04, the designated test H616 accepted the first reviewed production
 application-update public key. The ceremony and device gate never accepted,
 uploaded, logged, or stored the signing private key.
 
+On 2026-09-05, that still-unused trust root was retired because its encrypted
+private-key passphrase was no longer available. No application state or slot
+had been created with it. A separately backed up and reviewed passwordless
+owner-only key now supplies the active application public trust root.
+
 ## Reviewed public identity
 
 The operator generated and separately backed up an AES-256-encrypted PKCS#8
@@ -69,11 +74,65 @@ Its policy records public-key-only enrollment, no private-key input, no state
 initialization, no enabled unit, no runtime restart, no reboot, and no target
 power control.
 
+## Unused-root retirement and replacement
+
+Commit `091866a` added an explicit passwordless-key policy. Passwordless
+generation requires both `--without-passphrase` and
+`--acknowledge-unencrypted-host-key-risk`; signing requires the same policy
+acknowledgement. The key remains outside Git, `/tmp`, Project Memory, and the
+device as an owner-only mode-0400 PKCS#8 file, but relies only on host/account
+protection and is weaker than the encrypted default.
+
+The operator separately backed up and reviewed the replacement public identity:
+
+- key ID: `app-production-2026-09-05-01`;
+- public-key SHA-256:
+  `e9f50cc5f83f1556fe52bece7301e5743e3106856cfa703c7aa7775be548da41`;
+- exact enrollment-request SHA-256:
+  `c6cab9580246a4782d3ab8185115423d9ea7870d0be5591c437529d492ac592e`;
+  and
+- canonical supervisor-config SHA-256:
+  `93b2ae14c5dd12d831de01f4a4ba491667a5eee34512e161ef34e7cd29590c5e`.
+
+Commit `14562c2` added the exact unused-trust removal gate documented in
+`design/unused-update-trust-removal-gate-v1.md`. It accepts only the prior
+completed enrollment receipt and exact config hash while configuration has
+never acquired state, slots, runtime, or an active/enabled update unit.
+
+Read-only job `d0e62a9855644cdea374b3e5fa7e030e` first accepted the old
+configuration and unchanged runtime. Job `b43ed85a37ec400db6b9cdd6fd47c479`
+then performed the single exact config unlink and independently proved the
+no-trust state. It did not read, modify, or delete the old encrypted private
+key or backup. Its private receipts are:
+
+- `evidence/private/device-unused-update-trust-removal-preflight-2026-09.json`;
+  and
+- `evidence/private/device-unused-update-trust-removal-2026-09.json`.
+
+Read-only job `01224421cb6d4f6bbcc32faf92365251` accepted the clean state and
+new public request before guarded enrollment job
+`fe51f9cb797741549303023c74b5092b`. The latter repeated the preflight,
+validated the public request through the accepted AArch64 validator, armed and
+then removed early-boot/timed rollback, atomically published the 372-byte
+mode-0600 config, and independently verified it in a new SSH transaction.
+
+The final facts again prove all staging/guards absent, state/slots/runtime
+absent, update units inert, and the persistent service PIDs, zero restart
+counters, account, Nginx, TLS, health, and control boundary unchanged. The
+private receipts are:
+
+- `evidence/private/device-update-trust-preflight-passwordless-2026-09.json`;
+  and
+- `evidence/private/device-update-trust-enrollment-passwordless-2026-09.json`.
+
 ## Accepted and remaining boundary
 
-This checkpoint accepts one persistent production application public trust
-root on the test H616. It does not initialize update state or slots, start or
-enable the update runtime, stage or sign a candidate, expose an update API or
-GUI, exercise interruption/reboot recovery, establish system-image layout, or
-accept a release. Key rotation and revocation still require a versioned policy.
-ATX Power/Reset and equivalent attached-target power controls remain excluded.
+This checkpoint accepts `app-production-2026-09-05-01` as the current persistent
+application public trust root on the test H616. The original unused public root
+is no longer active, while its local encrypted key material remains untouched.
+This does not initialize update state or slots, start or enable the update
+runtime, stage or sign a candidate, expose an update API or GUI, exercise
+interruption/reboot recovery, establish system-image layout, or accept a
+release. Key rotation and revocation after first use still require a versioned
+policy. ATX Power/Reset and equivalent attached-target power controls remain
+excluded.
