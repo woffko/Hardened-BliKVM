@@ -1,11 +1,54 @@
 import copy
 import inspect
 import unittest
+from typing import cast
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 from tools import stage_operational_reboot as gate
 
 
 class OperationalRebootTests(unittest.TestCase):
+    def test_interruption_cleanup_without_ownership_preserves_user_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "probe"
+            root.mkdir()
+            override = Path(temporary) / "overrides"
+            override.mkdir()
+            user_file = override / "user.conf"
+            user_file.write_text("unrelated")
+            status = {"pending": None, "floorSequence": 2, "activeSlotId": gate.interruption.CONFIRMED,
+                      "confirmedSlotId": gate.interruption.CONFIRMED}
+            with patch.object(gate.interruption, "validate_assets"), \
+                 patch.object(gate.interruption, "DROPIN_ROOT", override), \
+                 patch.object(gate.interruption, "DROPIN", override / "ours.conf"), \
+                 patch.object(gate.interruption, "source_root", return_value=root / "absent-input"), \
+                 patch.object(gate.interruption.infrastructure, "current_status", return_value=status), \
+                 patch.object(gate.interruption, "checked") as checked:
+                gate.interruption.cleanup(root)
+                checked.assert_not_called()
+            self.assertEqual(user_file.read_text(), "unrelated")
+
+    def test_pending_reboot_requires_boot_changed_rollback_without_floor_raise(self) -> None:
+        before = self.fixture()
+        after = copy.deepcopy(before)
+        after["bootIdSha256"] = "b" * 64
+        status: dict[str, object] = {"floorSequence": 2, "generation": 10, "pending": None,
+                                    "activeSlotId": gate.interruption.CONFIRMED, "confirmedSlotId": gate.interruption.CONFIRMED,
+                                    "previousSlotId": gate.interruption.CANDIDATE, "lastRollback": "boot_changed"}
+        after["status"] = status
+        final_tree = cast(dict[str, object], cast(dict[str, object], after["snapshot"])["state"])
+        final_tree["candidate-file"] = "hash2"
+        pending: dict[str, object] = {"result": "pending", "bootIdSha256": "a" * 64, "status": {"generation": 9},
+                   "confirmedTree": {"signed-file": "hash"}, "candidateTree": {"candidate-file": "hash2"}}
+        gate.compare(before, after, pending)
+        for field, value in (("lastRollback", "health_timeout"), ("floorSequence", 3)):
+            changed = copy.deepcopy(after)
+            cast(dict[str, object], changed["status"])[field] = value
+            with self.assertRaises(ValueError):
+                gate.compare(before, changed, pending)
+
     def fixture(self) -> dict[str, object]:
         return {"result": "ready", "bootIdSha256": "a" * 64, "status": {"floorSequence": 2, "generation": 7},
                 "snapshot": {"state": {"signed-file": "hash"}, "nginxUnit": "hash",

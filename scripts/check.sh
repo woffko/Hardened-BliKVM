@@ -136,6 +136,7 @@ python3 -m py_compile \
   tools/installed_application_update.py \
   tools/stage_installed_application_update.py \
   tools/capture_operational_boot.py \
+  tools/prepare_interrupted_update.py \
   tools/stage_operational_reboot.py \
   tools/stage_initialized_updater_upgrade.py \
   tools/verify_candidate_health.py \
@@ -221,6 +222,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/installed_application_update.py \
     tools/stage_installed_application_update.py \
     tools/capture_operational_boot.py \
+    tools/prepare_interrupted_update.py \
     tools/stage_operational_reboot.py \
     tools/test_operational_reboot.py \
     tools/test_installed_application_update.py \

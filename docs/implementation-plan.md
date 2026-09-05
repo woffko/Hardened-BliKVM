@@ -1002,6 +1002,13 @@ services (`baselines/device-updater-dev5.md`). Next prove one real clean reboot:
 new boot identity, unchanged persistent state, verification completion before
 server startup and browser behavior. Interrupted-update reboot remains separate.
 
+The clean operational reboot and subsequent browser check passed
+(`baselines/device-operational-reboot.md`). Next exercise a real pending
+sequence-three candidate across software reboot, requiring boot-ID-change
+rollback to confirmed sequence two; see
+`design/interrupted-application-reboot-v1.md`. No abrupt-power-loss claim is
+made by either reboot gate.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
