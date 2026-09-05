@@ -43,8 +43,9 @@ The loader accepts this additional fixed root only with the same root-owned
 ancestors, service-owned mode-0400 file, single-link and read-only mount checks.
 The first main command still snapshots the request before restarting the
 server; ACK must use that snapshot, not reload the possibly newer live request.
-Native acceptance must verify this narrow bind mount without weakening the
-credential loader's ownership, ancestor or read-only checks.
+Native acceptance verified this narrow bind mount without weakening the
+credential loader's ownership, ancestor or read-only checks; see
+`../baselines/device-update-apply-events.md`.
 
 References: systemd v249 [credential namespace gating](https://github.com/systemd/systemd/blob/v249/src/core/execute.c#L2952-L2960)
 and [main-command credential initialization](https://github.com/systemd/systemd/blob/v249/src/core/service.c#L1941-L1945).
@@ -57,8 +58,9 @@ remains a separate one-use secret and is not included in this request.
 Host tests cover repeated clean ticks without restart requests, health
 confirmation, rollback, preservation until acknowledgement, stale ACK versus
 newer generation, unsafe symlink/oversized/unknown request rejection, and the
-CLI stdin flow. Real systemd delivery, repeated-tick PID stability, failed
-application retry and dev3 package installation still require device acceptance.
+CLI stdin flow. Isolated real systemd delivery, repeated-tick PID stability and
+failed application retry passed on the device. Dev3 package installation and
+the actual serving-candidate update flow still require separate acceptance.
 
 The native acceptance runner is `tools/verify_apply_events.py`. It renders the
 actual apply/watchdog units into an isolated `/var/lib` fixture (the device

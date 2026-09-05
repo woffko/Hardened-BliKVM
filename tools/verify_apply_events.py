@@ -87,20 +87,6 @@ def main() -> None:
         shutil.copyfile(assets / "supervisor", binary)
         binary.chmod(0o755)
         shutil.copyfile(Path(__file__), root / "cleanup.py")
-        # Metadata only: never read either credential or print its contents.
-        credential_probe = root / "credential-metadata.py"
-        credential_probe.write_text(
-            "import json,os,pathlib,sys\n"
-            "directory=pathlib.Path('/run/hardened-blikvm-apply-credentials')/sys.argv[1]\n"
-            "facts={'euid':os.geteuid(),'paths':{}}\n"
-            "for path in [pathlib.Path('/'),pathlib.Path('/run'),directory.parent,directory,directory/'update-supervisor-config',directory/'confirmed-apply-request']:\n"
-            " try:\n"
-            "  s=path.lstat(); v=os.statvfs(path)\n"
-            "  facts['paths'][str(path)]={'uid':s.st_uid,'mode':oct(s.st_mode),'links':s.st_nlink,'dev':s.st_dev,'ro':bool(v.f_flag & os.ST_RDONLY),'canonical':path.resolve()==path}\n"
-            " except OSError as e: facts['paths'][str(path)]={'errno':e.errno}\n"
-            "print('credential metadata '+json.dumps(facts,sort_keys=True))\n"
-        )
-        credential_probe.chmod(0o644)
         for sequence in (1, 2, 3):
             path = root / f"application-{sequence}.tar"
             shutil.copyfile(assets / path.name, path)
@@ -143,8 +129,6 @@ def main() -> None:
             text = "\n".join(line for line in text.splitlines() if not line.startswith(("StateDirectory", "RuntimeDirectory"))) + "\n"
             for original, replacement in replacements.items():
                 text = text.replace(original, replacement)
-            if key == "apply":
-                text = text.replace("ExecStartPost=", f"ExecStartPost=/usr/bin/python3 -B {credential_probe} %n\nExecStartPost=", 1)
             require("/var/lib/hardened-blikvm" not in text and "/run/hardened-blikvm-update" not in text,
                     "production path remained in fixture unit")
             (Path("/run/systemd/system") / units[key]).write_text(text)

@@ -970,9 +970,13 @@ Updater dev3 source now uses a bounded generation/slot apply request on health
 confirmation or recovery, followed by a matching acknowledgement after the
 fixed service action. Clean ticks create no request and candidate application
 is dispatched only by explicit activation. Unit and CLI tests cover stale ACKs
-and repeated clean ticks. Installed dev2 and its disabled timer are unchanged;
-the new event-delivery behavior still needs native systemd verification before
-dev3 installation and updater activation.
+and repeated clean ticks. Native isolated systemd verification now passed,
+including confirmation, failed-apply request retention, retry and fifteen
+clean ticks without restarts. Exact-unit rerun preserved the real serving
+runtime and removed all fixture/controller staging. See
+`baselines/device-update-apply-events.md`. Installed dev2 and its disabled timer
+are unchanged; next are reproducible dev3 packaging, a state-preserving guarded
+upgrade and real candidate/rollback acceptance before updater activation.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
