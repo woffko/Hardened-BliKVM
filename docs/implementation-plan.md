@@ -900,7 +900,10 @@ ordinary rollback-gated enrollment. The new mode-0600 config is persistent,
 all guards/staging are absent, state/slots/runtime remain absent, update units
 remain inert, and the running application is unchanged. The retired encrypted
 key files were not read, modified, or deleted. State/slot initialization is
-still the next gate, but work is paused before production bundle signing.
+still the next gate, but work is paused before production bundle signing. A
+late terminal process produced one bundle under the retired key; it was never
+uploaded and was moved to an explicit `retired-old-key` staging directory so it
+cannot be confused with the future current-key bundle.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

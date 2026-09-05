@@ -109,6 +109,16 @@ key or backup. Its private receipts are:
   and
 - `evidence/private/device-unused-update-trust-removal-2026-09.json`.
 
+One previously opened interactive builder completed late and produced a valid
+sequence-one bundle signed by the retired `app-production-2026-09-01` key. It
+was never uploaded or staged on the device and cannot validate under the new
+trust root. The artifact was retained without modification but moved under the
+explicit local staging name
+`retired-old-key-app-production-2026-09-01-application-531f5f1-seq1-b354b46d`;
+its bundle SHA-256 is
+`b354b46d6f991e2c8365a9882c3e4d547edfd6dfc3cd0bd5d6342426b415a887`.
+It is evidence only and must never be used as a current candidate.
+
 Read-only job `01224421cb6d4f6bbcc32faf92365251` accepted the clean state and
 new public request before guarded enrollment job
 `fe51f9cb797741549303023c74b5092b`. The latter repeated the preflight,
