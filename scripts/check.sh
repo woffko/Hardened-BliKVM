@@ -241,6 +241,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_status_api_wiring.py \
     tools/persistent_status_contract.py \
     tools/persistent_status_wiring.py \
+    tools/capture_status_boot_failure.py \
     tools/test_persistent_status_wiring.py \
     tools/verify_persistent_status_ordering.py \
     tools/test_persistent_status_contract.py \

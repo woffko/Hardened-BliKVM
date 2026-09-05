@@ -81,7 +81,8 @@ def validate_boot_context(root: Path, plan: dict[str, object]) -> str:
 
 
 def record_boot_recovery(root: Path, plan: dict[str, object], current: str) -> None:
-    value = {"schemaVersion": 1, "slotId": common.SLOT, "phase": plan["phase"],
+    value = {"schemaVersion": 2, "slotId": common.SLOT, "phase": plan["phase"],
+             "socketStartCancelled": plan["phase"] == "restored",
              "beforeBootIdSha256": plan["bootIdSha256"], "afterBootIdSha256": current,
              "finishedMonotonicUsec": time.monotonic_ns() // 1000,
              "controllerSha256": u.digest(root / "controller.py")}
@@ -96,9 +97,10 @@ def verify_boot(root: Path, plan: dict[str, object]) -> dict[str, object]:
             and stat.S_IMODE(meta.st_mode) == 0o600 and meta.st_size <= 4096, "unsafe boot proof")
     proof = cast(dict[str, object], json.loads(path.read_bytes()))
     require(set(proof) == {"schemaVersion", "slotId", "phase", "beforeBootIdSha256", "afterBootIdSha256",
-                           "finishedMonotonicUsec", "controllerSha256"}, "invalid boot proof fields")
-    require(proof["schemaVersion"] == 1 and proof["slotId"] == common.SLOT and proof["phase"] == plan["phase"]
+                           "finishedMonotonicUsec", "controllerSha256", "socketStartCancelled"}, "invalid boot proof fields")
+    require(proof["schemaVersion"] == 2 and proof["slotId"] == common.SLOT and proof["phase"] == plan["phase"]
             and plan["phase"] in ("restored", "committed")
+            and proof["socketStartCancelled"] is (plan["phase"] == "restored")
             and proof["beforeBootIdSha256"] == plan["bootIdSha256"] and proof["afterBootIdSha256"] == boot_identity()
             and proof["beforeBootIdSha256"] != proof["afterBootIdSha256"]
             and proof["controllerSha256"] == u.digest(root / "controller.py"), "boot proof binding mismatch")
@@ -256,7 +258,7 @@ def transition(action: str, root: Path, *, boot: bool = False, browser_verified:
             if decision.restart_server:
                 checked(["systemctl", "restart", s.CURRENT_SERVER])
             if decision.stop_socket:
-                checked(["systemctl", "stop", common.SOCKET])
+                checked(["systemctl", "stop", "--no-block", common.SOCKET] if boot else ["systemctl", "stop", common.SOCKET])
             phase = decision.phase
             verify(plan, phase is contract.Phase.COMMITTED, boot=boot)
             plan["phase"] = phase.value

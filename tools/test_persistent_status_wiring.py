@@ -23,7 +23,7 @@ class PersistentStatusWiringTests(unittest.TestCase):
     def test_boot_proof_binds_identity_controller_and_server_start(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            proof: dict[str, object] = {"schemaVersion": 1, "slotId": gate.SLOT, "phase": "restored",
+            proof: dict[str, object] = {"schemaVersion": 2, "slotId": gate.SLOT, "phase": "restored", "socketStartCancelled": True,
                 "beforeBootIdSha256": "a" * 64, "afterBootIdSha256": "b" * 64,
                 "finishedMonotonicUsec": 1000, "controllerSha256": "c" * 64}
             plan: dict[str, object] = {"phase": "restored", "bootIdSha256": "a" * 64, "before": {"state": {}}}
@@ -34,7 +34,8 @@ class PersistentStatusWiringTests(unittest.TestCase):
                 (root / "boot-recovery.json").write_text(json.dumps(proof))
                 self.assertTrue(gate.verify_boot(root, plan)["restoredBeforeServer"])
                 for changed in ({"afterBootIdSha256": "a" * 64}, {"controllerSha256": "d" * 64},
-                                {"finishedMonotonicUsec": 3000}, {"finishedMonotonicUsec": 1.5}, {"phase": "wired"}):
+                                {"finishedMonotonicUsec": 3000}, {"finishedMonotonicUsec": 1.5}, {"phase": "wired"},
+                                {"schemaVersion": 1}, {"socketStartCancelled": False}):
                     (root / "boot-recovery.json").write_text(json.dumps({**proof, **changed}))
                     with self.assertRaises(ValueError):
                         gate.verify_boot(root, plan)
@@ -56,7 +57,8 @@ class PersistentStatusWiringTests(unittest.TestCase):
                      patch.object(gate, "disarm"):
                     result = gate.transition("restore", root, boot=True)
                     remove.assert_called_once()
-                    self.assertEqual([call.args[0] for call in checked.call_args_list], [["systemctl", "daemon-reload"]])
+                    self.assertEqual([call.args[0] for call in checked.call_args_list], [
+                        ["systemctl", "daemon-reload"], ["systemctl", "stop", "--no-block", gate.common.SOCKET]])
                     self.assertTrue(verify.call_args.kwargs["boot"])
                     self.assertFalse(result["runtimeVerified"])
                     self.assertTrue(result["bootRecoveryPendingVerification"])

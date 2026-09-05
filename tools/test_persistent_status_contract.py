@@ -12,7 +12,7 @@ class PersistentStatusContractTests(unittest.TestCase):
                     result = contract.recovery_decision(phase, boot=boot)
                     self.assertTrue(result.remove_dropins)
                     self.assertEqual(result.restart_server, not boot)
-                    self.assertEqual(result.stop_socket, not boot)
+                    self.assertTrue(result.stop_socket)
                     self.assertEqual(result.verify_runtime_now, not boot)
                     self.assertIs(result.phase, contract.Phase.RESTORED)
 

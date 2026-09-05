@@ -39,7 +39,9 @@ def recovery_decision(phase: object, *, boot: bool) -> RecoveryDecision:
         # merely because a deadline or boot guard survived interrupted disarm.
         return RecoveryDecision(False, False, False, not boot, Phase.COMMITTED)
     # Early boot must not synchronously start a unit ordered after this guard.
-    return RecoveryDecision(True, not boot, not boot, not boot, Phase.RESTORED)
+    # Stop is non-blocking during boot: cancel a socket start already queued
+    # from the old Wants dependency before daemon-reload removed the drop-in.
+    return RecoveryDecision(True, not boot, True, not boot, Phase.RESTORED)
 
 
 def require_commit(phase: Phase, *, native_verified: bool, browser_verified: bool) -> Phase:
