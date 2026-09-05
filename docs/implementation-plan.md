@@ -905,6 +905,16 @@ late terminal process produced one bundle under the retired key; it was never
 uploaded and was moved to an explicit `retired-old-key` staging directory so it
 cannot be confused with the future current-key bundle.
 
+Resumed checkpoint: the first sequence-one bundle under the current passwordless
+key has now been built twice from the independent accepted dev2 packages.
+Both archives match, and the real host Rust supervisor passed staging,
+idempotency, immutable-payload verification, generation-one initialization,
+pointer/status checks, and tamper/wrong-key rejection. See
+`baselines/production-application-bundle.md`. Before live initialization,
+resolve the root-only config versus unprivileged updater access mismatch and
+verify configuration delivery under the actual service identity. Device
+state/slots have not been initialized by this host-only step.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

@@ -63,6 +63,9 @@ python3 -m unittest \
   tools/test_build_debian_update_runtime_package.py \
   tools/test_stage_device_update_runtime_package.py \
   tools/test_stage_device_update_trust_config.py \
+  tools/test_generate_production_update_signing_key.py \
+  tools/test_build_production_update_bundle.py \
+  tools/test_stage_device_unused_update_trust_removal.py \
   tools/test_stage_device_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_retain.py \
   tools/test_stage_device_runtime_package_upgrade.py \
@@ -109,6 +112,10 @@ python3 -m py_compile \
   tools/build_debian_update_runtime_package.py \
   tools/stage_device_update_runtime_package.py \
   tools/stage_device_update_trust_config.py \
+  tools/generate_production_update_signing_key.py \
+  tools/build_production_update_bundle.py \
+  tools/verify_production_update_bundle.py \
+  tools/stage_device_unused_update_trust_removal.py \
   tools/stage_device_debian_runtime_package.py \
   tools/stage_device_debian_runtime_retain.py \
   tools/stage_device_runtime_package_upgrade.py \
