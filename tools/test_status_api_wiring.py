@@ -11,6 +11,32 @@ from tools import stage_status_api_wiring as driver
 
 
 class StatusApiWiringTests(unittest.TestCase):
+    def test_persistent_checkpoint_cannot_reuse_temporary_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "receipt.json"
+            root = "/var/lib/" + driver.persistent_native.PREFIX + "b" * 24
+            value = {"probe": "persistent-status-api-wiring", "slotId": gate.SLOT, "guardRoot": root}
+            path.write_text(json.dumps(value))
+            with patch.object(driver.transport, "validate_private_file", return_value=path):
+                self.assertEqual(driver.checkpoint(str(path), persistent=True), root)
+                with self.assertRaises(ValueError):
+                    driver.checkpoint(str(path))
+                path.write_text(json.dumps({**value, "guardRoot": "/var/lib/" + gate.PREFIX + "b" * 24}))
+                with self.assertRaises(ValueError):
+                    driver.checkpoint(str(path), persistent=True)
+
+    def test_persistent_browser_proof_requires_complete_status_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "browser.json"
+            acceptance = {"enabled": True, "desktop": True, "mobile": True, "repeatedReads": 3, "refreshChecks": 2}
+            path.write_text(json.dumps({"statusAcceptance": acceptance}))
+            with patch.object(driver, "browser_gate") as basic, patch.object(driver.transport, "validate_private_file", return_value=path):
+                driver.persistent_browser_gate(str(path), "guard")
+                basic.assert_called_once_with(str(path), "guard", "enabled")
+                path.write_text(json.dumps({"statusAcceptance": {**acceptance, "mobile": False}}))
+                with self.assertRaises(ValueError):
+                    driver.persistent_browser_gate(str(path), "guard")
+
     def test_clean_verifier_never_mutates_and_rejects_leftovers(self) -> None:
         root = "/var/lib/" + gate.PREFIX + "a" * 24
         with patch.object(gate.infrastructure, "exists", return_value=False), \

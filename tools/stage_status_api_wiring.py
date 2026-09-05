@@ -20,46 +20,65 @@ if not __package__:
 
 from tools import stage_device_prototype as transport
 from tools import status_api_wiring as native
+from tools import persistent_status_wiring as persistent_native
+from tools.stage_installed_application_update import browser_gate
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 require = native.require
 
 
-def validate_guard(value: object) -> str:
-    require(isinstance(value, str) and re.fullmatch(r"/var/lib/" + native.PREFIX + "[a-f0-9]{24}", value) is not None,
+def validate_guard(value: object, *, persistent: bool = False) -> str:
+    prefix = persistent_native.PREFIX if persistent else native.PREFIX
+    require(isinstance(value, str) and re.fullmatch(r"/var/lib/" + prefix + "[a-f0-9]{24}", value) is not None,
             "invalid returned status guard")
     return cast(str, value)
 
 
-def checkpoint(path: str) -> str:
+def checkpoint(path: str, *, persistent: bool = False) -> str:
     value = cast(dict[str, object], json.loads(transport.validate_private_file(path).read_bytes()))
-    require(value.get("probe") == "installed-status-api-wiring" and value.get("slotId") == native.SLOT,
+    probe = "persistent-status-api-wiring" if persistent else "installed-status-api-wiring"
+    require(value.get("probe") == probe and value.get("slotId") == native.SLOT,
             "status checkpoint mismatch")
-    return validate_guard(value.get("guardRoot"))
+    return validate_guard(value.get("guardRoot"), persistent=persistent)
+
+
+def persistent_browser_gate(path: str | None, root: str) -> None:
+    browser_gate(path, root, "enabled")
+    value = cast(dict[str, object], json.loads(transport.validate_private_file(cast(str, path)).read_bytes()))
+    require(value.get("statusAcceptance") == {"enabled": True, "desktop": True, "mobile": True,
+                                              "repeatedReads": 3, "refreshChecks": 2}, "persistent status browser proof incomplete")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "inspect", "restore", "cleanup", "verify-clean"))
+    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean"))
+    parser.add_argument("--persistent", action="store_true")
+    parser.add_argument("--browser-receipt")
     for name in ("endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--guard-receipt")
     args = parser.parse_args()
+    backend = persistent_native if args.persistent else native
+    require(args.action not in ("preflight", "commit") or args.persistent, "action requires persistent mode")
+    require(args.action != "verify-clean" or not args.persistent, "persistent clean verification is not implemented")
+    # Retention stays unavailable until the real boot-restoration gate exists.
+    require(args.action != "commit", "persistent retention requires unfinished boot-recovery acceptance")
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new status receipt required")
-    guard = None if args.action == "prepare" else checkpoint(args.guard_receipt)
-    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in native.HELPERS} if args.action in ("prepare", "verify-clean") else {}
+    guard = None if args.action in ("prepare", "preflight") else checkpoint(args.guard_receipt, persistent=args.persistent)
+    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in backend.HELPERS} if args.action in ("prepare", "preflight", "verify-clean") else {}
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
     stage = "/tmp/blikvm-status-wiring-controller-" + secrets.token_hex(12)
     q = shlex.quote
     staged = False
-    receipt: dict[str, object] = {"probe": "installed-status-api-wiring", "action": args.action,
+    receipt: dict[str, object] = {"probe": "persistent-status-api-wiring" if args.persistent else "installed-status-api-wiring", "action": args.action,
                                   "slotId": native.SLOT, "targetPowerControl": False}
 
     def invoke(action: str) -> tuple[int, dict[str, object]]:
-        argv = ["python3", "-B", stage + "/status_api_wiring.py", "prepare", "--assets", stage] if action == "prepare" else [
+        script_name = "persistent_status_wiring.py" if args.persistent else "status_api_wiring.py"
+        argv = ["python3", "-B", stage + "/" + script_name, action, "--assets", stage] if action in ("prepare", "preflight") else [
             "python3", "-B", cast(str, guard) + "/controller.py", action, "--guard-root", cast(str, guard)]
         if action == "verify-clean":
             argv = ["python3", "-B", stage + "/status_api_wiring.py", action, "--guard-root", cast(str, guard)]
@@ -81,7 +100,7 @@ def main() -> int:
         code, result = invoke(args.action)
         receipt["device"] = result
         if "guardRoot" in result:
-            guard = validate_guard(result["guardRoot"])
+            guard = validate_guard(result["guardRoot"], persistent=args.persistent)
         if guard:
             receipt["guardRoot"] = guard
         require(code == 0 and result.get("result") == ("prepared" if args.action == "prepare" else args.action), "status device step failed")

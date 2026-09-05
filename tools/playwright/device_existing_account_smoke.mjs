@@ -25,7 +25,7 @@ assert.ok(
 if (runTag)
   assert.match(
     runTag,
-    /^(?:hardened-blikvm-slot-serving-[a-f0-9]{24}|hardened-blikvm-application-update-[a-f0-9]{24}-(?:rehearsal|confirmed)|hardened-blikvm-status-api-[a-f0-9]{24}-(?:enabled|restored))$/,
+    /^(?:hardened-blikvm-slot-serving-[a-f0-9]{24}|hardened-blikvm-application-update-[a-f0-9]{24}-(?:rehearsal|confirmed)|hardened-blikvm-status-(?:api|retain)-[a-f0-9]{24}-(?:enabled|restored))$/,
   );
 
 const outputPath = path.resolve(outputValue);

@@ -30,6 +30,7 @@ sh -n scripts/verify-aarch64-elf.sh
 
 scripts/check-source-boundary.sh
 scripts/verify-systemd-units.sh
+python3 -B tools/verify_persistent_status_ordering.py
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
@@ -74,6 +75,8 @@ python3 -m unittest \
   tools/test_enable_update_services.py \
   tools/test_installed_application_update.py \
   tools/test_status_api_wiring.py \
+  tools/test_persistent_status_contract.py \
+  tools/test_persistent_status_wiring.py \
   tools/test_operational_reboot.py \
   tools/test_verify_update_status.py \
   tools/test_verify_candidate_health.py \
@@ -236,6 +239,11 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/status_api_wiring.py \
     tools/stage_status_api_wiring.py \
     tools/test_status_api_wiring.py \
+    tools/persistent_status_contract.py \
+    tools/persistent_status_wiring.py \
+    tools/test_persistent_status_wiring.py \
+    tools/verify_persistent_status_ordering.py \
+    tools/test_persistent_status_contract.py \
     tools/test_enable_update_services.py \
     tools/stage_initialized_updater_upgrade.py \
     tools/verify_candidate_health.py \

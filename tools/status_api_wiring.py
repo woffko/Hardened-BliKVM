@@ -175,9 +175,9 @@ def prepare(assets: Path) -> dict[str, object]:
         os.close(descriptor)
 
 
-def restore(root: Path, plan: dict[str, object]) -> None:
+def remove_matching_dropins(paths: tuple[Path, ...]) -> None:
     # Validate all parents and files before removing any override.
-    for path in dropins():
+    for path in paths:
         if infrastructure.exists(path.parent):
             meta = path.parent.lstat()
             require(stat.S_ISDIR(meta.st_mode) and meta.st_uid == os.geteuid()
@@ -187,13 +187,17 @@ def restore(root: Path, plan: dict[str, object]) -> None:
             meta = path.lstat()
             require(stat.S_ISREG(meta.st_mode) and meta.st_uid == os.geteuid() and meta.st_nlink == 1
                     and stat.S_IMODE(meta.st_mode) == 0o644 and path.read_bytes() == DROPIN_BYTES, "foreign status override")
-    for path in dropins():
+    for path in paths:
         if infrastructure.exists(path):
             require(not path.is_symlink() and path.read_bytes() == DROPIN_BYTES, "foreign status override")
             path.unlink()
         if path.parent.exists():
             require(not path.parent.is_symlink() and not list(path.parent.iterdir()), "foreign server override directory")
             path.parent.rmdir()
+
+
+def restore(root: Path, plan: dict[str, object]) -> None:
+    remove_matching_dropins(dropins())
     checked(["systemctl", "daemon-reload"])
     checked(["systemctl", "restart", s.CURRENT_SERVER])
     checked(["systemctl", "stop", SOCKET])
