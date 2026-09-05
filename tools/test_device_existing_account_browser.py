@@ -7,6 +7,13 @@ SCRIPT = Path("tools/playwright/device_existing_account_smoke.mjs")
 
 
 class DeviceExistingAccountBrowserTests(unittest.TestCase):
+    def test_optional_status_gate_has_host_regressions(self) -> None:
+        result = subprocess.run(["node", "--test", "tools/test_status_api_browser.mjs"], capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        source = SCRIPT.read_text()
+        self.assertIn("verifyStatusPanel(page, statusMode", source)
+        self.assertEqual(source.count("context.request.get(`${baseUrl}${statusRoute}`)"), 2)
+
     def test_script_is_syntax_valid_and_secret_stdin_only(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
         result = subprocess.run(

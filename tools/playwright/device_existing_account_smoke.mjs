@@ -2,19 +2,30 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { statusRoute, verifyStatusPanel } from "./status_api_acceptance.mjs";
 
-const [modulePath, executablePath, baseUrl, username, outputValue, runTag] =
-  process.argv.slice(2);
+const [
+  modulePath,
+  executablePath,
+  baseUrl,
+  username,
+  outputValue,
+  runTag,
+  statusMode,
+] = process.argv.slice(2);
 assert.ok(
   modulePath && executablePath && baseUrl && username && outputValue,
   "missing browser arguments",
 );
 assert.equal(new URL(baseUrl).protocol, "https:");
 assert.match(username, /^[a-z_][a-z0-9_-]{0,31}$/);
+assert.ok(
+  statusMode === undefined || ["enabled", "restored"].includes(statusMode),
+);
 if (runTag)
   assert.match(
     runTag,
-    /^(?:hardened-blikvm-slot-serving-[a-f0-9]{24}|hardened-blikvm-application-update-[a-f0-9]{24}-(?:rehearsal|confirmed))$/,
+    /^(?:hardened-blikvm-slot-serving-[a-f0-9]{24}|hardened-blikvm-application-update-[a-f0-9]{24}-(?:rehearsal|confirmed)|hardened-blikvm-status-api-[a-f0-9]{24}-(?:enabled|restored))$/,
   );
 
 const outputPath = path.resolve(outputValue);
@@ -54,6 +65,7 @@ let activeStreamResponse = null;
 let inventoryVideoOnline = null;
 let inventoryVideoBusy = null;
 let logoutStatus = null;
+let statusAcceptance = null;
 
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -90,6 +102,12 @@ try {
   });
 
   phase = "login-document";
+  if (statusMode) {
+    assert.equal(
+      (await context.request.get(`${baseUrl}${statusRoute}`)).status(),
+      401,
+    );
+  }
   const documentResponse = await page.goto(`${baseUrl}/#/auth/login`, {
     waitUntil: "networkidle",
   });
@@ -212,6 +230,10 @@ try {
   assert.equal(diagnostics.status, 200);
   assert.equal(diagnostics.body.code, 0);
   assert.equal(diagnostics.body.data.schemaVersion, 1);
+  if (statusMode) {
+    phase = "status-api-desktop-mobile";
+    statusAcceptance = await verifyStatusPanel(page, statusMode === "enabled");
+  }
 
   phase = "cookies";
   let cookies = await context.cookies(baseUrl);
@@ -244,6 +266,12 @@ try {
     ),
   ]);
   phase = "logout-cookies";
+  if (statusMode) {
+    assert.equal(
+      (await context.request.get(`${baseUrl}${statusRoute}`)).status(),
+      401,
+    );
+  }
   cookies = await context.cookies(baseUrl);
   assert.equal(
     cookies.some((cookie) => cookie.name === "hardened-blikvm-session"),
@@ -269,6 +297,7 @@ try {
     probe: "hardened-blikvm-existing-account-browser",
     runTag: runTag || null,
     result: "passed",
+    statusAcceptance,
     transport: "direct-lan-https",
     title: "Remote Desktop - Hardened BliKVM",
     setupRequired: false,
