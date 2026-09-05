@@ -71,6 +71,7 @@ python3 -m unittest \
   tools/test_application_bootstrap_roots.py \
   tools/test_signed_slot_serving.py \
   tools/test_upgrade_initialized_updater.py \
+  tools/test_verify_candidate_health.py \
   tools/test_stage_device_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_retain.py \
   tools/test_stage_device_runtime_package_upgrade.py \
@@ -129,6 +130,8 @@ python3 -m py_compile \
   tools/stage_device_signed_slot_server.py \
   tools/upgrade_initialized_updater.py \
   tools/stage_initialized_updater_upgrade.py \
+  tools/verify_candidate_health.py \
+  tools/stage_candidate_health.py \
   tools/verify_apply_events.py \
   tools/stage_device_apply_events.py \
   tools/stage_device_update_config_credential.py \
@@ -206,6 +209,9 @@ if command -v basedpyright >/dev/null 2>&1; then
   basedpyright \
     tools/upgrade_initialized_updater.py \
     tools/stage_initialized_updater_upgrade.py \
+    tools/verify_candidate_health.py \
+    tools/stage_candidate_health.py \
+    tools/test_verify_candidate_health.py \
     tools/test_upgrade_initialized_updater.py \
     tools/capture_pikvm_baseline.py \
     tools/capture_ssh_preflight.py \
