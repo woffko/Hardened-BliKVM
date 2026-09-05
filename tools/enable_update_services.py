@@ -37,7 +37,7 @@ SOCKET_ROOT = Path("/run/hardened-blikvm-update-confirm")
 RULE = Path("/etc/tmpfiles.d/hardened-blikvm-update.conf")
 EXAMPLE = Path("/usr/share/doc/hardened-blikvm-update-runtime/examples/hardened-blikvm-update-tmpfiles.conf")
 RULE_SHA = "93081586b0cd99105f743bed2d4d81c78ef687aa338a6541db417f2dc2a30588"
-HELPERS = ("upgrade_initialized_updater.py", *upgrade.HELPERS)
+HELPERS = tuple(dict.fromkeys(("upgrade_initialized_updater.py", *upgrade.HELPERS)))
 
 
 def exists(path: Path) -> bool:
@@ -89,10 +89,11 @@ def audit_enabled(*, check_initial: bool = True) -> None:
 
 
 def enabled_snapshot(*, expected_slot: str = s.bootstrap.SLOT, expected_floor: int = 1,
-                     check_initial: bool = True) -> dict[str, object]:
+                     check_initial: bool = True, expected_supervisor_sha: str | None = None) -> dict[str, object]:
     require(re.fullmatch(r"app-[0-9]{20}-[a-f0-9]{64}", expected_slot) is not None
             and int(expected_slot.split("-", 2)[1]) == expected_floor, "invalid expected application binding")
-    s.bootstrap.trusted_code_and_config(expected_supervisor_sha=upgrade.SUPERVISOR_HASHES["new"])
+    selected_sha = upgrade.SUPERVISOR_HASHES["new"] if expected_supervisor_sha is None else expected_supervisor_sha
+    s.bootstrap.trusted_code_and_config(expected_supervisor_sha=selected_sha)
     audit_enabled(check_initial=check_initial)
     if not check_initial:
         status = current_status()
@@ -116,7 +117,11 @@ def enabled_snapshot(*, expected_slot: str = s.bootstrap.SLOT, expected_floor: i
 
 def disabled_snapshot() -> dict[str, object]:
     require(not exists(RULE) and not exists(SOCKET_ROOT) and not exists(RUNTIME), "idle updater provisioning already exists")
-    return upgrade.snapshot("new")
+    # Preserve the original generation-one provisioning contract independently
+    # of later package-upgrade observers for an already enabled deployment.
+    before = s.snapshot()
+    verified = s.verify(before, True, expected_supervisor_sha=upgrade.SUPERVISOR_HASHES["new"])
+    return {"runtime": before, "serving": verified, "state": upgrade.tree_fingerprint(upgrade.STATE_ROOTS), "nginxUnit": upgrade.digest(s.UNIT)}
 
 
 def verify(root: Path, plan: dict[str, object], enabled: bool) -> None:

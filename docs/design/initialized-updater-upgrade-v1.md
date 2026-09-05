@@ -1,8 +1,30 @@
 # State-preserving updater package upgrade
 
+## Current dev4-to-dev5 operational transition
+
+The gate now binds retained dev4 to dev5, preserving the already enabled
+watchdog/socket and confirmed application sequence two. The observer uses the
+operational snapshot without deleting the watchdog runtime directory and
+without assuming generation one. Original helper dependencies are copied
+uniquely into the guard. Version-specific file maps also require the added
+dev5 recovery unit to be absent after an explicit dev4 downgrade.
+
+Dev5 source/builder: `17eb3c42c9cfc30cd474e66316bd97a5c396a684`.
+Both source bundles: `c704dbd223cda0dd0025677d3abdf497f19323071a92ca7e7c3bcb34b08fe9de`.
+Both packages: `da88afb8c4b97d1f71318f04afa44445b1f64d76c6bf6580ecfa4200e67099f4`.
+Build jobs: `2668a48d7e5b45d38df4e50250d958db` and
+`87a4d569f9e343669e7824b6e0aaec38`; paths use
+`updater-dev5-17eb3c4-{a,b}/` in the approved external build root.
+The package rollback boot guard is ordered before both application servers;
+its boot branch verifies package/persistent state without requiring running
+GUI processes. Native package upgrade/rehearsal and real reboot acceptance
+must still prove these source changes.
+
+## Previous dev3-to-dev4 transition
+
 The first dev2-to-dev3 transition below passed and its guards were removed;
-see `../baselines/device-updater-dev3.md`. The same controller is now explicitly
-bound to dev3-to-dev4. Existing receipts for the earlier package pair cannot
+see `../baselines/device-updater-dev3.md`. The same controller was then
+explicitly bound to dev3-to-dev4. Existing receipts for an earlier package pair cannot
 authorize retaining the new pair; a new rollback rehearsal is required.
 
 Current dev4 source/builder: `bf956b16f752fa53e950bd9ee01339cd665e52ed`.

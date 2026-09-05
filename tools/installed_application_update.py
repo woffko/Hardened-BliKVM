@@ -36,7 +36,7 @@ SLOTS = {1: SLOT_ONE, 2: SLOT_TWO}
 DROPIN_ROOT = Path("/run/systemd/system/hardened-blikvm-server-candidate.service.d")
 DROPIN = DROPIN_ROOT / "90-health-timeout-rehearsal.conf"
 DROPIN_BYTES = b"[Service]\nExecStartPost=\nExecStartPost=/usr/bin/false\n"
-HELPERS = ("enable_update_services.py", *infrastructure.HELPERS)
+HELPERS = tuple(dict.fromkeys(("enable_update_services.py", *infrastructure.HELPERS)))
 
 
 def plan_path(value: str) -> Path:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native, rollback-gated dev3 to dev4 package replacement with state preserved."""
+"""Native, rollback-gated dev4 to dev5 replacement with operational state preserved."""
 
 from __future__ import annotations
 
@@ -30,15 +30,16 @@ sync_directory = serving.sync_directory
 PREFIX = "hardened-blikvm-updater-upgrade-"
 PACKAGE = "hardened-blikvm-update-runtime"
 PACKAGE_HASHES = {
-    "old": "688718d3adecddc61c6e183c0cd2a5888dc1dfa443ce8fc7b0170f4e249d9779",
-    "new": "fc63f2ee439fc5504526ba644544335a8f7e7eaea2cce95254fa39cd5ad98a3a",
+    "old": "fc63f2ee439fc5504526ba644544335a8f7e7eaea2cce95254fa39cd5ad98a3a",
+    "new": "da88afb8c4b97d1f71318f04afa44445b1f64d76c6bf6580ecfa4200e67099f4",
 }
 SUPERVISOR_HASHES = {
     "old": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
     "new": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
 }
-VERSIONS = {"old": "0.1.0~dev3", "new": "0.1.0~dev4"}
-HELPERS = ("switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py")
+VERSIONS = {"old": "0.1.0~dev4", "new": "0.1.0~dev5"}
+HELPERS = ("switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py",
+           "enable_update_services.py", "upgrade_initialized_updater.py")
 STATE_ROOTS = (Path("/var/lib/hardened-blikvm-slots"), Path("/var/lib/hardened-blikvm-update"))
 UNIT_ROOT = Path("/etc/systemd/system")
 
@@ -95,16 +96,25 @@ def installed(assets: Path, variant: str) -> None:
         require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_gid == 0
                 and meta.st_nlink == 1 and stat.S_IMODE(meta.st_mode) == values[1]
                 and digest(path) == values[0], "installed package file mismatch")
+    other = "new" if variant == "old" else "old"
+    bindings = cast(dict[str, dict[str, object]], json.loads((assets / "bindings.json").read_bytes()))
+    extra_paths = set(cast(dict[str, object], bindings[other]["files"])) - set(cast(dict[str, object], binding["files"]))
+    require(all(not Path(name).exists() and not Path(name).is_symlink() for name in extra_paths), "other package version left an extra file")
     require(not checked(["dpkg", "--audit"]).strip(), "dpkg audit is not clean")
     require(not checked(["getcap", str(serving.bootstrap.SUPERVISOR),
                          "/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter"]).strip(), "unexpected capabilities")
 
 
 def snapshot(variant: str) -> dict[str, object]:
-    before = serving.snapshot()
-    verified = serving.verify(before, True, expected_supervisor_sha=SUPERVISOR_HASHES[variant])
-    return {"runtime": before, "serving": verified, "state": tree_fingerprint(STATE_ROOTS),
-            "nginxUnit": digest(serving.UNIT)}
+    # Lazy import avoids a module-initialization cycle; the guard carries both
+    # this module and its operational observer as reviewed local helpers.
+    if not __package__:
+        import enable_update_services as infrastructure
+    else:
+        from tools import enable_update_services as infrastructure
+    return infrastructure.enabled_snapshot(
+        expected_slot="app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53",
+        expected_floor=2, check_initial=False, expected_supervisor_sha=SUPERVISOR_HASHES[variant])
 
 
 def verify(root: Path, plan: dict[str, object], variant: str, boot: bool = False) -> None:
@@ -124,7 +134,9 @@ def guard_units(root: Path) -> dict[str, str]:
     common = "[Service]\nType=oneshot\nUser=root\nUMask=0077\nTimeoutStartSec=180\nNoNewPrivileges=yes\nProtectHome=yes\n"
     command = f"ExecStart=/usr/bin/python3 -B {root}/controller.py rollback --guard-root {root}"
     return {
-        root.name + "-boot.service": "[Unit]\nDefaultDependencies=no\nAfter=local-fs.target\nBefore=multi-user.target\n" + common + command + " --boot\n[Install]\nWantedBy=sysinit.target\n",
+        root.name + "-boot.service": ("[Unit]\nDefaultDependencies=no\nAfter=local-fs.target\n"
+            f"Before=multi-user.target {serving.CURRENT_SERVER} {serving.CANDIDATE_SERVER}\n"
+            + common + command + " --boot\n[Install]\nWantedBy=sysinit.target\n"),
         root.name + "-rollback.service": "[Unit]\nDescription=Updater package deadline recovery\n" + common + command + "\n",
         root.name + "-deadline.timer": f"[Timer]\nOnActiveSec=600\nUnit={root.name}-rollback.service\n[Install]\nWantedBy=timers.target\n",
     }

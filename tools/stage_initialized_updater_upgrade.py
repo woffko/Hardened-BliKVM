@@ -26,10 +26,10 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 require = native.require
 SOURCE_BINDINGS = {
-    "old": ("e371528fbb8ee2255dfc0822011aac6932457ad2",
-            "76032fd77ae32ccb9732db5d22addfb28bf238fc56408be24e9f68d09a90a90f"),
-    "new": ("bf956b16f752fa53e950bd9ee01339cd665e52ed",
+    "old": ("bf956b16f752fa53e950bd9ee01339cd665e52ed",
             "17b7d77b3696da6ba83ebd8abb77377280a627a731c8d6b30856f55ce5157737"),
+    "new": ("17eb3c42c9cfc30cd474e66316bd97a5c396a684",
+            "c704dbd223cda0dd0025677d3abdf497f19323071a92ca7e7c3bcb34b08fe9de"),
 }
 
 
@@ -62,7 +62,7 @@ def upload_payloads(old_path: str, new_path: str) -> dict[str, bytes]:
         bindings[variant] = {"sha256": info.sha256, "version": native.VERSIONS[variant], "files": info.installed_files}
         uploads[variant + ".deb"] = info.path.read_bytes()
     uploads["bindings.json"] = json.dumps(bindings, sort_keys=True).encode()
-    for name in (*native.HELPERS, "upgrade_initialized_updater.py"):
+    for name in dict.fromkeys((*native.HELPERS, "upgrade_initialized_updater.py")):
         uploads[name] = Path(__file__).with_name(name).read_bytes()
     return uploads
 

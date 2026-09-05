@@ -12,6 +12,14 @@ from tools import stage_initialized_updater_upgrade as driver
 
 
 class InitializedUpdaterTests(unittest.TestCase):
+    def test_operational_helpers_are_unique_and_boot_recovery_precedes_servers(self) -> None:
+        self.assertEqual(len(gate.HELPERS), len(set(gate.HELPERS)))
+        self.assertIn("enable_update_services.py", gate.HELPERS)
+        self.assertIn("upgrade_initialized_updater.py", gate.HELPERS)
+        root = Path("/var/lib") / (gate.PREFIX + "a" * 24)
+        unit = gate.guard_units(root)[root.name + "-boot.service"]
+        self.assertIn("Before=multi-user.target " + gate.serving.CURRENT_SERVER + " " + gate.serving.CANDIDATE_SERVER, unit)
+
     def test_returned_guard_is_fixed_namespace_only(self) -> None:
         root = "/var/lib/" + gate.PREFIX + "b" * 24
         self.assertEqual(driver.validate_guard(root), root)
