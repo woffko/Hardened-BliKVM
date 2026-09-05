@@ -943,6 +943,12 @@ temporary roots were removed and the serving runtime/trust rechecked. The
 remaining initial-state gate must publish only identity-bound prepared roots
 and quarantine those same roots on rollback before any activation work.
 
+The initial-state implementation now includes the no-overwrite root transition
+helper, native root controller with early-boot/timed recovery, and host
+preflight/rehearsal/retention orchestration. Filesystem interruption tests pass.
+Persistent-path device rehearsal and retaining initialization remain pending;
+the existence of this source is not device acceptance.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

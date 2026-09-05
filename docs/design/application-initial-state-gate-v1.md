@@ -127,3 +127,29 @@ and unchanged serving runtime, and retains only the initialized roots. Later
 candidate activation, health confirmation, rollback under process failure,
 interruption/reboot matrices, update API/GUI, rotation/revocation, and release
 acceptance remain separate gates.
+
+## Executable gate
+
+`tools/application_bootstrap_roots.py` implements the directory transitions
+using `renameat2(RENAME_NOREPLACE)`, descriptor fsync and recorded device/inode/
+owner/group/mode identities. It handles interrupted publication of either root,
+replayed quarantine, incomplete marker writes and late rollback after commit.
+Filesystem tests prove preservation of foreign roots, empty occupied rename
+destinations and inner symlinks without following or deleting their targets.
+
+`tools/initialize_application_state.py` is a temporary root controller. Its
+production paths and accepted first bundle/config/supervisor hashes are fixed.
+It copies itself and the directory helper under the private guard root for
+early-boot recovery, arms a ten-minute timer, and executes only stage,
+initialize and status under the updater identity. PID 1 delivers public config
+and manages the transient runtime directory. A successful rollback renames the
+whole recovered guard to `hardened-blikvm-state-quarantine-<run-id>` under
+`/var/lib`, preserving contents as evidence; it does not delete those trees.
+
+`tools/stage_device_application_bootstrap.py` provides read-only preflight,
+rollback rehearsal and retention. It verifies the exact updater package,
+compares serving-runtime facts across separate SSH sessions, and uses explicit
+prepare/inspect/commit/cleanup/status transactions. Rehearsal returns to absent
+production roots before a later retaining run. A retained result is accepted
+only after a new status invocation and unchanged-runtime audit following guard
+cleanup. The host receipt records any quarantine or incomplete recovery path.
