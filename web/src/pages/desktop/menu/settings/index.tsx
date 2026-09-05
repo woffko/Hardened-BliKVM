@@ -16,7 +16,11 @@ import { useTranslation } from 'react-i18next';
 import semver from 'semver';
 
 import * as api from '@/api/application.ts';
-import { supportsSettingsTab, type CapabilitySettingsTab } from '@/lib/capabilities.ts';
+import {
+  supportsSettingsTab,
+  usesBliApplicationUpdates,
+  type CapabilitySettingsTab
+} from '@/lib/capabilities.ts';
 import * as ls from '@/lib/localstorage.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
@@ -67,7 +71,8 @@ export const Settings = () => {
     { id: 'account', icon: <UserRoundIcon size={18} />, component: <Account /> }
   ].filter((tab) => supportsSettingsTab(capabilities, tab.id as CapabilitySettingsTab));
 
-  const updateSupported = supportsSettingsTab(capabilities, 'update');
+  const updateSupported =
+    supportsSettingsTab(capabilities, 'update') && !usesBliApplicationUpdates(capabilities);
 
   useEffect(() => {
     const skip = ls.getSkipUpdate();

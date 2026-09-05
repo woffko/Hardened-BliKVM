@@ -6,6 +6,7 @@ import {
   SmileOutlined
 } from '@ant-design/icons';
 import { Alert, Button, Divider, Modal, Result, Spin, Switch } from 'antd';
+import { useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 import semver from 'semver';
 
@@ -21,7 +22,10 @@ import type {
 } from '@/api/application.ts';
 import * as firewallApi from '@/api/system-firewall.ts';
 import type { FirewallStatus } from '@/api/system-firewall.ts';
+import { usesBliApplicationUpdates } from '@/lib/capabilities.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
+import { BliApplicationUpdate } from './bli.tsx';
 import { Offline } from './offline.tsx';
 import { Preview } from './preview.tsx';
 
@@ -29,7 +33,14 @@ type UpdateProps = {
   setIsLocked: (isClosable: boolean) => void;
 };
 
-export const Update = ({ setIsLocked }: UpdateProps) => {
+export const Update = (props: UpdateProps) => {
+  const capabilities = useAtomValue(capabilitiesAtom);
+  if (!capabilities) return null;
+  if (usesBliApplicationUpdates(capabilities)) return <BliApplicationUpdate />;
+  return <LegacyUpdate {...props} />;
+};
+
+const LegacyUpdate = ({ setIsLocked }: UpdateProps) => {
   const { t } = useTranslation();
 
   const [status, setStatus] = useState('');

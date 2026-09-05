@@ -736,6 +736,33 @@ const en = {
         okBtn: 'Yes',
         cancelBtn: 'No'
       },
+      applicationUpdate: {
+        title: 'Signed application updates',
+        description: 'Versions and transaction state verified by the local updater.',
+        refresh: 'Refresh',
+        confirmed: 'Confirmed application',
+        selected: 'Selected application',
+        floor: 'Confirmed sequence floor',
+        generation: 'Journal generation',
+        idle: 'No update awaiting confirmation',
+        unavailable: 'Update status is unavailable. Retrying automatically.',
+        stale: 'Connection lost. The displayed status may be outdated.',
+        readOnly: 'Status only. Upload and activation are not enabled for this interface yet.',
+        lastRollback: 'Last rollback',
+        phase: {
+          prepared: 'Recovering a prepared update',
+          awaiting_health: 'Waiting for candidate health confirmation'
+        },
+        rollback: {
+          interrupted_prepare: 'Preparation was interrupted.',
+          boot_changed: 'The device rebooted before confirmation.',
+          health_timeout: 'The candidate did not confirm health in time.',
+          explicit_health_failure: 'Candidate health was rejected.',
+          pointer_mismatch: 'The selected slot did not match the journal.',
+          target_invalid: 'Candidate verification failed.',
+          health_challenge_lost: 'The one-use health confirmation was lost.'
+        }
+      },
       update: {
         title: 'Check for Updates',
         queryFailed: 'Get version failed',

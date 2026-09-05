@@ -2742,6 +2742,21 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("ListenStream=0.0.0.0", socket)
         self.assertIn("OnUnitActiveSec=2s", timer)
 
+    def test_update_status_worker_has_no_write_or_apply_authority(self) -> None:
+        worker = (ROOT / "packaging/systemd/hardened-blikvm-update-status@.service").read_text()
+        socket = (ROOT / "packaging/systemd/hardened-blikvm-update-status.socket").read_text()
+        self.assertIn("User=hardened-blikvm-update", worker)
+        self.assertIn("ProtectSystem=strict", worker)
+        self.assertIn("status-socket --peer-user hardened-blikvm-server", worker)
+        self.assertIn("StandardInput=socket", worker)
+        self.assertIn("StandardOutput=socket", worker)
+        for directive in ("OnSuccess=", "ReadWritePaths=", "StateDirectory=", "RuntimeDirectory="):
+            self.assertNotIn(directive, worker)
+        self.assertNotIn("hardened-blikvm-update-recover.service", worker)
+        self.assertIn("MaxConnections=4", socket)
+        self.assertIn("DirectoryMode=0755", socket)
+        self.assertIn("SocketMode=0620", socket)
+
     def test_candidate_orchestration_is_fixed_and_credential_gated(self) -> None:
         candidate = (
             ROOT / "packaging/systemd/hardened-blikvm-server-candidate.service"

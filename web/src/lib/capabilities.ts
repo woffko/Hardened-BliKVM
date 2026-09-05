@@ -29,6 +29,10 @@ export function isWritable(status: FeatureStatus) {
   return status.availability === 'read_write';
 }
 
+export function usesBliApplicationUpdates(manifest: CapabilityManifest | null) {
+  return manifest?.platform.id === 'bli-h616-pikvm';
+}
+
 export function isPhysicallyVerified(status: FeatureStatus) {
   return status.evidence === 'physical_verified';
 }
@@ -84,8 +88,10 @@ export function supportsSettingsTab(
     case 'update':
       return Boolean(
         manifest &&
-        (isWritable(manifest.system.signedApplicationUpdates) ||
-          isWritable(manifest.system.signedSystemUpdates))
+        (usesBliApplicationUpdates(manifest)
+          ? isAvailable(manifest.system.signedApplicationUpdates)
+          : isWritable(manifest.system.signedApplicationUpdates) ||
+            isWritable(manifest.system.signedSystemUpdates))
       );
   }
 }

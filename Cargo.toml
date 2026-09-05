@@ -44,6 +44,8 @@ members = [
   "crates/bli-kvm-recovery-inputs",
   "crates/bli-kvm-update-stager",
   "crates/bli-kvm-update-manager",
+  "crates/bli-kvm-update-protocol",
+  "crates/bli-kvm-update-client",
   "crates/bli-kvm-update-runtime",
   "crates/bli-kvm-update-supervisor",
   "crates/bli-kvm-update-health-reporter",

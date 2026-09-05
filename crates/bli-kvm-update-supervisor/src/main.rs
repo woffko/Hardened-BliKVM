@@ -1,4 +1,5 @@
 mod config;
+mod status_socket;
 
 use std::{
     env,
@@ -24,6 +25,8 @@ use config::load_config;
 
 #[derive(Debug, Error)]
 enum SupervisorCliError {
+    #[error("update status socket failed")]
+    StatusSocket(#[from] status_socket::StatusSocketError),
     #[error("command arguments are invalid")]
     InvalidArguments,
     #[error("configuration path is invalid")]
@@ -50,6 +53,7 @@ enum CliCommand {
     AckConfirmedApplyCredential,
     ValidateConfig,
     Status,
+    StatusSocket(String),
     Stage(PathBuf),
     GarbageCollect(usize),
     Initialize(String),
@@ -71,6 +75,7 @@ fn main() -> ExitCode {
 impl SupervisorCliError {
     fn exit_code(&self) -> u8 {
         match self {
+            Self::StatusSocket(_) => 96,
             Self::InvalidArguments => 2,
             Self::InvalidConfigPath => 10,
             Self::UnsafeConfigFile => 11,
@@ -128,6 +133,10 @@ fn manager_runtime_exit_code(error: &UpdateManagerError) -> u8 {
 
 fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCliError> {
     let (config_path, command) = parse_arguments(arguments)?;
+    if let CliCommand::StatusSocket(peer_user) = &command {
+        status_socket::serve_stdin(&config_path, peer_user)?;
+        return Ok(());
+    }
     let config = load_config(&config_path)?;
     let receipt = match command {
         CliCommand::ValidateConfig => json!({"command": "validate_config", "result": "valid"}),
@@ -205,6 +214,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                             json!({"command": "ack_confirmed_apply", "acknowledged": supervisor.acknowledge_confirmed_apply(&mut io::Cursor::new(request))?})
                         }
                         CliCommand::Stage(_)
+                        | CliCommand::StatusSocket(_)
                         | CliCommand::GarbageCollect(_)
                         | CliCommand::ValidateConfig => {
                             unreachable!("command handled before supervisor creation")
@@ -246,6 +256,19 @@ fn parse_arguments(
         "ack-confirmed-apply-credential" => CliCommand::AckConfirmedApplyCredential,
         "validate-config" => CliCommand::ValidateConfig,
         "status" => CliCommand::Status,
+        "status-socket" => {
+            if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--peer-user")) {
+                return Err(SupervisorCliError::InvalidArguments);
+            }
+            let user = arguments
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .ok_or(SupervisorCliError::InvalidArguments)?;
+            if !status_socket::valid_peer_name(&user) {
+                return Err(SupervisorCliError::InvalidArguments);
+            }
+            CliCommand::StatusSocket(user)
+        }
         "watchdog-once" => CliCommand::WatchdogOnce,
         "confirm-stdin" => CliCommand::ConfirmStdin,
         "gc" => {

@@ -328,9 +328,11 @@ else
   exit 1
 fi
 
+node tools/test_application_update_ui.mjs
 pnpm_web build
 pnpm_web lint
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
+pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 
 git diff --check

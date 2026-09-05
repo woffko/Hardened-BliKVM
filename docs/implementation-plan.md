@@ -1009,6 +1009,22 @@ rollback to confirmed sequence two; see
 `design/interrupted-application-reboot-v1.md`. No abrupt-power-loss claim is
 made by either reboot gate.
 
+Reboot during a real sequence-three health window now passed, restoring
+sequence two with `boot_changed`, floor two and generation ten. Browser and
+cleanup acceptance also passed (`baselines/device-interrupted-update-reboot.md`).
+Next connect the verified engine to authenticated API/GUI through separate
+bounded status, upload and activation IPC boundaries. Status polling must never
+dispatch apply services; writable update capability stays unavailable until
+the complete mutation path is implemented and accepted.
+
+The first network-integration slice now has a closed bounded status protocol,
+four-request-limited Unix client, kernel-UID-checked read-only worker, protected
+HTTP status route and a separate Bli status pane. Counters remain exact decimal
+strings in HTTP/GUI, unsupported legacy routes are not called, and status has
+no write paths or recovery/apply dependency. Full host checks passed; native
+worker/API/browser acceptance and deployment remain required. Signed upload
+and activation from the GUI are the following slices, not completed features.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

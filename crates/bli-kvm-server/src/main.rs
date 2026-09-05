@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             env::var("BLI_KVM_VIDEO_SOCKET")
                 .unwrap_or_else(|_| "/run/hardened-blikvm-video/mjpeg.sock".into()),
         ),
+        update_status_socket: env::var_os("BLI_KVM_UPDATE_STATUS_SOCKET").map(PathBuf::from),
         ..ServerOptions::default()
     };
 

@@ -9,8 +9,12 @@ use axum::{
     routing::{get, post},
 };
 use bli_kvm_broker_client::BrokerReadClient;
-use bli_kvm_core::{CapabilityManifest, CapabilityProvider, DiagnosticsView, RuntimeInventory};
+use bli_kvm_core::{
+    CapabilityManifest, CapabilityProvider, DiagnosticsView, EvidenceLevel, FeatureStatus,
+    RuntimeInventory,
+};
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
+use bli_kvm_update_client::UpdateStatusClient;
 use bli_kvm_video_client::VideoReadClient;
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -26,6 +30,7 @@ use crate::{
 
 mod auth;
 mod error;
+mod update;
 mod video;
 
 #[derive(Clone)]
@@ -33,6 +38,7 @@ pub(crate) struct AppState {
     pub capabilities: Arc<CapabilityManifest>,
     pub inventory: Arc<BrokerReadClient>,
     pub video: Arc<VideoReadClient>,
+    pub update_status: Option<Arc<UpdateStatusClient>>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -51,6 +57,8 @@ pub struct ServerOptions {
     pub login_lockout_secs: u64,
     pub broker_socket: PathBuf,
     pub video_socket: PathBuf,
+    /// Read-only updater IPC. No value keeps the capability unavailable.
+    pub update_status_socket: Option<PathBuf>,
 }
 
 impl Default for ServerOptions {
@@ -65,6 +73,7 @@ impl Default for ServerOptions {
             login_lockout_secs: 600,
             broker_socket: PathBuf::from("/run/hardened-blikvm/platform-broker.sock"),
             video_socket: PathBuf::from("/run/hardened-blikvm-video/mjpeg.sock"),
+            update_status_socket: None,
         }
     }
 }
@@ -94,12 +103,22 @@ pub fn app_with_web_root(web_root: Option<PathBuf>) -> Router {
 }
 
 pub fn app_with_options(options: ServerOptions) -> Router {
-    let manifest = BliH616PikvmPlatform.capabilities();
+    let mut manifest = BliH616PikvmPlatform.capabilities();
+    if options.update_status_socket.is_some() {
+        manifest.system.signed_application_updates =
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified);
+    }
     manifest
         .validate()
         .expect("built-in Bli H616 capability manifest must be valid");
     let state = AppState {
         capabilities: Arc::new(manifest),
+        update_status: options.update_status_socket.as_ref().map(|path| {
+            Arc::new(
+                UpdateStatusClient::new(path)
+                    .expect("update status socket path must be a bounded absolute Unix path"),
+            )
+        }),
         inventory: Arc::new(
             BrokerReadClient::new(&options.broker_socket)
                 .expect("broker socket path must be absolute"),
@@ -139,6 +158,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route("/inventory", get(runtime_inventory))
         .route("/diagnostics", get(diagnostics_view))
+        .route("/application-update/status", get(update::status))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let api = public.merge(protected_routes).fallback(api_not_found);
@@ -316,6 +336,139 @@ mod tests {
         let login_body = json_body(login).await;
         let csrf = login_body["data"]["csrfToken"].as_str().unwrap().to_owned();
         (cookie, csrf)
+    }
+
+    #[tokio::test]
+    async fn update_status_requires_login_before_contacting_ipc() {
+        let root = tempdir().unwrap();
+        let socket = root.path().join("update.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                Method::GET,
+                "/api/application-update/status",
+                Value::Null,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+        let manifest = json_body(
+            app.oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
+            "read_only"
+        );
+        assert_eq!(
+            manifest["data"]["system"]["signedSystemUpdates"]["availability"],
+            "unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_update_status_uses_only_typed_read_ipc() {
+        use bli_kvm_update_protocol as updates;
+        let root = tempdir().unwrap();
+        let socket = root.path().join("update.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            secure_cookies: true,
+            update_status_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut input = Vec::new();
+            stream.read_to_end(&mut input).await.unwrap();
+            let request = updates::decode_request(updates::decode_frame(&input).unwrap()).unwrap();
+            assert_eq!(request.request, updates::UpdateReadRequest::Status {});
+            let slot = updates::ApplicationSlotVersion {
+                slot_id: format!("app-00000000000000000002-{}", "a".repeat(64)),
+                version: "0.1.0-dev2".into(),
+                sequence: 2,
+                minimum_system_sequence: 1,
+            };
+            let status = updates::ApplicationUpdateStatus {
+                generation: 10,
+                floor_sequence: 2,
+                system_sequence: 1,
+                selected: slot.clone(),
+                confirmed: slot,
+                previous: None,
+                pending: None,
+                last_rollback: Some(updates::ApplicationRollbackReason::BootChanged),
+            };
+            let response = updates::UpdateResponseEnvelope {
+                schema_version: 1,
+                request_id: request.request_id,
+                response: updates::UpdateReadResponse::Status {
+                    status: Box::new(status),
+                },
+            };
+            stream
+                .write_all(
+                    &updates::encode_frame(&updates::encode_response(&response).unwrap()).unwrap(),
+                )
+                .await
+                .unwrap();
+        });
+        let mut request = json_request(Method::GET, "/api/application-update/status", Value::Null);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["generation"], "10");
+        assert_eq!(body["data"]["floorSequence"], "2");
+        assert_eq!(body["data"]["confirmed"]["version"], "0.1.0-dev2");
+        assert_eq!(body["data"]["lastRollback"], "boot_changed");
+        task.await.unwrap();
+        let mut mutation = json_request(
+            Method::POST,
+            "/api/application-update/activate",
+            serde_json::json!({"slotId": "untrusted"}),
+        );
+        mutation
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        mutation
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        assert_eq!(
+            app.oneshot(mutation).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn unconfigured_update_status_remains_unavailable_after_login() {
+        let root = tempdir().unwrap();
+        let app = auth_app(root.path().join("account"), 5);
+        let (cookie, _) = setup_and_login(&app).await;
+        let mut request = json_request(Method::GET, "/api/application-update/status", Value::Null);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json_body(response).await["msg"], "service unavailable");
     }
 
     fn diagnostics_inventory() -> RuntimeInventory {
