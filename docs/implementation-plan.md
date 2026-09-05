@@ -978,8 +978,11 @@ runtime and removed all fixture/controller staging. See
 state-preserving guarded upgrade are now accepted, including an explicit
 dev3-to-dev2 rollback rehearsal and a second retaining installation. See
 `baselines/device-updater-dev3.md`. The watchdog and confirmation socket remain
-disabled. Next fix the candidate reporter's systemd 249 post-command credential
-access, then prove real candidate/rollback acceptance before updater activation.
+disabled. Candidate post-command credential access and the complete isolated
+packaged-template activation/confirmation/timeout rollback chain now passed;
+see `baselines/device-candidate-health.md` and `baselines/device-activation-flow.md`.
+Next package/deploy updater dev4 with the accepted candidate fix, then test
+installed updater enablement and the production-key application update flow.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
