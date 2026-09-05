@@ -949,6 +949,15 @@ preflight/rehearsal/retention orchestration. Filesystem interruption tests pass.
 Persistent-path device rehearsal and retaining initialization remain pending;
 the existence of this source is not device acceptance.
 
+Persistent-path acceptance now passed on H616: a read-only preflight, real
+quarantine rollback rehearsal, then retaining initialization with independent
+post-cleanup status verification. The signed initial slot and generation-one
+journal are persistent; update/current/candidate units are still disabled.
+The GUI continues to run from the package-backed service. See
+`baselines/device-application-bootstrap.md`. Next is guarded serving-service
+cutover to the signed slot, including decoupling Nginx from the old server's
+Requires dependency before any server transition.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
