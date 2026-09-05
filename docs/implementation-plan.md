@@ -1037,8 +1037,11 @@ The signed application is now confirmed at sequence five after the GUI
 notification lifecycle fix. The complete temporary installed status API/GUI
 cycle passed on desktop/mobile, including authenticated exact counters,
 Refresh, restoration, logout and independent cleanup verification
-(`baselines/status-api-seq5-acceptance.md`). Persistent status wiring and its
-interruption/reboot gates remain next; status transport is currently disabled.
+(`baselines/status-api-seq5-acceptance.md`). Persistent status wiring is now
+retained, with corrected early-boot restoration, updater dev7 installation,
+automatic post-reboot startup and desktop/mobile status/browser acceptance
+(`baselines/persistent-status-acceptance.md`). Longer resource observation,
+status-unavailability behavior and signed upload/activation GUI remain next.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

@@ -24,3 +24,19 @@ persistent drop-in hashes must remain unchanged.
 Device preflight, dev7-to-dev6 rollback rehearsal, retention and fresh
 boot/browser acceptance remain required. The original startup failure and
 manual recovery are retained in `retained-status-startup-failure.md`.
+
+Gate source `6082c1a` passed full host job
+`68beafcfc8164ef5923201340e31a777`. Device preflight
+`d08e431d67074141b1b82f20736405e4`, dev7-to-dev6 rollback rehearsal
+`7b9d49c2561d45898b0b23a26148a740`, and retained installation
+`b4c200e690554257bdf864738eac8c1d` passed, including cleanup and unchanged
+serving/slot/status configuration. Fresh single-reboot verification
+`ae63cbf258b146b0bbb2f4b0f7321224` then passed with automatic server startup,
+unchanged application journal/content and persistent drop-in hashes; uptime was
+49 seconds at the post-boot observation. Browser
+`c0ae27a7ace24bf0a1dd50e51061fe0a` passed status desktop/mobile/Refresh,
+video decoding/reconnect, logout and stream revocation without page errors.
+
+The device retains dev7 and application sequence five. This accepts the
+observed upgrade/reboot/status integration, not release readiness or the
+unfinished upload/activation GUI and hardware acceptance matrix.
