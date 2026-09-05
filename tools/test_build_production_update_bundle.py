@@ -137,6 +137,7 @@ class ProductionUpdateBundleBuilderTests(unittest.TestCase):
             sequence=1,
             minimum_system_sequence=1,
             output_dir="/tmp/output",
+            acknowledge_unencrypted_host_key_risk=False,
         )
         enrollment = builder.Enrollment("app-production-test-1", bytes(range(32)), "e" * 64)
         files = {
@@ -201,6 +202,32 @@ class ProductionUpdateBundleBuilderTests(unittest.TestCase):
                 builder.validate_version(invalid)
         with self.assertRaises(ValueError):
             builder.validate_output_directory("relative")
+
+    def test_private_key_policy_requires_exact_passwordless_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.assertEqual(
+                builder.load_private_key_policy(directory, "app-production-test-1"),
+                builder.key_ceremony.ENCRYPTED_PROTECTION,
+            )
+            policy = builder.key_ceremony.policy_document(
+                "app-production-test-1",
+                builder.key_ceremony.UNENCRYPTED_PROTECTION,
+            )
+            path = directory / builder.key_ceremony.POLICY_NAME
+            path.write_bytes(policy)
+            path.chmod(0o400)
+            self.assertEqual(
+                builder.load_private_key_policy(directory, "app-production-test-1"),
+                builder.key_ceremony.UNENCRYPTED_PROTECTION,
+            )
+            decoded = json.loads(policy)
+            decoded["hostRiskAcknowledged"] = False
+            path.chmod(0o600)
+            path.write_text(json.dumps(decoded))
+            path.chmod(0o400)
+            with self.assertRaises(ValueError):
+                builder.load_private_key_policy(directory, "app-production-test-1")
 
 
 if __name__ == "__main__":

@@ -19,22 +19,28 @@ provided to this project or tool.
 
 ## Host key ceremony helper
 
-`tools/generate_production_update_signing_key.py` creates one encrypted
-PKCS#8 Ed25519 key in the invoking operator's owner-only local data directory,
-outside the repository and `/tmp`. It requires an interactive terminal so
-OpenSSL receives the passphrase directly, refuses to overwrite an existing key
-directory, uses exclusive no-follow file creation, and leaves the encrypted
-private key mode 0400. The helper emits only the public SPKI, raw 32-byte public
-key, closed enrollment request, request hash, and a public review receipt.
+`tools/generate_production_update_signing_key.py` creates one PKCS#8 Ed25519
+key in the invoking operator's owner-only local data directory, outside the
+repository and `/tmp`. Encrypted AES-256 storage is the default and requires an
+interactive terminal so OpenSSL receives the passphrase directly. An operator
+who explicitly accepts online-host file risk may instead request passwordless
+storage only by supplying both `--without-passphrase` and
+`--acknowledge-unencrypted-host-key-risk`. The helper refuses to overwrite an
+existing key directory, uses exclusive no-follow file creation, leaves the
+private key mode 0400, and writes a public policy receipt recording the chosen
+protection. It emits only the public SPKI, raw 32-byte public key, closed
+enrollment request, request hash, and public review material.
 
 The helper does not make an online workstation an offline signer and does not
 establish custody by itself. Before enrollment, the operator must separately
-back up the encrypted private key, retain the passphrase through a different
-secure channel, review the exact public request and both SHA-256 values, and
-confirm that this key is the intended production trust root. The private key
-must never be copied to the repository, `/tmp`, Project Memory, device staging,
-the test device, logs, chat, or an update bundle. The public request remains an
-external input to the provisioning gate even when the helper created it.
+back up the private key, retain any passphrase through a different secure
+channel, review the exact public request, protection policy, and both SHA-256
+values, and confirm that this key is the intended production trust root. A
+passwordless key relies only on host/account/filesystem protection and is
+therefore weaker than the default. The private key must never be copied to the
+repository, `/tmp`, Project Memory, device staging, the test device, logs,
+chat, or an update bundle. The public request remains an external input to the
+provisioning gate even when the helper created it.
 
 ## Local asset boundary
 

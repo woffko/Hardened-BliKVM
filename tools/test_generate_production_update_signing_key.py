@@ -8,6 +8,7 @@ import importlib.util
 import json
 from pathlib import Path
 import stat
+import sys
 import tempfile
 import unittest
 from typing import Protocol, cast
@@ -22,9 +23,20 @@ class GeneratorModule(Protocol):
 
     def public_pem(self, public_der: bytes) -> bytes: ...
 
+    def generate_private_key(self, path: Path, *, encrypted: bool) -> None: ...
+
+    def derive_public_der(self, private_key: Path) -> bytes: ...
+
     def enrollment_request(self, key_id: str, public_key: bytes) -> bytes: ...
 
-    def review_document(self, key_id: str, public_key: bytes, request: bytes) -> bytes: ...
+    ENCRYPTED_PROTECTION: str
+    UNENCRYPTED_PROTECTION: str
+
+    def review_document(
+        self, key_id: str, public_key: bytes, request: bytes, protection: str
+    ) -> bytes: ...
+
+    def policy_document(self, key_id: str, protection: str) -> bytes: ...
 
     def create_new_file(self, path: Path, content: bytes, mode: int) -> None: ...
 
@@ -35,6 +47,7 @@ def load_generator() -> GeneratorModule:
     if spec is None or spec.loader is None:
         raise RuntimeError("generator module could not be loaded")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return cast(GeneratorModule, module)
 
@@ -96,10 +109,44 @@ class ProductionUpdateSigningKeyGeneratorTests(unittest.TestCase):
     def test_review_document_contains_only_public_metadata(self) -> None:
         public_key = bytes(range(1, 33))
         request = GENERATOR.enrollment_request("app-production-2026-09-01", public_key)
-        review = GENERATOR.review_document("app-production-2026-09-01", public_key, request)
+        review = GENERATOR.review_document(
+            "app-production-2026-09-01",
+            public_key,
+            request,
+            GENERATOR.ENCRYPTED_PROTECTION,
+        )
         self.assertIn(hashlib.sha256(public_key).hexdigest().encode(), review)
         self.assertIn(hashlib.sha256(request).hexdigest().encode(), review)
+        self.assertIn(GENERATOR.ENCRYPTED_PROTECTION.encode(), review)
         self.assertNotIn(public_key, review)
+
+    def test_key_policy_explicitly_records_passwordless_host_risk(self) -> None:
+        encrypted = json.loads(
+            GENERATOR.policy_document(
+                "app-production-2026-09-01", GENERATOR.ENCRYPTED_PROTECTION
+            )
+        )
+        passwordless = json.loads(
+            GENERATOR.policy_document(
+                "app-production-2026-09-05-01", GENERATOR.UNENCRYPTED_PROTECTION
+            )
+        )
+        self.assertFalse(encrypted["hostRiskAcknowledged"])
+        self.assertTrue(passwordless["hostRiskAcknowledged"])
+        self.assertEqual(
+            passwordless["privateKeyProtection"], GENERATOR.UNENCRYPTED_PROTECTION
+        )
+        self.assertFalse(passwordless["privateKeyIncluded"])
+        with self.assertRaises(ValueError):
+            GENERATOR.policy_document("app-production-2026-09-05-01", "unknown")
+
+    def test_passwordless_key_is_owner_only_and_derives_public_material(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            private_key = Path(temporary) / "private-key.pk8.pem"
+            GENERATOR.generate_private_key(private_key, encrypted=False)
+            self.assertEqual(stat.S_IMODE(private_key.stat().st_mode), 0o400)
+            public_der = GENERATOR.derive_public_der(private_key)
+            self.assertEqual(len(GENERATOR.raw_public_key(public_der)), 32)
 
 
 if __name__ == "__main__":

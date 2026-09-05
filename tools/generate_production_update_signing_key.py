@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Generate one encrypted production Ed25519 application-update signing key.
+"""Generate one production Ed25519 application-update signing key.
 
 The private key is created outside the repository under an owner-only directory.
-OpenSSL reads the passphrase directly from the controlling terminal; this process
-never accepts, stores, or prints it.
+Encrypted mode is the default. Passwordless mode requires an explicit host-risk
+acknowledgement. This process never accepts, stores, or prints a passphrase.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -32,13 +33,38 @@ PUBLIC_RAW_NAME: Final = "public-key.raw"
 REQUEST_NAME: Final = "enrollment-request.json"
 REQUEST_HASH_NAME: Final = "enrollment-request.sha256"
 REVIEW_NAME: Final = "REVIEW.txt"
+POLICY_NAME: Final = "key-policy.json"
+ENCRYPTED_PROTECTION: Final = "openssl-aes-256-cbc"
+UNENCRYPTED_PROTECTION: Final = "unencrypted-owner-only"
 
 
-def parse_args() -> str:
+@dataclass(frozen=True)
+class Options:
+    key_id: str
+    without_passphrase: bool
+    acknowledge_unencrypted_host_key_risk: bool
+
+
+def parse_args() -> Options:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--key-id", required=True)
+    _ = parser.add_argument("--without-passphrase", action="store_true")
+    _ = parser.add_argument(
+        "--acknowledge-unencrypted-host-key-risk", action="store_true"
+    )
     namespace = parser.parse_args()
-    return validate_key_id(cast(str, namespace.key_id))
+    options = Options(
+        key_id=validate_key_id(cast(str, namespace.key_id)),
+        without_passphrase=cast(bool, namespace.without_passphrase),
+        acknowledge_unencrypted_host_key_risk=cast(
+            bool, namespace.acknowledge_unencrypted_host_key_risk
+        ),
+    )
+    if options.without_passphrase != options.acknowledge_unencrypted_host_key_risk:
+        raise ValueError(
+            "passwordless mode requires both explicit unencrypted-key flags"
+        )
+    return options
 
 
 def validate_key_id(value: str) -> str:
@@ -90,14 +116,17 @@ def create_new_file(path: Path, content: bytes, mode: int) -> None:
         os.close(descriptor)
 
 
-def generate_encrypted_private_key(path: Path) -> None:
+def generate_private_key(path: Path, *, encrypted: bool) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags, 0o600)
     try:
+        arguments = ["openssl", "genpkey", "-algorithm", "Ed25519"]
+        if encrypted:
+            arguments.append("-aes-256-cbc")
         subprocess.run(
-            ["openssl", "genpkey", "-algorithm", "Ed25519", "-aes-256-cbc"],
+            arguments,
             check=True,
             stdin=None,
             stdout=descriptor,
@@ -106,6 +135,10 @@ def generate_encrypted_private_key(path: Path) -> None:
         os.fchmod(descriptor, 0o400)
     finally:
         os.close(descriptor)
+
+
+def generate_encrypted_private_key(path: Path) -> None:
+    generate_private_key(path, encrypted=True)
 
 
 def derive_public_der(private_key: Path) -> bytes:
@@ -176,7 +209,9 @@ def enrollment_request(key_id: str, public_key: bytes) -> bytes:
     return json.dumps(document, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
 
 
-def review_document(key_id: str, public_key: bytes, request: bytes) -> bytes:
+def review_document(
+    key_id: str, public_key: bytes, request: bytes, protection: str
+) -> bytes:
     public_sha256 = hashlib.sha256(public_key).hexdigest()
     request_sha256 = hashlib.sha256(request).hexdigest()
     return (
@@ -184,11 +219,31 @@ def review_document(key_id: str, public_key: bytes, request: bytes) -> bytes:
         f"keyId={key_id}\n"
         f"publicKeySha256={public_sha256}\n"
         f"enrollmentRequestSha256={request_sha256}\n"
+        f"privateKeyProtection={protection}\n"
         "\n"
         "Review these public values before enrollment. Keep private-key.pk8.pem\n"
         "offline and backed up separately. Never copy it into Git, /tmp, Project\n"
         "Memory, the BliKVM device, chat, logs, or an update bundle.\n"
     ).encode("ascii")
+
+
+def policy_document(key_id: str, protection: str) -> bytes:
+    if protection not in {ENCRYPTED_PROTECTION, UNENCRYPTED_PROTECTION}:
+        raise ValueError("private-key protection policy is invalid")
+    return (
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "keyId": validate_key_id(key_id),
+                "privateKeyProtection": protection,
+                "hostRiskAcknowledged": protection == UNENCRYPTED_PROTECTION,
+                "privateKeyIncluded": False,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        + b"\n"
+    )
 
 
 def sync_directory(path: Path) -> None:
@@ -200,9 +255,12 @@ def sync_directory(path: Path) -> None:
 
 
 def main() -> int:
-    if not sys.stdin.isatty() or not sys.stderr.isatty():
-        raise ValueError("run this generator in an interactive local terminal")
-    key_id = parse_args()
+    options = parse_args()
+    encrypted = not options.without_passphrase
+    if encrypted and (not sys.stdin.isatty() or not sys.stderr.isatty()):
+        raise ValueError("encrypted generation requires an interactive local terminal")
+    key_id = options.key_id
+    protection = ENCRYPTED_PROTECTION if encrypted else UNENCRYPTED_PROTECTION
     home = secure_home()
     root = home / ".local" / "share" / "hardened-blikvm" / "production-signing"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -211,9 +269,16 @@ def main() -> int:
     ensure_private_directory(destination, create=True)
 
     private_key = destination / PRIVATE_KEY_NAME
-    print("Create a strong unique passphrase when OpenSSL prompts twice.", flush=True)
-    generate_encrypted_private_key(private_key)
-    print("Enter the same passphrase once more to derive the public key.", flush=True)
+    if encrypted:
+        print("Create a strong unique passphrase when OpenSSL prompts twice.", flush=True)
+    else:
+        print(
+            "Generating an explicitly acknowledged passwordless owner-only key.",
+            flush=True,
+        )
+    generate_private_key(private_key, encrypted=encrypted)
+    if encrypted:
+        print("Enter the same passphrase once more to derive the public key.", flush=True)
     public_der = derive_public_der(private_key)
     public_key = raw_public_key(public_der)
     request = enrollment_request(key_id, public_key)
@@ -227,7 +292,16 @@ def main() -> int:
         (request_sha256 + "\n").encode("ascii"),
         0o400,
     )
-    create_new_file(destination / REVIEW_NAME, review_document(key_id, public_key, request), 0o400)
+    create_new_file(
+        destination / REVIEW_NAME,
+        review_document(key_id, public_key, request, protection),
+        0o400,
+    )
+    create_new_file(
+        destination / POLICY_NAME,
+        policy_document(key_id, protection),
+        0o400,
+    )
     sync_directory(destination)
     sync_directory(root)
 

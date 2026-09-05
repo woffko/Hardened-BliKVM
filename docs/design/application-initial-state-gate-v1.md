@@ -36,11 +36,14 @@ the application bundle.
 ## Production signing boundary
 
 The builder consumes the exact reviewed public enrollment request and derives
-the encrypted private-key location from the local operator identity and key
-ID. The private-key path, bytes, and passphrase are not accepted through CLI
-arguments, environment variables, stdin, source, receipts, or logs. OpenSSL
-opens the encrypted mode-0400 key through an inherited descriptor and reads the
-passphrase directly from the controlling terminal.
+the private-key location and protection policy from the local operator identity
+and key ID. The private-key path, bytes, and passphrase are not accepted through
+CLI arguments, environment variables, stdin, source, receipts, or logs.
+OpenSSL opens the mode-0400 key through an inherited descriptor. Encrypted keys
+read the passphrase directly from the controlling terminal. A policy-recorded
+passwordless key is refused unless the builder also receives
+`--acknowledge-unencrypted-host-key-risk`; that acknowledgement never weakens
+the path, owner, mode, type, or link-count checks.
 
 The canonical manifest binds format/product/target/architecture, key ID,
 version, sequence one, minimum system sequence one, the accepted runtime source

@@ -72,6 +72,7 @@ class Options:
     sequence: int
     minimum_system_sequence: int
     output_dir: str
+    acknowledge_unencrypted_host_key_risk: bool
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,12 @@ class Enrollment:
     key_id: str
     public_key: bytes
     request_sha256: str
+
+
+@dataclass(frozen=True)
+class PrivateKey:
+    path: Path
+    protection: str
 
 
 class BundleReceipt(TypedDict):
@@ -98,6 +105,7 @@ class BundleReceipt(TypedDict):
     sequence: int
     minimumSystemSequence: int
     privateKeyIncluded: bool
+    privateKeyProtection: str
     ownerOnlySnapshotRequired: bool
 
 
@@ -115,6 +123,9 @@ def parse_args() -> Options:
     _ = parser.add_argument("--sequence", required=True, type=int)
     _ = parser.add_argument("--minimum-system-sequence", required=True, type=int)
     _ = parser.add_argument("--output-dir", required=True)
+    _ = parser.add_argument(
+        "--acknowledge-unencrypted-host-key-risk", action="store_true"
+    )
     namespace = parser.parse_args()
     return Options(
         package=cast(str, namespace.package),
@@ -133,6 +144,9 @@ def parse_args() -> Options:
         sequence=cast(int, namespace.sequence),
         minimum_system_sequence=cast(int, namespace.minimum_system_sequence),
         output_dir=cast(str, namespace.output_dir),
+        acknowledge_unencrypted_host_key_risk=cast(
+            bool, namespace.acknowledge_unencrypted_host_key_risk
+        ),
     )
 
 
@@ -231,7 +245,51 @@ def load_enrollment(
     return Enrollment(key_id, public_key, expected)
 
 
-def production_private_key(key_id: str) -> Path:
+def load_private_key_policy(directory: Path, key_id: str) -> str:
+    path = directory / key_ceremony.POLICY_NAME
+    if not path.exists() and not path.is_symlink():
+        return key_ceremony.ENCRYPTED_PROTECTION
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o400
+        or not 0 < metadata.st_size <= MAX_REQUEST_BYTES
+    ):
+        raise ValueError("production private-key policy metadata is unsafe")
+    decoded = cast(object, json.loads(path.read_bytes()))
+    if not isinstance(decoded, dict):
+        raise ValueError("production private-key policy is invalid")
+    policy = cast(dict[str, object], decoded)
+    protection = policy.get("privateKeyProtection")
+    if (
+        set(policy)
+        != {
+            "schemaVersion",
+            "keyId",
+            "privateKeyProtection",
+            "hostRiskAcknowledged",
+            "privateKeyIncluded",
+        }
+        or policy.get("schemaVersion") != 1
+        or policy.get("keyId") != key_id
+        or protection
+        not in {
+            key_ceremony.ENCRYPTED_PROTECTION,
+            key_ceremony.UNENCRYPTED_PROTECTION,
+        }
+        or policy.get("hostRiskAcknowledged")
+        != (protection == key_ceremony.UNENCRYPTED_PROTECTION)
+        or policy.get("privateKeyIncluded") is not False
+    ):
+        raise ValueError("production private-key policy is invalid")
+    assert isinstance(protection, str)
+    return protection
+
+
+def production_private_key(key_id: str) -> PrivateKey:
     root = (
         key_ceremony.secure_home()
         / ".local"
@@ -253,7 +311,7 @@ def production_private_key(key_id: str) -> Path:
         or not 0 < metadata.st_size <= PRIVATE_KEY_MAX_BYTES
     ):
         raise ValueError("production private-key metadata is unsafe")
-    return path
+    return PrivateKey(path, load_private_key_policy(directory, key_id))
 
 
 def _bundle_path(package_path: PurePosixPath) -> str | None:
@@ -509,8 +567,6 @@ def write_new(path: Path, content: bytes) -> None:
 
 
 def execute(options: Options) -> int:
-    if not sys.stdin.isatty() or not sys.stderr.isatty():
-        raise ValueError("run this builder in an interactive local terminal")
     if options.sequence <= 0 or options.minimum_system_sequence <= 0:
         raise ValueError("application sequences must be positive")
     output = validate_output_directory(options.output_dir)
@@ -520,6 +576,11 @@ def execute(options: Options) -> int:
         options.key_id,
     )
     private_key = production_private_key(enrollment.key_id)
+    passwordless = private_key.protection == key_ceremony.UNENCRYPTED_PROTECTION
+    if passwordless != options.acknowledge_unencrypted_host_key_risk:
+        raise ValueError("private-key protection mode does not match explicit risk flags")
+    if not passwordless and (not sys.stdin.isatty() or not sys.stderr.isatty()):
+        raise ValueError("encrypted signing requires an interactive local terminal")
     package = package_gate.validate_package(
         options.package,
         options.expected_package_sha256,
@@ -531,8 +592,11 @@ def execute(options: Options) -> int:
     archive_bytes = package_gate.read_dpkg_deb_archive(package.path, "--fsys-tarfile")
     files = extract_application_payload(archive_bytes, package)
     manifest = canonical_manifest(manifest_document(options, enrollment, files))
-    print("Enter the production key passphrase once to sign the exact manifest.", flush=True)
-    signature = sign_manifest(private_key, manifest)
+    if passwordless:
+        print("Signing with the explicitly acknowledged owner-only passwordless key.", flush=True)
+    else:
+        print("Enter the production key passphrase once to sign the exact manifest.", flush=True)
+    signature = sign_manifest(private_key.path, manifest)
     verify_signature(enrollment.public_key, manifest, signature)
     bundle = build_bundle(manifest, signature, files)
 
@@ -556,6 +620,7 @@ def execute(options: Options) -> int:
         "sequence": options.sequence,
         "minimumSystemSequence": options.minimum_system_sequence,
         "privateKeyIncluded": False,
+        "privateKeyProtection": private_key.protection,
         "ownerOnlySnapshotRequired": True,
     }
     write_new(
