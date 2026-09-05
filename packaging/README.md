@@ -236,9 +236,12 @@ Confirmed and candidate server templates both execute the signed `current`
 slot. The candidate requires `application-health-token` through systemd
 credentials and runs the dedicated Rust health reporter only after startup.
 The reporter validates the exact loopback health response before submitting
-the token to the Unix socket. Fixed root apply services restart only the
-literal candidate or confirmed unit after activate/watchdog success; the
-unprivileged update service does not receive general `systemctl` authority.
+the token to the Unix socket. Explicit activation dispatches the fixed
+candidate action. Confirmed application is gated by an unconsumed generation-
+and slot-bound request; a clean watchdog tick creates no request. The confirmed
+apply unit uses a single privileged, literal systemctl command followed by an
+unprivileged generation-checked acknowledgement from a systemd credential.
+The update identity does not receive general `systemctl` authority.
 The slots root is provisioned by tmpfiles as mode 0750, owned by the update
 identity and read-only to the shared runtime group; group write is forbidden.
 Tmpfiles also creates the confirmation socket parent as mode 0750 owned by the

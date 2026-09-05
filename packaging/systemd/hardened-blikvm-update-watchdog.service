@@ -2,7 +2,7 @@
 Description=Hardened BliKVM application update watchdog
 Documentation=https://github.com/woffko/Hardened-BliKVM
 After=local-fs.target
-OnSuccess=hardened-blikvm-update-apply-candidate.service hardened-blikvm-update-apply-confirmed.service
+OnSuccess=hardened-blikvm-update-apply-confirmed.service
 ConditionPathExists=/etc/hardened-blikvm/update-supervisor.json
 ConditionPathExists=/var/lib/hardened-blikvm-update/application-state.json
 ConditionPathIsDirectory=/var/lib/hardened-blikvm-slots

@@ -2775,9 +2775,16 @@ class PackagingBoundaryTests(unittest.TestCase):
             apply_candidate,
         )
         self.assertIn(
-            "systemctl restart hardened-blikvm-server-current.service",
+            "systemctl --no-ask-password restart hardened-blikvm-server-current.service",
             apply_confirmed,
         )
+        self.assertIn("ConditionPathExists=/run/hardened-blikvm-update/confirmed-apply-request.json", apply_confirmed)
+        self.assertIn("User=hardened-blikvm-update", apply_confirmed)
+        self.assertIn("StandardInput=file:%d/confirmed-apply-request", apply_confirmed)
+        self.assertIn("ack-confirmed-apply", apply_confirmed)
+        self.assertIn("ExecStart=+/usr/bin/systemctl", apply_confirmed)
+        watchdog = (ROOT / "packaging/systemd/hardened-blikvm-update-watchdog.service").read_text()
+        self.assertNotIn("OnSuccess=hardened-blikvm-update-apply-candidate", watchdog)
         self.assertNotIn("%i", apply_candidate)
         self.assertNotIn("%i", apply_confirmed)
         self.assertIn(

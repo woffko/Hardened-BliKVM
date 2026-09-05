@@ -1,6 +1,7 @@
 [Unit]
 Description=Hardened BliKVM one-use update health confirmation
 Documentation=https://github.com/woffko/Hardened-BliKVM
+OnSuccess=hardened-blikvm-update-apply-confirmed.service
 ConditionPathExists=/etc/hardened-blikvm/update-supervisor.json
 ConditionPathExists=/var/lib/hardened-blikvm-update/application-state.json
 ConditionPathIsDirectory=/var/lib/hardened-blikvm-slots

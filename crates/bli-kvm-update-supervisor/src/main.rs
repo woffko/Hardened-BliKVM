@@ -46,6 +46,7 @@ enum SupervisorCliError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliCommand {
+    AckConfirmedApply,
     ValidateConfig,
     Status,
     Stage(PathBuf),
@@ -193,6 +194,11 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                             let mut locked = stdin.lock();
                             confirmation_receipt(supervisor.confirm_from_reader(&mut locked)?)
                         }
+                        CliCommand::AckConfirmedApply => {
+                            let stdin = io::stdin();
+                            let mut locked = stdin.lock();
+                            json!({"command": "ack_confirmed_apply", "acknowledged": supervisor.acknowledge_confirmed_apply(&mut locked)?})
+                        }
                         CliCommand::Stage(_)
                         | CliCommand::GarbageCollect(_)
                         | CliCommand::ValidateConfig => {
@@ -231,6 +237,7 @@ fn parse_arguments(
         .and_then(|value| value.into_string().ok())
         .ok_or(SupervisorCliError::InvalidArguments)?;
     let command = match command.as_str() {
+        "ack-confirmed-apply" => CliCommand::AckConfirmedApply,
         "validate-config" => CliCommand::ValidateConfig,
         "status" => CliCommand::Status,
         "watchdog-once" => CliCommand::WatchdogOnce,

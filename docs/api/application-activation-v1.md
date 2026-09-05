@@ -113,6 +113,13 @@ argument. Service-owned configuration is accepted only on the checked read-only
 credential mount under root-controlled `/run/credentials`; direct root-owned
 administrative configuration retains its existing validation.
 
+`ack-confirmed-apply` reads a bounded public apply request from stdin and
+acknowledges only the same queued generation/confirmed slot while no activation
+is pending. It is used after the fixed confirmed-service action, not exposed
+through the network or health-confirmation socket. A stale ACK preserves newer
+work. Clean watchdog passes do not request repeated restarts; see
+`../design/update-service-application-v1.md` for the event contract.
+
 `stage` accepts
 one absolute local archive path and can publish a verified slot but cannot
 select it. `initialize`, `activate`, `status`, `gc`, and `watchdog-once` accept

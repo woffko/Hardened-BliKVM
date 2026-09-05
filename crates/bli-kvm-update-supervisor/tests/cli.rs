@@ -143,6 +143,35 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     assert!(!String::from_utf8_lossy(&confirmed.stdout).contains(&hex(&token)));
     assert!(!token_path.exists());
 
+    let apply_path = runtime.join("confirmed-apply-request.json");
+    let apply_request = fs::read(&apply_path).unwrap();
+    let mut acknowledge = command(binary, &config, &["ack-confirmed-apply"]);
+    acknowledge
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = acknowledge.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&apply_request)
+        .unwrap();
+    let acknowledged = child.wait_with_output().unwrap();
+    assert!(acknowledged.status.success(), "{:?}", acknowledged.stderr);
+    assert_eq!(json_output(&acknowledged)["acknowledged"], true);
+    assert!(!apply_path.exists());
+    for _ in 0..3 {
+        assert!(
+            command(binary, &config, &["watchdog-once"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(!apply_path.exists());
+    }
+
     let status = command(binary, &config, &["status"]).output().unwrap();
     assert!(status.status.success(), "{:?}", status.stderr);
     let status = json_output(&status);

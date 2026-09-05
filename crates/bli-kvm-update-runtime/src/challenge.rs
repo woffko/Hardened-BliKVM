@@ -19,6 +19,30 @@ const STATE_FILE_NAME: &str = "health-challenge.json";
 const TOKEN_FILE_NAME: &str = "health-token";
 const MAX_STATE_BYTES: u64 = 4 * 1024;
 const TOKEN_BYTES: u64 = 32;
+pub const CONFIRMED_APPLY_FILE_NAME: &str = "confirmed-apply-request.json";
+pub const MAX_APPLY_REQUEST_BYTES: usize = 512;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConfirmedApplyRequest {
+    schema_version: u32,
+    pub generation: u64,
+    pub slot_id: String,
+}
+
+impl ConfirmedApplyRequest {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, UpdateRuntimeError> {
+        if bytes.is_empty() || bytes.len() > MAX_APPLY_REQUEST_BYTES {
+            return Err(UpdateRuntimeError::InvalidApplyRequest);
+        }
+        let value: Self =
+            serde_json::from_slice(bytes).map_err(|_| UpdateRuntimeError::InvalidApplyRequest)?;
+        if value.schema_version != 1 || value.generation == 0 || !valid_slot_id(&value.slot_id) {
+            return Err(UpdateRuntimeError::InvalidApplyRequest);
+        }
+        Ok(value)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuedHealthChallenge {
@@ -85,6 +109,58 @@ pub struct HealthChallengeStore {
 }
 
 impl HealthChallengeStore {
+    pub(crate) fn confirmed_apply_request(
+        &self,
+    ) -> Result<Option<ConfirmedApplyRequest>, UpdateRuntimeError> {
+        self.validate_root()?;
+        let path = self.root.join(CONFIRMED_APPLY_FILE_NAME);
+        if !node_exists(&path)? {
+            return Ok(None);
+        }
+        let bytes = self.read_safe_file(&path, 0o600, MAX_APPLY_REQUEST_BYTES as u64)?;
+        Ok(Some(ConfirmedApplyRequest::from_bytes(&bytes)?))
+    }
+
+    pub(crate) fn request_confirmed_apply(
+        &self,
+        generation: u64,
+        slot_id: &str,
+    ) -> Result<(), UpdateRuntimeError> {
+        if generation == 0 || !valid_slot_id(slot_id) {
+            return Err(UpdateRuntimeError::InvalidApplyRequest);
+        }
+        let request = ConfirmedApplyRequest {
+            schema_version: 1,
+            generation,
+            slot_id: slot_id.into(),
+        };
+        let previous = self.confirmed_apply_request()?;
+        if previous.as_ref() == Some(&request) {
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec(&request).map_err(|_| UpdateRuntimeError::Serialization)?;
+        self.write_file(
+            &self.root.join(CONFIRMED_APPLY_FILE_NAME),
+            &bytes,
+            0o600,
+            previous.is_some(),
+        )
+    }
+
+    pub(crate) fn acknowledge_confirmed_apply(
+        &self,
+        expected: &ConfirmedApplyRequest,
+    ) -> Result<bool, UpdateRuntimeError> {
+        if self.confirmed_apply_request()?.as_ref() != Some(expected) {
+            return Ok(false);
+        }
+        self.remove_safe_file(
+            &self.root.join(CONFIRMED_APPLY_FILE_NAME),
+            0o600,
+            MAX_APPLY_REQUEST_BYTES as u64,
+        )?;
+        Ok(true)
+    }
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, UpdateRuntimeError> {
         let root = root.into();
         let identity = validate_runtime_root(&root)?;
@@ -323,6 +399,16 @@ impl HealthChallengeStore {
         bytes: &[u8],
         mode: u32,
     ) -> Result<(), UpdateRuntimeError> {
+        self.write_file(path, bytes, mode, false)
+    }
+
+    fn write_file(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        mode: u32,
+        replace: bool,
+    ) -> Result<(), UpdateRuntimeError> {
         self.validate_root()?;
         let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
         fs::set_permissions(temporary.path(), Permissions::from_mode(mode))?;
@@ -338,9 +424,15 @@ impl HealthChallengeStore {
         temporary.write_all(bytes)?;
         temporary.flush()?;
         temporary.as_file().sync_all()?;
-        temporary
-            .persist_noclobber(path)
-            .map_err(|error| UpdateRuntimeError::Io(error.error))?;
+        if replace {
+            temporary
+                .persist(path)
+                .map_err(|error| UpdateRuntimeError::Io(error.error))?;
+        } else {
+            temporary
+                .persist_noclobber(path)
+                .map_err(|error| UpdateRuntimeError::Io(error.error))?;
+        }
         self.root_directory.sync_all()?;
         Ok(())
     }
@@ -531,6 +623,30 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     use super::*;
+
+    #[test]
+    fn request_is_bounded_closed_and_rejects_unsafe_event_files() {
+        let root = tempfile::tempdir().unwrap();
+        let store = HealthChallengeStore::open(root.path()).unwrap();
+        let slot = slot_id(1, b'a');
+        store.request_confirmed_apply(1, &slot).unwrap();
+        let path = root.path().join(CONFIRMED_APPLY_FILE_NAME);
+        let bytes = fs::read(&path).unwrap();
+        let parsed = ConfirmedApplyRequest::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed.generation, 1);
+        assert_eq!(parsed.slot_id, slot);
+        assert!(
+            ConfirmedApplyRequest::from_bytes(&vec![b'x'; MAX_APPLY_REQUEST_BYTES + 1]).is_err()
+        );
+        let mut unknown: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        unknown["path"] = serde_json::json!("/unexpected");
+        assert!(ConfirmedApplyRequest::from_bytes(&serde_json::to_vec(&unknown).unwrap()).is_err());
+        fs::rename(&path, root.path().join("saved")).unwrap();
+        symlink(root.path().join("saved"), &path).unwrap();
+        assert!(store.confirmed_apply_request().is_err());
+        assert!(store.acknowledge_confirmed_apply(&parsed).is_err());
+        assert!(root.path().join("saved").exists());
+    }
 
     fn slot_id(sequence: u64, digest: u8) -> String {
         format!(

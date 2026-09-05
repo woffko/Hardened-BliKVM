@@ -6,7 +6,10 @@ use bli_kvm_update_manager::{
 };
 use zeroize::Zeroize;
 
-use crate::{HealthChallengeStatus, HealthChallengeStore, LinuxKernelEvidence, UpdateRuntimeError};
+use crate::{
+    ConfirmedApplyRequest, HealthChallengeStatus, HealthChallengeStore, LinuxKernelEvidence,
+    MAX_APPLY_REQUEST_BYTES, UpdateRuntimeError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChallengeReconciliation {
@@ -54,6 +57,35 @@ impl UpdateSupervisor {
 
     pub fn status(&self) -> Result<ManagerStatus, UpdateRuntimeError> {
         Ok(self.manager.status()?)
+    }
+
+    fn request_confirmed_apply(&self) -> Result<(), UpdateRuntimeError> {
+        let status = self.manager.status()?;
+        if status.pending.is_some() || status.active_slot_id != status.confirmed_slot_id {
+            return Err(UpdateRuntimeError::SupervisorStateMismatch);
+        }
+        self.challenges
+            .request_confirmed_apply(status.generation, &status.confirmed_slot_id)
+    }
+
+    pub fn acknowledge_confirmed_apply(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<bool, UpdateRuntimeError> {
+        let mut bytes = Vec::new();
+        reader
+            .take((MAX_APPLY_REQUEST_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        let request = ConfirmedApplyRequest::from_bytes(&bytes)?;
+        let status = self.manager.status()?;
+        if status.pending.is_some()
+            || status.generation != request.generation
+            || status.active_slot_id != request.slot_id
+            || status.confirmed_slot_id != request.slot_id
+        {
+            return Ok(false);
+        }
+        self.challenges.acknowledge_confirmed_apply(&request)
     }
 
     pub fn activate(
@@ -148,6 +180,7 @@ impl UpdateSupervisor {
         let outcome =
             self.manager
                 .confirm_health(verified.operation_id, verified.health_binding, clock)?;
+        self.request_confirmed_apply()?;
         self.challenges.consume(verified.operation_id)?;
         Ok(outcome)
     }
@@ -159,12 +192,23 @@ impl UpdateSupervisor {
         let clock = self.kernel.snapshot()?;
         let initial = self.manager.recover(clock)?;
         let status = self.manager.status()?;
+        if status.pending.is_none()
+            && matches!(
+                initial,
+                RecoveryOutcome::RolledBack { .. } | RecoveryOutcome::RepairedPointer { .. }
+            )
+        {
+            // Publish before clearing the challenge, so a crash leaves either
+            // the request or stale challenge as evidence for the next pass.
+            self.request_confirmed_apply()?;
+        }
         let challenge = match (status.pending.as_ref(), self.challenges.status()) {
             (Some(pending), Ok(Some(challenge))) if challenge_matches(pending, &challenge) => {
                 ChallengeReconciliation::Ready
             }
             (Some(_), Ok(None)) => {
                 let manager = self.manager.abort_missing_health_challenge()?;
+                self.request_confirmed_apply()?;
                 return Ok(SupervisorRecovery {
                     manager,
                     challenge: ChallengeReconciliation::RolledBackMissing,
@@ -174,6 +218,7 @@ impl UpdateSupervisor {
             }
             (Some(_), Ok(Some(challenge))) => {
                 let manager = self.manager.abort_missing_health_challenge()?;
+                self.request_confirmed_apply()?;
                 self.challenges.discard(challenge.operation_id)?;
                 return Ok(SupervisorRecovery {
                     manager,
@@ -184,6 +229,7 @@ impl UpdateSupervisor {
             }
             (Some(_), Err(UpdateRuntimeError::InvalidChallengeState)) => {
                 let manager = self.manager.abort_missing_health_challenge()?;
+                self.request_confirmed_apply()?;
                 let _ = self.challenges.clear_stale_after_rollback()?;
                 return Ok(SupervisorRecovery {
                     manager,
@@ -194,16 +240,23 @@ impl UpdateSupervisor {
             }
             (Some(_), Err(error)) => return Err(error),
             (None, Ok(Some(challenge))) => {
+                self.request_confirmed_apply()?;
                 self.challenges.discard(challenge.operation_id)?;
                 ChallengeReconciliation::DiscardedStale
             }
             (None, Err(UpdateRuntimeError::InvalidChallengeState)) => {
+                self.request_confirmed_apply()?;
                 self.challenges.clear_stale_after_rollback()?;
                 ChallengeReconciliation::DiscardedStale
             }
             (None, Ok(None)) => ChallengeReconciliation::None,
             (None, Err(error)) => return Err(error),
         };
+        if self.manager.status()?.pending.is_none()
+            && self.challenges.confirmed_apply_request()?.is_some()
+        {
+            self.request_confirmed_apply()?;
+        }
         Ok(SupervisorRecovery {
             manager: initial,
             challenge,
@@ -375,6 +428,18 @@ mod tests {
             ChallengeReconciliation::RolledBackMismatch
         );
         assert_eq!(supervisor.status().unwrap().active_slot_id, slot1.slot_id);
+        let request = fs::read(
+            fixture
+                .runtime
+                .path()
+                .join(crate::CONFIRMED_APPLY_FILE_NAME),
+        )
+        .unwrap();
+        assert!(
+            supervisor
+                .acknowledge_confirmed_apply(&mut Cursor::new(request))
+                .unwrap()
+        );
         assert_eq!(fs::read_dir(fixture.runtime.path()).unwrap().count(), 0);
     }
 
@@ -412,6 +477,83 @@ mod tests {
         assert_eq!(activation.outcome, ActivationOutcome::AlreadyActive);
         assert_eq!(activation.credential_path, None);
         assert_eq!(fs::read_dir(fixture.runtime.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn clean_watchdog_ticks_do_not_request_service_restarts() {
+        let fixture = Fixture::new();
+        let slot = fixture.stage(1);
+        let supervisor = fixture.supervisor();
+        supervisor.initialize(&slot.slot_id).unwrap();
+        for _ in 0..12 {
+            assert_eq!(
+                supervisor.watchdog_once().unwrap().manager,
+                RecoveryOutcome::Clean
+            );
+            assert!(
+                supervisor
+                    .challenges
+                    .confirmed_apply_request()
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn stale_ack_cannot_remove_a_newer_confirmed_service_request() {
+        let fixture = Fixture::new();
+        let first = fixture.stage(1);
+        let second = fixture.stage(2);
+        let third = fixture.stage(3);
+        let supervisor = fixture.supervisor();
+        supervisor.initialize(&first.slot_id).unwrap();
+        let token = fs::read(
+            supervisor
+                .activate(&second.slot_id)
+                .unwrap()
+                .credential_path
+                .unwrap(),
+        )
+        .unwrap();
+        supervisor
+            .confirm_from_reader(&mut Cursor::new(token))
+            .unwrap();
+        let path = fixture
+            .runtime
+            .path()
+            .join(crate::CONFIRMED_APPLY_FILE_NAME);
+        let previous = fs::read(&path).unwrap();
+        supervisor.watchdog_once().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        let token = fs::read(
+            supervisor
+                .activate(&third.slot_id)
+                .unwrap()
+                .credential_path
+                .unwrap(),
+        )
+        .unwrap();
+        supervisor
+            .confirm_from_reader(&mut Cursor::new(token))
+            .unwrap();
+        let current = fs::read(&path).unwrap();
+        assert_ne!(previous, current);
+        assert!(
+            !supervisor
+                .acknowledge_confirmed_apply(&mut Cursor::new(previous))
+                .unwrap()
+        );
+        assert_eq!(fs::read(&path).unwrap(), current);
+        assert!(
+            supervisor
+                .acknowledge_confirmed_apply(&mut Cursor::new(current))
+                .unwrap()
+        );
+        for _ in 0..12 {
+            supervisor.watchdog_once().unwrap();
+            assert!(!path.exists());
+        }
     }
 
     fn payload(sequence: u64) -> BTreeMap<&'static str, (u32, Vec<u8>)> {

@@ -966,6 +966,14 @@ passed. See `baselines/device-signed-slot-serving.md`. Before enabling the
 watchdog timer, replace unconditional apply-service restarts with idempotent
 reconciliation; clean two-second watchdog ticks must not restart the GUI.
 
+Updater dev3 source now uses a bounded generation/slot apply request on health
+confirmation or recovery, followed by a matching acknowledgement after the
+fixed service action. Clean ticks create no request and candidate application
+is dispatched only by explicit activation. Unit and CLI tests cover stale ACKs
+and repeated clean ticks. Installed dev2 and its disabled timer are unchanged;
+the new event-delivery behavior still needs native systemd verification before
+dev3 installation and updater activation.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

@@ -5,7 +5,8 @@ mod supervisor;
 use std::io;
 
 pub use challenge::{
-    HealthChallengeStatus, HealthChallengeStore, IssuedHealthChallenge, VerifiedHealthResponse,
+    CONFIRMED_APPLY_FILE_NAME, ConfirmedApplyRequest, HealthChallengeStatus, HealthChallengeStore,
+    IssuedHealthChallenge, MAX_APPLY_REQUEST_BYTES, VerifiedHealthResponse,
 };
 pub use kernel::LinuxKernelEvidence;
 pub use supervisor::{
@@ -15,6 +16,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum UpdateRuntimeError {
+    #[error("confirmed service apply request is invalid")]
+    InvalidApplyRequest,
     #[error("kernel boot identity is unavailable or invalid")]
     InvalidBootIdentity,
     #[error("kernel boot identity changed while evidence was sampled")]
