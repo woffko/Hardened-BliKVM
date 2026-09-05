@@ -995,6 +995,13 @@ boot-time journal/slot verification before starting current/candidate servers,
 then prove confirmed and interrupted-update reboot behavior. The signed-update
 API/GUI and remaining hardware-adapter work are not completed by this gate.
 
+Mandatory startup verification passed isolated missing-trust and tampered-tree
+rejection/restore tests. Updater dev5 is now retained after a full dev5-to-dev4
+rollback rehearsal, preserving operational sequence two and enabled updater
+services (`baselines/device-updater-dev5.md`). Next prove one real clean reboot:
+new boot identity, unchanged persistent state, verification completion before
+server startup and browser behavior. Interrupted-update reboot remains separate.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

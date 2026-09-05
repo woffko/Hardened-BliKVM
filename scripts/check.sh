@@ -73,6 +73,7 @@ python3 -m unittest \
   tools/test_upgrade_initialized_updater.py \
   tools/test_enable_update_services.py \
   tools/test_installed_application_update.py \
+  tools/test_operational_reboot.py \
   tools/test_verify_candidate_health.py \
   tools/test_stage_device_debian_runtime_package.py \
   tools/test_stage_device_debian_runtime_retain.py \
@@ -134,6 +135,8 @@ python3 -m py_compile \
   tools/enable_update_services.py \
   tools/installed_application_update.py \
   tools/stage_installed_application_update.py \
+  tools/capture_operational_boot.py \
+  tools/stage_operational_reboot.py \
   tools/stage_initialized_updater_upgrade.py \
   tools/verify_candidate_health.py \
   tools/verify_activation_flow.py \
@@ -217,6 +220,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/enable_update_services.py \
     tools/installed_application_update.py \
     tools/stage_installed_application_update.py \
+    tools/capture_operational_boot.py \
+    tools/stage_operational_reboot.py \
+    tools/test_operational_reboot.py \
     tools/test_installed_application_update.py \
     tools/test_enable_update_services.py \
     tools/stage_initialized_updater_upgrade.py \
