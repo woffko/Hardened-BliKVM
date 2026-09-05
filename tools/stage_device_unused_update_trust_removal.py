@@ -187,7 +187,7 @@ def _assignments(values: Mapping[str, str | int]) -> str:
     return "\n".join(f"{key}={shlex.quote(str(value))}" for key, value in values.items())
 
 
-def _values(
+def common_values(
     enrollment: AcceptedEnrollment,
     baseline: Mapping[str, str],
     preflight: Mapping[str, str] | None = None,
@@ -256,7 +256,7 @@ def build_preflight_script(
 ) -> str:
     if update_version not in update_builder.SUPPORTED_PACKAGE_VERSIONS:
         raise ValueError("unsupported update package preflight version")
-    values = _values(enrollment, baseline)
+    values = common_values(enrollment, baseline)
     values["package_version"] = update_version
     body = rf"""
 set -eu
@@ -311,7 +311,7 @@ def build_remove_script(
     baseline: Mapping[str, str],
     preflight: Mapping[str, str],
 ) -> str:
-    values = _values(enrollment, baseline, preflight)
+    values = common_values(enrollment, baseline, preflight)
     body = rf"""
 set -eu
 export LC_ALL=C
@@ -339,7 +339,7 @@ def build_final_script(
     baseline: Mapping[str, str],
     preflight: Mapping[str, str],
 ) -> str:
-    values = _values(enrollment, baseline, preflight)
+    values = common_values(enrollment, baseline, preflight)
     body = rf"""
 set -eu
 export LC_ALL=C
