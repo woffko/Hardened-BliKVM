@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native, rollback-gated dev4 to dev5 replacement with operational state preserved."""
+"""Native, rollback-gated dev5 to dev6 replacement with operational state preserved."""
 
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ sync_directory = serving.sync_directory
 PREFIX = "hardened-blikvm-updater-upgrade-"
 PACKAGE = "hardened-blikvm-update-runtime"
 PACKAGE_HASHES = {
-    "old": "fc63f2ee439fc5504526ba644544335a8f7e7eaea2cce95254fa39cd5ad98a3a",
-    "new": "da88afb8c4b97d1f71318f04afa44445b1f64d76c6bf6580ecfa4200e67099f4",
+    "old": "da88afb8c4b97d1f71318f04afa44445b1f64d76c6bf6580ecfa4200e67099f4",
+    "new": "1634b7e42ff7ef8f10894b212bf635c6e23851d58bab5f69096705aed52cb939",
 }
 SUPERVISOR_HASHES = {
     "old": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
-    "new": "2e0fe93a2acf14a34d60f2495b64fc245ef77f9eac0ebd0716ca21ae0b02cdc1",
+    "new": "2a1fe1ca3b255c6b93b8b89b8cb2f85476fbed7453344cb0ec60fbe64033c181",
 }
-VERSIONS = {"old": "0.1.0~dev4", "new": "0.1.0~dev5"}
+VERSIONS = {"old": "0.1.0~dev5", "new": "0.1.0~dev6"}
 HELPERS = ("switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py",
            "enable_update_services.py", "upgrade_initialized_updater.py")
 STATE_ROOTS = (Path("/var/lib/hardened-blikvm-slots"), Path("/var/lib/hardened-blikvm-update"))
@@ -105,6 +105,18 @@ def installed(assets: Path, variant: str) -> None:
                          "/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter"]).strip(), "unexpected capabilities")
 
 
+def status_transport_inert() -> None:
+    socket = "hardened-blikvm-update-status.socket"
+    serving.inactive(socket)
+    require(serving.enabled(socket) not in ("enabled", "enabled-runtime", "linked", "linked-runtime"),
+            "status socket unexpectedly enabled")
+    require(not Path("/run/hardened-blikvm-update-api/status.sock").exists()
+            and not Path("/run/hardened-blikvm-update-api/status.sock").is_symlink(), "status socket unexpectedly present")
+    instances = checked(["systemctl", "list-units", "--all", "--plain", "--no-legend",
+                         "--state=active,activating,deactivating,reloading", "hardened-blikvm-update-status@*.service"])
+    require(not instances.strip(), "status worker unexpectedly active")
+
+
 def snapshot(variant: str) -> dict[str, object]:
     # Lazy import avoids a module-initialization cycle; the guard carries both
     # this module and its operational observer as reviewed local helpers.
@@ -112,6 +124,7 @@ def snapshot(variant: str) -> dict[str, object]:
         import enable_update_services as infrastructure
     else:
         from tools import enable_update_services as infrastructure
+    status_transport_inert()
     return infrastructure.enabled_snapshot(
         expected_slot="app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53",
         expected_floor=2, check_initial=False, expected_supervisor_sha=SUPERVISOR_HASHES[variant])
@@ -119,6 +132,7 @@ def snapshot(variant: str) -> dict[str, object]:
 
 def verify(root: Path, plan: dict[str, object], variant: str, boot: bool = False) -> None:
     installed(root, variant)
+    status_transport_inert()
     before = cast(dict[str, object], plan["before"])
     if boot:
         require(tree_fingerprint(STATE_ROOTS) == before["state"], "persistent update state changed")

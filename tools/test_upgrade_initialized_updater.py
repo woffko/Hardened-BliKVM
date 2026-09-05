@@ -12,6 +12,18 @@ from tools import stage_initialized_updater_upgrade as driver
 
 
 class InitializedUpdaterTests(unittest.TestCase):
+    def test_status_transport_must_remain_disabled_without_active_workers(self) -> None:
+        with patch.object(gate.serving, "inactive"), patch.object(gate.serving, "enabled", return_value="disabled"), \
+             patch.object(Path, "exists", return_value=False), patch.object(Path, "is_symlink", return_value=False), \
+             patch.object(gate, "checked", return_value=b""):
+            gate.status_transport_inert()
+            with patch.object(gate.serving, "enabled", return_value="enabled"), self.assertRaises(ValueError):
+                gate.status_transport_inert()
+            with patch.object(gate, "checked", return_value=b"active worker"), self.assertRaises(ValueError):
+                gate.status_transport_inert()
+            with patch.object(Path, "is_symlink", return_value=True), self.assertRaises(ValueError):
+                gate.status_transport_inert()
+
     def test_operational_helpers_are_unique_and_boot_recovery_precedes_servers(self) -> None:
         self.assertEqual(len(gate.HELPERS), len(set(gate.HELPERS)))
         self.assertIn("enable_update_services.py", gate.HELPERS)
