@@ -14,6 +14,13 @@ production private key.
 
 ## Exact payload
 
+Revision `0.1.0~dev2` carries the credential-aware supervisor and three updated
+unit templates. Its runtime dependency remains exactly `0.1.0~dev2`. The
+package verifier can explicitly validate the prior updater revision
+`0.1.0~dev1` for rollback; unsupported versions fail closed. Installing or
+upgrading these files does not itself enable their units or create update
+state. The enrolled public config stays outside the package.
+
 The package contains only:
 
 - `bli-kvm-update-supervisor` and `bli-kvm-update-health-reporter` under the

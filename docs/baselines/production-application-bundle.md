@@ -80,5 +80,21 @@ stopped before any fixture/service creation because noninteractive sudo was
 unavailable. Use the already authorized test device for the runtime check
 after rebuilding the AArch64 supervisor.
 
+The AArch64 runtime check subsequently passed on H616 in Longrun job
+`b2dc851408a943ddb82c10d98a2f97eb`. The supervisor built from `edf139f`
+has SHA-256
+`a6d7c99e1269371a2b1c62aebc2e31ead9ca30b5a1a54356afc367d63804dc59`.
+The actual updater identity (UID 984) received exit 11 on direct root-only
+config access and exit 0 through the read-only systemd credential. The check
+used a synthetic public configuration and transient units with no capabilities,
+namespace restrictions, and the system-service syscall filter. Configuration
+and state absence checks, credential-mount cleanup, temporary-file cleanup,
+and independent unchanged-runtime/trust verification all passed. Receipt:
+`evidence/private/device-update-config-credential-edf139f.json`.
+
+This tested a transient binary only. The installed updater is still dev1;
+the corrected supervisor and unit templates must be packaged as dev2 and
+upgraded with a verified dev1 rollback artifact before state initialization.
+
 No new package was uploaded, installed, or activated on H616 during this
 checkpoint. Device state/slots remain outside this host verification scope.

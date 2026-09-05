@@ -19,6 +19,7 @@ if not __package__:
 
 from tools import stage_device_prototype as transport
 from tools import stage_device_unused_update_trust_removal as boundary
+from tools import build_debian_update_runtime_package as update_package
 from tools import stage_device_web_cutover as cutover
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
@@ -35,6 +36,8 @@ def main() -> int:
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--known-hosts", default="evidence/private/ssh-known-hosts")
     parser.add_argument("--baseline", default="evidence/private/device-web-cutover-preflight.json")
+    parser.add_argument("--update-package-version", choices=update_package.SUPPORTED_PACKAGE_VERSIONS,
+                        default=update_package.PACKAGE_VERSION)
     args = cast(dict[str, str], vars(parser.parse_args()))
     output = transport.validate_output_path(args["output"])
     require(not output.exists(), "new receipt path required")
@@ -81,7 +84,8 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
     phase = "preflight"
     receipt: dict[str, object] = {"probe": "device-update-config-credential", "supervisorSha256": expected}
     try:
-        before = transport.run_ssh(target, password, boundary.build_preflight_script(enrollment, baseline), timeout=90)
+        before = transport.run_ssh(target, password, boundary.build_preflight_script(
+            enrollment, baseline, update_version=args["update_package_version"]), timeout=90)
         require(before.returncode == 0, "baseline rejected")
         before_facts = boundary.parse_facts(before.stdout, boundary.PRE_KEYS)
         phase = "prepare"
@@ -108,7 +112,8 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
         require(transport.run_ssh(target, password, cleanup).returncode == 0, "cleanup failed")
         created = False
         phase = "independent-final"
-        after = transport.run_ssh(target, password, boundary.build_preflight_script(enrollment, baseline), timeout=90)
+        after = transport.run_ssh(target, password, boundary.build_preflight_script(
+            enrollment, baseline, update_version=args["update_package_version"]), timeout=90)
         require(after.returncode == 0, "final baseline rejected")
         require(boundary.parse_facts(after.stdout, boundary.PRE_KEYS) == before_facts, "runtime changed")
         receipt.update({"result": "passed", "runtimeUnchanged": True, "trustConfigUnchanged": True,

@@ -251,9 +251,13 @@ trust_guards_absent
 
 
 def build_preflight_script(
-    enrollment: AcceptedEnrollment, baseline: Mapping[str, str]
+    enrollment: AcceptedEnrollment, baseline: Mapping[str, str],
+    *, update_version: str = update_builder.PACKAGE_VERSION,
 ) -> str:
+    if update_version not in update_builder.SUPPORTED_PACKAGE_VERSIONS:
+        raise ValueError("unsupported update package preflight version")
     values = _values(enrollment, baseline)
+    values["package_version"] = update_version
     body = rf"""
 set -eu
 export LC_ALL=C

@@ -922,6 +922,12 @@ creating state. Runtime verification under the service identity, AArch64
 rebuild and replacement of the inert updater package must pass before live
 state/slot initialization.
 
+The transient AArch64 credential check now passed on H616 under the actual
+updater UID: direct root-only config access failed, systemd credential delivery
+succeeded, temporary services and files were cleaned, and existing runtime and
+trust remained unchanged. The dev2 update-runtime package is being prepared;
+the installed dev1 package has not yet been replaced.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

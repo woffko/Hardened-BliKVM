@@ -12,7 +12,7 @@ import tools.stage_device_prototype as prototype
 class DebianUpdateRuntimePackageTests(unittest.TestCase):
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev1")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev2")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -53,6 +53,16 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
             "hardwareMutationIncluded",
         ):
             self.assertIs(manifest[field], False)
+
+    def test_rollback_manifest_requires_an_explicit_supported_old_version(self) -> None:
+        bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
+        current = package.package_manifest(bundle, "c" * 40)
+        previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
+        self.assertEqual(current["version"], "0.1.0~dev2")
+        self.assertEqual(previous["version"], "0.1.0~dev1")
+        self.assertEqual({**previous, "version": current["version"]}, current)
+        with self.assertRaises(package.BuildError):
+            package.package_manifest(bundle, "c" * 40, version="unreviewed")
 
     def test_audit_rejects_extra_and_active_configuration_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -232,7 +232,11 @@ def validate_package(
     expected_source_commit: str,
     expected_source_bundle_sha256: str,
     expected_builder_commit: str,
+    *,
+    expected_version: str = update_builder.PACKAGE_VERSION,
 ) -> PackageInfo:
+    if expected_version not in update_builder.SUPPORTED_PACKAGE_VERSIONS:
+        raise ValueError("unsupported update package version")
     path = Path(path_value)
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise ValueError("update package must be an absolute regular file")
@@ -251,7 +255,7 @@ def validate_package(
     )
     for required in (
         f"Package: {update_builder.PACKAGE_NAME}\n",
-        f"Version: {update_builder.PACKAGE_VERSION}\n",
+        f"Version: {expected_version}\n",
         f"Architecture: {update_builder.PACKAGE_ARCHITECTURE}\n",
         f"Depends: systemd (>= 249), {update_builder.RUNTIME_DEPENDENCY}\n",
     ):
@@ -345,7 +349,7 @@ def validate_package(
         1,
         expected_source_commit,
     )
-    if manifest != update_builder.package_manifest(bundle, expected_builder_commit):
+    if manifest != update_builder.package_manifest(bundle, expected_builder_commit, version=expected_version):
         raise ValueError("update package manifest is invalid")
     return PackageInfo(
         path=path,
