@@ -78,6 +78,16 @@ def boot_acceptance(boot_path: str | None, browser_path: str | None, cleanup_pat
     return root
 
 
+def request_one_reboot(reboot: Callable[[], int], receipt: dict[str, object]) -> None:
+    receipt["softwareRebootAttempted"] = True
+    try:
+        status = reboot()
+        require(status in (0, 255), "reboot request rejected")
+        receipt["rebootRequestOutcome"] = "accepted" if status == 0 else "connection-closed"
+    except subprocess.TimeoutExpired:
+        receipt["rebootRequestOutcome"] = "observation-timeout"
+
+
 def reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]], reboot: Callable[[], int],
                 receipt: dict[str, object]) -> dict[str, object]:
     code, before = invoke("preflight-reboot")
@@ -87,13 +97,7 @@ def reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]], reboot: 
         require(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None, "invalid reboot preflight binding")
     validate_guard(before.get("guardRoot"), persistent=True)
     receipt["rebootBefore"] = before
-    receipt["softwareRebootAttempted"] = True
-    try:
-        status = reboot()
-        require(status in (0, 255), "reboot request rejected")
-        receipt["rebootRequestOutcome"] = "accepted" if status == 0 else "connection-closed"
-    except subprocess.TimeoutExpired:
-        receipt["rebootRequestOutcome"] = "observation-timeout"
+    request_one_reboot(reboot, receipt)
     deadline = time.monotonic() + 240
     while time.monotonic() < deadline:
         try:
@@ -112,9 +116,48 @@ def reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]], reboot: 
     raise ValueError("boot recovery not verified within bounded observation window; do not repeat reboot")
 
 
+def compare_retained_boot(before: dict[str, object], after: dict[str, object]) -> None:
+    for value in (before.get("bootIdSha256"), after.get("bootIdSha256")):
+        require(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None, "invalid retained boot identity")
+    require(after.get("result") == "inspect-retained" and after.get("persistentWiringVerified") is True
+            and after.get("startupOrderVerified") is True and after.get("guardRemoved") is True, "retained runtime not verified")
+    require(after.get("bootIdSha256") != before.get("bootIdSha256") and after.get("guardRoot") == before.get("guardRoot"),
+            "retained reboot identity mismatch")
+    require(after["dropinHashes"] == before["dropinHashes"], "persistent drop-ins changed on reboot")
+    old = cast(dict[str, object], before["snapshot"])
+    new = cast(dict[str, object], after["snapshot"])
+    for field in ("state", "managerStatus", "nginxUnit"):
+        require(new[field] == old[field], "retained application state changed")
+    old_runtime = cast(dict[str, object], old["runtime"])
+    new_runtime = cast(dict[str, object], new["runtime"])
+    for field in ("account", "nginxConfig", "certificate", "tlsKey", "trust"):
+        require(new_runtime[field] == old_runtime[field], "retained configuration changed")
+    require(new_runtime["brokerRestarts"] == new_runtime["videoRestarts"] == "0", "runtime peer restarted after boot")
+
+
+def retained_reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]], reboot: Callable[[], int],
+                         receipt: dict[str, object]) -> dict[str, object]:
+    code, before = invoke("inspect-retained")
+    require(code == 0 and before.get("result") == "inspect-retained", "retained reboot preflight failed")
+    receipt["rebootBefore"] = before
+    request_one_reboot(reboot, receipt)
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        try:
+            code, after = invoke("inspect-retained")
+            if code == 0:
+                compare_retained_boot(before, after)
+                receipt["persistentRebootVerified"] = True
+                return after
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        time.sleep(3)
+    raise ValueError("retained reboot verification timed out; do not repeat reboot")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean", "verify-boot", "reboot-test"))
+    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean", "verify-boot", "reboot-test", "inspect-retained", "retained-reboot"))
     parser.add_argument("--persistent", action="store_true")
     parser.add_argument("--browser-receipt")
     parser.add_argument("--boot-recovery-receipt")
@@ -125,7 +168,7 @@ def main() -> int:
     parser.add_argument("--guard-receipt")
     args = parser.parse_args()
     backend = persistent_native if args.persistent else native
-    require(args.action not in ("preflight", "commit", "verify-boot", "reboot-test") or args.persistent, "action requires persistent mode")
+    require(args.action not in ("preflight", "commit", "verify-boot", "reboot-test", "inspect-retained", "retained-reboot") or args.persistent, "action requires persistent mode")
     require(args.action != "verify-clean" or not args.persistent, "persistent clean verification is not implemented")
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new status receipt required")
@@ -133,11 +176,13 @@ def main() -> int:
     if args.action == "commit":
         boot_acceptance(args.boot_recovery_receipt, args.boot_browser_receipt, args.boot_cleanup_receipt)
         persistent_browser_gate(args.browser_receipt, cast(str, guard))
-    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in backend.HELPERS} if args.action in ("prepare", "preflight", "verify-clean") else {}
+    uploads = {name: Path(__file__).with_name(name).read_bytes() for name in backend.HELPERS} if args.action in ("prepare", "preflight", "verify-clean", "inspect-retained", "retained-reboot") else {}
+    if args.action in ("inspect-retained", "retained-reboot"):
+        uploads["capture_retained_status.py"] = Path(__file__).with_name("capture_retained_status.py").read_bytes()
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
-    stage = "/tmp/blikvm-status-wiring-controller-" + secrets.token_hex(12)
+    stage = ("/var/lib/hardened-blikvm-status-observer-" if args.action == "retained-reboot" else "/tmp/blikvm-status-wiring-controller-") + secrets.token_hex(12)
     q = shlex.quote
     staged = False
     receipt: dict[str, object] = {"probe": "persistent-status-api-wiring" if args.persistent else "installed-status-api-wiring", "action": args.action,
@@ -149,9 +194,11 @@ def main() -> int:
             "python3", "-B", cast(str, guard) + "/controller.py", action, "--guard-root", cast(str, guard)]
         if action == "verify-clean":
             argv = ["python3", "-B", stage + "/status_api_wiring.py", action, "--guard-root", cast(str, guard)]
+        if action == "inspect-retained":
+            argv = ["python3", "-B", stage + "/capture_retained_status.py", "--guard-root", cast(str, guard)]
         if action == "commit":
             argv.append("--browser-verified")
-        result = transport.run_ssh(target, secret, shlex.join(argv), timeout=30 if action == "verify-boot" else 180)
+        result = transport.run_ssh(target, secret, shlex.join(argv), timeout=30 if action in ("verify-boot", "inspect-retained") else 180)
         return result.returncode, cast(dict[str, object], json.loads(result.stdout)) if result.stdout else {}
 
     try:
@@ -166,11 +213,11 @@ def main() -> int:
                     stream.write(data)
                     stream.seek(0)
                     require(transport.run_ssh(target, secret, command, stdin=stream, timeout=60).returncode == 0, "status controller upload failed")
-        if args.action == "reboot-test":
+        if args.action in ("reboot-test", "retained-reboot"):
             def reboot() -> int:
                 return transport.run_ssh(target, secret, "systemctl reboot --no-block", timeout=20).returncode
 
-            result = reboot_test(invoke, reboot, receipt)
+            result = (reboot_test if args.action == "reboot-test" else retained_reboot_test)(invoke, reboot, receipt)
             code = 0
         else:
             code, result = invoke(args.action)
@@ -179,10 +226,10 @@ def main() -> int:
             guard = validate_guard(result["guardRoot"], persistent=args.persistent)
         if guard:
             receipt["guardRoot"] = guard
-        expected_result = {"prepare": "prepared", "reboot-test": "verify-boot"}.get(args.action, args.action)
+        expected_result = {"prepare": "prepared", "reboot-test": "verify-boot", "retained-reboot": "inspect-retained"}.get(args.action, args.action)
         require(code == 0 and result.get("result") == expected_result, "status device step failed")
-        if args.action in ("prepare", "restore", "reboot-test"):
-            receipt["browserRunTag"] = Path(cast(str, guard)).name + ("-enabled" if args.action == "prepare" else "-restored")
+        if args.action in ("prepare", "restore", "reboot-test", "retained-reboot"):
+            receipt["browserRunTag"] = Path(cast(str, guard)).name + ("-enabled" if args.action in ("prepare", "retained-reboot") else "-restored")
         receipt["result"] = "passed"
         return 0
     except (OSError, ValueError, subprocess.SubprocessError) as error:

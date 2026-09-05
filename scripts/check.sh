@@ -75,6 +75,7 @@ python3 -m unittest \
   tools/test_enable_update_services.py \
   tools/test_installed_application_update.py \
   tools/test_status_api_wiring.py \
+  tools/test_capture_retained_status.py \
   tools/test_persistent_status_contract.py \
   tools/test_persistent_status_wiring.py \
   tools/test_operational_reboot.py \
@@ -237,6 +238,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_operational_reboot.py \
     tools/test_installed_application_update.py \
     tools/status_api_wiring.py \
+    tools/capture_retained_status.py \
+    tools/test_capture_retained_status.py \
     tools/stage_status_api_wiring.py \
     tools/test_status_api_wiring.py \
     tools/persistent_status_contract.py \

@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import hashlib
+import copy
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,30 @@ from tools import stage_status_api_wiring as driver
 
 
 class StatusApiWiringTests(unittest.TestCase):
+    def test_retained_reboot_compares_state_and_never_reissues_request(self) -> None:
+        snapshot: dict[str, object] = {"state": {"file": "hash"}, "managerStatus": {"floorSequence": 5}, "nginxUnit": "unit",
+                    "runtime": {"account": "a", "nginxConfig": "n", "certificate": "c", "tlsKey": "k", "trust": "t",
+                                "brokerRestarts": "0", "videoRestarts": "0"}}
+        before: dict[str, object] = {"result": "inspect-retained", "guardRoot": "guard", "bootIdSha256": "a" * 64,
+                  "dropinHashes": {"current": "hash"}, "snapshot": snapshot,
+                  "persistentWiringVerified": True, "startupOrderVerified": True, "guardRemoved": True}
+        after: dict[str, object] = {**copy.deepcopy(before), "bootIdSha256": "b" * 64}
+        driver.compare_retained_boot(before, after)
+        changes: list[dict[str, object]] = [{"bootIdSha256": "a" * 64}, {"bootIdSha256": None}, {"dropinHashes": {}}, {"startupOrderVerified": False}]
+        for changed in changes:
+            with self.assertRaises(ValueError):
+                driver.compare_retained_boot(before, {**after, **changed})
+        bad: dict[str, object] = {**after, "snapshot": {**snapshot, "managerStatus": {"floorSequence": 4}}}
+        with self.assertRaises(ValueError):
+            driver.compare_retained_boot(before, bad)
+        invoke = Mock(side_effect=[(0, before), (1, {}), (0, after)])
+        reboot = Mock(return_value=255)
+        with patch.object(driver.time, "sleep"):
+            receipt: dict[str, object] = {}
+            self.assertEqual(driver.retained_reboot_test(invoke, reboot, receipt), after)
+            self.assertTrue(receipt["persistentRebootVerified"])
+        reboot.assert_called_once_with()
+
     def test_retention_requires_current_controller_boot_browser_and_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = "/var/lib/" + driver.persistent_native.PREFIX + "a" * 24
