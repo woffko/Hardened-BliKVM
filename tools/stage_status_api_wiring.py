@@ -51,6 +51,33 @@ def persistent_browser_gate(path: str | None, root: str) -> None:
                                               "repeatedReads": 3, "refreshChecks": 2}, "persistent status browser proof incomplete")
 
 
+def boot_acceptance(boot_path: str | None, browser_path: str | None, cleanup_path: str | None) -> str:
+    require(boot_path is not None and cleanup_path is not None, "boot and cleanup acceptance receipts required")
+    root = checkpoint(cast(str, boot_path), persistent=True)
+    boot = cast(dict[str, object], json.loads(transport.validate_private_file(cast(str, boot_path)).read_bytes()))
+    proof = cast(dict[str, object], boot.get("device", {}))
+    require(boot.get("result") == "passed" and boot.get("action") == "reboot-test"
+            and boot.get("softwareRebootAttempted") is True and proof.get("result") == "verify-boot"
+            and proof.get("guardRoot") == root and proof.get("bootChanged") is True
+            and proof.get("restoredBeforeServer") is True and proof.get("runtimeVerified") is True
+            and proof.get("controllerSha256") == hashlib.sha256(Path(persistent_native.__file__).read_bytes()).hexdigest(),
+            "boot acceptance does not match this controller")
+    status = cast(dict[str, object], proof.get("status", {}))
+    require(status.get("floorSequence") == 5 and status.get("generation") == 22 and status.get("pending") is None
+            and status.get("activeSlotId") == status.get("confirmedSlotId") == native.SLOT, "boot application state mismatch")
+    browser_gate(browser_path, root, "restored")
+    browser = cast(dict[str, object], json.loads(transport.validate_private_file(cast(str, browser_path)).read_bytes()))
+    require(browser.get("statusAcceptance") == {"enabled": False, "desktop": True, "mobile": True,
+                                                "repeatedReads": 0, "refreshChecks": 0}, "post-boot browser proof incomplete")
+    require(checkpoint(cast(str, cleanup_path), persistent=True) == root, "boot cleanup belongs to another guard")
+    cleanup = cast(dict[str, object], json.loads(transport.validate_private_file(cast(str, cleanup_path)).read_bytes()))
+    cleaned = cast(dict[str, object], cleanup.get("device", {}))
+    require(cleanup.get("result") == "passed" and cleanup.get("action") == "cleanup"
+            and cleanup.get("controllerStagingRemoved") is True and cleaned.get("result") == "cleanup"
+            and cleaned.get("phase") == "restored" and cleaned.get("runtimeVerified") is True, "boot cleanup incomplete")
+    return root
+
+
 def reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]], reboot: Callable[[], int],
                 receipt: dict[str, object]) -> dict[str, object]:
     code, before = invoke("preflight-reboot")
@@ -90,6 +117,9 @@ def main() -> int:
     parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean", "verify-boot", "reboot-test"))
     parser.add_argument("--persistent", action="store_true")
     parser.add_argument("--browser-receipt")
+    parser.add_argument("--boot-recovery-receipt")
+    parser.add_argument("--boot-browser-receipt")
+    parser.add_argument("--boot-cleanup-receipt")
     for name in ("endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--guard-receipt")
@@ -97,11 +127,12 @@ def main() -> int:
     backend = persistent_native if args.persistent else native
     require(args.action not in ("preflight", "commit", "verify-boot", "reboot-test") or args.persistent, "action requires persistent mode")
     require(args.action != "verify-clean" or not args.persistent, "persistent clean verification is not implemented")
-    # Retention stays unavailable until the real boot-restoration gate exists.
-    require(args.action != "commit", "persistent retention requires unfinished boot-recovery acceptance")
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new status receipt required")
     guard = None if args.action in ("prepare", "preflight") else checkpoint(args.guard_receipt, persistent=args.persistent)
+    if args.action == "commit":
+        boot_acceptance(args.boot_recovery_receipt, args.boot_browser_receipt, args.boot_cleanup_receipt)
+        persistent_browser_gate(args.browser_receipt, cast(str, guard))
     uploads = {name: Path(__file__).with_name(name).read_bytes() for name in backend.HELPERS} if args.action in ("prepare", "preflight", "verify-clean") else {}
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
@@ -118,6 +149,8 @@ def main() -> int:
             "python3", "-B", cast(str, guard) + "/controller.py", action, "--guard-root", cast(str, guard)]
         if action == "verify-clean":
             argv = ["python3", "-B", stage + "/status_api_wiring.py", action, "--guard-root", cast(str, guard)]
+        if action == "commit":
+            argv.append("--browser-verified")
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=30 if action == "verify-boot" else 180)
         return result.returncode, cast(dict[str, object], json.loads(result.stdout)) if result.stdout else {}
 

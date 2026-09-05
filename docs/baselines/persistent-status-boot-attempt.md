@@ -33,3 +33,20 @@ Failed-test cleanup `b5a47e43a2a04e729239e94d7055ac83` removed the exact guard
 files after online restoration and verified the runtime. Host failure receipts
 and the sanitized boot diagnosis were retained. No further reboot was issued
 as part of this recovery or cleanup.
+
+## Corrected boot attempt
+
+Source `c8038a0` passed full host job `0c87e0aa7a2d4a21b301124712049477`.
+Preparation `94ff0d1e325c419aa93e9928e85de312` and single-reboot test
+`319d833919f94d00af1d08e5f482ee6e` passed. The version-two proof binds controller
+`d8137c8dfc9535e5540f1cd2f13475342b079faeac8b5b644d6439dbf7677c5b`, changed
+boot identity, restoration before server execution and disabled/inactive status
+transport. Confirmed slot five, floor five and generation twenty-two were
+unchanged. Post-boot browser `7a50132b5fbb498db18829c95789809d` passed the strict
+desktop/mobile/logout and video checks. Cleanup
+`f395c5190e594b3f8863dd79f18996ed` removed the exact guard files.
+
+These receipts permit the host driver to validate the boot-recovery prerequisite
+for a new persistent retention transaction. That new transaction still requires
+its own native and enabled-browser acceptance; retention and a subsequent
+persistent-mode reboot have not yet passed.

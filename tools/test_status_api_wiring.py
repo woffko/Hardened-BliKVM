@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,41 @@ from tools import stage_status_api_wiring as driver
 
 
 class StatusApiWiringTests(unittest.TestCase):
+    def test_retention_requires_current_controller_boot_browser_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = "/var/lib/" + driver.persistent_native.PREFIX + "a" * 24
+            boot_path = Path(temporary) / "boot.json"
+            browser_path = Path(temporary) / "browser.json"
+            cleanup_path = Path(temporary) / "cleanup.json"
+            base = {"probe": "persistent-status-api-wiring", "slotId": gate.SLOT, "guardRoot": root, "result": "passed"}
+            proof = {"result": "verify-boot", "guardRoot": root, "bootChanged": True,
+                     "restoredBeforeServer": True, "runtimeVerified": True,
+                     "controllerSha256": hashlib.sha256(Path(driver.persistent_native.__file__).read_bytes()).hexdigest(),
+                     "status": {"floorSequence": 5, "generation": 22, "pending": None,
+                                "activeSlotId": gate.SLOT, "confirmedSlotId": gate.SLOT}}
+            boot = {**base, "action": "reboot-test", "softwareRebootAttempted": True, "device": proof}
+            browser = {"statusAcceptance": {"enabled": False, "desktop": True, "mobile": True,
+                                             "repeatedReads": 0, "refreshChecks": 0}}
+            cleanup = {**base, "action": "cleanup", "controllerStagingRemoved": True,
+                       "device": {"result": "cleanup", "phase": "restored", "runtimeVerified": True}}
+            boot_path.write_text(json.dumps(boot))
+            browser_path.write_text(json.dumps(browser))
+            cleanup_path.write_text(json.dumps(cleanup))
+            def private_file(value: str) -> Path:
+                return Path(value)
+            with patch.object(driver.transport, "validate_private_file", side_effect=private_file), patch.object(driver, "browser_gate"):
+                self.assertEqual(driver.boot_acceptance(str(boot_path), str(browser_path), str(cleanup_path)), root)
+                for change in ({"controllerSha256": "f" * 64}, {"bootChanged": False}, {"restoredBeforeServer": False}):
+                    boot_path.write_text(json.dumps({**boot, "device": {**proof, **change}}))
+                    with self.assertRaises(ValueError):
+                        driver.boot_acceptance(str(boot_path), str(browser_path), str(cleanup_path))
+                boot_path.write_text(json.dumps(boot))
+                cleanup_path.write_text(json.dumps({**cleanup, "controllerStagingRemoved": False}))
+                with self.assertRaises(ValueError):
+                    driver.boot_acceptance(str(boot_path), str(browser_path), str(cleanup_path))
+                with self.assertRaises(ValueError):
+                    driver.boot_acceptance(None, None, None)
+
     def test_reboot_is_sent_once_even_if_observation_times_out(self) -> None:
         root = "/var/lib/" + driver.persistent_native.PREFIX + "a" * 24
         before = {"result": "preflight-reboot", "guardRoot": root, "bootIdSha256": "a" * 64, "controllerSha256": "c" * 64}
