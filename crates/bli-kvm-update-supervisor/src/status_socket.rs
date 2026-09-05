@@ -17,7 +17,6 @@ use bli_kvm_update_protocol::{
     UpdateProtocolError, UpdateReadErrorCode, UpdateReadRequest, UpdateReadResponse,
     UpdateResponseEnvelope, decode_request, encode_frame, encode_response,
 };
-use bli_kvm_update_stager::ApplicationSlotStager;
 use nix::unistd::User;
 use thiserror::Error;
 
@@ -173,9 +172,8 @@ fn read_status(path: &Path) -> Result<ApplicationUpdateStatus, SupervisorCliErro
         config.health_timeout_ms,
     )?;
     let status = manager.status()?;
-    let stager = ApplicationSlotStager::open(config.slot_root)?;
     let slot = |id: &str| -> Result<ApplicationSlotVersion, SupervisorCliError> {
-        let verified = stager.inspect_slot(id, &config.trust_root)?;
+        let verified = manager.inspect_slot(id)?;
         Ok(ApplicationSlotVersion {
             slot_id: verified.slot_id,
             version: verified.manifest.version,

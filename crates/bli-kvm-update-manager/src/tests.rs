@@ -94,6 +94,24 @@ fn request(operation: u8, target: &StagedApplication, boot: u8, now: u64) -> Act
 }
 
 #[test]
+fn status_metadata_reuses_the_held_slot_lock_without_mutating_state() {
+    let fixture = Fixture::new();
+    let slot = fixture.stage(1, 1, 1);
+    let manager = fixture.manager(1);
+    manager.initialize(&slot.slot_id).unwrap();
+    let before = manager.status().unwrap();
+    for _ in 0..4 {
+        let verified = manager.inspect_slot(&before.active_slot_id).unwrap();
+        assert_eq!(verified.slot_id, slot.slot_id);
+        assert_eq!(verified.manifest, slot.manifest);
+        assert_eq!(manager.status().unwrap(), before);
+        assert_eq!(fixture.current(), slot.slot_id);
+    }
+    assert!(manager.inspect_slot("../invalid").is_err());
+    assert_eq!(manager.status().unwrap(), before);
+}
+
+#[test]
 fn initializes_confirms_and_enforces_the_persisted_floor() {
     let fixture = Fixture::new();
     let slot1 = fixture.stage(1, 1, 1);

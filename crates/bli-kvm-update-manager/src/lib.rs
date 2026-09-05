@@ -326,6 +326,12 @@ impl ApplicationUpdateManager {
         })
     }
 
+    /// Verify slot metadata under the manager's existing slot-root lock.
+    /// Opening another stager while this manager lives would contend with itself.
+    pub fn inspect_slot(&self, slot_id: &str) -> Result<StagedApplication, UpdateManagerError> {
+        Ok(self.stager.inspect_slot(slot_id, &self.trust_root)?)
+    }
+
     pub fn status(&self) -> Result<ManagerStatus, UpdateManagerError> {
         let document = self.load_required()?;
         self.validate_referenced_slots(&document)?;
