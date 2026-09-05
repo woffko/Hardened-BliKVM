@@ -29,13 +29,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--supervisor", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--service-user", choices=("nobody", "hardened-blikvm-update"), default="nobody")
     args = parser.parse_args()
     binary = cast(Path, args.supervisor).resolve(strict=True)
     output = cast(Path, args.output)
     check(os.geteuid() == 0, "this local systemd regression requires root")
     check(output.is_absolute() and output.parent == Path("/tmp") and not output.exists(), "new /tmp receipt required")
-    uid = pwd.getpwnam("nobody").pw_uid
-    check(uid != 0, "nobody must be unprivileged")
+    service_user = cast(str, args.service_user)
+    uid = pwd.getpwnam(service_user).pw_uid
+    check(uid != 0, "service user must be unprivileged")
     receipts: dict[str, object] = {}
     with tempfile.TemporaryDirectory(prefix="blikvm-config-credential-", dir="/tmp") as temporary:
         root = Path(temporary)
@@ -61,10 +63,11 @@ def main() -> None:
             unit = root.name + "-" + scenario + ".service"
             command = [
                 "systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--unit=" + unit,
-                "--property=User=nobody", "--property=NoNewPrivileges=yes",
+                "--property=User=" + service_user, "--property=NoNewPrivileges=yes",
                 "--property=ProtectSystem=strict", "--property=ProtectHome=yes",
                 "--property=PrivateDevices=yes", "--property=CapabilityBoundingSet=",
                 "--property=RestrictNamespaces=yes", "--property=RuntimeMaxSec=10",
+                "--property=SystemCallFilter=@system-service", "--property=RestrictAddressFamilies=AF_UNIX",
             ]
             path = str(config)
             if scenario == "credential":

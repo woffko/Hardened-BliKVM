@@ -116,6 +116,7 @@ python3 -m py_compile \
   tools/build_production_update_bundle.py \
   tools/verify_production_update_bundle.py \
   tools/verify_update_config_credential.py \
+  tools/stage_device_update_config_credential.py \
   tools/stage_device_unused_update_trust_removal.py \
   tools/stage_device_debian_runtime_package.py \
   tools/stage_device_debian_runtime_retain.py \
