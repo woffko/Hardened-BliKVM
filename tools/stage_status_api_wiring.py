@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from typing import cast
 
 if not __package__:
@@ -49,9 +51,43 @@ def persistent_browser_gate(path: str | None, root: str) -> None:
                                               "repeatedReads": 3, "refreshChecks": 2}, "persistent status browser proof incomplete")
 
 
+def reboot_test(invoke: Callable[[str], tuple[int, dict[str, object]]], reboot: Callable[[], int],
+                receipt: dict[str, object]) -> dict[str, object]:
+    code, before = invoke("preflight-reboot")
+    require(code == 0 and before.get("result") == "preflight-reboot", "guarded reboot preflight failed")
+    for field in ("bootIdSha256", "controllerSha256"):
+        value = before.get(field)
+        require(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None, "invalid reboot preflight binding")
+    validate_guard(before.get("guardRoot"), persistent=True)
+    receipt["rebootBefore"] = before
+    receipt["softwareRebootAttempted"] = True
+    try:
+        status = reboot()
+        require(status in (0, 255), "reboot request rejected")
+        receipt["rebootRequestOutcome"] = "accepted" if status == 0 else "connection-closed"
+    except subprocess.TimeoutExpired:
+        receipt["rebootRequestOutcome"] = "observation-timeout"
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        try:
+            code, after = invoke("verify-boot")
+            if code == 0 and after.get("result") == "verify-boot":
+                require(after.get("bootChanged") is True and after.get("restoredBeforeServer") is True
+                        and after.get("runtimeVerified") is True
+                        and after.get("guardRoot") == before.get("guardRoot")
+                        and after.get("beforeBootIdSha256") == before.get("bootIdSha256")
+                        and after.get("afterBootIdSha256") != before.get("bootIdSha256")
+                        and after.get("controllerSha256") == before.get("controllerSha256"), "boot restoration proof mismatch")
+                return after
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        time.sleep(3)
+    raise ValueError("boot recovery not verified within bounded observation window; do not repeat reboot")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean"))
+    parser.add_argument("action", choices=("preflight", "prepare", "inspect", "restore", "commit", "cleanup", "verify-clean", "verify-boot", "reboot-test"))
     parser.add_argument("--persistent", action="store_true")
     parser.add_argument("--browser-receipt")
     for name in ("endpoint", "output"):
@@ -59,7 +95,7 @@ def main() -> int:
     parser.add_argument("--guard-receipt")
     args = parser.parse_args()
     backend = persistent_native if args.persistent else native
-    require(args.action not in ("preflight", "commit") or args.persistent, "action requires persistent mode")
+    require(args.action not in ("preflight", "commit", "verify-boot", "reboot-test") or args.persistent, "action requires persistent mode")
     require(args.action != "verify-clean" or not args.persistent, "persistent clean verification is not implemented")
     # Retention stays unavailable until the real boot-restoration gate exists.
     require(args.action != "commit", "persistent retention requires unfinished boot-recovery acceptance")
@@ -82,7 +118,7 @@ def main() -> int:
             "python3", "-B", cast(str, guard) + "/controller.py", action, "--guard-root", cast(str, guard)]
         if action == "verify-clean":
             argv = ["python3", "-B", stage + "/status_api_wiring.py", action, "--guard-root", cast(str, guard)]
-        result = transport.run_ssh(target, secret, shlex.join(argv), timeout=180)
+        result = transport.run_ssh(target, secret, shlex.join(argv), timeout=30 if action == "verify-boot" else 180)
         return result.returncode, cast(dict[str, object], json.loads(result.stdout)) if result.stdout else {}
 
     try:
@@ -97,14 +133,22 @@ def main() -> int:
                     stream.write(data)
                     stream.seek(0)
                     require(transport.run_ssh(target, secret, command, stdin=stream, timeout=60).returncode == 0, "status controller upload failed")
-        code, result = invoke(args.action)
+        if args.action == "reboot-test":
+            def reboot() -> int:
+                return transport.run_ssh(target, secret, "systemctl reboot --no-block", timeout=20).returncode
+
+            result = reboot_test(invoke, reboot, receipt)
+            code = 0
+        else:
+            code, result = invoke(args.action)
         receipt["device"] = result
         if "guardRoot" in result:
             guard = validate_guard(result["guardRoot"], persistent=args.persistent)
         if guard:
             receipt["guardRoot"] = guard
-        require(code == 0 and result.get("result") == ("prepared" if args.action == "prepare" else args.action), "status device step failed")
-        if args.action in ("prepare", "restore"):
+        expected_result = {"prepare": "prepared", "reboot-test": "verify-boot"}.get(args.action, args.action)
+        require(code == 0 and result.get("result") == expected_result, "status device step failed")
+        if args.action in ("prepare", "restore", "reboot-test"):
             receipt["browserRunTag"] = Path(cast(str, guard)).name + ("-enabled" if args.action == "prepare" else "-restored")
         receipt["result"] = "passed"
         return 0

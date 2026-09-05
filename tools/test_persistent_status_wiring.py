@@ -1,5 +1,8 @@
 from pathlib import Path
+import json
+import stat
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -7,6 +10,35 @@ from tools import persistent_status_wiring as gate
 
 
 class PersistentStatusWiringTests(unittest.TestCase):
+    def test_boot_context_requires_new_boot_and_exact_service_cgroup(self) -> None:
+        root = Path("/var/lib") / (gate.PREFIX + "a" * 24)
+        with patch.object(gate, "boot_identity", return_value="b" * 64):
+            with self.assertRaises(ValueError):
+                gate.validate_boot_context(root, {"bootIdSha256": "b" * 64})
+            with patch.object(Path, "read_text", return_value="0::/system.slice/unrelated.service"), self.assertRaises(ValueError):
+                gate.validate_boot_context(root, {"bootIdSha256": "a" * 64})
+            with patch.object(Path, "read_text", return_value="0::/system.slice/" + root.name + "-boot.service"):
+                self.assertEqual(gate.validate_boot_context(root, {"bootIdSha256": "a" * 64}), "b" * 64)
+
+    def test_boot_proof_binds_identity_controller_and_server_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            proof: dict[str, object] = {"schemaVersion": 1, "slotId": gate.SLOT, "phase": "restored",
+                "beforeBootIdSha256": "a" * 64, "afterBootIdSha256": "b" * 64,
+                "finishedMonotonicUsec": 1000, "controllerSha256": "c" * 64}
+            plan: dict[str, object] = {"phase": "restored", "bootIdSha256": "a" * 64, "before": {"state": {}}}
+            metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0, st_nlink=1, st_size=512)
+            with patch.object(Path, "lstat", return_value=metadata), patch.object(gate, "boot_identity", return_value="b" * 64), \
+                 patch.object(gate.u, "digest", return_value="c" * 64), patch.object(gate.s, "property_value", return_value="2000"), \
+                 patch.object(gate, "verify"), patch.object(gate.common, "snapshot", return_value={"state": {}, "managerStatus": {}}):
+                (root / "boot-recovery.json").write_text(json.dumps(proof))
+                self.assertTrue(gate.verify_boot(root, plan)["restoredBeforeServer"])
+                for changed in ({"afterBootIdSha256": "a" * 64}, {"controllerSha256": "d" * 64},
+                                {"finishedMonotonicUsec": 3000}, {"finishedMonotonicUsec": 1.5}, {"phase": "wired"}):
+                    (root / "boot-recovery.json").write_text(json.dumps({**proof, **changed}))
+                    with self.assertRaises(ValueError):
+                        gate.verify_boot(root, plan)
+
     def test_dropins_are_fixed_persistent_paths(self) -> None:
         self.assertEqual(len(gate.dropins()), 2)
         self.assertTrue(all(path.is_relative_to("/etc/systemd/system") for path in gate.dropins()))
@@ -20,6 +52,7 @@ class PersistentStatusWiringTests(unittest.TestCase):
                      patch.object(gate.common, "remove_matching_dropins") as remove, \
                      patch.object(gate.u, "sync_directory"), patch.object(gate, "checked", return_value=b"") as checked, \
                      patch.object(gate, "verify") as verify, patch.object(gate.common, "save"), \
+                     patch.object(gate, "validate_boot_context", return_value="new-boot"), patch.object(gate, "record_boot_recovery"), \
                      patch.object(gate, "disarm"):
                     result = gate.transition("restore", root, boot=True)
                     remove.assert_called_once()
@@ -35,6 +68,7 @@ class PersistentStatusWiringTests(unittest.TestCase):
                 with patch.object(gate, "load", return_value={"phase": "committed", "before": {}}), \
                      patch.object(gate.common, "remove_matching_dropins") as remove, \
                      patch.object(gate, "checked") as checked, patch.object(gate, "verify") as verify, \
+                     patch.object(gate, "validate_boot_context", return_value="new-boot"), patch.object(gate, "record_boot_recovery"), \
                      patch.object(gate.common, "save"), patch.object(gate, "disarm"):
                     result = gate.transition("restore", root, boot=boot)
                     self.assertEqual(result["phase"], "committed")

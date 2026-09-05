@@ -4,13 +4,35 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tools import status_api_wiring as gate
 from tools import stage_status_api_wiring as driver
 
 
 class StatusApiWiringTests(unittest.TestCase):
+    def test_reboot_is_sent_once_even_if_observation_times_out(self) -> None:
+        root = "/var/lib/" + driver.persistent_native.PREFIX + "a" * 24
+        before = {"result": "preflight-reboot", "guardRoot": root, "bootIdSha256": "a" * 64, "controllerSha256": "c" * 64}
+        after = {"result": "verify-boot", "guardRoot": root, "bootChanged": True, "restoredBeforeServer": True,
+                 "runtimeVerified": True, "beforeBootIdSha256": "a" * 64, "afterBootIdSha256": "b" * 64,
+                 "controllerSha256": "c" * 64}
+        for request_result in (0, 255, subprocess.TimeoutExpired("reboot", 20)):
+            invoke = Mock(side_effect=[(0, before), subprocess.TimeoutExpired("observe", 30), (0, after)])
+            reboot = Mock(side_effect=request_result) if isinstance(request_result, Exception) else Mock(return_value=request_result)
+            with patch.object(driver.time, "sleep"):
+                self.assertEqual(driver.reboot_test(invoke, reboot, {}), after)
+            reboot.assert_called_once_with()
+            self.assertEqual([call.args[0] for call in invoke.call_args_list], ["preflight-reboot", "verify-boot", "verify-boot"])
+        reboot = Mock()
+        with self.assertRaises(ValueError):
+            driver.reboot_test(Mock(return_value=(1, {})), reboot, {})
+        reboot.assert_not_called()
+        reboot = Mock(return_value=0)
+        with patch.object(driver.time, "monotonic", side_effect=[0, 0, 300]), patch.object(driver.time, "sleep"), self.assertRaises(ValueError):
+            driver.reboot_test(Mock(side_effect=[(0, before), (1, {})]), reboot, {})
+        reboot.assert_called_once_with()
+
     def test_persistent_checkpoint_cannot_reuse_temporary_guard(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "receipt.json"
