@@ -1021,8 +1021,10 @@ The first network-integration slice now has a closed bounded status protocol,
 four-request-limited Unix client, kernel-UID-checked read-only worker, protected
 HTTP status route and a separate Bli status pane. Counters remain exact decimal
 strings in HTTP/GUI, unsupported legacy routes are not called, and status has
-no write paths or recovery/apply dependency. Full host checks passed; native
-worker/API/browser acceptance and deployment remain required. Signed upload
+no write paths or recovery/apply dependency. Full host checks and the temporary
+native socket-worker gate passed after fixing a duplicate slot-lock acquisition
+(`baselines/device-update-status-ipc.md`). Installed API/browser acceptance and
+deployment remain required. Signed upload
 and activation from the GUI are the following slices, not completed features.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
