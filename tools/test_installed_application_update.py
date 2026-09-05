@@ -13,6 +13,16 @@ from tools import stage_installed_application_update as driver
 
 
 class InstalledApplicationUpdateTests(unittest.TestCase):
+    def test_notification_profile_is_bound_to_verified_sequence_five(self) -> None:
+        profile = gate.PROFILES["seq4-to-seq5-notification"]
+        self.assertEqual(profile.source_slot, gate.PROFILES["seq2-to-seq4-status"].target_slot)
+        self.assertEqual((profile.source_sequence, profile.target_sequence), (4, 5))
+        self.assertEqual(profile.bundle_bytes, 8591360)
+        self.assertEqual(profile.bundle_sha, "618b1068086a04aa75f44804b58bcf0dac05d62c11553af74ebfe5cfdf893093")
+        with patch.object(gate, "active_profile", profile):
+            self.assertEqual(gate.minimum_recovery_floor({"phase": "confirmed"}), 5)
+            self.assertEqual(gate.minimum_recovery_floor({"phase": "recovered", "observedFloor": 5}), 5)
+
     def test_named_profile_preserves_legacy_and_binds_new_recovery(self) -> None:
         original = gate.active_profile
         try:

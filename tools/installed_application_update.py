@@ -55,6 +55,10 @@ PROFILES = {
         "seq2-to-seq4-status", "4ae41c49d2a4dcc0cab041516e3591d89d2da4342484123467f70e19d19a7b12",
         8591360, 2, SLOT_TWO, 4,
         "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c"),
+    "seq4-to-seq5-notification": UpdateProfile(
+        "seq4-to-seq5-notification", "618b1068086a04aa75f44804b58bcf0dac05d62c11553af74ebfe5cfdf893093",
+        8591360, 4, "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c", 5,
+        "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc"),
 }
 active_profile = PROFILES["seq1-to-seq2"]
 
