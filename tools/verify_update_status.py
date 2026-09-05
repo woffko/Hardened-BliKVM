@@ -21,7 +21,7 @@ from typing import cast
 
 sys.dont_write_bytecode = True
 PREFIX = "blikvm-update-status-"
-SUPERVISOR_SHA = "4834733094f3ccc61016b27c28d0d1da63996fd165f771059a361a009f5a8540"
+SUPERVISOR_SHA = "2a1fe1ca3b255c6b93b8b89b8cb2f85476fbed7453344cb0ec60fbe64033c181"
 UNIT_ROOT = Path("/run/systemd/system")
 
 
