@@ -102,8 +102,9 @@ def updater_inert() -> None:
             "current server template changed")
 
 
-def verify(before: dict[str, str], current: bool, *, preserve_nginx_pid: bool = True) -> dict[str, object]:
-    bootstrap.verify(secrets.token_hex(12))
+def verify(before: dict[str, str], current: bool, *, preserve_nginx_pid: bool = True,
+           expected_supervisor_sha: str = bootstrap.CURRENT_SUPERVISOR_SHA) -> dict[str, object]:
+    bootstrap.verify(secrets.token_hex(12), expected_supervisor_sha=expected_supervisor_sha)
     updater_inert()
     actual = snapshot()
     for name, value in before.items():

@@ -69,8 +69,9 @@ def new_file(path: Path, data: bytes, mode: int = 0o600) -> None:
     sync_directory(path.parent)
 
 
-def trusted_code_and_config() -> None:
-    for path, expected in ((CONFIG, CURRENT_CONFIG_SHA), (SUPERVISOR, CURRENT_SUPERVISOR_SHA)):
+def trusted_code_and_config(*, expected_supervisor_sha: str = CURRENT_SUPERVISOR_SHA) -> None:
+    require(re.fullmatch(r"[a-f0-9]{64}", expected_supervisor_sha) is not None, "invalid supervisor binding")
+    for path, expected in ((CONFIG, CURRENT_CONFIG_SHA), (SUPERVISOR, expected_supervisor_sha)):
         meta = path.lstat()
         require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1, "unsafe installed input")
         require(path.resolve(strict=True) == path and stat.S_IMODE(meta.st_mode) == (0o600 if path == CONFIG else 0o755),
@@ -154,8 +155,8 @@ def supervisor(token: str, action: str, *arguments: str) -> dict[str, object]:
     return result
 
 
-def verify(token: str) -> dict[str, object]:
-    trusted_code_and_config()
+def verify(token: str, *, expected_supervisor_sha: str = CURRENT_SUPERVISOR_SHA) -> dict[str, object]:
+    trusted_code_and_config(expected_supervisor_sha=expected_supervisor_sha)
     status = supervisor(token, "status")
     for name, expected in {"generation": 1, "floorSequence": 1, "activeSlotId": SLOT,
                            "confirmedSlotId": SLOT, "previousSlotId": None, "pending": None}.items():
