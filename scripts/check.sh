@@ -126,6 +126,8 @@ python3 -m py_compile \
   tools/stage_device_application_bootstrap.py \
   tools/switch_signed_slot_server.py \
   tools/stage_device_signed_slot_server.py \
+  tools/verify_apply_events.py \
+  tools/stage_device_apply_events.py \
   tools/stage_device_update_config_credential.py \
   tools/stage_device_update_runtime_upgrade.py \
   tools/stage_device_unused_update_trust_removal.py \

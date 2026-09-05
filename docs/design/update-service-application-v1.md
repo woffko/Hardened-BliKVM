@@ -40,3 +40,14 @@ confirmation, rollback, preservation until acknowledgement, stale ACK versus
 newer generation, unsafe symlink/oversized/unknown request rejection, and the
 CLI stdin flow. Real systemd delivery, repeated-tick PID stability, failed
 application retry and dev3 package installation still require device acceptance.
+
+The native acceptance runner is `tools/verify_apply_events.py`. It renders the
+actual apply/watchdog units into an isolated `/run` fixture, retaining their
+credential, privilege and sandbox settings while redirecting only paths and
+the literal restarted service to a temporary sleep process. Three ephemeral
+signed fixture bundles exercise confirmation and missing-health recovery.
+Repeated real timer invocations must preserve the process PID between events;
+an injected ExecStartPre failure must retain the request until a later retry
+successfully applies and acknowledges it. A separate deadline cleans abandoned
+fixture services, and the SSH wrapper verifies the production serving runtime
+before and after the test.
