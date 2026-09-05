@@ -68,16 +68,22 @@ class SerializationProtocol(Protocol):
 class Options:
     output_dir: str
     source_commit: str
+    server_binary: str | None = None
+    expected_server_sha256: str | None = None
 
 
 def parse_args() -> Options:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--output-dir", required=True)
     _ = parser.add_argument("--source-commit", required=True)
+    _ = parser.add_argument("--server-binary")
+    _ = parser.add_argument("--expected-server-sha256")
     namespace = parser.parse_args()
     return Options(
         output_dir=cast(str, namespace.output_dir),
         source_commit=cast(str, namespace.source_commit),
+        server_binary=cast(str | None, namespace.server_binary),
+        expected_server_sha256=cast(str | None, namespace.expected_server_sha256),
     )
 
 
@@ -178,8 +184,11 @@ def build_bundle(
     sequence: int,
     key_id: str,
     source_commit: str,
+    server_binary: bytes | None = None,
 ) -> bytes:
     files = payload(sequence)
+    if server_binary is not None and sequence in (1, 2):
+        files["bin/bli-kvm-server"] = (0o755, server_binary)
     manifest = json.dumps(
         manifest_document(sequence, key_id, source_commit, files),
         ensure_ascii=True,
@@ -227,7 +236,7 @@ def write_private(path: Path, content: bytes) -> None:
         os.close(descriptor)
 
 
-def build_fixture(output: Path, source_commit: str) -> FixtureReceipt:
+def build_fixture(output: Path, source_commit: str, server_binary: bytes | None = None) -> FixtureReceipt:
     output.mkdir(mode=0o700)
     ed25519 = importlib.import_module(
         "cryptography.hazmat.primitives.asymmetric.ed25519"
@@ -245,7 +254,7 @@ def build_fixture(output: Path, source_commit: str) -> FixtureReceipt:
     key_id = f"app-device-gate-{hashlib.sha256(public_key).hexdigest()[:16]}"
     artifacts: list[ArtifactReceipt] = []
     for sequence in (1, 2, 3):
-        content = build_bundle(signing_key, sequence, key_id, source_commit)
+        content = build_bundle(signing_key, sequence, key_id, source_commit, server_binary)
         name = f"application-{sequence}.tar"
         write_private(output / name, content)
         artifacts.append(
@@ -279,7 +288,17 @@ def build_fixture(output: Path, source_commit: str) -> FixtureReceipt:
 def execute(options: Options) -> int:
     output = validate_new_output(options.output_dir)
     source_commit = validate_source_commit(options.source_commit)
-    receipt = build_fixture(output, source_commit)
+    server_binary = None
+    if options.server_binary is not None or options.expected_server_sha256 is not None:
+        if options.server_binary is None or options.expected_server_sha256 is None:
+            raise ValueError("both server input and hash binding are required")
+        path = Path(options.server_binary)
+        if not path.is_absolute() or path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 8 * 1024 * 1024:
+            raise ValueError("unsafe server fixture input")
+        server_binary = path.read_bytes()
+        if not server_binary.startswith(b"\x7fELF") or hashlib.sha256(server_binary).hexdigest() != options.expected_server_sha256:
+            raise ValueError("server fixture binding mismatch")
+    receipt = build_fixture(output, source_commit, server_binary)
     print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
     return 0
 

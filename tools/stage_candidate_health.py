@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
 import secrets
@@ -12,12 +13,15 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tarfile
+from typing import cast
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import stage_device_prototype as transport
 from tools import verify_candidate_health as native
+from tools import verify_activation_flow as flow
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 require = native.require
@@ -28,6 +32,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("build-dir", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--fixture", help="Run full isolated activation using these public-only signed fixtures")
     args = parser.parse_args()
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new receipt required")
@@ -41,6 +46,38 @@ def main() -> int:
     for name in ("verify_candidate_health.py", "switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py"):
         uploads[name] = Path(__file__).with_name(name).read_bytes()
     uploads["candidate.service"] = (Path(__file__).resolve().parent.parent / "packaging/systemd/hardened-blikvm-server-candidate.service").read_bytes()
+    test_script = "verify_candidate_health.py"
+    if args.fixture:
+        test_script = "verify_activation_flow.py"
+        uploads[test_script] = Path(__file__).with_name(test_script).read_bytes()
+        supervisor = (build / "bli-kvm-update-supervisor").read_bytes()
+        require(hashlib.sha256(supervisor).hexdigest() == INSTALLED_SUPERVISOR_SHA, "supervisor hash mismatch")
+        uploads["supervisor"] = supervisor
+        for filename in flow.TEMPLATES.values():
+            uploads[filename] = (Path(__file__).resolve().parent.parent / "packaging/systemd" / filename).read_bytes()
+        fixture_root = Path(args.fixture)
+        metadata = (fixture_root / "fixture.json").read_bytes()
+        fixture = cast(dict[str, object], json.loads(metadata))
+        artifacts = cast(list[dict[str, object]], fixture["artifacts"])
+        require(len(artifacts) == 3 and {item["path"] for item in artifacts} == {f"application-{i}.tar" for i in (1, 2, 3)},
+                "unexpected activation fixtures")
+        uploads["fixture.json"] = metadata
+        for sequence in (1, 2, 3):
+            name = f"application-{sequence}.tar"
+            item = next(item for item in artifacts if item["path"] == name)
+            data = (fixture_root / name).read_bytes()
+            require(len(data) <= 8 * 1024 * 1024 and hashlib.sha256(data).hexdigest() == item["sha256"], "fixture hash mismatch")
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+                member = archive.getmember("payload/bin/bli-kvm-server")
+                require(member.isfile() and member.size <= 8 * 1024 * 1024, "unsafe fixture executable")
+                stream = archive.extractfile(member)
+                require(stream is not None, "fixture executable is missing")
+                executable = cast(io.BufferedReader, stream).read()
+                if sequence < 3:
+                    require(hashlib.sha256(executable).hexdigest() == native.SERVER_HASH, "unreviewed fixture executable")
+                else:
+                    require(executable == b"device-gate-server-3", "unexpected failure fixture")
+            uploads[name] = data
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
@@ -48,7 +85,8 @@ def main() -> int:
     q = shlex.quote
     staged = False
     phase = "stage"
-    receipt: dict[str, object] = {"probe": "isolated-candidate-health", "reporterSha256": native.REPORTER_HASH}
+    receipt: dict[str, object] = {"probe": "isolated-activation-flow" if args.fixture else "isolated-candidate-health",
+                                  "reporterSha256": native.REPORTER_HASH}
     observer_code = ("import json,sys;sys.path.insert(0," + repr(stage) + ");import switch_signed_slot_server as s;"
                      "v=s.snapshot();r=s.verify(v,True,expected_supervisor_sha=" + repr(INSTALLED_SUPERVISOR_SHA)
                      + ");print(json.dumps({'snapshot':v,'verification':r},sort_keys=True))")
@@ -69,7 +107,7 @@ def main() -> int:
         require(before.returncode == 0, "serving preflight failed")
         receipt["before"] = json.loads(before.stdout)
         phase = "native-test"
-        tested = transport.run_ssh(target, secret, shlex.join(["python3", "-B", stage + "/verify_candidate_health.py", "--assets", stage]), timeout=150)
+        tested = transport.run_ssh(target, secret, shlex.join(["python3", "-B", stage + "/" + test_script, "--assets", stage]), timeout=180)
         if tested.stdout:
             receipt["test"] = json.loads(tested.stdout)
         require(tested.returncode == 0, "candidate test failed")

@@ -21,6 +21,25 @@ class VerifyKeyFactoryProtocol(Protocol):
 
 
 class UpdateTestFixtureTests(unittest.TestCase):
+    def test_real_server_payload_is_signed_only_for_first_two_slots(self) -> None:
+        binary = b"\x7fELFbounded test bytes"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "fixture"
+            receipt = build_fixture(output, "2" * 40, binary)
+            for artifact in receipt["artifacts"]:
+                with tarfile.open(output / artifact["path"], mode="r:") as archive:
+                    stream = archive.extractfile("payload/bin/bli-kvm-server")
+                    manifest_stream = archive.extractfile("manifest.json")
+                    assert stream is not None and manifest_stream is not None
+                    payload_bytes = stream.read()
+                    manifest = json.loads(manifest_stream.read())
+                    entry = next(item for item in manifest["files"] if item["path"] == "bin/bli-kvm-server")
+                    self.assertEqual(entry["sha256"], hashlib.sha256(payload_bytes).hexdigest())
+                    if artifact["sequence"] < 3:
+                        self.assertEqual(payload_bytes, binary)
+                    else:
+                        self.assertFalse(payload_bytes.startswith(b"\x7fELF"))
+
     def test_fixture_contains_only_public_metadata_and_three_valid_signatures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "fixture"

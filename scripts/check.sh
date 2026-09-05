@@ -131,6 +131,7 @@ python3 -m py_compile \
   tools/upgrade_initialized_updater.py \
   tools/stage_initialized_updater_upgrade.py \
   tools/verify_candidate_health.py \
+  tools/verify_activation_flow.py \
   tools/stage_candidate_health.py \
   tools/verify_apply_events.py \
   tools/stage_device_apply_events.py \
@@ -210,6 +211,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/upgrade_initialized_updater.py \
     tools/stage_initialized_updater_upgrade.py \
     tools/verify_candidate_health.py \
+    tools/verify_activation_flow.py \
     tools/stage_candidate_health.py \
     tools/test_verify_candidate_health.py \
     tools/test_upgrade_initialized_updater.py \
