@@ -11,7 +11,7 @@ from tools import stage_initialized_updater_upgrade as driver
 
 class EnableUpdateServicesTests(unittest.TestCase):
     def test_status_query_does_not_own_or_remove_watchdog_runtime_directory(self) -> None:
-        source = inspect.getsource(gate.initial_status)
+        source = inspect.getsource(gate.current_status)
         self.assertNotIn("--property=RuntimeDirectory=", source)
         self.assertNotIn("rmdir", source)
         self.assertIn('"status"', source)

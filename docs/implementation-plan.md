@@ -982,9 +982,10 @@ disabled. Candidate post-command credential access and the complete isolated
 packaged-template activation/confirmation/timeout rollback chain now passed;
 see `baselines/device-candidate-health.md` and `baselines/device-activation-flow.md`.
 Updater dev4 is now reproducibly built, rollback-rehearsed and retained;
-see `baselines/device-updater-dev4.md`. Next test idle installed updater
-enablement with the exact tmpfiles provisioning under a rollback guard, then
-the production-key application update flow and browser/recovery acceptance.
+see `baselines/device-updater-dev4.md`. Idle installed updater enablement is
+also retained after explicit disabling/restoration and a second verified
+enablement: `baselines/device-updater-infrastructure.md`. Next are the
+production-key application update flow and browser/recovery acceptance.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

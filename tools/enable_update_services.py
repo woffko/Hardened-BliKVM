@@ -44,7 +44,7 @@ def exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
 
-def initial_status() -> None:
+def current_status() -> dict[str, object]:
     name = "blikvm-enabled-status-" + secrets.token_hex(10) + ".service"
     argv = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--unit=" + name,
             "--property=User=hardened-blikvm-update", "--property=Group=hardened-blikvm", "--property=UMask=0077",
@@ -52,13 +52,17 @@ def initial_status() -> None:
             "--property=ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-update /run/hardened-blikvm-update",
             "--property=LoadCredential=update-supervisor-config:" + str(s.bootstrap.CONFIG),
             str(s.bootstrap.SUPERVISOR), "--config", "/run/credentials/" + name + "/update-supervisor-config", "status"]
-    result = cast(dict[str, object], json.loads(checked(argv)))
+    return cast(dict[str, object], json.loads(checked(argv)))
+
+
+def initial_status() -> None:
+    result = current_status()
     for key, value in {"generation": 1, "floorSequence": 1, "activeSlotId": s.bootstrap.SLOT,
                        "confirmedSlotId": s.bootstrap.SLOT, "previousSlotId": None, "pending": None, "lastRollback": None}.items():
         require(result.get(key) == value, "initial update state changed")
 
 
-def audit_enabled() -> None:
+def audit_enabled(*, check_initial: bool = True) -> None:
     for unit in (TIMER, SOCKET):
         require(s.enabled(unit) == "enabled" and s.property_value(unit, "ActiveState") == "active", "updater service not enabled/active")
     require(s.property_value(WATCHDOG, "Result") == "success" and s.property_value(WATCHDOG, "ExecMainStatus") == "0",
@@ -80,7 +84,8 @@ def audit_enabled() -> None:
     meta = RULE.lstat()
     require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1 and stat.S_IMODE(meta.st_mode) == 0o644
             and upgrade.digest(RULE) == RULE_SHA, "tmpfiles configuration changed")
-    initial_status()
+    if check_initial:
+        initial_status()
 
 
 def enabled_snapshot() -> dict[str, object]:

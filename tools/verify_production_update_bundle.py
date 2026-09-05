@@ -44,7 +44,8 @@ def run(binary: Path, config: Path, *args: str, rejected: bool = False) -> dict[
     return cast(dict[str, object], json.loads(result.stdout))
 
 
-def verify(binary: Path, data: bytes, request: dict[str, object]) -> dict[str, object]:
+def verify(binary: Path, data: bytes, request: dict[str, object], *, expected_sequence: int = 1) -> dict[str, object]:
+    require(expected_sequence > 0, "expected sequence must be positive")
     with tempfile.TemporaryDirectory(prefix="blikvm-bundle-verification-", dir="/tmp") as temporary:
         root = Path(temporary)
         for name in ("slots", "state", "runtime"):
@@ -61,7 +62,7 @@ def verify(binary: Path, data: bytes, request: dict[str, object]) -> dict[str, o
         builder.write_new(source, data)
         staged = run(binary, config, "stage", str(source))
         require(staged.get("result") == "published", "slot not published")
-        require(staged.get("sequence") == 1, "expected initial sequence one")
+        require(staged.get("sequence") == expected_sequence, "unexpected application sequence")
         slot_id = cast(str, staged["slotId"])
         require(run(binary, config, "stage", str(source)).get("result") == "already_present",
                 "staging is not idempotent")
@@ -83,7 +84,7 @@ def verify(binary: Path, data: bytes, request: dict[str, object]) -> dict[str, o
         require(initialized.get("result") == "initialized", "journal not initialized")
         status = run(binary, config, "status")
         for name, value in {
-            "generation": 1, "floorSequence": 1, "activeSlotId": slot_id,
+            "generation": 1, "floorSequence": expected_sequence, "activeSlotId": slot_id,
             "confirmedSlotId": slot_id, "previousSlotId": None, "pending": None,
         }.items():
             require(status.get(name) == value, "initial journal mismatch: " + name)
@@ -120,6 +121,7 @@ def main() -> None:
     for name in ("bundle", "second-bundle", "expected-sha256", "request", "expected-request-sha256",
                  "key-id", "supervisor", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--expected-sequence", default="1")
     args = vars(parser.parse_args())
     values = cast(dict[str, str], args)
     first = Path(values["bundle"]).read_bytes()
@@ -128,7 +130,8 @@ def main() -> None:
     require(hashlib.sha256(first).hexdigest() == values["expected_sha256"], "bundle hash mismatch")
     enrollment = builder.load_enrollment(values["request"], values["expected_request_sha256"], values["key_id"])
     binary = Path(values["supervisor"]).resolve(strict=True)
-    result = verify(binary, first, {"keyId": enrollment.key_id, "publicKeyHex": enrollment.public_key.hex()})
+    result = verify(binary, first, {"keyId": enrollment.key_id, "publicKeyHex": enrollment.public_key.hex()},
+                    expected_sequence=int(values["expected_sequence"]))
     receipt = {
         "schemaVersion": 1, "probe": "production-application-host-verification", "result": "passed",
         "bundleSha256": values["expected_sha256"], "requestSha256": enrollment.request_sha256,
