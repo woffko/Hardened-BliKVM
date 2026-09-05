@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import grp
 import hashlib
 import io
 import json
@@ -38,19 +39,20 @@ def main() -> None:
     data = Path(args["bundle"]).read_bytes()
     require(hashlib.sha256(data).hexdigest() == args["bundle_sha256"], "bundle hash mismatch")
     identity = pwd.getpwnam("hardened-blikvm-update")
+    shared_gid = grp.getgrnam("hardened-blikvm").gr_gid
     require(identity.pw_uid != 0, "nonroot updater required")
     checks: dict[str, object] = {}
     with tempfile.TemporaryDirectory(prefix="blikvm-config-credential-bundle-", dir="/tmp") as temporary:
         root = Path(temporary)
         root.chmod(0o750)
-        os.chown(root, 0, identity.pw_gid)
+        os.chown(root, 0, shared_gid)
         for name in ("slots", "state", "runtime"):
             (root / name).mkdir(mode=0o700)
-            os.chown(root / name, identity.pw_uid, identity.pw_gid)
+            os.chown(root / name, identity.pw_uid, shared_gid)
         source = root / "application.tar"
         source.write_bytes(data)
         source.chmod(0o640)
-        os.chown(source, 0, identity.pw_gid)
+        os.chown(source, 0, shared_gid)
         document = cast(dict[str, object], json.loads(config_bytes))
         for field, name in (("slotRoot", "slots"), ("stateRoot", "state"), ("runtimeRoot", "runtime")):
             document[field] = str(root / name)
@@ -135,7 +137,7 @@ def main() -> None:
         require(not Path(path).exists() and not Path(path).is_symlink(), "production state unexpectedly created")
     receipt = {"probe": "installed-update-bundle-rehearsal", "result": "passed", "checks": checks,
                "supervisorSha256": hashlib.sha256(Path(args["supervisor"]).read_bytes()).hexdigest(),
-               "bundleSha256": args["bundle_sha256"], "serviceUid": identity.pw_uid,
+               "bundleSha256": args["bundle_sha256"], "serviceUid": identity.pw_uid, "serviceGid": shared_gid,
                "temporaryRootsRemoved": True, "productionStateInitialized": False, "payloadExecuted": False}
     descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(descriptor, "w") as handle:
