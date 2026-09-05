@@ -77,7 +77,8 @@ def main() -> None:
             if rejected:
                 require(result.returncode == 40, "tampered bundle was not rejected by stager")
                 return {"exitCode": result.returncode}
-            require(result.returncode == 0, "supervisor failure: " + result.stderr.decode(errors="replace"))
+            require(result.returncode == 0, "supervisor " + arguments[0] + " exit " + str(result.returncode)
+                    + ": " + result.stderr.decode(errors="replace")[:1024])
             return cast(dict[str, object], json.loads(result.stdout))
 
         require(run("validate-config").get("result") == "valid", "configuration invalid")
@@ -143,4 +144,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(json.dumps({"result": "failed", "errorType": type(error).__name__, "error": str(error)[:2048]}))
+        raise SystemExit(1) from None

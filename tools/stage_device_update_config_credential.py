@@ -29,6 +29,24 @@ def require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
+def probe_failure(result: subprocess.CompletedProcess[bytes]) -> dict[str, object]:
+    # The shared secret transport deliberately discards stderr. Runner failures
+    # carry bounded, non-secret JSON on stdout instead.
+    diagnostic: dict[str, object] = {"probeExitCode": result.returncode}
+    try:
+        raw = result.stdout or b""
+        if len(raw) <= 4096:
+            decoded = cast(object, json.loads(raw))
+            if isinstance(decoded, dict):
+                for key in ("errorType", "error", "failure", "actual"):
+                    value = cast(dict[str, object], decoded).get(key)
+                    if isinstance(value, str):
+                        diagnostic[key] = value[:2048]
+    except (ValueError, UnicodeError):
+        pass
+    return diagnostic
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("supervisor", "expected-sha256", "enrollment-receipt", "expected-config-sha256", "output"):
@@ -92,6 +110,7 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
 """
     password = transport.read_secret_stdin()
     created = False
+    before_facts: dict[str, str] | None = None
     phase = "preflight"
     receipt: dict[str, object] = {
         "probe": "device-installed-bundle-rehearsal" if bundle_data else "device-update-config-credential",
@@ -120,12 +139,13 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
             command = (f"python3 {q(stage + '/runner.py')} --supervisor /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
                        f" --bundle {q(stage + '/application.tar')} --bundle-sha256 {q(args['expected_bundle_sha256'])}"
                        f" --config-sha256 {q(enrollment.config_sha256)} --output {q(remote_receipt)}")
-            command = ("test \"$(sha256sum /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor | cut -d ' ' -f 1)\" = "
-                       + q(expected) + " && " + command)
+            command = ("actual=$(sha256sum /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor | cut -d ' ' -f 1); "
+                       + f"if [ \"$actual\" != {q(expected)} ]; then "
+                       + "printf '{\"result\":\"failed\",\"failure\":\"installed-supervisor-hash-mismatch\",\"actual\":\"%s\"}\\n' \"$actual\"; exit 1; fi; "
+                       + command)
         result = transport.run_ssh(target, password, command, timeout=90)
         if result.returncode != 0:
-            receipt["probeExitCode"] = result.returncode
-            receipt["probeError"] = result.stderr[-4096:].decode(errors="replace")
+            receipt.update(probe_failure(result))
         require(result.returncode == 0, "credential probe failed")
         observed = cast(dict[str, object], json.loads(result.stdout))
         require(observed.get("result") == "passed" and observed.get("supervisorSha256") == expected, "invalid probe receipt")
@@ -151,6 +171,15 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
             except (OSError, subprocess.SubprocessError):
                 created = True
         receipt["cleanupConfirmed"] = not created
+        if receipt.get("result") != "passed" and before_facts is not None:
+            try:
+                after = transport.run_ssh(target, password, boundary.build_preflight_script(
+                    enrollment, baseline, update_version=args["update_package_version"]), timeout=45)
+                receipt["failureRuntimeUnchanged"] = (
+                    after.returncode == 0 and boundary.parse_facts(after.stdout, boundary.PRE_KEYS) == before_facts
+                )
+            except (OSError, ValueError, subprocess.SubprocessError):
+                receipt["failureRuntimeUnchanged"] = False
         write_json_0600_atomic(output, receipt)
         for index in range(len(password)):
             password[index] = 0
