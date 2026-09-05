@@ -17,6 +17,7 @@ use crate::SupervisorCliError;
 const CONFIG_SCHEMA_VERSION: u32 = 1;
 const MAX_CONFIG_BYTES: u64 = 16 * 1024;
 const CREDENTIAL_ROOT: &str = "/run/credentials";
+const APPLY_CREDENTIAL_ROOT: &str = "/run/hardened-blikvm-apply-credentials";
 const CREDENTIAL_NAME: &str = "update-supervisor-config";
 
 #[derive(Debug, Deserialize)]
@@ -61,11 +62,12 @@ pub(crate) fn load_config(path: &Path) -> Result<LoadedConfig, SupervisorCliErro
         .metadata()
         .map_err(|_| SupervisorCliError::UnsafeConfigFile)?;
     let owner = metadata.uid();
-    let trusted_owner = if path.starts_with(CREDENTIAL_ROOT) {
-        trusted_credential(&file, path, effective_uid())?
-    } else {
-        trusted_config_owner(owner)
-    };
+    let trusted_owner =
+        if path.starts_with(CREDENTIAL_ROOT) || path.starts_with(APPLY_CREDENTIAL_ROOT) {
+            trusted_credential(&file, path, effective_uid())?
+        } else {
+            trusted_config_owner(owner)
+        };
     if !metadata.is_file()
         || metadata.nlink() != 1
         || metadata.permissions().mode() & 0o022 != 0
@@ -102,8 +104,11 @@ fn trusted_named_credential(
     let Some(directory) = path.parent() else {
         return Ok(false);
     };
+    let Some(root) = directory.parent() else {
+        return Ok(false);
+    };
     if path.file_name() != Some(std::ffi::OsStr::new(name))
-        || directory.parent() != Some(Path::new(CREDENTIAL_ROOT))
+        || ![Path::new(CREDENTIAL_ROOT), Path::new(APPLY_CREDENTIAL_ROOT)].contains(&root)
     {
         return Ok(false);
     }
@@ -127,7 +132,7 @@ fn trusted_named_credential(
     {
         return Ok(false);
     }
-    for ancestor in Path::new(CREDENTIAL_ROOT).ancestors() {
+    for ancestor in root.ancestors() {
         let metadata = fs::symlink_metadata(ancestor)?;
         if !metadata.is_dir() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
             return Ok(false);

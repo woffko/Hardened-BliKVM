@@ -33,6 +33,22 @@ runtime request only if generation, active/confirmed slot, no-pending status and
 the actual queued request still match. A stale acknowledgement preserves newer
 work. If restart fails, ExecStartPost does not acknowledge the request.
 
+On systemd 249, automatic credential mounting is confined to the first
+`ExecStart`; the observed post-command namespace masks `/run/credentials` with
+mode 000. `ExecStartPre` cannot initialize it either. The apply unit therefore
+explicitly bind-mounts only `/run/credentials/%n` read-only at
+`/run/hardened-blikvm-apply-credentials/%n` for post commands. Binding beneath
+the masked original parent is insufficient because that parent stays mode 000.
+The loader accepts this additional fixed root only with the same root-owned
+ancestors, service-owned mode-0400 file, single-link and read-only mount checks.
+The first main command still snapshots the request before restarting the
+server; ACK must use that snapshot, not reload the possibly newer live request.
+Native acceptance must verify this narrow bind mount without weakening the
+credential loader's ownership, ancestor or read-only checks.
+
+References: systemd v249 [credential namespace gating](https://github.com/systemd/systemd/blob/v249/src/core/execute.c#L2952-L2960)
+and [main-command credential initialization](https://github.com/systemd/systemd/blob/v249/src/core/service.c#L1941-L1945).
+
 The privileged command receives no request-selected argument and no general
 shell. The acknowledgement can write only the update runtime directory and
 does not write journal, slots or public trust. The confirmation health token
