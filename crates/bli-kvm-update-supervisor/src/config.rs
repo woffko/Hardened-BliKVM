@@ -90,10 +90,19 @@ pub(crate) fn load_config(path: &Path) -> Result<LoadedConfig, SupervisorCliErro
 // the service UID. Accept it only beneath root-controlled ancestors and on a
 // read-only credential mount. Mode 0400 alone is not a trust boundary.
 fn trusted_credential(file: &File, path: &Path, uid: u32) -> Result<bool, SupervisorCliError> {
+    trusted_named_credential(file, path, uid, CREDENTIAL_NAME)
+}
+
+fn trusted_named_credential(
+    file: &File,
+    path: &Path,
+    uid: u32,
+    name: &str,
+) -> Result<bool, SupervisorCliError> {
     let Some(directory) = path.parent() else {
         return Ok(false);
     };
-    if path.file_name() != Some(std::ffi::OsStr::new(CREDENTIAL_NAME))
+    if path.file_name() != Some(std::ffi::OsStr::new(name))
         || directory.parent() != Some(Path::new(CREDENTIAL_ROOT))
     {
         return Ok(false);
@@ -125,6 +134,35 @@ fn trusted_credential(file: &File, path: &Path, uid: u32) -> Result<bool, Superv
         }
     }
     Ok(true)
+}
+
+pub(crate) fn load_apply_credential(config_path: &Path) -> Result<Vec<u8>, SupervisorCliError> {
+    const NAME: &str = "confirmed-apply-request";
+    let directory = config_path
+        .parent()
+        .ok_or(SupervisorCliError::UnsafeConfigFile)?;
+    let path = directory.join(NAME);
+    if fs::canonicalize(&path).map_err(|_| SupervisorCliError::UnsafeConfigFile)? != path {
+        return Err(SupervisorCliError::UnsafeConfigFile);
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)?;
+    if !trusted_named_credential(&file, &path, effective_uid(), NAME)? {
+        return Err(SupervisorCliError::UnsafeConfigFile);
+    }
+    let limit = bli_kvm_update_runtime::MAX_APPLY_REQUEST_BYTES as u64;
+    let size = file.metadata()?.len();
+    if size == 0 || size > limit {
+        return Err(SupervisorCliError::UnsafeConfigFile);
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != size {
+        return Err(SupervisorCliError::UnsafeConfigFile);
+    }
+    Ok(bytes)
 }
 
 fn read_only_mount(file: &File) -> Result<bool, SupervisorCliError> {
@@ -233,6 +271,37 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[test]
+    fn apply_credential_rejects_an_ordinary_read_only_sibling() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join(CREDENTIAL_NAME);
+        let request = directory.path().join("confirmed-apply-request");
+        fs::write(&request, b"public request").unwrap();
+        fs::set_permissions(&request, fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(matches!(
+            load_apply_credential(&config_path),
+            Err(SupervisorCliError::UnsafeConfigFile)
+        ));
+    }
+
+    #[test]
+    fn apply_credential_requires_the_fixed_sibling_and_rejects_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join(CREDENTIAL_NAME);
+        let alternate = directory.path().join("alternate-request");
+        fs::write(&alternate, b"public request").unwrap();
+        fs::set_permissions(&alternate, fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(matches!(
+            load_apply_credential(&config_path),
+            Err(SupervisorCliError::UnsafeConfigFile)
+        ));
+        symlink(&alternate, directory.path().join("confirmed-apply-request")).unwrap();
+        assert!(matches!(
+            load_apply_credential(&config_path),
+            Err(SupervisorCliError::UnsafeConfigFile)
+        ));
     }
 
     fn valid_document(root: &Path) -> serde_json::Value {

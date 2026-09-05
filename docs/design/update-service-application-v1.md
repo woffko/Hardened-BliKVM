@@ -25,7 +25,10 @@ PID 1 snapshots this public request with `LoadCredential`. The apply service
 runs as the updater identity, while its single fixed `+`-prefixed systemctl
 command restarts only `hardened-blikvm-server-current.service`. After successful
 application, the ordinary unprivileged supervisor reads the bounded request
-from stdin using `ack-confirmed-apply`. Under the manager lock it removes the
+from its verified read-only credential mount using `ack-confirmed-apply-credential`.
+The privileged systemctl action has null stdin; it does not need to enter the
+credential namespace. A separate `ack-confirmed-apply` command retains the
+bounded stdin interface for local tests. Under the manager lock it removes the
 runtime request only if generation, active/confirmed slot, no-pending status and
 the actual queued request still match. A stale acknowledgement preserves newer
 work. If restart fails, ExecStartPost does not acknowledge the request.
