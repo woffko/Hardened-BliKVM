@@ -96,5 +96,24 @@ This tested a transient binary only. The installed updater is still dev1;
 the corrected supervisor and unit templates must be packaged as dev2 and
 upgraded with a verified dev1 rollback artifact before state initialization.
 
+That packaging and upgrade step subsequently completed. Two independent dev2
+packages from source/builder `e1e8062` matched SHA-256
+`b3c385adfbcdbe9d1932982b71a9551f7325f9b8467fc632e194009fc822c4e8`.
+Read-only preflight `36adda270d3a44d290116097b9600b1b` passed, then
+`a3405e5d032448f6b6e422a83ee7e395` installed dev2 and explicitly restored
+dev1, independently verifying all package files, preserved trust, unchanged
+runtime, and removed guards. Job `ecb7dd51c1484924ae57cd8b5dc3ec0f` then
+retained dev2 with the same final checks. The accepted private receipts are
+`device-updater-dev2-upgrade-preflight.json`,
+`device-updater-dev2-rollback-rehearsal.json`, and
+`device-updater-dev2-retained.json` under `evidence/private/`.
+
+The installed updater is now dev2, with services still inactive and disabled,
+trust preserved and state/slots absent. The next rehearsal uses the installed
+supervisor to stage and initialize the current signed bundle in disposable
+directories under the real updater identity, verifies every payload file
+against the installed application, and cleans those directories. Persistent
+state initialization and application activation remain separate work.
+
 No new package was uploaded, installed, or activated on H616 during this
 checkpoint. Device state/slots remain outside this host verification scope.

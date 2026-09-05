@@ -928,6 +928,13 @@ succeeded, temporary services and files were cleaned, and existing runtime and
 trust remained unchanged. The dev2 update-runtime package is being prepared;
 the installed dev1 package has not yet been replaced.
 
+The dev2 updater package is now retained on H616 after successful read-only
+preflight, real dev2-to-dev1 rollback rehearsal, and a second guarded upgrade.
+Independent final checks prove package files, preserved trust, unchanged serving
+runtime, inert update services and complete guard cleanup. The next task is
+installed-supervisor rehearsal with the actual signed bundle, followed by
+persistent state/slot initialization.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot

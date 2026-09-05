@@ -38,6 +38,8 @@ def main() -> int:
     parser.add_argument("--baseline", default="evidence/private/device-web-cutover-preflight.json")
     parser.add_argument("--update-package-version", choices=update_package.SUPPORTED_PACKAGE_VERSIONS,
                         default=update_package.PACKAGE_VERSION)
+    parser.add_argument("--bundle", default="")
+    parser.add_argument("--expected-bundle-sha256", default="")
     args = cast(dict[str, str], vars(parser.parse_args()))
     output = transport.validate_output_path(args["output"])
     require(not output.exists(), "new receipt path required")
@@ -47,7 +49,16 @@ def main() -> int:
     binary = binary_path.read_bytes()
     require(hashlib.sha256(binary).hexdigest() == expected, "binary hash mismatch")
     require(binary[:5] == b"\x7fELF\x02" and binary[18:20] == b"\xb7\x00", "AArch64 ELF required")
-    runner = Path(__file__).with_name("verify_update_config_credential.py").read_bytes()
+    bundle_data = b""
+    if args["bundle"]:
+        bundle_path = Path(args["bundle"])
+        require(not bundle_path.is_symlink() and 0 < bundle_path.stat().st_size <= 128 * 1024 * 1024,
+                "invalid bundle source")
+        bundle_data = bundle_path.read_bytes()
+        require(hashlib.sha256(bundle_data).hexdigest() == transport.validate_sha256(args["expected_bundle_sha256"]),
+                "bundle hash mismatch")
+    runner_name = "verify_installed_update_bundle.py" if bundle_data else "verify_update_config_credential.py"
+    runner = Path(__file__).with_name(runner_name).read_bytes()
     enrollment = boundary.load_enrollment_receipt(args["enrollment_receipt"], args["expected_config_sha256"])
     baseline = cutover.load_baseline(args["baseline"])
     host, port = transport.parse_endpoint(args["endpoint"])
@@ -68,8 +79,8 @@ if [ -e {q(stage)} ]; then
   test ! -L {q(stage)}
   test "$(stat -c '%a:%u:%g' {q(stage)})" = 700:0:0
   test "$(cat {q(stage + '/owner')})" = {q(token)}
-  test -z "$(find {q(stage)} -mindepth 1 -maxdepth 1 ! -name owner ! -name supervisor ! -name runner.py -print -quit)"
-  rm -f -- {q(stage + '/supervisor')} {q(stage + '/runner.py')} {q(stage + '/owner')}
+  test -z "$(find {q(stage)} -mindepth 1 -maxdepth 1 ! -name owner ! -name supervisor ! -name runner.py ! -name application.tar -print -quit)"
+  rm -f -- {q(stage + '/supervisor')} {q(stage + '/runner.py')} {q(stage + '/application.tar')} {q(stage + '/owner')}
   rmdir {q(stage)}
 fi
 if [ -e {q(remote_receipt)} ]; then
@@ -82,7 +93,10 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
     password = transport.read_secret_stdin()
     created = False
     phase = "preflight"
-    receipt: dict[str, object] = {"probe": "device-update-config-credential", "supervisorSha256": expected}
+    receipt: dict[str, object] = {
+        "probe": "device-installed-bundle-rehearsal" if bundle_data else "device-update-config-credential",
+        "supervisorSha256": expected,
+    }
     try:
         before = transport.run_ssh(target, password, boundary.build_preflight_script(
             enrollment, baseline, update_version=args["update_package_version"]), timeout=90)
@@ -91,7 +105,9 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
         phase = "prepare"
         created = True
         require(transport.run_ssh(target, password, prepare).returncode == 0, "stage creation failed")
-        for name, data, mode in (("supervisor", binary, "755"), ("runner.py", runner, "600")):
+        uploads = [("runner.py", runner, "600")]
+        uploads.append(("application.tar", bundle_data, "600") if bundle_data else ("supervisor", binary, "755"))
+        for name, data, mode in uploads:
             phase = "upload-" + name
             script = f"set -eu\numask 077\ntest \"$(cat {q(stage + '/owner')})\" = {q(token)}\ncat > {q(stage + '/' + name)}\nchmod {mode} {q(stage + '/' + name)}\ntest \"$(sha256sum {q(stage + '/' + name)} | cut -d ' ' -f 1)\" = {hashlib.sha256(data).hexdigest()}"
             with tempfile.TemporaryFile() as source:
@@ -100,6 +116,12 @@ test -z "$(find /tmp -maxdepth 1 -name 'blikvm-config-credential-*' -print -quit
                 require(transport.run_ssh(target, password, script, stdin=source).returncode == 0, "upload failed")
         phase = "credential-probe"
         command = f"python3 {q(stage + '/runner.py')} --supervisor {q(stage + '/supervisor')} --output {q(remote_receipt)} --service-user hardened-blikvm-update"
+        if bundle_data:
+            command = (f"python3 {q(stage + '/runner.py')} --supervisor /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
+                       f" --bundle {q(stage + '/application.tar')} --bundle-sha256 {q(args['expected_bundle_sha256'])}"
+                       f" --config-sha256 {q(enrollment.config_sha256)} --output {q(remote_receipt)}")
+            command = ("test \"$(sha256sum /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor | cut -d ' ' -f 1)\" = "
+                       + q(expected) + " && " + command)
         result = transport.run_ssh(target, password, command, timeout=90)
         if result.returncode != 0:
             receipt["probeExitCode"] = result.returncode
