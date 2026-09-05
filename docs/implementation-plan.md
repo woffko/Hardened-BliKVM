@@ -958,6 +958,14 @@ The GUI continues to run from the package-backed service. See
 cutover to the signed slot, including decoupling Nginx from the old server's
 Requires dependency before any server transition.
 
+Signed-slot serving is now retained after guarded rehearsal, browser acceptance,
+explicit restoration of the old server, and a second verified switch/commit.
+The original server is disabled; Nginx is independent of backend lifetime and
+kept its PID. Login, Diagnostics, decoded MJPEG, reconnect and logout revocation
+passed. See `baselines/device-signed-slot-serving.md`. Before enabling the
+watchdog timer, replace unconditional apply-service restarts with idempotent
+reconciliation; clean two-second watchdog ticks must not restart the GUI.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
