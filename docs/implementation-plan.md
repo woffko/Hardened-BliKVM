@@ -1054,6 +1054,10 @@ same baseline document; it does not cover HTTP/server load, decoded frames or
 transient status-worker resource peaks. End-to-end loaded and longer resource
 observation, status-unavailability behavior and signed upload/activation GUI
 remain next.
+Read-only systemd preflight now confirms the device's typed D-Bus property
+format and the monotonic clock required for the planned outage guard
+(`baselines/status-outage-preflight.md`). No status outage or guard activation
+has been performed in this preflight.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
