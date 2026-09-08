@@ -1047,8 +1047,13 @@ the auto-hidden toolbar. This does not establish CPU/RAM resource bounds.
 An initial 61-snapshot resource baseline for the four retained
 serving services now records stable identities and no RSS/FD growth without
 observer-generated workload (`baselines/retained-resource-baseline.md`).
-Loaded and longer resource observation,
-status-unavailability behavior and signed upload/activation GUI remain next.
+A separate backend IPC load observation now passed 61 stable status reads
+while draining one MJPEG connection, with stable main processes and no sampled
+RSS/FD growth over 647 seconds. Its scope and resource measurements are in the
+same baseline document; it does not cover HTTP/server load, decoded frames or
+transient status-worker resource peaks. End-to-end loaded and longer resource
+observation, status-unavailability behavior and signed upload/activation GUI
+remain next.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

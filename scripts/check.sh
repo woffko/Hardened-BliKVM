@@ -56,6 +56,8 @@ python3 -m unittest \
   tools/test_device_test_account_setup_browser.py \
   tools/test_capture_device_persistent_soak.py \
   tools/test_retained_resource_baseline.py \
+  tools/test_retained_load_ipc.py \
+  tools/test_retained_backend_load.py \
   tools/test_stage_device_persistent_reboot.py \
   tools/test_capture_device_reboot_persistence_state.py \
   tools/test_recover_device_web_cutover_fallback.py \
@@ -119,6 +121,9 @@ python3 -m py_compile \
   tools/capture_device_web_cutover_failure.py \
   tools/capture_device_persistent_soak.py \
   tools/observe_service_resources.py \
+  tools/retained_load_ipc.py \
+  tools/observe_retained_backend_load.py \
+  tools/capture_retained_backend_load.py \
   tools/capture_retained_resource_baseline.py \
   tools/stage_device_persistent_reboot.py \
   tools/capture_device_reboot_persistence_state.py \
@@ -279,6 +284,11 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_device_web_cutover_failure.py \
     tools/capture_device_persistent_soak.py \
     tools/observe_service_resources.py \
+    tools/retained_load_ipc.py \
+    tools/test_retained_load_ipc.py \
+    tools/observe_retained_backend_load.py \
+    tools/capture_retained_backend_load.py \
+    tools/test_retained_backend_load.py \
     tools/capture_retained_resource_baseline.py \
     tools/stage_device_persistent_reboot.py \
     tools/capture_device_reboot_persistence_state.py \
