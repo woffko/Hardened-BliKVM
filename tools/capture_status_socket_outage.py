@@ -32,7 +32,7 @@ PHASES = {"arm", "stop", "restore", "finish", "emergency"}
 
 def browser_sources() -> dict[str, str]:
     names = ("device_existing_account_smoke", "status_api_acceptance", "status_soak", "status_outage_audit",
-             "status_outage_scenario", "status_outage_control", "device_status_outage")
+             "status_outage_scenario", "status_outage_control", "device_status_outage", "mjpeg_progress")
     return {name: hashlib.sha256(Path("tools/playwright", name + ".mjs").read_text().encode()).hexdigest() for name in names}
 
 

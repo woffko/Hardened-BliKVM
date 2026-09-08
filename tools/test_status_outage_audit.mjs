@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
+import { MjpegProgress } from "./playwright/mjpeg_progress.mjs";
 import { StatusOutageControl } from "./playwright/status_outage_control.mjs";
 import {
   createStatusOutageWindow,
@@ -210,6 +211,9 @@ function scenarioFixture({
       beginOutage: () => events.push("begin"),
       endOutage: () => events.push("end"),
       activeStream: () => stream,
+      verifyVideoProgress: async () => {
+        if (endedStream) throw new Error("MJPEG progress failed");
+      },
       createObservedPage: async () => cold,
     },
   };
@@ -266,10 +270,55 @@ test("failed restoration cannot pass and still closes the cold page", async () =
   assert.equal(fixture.cold.isClosed(), true);
 });
 
-test("an ended MJPEG response fails preservation even with a decoded image", async () => {
+test("missing MJPEG byte progress fails preservation even with a decoded image", async () => {
   const fixture = scenarioFixture({ endedStream: true });
-  await assert.rejects(fixture.scenario(fixture.args), /MJPEG response ended/);
-  assert.equal(fixture.cold.isClosed(), true);
+  await assert.rejects(fixture.scenario(fixture.args), /MJPEG progress failed/);
+  assert.equal(fixture.events.includes("stop"), false);
+});
+
+test("multipart completion is not disconnect; later bytes prove progress", async () => {
+  const client = new EventEmitter();
+  const observer = new MjpegProgress(client);
+  client.emit("Network.requestWillBeSent", {
+    requestId: "one",
+    request: { url: "https://synthetic/api/stream/mjpeg?v=1" },
+  });
+  client.emit("Network.responseReceived", {
+    requestId: "one",
+    response: { status: 200 },
+  });
+  const checkpoint = observer.checkpoint();
+  const progress = observer.progress(checkpoint, 100);
+  client.emit("Network.loadingFinished", { requestId: "one" });
+  client.emit("Network.dataReceived", { requestId: "one", dataLength: 100 });
+  await progress;
+  const disconnected = observer.disconnected(checkpoint, 100);
+  client.emit("Network.loadingFailed", { requestId: "one" });
+  await disconnected;
+  assert.throws(() => observer.checkpoint());
+});
+
+test("MJPEG progress rejects request replacement and stalled streams", async () => {
+  const client = new EventEmitter();
+  const observer = new MjpegProgress(client);
+  const start = (id) => {
+    client.emit("Network.requestWillBeSent", {
+      requestId: id,
+      request: { url: "https://synthetic/api/stream/mjpeg" },
+    });
+    client.emit("Network.responseReceived", {
+      requestId: id,
+      response: { status: 200 },
+    });
+  };
+  start("one");
+  const progress = observer.progress(observer.checkpoint(), 100);
+  start("two");
+  await assert.rejects(progress, /request replaced/);
+  await assert.rejects(
+    observer.progress(observer.checkpoint(), 5),
+    /timed out/,
+  );
 });
 
 function controlFixture(timeout = 1000) {

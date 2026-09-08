@@ -84,19 +84,11 @@ export function createStatusOutageScenario(control) {
     beginOutage,
     endOutage,
     activeStream,
+    verifyVideoProgress,
     createObservedPage,
   }) => {
     const originalStream = activeStream();
     assert.ok(originalStream);
-    let streamEnded = false;
-    originalStream.finished().then(
-      () => {
-        streamEnded = true;
-      },
-      () => {
-        streamEnded = true;
-      },
-    );
     let cold = null;
     let restoreRequired = false;
     let windowOpen = false;
@@ -104,6 +96,7 @@ export function createStatusOutageScenario(control) {
       const warm = await openPanel(page);
       await refresh(page, warm.panel, 200);
       await verifyViewports(page, warm.panel, "ready");
+      await verifyVideoProgress();
       beginOutage();
       windowOpen = true;
       // A failed stop acknowledgement may still mean the listener stopped.
@@ -111,6 +104,7 @@ export function createStatusOutageScenario(control) {
       await control("stop");
       await refresh(page, warm.panel, 503);
       await verifyViewports(page, warm.panel, "stale");
+      await verifyVideoProgress();
 
       cold = await createObservedPage();
       const document = await cold.goto(page.url(), {
@@ -120,6 +114,7 @@ export function createStatusOutageScenario(control) {
       const fresh = await openPanel(cold);
       await refresh(cold, fresh.panel, 503);
       await verifyViewports(cold, fresh.panel, "error");
+      await verifyVideoProgress();
 
       await control("restore");
       restoreRequired = false;
@@ -140,7 +135,7 @@ export function createStatusOutageScenario(control) {
         originalStream,
         "MJPEG response was replaced",
       );
-      assert.equal(streamEnded, false, "MJPEG response ended during outage");
+      await verifyVideoProgress();
       assert.equal(
         await page
           .locator("img#screen")

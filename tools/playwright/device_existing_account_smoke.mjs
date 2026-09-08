@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { statusRoute, verifyStatusPanel } from "./status_api_acceptance.mjs";
 import { runStatusSoak } from "./status_soak.mjs";
+import { observeMjpegProgress } from "./mjpeg_progress.mjs";
 import {
   createStatusOutageWindow,
   validateOutageResult,
@@ -12,11 +13,17 @@ import {
 export async function runExistingAccountBrowser({
   browserArguments = process.argv.slice(2),
   statusOutageScenario,
+  videoContinuityScenario,
 } = {}) {
   assert.ok(
     statusOutageScenario === undefined ||
       typeof statusOutageScenario === "function",
   );
+  assert.ok(
+    videoContinuityScenario === undefined ||
+      typeof videoContinuityScenario === "function",
+  );
+  assert.ok(!(statusOutageScenario && videoContinuityScenario));
 
   const [
     modulePath,
@@ -44,6 +51,10 @@ export async function runExistingAccountBrowser({
   if (statusOutageScenario) {
     assert.equal(statusMode, "enabled");
     assert.equal(soakMode, undefined, "outage and soak are separate probes");
+  }
+  if (videoContinuityScenario) {
+    assert.equal(statusMode, "enabled");
+    assert.equal(soakMode, undefined);
   }
   assert.ok(browserArguments.length <= 8);
   if (runTag)
@@ -85,6 +96,10 @@ export async function runExistingAccountBrowser({
   const responses = [];
   const outageWindow = createStatusOutageWindow();
   let statusOutageAcceptance = null;
+  let videoContinuityAcceptance = null;
+  let videoContinuityStep = null;
+  let videoContinuityObservation = null;
+  const videoFacts = [];
   let webSockets = 0;
   let streamResponses = 0;
   let activeStreamResponse = null;
@@ -109,6 +124,7 @@ export async function runExistingAccountBrowser({
       locale: "en-US",
     });
     const page = await context.newPage();
+    const videoProgress = await observeMjpegProgress(page);
     const pageErrors = [];
     const streamByPage = new WeakMap();
     const requestWindows = new WeakMap();
@@ -158,6 +174,13 @@ export async function runExistingAccountBrowser({
       });
       observedPage.on("response", (response) => {
         const route = new URL(response.url()).pathname;
+        if (route === "/api/stream/mjpeg" && videoFacts.length < 32) {
+          videoFacts.push({
+            page: observedPage === page ? "primary" : "additional",
+            status: response.status(),
+            step: videoContinuityStep,
+          });
+        }
         if (route.startsWith("/api/")) {
           const observation = {
             method: response.request().method(),
@@ -259,7 +282,8 @@ export async function runExistingAccountBrowser({
       activeStreamResponse,
       "missing active MJPEG response before reload",
     );
-    const initialStreamFinished = activeStreamResponse.finished();
+    const initialStreamCheckpoint = videoProgress.checkpoint();
+    await videoProgress.progress(initialStreamCheckpoint);
 
     phase = "video-reconnect-response";
     const reconnectedStreamResponse = page.waitForResponse(
@@ -280,15 +304,7 @@ export async function runExistingAccountBrowser({
       return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
     });
     phase = "video-reconnect-old-stream-release";
-    await Promise.race([
-      initialStreamFinished,
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("initial MJPEG stream survived reload")),
-          5000,
-        ),
-      ),
-    ]);
+    await videoProgress.disconnected(initialStreamCheckpoint);
 
     phase = "authenticated";
     const inventory = await page.evaluate(async () => {
@@ -349,6 +365,8 @@ export async function runExistingAccountBrowser({
         beginOutage: () => outageWindow.begin(),
         endOutage: () => outageWindow.end(),
         activeStream: () => activeStreamResponse,
+        verifyVideoProgress: () =>
+          videoProgress.progress(videoProgress.checkpoint()),
         streamFor: (observedPage) => streamByPage.get(observedPage),
         createObservedPage: async () => {
           assert.equal(
@@ -375,6 +393,47 @@ export async function runExistingAccountBrowser({
       statusOutageAcceptance = outcome;
     }
 
+    if (videoContinuityScenario) {
+      phase = "video-continuity";
+      videoContinuityAcceptance = await videoContinuityScenario({
+        page,
+        activeStream: () => activeStreamResponse,
+        verifyVideoProgress: () =>
+          videoProgress.progress(videoProgress.checkpoint()),
+        progress: (step) => {
+          assert.ok(
+            [
+              "warm-viewports",
+              "cold-document",
+              "cold-viewports",
+              "cold-close",
+              "warm-return",
+              "complete",
+            ].includes(step),
+          );
+          videoContinuityStep = step;
+        },
+        observe: (value) => {
+          assert.deepEqual(Object.keys(value).sort(), [
+            "finished",
+            "sameResponse",
+          ]);
+          assert.equal(typeof value.finished, "boolean");
+          assert.equal(typeof value.sameResponse, "boolean");
+          videoContinuityObservation = value;
+        },
+        createObservedPage: async () => {
+          assert.equal(extraPageCreated, false);
+          extraPageCreated = true;
+          extraPage = await context.newPage();
+          watchPage(extraPage);
+          return extraPage;
+        },
+      });
+      assert.deepEqual(videoContinuityAcceptance, { videoPreserved: true });
+      assert.ok(extraPage?.isClosed());
+    }
+
     phase = "cookies";
     let cookies = await context.cookies(baseUrl);
     const session = cookies.find(
@@ -393,7 +452,8 @@ export async function runExistingAccountBrowser({
 
     phase = "logout-request";
     assert.ok(activeStreamResponse, "missing active MJPEG response");
-    const activeStreamFinished = activeStreamResponse.finished();
+    const activeStreamCheckpoint = videoProgress.checkpoint();
+    await videoProgress.progress(activeStreamCheckpoint);
     const logout = await context.request.post(`${baseUrl}/api/auth/logout`, {
       headers: { Origin: baseUrl, "x-csrf-token": csrf.value },
     });
@@ -401,15 +461,7 @@ export async function runExistingAccountBrowser({
     phase = "logout-status";
     assert.equal(logoutStatus, 200);
     phase = "logout-stream-revocation";
-    await Promise.race([
-      activeStreamFinished,
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("MJPEG stream survived logout")),
-          5000,
-        ),
-      ),
-    ]);
+    await videoProgress.disconnected(activeStreamCheckpoint);
     phase = "logout-cookies";
     if (statusMode) {
       assert.equal(
@@ -445,6 +497,14 @@ export async function runExistingAccountBrowser({
       runTag: runTag || null,
       result: "passed",
       ...(statusOutageScenario ? { statusOutageAcceptance } : {}),
+      ...(videoContinuityScenario
+        ? {
+            videoContinuityAcceptance,
+            videoContinuityStep,
+            videoContinuityObservation,
+            videoFacts,
+          }
+        : {}),
       statusAcceptance,
       statusAfterSoak,
       statusSoak,
@@ -480,6 +540,14 @@ export async function runExistingAccountBrowser({
       runTag: runTag || null,
       result: "failed",
       ...(statusOutageScenario ? { statusOutageAcceptance } : {}),
+      ...(videoContinuityScenario
+        ? {
+            videoContinuityAcceptance,
+            videoContinuityStep,
+            videoContinuityObservation,
+            videoFacts,
+          }
+        : {}),
       phase,
       statusAcceptance,
       statusAfterSoak,

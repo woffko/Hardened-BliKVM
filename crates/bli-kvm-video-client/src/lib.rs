@@ -262,6 +262,60 @@ mod tests {
         drop(stream);
     }
 
+    #[tokio::test]
+    async fn pending_request_disconnects_on_cancellation_or_timeout() {
+        for cancelled in [true, false] {
+            let directory = tempfile::tempdir().unwrap();
+            let socket = directory.path().join("pending-video.sock");
+            let listener = UnixListener::bind(&socket).unwrap();
+            let (ready, accepted) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let mut chunk = [0_u8; 1024];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert_ne!(read, 0);
+                    request.extend_from_slice(&chunk[..read]);
+                    assert!(request.len() <= 4096);
+                }
+                ready.send(()).unwrap();
+                // Deliberately never send response headers. The client must
+                // release its proxy connection when this request is abandoned.
+                let mut probe = [0_u8; 1];
+                let read = timeout(Duration::from_secs(2), stream.read(&mut probe))
+                    .await
+                    .expect("abandoned pre-header request kept its proxy connection")
+                    .unwrap();
+                assert_eq!(read, 0);
+            });
+            let client = VideoReadClient::with_timeout(
+                &socket,
+                if cancelled {
+                    Duration::from_secs(5)
+                } else {
+                    Duration::from_millis(200)
+                },
+            )
+            .unwrap();
+            let request = tokio::spawn(async move { client.mjpeg().await });
+            timeout(Duration::from_secs(1), accepted)
+                .await
+                .unwrap()
+                .unwrap();
+            if cancelled {
+                request.abort();
+                assert!(request.await.err().unwrap().is_cancelled());
+            } else {
+                assert!(matches!(
+                    request.await.unwrap(),
+                    Err(VideoClientError::Timeout)
+                ));
+            }
+            server.await.unwrap();
+        }
+    }
+
     #[test]
     fn rejects_relative_paths_and_zero_timeout() {
         assert!(matches!(

@@ -1089,8 +1089,13 @@ prompted pre-arm worker-collection checks and a 25-second collection allowance
 for the 20-second restore service. No failed units are reset or silently ignored.
 The complete host check passed (`ed960a7249be4f4a95c33e3b9290fcca`), followed
 by a real Node/Python inherited-FD exchange with finite separate stdin. Actual
-device/browser acceptance remains pending; no deliberate status outage has yet
-been performed.
+device/browser acceptance remains pending. The first real outage restored the
+status socket and preserved serving identities but failed the browser gate.
+Its guard was removed by a separately verified recovery. A local synthetic
+MJPEG experiment exposed an invalid `Response.finished()` continuity invariant;
+the harness now checks same-request byte progress and cancellation separately.
+The unexpected video 503 and corrected two-page/outage checks remain open
+(`baselines/status-outage-browser-first-attempt.md`).
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
