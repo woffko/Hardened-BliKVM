@@ -19,6 +19,7 @@ from tools.observe_retained_backend_load import retained_status
 from tools.systemd_property import decode_property
 
 require = resources.require
+WORKERS = "hardened-blikvm-update-status@*.service"
 
 
 def command(argv: list[str], timeout: int = 5) -> bytes:
@@ -80,6 +81,13 @@ def namespace_pristine(operation: str) -> None:
                 "guard namespace has inherited configuration")
 
 
+def workers_collected() -> bool:
+    # Preserve failed-unit evidence. Historical retained instances deliberately
+    # fail this gate before arming, rather than being reset or ignored.
+    return not command(["systemctl", "list-units", "--all", "--plain",
+                        "--no-legend", "--no-pager", WORKERS]).strip()
+
+
 def quiet_socket() -> None:
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
@@ -90,7 +98,7 @@ def quiet_socket() -> None:
             require(decode_property(property_value(policy.SOCKET, interface, name, sig), sig) == expected,
                     "status socket baseline mismatch")
         count = decode_property(property_value(policy.SOCKET, "Socket", "NConnections", "u"), "u")
-        if count == 0:
+        if count == 0 and workers_collected():
             return
         time.sleep(0.25)
     raise ValueError("status workers did not become idle")

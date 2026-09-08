@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import { StatusOutageControl } from "./playwright/status_outage_control.mjs";
 import {
   createStatusOutageWindow,
   validateOutageResult,
@@ -268,4 +270,60 @@ test("an ended MJPEG response fails preservation even with a decoded image", asy
   const fixture = scenarioFixture({ endedStream: true });
   await assert.rejects(fixture.scenario(fixture.args), /MJPEG response ended/);
   assert.equal(fixture.cold.isClosed(), true);
+});
+
+function controlFixture(timeout = 1000) {
+  const socket = new EventEmitter();
+  socket.writes = [];
+  socket.setEncoding = () => {};
+  socket.write = (value, callback) => {
+    socket.writes.push(value);
+    callback(null);
+  };
+  socket.destroy = () => socket.emit("close");
+  return { socket, control: new StatusOutageControl(socket, timeout) };
+}
+
+test("phase channel accepts split canonical replies and one stop only", async () => {
+  const { socket, control } = controlFixture();
+  const stop = control.request("stop");
+  assert.equal(socket.writes[0], '{"v":1,"id":1,"phase":"stop"}\n');
+  socket.emit("data", '{"v":1,"id":1,');
+  socket.emit("data", '"phase":"stop","ok":true}\n');
+  await stop;
+  assert.throws(() => control.request("stop"));
+  const restore = control.request("restore");
+  socket.emit("data", '{"v":1,"id":2,"phase":"restore","ok":true}\n');
+  await restore;
+  control.close();
+});
+
+test("phase channel rejects malformed, duplicate, oversize and mismatched replies", async () => {
+  for (const reply of [
+    '{"v":1,"id":2,"phase":"stop","ok":true}\n',
+    '{"v":1,"id":1,"phase":"restore","ok":true}\n',
+    '{"v":1,"id":1,"id":1,"phase":"stop","ok":true}\n',
+    '{"v":1,"id":1,"phase":"stop","ok":1}\n',
+    "{}\n{}\n",
+    "x".repeat(257),
+  ]) {
+    const { socket, control } = controlFixture();
+    const request = control.request("stop");
+    socket.emit("data", reply);
+    await assert.rejects(request, /channel failed/);
+    assert.equal(control.closed, true);
+  }
+});
+
+test("phase failure permits bounded restoration but EOF and timeout fail closed", async () => {
+  const { socket, control } = controlFixture();
+  assert.throws(() => control.request("restore"));
+  const stop = control.request("stop");
+  socket.emit("data", '{"v":1,"id":1,"phase":"stop","ok":false}\n');
+  await assert.rejects(stop, /not verified/);
+  const restore = control.request("restore");
+  socket.emit("end");
+  await assert.rejects(restore, /channel failed/);
+  const expiring = controlFixture(5).control;
+  await assert.rejects(expiring.request("stop"), /channel failed/);
 });

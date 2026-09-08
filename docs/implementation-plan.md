@@ -1079,6 +1079,18 @@ regressions exercise lost stop acknowledgement, failed restoration, cold-page
 failure, a false healthy-idle claim, and an ended video response. This remains
 host-tested preparation: the privileged coordinator and actual device outage
 acceptance are not yet complete.
+The host coordinator and inherited-socket phase channel are now implemented
+for the next device gate. SSH and GUI secrets remain on separate stdin/FD
+paths; only canonical bounded public phase messages cross the browser control
+channel. The coordinator persists the arm handoff before stop, verifies worker
+collection, waits for browser exit before finish, and requests fixed restoration
+without timer removal on ambiguous failures. A read-only independent review
+prompted pre-arm worker-collection checks and a 25-second collection allowance
+for the 20-second restore service. No failed units are reset or silently ignored.
+The complete host check passed (`ed960a7249be4f4a95c33e3b9290fcca`), followed
+by a real Node/Python inherited-FD exchange with finite separate stdin. Actual
+device/browser acceptance remains pending; no deliberate status outage has yet
+been performed.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

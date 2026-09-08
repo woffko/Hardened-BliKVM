@@ -60,6 +60,9 @@ python3 -m unittest \
   tools/test_retained_backend_load.py \
   tools/test_secret_pair_stdin.py \
   tools/test_status_outage_contract.py \
+  tools/test_status_socket_outage.py \
+  tools/test_status_outage_channel.py \
+  tools/test_capture_status_socket_outage.py \
   tools/test_capture_status_bus_preflight.py \
   tools/test_systemd_property.py \
   tools/test_status_restore_properties.py \
@@ -143,6 +146,9 @@ python3 -m py_compile \
   tools/systemd_property.py \
   tools/status_restore_properties.py \
   tools/probe_status_restore_timer.py \
+  tools/status_socket_outage.py \
+  tools/status_outage_channel.py \
+  tools/capture_status_socket_outage.py \
   tools/capture_status_restore_timer.py \
   tools/status_restore_event.py \
   tools/status_restore_monitor.py \
@@ -327,6 +333,12 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/status_restore_properties.py \
     tools/test_status_restore_properties.py \
     tools/probe_status_restore_timer.py \
+    tools/status_socket_outage.py \
+    tools/test_status_socket_outage.py \
+    tools/status_outage_channel.py \
+    tools/test_status_outage_channel.py \
+    tools/capture_status_socket_outage.py \
+    tools/test_capture_status_socket_outage.py \
     tools/capture_status_restore_timer.py \
     tools/test_probe_status_restore_timer.py \
     tools/status_restore_event.py \

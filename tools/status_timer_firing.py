@@ -31,7 +31,9 @@ def cleanup(operation: str) -> bool:
                 probe.command(["systemctl", "stop", name + ".timer"])
             except subprocess.CalledProcessError:
                 require(probe.unit_absent(name + ".timer"), "timer stop failed")
-        deadline = time.monotonic() + 8
+        # The owned restoration service has TimeoutStartSec=20s. Its job may
+        # already be running when the timer is stopped; never cancel it.
+        deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             if probe.unit_absent(name + ".timer") and probe.unit_absent(name + ".service"):
                 return True
