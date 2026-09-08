@@ -18,10 +18,12 @@ export function validateStatus(value) {
   assert.equal(value.confirmed.minimumSystemSequence, "1");
 }
 
-export async function verifyStatusPanel(page, enabled) {
+export async function verifyStatusPanel(page, enabled, progress = () => {}) {
   let first = null;
+  let desktopSettingsOffscreenBeforeReveal = false;
   if (enabled) {
     for (let index = 0; index < 3; index++) {
+      progress(`read-${index + 1}`);
       const result = await page.evaluate(async (route) => {
         const response = await fetch(route, { credentials: "include" });
         return { status: response.status, body: await response.json() };
@@ -37,14 +39,31 @@ export async function verifyStatusPanel(page, enabled) {
     { width: 1280, height: 900 },
     { width: 390, height: 844 },
   ]) {
+    const size = viewport.width === 1280 ? "desktop" : "mobile";
+    progress(`${size}-viewport`);
     await page.setViewportSize(viewport);
+    if (size === "desktop") {
+      progress("desktop-reveal-toolbar");
+      const bounds = await page
+        .locator("svg.lucide-settings")
+        .first()
+        .boundingBox();
+      desktopSettingsOffscreenBeforeReveal = Boolean(bounds && bounds.y < 0);
+      // The desktop toolbar auto-hides after idle. Use its real hover trigger,
+      // not a forced click or a change to the user's menu preferences.
+      await page.mouse.move(viewport.width / 2, 1);
+    }
+    progress(`${size}-open-settings`);
     await page.locator("svg.lucide-settings").first().click();
     const dialog = page.getByRole("dialog");
+    progress(`${size}-dialog-visible`);
     await dialog.waitFor({ state: "visible" });
     const update = dialog.getByText("Check for Updates", { exact: true });
     if (enabled) {
+      progress(`${size}-open-updates`);
       await update.click();
       const panel = dialog.getByTestId("bli-application-update");
+      progress(`${size}-status-visible`);
       await panel
         .getByText("No update awaiting confirmation", { exact: true })
         .waitFor();
@@ -65,6 +84,7 @@ export async function verifyStatusPanel(page, enabled) {
           .count(),
         0,
       );
+      progress(`${size}-refresh`);
       const response = page.waitForResponse(
         (item) =>
           new URL(item.url()).pathname === statusRoute &&
@@ -77,15 +97,19 @@ export async function verifyStatusPanel(page, enabled) {
     } else {
       assert.equal(await update.count(), 0);
     }
+    progress(`${size}-close-settings`);
     await dialog.locator("button.ant-modal-close").click();
     await dialog.waitFor({ state: "hidden" });
   }
+  progress("restore-desktop");
   await page.setViewportSize({ width: 1280, height: 900 });
+  progress("complete");
   return {
     enabled,
     desktop: true,
     mobile: true,
     repeatedReads: enabled ? 3 : 0,
     refreshChecks: enabled ? 2 : 0,
+    desktopSettingsOffscreenBeforeReveal,
   };
 }

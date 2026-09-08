@@ -1040,7 +1040,11 @@ Refresh, restoration, logout and independent cleanup verification
 (`baselines/status-api-seq5-acceptance.md`). Persistent status wiring is now
 retained, with corrected early-boot restoration, updater dev7 installation,
 automatic post-reboot startup and desktop/mobile status/browser acceptance
-(`baselines/persistent-status-acceptance.md`). Longer resource observation,
+(`baselines/persistent-status-acceptance.md`). A ten-minute observation now
+passes 61 exact status reads, post-idle desktop/mobile panel interaction,
+Refresh and logout/video revocation after correcting the test's handling of
+the auto-hidden toolbar. This does not establish CPU/RAM resource bounds.
+Longer resource observation,
 status-unavailability behavior and signed upload/activation GUI remain next.
 
 Checkpoint: the first host-only system-image verifier now uses a separate

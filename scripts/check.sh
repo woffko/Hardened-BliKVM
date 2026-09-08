@@ -352,6 +352,7 @@ fi
 
 node tools/test_application_update_ui.mjs
 node tools/test_notification_lifecycle.mjs
+node tools/test_status_soak.mjs
 pnpm_web build
 pnpm_web lint
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'

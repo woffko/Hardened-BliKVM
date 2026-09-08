@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { statusRoute, verifyStatusPanel } from "./status_api_acceptance.mjs";
+import { runStatusSoak } from "./status_soak.mjs";
 
 const [
   modulePath,
@@ -12,6 +13,7 @@ const [
   outputValue,
   runTag,
   statusMode,
+  soakMode,
 ] = process.argv.slice(2);
 assert.ok(
   modulePath && executablePath && baseUrl && username && outputValue,
@@ -22,6 +24,11 @@ assert.match(username, /^[a-z_][a-z0-9_-]{0,31}$/);
 assert.ok(
   statusMode === undefined || ["enabled", "restored"].includes(statusMode),
 );
+assert.ok(
+  soakMode === undefined ||
+    (soakMode === "soak-10m" && statusMode === "enabled"),
+);
+assert.ok(process.argv.slice(2).length <= 8);
 if (runTag)
   assert.match(
     runTag,
@@ -66,6 +73,12 @@ let inventoryVideoOnline = null;
 let inventoryVideoBusy = null;
 let logoutStatus = null;
 let statusAcceptance = null;
+let statusAfterSoak = null;
+let statusSoak = null;
+let statusPanelStep = null;
+const statusProgress = (step) => {
+  statusPanelStep = step;
+};
 let pageErrorCount = 0;
 const pageErrorFacts = [];
 
@@ -261,7 +274,31 @@ try {
   assert.equal(diagnostics.body.data.schemaVersion, 1);
   if (statusMode) {
     phase = "status-api-desktop-mobile";
-    statusAcceptance = await verifyStatusPanel(page, statusMode === "enabled");
+    statusAcceptance = await verifyStatusPanel(
+      page,
+      statusMode === "enabled",
+      statusProgress,
+    );
+  }
+  if (soakMode) {
+    phase = "status-api-soak";
+    statusSoak = await runStatusSoak(
+      () =>
+        page.evaluate(async (route) => {
+          const response = await fetch(route, {
+            credentials: "include",
+            signal: AbortSignal.timeout(5000),
+          });
+          return { status: response.status, body: await response.json() };
+        }, statusRoute),
+      {
+        progress: (value) => {
+          statusSoak = value;
+        },
+      },
+    );
+    phase = "status-api-after-soak";
+    statusAfterSoak = await verifyStatusPanel(page, true, statusProgress);
   }
 
   phase = "cookies";
@@ -327,6 +364,9 @@ try {
     runTag: runTag || null,
     result: "passed",
     statusAcceptance,
+    statusAfterSoak,
+    statusSoak,
+    statusPanelStep,
     transport: "direct-lan-https",
     title: "Remote Desktop - Hardened BliKVM",
     setupRequired: false,
@@ -359,6 +399,9 @@ try {
     result: "failed",
     phase,
     statusAcceptance,
+    statusAfterSoak,
+    statusSoak,
+    statusPanelStep,
     pageErrorCount,
     pageErrorFacts,
     serverErrors: responses
