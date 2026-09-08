@@ -1096,6 +1096,13 @@ MJPEG experiment exposed an invalid `Response.finished()` continuity invariant;
 the harness now checks same-request byte progress and cancellation separately.
 The unexpected video 503 and corrected two-page/outage checks remain open
 (`baselines/status-outage-browser-first-attempt.md`).
+The second read-only diagnostic preserved primary video and isolated the 503
+to secondary-page startup. A local two-slot fixture reproduced the source-swap
+contention; the React component now avoids its redundant initial nonce change.
+An isolated real-component test passes the one-request startup and preserves
+dependency-triggered reconnects. The source fix still needs host validation
+and installation through the reviewed application-update workflow before
+device acceptance; the current active slot has not been edited in place.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

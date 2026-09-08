@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useAtom, useAtomValue } from 'jotai';
 
@@ -20,6 +20,7 @@ export const Mjpeg = () => {
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const [hasError, setHasError] = useState(false);
   const [streamNonce, setStreamNonce] = useState(0);
+  const streamInputs = useRef({ isWritable, resolution });
   const streamURL = `${getBaseUrl('http')}/api/stream/mjpeg`;
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
@@ -35,7 +36,15 @@ export const Mjpeg = () => {
       stopFrameDetect(10);
     }
     setHasError(false);
-    setStreamNonce((current) => current + 1);
+    // The initial src already starts the stream. Replacing it on mount can
+    // deadlock a full proxy: Chromium retains the old multipart image until
+    // the replacement receives its first frame. Only changed inputs require
+    // a new request (including a newly selected resolution object).
+    const previous = streamInputs.current;
+    streamInputs.current = { isWritable, resolution };
+    if (previous.isWritable !== isWritable || previous.resolution !== resolution) {
+      setStreamNonce((current) => current + 1);
+    }
   }, [isWritable, resolution]);
 
   useEffect(() => {

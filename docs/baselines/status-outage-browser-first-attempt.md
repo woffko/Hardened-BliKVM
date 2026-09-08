@@ -46,3 +46,36 @@ or release acceptance is claimed here.
 
 The complete host check for the corrected observer passed in job
 `c24b95999f55455ab25618cbc610c6da` (exit 0).
+
+## Second read-only diagnostic and source fix
+
+Job `ee19be6ad0634f35be256e251abae23f` completed the two-page continuity
+checks with the same primary response and continuing bytes. The secondary page
+received one video 200 and one video 503. Logout returned 200, but the observer
+timed out waiting for cancellation, so the whole diagnostic still failed.
+
+The local fixture's `graceful` mode established a separate normal-EOF path:
+the first `Network.loadingFinished` event has encoded length zero, while normal
+EOF emits a later completion with positive encoded length and no
+`Network.loadingFailed`. The observer now distinguishes that pair from the
+early first-part event; cancelled streams still use `loadingFailed`.
+
+The fixture's `contention` mode reproduced the secondary 503 with a two-stream
+budget. Chromium keeps the old image stream until the replacement has a first
+frame; the replacement waits for a slot occupied by that old stream. The
+primary stream continued receiving frames during this reproduction.
+
+`Mjpeg` unnecessarily incremented its URL nonce in its initial effect, even
+though the initial src already started a request. Its input snapshot now skips
+that redundant initial replacement, while preserving dependency-triggered
+reconnects and frame-detection behavior. The isolated React-component fixture
+failed against the old component (initial nonce 1 instead of 0) and passed
+against the source fix: exactly one initial request, resolution/writability
+reconnects, error reset, and the expected frame-detection calls.
+
+The component fix has not been installed on the device. The corrected logout
+observer and device-level two-page/outage acceptance remain pending. This fix
+does not claim unrestricted concurrent resolution changes with a full proxy.
+
+The complete host check for the component fix passed in job
+`8aa3185a029d45b2ab6b79c03d3d6a3e` (exit 0). Installation remains pending.

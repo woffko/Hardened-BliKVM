@@ -7,7 +7,13 @@ export class MjpegProgress {
     this.waiters = new Set();
     client.on("Network.requestWillBeSent", ({ requestId, request }) => {
       if (new URL(request.url).pathname !== route) return;
-      const value = { bytes: 0, status: null, failed: false };
+      const value = {
+        bytes: 0,
+        status: null,
+        failed: false,
+        firstPartFinished: false,
+        completed: false,
+      };
       this.requests.set(requestId, value);
       this.current = value;
       if (this.requests.size > 16)
@@ -35,9 +41,24 @@ export class MjpegProgress {
         this.notify();
       }
     });
+    client.on("Network.loadingFinished", ({ requestId, encodedDataLength }) => {
+      const value = this.requests.get(requestId);
+      if (!value) return;
+      if (encodedDataLength === 0) value.firstPartFinished = true;
+      else if (
+        value.firstPartFinished &&
+        Number.isSafeInteger(encodedDataLength) &&
+        encodedDataLength > 0
+      ) {
+        value.completed = true;
+        this.notify();
+      }
+    });
     // Chromium emits loadingFinished/Response.finished after the first MJPEG
     // part, while further dataReceived events and decoded frames continue.
-    // Neither completion signal is a stream-disconnection observation.
+    // The first zero-byte completion is not a disconnection. A later positive
+    // encoded-length completion represents normal EOF; loadingFailed covers
+    // cancellation. Both close paths are exercised by the local fixture.
   }
 
   notify() {
@@ -48,6 +69,11 @@ export class MjpegProgress {
     assert.ok(this.current, "missing primary video request");
     assert.equal(this.current.status, 200, "primary video did not return 200");
     assert.equal(this.current.failed, false, "primary video request failed");
+    assert.equal(
+      this.current.completed,
+      false,
+      "primary video stream completed",
+    );
     return { request: this.current, bytes: this.current.bytes };
   }
 
@@ -87,12 +113,20 @@ export class MjpegProgress {
         false,
         "primary video request failed",
       );
+      assert.equal(
+        checkpoint.request.completed,
+        false,
+        "primary video stream completed",
+      );
       return checkpoint.request.bytes > checkpoint.bytes;
     }, timeoutMs);
   }
 
   disconnected(checkpoint, timeoutMs = 5000) {
-    return this.wait(() => checkpoint.request.failed, timeoutMs);
+    return this.wait(
+      () => checkpoint.request.failed || checkpoint.request.completed,
+      timeoutMs,
+    );
   }
 }
 

@@ -321,6 +321,35 @@ test("MJPEG progress rejects request replacement and stalled streams", async () 
   );
 });
 
+test("MJPEG normal EOF differs from the first zero-byte completion", async () => {
+  const client = new EventEmitter();
+  const observer = new MjpegProgress(client);
+  client.emit("Network.requestWillBeSent", {
+    requestId: "one",
+    request: { url: "https://synthetic/api/stream/mjpeg" },
+  });
+  client.emit("Network.responseReceived", {
+    requestId: "one",
+    response: { status: 200 },
+  });
+  client.emit("Network.loadingFinished", {
+    requestId: "one",
+    encodedDataLength: 0,
+  });
+  const checkpoint = observer.checkpoint();
+  const progress = observer.progress(checkpoint, 100);
+  client.emit("Network.dataReceived", { requestId: "one", dataLength: 200 });
+  await progress;
+  const closed = observer.disconnected(checkpoint, 100);
+  client.emit("Network.loadingFinished", {
+    requestId: "one",
+    encodedDataLength: 250,
+  });
+  await closed;
+  assert.throws(() => observer.checkpoint(), /stream completed/);
+  await assert.rejects(observer.progress(checkpoint, 100), /stream completed/);
+});
+
 function controlFixture(timeout = 1000) {
   const socket = new EventEmitter();
   socket.writes = [];
