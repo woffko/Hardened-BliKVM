@@ -15,6 +15,7 @@ from tools.systemd_property import uint
 MAX_EVENT_BYTES = 8192
 MANAGER_PATH = "/org/freedesktop/systemd1"
 MANAGER_INTERFACE = "org.freedesktop.systemd1.Manager"
+SYSTEM_BUS_ADDRESS = "unix:path=/run/dbus/system_bus_socket"
 
 
 def monitor_command(operation: str) -> list[str]:
@@ -22,7 +23,8 @@ def monitor_command(operation: str) -> list[str]:
     rule = ("type='signal',sender='org.freedesktop.systemd1',"
             f"path='{MANAGER_PATH}',interface='{MANAGER_INTERFACE}',"
             f"member='JobRemoved',arg2='{unit}'")
-    return ["/usr/bin/busctl", "--system", "--no-pager", "--json=short", "--match=" + rule, "monitor"]
+    return ["/usr/bin/busctl", "--system", "--address=" + SYSTEM_BUS_ADDRESS,
+            "--no-pager", "--json=short", "--match=" + rule, "monitor"]
 
 
 def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

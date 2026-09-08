@@ -21,9 +21,10 @@ class EventTests(unittest.TestCase):
     def test_one_exact_match_and_no_broad_service_operand(self) -> None:
         argv = event.monitor_command(OPERATION)
         self.assertEqual(argv[-1], "monitor")
-        self.assertEqual(argv[:4], ["/usr/bin/busctl", "--system", "--no-pager", "--json=short"])
-        self.assertEqual(len(argv), 6)
-        self.assertEqual(argv[4], "--match=type='signal',sender='org.freedesktop.systemd1',"
+        self.assertEqual(argv[:5], ["/usr/bin/busctl", "--system", "--address=" + event.SYSTEM_BUS_ADDRESS,
+                                   "--no-pager", "--json=short"])
+        self.assertEqual(len(argv), 7)
+        self.assertEqual(argv[5], "--match=type='signal',sender='org.freedesktop.systemd1',"
                          "path='/org/freedesktop/systemd1',interface='org.freedesktop.systemd1.Manager',"
                          "member='JobRemoved',arg2='" + guard_name(OPERATION) + ".service'")
         with self.assertRaises(ValueError):

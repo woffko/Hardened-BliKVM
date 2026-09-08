@@ -1062,6 +1062,10 @@ A subsequent arm/disarm probe verified the actual transient restore timer and
 service, then removed both while preserving status and serving identities
 (`baselines/status-restore-timer-arm-disarm.md`). Timer firing, controller-loss
 recovery and the deliberate browser-visible status outage remain next.
+The bounded native subscription and exact-filter monitor have now passed a
+read-only readiness/cleanup probe on the device
+(`baselines/systemd-subscription-preflight.md`). A positive completion event
+from the restore timer has not yet been observed.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
