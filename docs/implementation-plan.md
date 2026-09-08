@@ -1069,6 +1069,16 @@ probe observed the restore timer's successful completion after the arming
 command exited normally, with unchanged serving state and clean guard removal
 (`baselines/status-timer-automatic-completion.md`). The deliberate status outage
 and authenticated browser stale/error/recovery scenario remain next.
+The browser workflow is now import-safe and accepts a dedicated outage
+scenario without weakening its normal API, WebSocket, control-request, cookie,
+or logout checks. The scenario checks warm stale data, a cold-page error,
+desktop/mobile recovery, and preservation of the original MJPEG response.
+Only exact status GET 503 responses belonging to requests started inside a
+single bounded 90-second window are exempted from the failure audit. Host
+regressions exercise lost stop acknowledgement, failed restoration, cold-page
+failure, a false healthy-idle claim, and an ended video response. This remains
+host-tested preparation: the privileged coordinator and actual device outage
+acceptance are not yet complete.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

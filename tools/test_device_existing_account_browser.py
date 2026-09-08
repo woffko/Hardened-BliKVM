@@ -7,6 +7,11 @@ SCRIPT = Path("tools/playwright/device_existing_account_smoke.mjs")
 
 
 class DeviceExistingAccountBrowserTests(unittest.TestCase):
+    def test_outage_allowance_and_import_safe_workflow(self) -> None:
+        result = subprocess.run(["node", "tools/test_status_outage_audit.mjs"], capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn("only exact status GET 503", result.stdout.decode())
+
     def test_optional_status_gate_has_host_regressions(self) -> None:
         result = subprocess.run(["node", "--test", "tools/test_status_api_browser.mjs"], capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
