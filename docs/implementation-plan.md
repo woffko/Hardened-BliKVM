@@ -1103,6 +1103,11 @@ An isolated real-component test passes the one-request startup and preserves
 dependency-triggered reconnects. The source fix still needs host validation
 and installation through the reviewed application-update workflow before
 device acceptance; the current active slot has not been edited in place.
+Independent fresh builds, runtime packages and signed sequence-six archives
+now compare byte-identical, and the real host Rust verifier accepted the
+immutable payload and negative checks. A named 5-to-6 transition profile adds
+strict preservation of permanent status wiring; its full host/device gates
+remain pending (`baselines/mjpeg-application-seq6.md`).
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

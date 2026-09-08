@@ -10,6 +10,7 @@ import grp
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import secrets
@@ -47,6 +48,7 @@ class UpdateProfile:
     source_slot: str
     target_sequence: int
     target_slot: str
+    persistent_status: bool = False
 
 
 PROFILES = {
@@ -59,6 +61,10 @@ PROFILES = {
         "seq4-to-seq5-notification", "618b1068086a04aa75f44804b58bcf0dac05d62c11553af74ebfe5cfdf893093",
         8591360, 4, "app-00000000000000000004-768b33ac3a022f4a216ae1db4a08e7926802eabb4842b0de1dc80c74aa70095c", 5,
         "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc"),
+    "seq5-to-seq6-mjpeg": UpdateProfile(
+        "seq5-to-seq6-mjpeg", "4f5a307e2d1014de360dc2cdb75cb5186a60511cfd772f3be0b98b8aff9a6036",
+        8601600, 5, "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc", 6,
+        "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac", True),
 }
 active_profile = PROFILES["seq1-to-seq2"]
 
@@ -155,9 +161,53 @@ def preserved(plan: dict[str, object]) -> None:
     require(u.tree_fingerprint((original,)) == plan["originalSlot"], "original signed slot changed")
 
 
+def validate_status_wiring(*, allow_rehearsal: bool = False) -> None:
+    """Preserve the accepted status wiring independently of application floor.
+
+    The old status snapshot binds sequence five and cannot validate a new slot.
+    Here only its exact transport/override contract is reused; stable() checks
+    the authoritative application slot against the selected transition profile.
+    """
+    if __package__:
+        from tools import status_api_wiring as common
+    else:
+        import status_api_wiring as common
+    for unit in common.SERVERS:
+        directory = Path("/etc/systemd/system") / (unit + ".d")
+        meta = directory.lstat()
+        require(stat.S_ISDIR(meta.st_mode) and meta.st_uid == 0 and stat.S_IMODE(meta.st_mode) == 0o755
+                and {child.name for child in directory.iterdir()} == {common.DROPIN_NAME}, "unexpected persistent status override directory")
+        path = directory / common.DROPIN_NAME
+        meta = path.lstat()
+        require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
+                and stat.S_IMODE(meta.st_mode) == 0o644 and path.read_bytes() == common.DROPIN_BYTES,
+                "persistent status override changed")
+        runtime = Path("/run/systemd/system") / (unit + ".d")
+        if infrastructure.exists(runtime):
+            meta = runtime.lstat()
+            require(allow_rehearsal and runtime == DROPIN_ROOT and stat.S_ISDIR(meta.st_mode)
+                    and meta.st_uid == 0 and stat.S_IMODE(meta.st_mode) == 0o755
+                    and {child.name for child in runtime.iterdir()} == {DROPIN.name}, "unapproved runtime override")
+            meta = DROPIN.lstat()
+            require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
+                    and stat.S_IMODE(meta.st_mode) == 0o644 and DROPIN.read_bytes() == DROPIN_BYTES,
+                    "rehearsal override changed")
+    common.runtime_environment(True)
+    for unit, digest in common.UNIT_HASHES.items():
+        require(u.digest(Path("/lib/systemd/system") / unit) == digest, "status transport unit changed")
+    require(s.enabled(common.SOCKET) == "disabled" and s.property_value(common.SOCKET, "ActiveState") == "active",
+            "persistent status socket changed")
+    meta = common.ENDPOINT.lstat()
+    require(stat.S_ISSOCK(meta.st_mode) and stat.S_IMODE(meta.st_mode) == 0o620
+            and meta.st_uid == pwd.getpwnam("hardened-blikvm-update").pw_uid
+            and meta.st_gid == grp.getgrnam("hardened-blikvm").gr_gid, "unsafe status socket metadata")
+
+
 def stable(root: Path, plan: dict[str, object], expected_floor: int | None = None) -> dict[str, object]:
     u.installed(root, "new")
     infrastructure.audit_enabled(check_initial=False)
+    if active_profile.persistent_status:
+        validate_status_wiring(allow_rehearsal=plan.get("phase") == "staged")
     status = infrastructure.current_status()
     floor = status.get("floorSequence")
     require(isinstance(floor, int) and floor in profile_slots() and (expected_floor is None or floor == expected_floor), "unexpected confirmed floor")
@@ -277,8 +327,11 @@ def activate_slot() -> None:
 
 def prepare(assets: Path) -> dict[str, object]:
     require(not list(Path("/var/lib").glob(PREFIX + "*")) and not list(u.UNIT_ROOT.glob(PREFIX + "*")), "previous application guard remains")
-    require(not infrastructure.exists(DROPIN_ROOT)
-            and not infrastructure.exists(Path("/etc/systemd/system/hardened-blikvm-server-candidate.service.d")), "candidate override already exists")
+    require(not infrastructure.exists(DROPIN_ROOT), "candidate runtime override already exists")
+    if active_profile.persistent_status:
+        validate_status_wiring()
+    else:
+        require(not infrastructure.exists(Path("/etc/systemd/system/hardened-blikvm-server-candidate.service.d")), "candidate override already exists")
     u.installed(assets, "new")
     s.bootstrap.trusted_code_and_config(expected_supervisor_sha=u.SUPERVISOR_HASHES["new"])
     infrastructure.audit_enabled(check_initial=False)

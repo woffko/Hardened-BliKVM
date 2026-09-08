@@ -1,18 +1,90 @@
 import inspect
+import contextlib
 import hashlib
 import io
 import json
 from pathlib import Path
 import tempfile
 import tarfile
+import stat
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from tools import installed_application_update as gate
 from tools import stage_installed_application_update as driver
+from tools import status_api_wiring as status_wiring
 
 
 class InstalledApplicationUpdateTests(unittest.TestCase):
+    def test_mjpeg_profile_binds_verified_sequence_six_and_keeps_floor(self) -> None:
+        profile = gate.PROFILES["seq5-to-seq6-mjpeg"]
+        self.assertEqual(profile.source_slot, gate.PROFILES["seq4-to-seq5-notification"].target_slot)
+        self.assertEqual((profile.source_sequence, profile.target_sequence), (5, 6))
+        self.assertEqual(profile.bundle_bytes, 8601600)
+        self.assertEqual(profile.bundle_sha, "4f5a307e2d1014de360dc2cdb75cb5186a60511cfd772f3be0b98b8aff9a6036")
+        self.assertEqual(profile.target_slot, "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac")
+        self.assertTrue(profile.persistent_status)
+        self.assertIn("status_api_wiring.py", gate.HELPERS)
+        with patch.object(gate, "active_profile", profile):
+            self.assertEqual(gate.minimum_recovery_floor({"phase": "confirmed"}), 6)
+            self.assertEqual(gate.minimum_recovery_floor({"phase": "recovered", "observedFloor": 6}), 6)
+            root = Path("/var/lib") / (gate.PREFIX + "a" * 24)
+            self.assertIn("--profile seq5-to-seq6-mjpeg", gate.guard_units(root)[root.name + "-recovery.service"])
+
+    def test_persistent_status_preservation_accepts_only_exact_rehearsal_override(self) -> None:
+        for failure in ("none", "rehearsal", "foreign", "mode", "link", "content", "missing", "runtime", "runtime-extra", "runtime-content", "runtime-current", "socket"):
+            with self.subTest(failure=failure), contextlib.ExitStack() as stack:
+                runtime_present = failure in ("rehearsal", "runtime", "runtime-extra", "runtime-content")
+                def exists(path: Path) -> bool:
+                    if failure == "runtime-current":
+                        return path == Path("/run/systemd/system") / (gate.s.CURRENT_SERVER + ".d")
+                    return runtime_present and path == gate.DROPIN_ROOT
+                def metadata(path: Path) -> SimpleNamespace:
+                    if failure == "missing" and path.name.endswith(".d"):
+                        raise FileNotFoundError("synthetic missing persistent override")
+                    if path == status_wiring.ENDPOINT:
+                        return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o620, st_uid=0 if failure == "socket" else 984, st_gid=989)
+                    if path.name.endswith(".d"):
+                        return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+                    return SimpleNamespace(st_mode=stat.S_IFREG | (0o666 if failure == "mode" else 0o644),
+                                           st_uid=0, st_nlink=2 if failure == "link" else 1)
+                def entries(path: Path) -> list[Path]:
+                    result = [gate.DROPIN] if path == gate.DROPIN_ROOT else [path / status_wiring.DROPIN_NAME]
+                    if failure == "foreign" or (failure == "runtime-extra" and path == gate.DROPIN_ROOT):
+                        result.append(path / "foreign.conf")
+                    return result
+                def contents(path: Path) -> bytes:
+                    if path == gate.DROPIN:
+                        return b"changed" if failure == "runtime-content" else gate.DROPIN_BYTES
+                    return b"changed" if failure == "content" else status_wiring.DROPIN_BYTES
+                def digest(path: Path) -> str:
+                    return status_wiring.UNIT_HASHES[path.name]
+                stack.enter_context(patch.object(gate.infrastructure, "exists", side_effect=exists))
+                stack.enter_context(patch.object(Path, "lstat", metadata))
+                stack.enter_context(patch.object(Path, "iterdir", entries))
+                stack.enter_context(patch.object(Path, "read_bytes", contents))
+                environment = stack.enter_context(patch.object(status_wiring, "runtime_environment"))
+                stack.enter_context(patch.object(gate.u, "digest", side_effect=digest))
+                stack.enter_context(patch.object(gate.s, "enabled", return_value="disabled"))
+                stack.enter_context(patch.object(gate.s, "property_value", return_value="active"))
+                stack.enter_context(patch.object(gate.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=984)))
+                stack.enter_context(patch.object(gate.grp, "getgrnam", return_value=SimpleNamespace(gr_gid=989)))
+                if failure in ("none", "rehearsal"):
+                    gate.validate_status_wiring(allow_rehearsal=failure == "rehearsal")
+                    environment.assert_called_once_with(True)
+                else:
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        gate.validate_status_wiring(allow_rehearsal=failure in ("runtime-extra", "runtime-content", "runtime-current"))
+
+    def test_rehearsal_phase_is_durable_before_creating_override(self) -> None:
+        source = inspect.getsource(gate.prepare)
+        staged = source.index('plan["phase"] = "staged"')
+        persisted = source.index("save(root, plan)", staged)
+        override = source.index("DROPIN_ROOT.mkdir", staged)
+        self.assertLess(staged, persisted)
+        self.assertLess(persisted, override)
+
     def test_notification_profile_is_bound_to_verified_sequence_five(self) -> None:
         profile = gate.PROFILES["seq4-to-seq5-notification"]
         self.assertEqual(profile.source_slot, gate.PROFILES["seq2-to-seq4-status"].target_slot)
