@@ -1058,6 +1058,10 @@ Read-only systemd preflight now confirms the device's typed D-Bus property
 format and the monotonic clock required for the planned outage guard
 (`baselines/status-outage-preflight.md`). No status outage or guard activation
 has been performed in this preflight.
+A subsequent arm/disarm probe verified the actual transient restore timer and
+service, then removed both while preserving status and serving identities
+(`baselines/status-restore-timer-arm-disarm.md`). Timer firing, controller-loss
+recovery and the deliberate browser-visible status outage remain next.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

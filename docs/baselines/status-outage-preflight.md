@@ -35,8 +35,9 @@ verified the exact remote source hash:
 Receipt: `evidence/private/status-systemd-wire-preflight.json`.
 The complete host gate passed in job `761eaf6ebeda4d699e3669c574946393`.
 
-Not yet established: actual transient guard ownership/definition verification,
-restorer command verification, post-stop worker draining, handling an elapsed
-or collected guard, authenticated browser outage/recovery, or automatic
-restoration after coordinator loss. A successful property read or pure policy
-test is not evidence that these device gates passed.
+Transient guard creation, ownership/definition checking and explicit disarm
+subsequently passed in [the arm/disarm probe](status-restore-timer-arm-disarm.md).
+Post-stop worker draining, elapsed-guard handling on the device, authenticated
+browser outage/recovery and automatic restoration after coordinator loss remain
+unverified. A successful property read or pure policy test does not prove those
+device gates.

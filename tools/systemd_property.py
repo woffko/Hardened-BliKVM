@@ -34,6 +34,42 @@ def decode_property(value: object, signature: str) -> object:
         if not isinstance(data, str) or len(data) > 512 or any(ord(char) < 32 or ord(char) > 126 for char in data):
             raise ValueError("invalid D-Bus public string")
         return data
+    if signature == "as":
+        if not isinstance(data, list):
+            raise ValueError("invalid D-Bus string array")
+        strings = cast(list[object], data)
+        if len(strings) > 32:
+            raise ValueError("D-Bus string array too large")
+        for item in strings:
+            decode_property({"type": "s", "data": item}, "s")
+        return strings
+    if signature == "a(sst)":
+        # The outage guard must not contain any calendar expressions.
+        if data != []:
+            raise ValueError("calendar expressions are not permitted for the guard")
+        return []
+    if signature == "a(sasbttttuii)":
+        if not isinstance(data, list):
+            raise ValueError("invalid D-Bus command array")
+        commands = cast(list[object], data)
+        if len(commands) > 16:
+            raise ValueError("D-Bus command array too large")
+        for command in commands:
+            if not isinstance(command, list):
+                raise ValueError("invalid D-Bus command record")
+            fields = cast(list[object], command)
+            if len(fields) != 10:
+                raise ValueError("invalid D-Bus command record length")
+            decode_property({"type": "s", "data": fields[0]}, "s")
+            decode_property({"type": "as", "data": fields[1]}, "as")
+            decode_property({"type": "b", "data": fields[2]}, "b")
+            for item in fields[3:7]:
+                uint(item, 64)
+            uint(fields[7], 32)
+            for item in fields[8:]:
+                if type(item) is not int or not -(2**31) <= item < 2**31:
+                    raise ValueError("invalid D-Bus command exit counter")
+        return commands
     if signature == "a(stt)":
         if not isinstance(data, list):
             raise ValueError("invalid monotonic timer entries")
