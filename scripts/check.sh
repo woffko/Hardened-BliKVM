@@ -64,6 +64,7 @@ python3 -m unittest \
   tools/test_systemd_property.py \
   tools/test_status_restore_properties.py \
   tools/test_probe_status_restore_timer.py \
+  tools/test_status_restore_event.py \
   tools/test_stage_device_persistent_reboot.py \
   tools/test_capture_device_reboot_persistence_state.py \
   tools/test_recover_device_web_cutover_fallback.py \
@@ -137,6 +138,7 @@ python3 -m py_compile \
   tools/status_restore_properties.py \
   tools/probe_status_restore_timer.py \
   tools/capture_status_restore_timer.py \
+  tools/status_restore_event.py \
   tools/capture_retained_resource_baseline.py \
   tools/stage_device_persistent_reboot.py \
   tools/capture_device_reboot_persistence_state.py \
@@ -315,6 +317,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/probe_status_restore_timer.py \
     tools/capture_status_restore_timer.py \
     tools/test_probe_status_restore_timer.py \
+    tools/status_restore_event.py \
+    tools/test_status_restore_event.py \
     tools/capture_retained_resource_baseline.py \
     tools/stage_device_persistent_reboot.py \
     tools/capture_device_reboot_persistence_state.py \
