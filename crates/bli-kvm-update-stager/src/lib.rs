@@ -192,7 +192,35 @@ impl ApplicationSlotStager {
         if !deletion_markers.is_empty() || !deletion_tombstones.is_empty() {
             return Err(ApplicationStageError::UnsafeDeletionState);
         }
-        let (mut snapshot, archive_size) = self.snapshot_source(source.as_ref())?;
+        let (snapshot, archive_size) = self.snapshot_source(source.as_ref())?;
+        self.stage_snapshot(snapshot, archive_size, trust_root)
+    }
+
+    /// Stage a complete, length-delimited archive without accepting a source path.
+    /// The caller must enforce authentication, concurrency and transport deadlines.
+    /// The reader must end at the archive boundary: an extra byte is rejected.
+    /// This only publishes an immutable slot; it never activates it.
+    pub fn stage_reader(
+        &self,
+        source: impl Read,
+        archive_size: u64,
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<StagedApplication, ApplicationStageError> {
+        self.validate_root()?;
+        let (deletion_markers, deletion_tombstones) = self.collect_deletion_state()?;
+        if !deletion_markers.is_empty() || !deletion_tombstones.is_empty() {
+            return Err(ApplicationStageError::UnsafeDeletionState);
+        }
+        let (snapshot, archive_size) = self.snapshot_reader(source, archive_size)?;
+        self.stage_snapshot(snapshot, archive_size, trust_root)
+    }
+
+    fn stage_snapshot(
+        &self,
+        mut snapshot: File,
+        archive_size: u64,
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<StagedApplication, ApplicationStageError> {
         let verified = verify_application_reader(&mut snapshot, archive_size, trust_root)?;
         let slot_id = slot_id(&verified);
         let slot_path = self.root.join(&slot_id);
@@ -549,6 +577,14 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeSource);
         }
         let expected_size = source_metadata.len();
+        self.snapshot_reader(source, expected_size)
+    }
+
+    fn snapshot_reader(
+        &self,
+        source: impl Read,
+        expected_size: u64,
+    ) -> Result<(File, u64), ApplicationStageError> {
         if expected_size == 0 || expected_size > MAX_ARCHIVE_BYTES {
             return Err(ApplicationStageError::ArchiveTooLarge);
         }
@@ -565,7 +601,7 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeRoot);
         }
 
-        let mut limited = source.take(MAX_ARCHIVE_BYTES + 1);
+        let mut limited = source.take(expected_size + 1);
         let copied = io::copy(&mut limited, temporary.as_file_mut())?;
         if copied > MAX_ARCHIVE_BYTES {
             return Err(ApplicationStageError::ArchiveTooLarge);

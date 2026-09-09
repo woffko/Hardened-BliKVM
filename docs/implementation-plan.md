@@ -1026,6 +1026,11 @@ native socket-worker gate passed after fixing a duplicate slot-lock acquisition
 (`baselines/device-update-status-ipc.md`). Installed API/browser acceptance and
 deployment remain required. Signed upload
 and activation from the GUI are the following slices, not completed features.
+The upload foundation now adds exact-length stream staging through the same
+verified immutable publication path and a separate closed stage-only metadata
+protocol (`design/application-upload-boundary-v1.md`). HTTP transport, private
+spooling before taking the slot lock, quotas, installed worker and GUI wiring
+remain required; this does not enable uploads or activation on the device.
 
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all

@@ -196,6 +196,103 @@ fn stages_one_readonly_exact_slot_and_is_idempotent() {
 }
 
 #[test]
+fn streamed_archive_uses_the_same_immutable_idempotent_slot() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let first = stager
+        .stage_reader(archive.as_slice(), archive.len() as u64, &trust)
+        .unwrap();
+    assert_eq!(first.disposition, StageDisposition::Published);
+    assert_eq!(mode(&first.slot_path), 0o555);
+    for (relative, (manifest_mode, bytes)) in &payload {
+        let path = first.slot_path.join(relative);
+        assert_eq!(fs::read(&path).unwrap(), *bytes);
+        assert_eq!(mode(&path), manifest_mode & !0o222);
+    }
+    let source_directory = tempfile::tempdir().unwrap();
+    let source = write_source(&source_directory, "application.tar", &archive);
+    let second = stager.stage(source, &trust).unwrap();
+    assert_eq!(second.disposition, StageDisposition::AlreadyPresent);
+    assert_eq!(second.slot_id, first.slot_id);
+    assert_eq!(second.manifest_sha256, first.manifest_sha256);
+    assert_eq!(root_entries(slots.path()), vec![first.slot_id]);
+    assert!(!slots.path().join("current").exists());
+}
+
+#[test]
+fn streamed_archive_rejects_length_mismatch_and_cleans_snapshot() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    for declared in [archive.len() as u64 - 1, archive.len() as u64 + 1] {
+        assert!(matches!(
+            stager.stage_reader(archive.as_slice(), declared, &trust),
+            Err(ApplicationStageError::SourceChanged)
+        ));
+        assert!(root_entries(slots.path()).is_empty());
+    }
+    // A lying sender cannot force a full maximum-size copy for a tiny declaration.
+    let mut reader = std::io::Cursor::new(&archive);
+    assert!(matches!(
+        stager.stage_reader(&mut reader, 1, &trust),
+        Err(ApplicationStageError::SourceChanged)
+    ));
+    assert_eq!(reader.position(), 2);
+    assert!(root_entries(slots.path()).is_empty());
+}
+
+#[test]
+fn streamed_archive_rejects_invalid_bounds_without_reading() {
+    let (_, trust) = keys();
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    struct MustNotRead;
+    impl std::io::Read for MustNotRead {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("invalid declared size must be rejected before reading")
+        }
+    }
+    for declared in [0, MAX_ARCHIVE_BYTES + 1, u64::MAX] {
+        assert!(matches!(
+            stager.stage_reader(MustNotRead, declared, &trust),
+            Err(ApplicationStageError::ArchiveTooLarge)
+        ));
+        assert!(root_entries(slots.path()).is_empty());
+    }
+}
+
+#[test]
+fn streamed_archive_rejects_read_failure_and_untrusted_signature_without_publication() {
+    let (signing, _) = keys();
+    let untrusted = SigningKey::from_bytes(&[18; 32]);
+    let trust = ApplicationTrustRoot::new(KEY_ID, untrusted.verifying_key().to_bytes()).unwrap();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    assert!(matches!(
+        stager.stage_reader(archive.as_slice(), archive.len() as u64, &trust),
+        Err(ApplicationStageError::Verify(_))
+    ));
+    struct Broken;
+    impl std::io::Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("test interruption"))
+        }
+    }
+    assert!(matches!(
+        stager.stage_reader(Broken, 1, &trust),
+        Err(ApplicationStageError::Io(_))
+    ));
+    assert!(root_entries(slots.path()).is_empty());
+}
+
+#[test]
 fn standalone_inspection_rejects_untrusted_slot_identifiers() {
     let (_, trust) = keys();
     let slots = tempfile::tempdir().unwrap();

@@ -1,6 +1,8 @@
 //! Closed, bounded metadata for the local application-update boundary.
 //! Status requests contain no mutation, path, command, URL or credential.
 
+pub mod upload;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
