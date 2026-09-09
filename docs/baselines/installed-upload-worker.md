@@ -1,6 +1,6 @@
 # Installed upload worker rehearsal
 
-This gate is not yet device-accepted. Its first scope is the existing confirmed
+This bounded gate passed on the device on 2026-09-09. Its first scope is the existing confirmed
 sequence-seven archive only. It does not publish a new slot, activate an
 application, enable HTTP writes, restart the serving application, change the
 updater package, or operate target power.
@@ -35,6 +35,17 @@ and [unit reference implementation](https://github.com/systemd/systemd/blob/v249
 The test intentionally observes the upload idle timeout. It does not force
 expiry of the separate packaged 180-second RuntimeMax limit.
 
-Host protocol, lifecycle, cleanup, reference ABI and receipt checks are local
-evidence only. The installed native command and post-gate browser preservation
-checks are still pending.
+The installed native command passed all nine vectors. Authorized body probes
+observed the dedicated identity, empty effective capabilities, unchanged
+packaged executable/sandbox, and the anonymous spool. Natural exits were 0 for
+retry and the delivered tamper rejection, 50 for truncated/surplus/malformed
+and idle-timeout streams, 96 for the unauthorized root peer, and 50 for the
+deliberately lost reply; the following exact retry succeeded. No forced worker
+stop was used as terminal proof. Protected state and the serving PID were
+unchanged; the socket, new empty spool, guard and controller staging were
+removed/restored as designed. Private receipt:
+`installed-upload-seq7-rehearsal-20260909.json`.
+
+The post-gate browser preservation check remains pending. These results do not
+establish new-slot publication, HTTP/GUI upload, activation, or forced expiry
+of the packaged RuntimeMax limit.
