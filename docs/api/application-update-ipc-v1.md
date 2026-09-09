@@ -2,10 +2,12 @@
 
 The HTTP process does not read updater-owned journals, publish slots, read
 health credentials or invoke privileged service management. Separate Unix
-socket endpoints will expose status, signed-upload staging and activation.
-The first implementation slice defines status only; unknown request variants
-must fail closed. Upload/activation and writable GUI capability remain later
-parts of this same integration, not omitted product requirements.
+socket endpoints expose separate protocols for status, signed-upload staging
+and generation-fenced activation. This document describes status; unknown
+request variants must fail closed. See `application-update-v1.md` for upload
+and `application-activation-v1.md` for opt-in activation source. Installed
+write-path acceptance and writable GUI capability remain required parts of
+this same integration, not omitted product requirements.
 
 Messages are closed UTF-8 JSON framed by a four-byte big-endian payload length.
 Frames are nonempty and at most 16 KiB. Every envelope carries schema version
@@ -53,6 +55,6 @@ setting the capability remains unavailable and authenticated requests return
 503. HTTP status data carries schema version one and decimal strings for all
 u64 counters, preserving values above JavaScript's safe-integer range. The Bli
 settings pane validates exact fields and slot/counter relationships, shows
-stale/unavailable data explicitly, and polls only while visible. It neither
-offers mutation controls nor invokes inherited system-update/firewall routes.
-Upload and activation are still required subsequent integration work.
+stale/unavailable data explicitly, and polls only while visible. Writable
+controls remain capability-gated; inherited system-update/firewall routes
+are never invoked. Installed upload/activation acceptance remains required.

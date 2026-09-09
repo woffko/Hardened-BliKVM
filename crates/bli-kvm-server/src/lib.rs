@@ -14,7 +14,7 @@ use bli_kvm_core::{
     RuntimeInventory,
 };
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
-use bli_kvm_update_client::{UpdateStatusClient, UpdateUploadClient};
+use bli_kvm_update_client::{UpdateActivationClient, UpdateStatusClient, UpdateUploadClient};
 use bli_kvm_video_client::VideoReadClient;
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -40,6 +40,7 @@ pub(crate) struct AppState {
     pub video: Arc<VideoReadClient>,
     pub update_status: Option<Arc<UpdateStatusClient>>,
     pub update_upload: Option<Arc<UpdateUploadClient>>,
+    pub update_activation: Option<Arc<UpdateActivationClient>>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -62,6 +63,8 @@ pub struct ServerOptions {
     pub update_status_socket: Option<PathBuf>,
     /// Stage-only IPC; disabled by default, never enables activation.
     pub update_upload_socket: Option<PathBuf>,
+    /// Explicit generation-fenced activation; disabled by default.
+    pub update_activation_socket: Option<PathBuf>,
 }
 
 impl Default for ServerOptions {
@@ -78,6 +81,7 @@ impl Default for ServerOptions {
             video_socket: PathBuf::from("/run/hardened-blikvm-video/mjpeg.sock"),
             update_status_socket: None,
             update_upload_socket: None,
+            update_activation_socket: None,
         }
     }
 }
@@ -107,6 +111,19 @@ pub fn app_with_web_root(web_root: Option<PathBuf>) -> Router {
 }
 
 pub fn app_with_options(options: ServerOptions) -> Router {
+    if let Some(activation) = &options.update_activation_socket {
+        assert!(
+            options
+                .update_status_socket
+                .as_ref()
+                .is_some_and(|status| status != activation)
+                && options
+                    .update_upload_socket
+                    .as_ref()
+                    .is_some_and(|upload| upload != activation),
+            "activation requires separate configured status and upload sockets"
+        );
+    }
     if let Some(upload) = &options.update_upload_socket {
         assert!(
             options
@@ -126,6 +143,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .expect("built-in Bli H616 capability manifest must be valid");
     let state = AppState {
         capabilities: Arc::new(manifest),
+        update_activation: options.update_activation_socket.as_ref().map(|path| {
+            Arc::new(
+                UpdateActivationClient::new(path)
+                    .expect("activation socket path must be a bounded absolute Unix path"),
+            )
+        }),
         update_upload: options.update_upload_socket.as_ref().map(|path| {
             Arc::new(
                 UpdateUploadClient::new(path)
@@ -179,6 +202,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/diagnostics", get(diagnostics_view))
         .route("/application-update/status", get(update::status))
         .route("/application-update/upload", post(update::upload))
+        .route("/application-update/activate", post(update::activate))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let api = public.merge(protected_routes).fallback(api_not_found);
@@ -396,6 +420,128 @@ mod tests {
         assert_eq!(
             manifest["data"]["system"]["signedSystemUpdates"]["availability"],
             "unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn activation_is_authorized_bounded_once_and_awaiting_health_only() {
+        use bli_kvm_update_protocol::{self as protocol, activation as ipc};
+        let root = tempdir().unwrap();
+        let socket = root.path().join("activate.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(root.path().join("upload.sock")),
+            update_activation_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let slot = format!("app-00000000000000000002-{}", "a".repeat(64));
+        let payload =
+            serde_json::json!({"slotId":slot, "expectedGeneration": u64::MAX.to_string()});
+        for mode in [
+            "no-login",
+            "no-csrf",
+            "cross-origin",
+            "extra-field",
+            "numeric-generation",
+            "oversize",
+        ] {
+            let mut body = payload.clone();
+            if mode == "extra-field" {
+                body["command"] = serde_json::json!("forbidden");
+            }
+            if mode == "numeric-generation" {
+                body["expectedGeneration"] = serde_json::json!(1);
+            }
+            if mode == "oversize" {
+                body["slotId"] = serde_json::json!("a".repeat(17000));
+            }
+            let mut request = json_request(Method::POST, "/api/application-update/activate", body);
+            if mode != "no-login" {
+                request
+                    .headers_mut()
+                    .insert(header::COOKIE, cookie.parse().unwrap());
+            }
+            if mode != "no-csrf" {
+                request
+                    .headers_mut()
+                    .insert("x-csrf-token", csrf.parse().unwrap());
+            }
+            if mode == "cross-origin" {
+                request
+                    .headers_mut()
+                    .insert(header::ORIGIN, "https://attacker.invalid".parse().unwrap());
+            }
+            let response = app.clone().oneshot(request).await.unwrap();
+            match mode {
+                "no-login" => assert_eq!(response.status(), StatusCode::UNAUTHORIZED),
+                "no-csrf" | "cross-origin" => assert_eq!(response.status(), StatusCode::FORBIDDEN),
+                _ => assert_eq!(json_body(response).await["code"], -1),
+            }
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+        let worker = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).await.unwrap();
+            assert_eq!(
+                u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize,
+                bytes.len() - 4
+            );
+            let request = ipc::decode_request(&bytes[4..]).unwrap();
+            assert_eq!(
+                request.request,
+                ipc::ActivationRequest::Activate {
+                    slot_id: slot.clone(),
+                    expected_generation: u64::MAX
+                }
+            );
+            let response = ipc::ActivationResponseEnvelope {
+                schema_version: 1,
+                request_id: request.request_id,
+                response: ipc::ActivationResponse::AwaitingHealth {
+                    receipt: ipc::ActivationReceipt {
+                        operation_id: "1".repeat(32),
+                        target_slot_id: slot,
+                    },
+                },
+            };
+            stream
+                .write_all(
+                    &protocol::encode_frame(&ipc::encode_response(&response).unwrap()).unwrap(),
+                )
+                .await
+                .unwrap();
+        });
+        let mut request = json_request(Method::POST, "/api/application-update/activate", payload);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let result = json_body(response).await;
+        assert_eq!(result["data"]["phase"], "awaiting_health");
+        assert_eq!(result["data"]["receipt"]["operationId"], "1".repeat(32));
+        assert!(result["data"].get("confirmed").is_none());
+        worker.await.unwrap();
+        let manifest = json_body(
+            app.oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
+            "read_only"
         );
     }
 
@@ -698,7 +844,7 @@ mod tests {
             .insert("x-csrf-token", csrf.parse().unwrap());
         assert_eq!(
             app.oneshot(mutation).await.unwrap().status(),
-            StatusCode::NOT_FOUND
+            StatusCode::SERVICE_UNAVAILABLE
         );
     }
 

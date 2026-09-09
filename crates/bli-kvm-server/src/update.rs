@@ -4,7 +4,10 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, header},
 };
-use bli_kvm_update_client::UploadClientError;
+use bli_kvm_update_client::{ActivationClientError, UploadClientError};
+use bli_kvm_update_protocol::activation::{
+    self, ActivationErrorCode, ActivationReceipt, ActivationRequest, ActivationRequestEnvelope,
+};
 use bli_kvm_update_protocol::upload::{
     MAX_UPLOAD_ARCHIVE_BYTES, UploadDisposition, UploadErrorCode, UploadReceipt,
 };
@@ -14,7 +17,7 @@ use bli_kvm_update_protocol::{
 };
 use bytes::Bytes;
 use http_body::Body as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -106,6 +109,131 @@ pub(crate) async fn status(
         AppError::ServiceUnavailable("application update status is unavailable".into())
     })?;
     Ok(Json(ApiResponse::ok(status.into())))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ActivationBody {
+    slot_id: String,
+    expected_generation: String,
+}
+
+fn activation_body(bytes: &[u8]) -> AppResult<(String, u64)> {
+    let invalid = || AppError::BadRequest("invalid activation request".into());
+    let body: ActivationBody = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let value = &body.expected_generation;
+    if value.is_empty() || value.starts_with('0') || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let generation: u64 = value.parse().map_err(|_| invalid())?;
+    activation::encode_request(&ActivationRequestEnvelope {
+        schema_version: UPDATE_SCHEMA_VERSION,
+        request_id: 1,
+        request: ActivationRequest::Activate {
+            slot_id: body.slot_id.clone(),
+            expected_generation: generation,
+        },
+    })
+    .map_err(|_| invalid())?;
+    Ok((body.slot_id, generation))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivationView {
+    phase: &'static str,
+    receipt: ActivationReceipt,
+}
+
+pub(crate) async fn activate(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    request: Request,
+) -> AppResult<(axum::http::StatusCode, Json<ApiResponse<ActivationView>>)> {
+    // Protected middleware has checked authentication, origin and CSRF first.
+    let client = state
+        .update_activation
+        .as_ref()
+        .ok_or_else(|| AppError::ServiceUnavailable("activation is not configured".into()))?;
+    if request
+        .headers()
+        .get_all(header::CONTENT_TYPE)
+        .iter()
+        .count()
+        != 1
+        || request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            != Some("application/json")
+        || request.headers().contains_key(header::CONTENT_ENCODING)
+        || request.headers().contains_key(header::TRAILER)
+    {
+        return Err(AppError::BadRequest(
+            "activation requires unencoded application/json".into(),
+        ));
+    }
+    // Reuse the session-aware frame adapter so trailers and body errors cannot
+    // be accepted, with a small absolute allocation/read-time bound.
+    let reader = UploadBody {
+        body: request.into_body(),
+        chunk: Bytes::new(),
+        session: session.clone(),
+    };
+    let mut bytes = Vec::new();
+    let limit = bli_kvm_update_protocol::MAX_UPDATE_MESSAGE_BYTES;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::io::AsyncReadExt::read_to_end(
+            &mut tokio::io::AsyncReadExt::take(reader, (limit + 1) as u64),
+            &mut bytes,
+        ),
+    )
+    .await
+    .map_err(|_| AppError::BadRequest("activation body timed out".into()))?
+    .map_err(|_| AppError::BadRequest("invalid activation body".into()))?;
+    if bytes.len() > limit {
+        return Err(AppError::BadRequest("activation body too large".into()));
+    }
+    let (slot_id, generation) = activation_body(&bytes)?;
+    if !session.is_active() {
+        return Err(AppError::Unauthorized);
+    }
+    // No cancellation implies rollback, and no failure authorizes a replay.
+    let receipt = client
+        .activate(&slot_id, generation)
+        .await
+        .map_err(|error| match error {
+            ActivationClientError::Busy
+            | ActivationClientError::Rejected(ActivationErrorCode::Busy) => {
+                AppError::Conflict("another activation is in progress".into())
+            }
+            ActivationClientError::Rejected(ActivationErrorCode::StaleGeneration) => {
+                AppError::Conflict("update state changed; refresh and confirm again".into())
+            }
+            ActivationClientError::Rejected(ActivationErrorCode::AlreadyActive) => {
+                AppError::Conflict("target is already active".into())
+            }
+            ActivationClientError::Rejected(ActivationErrorCode::PendingActivation) => {
+                AppError::Conflict("an activation is awaiting health".into())
+            }
+            ActivationClientError::Rejected(ActivationErrorCode::InvalidTarget) => {
+                AppError::BadRequest("activation target is not eligible".into())
+            }
+            _ => {
+                AppError::ServiceUnavailable("activation outcome unknown; reconcile status".into())
+            }
+        })?;
+    if !session.is_active() {
+        return Err(AppError::Unauthorized);
+    }
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        Json(ApiResponse::ok(ActivationView {
+            phase: "awaiting_health",
+            receipt,
+        })),
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -262,6 +390,36 @@ pub(crate) async fn upload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activation_accepts_only_exact_decimal_generation_and_closed_intent() {
+        let slot = format!("app-00000000000000000002-{}", "a".repeat(64));
+        let valid = serde_json::json!({"slotId": slot, "expectedGeneration": u64::MAX.to_string()});
+        assert_eq!(
+            activation_body(&serde_json::to_vec(&valid).unwrap()).unwrap(),
+            (slot, u64::MAX)
+        );
+        for value in [
+            serde_json::json!(1),
+            serde_json::json!(null),
+            serde_json::json!("0"),
+            serde_json::json!("01"),
+            serde_json::json!("+1"),
+            serde_json::json!(" 1"),
+            serde_json::json!("1.0"),
+            serde_json::json!("18446744073709551616"),
+        ] {
+            let mut body = valid.clone();
+            body["expectedGeneration"] = value;
+            assert!(activation_body(&serde_json::to_vec(&body).unwrap()).is_err());
+        }
+        for field in ["command", "url", "healthToken", "confirm"] {
+            let mut body = valid.clone();
+            body[field] = serde_json::json!("forbidden");
+            assert!(activation_body(&serde_json::to_vec(&body).unwrap()).is_err());
+        }
+        assert!(activation_body(br#"{"slotId":"../bad","expectedGeneration":"1"}"#).is_err());
+    }
 
     fn raw_headers() -> HeaderMap {
         let mut headers = HeaderMap::new();

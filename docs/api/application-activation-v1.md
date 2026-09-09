@@ -163,9 +163,36 @@ releases manager locks. Dev1–dev8 package file maps remain unchanged.
 Host tests cover generation fencing, repeated requests before/after health
 confirmation, preserved challenge identity, typed errors, exact receipts and
 success-for-dispatch after a lost reply. Offline package/systemd checks cover
-the new templates. HTTP/UI activation wiring and installed identity, dispatch,
+the new templates. UI activation wiring and installed identity, dispatch,
 restart/health/rollback and browser acceptance remain required; these source
 changes do not enable writable-update capability.
+
+### Opt-in HTTP activation source
+
+`POST /api/application-update/activate` is protected by the existing session,
+origin and CSRF middleware before any body or IPC work. It is disabled unless
+`BLI_KVM_UPDATE_ACTIVATION_SOCKET` is explicitly configured, and requires
+separate configured status and upload sockets. Authenticated calls return 503
+when disabled. Configuration alone still advertises read-only capability.
+
+The closed `application/json` body contains only `slotId` and
+`expectedGeneration`; the latter is a canonical positive decimal **string**,
+not a JavaScript number. Unknown fields, noncanonical/overflowing counters,
+invalid slot IDs, encoded bodies and trailers are rejected. Reading is bounded
+to 16 KiB plus an overflow sentinel and a two-second absolute deadline; the
+session is checked again before dispatch. The separate client allows one
+in-flight activation and has a ten-second total deadline. It sends exactly
+once, validates bounded framing, EOF, request ID and returned target identity.
+
+An HTTP 202 response contains `data.phase = "awaiting_health"` and a `receipt`
+with `operationId` and `targetSlotId`. It never claims health confirmation.
+Stale/current/pending/busy rejections retain the API's existing conflict code;
+transport or protocol failures return sanitized 503. A lost response or logout
+after dispatch does not undo activation. The caller must reconcile via status,
+never silently retry or substitute a newer generation. Host HTTP/client tests
+cover authorization, closed bodies, exact u64 generation, receipt correlation,
+bounded concurrency/timeouts, lost replies and absence of automatic retry.
+These tests are not installed systemd dispatch or native browser acceptance.
 
 Supervisor stderr remains deliberately generic. When a runtime operation
 reaches the manager and fails, the local exit status identifies only the fixed

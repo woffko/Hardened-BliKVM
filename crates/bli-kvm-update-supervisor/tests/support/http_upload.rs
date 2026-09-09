@@ -230,6 +230,6 @@ async fn authenticated_http_reaches_real_signed_stager_without_activation() {
         .insert("x-csrf-token", csrf.parse().unwrap());
     assert_eq!(
         app.oneshot(activate).await.unwrap().status(),
-        StatusCode::NOT_FOUND
+        StatusCode::SERVICE_UNAVAILABLE
     );
 }

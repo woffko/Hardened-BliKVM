@@ -38,6 +38,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ),
         update_status_socket: env::var_os("BLI_KVM_UPDATE_STATUS_SOCKET").map(PathBuf::from),
         update_upload_socket: env::var_os("BLI_KVM_UPDATE_UPLOAD_SOCKET").map(PathBuf::from),
+        update_activation_socket: env::var_os("BLI_KVM_UPDATE_ACTIVATION_SOCKET")
+            .map(PathBuf::from),
         ..ServerOptions::default()
     };
 

@@ -19,6 +19,8 @@ use tokio::{
 
 mod upload;
 pub use upload::{UpdateUploadClient, UploadClientError};
+mod activation;
+pub use activation::{ActivationClientError, UpdateActivationClient};
 
 #[derive(Debug, Error)]
 pub enum UpdateClientError {
