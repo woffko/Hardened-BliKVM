@@ -36,6 +36,17 @@ match the digest component of the validated slot ID. HTTP must serialize all
 
 ## Required transport integration, not yet implemented
 
+The supervisor library now provides a bounded reception primitive: it checks
+the closed metadata before creating a sink, copies in 64 KiB chunks, requires
+exact body length and EOF, and drops the owned sink on failure. Header, idle
+and absolute total deadlines are independent; progress does not reset the
+total deadline. Its defaults are 2 s / 5 s / 120 s. Socket-pair tests cover
+truncation, surplus, missing EOF, stalled metadata, continuously progressing
+uploads exceeding total time, and sink destruction on failure. This primitive
+does not authorize peers or create the private spool: those worker integration
+gates below remain mandatory. Blocking local filesystem calls additionally
+require an installed worker process lifetime bound.
+
 - Authenticate the HTTP request and enforce the existing same-origin/CSRF
   policy before consuming the archive or opening updater IPC. Do not accept a
   user-selected upstream URL. Enforce an exact content length and media type;
