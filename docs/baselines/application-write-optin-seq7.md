@@ -49,7 +49,17 @@ reads/refresh, video decoding and logout revocation. No upload/activation
 control request or WebSocket was issued. Private receipt:
 `application-seq7-read-status-browser-20260909.json`.
 
-Fresh reboot checks remain pending. Their observer uses a separate application
-profile, preserving both the legacy seq2 reboot-interruption contract and the
-dev7-to-dev9 updater upgrade's original seq6 binding. This flow deliberately
-did not enable writable services or test GUI writes.
+The fresh reboot and post-boot browser checks passed. One software reboot
+changed the boot identity; sequence seven, generation 37, signed slot contents,
+persistent status drop-ins and protected runtime state were preserved. Recovery
+and status socket activation preceded the server. The final observation saw
+57 seconds uptime, rootfs `rw`, and removed probe staging. The post-boot GUI
+again passed the seq7 desktop/mobile status, video and logout checks.
+Private receipts: `application-seq7-reboot-20260909.json` and
+`application-seq7-postboot-browser-20260909.json`.
+
+The observer uses a separate application profile, preserving both the legacy
+seq2 reboot-interruption contract and the dev7-to-dev9 updater upgrade's
+original seq6 binding. These gates did not enable writable services or test GUI
+writes. Native upload worker identity/sandbox/lifetime and the complete
+authenticated HTTP/GUI upload and activation flow remain required.
