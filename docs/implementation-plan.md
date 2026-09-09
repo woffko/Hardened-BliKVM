@@ -1058,6 +1058,11 @@ The probe now verifies the selected browser File's size and SHA-256 before
 submission, leaves its request untouched, and still requires the exact signed
 staging receipt. Separate cleanup again verified floor seven/generation 37 and
 closed writes; no activation request was sent in either failed probe run.
+The next run forwarded the real upload but failed response validation, still
+without activation. Recovery and independent cleanup again passed. Bounded
+read-only service error counters did not identify the cause; the probe now
+retains the HTTP status and allowlisted application-error classification
+before asserting success. No speculative server or proxy changes were made.
 
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all

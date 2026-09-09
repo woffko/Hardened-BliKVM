@@ -84,7 +84,9 @@ export async function runApplicationWriteUi(
   page,
   archivePath,
   archiveVerified = () => {},
+  progress = () => {},
 ) {
+  progress({ step: "status-before" });
   await readStatus(page, "seq7");
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.mouse.move(640, 1);
@@ -110,6 +112,7 @@ export async function runApplicationWriteUi(
     });
   assert.deepEqual(selected, { bytes: bundleBytes, sha256: bundleSha256 });
   archiveVerified();
+  progress({ step: "upload-send" });
   const uploaded = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === uploadRoute &&
@@ -120,12 +123,33 @@ export async function runApplicationWriteUi(
     .getByRole("button", { name: "Upload and verify", exact: true })
     .click();
   const response = await uploaded;
+  progress({ step: "upload-response", httpStatus: response.status() });
+  const uploadBody = await response.json();
+  const knownMessages = new Set([
+    "success",
+    "upload body length mismatch",
+    "archive verification failed",
+    "another upload is in progress",
+    "upload staging quota exceeded",
+    "service unavailable",
+    "upload requires an exact unencoded application/octet-stream body of 1 to 134217728 bytes",
+  ]);
+  progress({
+    step: "upload-receipt",
+    httpStatus: response.status(),
+    code: Number.isSafeInteger(uploadBody.code) ? uploadBody.code : null,
+    messageKind: knownMessages.has(uploadBody.msg)
+      ? uploadBody.msg
+      : "unclassified",
+  });
   assert.equal(response.status(), 200);
-  validateStaged(await response.json());
+  validateStaged(uploadBody);
+  progress({ step: "staged-ui" });
   await panel
     .getByText("This verified archive is already staged", { exact: true })
     .waitFor();
   await readStatus(page, "seq7");
+  progress({ step: "review" });
   await panel.getByTestId("application-activation-review").click();
   const confirm = page.getByTestId("application-activation-confirm");
   const dialog = page.getByRole("dialog").filter({ has: confirm });

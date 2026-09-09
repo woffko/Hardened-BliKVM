@@ -151,9 +151,16 @@ try {
   );
   phase = mode;
   if (mode === "activate") {
-    receipt.ui = await runApplicationWriteUi(page, archive, () => {
-      receipt.selectedArchiveVerified = true;
-    });
+    receipt.ui = await runApplicationWriteUi(
+      page,
+      archive,
+      () => {
+        receipt.selectedArchiveVerified = true;
+      },
+      (fact) => {
+        receipt.lastUpdateFact = fact;
+      },
+    );
     assert.equal(receipt.uploadRequests, 1);
     assert.equal(receipt.activationRequests, 1);
   } else {
