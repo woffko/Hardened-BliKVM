@@ -723,6 +723,8 @@ dependencies = [
 name = "bli-kvm-update-supervisor"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "bli-kvm-server",
  "bli-kvm-update-manager",
  "bli-kvm-update-protocol",
  "bli-kvm-update-runtime",
@@ -737,6 +739,8 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

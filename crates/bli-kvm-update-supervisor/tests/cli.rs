@@ -19,6 +19,9 @@ use tar::{Builder, EntryType, Header};
 
 const KEY_ID: &str = "app-supervisor-cli-test-key-1";
 
+#[path = "support/http_upload.rs"]
+mod http_upload;
+
 #[test]
 fn upload_worker_stages_retries_and_rejects_without_activation() {
     use bli_kvm_update_protocol::{

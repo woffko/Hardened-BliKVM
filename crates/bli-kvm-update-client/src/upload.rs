@@ -127,6 +127,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upstream_error_after_exact_bytes_withholds_final_worker_byte() {
+        struct ErrorAtEof(&'static [u8]);
+        impl AsyncRead for ErrorAtEof {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                buffer: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                if self.0.is_empty() {
+                    return std::task::Poll::Ready(Err(std::io::Error::other(
+                        "upstream trailer failure",
+                    )));
+                }
+                let size = buffer.remaining().min(self.0.len());
+                buffer.put_slice(&self.0[..size]);
+                self.0 = &self.0[size..];
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("upload.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let worker = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            request(&mut socket).await;
+            let mut body = Vec::new();
+            socket.read_to_end(&mut body).await.unwrap();
+            assert_eq!(body, b"ab");
+        });
+        assert!(matches!(
+            UpdateUploadClient::new(path)
+                .unwrap()
+                .stage(3, ErrorAtEof(b"abc"))
+                .await,
+            Err(UploadClientError::Io(_))
+        ));
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn independent_idle_transfer_and_response_total_deadlines() {
+        for mode in ["idle", "transfer", "response"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("upload.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let worker = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                request(&mut socket).await;
+                let mut body = Vec::new();
+                socket.read_to_end(&mut body).await.unwrap();
+                if mode == "response" {
+                    assert_eq!(body, b"x");
+                    std::future::pending::<()>().await;
+                }
+            });
+            let client = UpdateUploadClient::new(path).unwrap();
+            let mut limits = UploadDeadlines {
+                idle: Duration::from_secs(2),
+                transfer: Duration::from_secs(2),
+                total: Duration::from_secs(2),
+            };
+            let (mut writer, reader) = tokio::io::duplex(8);
+            let progress = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let source;
+            let size;
+            match mode {
+                "idle" => {
+                    limits.idle = Duration::from_millis(40);
+                    size = 1;
+                    source = tokio::spawn(async move {
+                        let _hold = writer;
+                        std::future::pending::<()>().await;
+                    });
+                }
+                "transfer" => {
+                    limits.transfer = Duration::from_millis(120);
+                    size = 100;
+                    let progress = progress.clone();
+                    source = tokio::spawn(async move {
+                        for _ in 0..100 {
+                            if writer.write_all(b"x").await.is_err() {
+                                break;
+                            }
+                            progress.fetch_add(1, Ordering::Relaxed);
+                            tokio::time::sleep(Duration::from_millis(5)).await;
+                        }
+                    });
+                }
+                _ => {
+                    limits.total = Duration::from_millis(80);
+                    size = 1;
+                    source = tokio::spawn(async move {
+                        writer.write_all(b"x").await.unwrap();
+                    });
+                }
+            }
+            // Only the selected 40/80/120 ms bound can finish before this
+            // independent outer guard; the other two remain at two seconds.
+            let result = timeout(
+                Duration::from_secs(1),
+                client.stage_with_deadlines(size, reader, limits),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(result, Err(UploadClientError::Timeout)), "{mode}");
+            if mode == "transfer" {
+                assert!(progress.load(Ordering::Relaxed) > 2);
+            }
+            assert!(matches!(
+                client.stage(0, &b""[..]).await,
+                Err(UploadClientError::Protocol(_))
+            ));
+            source.abort();
+            let _ = source.await;
+            if mode == "response" {
+                worker.abort();
+            }
+            let result = worker.await;
+            if mode != "response" {
+                result.unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn invalid_length_does_not_read_or_connect() {
         struct NeverRead;
         impl AsyncRead for NeverRead {
@@ -230,6 +355,21 @@ pub struct UpdateUploadClient {
     concurrency: Semaphore,
 }
 
+#[derive(Clone, Copy)]
+struct UploadDeadlines {
+    idle: Duration,
+    transfer: Duration,
+    total: Duration,
+}
+
+impl UploadDeadlines {
+    const DEFAULT: Self = Self {
+        idle: Duration::from_secs(4),
+        transfer: Duration::from_secs(115),
+        total: Duration::from_secs(175),
+    };
+}
+
 impl UpdateUploadClient {
     pub fn new(path: impl Into<PathBuf>) -> Result<Self, UploadClientError> {
         let path = path.into();
@@ -248,6 +388,16 @@ impl UpdateUploadClient {
         archive_bytes: u64,
         reader: R,
     ) -> Result<UploadReceipt, UploadClientError> {
+        self.stage_with_deadlines(archive_bytes, reader, UploadDeadlines::DEFAULT)
+            .await
+    }
+
+    async fn stage_with_deadlines<R: AsyncRead + Unpin>(
+        &self,
+        archive_bytes: u64,
+        reader: R,
+        deadlines: UploadDeadlines,
+    ) -> Result<UploadReceipt, UploadClientError> {
         let _permit = self
             .concurrency
             .try_acquire()
@@ -255,8 +405,8 @@ impl UpdateUploadClient {
         // Independent hard total bound: progress does not extend it. Includes
         // verification and response time, bounded by the worker's 180 s life.
         timeout(
-            Duration::from_secs(175),
-            self.execute(archive_bytes, reader),
+            deadlines.total,
+            self.execute(archive_bytes, reader, deadlines),
         )
         .await
         .map_err(|_| UploadClientError::Timeout)?
@@ -266,6 +416,7 @@ impl UpdateUploadClient {
         &self,
         archive_bytes: u64,
         mut reader: R,
+        deadlines: UploadDeadlines,
     ) -> Result<UploadReceipt, UploadClientError> {
         let id = self
             .next_id
@@ -287,7 +438,7 @@ impl UpdateUploadClient {
         )
         .await
         .map_err(|_| UploadClientError::Timeout)??;
-        timeout(Duration::from_secs(115), async {
+        timeout(deadlines.transfer, async {
             // Hold the final byte until upstream EOF is validated. Otherwise
             // dropping IPC on a surplus/error would deliver an apparently
             // valid exact-length body plus EOF and could publish it.
@@ -295,33 +446,33 @@ impl UpdateUploadClient {
             let mut buffer = [0_u8; 64 * 1024];
             while remaining > 0 {
                 let capacity = remaining.min(buffer.len() as u64) as usize;
-                let count = timeout(Duration::from_secs(4), reader.read(&mut buffer[..capacity]))
+                let count = timeout(deadlines.idle, reader.read(&mut buffer[..capacity]))
                     .await
                     .map_err(|_| UploadClientError::Timeout)??;
                 if count == 0 {
                     return Err(UploadClientError::LengthMismatch);
                 }
-                timeout(Duration::from_secs(4), socket.write_all(&buffer[..count]))
+                timeout(deadlines.idle, socket.write_all(&buffer[..count]))
                     .await
                     .map_err(|_| UploadClientError::Timeout)??;
                 remaining -= count as u64;
             }
             let mut last = [0_u8; 1];
-            if timeout(Duration::from_secs(4), reader.read(&mut last))
+            if timeout(deadlines.idle, reader.read(&mut last))
                 .await
                 .map_err(|_| UploadClientError::Timeout)??
                 != 1
             {
                 return Err(UploadClientError::LengthMismatch);
             }
-            if timeout(Duration::from_secs(4), reader.read(&mut buffer[..1]))
+            if timeout(deadlines.idle, reader.read(&mut buffer[..1]))
                 .await
                 .map_err(|_| UploadClientError::Timeout)??
                 != 0
             {
                 return Err(UploadClientError::LengthMismatch);
             }
-            timeout(Duration::from_secs(4), socket.write_all(&last))
+            timeout(deadlines.idle, socket.write_all(&last))
                 .await
                 .map_err(|_| UploadClientError::Timeout)??;
             socket.shutdown().await?;

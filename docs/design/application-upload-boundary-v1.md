@@ -98,9 +98,19 @@ Host tests cover authorization/headers before body or IPC, exact signed-slot
 receipt serialization without u64 rounding, raw stage-only IPC, malformed
 headers/trailers, incomplete/surplus input, cancellation/admission, logout
 during a stalled body and oversized/mismatched/surplus receipts. The successful
-HTTP test uses a fake IPC peer, not the installed updater. These checks do not
-establish native or browser acceptance. Writable-update capability remains
+HTTP route serialization test uses a fake IPC peer, not the installed updater.
+These checks do not establish native or browser acceptance. Writable-update capability remains
 disabled; the upload does not expose an activation endpoint.
+
+An additional host integration now connects the real authenticated Axum route
+and streaming client to a subprocess running `upload-socket`, using synthetic
+signed archives and disposable unprivileged roots. It verifies publication,
+same-slot retry, rejection of an untrusted signature and short/surplus bodies,
+empty spool/state/runtime directories, unchanged slot-root layout after the
+first publication and no current pointer. This is not an installed systemd
+sandbox or a real TLS/reverse-proxy test. Client tests also isolate idle,
+transfer and overall response deadlines, and prove that an upstream error
+after the last declared byte still withholds that byte from the worker.
 
 ## Browser UI source
 
