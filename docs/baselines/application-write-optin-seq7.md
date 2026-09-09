@@ -35,6 +35,13 @@ explicit profile, phase-bound browser receipts, no automatic activation retry,
 and a nondecreasing observed recovery floor. Its deadline and boot recovery
 execute the same bound profile.
 
-Installed health-timeout rehearsal, confirmed rollout, browser checks, and
-guard cleanup have not yet been performed for this candidate. Passing host
-checks does not imply those gates passed or writable services were enabled.
+The installed guarded flow passed on 2026-09-09. The health-timeout rehearsal
+returned to sequence six at generation 34 without raising its floor. The
+explicit activation then confirmed sequence seven at generation 37, with
+sequence six as the previous slot and no pending operation or rollback reason.
+Both phase-bound browser checks passed, commit and cleanup passed, and the
+guard and controller staging were removed. Account/TLS/trust/peer state was
+preserved. Private receipt: `application-seq7-write-optin-flow-20260909.json`.
+
+The sequence-seven read-status panel and fresh reboot checks remain pending.
+This flow deliberately did not enable writable services or test GUI writes.

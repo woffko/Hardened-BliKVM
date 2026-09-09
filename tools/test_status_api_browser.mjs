@@ -71,6 +71,30 @@ test("sequence-six panel checks both viewports using its explicit profile", asyn
   assert.equal(result.refreshChecks, 2);
 });
 
+test("sequence-seven status and both panels bind the installed generation", async () => {
+  assert.deepEqual(statusProfile("seq7"), {
+    generation: "37",
+    sequence: "7",
+    version: "0.1.0-dev6",
+    slot: "app-00000000000000000007-f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140",
+  });
+  validateStatus(fixture("seq7"), "seq7");
+  assert.throws(() => validateStatus(fixture("seq6"), "seq7"));
+  assert.throws(() => validateStatus(fixture("seq7"), "seq6"));
+  assert.throws(() =>
+    validateStatus({ ...fixture("seq7"), generation: "34" }, "seq7"),
+  );
+  const result = await verifyStatusPanel(
+    panelPage({ profileName: "seq7" }),
+    true,
+    undefined,
+    "seq7",
+  );
+  assert.equal(result.desktop, true);
+  assert.equal(result.mobile, true);
+  assert.equal(result.refreshChecks, 2);
+});
+
 function panelPage({
   hidden = false,
   revealWorks = true,
