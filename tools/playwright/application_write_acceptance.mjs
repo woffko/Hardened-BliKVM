@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { readCapturedResponse } from "./application_response_capture.mjs";
 import {
   statusProfile,
   statusRoute,
@@ -124,7 +125,11 @@ export async function runApplicationWriteUi(
     .click();
   const response = await uploaded;
   progress({ step: "upload-response", httpStatus: response.status() });
-  const uploadBody = await response.json();
+  const uploadBody = await readCapturedResponse(
+    page,
+    uploadRoute,
+    response.status(),
+  );
   const knownMessages = new Set([
     "success",
     "upload body length mismatch",
@@ -172,7 +177,9 @@ export async function runApplicationWriteUi(
   const activation = await activated;
   validateActivationRequest(activation.request().postDataJSON());
   assert.equal(activation.status(), 202);
-  validateActivation(await activation.json());
+  validateActivation(
+    await readCapturedResponse(page, activationRoute, activation.status()),
+  );
   return {
     uploadedAlreadyPresent: true,
     generationReviewed: "37",

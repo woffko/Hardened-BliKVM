@@ -14,6 +14,7 @@ import {
   validateUploadBody,
 } from "./application_write_acceptance.mjs";
 import { verifyStatusPanel } from "./status_api_acceptance.mjs";
+import { installResponseCapture } from "./application_response_capture.mjs";
 
 const [
   mode,
@@ -73,6 +74,7 @@ try {
     ignoreHTTPSErrors: true,
     locale: "en-US",
   });
+  await installResponseCapture(context);
   await context.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;

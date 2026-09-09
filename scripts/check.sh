@@ -36,7 +36,7 @@ python3 -B -m unittest \
   tools.test_application_write_pipeline tools.test_application_write_observer \
   tools.test_application_write_overrides tools.test_application_write_state \
   tools.test_installed_application_write_gate tools.test_run_application_write_gate
-node --test tools/test_application_write_acceptance.mjs
+node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --check tools/playwright/device_application_write.mjs
 
 python3 -m unittest \

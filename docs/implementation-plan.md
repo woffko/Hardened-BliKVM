@@ -1063,6 +1063,13 @@ without activation. Recovery and independent cleanup again passed. Bounded
 read-only service error counters did not identify the cause; the probe now
 retains the HTTP status and allowlisted application-error classification
 before asserting success. No speculative server or proxy changes were made.
+The instrumented run identified HTTP 200 followed by inspector response-body
+loss. A real localhost 8-MB XHR reproduction showed Chromium's "Request content
+was evicted from inspector cache" error despite a valid JSON response; larger
+CDP buffers did not fix it. A bounded in-page XHR loadend observer now captures
+only the two update-route responses, without altering request or response data
+or observing login. Unit tests and the same real localhost upload verified this
+observer. Activation remains unattempted pending the corrected device check.
 
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
