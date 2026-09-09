@@ -12,6 +12,39 @@ from tools import capture_operational_boot as observer
 
 
 class OperationalRebootTests(unittest.TestCase):
+    def test_application_profile_is_independent_and_preserves_legacy_defaults(self) -> None:
+        self.assertEqual(observer.resolve_application_profile("dev6-dev7", None), "seq2")
+        self.assertEqual(observer.resolve_application_profile("dev7-dev9", None), "seq6")
+        self.assertEqual(observer.resolve_application_profile("dev7-dev9", "seq7"), "seq7")
+        for updater, application in (("dev6-dev7", "seq7"), ("dev6-dev7", "seq6"), ("dev7-dev9", "seq2"), ("unknown", None)):
+            with self.assertRaises(ValueError):
+                observer.resolve_application_profile(updater, application)
+        self.assertIn('"--application-profile", application_profile', inspect.getsource(gate.main))
+
+    def test_seq7_snapshot_binds_slot_generation_anchor_and_preserves_dropins(self) -> None:
+        original = observer.u.selected_profile
+        observer.u.select_profile("dev7-dev9")
+        value: dict[str, object] = {"managerStatus": {"previousSlotId": observer.u.SEQ6_SLOT}, "serving": {}}
+        try:
+            with patch.object(observer.persistent, "validate_dropins") as dropins, \
+                 patch.object(observer.u, "write_transports_inert") as inert, \
+                 patch.object(observer.status_api, "snapshot", return_value=value) as snapshot, \
+                 patch.object(observer.s, "property_value", return_value="123"), \
+                 patch.object(observer.persistent, "dropins", return_value=(Path("/current"), Path("/candidate"))), \
+                 patch.object(observer.u, "digest", return_value="hash"):
+                result = observer.seq7_snapshot()
+                snapshot.assert_called_once_with(True, expected_version="0.1.0~dev9",
+                    expected_supervisor_sha=observer.u.SUPERVISOR_HASHES["new"],
+                    expected_slot=observer.SEQ7_SLOT, expected_floor=7, expected_generation=37)
+                dropins.assert_called_once_with(True)
+                inert.assert_called_once_with()
+                self.assertEqual(result["persistentDropinHashes"], {"/current": "hash", "/candidate": "hash"})
+                cast(dict[str, object], value["managerStatus"])["previousSlotId"] = "foreign"
+                with self.assertRaisesRegex(ValueError, "rollback anchor"):
+                    observer.seq7_snapshot()
+        finally:
+            observer.u.select_profile(original)
+
     def test_dev9_observer_checks_retained_snapshot_and_status_startup_order(self) -> None:
         observer.u.select_profile("dev7-dev9")
         properties = {"Requires": observer.RECOVERY, "After": observer.RECOVERY,
@@ -37,6 +70,10 @@ class OperationalRebootTests(unittest.TestCase):
                 installed.assert_called_once_with(Path("/assets"), "new")
                 snapshot.assert_called_once_with("new")
                 legacy.assert_not_called()
+                with patch.object(observer, "seq7_snapshot", return_value={}) as seq7:
+                    result = observer.capture(Path("/assets"), True, "seq7")
+                    self.assertEqual(result["applicationProfile"], "seq7")
+                    seq7.assert_called_once_with()
                 for invalid in ("0", "201", "invalid"):
                     properties["ActiveEnterTimestampMonotonic"] = invalid
                     with self.assertRaises(ValueError):

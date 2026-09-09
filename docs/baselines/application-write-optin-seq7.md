@@ -43,5 +43,13 @@ Both phase-bound browser checks passed, commit and cleanup passed, and the
 guard and controller staging were removed. Account/TLS/trust/peer state was
 preserved. Private receipt: `application-seq7-write-optin-flow-20260909.json`.
 
-The sequence-seven read-status panel and fresh reboot checks remain pending.
-This flow deliberately did not enable writable services or test GUI writes.
+The explicit sequence-seven read-status browser gate also passed: exact
+generation 37 and confirmed slot, desktop/mobile panels, repeated status
+reads/refresh, video decoding and logout revocation. No upload/activation
+control request or WebSocket was issued. Private receipt:
+`application-seq7-read-status-browser-20260909.json`.
+
+Fresh reboot checks remain pending. Their observer uses a separate application
+profile, preserving both the legacy seq2 reboot-interruption contract and the
+dev7-to-dev9 updater upgrade's original seq6 binding. This flow deliberately
+did not enable writable services or test GUI writes.

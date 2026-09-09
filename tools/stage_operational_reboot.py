@@ -22,6 +22,7 @@ if not __package__:
 from tools import stage_initialized_updater_upgrade as packages
 from tools import stage_device_prototype as transport
 from tools import prepare_interrupted_update as interruption
+from tools import capture_operational_boot as observer
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 require = packages.require
@@ -29,6 +30,7 @@ REBOOT_COMMAND = "systemctl reboot --no-block"
 
 
 def compare(before: dict[str, object], after: dict[str, object], pending: dict[str, object] | None = None) -> None:
+    require(before.get("applicationProfile") == after.get("applicationProfile"), "application observation profile changed")
     for value in (before.get("bootIdSha256"), after.get("bootIdSha256")):
         require(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None, "missing or invalid boot identifier")
     require(after.get("result") == "ready" and after.get("bootIdSha256") != before.get("bootIdSha256"), "boot identifier did not change")
@@ -72,7 +74,9 @@ def main() -> int:
     parser.add_argument("--reboot", action="store_true", help="Request exactly one software reboot after preflight")
     parser.add_argument("--pending-bundle", help="Bound sequence-three candidate for reboot during unconfirmed activation")
     parser.add_argument("--profile", choices=packages.native.PROFILES, default="dev6-dev7")
+    parser.add_argument("--application-profile", choices=observer.APPLICATION_PROFILES)
     args = parser.parse_args()
+    application_profile = observer.resolve_application_profile(args.profile, args.application_profile)
     require(args.pending_bundle is None or args.profile == "dev6-dev7", "interruption only supports legacy profile")
     packages.select_profile(args.profile)
     require(args.pending_bundle is None or args.reboot, "interrupted update requires explicit reboot mode")
@@ -95,10 +99,12 @@ def main() -> int:
     pending: dict[str, object] | None = None
     phase = "stage"
     receipt: dict[str, object] = {"probe": "operational-signed-slot-reboot", "profile": args.profile,
+                                 "applicationProfile": application_profile,
                                  "targetPowerControl": False, "softwareRebootRequested": False}
 
     def capture(post: bool) -> tuple[int, dict[str, object]]:
-        argv = ["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage, "--profile", args.profile]
+        argv = ["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage, "--profile", args.profile,
+                "--application-profile", application_profile]
         if post:
             argv.append("--post")
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=40)
