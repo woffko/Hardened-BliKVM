@@ -89,3 +89,35 @@ a new live run; sequence six is not accepted by this checkpoint.
 
 The coordinator's complete host check passed in job
 `49c47526bd494465b165c68a7f21c7fb` (exit 0).
+
+## Confirmed installation
+
+The combined run `cb4b5723f9a043d29dbb4ff98bdc8806` passed all phases.
+Rehearsal returned to source five at generation 28 with `health_timeout`.
+Activation then confirmed sequence six/floor six at generation 31, with no
+pending operation or rollback and previous slot five. Both phase-bound browser
+checks passed login, video decode/progress/reconnect, logout/revocation and
+session/TLS checks. The confirmed GUI produced two successful video responses
+across initial load and reload.
+
+Commit and cleanup reported `committed-update`, preserved accounts/TLS/trust/
+peers and removed controller staging and the exact transaction guard. Source
+and target slots and the journal were retained. The artifact remains the
+previously verified `975d350` payload; no active-slot files were edited in place.
+
+This accepts installation through the existing native application-update
+workflow. Full sequence-six status API/GUI, two-page continuity, outage/recovery,
+GUI upload/activation and broader hardware/release gates remain unfinished.
+
+The explicit sequence-six status/two-page browser gate
+`02e08eb2fc864332820617e1d700c8ce` subsequently passed. It validated generation
+31 and the confirmed slot/version, desktop/mobile status and Refresh, primary
+same-request byte progress through the additional page, and logout/revocation.
+The video responses were two primary 200s (initial load/reload) and one
+additional-page 200; the strict audit accepted no unexpected 5xx, control
+requests, WebSockets or page errors. The previous secondary MJPEG 503 was not
+reproduced on the installed fix.
+
+This closes the read-only two-page/startup regression for the tested Chromium
+and artifact. A real guarded status outage/stale/error/recovery check on slot
+six remains required, as do the other open plan gates.

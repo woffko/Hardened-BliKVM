@@ -42,7 +42,8 @@ export async function runExistingAccountBrowser({
   assert.equal(new URL(baseUrl).protocol, "https:");
   assert.match(username, /^[a-z_][a-z0-9_-]{0,31}$/);
   assert.ok(
-    statusMode === undefined || ["enabled", "restored"].includes(statusMode),
+    statusMode === undefined ||
+      ["enabled", "enabled-seq6", "restored"].includes(statusMode),
   );
   assert.ok(
     soakMode === undefined ||
@@ -53,9 +54,11 @@ export async function runExistingAccountBrowser({
     assert.equal(soakMode, undefined, "outage and soak are separate probes");
   }
   if (videoContinuityScenario) {
-    assert.equal(statusMode, "enabled");
+    assert.ok(["enabled", "enabled-seq6"].includes(statusMode));
     assert.equal(soakMode, undefined);
   }
+  const statusProfileName = statusMode === "enabled-seq6" ? "seq6" : "seq5";
+  const statusEnabled = ["enabled", "enabled-seq6"].includes(statusMode);
   assert.ok(browserArguments.length <= 8);
   if (runTag)
     assert.match(
@@ -332,8 +335,9 @@ export async function runExistingAccountBrowser({
       phase = "status-api-desktop-mobile";
       statusAcceptance = await verifyStatusPanel(
         page,
-        statusMode === "enabled",
+        statusEnabled,
         statusProgress,
+        statusProfileName,
       );
     }
     if (soakMode) {
@@ -397,6 +401,7 @@ export async function runExistingAccountBrowser({
       phase = "video-continuity";
       videoContinuityAcceptance = await videoContinuityScenario({
         page,
+        statusProfileName,
         activeStream: () => activeStreamResponse,
         verifyVideoProgress: () =>
           videoProgress.progress(videoProgress.checkpoint()),
@@ -497,6 +502,7 @@ export async function runExistingAccountBrowser({
       runTag: runTag || null,
       result: "passed",
       ...(statusOutageScenario ? { statusOutageAcceptance } : {}),
+      ...(statusMode ? { statusProfileName } : {}),
       ...(videoContinuityScenario
         ? {
             videoContinuityAcceptance,
@@ -540,6 +546,7 @@ export async function runExistingAccountBrowser({
       runTag: runTag || null,
       result: "failed",
       ...(statusOutageScenario ? { statusOutageAcceptance } : {}),
+      ...(statusMode ? { statusProfileName } : {}),
       ...(videoContinuityScenario
         ? {
             videoContinuityAcceptance,

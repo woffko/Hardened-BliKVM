@@ -1118,6 +1118,15 @@ transaction deadline settled it before activation across separate turns.
 Verified cleanup preserved floor five/generation 25 and both slots. A bounded
 host coordinator now keeps the existing phase/browser gates in one process
 without changing the device guard duration; its host/live checks remain pending.
+The combined host/live workflow subsequently passed and finalized sequence six
+at generation 31, with both phase-bound browser gates and exact guard cleanup.
+The next status/GUI checks use an explicit sequence-six profile, while retaining
+the historical sequence-five profile unchanged. Two-page and status-outage
+acceptance on the installed fix remain separate outstanding gates.
+The explicit sequence-six status and two-page browser gate now passed with
+three successful video responses, continued primary byte progress and correct
+logout. The secondary startup 503 is resolved for the tested artifact/browser;
+the guarded status-outage/stale/error/recovery gate still remains open.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

@@ -10,6 +10,7 @@ await runExistingAccountBrowser({
     progress,
     observe,
     verifyVideoProgress,
+    statusProfileName,
   }) => {
     const original = activeStream();
     assert.ok(original);
@@ -30,7 +31,7 @@ await runExistingAccountBrowser({
     let cold = null;
     try {
       progress("warm-viewports");
-      await verifyStatusPanel(page, true);
+      await verifyStatusPanel(page, true, undefined, statusProfileName);
       await verifyStream();
       progress("cold-document");
       cold = await createObservedPage();
@@ -42,13 +43,13 @@ await runExistingAccountBrowser({
       );
       await cold.bringToFront();
       progress("cold-viewports");
-      await verifyStatusPanel(cold, true);
+      await verifyStatusPanel(cold, true, undefined, statusProfileName);
       await verifyStream();
       progress("cold-close");
       await cold.close();
       progress("warm-return");
       await page.bringToFront();
-      await verifyStatusPanel(page, true);
+      await verifyStatusPanel(page, true, undefined, statusProfileName);
       await verifyStream();
       progress("complete");
       return { videoPreserved: true };

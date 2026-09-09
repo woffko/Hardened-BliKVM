@@ -3,20 +3,21 @@ import test from "node:test";
 import {
   validateStatus,
   verifyStatusPanel,
+  statusProfile,
 } from "./playwright/status_api_acceptance.mjs";
 
-function fixture() {
+function fixture(profileName = "seq5") {
+  const profile = statusProfile(profileName);
   const slot = {
-    slotId:
-      "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc",
-    version: "0.1.0-dev4",
-    sequence: "5",
+    slotId: profile.slot,
+    version: profile.version,
+    sequence: profile.sequence,
     minimumSystemSequence: "1",
   };
   return {
     schemaVersion: 1,
-    generation: "22",
-    floorSequence: "5",
+    generation: profile.generation,
+    floorSequence: profile.sequence,
     systemSequence: "1",
     selected: slot,
     confirmed: { ...slot },
@@ -41,7 +42,41 @@ test("status acceptance binds exact string counters and confirmed slot", () => {
   assert.throws(() => validateStatus(wrong));
 });
 
-function panelPage({ hidden = false, revealWorks = true } = {}) {
+test("sequence-six profile binds the confirmed slot and generation without relaxing sequence five", () => {
+  assert.deepEqual(statusProfile("seq6"), {
+    generation: "31",
+    sequence: "6",
+    version: "0.1.0-dev5",
+    slot: "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac",
+  });
+  validateStatus(fixture("seq6"), "seq6");
+  assert.throws(() => validateStatus(fixture("seq6")));
+  assert.throws(() => validateStatus(fixture(), "seq6"));
+  assert.throws(() =>
+    validateStatus({ ...fixture("seq6"), generation: "30" }, "seq6"),
+  );
+  assert.throws(() => statusProfile("unreviewed"));
+  assert.throws(() => statusProfile("__proto__"));
+});
+
+test("sequence-six panel checks both viewports using its explicit profile", async () => {
+  const result = await verifyStatusPanel(
+    panelPage({ profileName: "seq6" }),
+    true,
+    undefined,
+    "seq6",
+  );
+  assert.equal(result.desktop, true);
+  assert.equal(result.mobile, true);
+  assert.equal(result.refreshChecks, 2);
+});
+
+function panelPage({
+  hidden = false,
+  revealWorks = true,
+  profileName = "seq5",
+} = {}) {
+  const profile = statusProfile(profileName);
   const events = [];
   let width = 1280;
   const locator = (kind) => ({
@@ -59,7 +94,7 @@ function panelPage({ hidden = false, revealWorks = true } = {}) {
     },
     async waitFor() {},
     async count() {
-      return kind === "0.1.0-dev4 · #5" ? 2 : 0;
+      return kind === `${profile.version} · #${profile.sequence}` ? 2 : 0;
     },
     locator,
     getByText: locator,
@@ -69,7 +104,7 @@ function panelPage({ hidden = false, revealWorks = true } = {}) {
   return {
     events,
     async evaluate() {
-      return { status: 200, body: { code: 0, data: fixture() } };
+      return { status: 200, body: { code: 0, data: fixture(profileName) } };
     },
     async setViewportSize(viewport) {
       width = viewport.width;
@@ -85,7 +120,10 @@ function panelPage({ hidden = false, revealWorks = true } = {}) {
       },
     },
     async waitForResponse() {
-      return { status: () => 200, json: async () => ({ data: fixture() }) };
+      return {
+        status: () => 200,
+        json: async () => ({ data: fixture(profileName) }),
+      };
     },
   };
 }

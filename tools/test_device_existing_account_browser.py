@@ -16,7 +16,7 @@ class DeviceExistingAccountBrowserTests(unittest.TestCase):
         result = subprocess.run(["node", "--test", "tools/test_status_api_browser.mjs"], capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         source = SCRIPT.read_text()
-        self.assertRegex(source, r'verifyStatusPanel\(\s*page,\s*statusMode === "enabled",\s*statusProgress')
+        self.assertRegex(source, r'verifyStatusPanel\(\s*page,\s*statusEnabled,\s*statusProgress,\s*statusProfileName')
         self.assertEqual(source.count("context.request.get(`${baseUrl}${statusRoute}`)"), 2)
 
     def test_script_is_syntax_valid_and_secret_stdin_only(self) -> None:

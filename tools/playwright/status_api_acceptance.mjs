@@ -1,24 +1,49 @@
 import assert from "node:assert/strict";
 
 export const statusRoute = "/api/application-update/status";
-const slot =
-  "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc";
+const profiles = Object.freeze({
+  seq5: Object.freeze({
+    generation: "22",
+    sequence: "5",
+    version: "0.1.0-dev4",
+    slot: "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc",
+  }),
+  seq6: Object.freeze({
+    generation: "31",
+    sequence: "6",
+    version: "0.1.0-dev5",
+    slot: "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac",
+  }),
+});
 
-export function validateStatus(value) {
+export function statusProfile(name = "seq5") {
+  assert.equal(typeof name, "string");
+  assert.ok(Object.hasOwn(profiles, name), "unknown status acceptance profile");
+  return profiles[name];
+}
+
+export function validateStatus(value, profileName = "seq5") {
+  const profile = statusProfile(profileName);
   assert.equal(value.schemaVersion, 1);
-  assert.equal(value.generation, "22");
-  assert.equal(value.floorSequence, "5");
+  assert.equal(value.generation, profile.generation);
+  assert.equal(value.floorSequence, profile.sequence);
   assert.equal(value.systemSequence, "1");
   assert.equal(value.pending, null);
   assert.equal(value.lastRollback, null);
   assert.deepEqual(value.selected, value.confirmed);
-  assert.equal(value.confirmed.slotId, slot);
-  assert.equal(value.confirmed.version, "0.1.0-dev4");
-  assert.equal(value.confirmed.sequence, "5");
+  assert.equal(value.confirmed.slotId, profile.slot);
+  assert.equal(value.confirmed.version, profile.version);
+  assert.equal(value.confirmed.sequence, profile.sequence);
   assert.equal(value.confirmed.minimumSystemSequence, "1");
 }
 
-export async function verifyStatusPanel(page, enabled, progress = () => {}) {
+export async function verifyStatusPanel(
+  page,
+  enabled,
+  progress = () => {},
+  profileName = "seq5",
+) {
+  const profile = statusProfile(profileName);
   let first = null;
   let desktopSettingsOffscreenBeforeReveal = false;
   if (enabled) {
@@ -30,7 +55,7 @@ export async function verifyStatusPanel(page, enabled, progress = () => {}) {
       }, statusRoute);
       assert.equal(result.status, 200);
       assert.equal(result.body.code, 0);
-      validateStatus(result.body.data);
+      validateStatus(result.body.data, profileName);
       if (first) assert.deepEqual(result.body.data, first);
       first = result.body.data;
     }
@@ -68,7 +93,11 @@ export async function verifyStatusPanel(page, enabled, progress = () => {}) {
         .getByText("No update awaiting confirmation", { exact: true })
         .waitFor();
       assert.equal(
-        await panel.getByText("0.1.0-dev4 · #5", { exact: true }).count(),
+        await panel
+          .getByText(`${profile.version} · #${profile.sequence}`, {
+            exact: true,
+          })
+          .count(),
         2,
       );
       await panel
@@ -93,7 +122,7 @@ export async function verifyStatusPanel(page, enabled, progress = () => {}) {
       await panel.getByRole("button", { name: "Refresh", exact: true }).click();
       const refreshed = await response;
       assert.equal(refreshed.status(), 200);
-      validateStatus((await refreshed.json()).data);
+      validateStatus((await refreshed.json()).data, profileName);
     } else {
       assert.equal(await update.count(), 0);
     }
