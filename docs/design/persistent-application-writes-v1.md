@@ -96,7 +96,7 @@ The companion file adapter records original absence, preserves status files,
 installs transaction dependencies before policy files/enable links, validates
 all owned targets before removal, and can detach only guard dependencies after
 commit. Its filesystem tests run solely in temporary host directories; a
-privileged device controller has not yet been implemented.
+privileged device acceptance has not yet been performed.
 
 The native admission adapter now closes only the two sockets, installs owned
 runtime masks, reloads systemd, and repeats closure. Early-boot stops are
@@ -111,8 +111,21 @@ Persistent settlement has a separate policy from the fixed 7-to-8 acceptance
 script. It durably records both floor and generation increases even while
 workers are busy, rejects regressions, and requires two identical idle terminal
 observations. Later confirmed slots are preserved, not reset to slot eight.
-The complete privileged coordinator, receipt qualification and CLI remain to
-be integrated before any device preparation.
+The candidate privileged coordinator now exposes `prepare`, cgroup-bound
+`wire`, `restore`, and `cleanup` commands. It stages root-private pinned code and backups,
+arms boot/deadline recovery before policy installation, and leaves dormant
+guard definitions and recovery metadata after restoration for explicit
+inspection/cleanup. Initial preparation is restricted to the accepted
+slot-eight baseline; recovery preserves later monotonic state. Host tests
+cover import closure, boot arming/restoration routing, write failure closure,
+counter persistence, and snapshot preservation. It has not been installed or
+qualified on the device. Cleanup first requires verified restoration, absent
+enable links/masks, idle preparer/recovery units, and no loaded server dependency
+on the boot guard. It records a durable cleanup marker before removing owned
+unit definitions, then re-verifies closed runtime and archives the root-private
+code/backup instead of deleting it. An interrupted unit cleanup can resume;
+foreign data is left for inspection. Host orchestration and actual gate receipt
+qualification remain pending. There is no permanent-retention CLI.
 
 Offline systemd verification accepts the transaction dependency graph and
 rejects an injected `basic.target`/`sysinit.target` cycle. This proves static

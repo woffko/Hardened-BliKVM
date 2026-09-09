@@ -39,7 +39,7 @@ python3 -B -m unittest \
   tools.test_installed_application_write_gate tools.test_run_application_write_gate \
   tools.test_persistent_write_contract tools.test_persistent_write_files tools.test_persistent_write_decision \
   tools.test_persistent_write_lifecycle tools.test_persistent_write_fence tools.test_persistent_write_pipeline \
-  tools.test_persistent_write_systemd
+  tools.test_persistent_write_systemd tools.test_persistent_write_snapshot tools.test_installed_persistent_write
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --check tools/playwright/device_application_write.mjs
 
@@ -296,7 +296,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/persistent_write_lifecycle.py tools/test_persistent_write_lifecycle.py \
     tools/persistent_write_fence.py tools/test_persistent_write_fence.py \
     tools/persistent_write_pipeline.py tools/test_persistent_write_pipeline.py \
-    tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py
+    tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
+    tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
+    tools/installed_persistent_write.py tools/test_installed_persistent_write.py
   basedpyright \
     tools/upgrade_initialized_updater.py \
     tools/enable_update_services.py \

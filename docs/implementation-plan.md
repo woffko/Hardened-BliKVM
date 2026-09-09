@@ -1096,8 +1096,13 @@ existing local upload/activation browser scenario are included in the complete
 host check. Offline verification accepts the temporary guard dependency graph
 and rejects an injected cycle. The owned-file adapter has temporary-filesystem
 tests for preservation, ordering, interruption, commit detachment and refusal
-to delete foreign files. The privileged controller and live persistent-policy
-acceptance are still pending.
+to delete foreign files. A candidate privileged prepare/wire/restore controller
+now ties owned socket fencing, monotonic settlement, configuration ownership
+and preservation checks together. An explicit cleanup command now removes only
+dormant owned guard units and archives the original-absence backup after closed
+runtime verification. It remains host-tested only: host orchestration,
+retention receipts and live persistent-policy
+acceptance are still pending. No permanent-retention command is exposed.
 Commit/revocation publication now uses a single atomic, immutable decision;
 tests cover competing publishers and reject partial decisions. Controller
 sequencing tests ensure that revocation prevents commit, a late committed
