@@ -96,4 +96,7 @@ the dedicated identity, empty capabilities, sandbox and anonymous spool;
 all worker exits were natural. The upload socket was stopped, the new empty
 spool and owned guard/controller files removed. Private receipt:
 `installed-upload-seq8-publication-20260909.json`.
-Post-publication browser preservation and HTTP/GUI activation remain pending.
+The post-publication browser gate also passed: video decoded, logout revoked
+the stream and session, and no control request or WebSocket was issued.
+Private receipt: `installed-upload-seq8-postgate-browser-20260909.json`.
+HTTP/GUI upload and activation remain pending.
