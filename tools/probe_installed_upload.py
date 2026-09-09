@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Fixed stage-only IPC probes; never select or activate an application slot."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import pwd
+import select
+import socket
+import stat
+import struct
+import sys
+import tarfile
+import time
+from typing import cast
+
+ENDPOINT = "/run/hardened-blikvm-update-api/upload.sock"
+BUNDLE_SHA = "ad36542bf330440717bf5b2ac0279258dfbd98e32834a6cf2a47f39722045a0f"
+BUNDLE_BYTES = 8724480
+MANIFEST_SHA = "f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140"
+SLOT = "app-00000000000000000007-" + MANIFEST_SHA
+MODES = ("retry", "invalid-archive", "short", "surplus", "malformed", "lost-reply", "unauthorized", "idle")
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        require(key not in result, "duplicate response field")
+        result[key] = value
+    return result
+
+
+def frame(length: int) -> bytes:
+    require(type(length) is int and 1 <= length <= 128 * 1024 * 1024, "invalid declared size")
+    value = {"schemaVersion": 1, "requestId": 1, "request": {"type": "stage", "archiveBytes": length}}
+    raw = json.dumps(value, separators=(",", ":")).encode()
+    return struct.pack(">I", len(raw)) + raw
+
+
+def receive(stream: socket.socket) -> dict[str, object] | None:
+    def exact(size: int) -> bytes:
+        value = bytearray()
+        while len(value) < size:
+            try:
+                chunk = stream.recv(size - len(value))
+            except ConnectionResetError:
+                chunk = b""
+            if not chunk:
+                break
+            value.extend(chunk)
+        return bytes(value)
+    prefix = exact(4)
+    if not prefix:
+        return None
+    require(len(prefix) == 4, "partial response prefix")
+    size = struct.unpack(">I", prefix)[0]
+    require(1 <= size <= 16384, "oversize response")
+    raw = exact(size)
+    require(len(raw) == size and not exact(1), "partial or surplus response")
+    decoded: object = json.loads(raw, object_pairs_hook=unique_object)
+    require(isinstance(decoded, dict), "invalid response envelope")
+    value = cast(dict[str, object], decoded)
+    require(set(value) == {"schemaVersion", "requestId", "response"}, "invalid response envelope")
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1
+            and type(value["requestId"]) is int and value["requestId"] == 1, "uncorrelated response")
+    response = value["response"]
+    require(isinstance(response, dict), "invalid response object")
+    return cast(dict[str, object], response)
+
+
+def validate_retry(response: dict[str, object] | None) -> None:
+    expected = {"type": "staged", "receipt": {
+        "slot": {"slotId": SLOT, "version": "0.1.0-dev6", "sequence": 7, "minimumSystemSequence": 1},
+        "disposition": "already_present", "manifestSha256": MANIFEST_SHA, "payloadBytes": 8683648}}
+    # Canonical JSON also distinguishes booleans from integer counters.
+    require(json.dumps(response, sort_keys=True) == json.dumps(expected, sort_keys=True), "unexpected staging receipt")
+
+
+def tamper_archive(archive: bytes) -> bytes:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source:
+        member = source.getmember("payload/share/web/index.html")
+        require(member.isfile() and member.size > 0, "signed payload entry missing")
+        position = member.offset_data
+    altered = bytearray(archive)
+    altered[position] ^= 1
+    return bytes(altered)
+
+
+def await_release(stream: socket.socket, body: bytes) -> bytes:
+    require(len(body) > 256, "held body too small")
+    stream.sendall(body[:1])
+    position = 1
+    print("UPLOAD_BODY_HELD", flush=True)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if select.select([sys.stdin.buffer], [], [], 0.25)[0]:
+            require(sys.stdin.buffer.read(1) == b"G", "invalid probe release")
+            return body[position:]
+        # Preserve the worker idle deadline without completing the archive.
+        stream.sendall(body[position:position + 1])
+        position += 1
+    raise TimeoutError("upload observer did not release body")
+
+
+def exchange(stream: socket.socket, archive: bytes, mode: str, *, hold: bool = False) -> dict[str, object]:
+    require(mode in MODES, "unknown probe mode")
+    if mode == "malformed":
+        wire, body = struct.pack(">I", 1) + b"{", b""
+    elif mode == "unauthorized":
+        wire, body = frame(1), b"x"
+    else:
+        body = tamper_archive(archive) if mode == "invalid-archive" else archive
+        wire = frame(len(body))
+        if mode == "short":
+            body = body[:-1]
+        elif mode == "surplus":
+            body += b"x"
+    try:
+        stream.sendall(wire)
+        if hold:
+            require(mode not in ("malformed", "unauthorized"), "cannot hold early rejection")
+            body = await_release(stream, body)
+        if mode == "idle":
+            if not hold:
+                stream.sendall(body[:1])
+        else:
+            stream.sendall(body)
+            stream.shutdown(socket.SHUT_WR)
+    except (BrokenPipeError, ConnectionResetError):
+        require(mode in ("malformed", "unauthorized"), "worker disconnected during body")
+    if mode == "lost-reply":
+        # A send is not evidence of publication; the root controller must wait
+        # for worker exit and require a subsequent exact idempotent retry.
+        return {"mode": mode, "result": "reply-unobserved"}
+    started = time.monotonic()
+    response = receive(stream)
+    if mode == "idle":
+        require(response is None and 4 <= time.monotonic() - started <= 12, "worker idle deadline differs")
+    elif mode in ("short", "surplus", "malformed", "unauthorized"):
+        require(response is None, "invalid transport or peer received a receipt")
+    elif mode == "invalid-archive":
+        require(response == {"type": "error", "code": "invalid_archive"}, "archive rejection differs")
+    else:
+        validate_retry(response)
+    return {"mode": mode, "result": "passed"}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=MODES)
+    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--hold", action="store_true")
+    args = parser.parse_args()
+    expected_uid = 0 if args.mode == "unauthorized" else pwd.getpwnam("hardened-blikvm-server").pw_uid
+    require(os.geteuid() == expected_uid and (expected_uid > 0 or args.mode == "unauthorized"), "wrong probe identity")
+    meta = args.archive.lstat()
+    require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
+            and not meta.st_mode & 0o022 and meta.st_size == BUNDLE_BYTES, "unsafe bound archive")
+    archive = args.archive.read_bytes()
+    require(hashlib.sha256(archive).hexdigest() == BUNDLE_SHA, "bound archive differs")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.settimeout(20)
+        stream.connect(ENDPOINT)
+        result = exchange(stream, archive, args.mode, hold=args.hold)
+    print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
