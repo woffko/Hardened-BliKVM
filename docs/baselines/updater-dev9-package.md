@@ -48,3 +48,12 @@ Both receipts verify unchanged serving/state and removal of guard and temporary
 controller files. The device now retains updater dev9 and application sequence
 six; write sockets remain inert. Fresh reboot and installed write-flow/browser
 acceptance are still outstanding.
+
+Fresh reboot `93aefc80d6c34965acf763729f808cbf` passed with a changed boot
+identifier, unchanged journal/slots/status drop-ins, automatic recovery before
+server startup, rootfs still rw and a stable server PID after boot. Final uptime
+was 62 seconds. Browser `a952460dfeec47dc833472bde7c87186` then passed the
+sequence-six desktop/mobile status and Refresh checks, decoded/reconnected
+video, logout and stream revocation, with zero control requests or WebSockets.
+These accept the dev9 package upgrade/reboot with the retained read-only
+application. They do not accept installed upload/activation or release readiness.
