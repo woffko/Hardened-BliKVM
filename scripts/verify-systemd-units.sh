@@ -86,6 +86,8 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-update-status@.service \
   hardened-blikvm-update-upload.socket \
   hardened-blikvm-update-upload@.service \
+  hardened-blikvm-update-activation.socket \
+  hardened-blikvm-update-activation@.service \
   hardened-blikvm-update-watchdog.timer \
   hardened-blikvm-update-confirm.socket \
   hardened-blikvm-update-confirm@.service \
@@ -109,6 +111,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-update-recover.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-status@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-upload@.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-activation@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-confirm@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-activate@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-apply-candidate.service" \

@@ -16,6 +16,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum UpdateRuntimeError {
+    #[error("activation confirmation refers to an outdated journal generation")]
+    StaleActivationGeneration,
+    #[error("activation target is already selected")]
+    ActivationTargetAlreadyActive,
     #[error("confirmed service apply request is invalid")]
     InvalidApplyRequest,
     #[error("kernel boot identity is unavailable or invalid")]

@@ -10,13 +10,32 @@ import tools.stage_device_prototype as prototype
 
 
 class DebianUpdateRuntimePackageTests(unittest.TestCase):
+    def test_activation_units_start_at_dev9_with_fixed_success_dispatch(self) -> None:
+        units = {
+            "lib/systemd/system/hardened-blikvm-update-activation.socket",
+            "lib/systemd/system/hardened-blikvm-update-activation@.service",
+        }
+        self.assertTrue(units <= set(package.file_map("0.1.0~dev9").values()))
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[:8]:
+            self.assertFalse(units & set(package.file_map(version).values()))
+        worker = Path("packaging/systemd/hardened-blikvm-update-activation@.service").read_text()
+        socket = Path("packaging/systemd/hardened-blikvm-update-activation.socket").read_text()
+        for required in ("Type=oneshot", "TimeoutStartSec=15s", "activation-socket --peer-user hardened-blikvm-server",
+                         "OnSuccess=hardened-blikvm-update-apply-candidate.service hardened-blikvm-update-apply-confirmed.service",
+                         "ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-update /run/hardened-blikvm-update"):
+            self.assertIn(required, worker)
+        for forbidden in ("SuccessExitStatus=", "OnFailure=", "ConditionPath", "ExecStart=/usr/bin/systemctl", " activate %i"):
+            self.assertNotIn(forbidden, worker)
+        self.assertIn("MaxConnections=1", socket)
+        self.assertIn("ListenStream=/run/hardened-blikvm-update-api/activation.sock", socket)
+
     def test_upload_units_start_at_dev8_with_stage_only_disk_spool(self) -> None:
         units = {
             "lib/systemd/system/hardened-blikvm-update-upload.socket",
             "lib/systemd/system/hardened-blikvm-update-upload@.service",
         }
         self.assertTrue(units <= set(package.file_map("0.1.0~dev8").values()))
-        for version in package.SUPPORTED_PACKAGE_VERSIONS[:-1]:
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[:7]:
             self.assertFalse(units & set(package.file_map(version).values()))
         worker = Path("packaging/systemd/hardened-blikvm-update-upload@.service").read_text()
         socket = Path("packaging/systemd/hardened-blikvm-update-upload.socket").read_text()
@@ -55,7 +74,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev8")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev9")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -103,7 +122,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev8")
+        self.assertEqual(current["version"], "0.1.0~dev9")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertEqual({**previous, "version": current["version"]}, current)
         with self.assertRaises(package.BuildError):

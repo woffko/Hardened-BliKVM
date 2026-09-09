@@ -19,6 +19,8 @@ use tar::{Builder, EntryType, Header};
 
 const KEY_ID: &str = "app-supervisor-cli-test-key-1";
 
+#[path = "support/activation_socket.rs"]
+mod activation_socket;
 #[path = "support/http_upload.rs"]
 mod http_upload;
 

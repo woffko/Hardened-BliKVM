@@ -1,3 +1,4 @@
+mod activation_socket;
 mod config;
 mod status_socket;
 mod upload_socket;
@@ -26,6 +27,8 @@ use config::load_config;
 
 #[derive(Debug, Error)]
 enum SupervisorCliError {
+    #[error("activation request did not authorize candidate dispatch")]
+    ActivationNotDispatched,
     #[error("update status socket failed")]
     StatusSocket(#[from] status_socket::StatusSocketError),
     #[error("command arguments are invalid")]
@@ -56,6 +59,7 @@ enum CliCommand {
     Status,
     StatusSocket(String),
     UploadSocket(String, PathBuf),
+    ActivationSocket(String),
     Stage(PathBuf),
     GarbageCollect(usize),
     Initialize(String),
@@ -77,6 +81,7 @@ fn main() -> ExitCode {
 impl SupervisorCliError {
     fn exit_code(&self) -> u8 {
         match self {
+            Self::ActivationNotDispatched => 97,
             Self::StatusSocket(_) => 96,
             Self::InvalidArguments => 2,
             Self::InvalidConfigPath => 10,
@@ -142,6 +147,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
     if let CliCommand::UploadSocket(peer_user, spool) = &command {
         upload_socket::serve_stdin(&config_path, peer_user, spool)?;
         return Ok(());
+    }
+    if let CliCommand::ActivationSocket(peer_user) = &command {
+        return activation_socket::serve_stdin(&config_path, peer_user);
     }
     let config = load_config(&config_path)?;
     let receipt = match command {
@@ -222,6 +230,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                         CliCommand::Stage(_)
                         | CliCommand::StatusSocket(_)
                         | CliCommand::UploadSocket(_, _)
+                        | CliCommand::ActivationSocket(_)
                         | CliCommand::GarbageCollect(_)
                         | CliCommand::ValidateConfig => {
                             unreachable!("command handled before supervisor creation")
@@ -263,7 +272,7 @@ fn parse_arguments(
         "ack-confirmed-apply-credential" => CliCommand::AckConfirmedApplyCredential,
         "validate-config" => CliCommand::ValidateConfig,
         "status" => CliCommand::Status,
-        "status-socket" | "upload-socket" => {
+        "status-socket" | "upload-socket" | "activation-socket" => {
             if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--peer-user")) {
                 return Err(SupervisorCliError::InvalidArguments);
             }
@@ -276,6 +285,8 @@ fn parse_arguments(
             }
             if command == "status-socket" {
                 CliCommand::StatusSocket(user)
+            } else if command == "activation-socket" {
+                CliCommand::ActivationSocket(user)
             } else {
                 if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--spool-root")) {
                     return Err(SupervisorCliError::InvalidArguments);

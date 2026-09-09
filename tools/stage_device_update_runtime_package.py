@@ -38,6 +38,8 @@ SLOT_ROOT = "/var/lib/hardened-blikvm-slots"
 UPDATE_RUNTIME = "/run/hardened-blikvm-update"
 UPDATE_SOCKET_RUNTIME = "/run/hardened-blikvm-update-confirm"
 UNIT_NAMES = (
+    "hardened-blikvm-update-activation.socket",
+    "hardened-blikvm-update-activation@.service",
     "hardened-blikvm-update-upload.socket",
     "hardened-blikvm-update-upload@.service",
     "hardened-blikvm-update-recover.service",

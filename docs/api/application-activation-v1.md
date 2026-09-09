@@ -128,8 +128,44 @@ root-owned public-key configuration may appear in argv; a health token may
 enter only as exactly 32 raw stdin bytes for `confirm-stdin`. JSON receipts
 never contain the token, credential path, or public key. The packaged watchdog
 timer and Unix confirmation socket run under a distinct update identity with
-no network or device authority. There is deliberately no network activation
-socket and no production signing key or enabled configuration in the bundle.
+no network or device authority. The bundle contains no production signing key
+or enabled configuration. The newer guarded activation socket is described
+below; adding its source does not enable network activation on a device.
+
+### Generation-fenced activation socket source
+
+The separate `activation-socket --peer-user USER` entrypoint authorizes the
+kernel Unix peer before reading one closed, framed request and exact EOF.
+Metadata is capped at 16 KiB with a two-second absolute reception deadline;
+no journal/slot lock is held while receiving it. The only request is `activate`
+with a validated slot ID and nonzero expected journal generation. It accepts
+no path, URL, command, health token or confirmation instruction.
+
+`UpdateSupervisor::activate_if_generation` holds the existing manager locks,
+checks the generation, absence of a pending operation, non-current target and
+its signed proof before watchdog housekeeping, then checks again after
+housekeeping and before issuing the challenge. The existing local `activate`
+semantics are unchanged. An old confirmation returns `stale_generation` and
+cannot start a second activation. A caller must reread status and ask for a
+new explicit confirmation, never silently replace the expected generation.
+
+Only a new `AwaitingHealth` result produces an acceptance receipt containing
+the operation ID and target slot ID. It is not a health confirmation. The
+worker exits zero only for that result, even when response delivery fails;
+rejected, stale, pending and already-active requests exit nonzero (97 after a
+delivered rejection) and do not authorize apply dispatch. No credential path
+or token appears in the receipt. Inert package dev9 adds a separate one-client
+socket and a 15-second oneshot service with fixed `OnSuccess` candidate and
+confirmed apply units. It has no success-exit override, condition-skip shortcut
+or user-selected unit/command. Apply runs only after the worker exits and
+releases manager locks. Dev1–dev8 package file maps remain unchanged.
+
+Host tests cover generation fencing, repeated requests before/after health
+confirmation, preserved challenge identity, typed errors, exact receipts and
+success-for-dispatch after a lost reply. Offline package/systemd checks cover
+the new templates. HTTP/UI activation wiring and installed identity, dispatch,
+restart/health/rollback and browser acceptance remain required; these source
+changes do not enable writable-update capability.
 
 Supervisor stderr remains deliberately generic. When a runtime operation
 reaches the manager and fails, the local exit status identifies only the fixed

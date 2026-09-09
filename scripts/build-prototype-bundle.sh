@@ -75,6 +75,8 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-update-status@.service \
   packaging/systemd/hardened-blikvm-update-upload.socket \
   packaging/systemd/hardened-blikvm-update-upload@.service \
+  packaging/systemd/hardened-blikvm-update-activation.socket \
+  packaging/systemd/hardened-blikvm-update-activation@.service \
   packaging/systemd/hardened-blikvm-update-confirm@.service \
   packaging/systemd/hardened-blikvm-update-activate@.service \
   packaging/systemd/hardened-blikvm-update-apply-candidate.service \

@@ -92,7 +92,56 @@ impl UpdateSupervisor {
         &self,
         target_slot_id: &str,
     ) -> Result<SupervisorActivation, UpdateRuntimeError> {
+        self.activate_inner(target_slot_id, None)
+    }
+
+    /// Network confirmation is bound to the exact observed journal generation.
+    /// The manager's state/slot locks live for this entire supervisor lifetime.
+    /// Repeating an old confirmation never creates another operation; callers
+    /// must reconcile through status rather than silently refresh the fence.
+    pub fn activate_if_generation(
+        &self,
+        target_slot_id: &str,
+        expected_generation: u64,
+    ) -> Result<SupervisorActivation, UpdateRuntimeError> {
+        self.activate_inner(target_slot_id, Some(expected_generation))
+    }
+
+    fn check_activation_precondition(
+        &self,
+        target_slot_id: &str,
+        expected_generation: u64,
+    ) -> Result<(), UpdateRuntimeError> {
+        let status = self.manager.status()?;
+        if status.generation != expected_generation {
+            return Err(UpdateRuntimeError::StaleActivationGeneration);
+        }
+        if status.pending.is_some() {
+            return Err(UpdateManagerError::PendingActivation.into());
+        }
+        if status.active_slot_id == target_slot_id {
+            return Err(UpdateRuntimeError::ActivationTargetAlreadyActive);
+        }
+        // Invalid/untrusted targets must not provoke challenge issuance or
+        // watchdog housekeeping through the network activation entrypoint.
+        self.manager.inspect_slot(target_slot_id)?;
+        Ok(())
+    }
+
+    fn activate_inner(
+        &self,
+        target_slot_id: &str,
+        expected_generation: Option<u64>,
+    ) -> Result<SupervisorActivation, UpdateRuntimeError> {
+        if let Some(generation) = expected_generation {
+            self.check_activation_precondition(target_slot_id, generation)?;
+        }
         let _ = self.watchdog_once()?;
+        if let Some(generation) = expected_generation {
+            // Recovery may itself advance the journal. That does not refresh
+            // the user's confirmation or authorize a new target transition.
+            self.check_activation_precondition(target_slot_id, generation)?;
+        }
         if self.manager.status()?.pending.is_some() {
             return Err(UpdateManagerError::PendingActivation.into());
         }
@@ -477,6 +526,78 @@ mod tests {
         assert_eq!(activation.outcome, ActivationOutcome::AlreadyActive);
         assert_eq!(activation.credential_path, None);
         assert_eq!(fs::read_dir(fixture.runtime.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn guarded_activation_rejects_stale_current_and_invalid_targets_without_mutation() {
+        let fixture = Fixture::new();
+        let first = fixture.stage(1);
+        let second = fixture.stage(2);
+        let supervisor = fixture.supervisor();
+        let initial = supervisor.initialize(&first.slot_id).unwrap();
+        assert!(matches!(
+            supervisor.activate_if_generation(&second.slot_id, initial.generation + 1),
+            Err(UpdateRuntimeError::StaleActivationGeneration)
+        ));
+        assert!(matches!(
+            supervisor.activate_if_generation(&first.slot_id, initial.generation),
+            Err(UpdateRuntimeError::ActivationTargetAlreadyActive)
+        ));
+        assert!(
+            supervisor
+                .activate_if_generation("../untrusted", initial.generation)
+                .is_err()
+        );
+        assert_eq!(supervisor.status().unwrap(), initial);
+        assert_eq!(fs::read_dir(fixture.runtime.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn guarded_repeats_do_not_replace_pending_challenge_or_reactivate_after_confirmation() {
+        let fixture = Fixture::new();
+        let first = fixture.stage(1);
+        let second = fixture.stage(2);
+        let supervisor = fixture.supervisor();
+        let initial = supervisor.initialize(&first.slot_id).unwrap();
+        let activation = supervisor
+            .activate_if_generation(&second.slot_id, initial.generation)
+            .unwrap();
+        assert!(matches!(
+            activation.outcome,
+            ActivationOutcome::AwaitingHealth { .. }
+        ));
+        let pending = supervisor.status().unwrap();
+        let credential = activation.credential_path.unwrap();
+        let token = fs::read(&credential).unwrap();
+        assert!(matches!(
+            supervisor.activate_if_generation(&second.slot_id, initial.generation),
+            Err(UpdateRuntimeError::StaleActivationGeneration)
+        ));
+        assert!(matches!(
+            supervisor.activate_if_generation(&second.slot_id, pending.generation),
+            Err(UpdateRuntimeError::Manager(
+                UpdateManagerError::PendingActivation
+            ))
+        ));
+        assert_eq!(supervisor.status().unwrap(), pending);
+        assert_eq!(fs::read(&credential).unwrap(), token);
+        assert_eq!(
+            supervisor
+                .confirm_from_reader(&mut Cursor::new(token))
+                .unwrap(),
+            ConfirmationOutcome::Confirmed
+        );
+        let confirmed = supervisor.status().unwrap();
+        assert!(matches!(
+            supervisor.activate_if_generation(&second.slot_id, initial.generation),
+            Err(UpdateRuntimeError::StaleActivationGeneration)
+        ));
+        assert!(matches!(
+            supervisor.activate_if_generation(&second.slot_id, confirmed.generation),
+            Err(UpdateRuntimeError::ActivationTargetAlreadyActive)
+        ));
+        assert_eq!(supervisor.status().unwrap(), confirmed);
+        assert!(!credential.exists());
     }
 
     #[test]
