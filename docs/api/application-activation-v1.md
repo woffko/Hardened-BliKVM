@@ -171,9 +171,17 @@ changes do not enable writable-update capability.
 
 `POST /api/application-update/activate` is protected by the existing session,
 origin and CSRF middleware before any body or IPC work. It is disabled unless
-`BLI_KVM_UPDATE_ACTIVATION_SOCKET` is explicitly configured, and requires
-separate configured status and upload sockets. Authenticated calls return 503
-when disabled. Configuration alone still advertises read-only capability.
+`BLI_KVM_UPDATE_WRITES_ENABLED=1` and `BLI_KVM_UPDATE_ACTIVATION_SOCKET` are
+explicitly configured, and requires separate configured status and upload
+sockets. Missing or shared paths with write enablement fail startup. Socket
+paths alone never instantiate either write client. Authenticated calls return
+503 when disabled, before body consumption or IPC. Status remains available
+independently. Only explicit write enablement advertises `read_write`, with
+`source_verified` evidence; this is configuration, not a worker-liveness or
+installed-acceptance claim. Missing or other flag values keep writes disabled.
+The protected routes retain the same authentication/CSRF/origin middleware.
+Existing status-only deployment remains unchanged. Installed write enablement
+still requires the guarded native and browser acceptance gates below.
 
 The closed `application/json` body contains only `slotId` and
 `expectedGeneration`; the latter is a canonical positive decimal **string**,

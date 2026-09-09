@@ -345,11 +345,11 @@ pub(crate) async fn upload(
 ) -> AppResult<Json<ApiResponse<UploadView>>> {
     // Authentication and existing unsafe-method origin policy ran in the
     // protected route middleware, before this body or IPC can be touched.
-    let length = upload_length(request.headers())?;
     let client = state
         .update_upload
         .as_ref()
         .ok_or_else(|| AppError::ServiceUnavailable("upload is not configured".into()))?;
+    let length = upload_length(request.headers())?;
     let reader = UploadBody {
         body: request.into_body(),
         chunk: Bytes::new(),

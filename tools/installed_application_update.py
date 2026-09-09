@@ -49,6 +49,7 @@ class UpdateProfile:
     target_sequence: int
     target_slot: str
     persistent_status: bool = False
+    updater_profile: str = "dev6-dev7"
 
 
 PROFILES = {
@@ -72,7 +73,11 @@ active_profile = PROFILES["seq1-to-seq2"]
 def select_profile(name: str) -> None:
     global active_profile
     require(name in PROFILES, "unknown application transition profile")
-    active_profile = PROFILES[name]
+    profile = PROFILES[name]
+    # Pin installed package and supervisor checks in every invocation, including
+    # the independent boot/deadline recovery controller.
+    u.select_profile(profile.updater_profile)
+    active_profile = profile
 
 
 def profile_slots() -> dict[int, str]:

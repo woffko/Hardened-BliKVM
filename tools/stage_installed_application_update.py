@@ -73,6 +73,7 @@ def main() -> int:
         parser.add_argument("--" + name)
     args = parser.parse_args()
     native.select_profile(args.profile)
+    packages.select_profile(native.active_profile.updater_profile)
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new receipt required")
     guard: str | None = None

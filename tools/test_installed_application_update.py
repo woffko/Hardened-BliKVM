@@ -1,5 +1,6 @@
 import inspect
 import contextlib
+from dataclasses import replace
 import hashlib
 import io
 import json
@@ -17,6 +18,52 @@ from tools import status_api_wiring as status_wiring
 
 
 class InstalledApplicationUpdateTests(unittest.TestCase):
+    def test_application_profile_pins_updater_and_restores_legacy_bindings(self) -> None:
+        original = gate.active_profile
+        fixture = replace(original, name="fixture-dev9", updater_profile="dev7-dev9")
+        try:
+            with patch.dict(gate.PROFILES, {fixture.name: fixture}):
+                gate.select_profile(fixture.name)
+                self.assertEqual(gate.u.selected_profile, "dev7-dev9")
+                self.assertEqual(gate.u.VERSIONS["new"], "0.1.0~dev9")
+                invalid = replace(fixture, name="fixture-invalid", updater_profile="unknown")
+                with patch.dict(gate.PROFILES, {invalid.name: invalid}):
+                    with self.assertRaises(ValueError):
+                        gate.select_profile(invalid.name)
+                self.assertIs(gate.active_profile, fixture)
+                self.assertEqual(gate.u.selected_profile, "dev7-dev9")
+                gate.select_profile("seq5-to-seq6-mjpeg")
+                self.assertEqual(gate.u.VERSIONS["new"], "0.1.0~dev7")
+                self.assertEqual(gate.u.PACKAGE_HASHES, gate.u.LEGACY_BINDINGS[0])
+        finally:
+            gate.select_profile(original.name)
+
+    def test_driver_selects_matching_package_sources_before_upload(self) -> None:
+        original = gate.active_profile
+        original_package_profile = driver.packages.native.selected_profile
+        fixture = replace(original, name="fixture-dev9", updater_profile="dev7-dev9")
+        try:
+            with tempfile.TemporaryDirectory() as temporary, patch.dict(gate.PROFILES, {fixture.name: fixture}):
+                argv = ["driver", "prepare", "--profile", fixture.name, "--endpoint", "unused:22",
+                        "--output", str(Path(temporary) / "receipt.json"), "--old-package", "old.deb",
+                        "--new-package", "new.deb", "--bundle", "application.tar"]
+                def stop_after_binding(*args: str) -> dict[str, bytes]:
+                    self.assertEqual(args, ("old.deb", "new.deb"))
+                    self.assertEqual(driver.packages.native.VERSIONS["new"], "0.1.0~dev9")
+                    self.assertEqual(driver.packages.SOURCE_BINDINGS["old"],
+                                     driver.packages.LEGACY_SOURCE_BINDINGS["new"])
+                    raise RuntimeError("fixture stops before any upload")
+                with patch.object(driver.sys, "argv", argv), patch.object(
+                        driver.transport, "validate_output_path", return_value=Path(temporary) / "receipt.json"), patch.object(
+                        driver.packages, "upload_payloads", side_effect=stop_after_binding), patch.object(
+                        driver.transport, "read_secret_stdin") as secret:
+                    with self.assertRaisesRegex(RuntimeError, "fixture stops"):
+                        driver.main()
+                    secret.assert_not_called()
+        finally:
+            driver.packages.select_profile(original_package_profile)
+            gate.select_profile(original.name)
+
     def test_mjpeg_profile_binds_verified_sequence_six_and_keeps_floor(self) -> None:
         profile = gate.PROFILES["seq5-to-seq6-mjpeg"]
         self.assertEqual(profile.source_slot, gate.PROFILES["seq4-to-seq5-notification"].target_slot)

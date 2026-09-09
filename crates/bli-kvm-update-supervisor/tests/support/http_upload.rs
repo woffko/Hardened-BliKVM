@@ -79,6 +79,8 @@ async fn authenticated_http_reaches_real_signed_stager_without_activation() {
         state_dir: root.path().join("account"),
         update_status_socket: Some(root.path().join("status.sock")),
         update_upload_socket: Some(socket),
+        update_activation_socket: Some(root.path().join("activation.sock")),
+        update_writes_enabled: true,
         ..ServerOptions::default()
     });
     let login_body = json!({ "username": "operator", "password": "synthetic fixture password" });
@@ -220,7 +222,7 @@ async fn authenticated_http_reaches_real_signed_stager_without_activation() {
     }
     let mut activate = auth_request(
         "/api/application-update/activate",
-        json!({"slotId": published.unwrap()}),
+        json!({"slotId": published.unwrap(), "expectedGeneration": "1"}),
     );
     activate
         .headers_mut()

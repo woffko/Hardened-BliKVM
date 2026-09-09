@@ -65,6 +65,9 @@ pub struct ServerOptions {
     pub update_upload_socket: Option<PathBuf>,
     /// Explicit generation-fenced activation; disabled by default.
     pub update_activation_socket: Option<PathBuf>,
+    /// Explicit operator opt-in for both write clients and the GUI capability.
+    /// Requires all three separate IPC paths; does not prove worker liveness.
+    pub update_writes_enabled: bool,
 }
 
 impl Default for ServerOptions {
@@ -82,6 +85,7 @@ impl Default for ServerOptions {
             update_status_socket: None,
             update_upload_socket: None,
             update_activation_socket: None,
+            update_writes_enabled: false,
         }
     }
 }
@@ -111,6 +115,13 @@ pub fn app_with_web_root(web_root: Option<PathBuf>) -> Router {
 }
 
 pub fn app_with_options(options: ServerOptions) -> Router {
+    assert!(
+        !options.update_writes_enabled
+            || (options.update_status_socket.is_some()
+                && options.update_upload_socket.is_some()
+                && options.update_activation_socket.is_some()),
+        "write enablement requires configured status, upload and activation sockets"
+    );
     if let Some(activation) = &options.update_activation_socket {
         assert!(
             options
@@ -135,26 +146,37 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     }
     let mut manifest = BliH616PikvmPlatform.capabilities();
     if options.update_status_socket.is_some() {
-        manifest.system.signed_application_updates =
-            FeatureStatus::read_only(EvidenceLevel::SourceVerified);
+        manifest.system.signed_application_updates = if options.update_writes_enabled {
+            FeatureStatus::read_write(EvidenceLevel::SourceVerified)
+        } else {
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified)
+        };
     }
     manifest
         .validate()
         .expect("built-in Bli H616 capability manifest must be valid");
     let state = AppState {
         capabilities: Arc::new(manifest),
-        update_activation: options.update_activation_socket.as_ref().map(|path| {
-            Arc::new(
-                UpdateActivationClient::new(path)
-                    .expect("activation socket path must be a bounded absolute Unix path"),
-            )
-        }),
-        update_upload: options.update_upload_socket.as_ref().map(|path| {
-            Arc::new(
-                UpdateUploadClient::new(path)
-                    .expect("upload socket path must be a bounded absolute Unix path"),
-            )
-        }),
+        update_activation: options
+            .update_activation_socket
+            .as_ref()
+            .filter(|_| options.update_writes_enabled)
+            .map(|path| {
+                Arc::new(
+                    UpdateActivationClient::new(path)
+                        .expect("activation socket path must be a bounded absolute Unix path"),
+                )
+            }),
+        update_upload: options
+            .update_upload_socket
+            .as_ref()
+            .filter(|_| options.update_writes_enabled)
+            .map(|path| {
+                Arc::new(
+                    UpdateUploadClient::new(path)
+                        .expect("upload socket path must be a bounded absolute Unix path"),
+                )
+            }),
         update_status: options.update_status_socket.as_ref().map(|path| {
             Arc::new(
                 UpdateStatusClient::new(path)
@@ -424,6 +446,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_write_sockets_without_opt_in_remain_inaccessible() {
+        struct NeverBody;
+        impl http_body::Body for NeverBody {
+            type Data = bytes::Bytes;
+            type Error = std::io::Error;
+            fn poll_frame(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>>
+            {
+                panic!("disabled write request must not poll its body");
+            }
+        }
+        let root = tempdir().unwrap();
+        let upload = root.path().join("upload.sock");
+        let activation = root.path().join("activation.sock");
+        let upload_listener = UnixListener::bind(&upload).unwrap();
+        let activation_listener = UnixListener::bind(&activation).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(upload),
+            update_activation_socket: Some(activation),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        for route in ["upload", "activate"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/api/application-update/{route}"))
+                        .header(header::HOST, "kvm.test")
+                        .header(header::ORIGIN, "https://kvm.test")
+                        .header(header::COOKIE, &cookie)
+                        .header("x-csrf-token", &csrf)
+                        .body(Body::new(NeverBody))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+        for listener in [upload_listener, activation_listener] {
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+                    .await
+                    .is_err()
+            );
+        }
+        let manifest = json_body(
+            app.oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
+            "read_only"
+        );
+        assert_eq!(
+            manifest["data"]["system"]["signedApplicationUpdates"]["evidence"],
+            "source_verified"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_opt_in_rejects_missing_or_shared_paths() {
+        for mask in 0..7 {
+            let root = tempdir().unwrap();
+            let options = ServerOptions {
+                state_dir: root.path().join("account"),
+                update_status_socket: (mask & 1 != 0).then(|| root.path().join("status.sock")),
+                update_upload_socket: (mask & 2 != 0).then(|| root.path().join("upload.sock")),
+                update_activation_socket: (mask & 4 != 0)
+                    .then(|| root.path().join("activation.sock")),
+                update_writes_enabled: true,
+                ..ServerOptions::default()
+            };
+            assert!(std::panic::catch_unwind(|| app_with_options(options)).is_err());
+        }
+        for pair in [(0, 1), (0, 2), (1, 2)] {
+            let root = tempdir().unwrap();
+            let mut paths = [
+                root.path().join("status.sock"),
+                root.path().join("upload.sock"),
+                root.path().join("activation.sock"),
+            ];
+            paths[pair.1] = paths[pair.0].clone();
+            let options = ServerOptions {
+                state_dir: root.path().join("account"),
+                update_status_socket: Some(paths[0].clone()),
+                update_upload_socket: Some(paths[1].clone()),
+                update_activation_socket: Some(paths[2].clone()),
+                update_writes_enabled: true,
+                ..ServerOptions::default()
+            };
+            assert!(std::panic::catch_unwind(|| app_with_options(options)).is_err());
+        }
+    }
+
+    #[tokio::test]
     async fn activation_is_authorized_bounded_once_and_awaiting_health_only() {
         use bli_kvm_update_protocol::{self as protocol, activation as ipc};
         let root = tempdir().unwrap();
@@ -434,6 +559,7 @@ mod tests {
             update_status_socket: Some(root.path().join("status.sock")),
             update_upload_socket: Some(root.path().join("upload.sock")),
             update_activation_socket: Some(socket),
+            update_writes_enabled: true,
             ..ServerOptions::default()
         });
         let (cookie, csrf) = setup_and_login(&app).await;
@@ -541,7 +667,7 @@ mod tests {
         .await;
         assert_eq!(
             manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
-            "read_only"
+            "read_write"
         );
     }
 
@@ -566,6 +692,8 @@ mod tests {
             state_dir: root.path().join("account"),
             update_status_socket: Some(root.path().join("status.sock")),
             update_upload_socket: Some(socket),
+            update_activation_socket: Some(root.path().join("activation.sock")),
+            update_writes_enabled: true,
             ..ServerOptions::default()
         });
         let (cookie, csrf) = setup_and_login(&app).await;
@@ -639,6 +767,8 @@ mod tests {
             state_dir: root.path().join("account"),
             update_status_socket: Some(root.path().join("status.sock")),
             update_upload_socket: Some(socket),
+            update_activation_socket: Some(root.path().join("activation.sock")),
+            update_writes_enabled: true,
             ..ServerOptions::default()
         });
         let (cookie, csrf) = setup_and_login(&app).await;
@@ -705,7 +835,7 @@ mod tests {
         .await;
         assert_eq!(
             manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
-            "read_only"
+            "read_write"
         );
     }
 
@@ -730,6 +860,8 @@ mod tests {
             state_dir: root.path().join("account"),
             update_status_socket: Some(root.path().join("status.sock")),
             update_upload_socket: Some(socket),
+            update_activation_socket: Some(root.path().join("activation.sock")),
+            update_writes_enabled: true,
             ..ServerOptions::default()
         });
         let (cookie, csrf) = setup_and_login(&app).await;

@@ -75,9 +75,14 @@ file support and timeout behaviour under the actual service identity.
 
 ## Host HTTP transport
 
-The opt-in `BLI_KVM_UPDATE_UPLOAD_SOCKET` configures
-`POST /api/application-update/upload`; it requires a separately configured
-status socket. Both are disabled by default. The protected router checks the
+The opt-in `BLI_KVM_UPDATE_WRITES_ENABLED=1` together with
+`BLI_KVM_UPDATE_UPLOAD_SOCKET` enables `POST /api/application-update/upload`;
+it requires separately configured status and activation sockets. All paths and
+write enablement are absent by default. Paths without the flag leave both write
+clients absent and capability read-only (or unavailable without status).
+Explicit enablement publishes `read_write` with `source_verified` evidence,
+not a claim of installed acceptance or current worker availability. Upload
+itself remains stage-only. The protected router checks the
 session, CSRF token and existing origin policy before body polling or IPC.
 The handler requires a single exact decimal `Content-Length` of 1–128 MiB and
 one `application/octet-stream` content type. Content/transfer encoding,
@@ -99,8 +104,9 @@ receipt serialization without u64 rounding, raw stage-only IPC, malformed
 headers/trailers, incomplete/surplus input, cancellation/admission, logout
 during a stalled body and oversized/mismatched/surplus receipts. The successful
 HTTP route serialization test uses a fake IPC peer, not the installed updater.
-These checks do not establish native or browser acceptance. Writable-update capability remains
-disabled; the upload does not expose an activation endpoint.
+These checks do not establish native or browser acceptance. Writable-update
+capability remains disabled by default and on the retained device; activation
+uses its own separately authorized endpoint.
 
 An additional host integration now connects the real authenticated Axum route
 and streaming client to a subprocess running `upload-socket`, using synthetic
@@ -194,3 +200,12 @@ failure/retry, logout/cancellation and a clear separate activation confirmation.
 
 The host tests do not establish installed-worker or browser-upload acceptance.
 No upload endpoint is enabled on the device by these source changes.
+
+The explicit write opt-in source gate has passed the server/supervisor host
+suite (66 tests), including disabled clients with configured listening sockets,
+missing/shared-path startup rejection, authorized stage-only HTTP to the real
+worker, and existing activation authorization/receipt checks. The installed
+application controller now binds its updater profile independently of the
+application sequence, including boot/deadline recovery; legacy profiles retain
+their previous package/supervisor bindings. The Python suite passed 543 tests.
+These are local source checks, not acceptance of installed writable services.
