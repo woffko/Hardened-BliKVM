@@ -9,7 +9,15 @@ import {
   validateActivationRequest,
   validateStaged,
   waitLoginInputs,
+  validateUploadBody,
 } from "./playwright/application_write_acceptance.mjs";
+
+test("omitted File-backed XHR body requires prior selected-file verification", () => {
+  assert.equal(validateUploadBody(null, true), false);
+  assert.throws(() => validateUploadBody(null, false));
+  assert.throws(() => validateUploadBody(null, undefined));
+  assert.throws(() => validateUploadBody(Buffer.from("foreign"), true));
+});
 
 test("login waits for the lazy form instead of using document title as readiness", async () => {
   let visible = false;

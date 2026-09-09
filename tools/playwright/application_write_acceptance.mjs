@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import {
   statusProfile,
   statusRoute,
@@ -10,6 +11,19 @@ export const activationRoute = "/api/application-update/activate";
 export const bundleSha256 =
   "d2acf270fa2aa9cb924c362066ece50f4b0fbd4c4c8b2975648dab5ac0b4f849";
 export const bundleBytes = 8724480;
+
+export function validateUploadBody(body, selectedArchiveVerified) {
+  assert.equal(selectedArchiveVerified, true);
+  // Chromium omits File-backed XHR post data (including Content-Length)
+  // from interception. Never replace it with a synthetic request body.
+  if (body === null) return false;
+  assert.equal(body.length, bundleBytes);
+  assert.equal(
+    crypto.createHash("sha256").update(body).digest("hex"),
+    bundleSha256,
+  );
+  return true;
+}
 
 export async function waitLoginInputs(page) {
   const inputs = page.locator("input");
@@ -66,7 +80,11 @@ export async function readStatus(page, profile) {
   return result.body.data;
 }
 
-export async function runApplicationWriteUi(page, archivePath) {
+export async function runApplicationWriteUi(
+  page,
+  archivePath,
+  archiveVerified = () => {},
+) {
   await readStatus(page, "seq7");
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.mouse.move(640, 1);
@@ -76,6 +94,22 @@ export async function runApplicationWriteUi(page, archivePath) {
   const panel = settings.getByTestId("bli-application-upload");
   await panel.waitFor({ state: "visible" });
   await panel.getByTestId("application-archive").setInputFiles(archivePath);
+  const selected = await panel
+    .getByTestId("application-archive")
+    .evaluate(async (input) => {
+      const file = input.files[0];
+      const digest = new Uint8Array(
+        await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
+      );
+      return {
+        bytes: file.size,
+        sha256: Array.from(digest, (value) =>
+          value.toString(16).padStart(2, "0"),
+        ).join(""),
+      };
+    });
+  assert.deepEqual(selected, { bytes: bundleBytes, sha256: bundleSha256 });
+  archiveVerified();
   const uploaded = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === uploadRoute &&

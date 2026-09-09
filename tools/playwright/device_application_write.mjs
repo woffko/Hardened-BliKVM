@@ -11,6 +11,7 @@ import {
   runApplicationWriteUi,
   validateActivationRequest,
   waitLoginInputs,
+  validateUploadBody,
 } from "./application_write_acceptance.mjs";
 import { verifyStatusPanel } from "./status_api_acceptance.mjs";
 
@@ -97,11 +98,9 @@ try {
             await request.headerValue("content-type"),
             "application/octet-stream",
           );
-          const bytes = request.postDataBuffer();
-          assert.equal(bytes?.length, bundleBytes);
-          assert.equal(
-            crypto.createHash("sha256").update(bytes).digest("hex"),
-            bundleSha256,
+          receipt.uploadBodyVisibleToObserver = validateUploadBody(
+            request.postDataBuffer(),
+            receipt.selectedArchiveVerified,
           );
         } else {
           assert.equal(receipt.activationRequests++, 0);
@@ -152,7 +151,9 @@ try {
   );
   phase = mode;
   if (mode === "activate") {
-    receipt.ui = await runApplicationWriteUi(page, archive);
+    receipt.ui = await runApplicationWriteUi(page, archive, () => {
+      receipt.selectedArchiveVerified = true;
+    });
     assert.equal(receipt.uploadRequests, 1);
     assert.equal(receipt.activationRequests, 1);
   } else {

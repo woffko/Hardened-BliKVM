@@ -1051,6 +1051,13 @@ form inputs. No upload or activation request was sent. Recovery and a separate
 verified cleanup retained sequence seven/generation 37, closed write admission,
 and removed only the owned guard. The test now awaits visible form inputs;
 real-device HTTP upload/activation acceptance is still pending.
+The second run reached upload but the probe blocked Chromium's opaque
+File-backed XHR before forwarding it. A local fetch/XHR comparison reproduced
+the missing intercepted body and Content-Length for XHR with upload progress.
+The probe now verifies the selected browser File's size and SHA-256 before
+submission, leaves its request untouched, and still requires the exact signed
+staging receipt. Separate cleanup again verified floor seven/generation 37 and
+closed writes; no activation request was sent in either failed probe run.
 
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
