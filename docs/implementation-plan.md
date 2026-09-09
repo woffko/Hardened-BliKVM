@@ -1108,6 +1108,11 @@ now compare byte-identical, and the real host Rust verifier accepted the
 immutable payload and negative checks. A named 5-to-6 transition profile adds
 strict preservation of permanent status wiring; its full host/device gates
 remain pending (`baselines/mjpeg-application-seq6.md`).
+The transition host check and a separate read-only device preflight have now
+passed. Dev7, source slot five/generation 22, persistent status wiring and an
+idle transaction namespace were verified without device writes. The next live
+step is the guarded sequence-six failure/rollback rehearsal, not direct
+retention of the new slot.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

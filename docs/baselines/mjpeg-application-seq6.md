@@ -48,3 +48,15 @@ Host transition validation, device preflight, rehearsal, activation, phase-bound
 browser checks and finalization/cleanup are still required. The device has not
 been updated by this checkpoint. Existing sequence-five status fixtures must
 not be mistaken for sequence-six acceptance.
+
+Read-only device preflight `ab459f629b244c2cb6f7fc657027f8fa` subsequently
+passed using the host-validated dev6/dev7 package bindings. It verified the
+installed dev7 files, trust/config, persistent status transport, source-slot
+executable, and absence of an application transaction or target slot. The
+application remained confirmed at sequence five, floor five, generation 22,
+with no pending operation or rollback. State/slot fingerprints and serving
+identities were unchanged. No remote staging files, guards, installation or
+activation were created. Rehearsal and activation remain pending.
+
+The complete host check including the read-only preflight tools passed in job
+`140741b6fa0b40ae963479065d16b416` (exit 0).
