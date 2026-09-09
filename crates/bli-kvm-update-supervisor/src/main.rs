@@ -1,5 +1,6 @@
 mod config;
 mod status_socket;
+mod upload_socket;
 
 use std::{
     env,
@@ -54,6 +55,7 @@ enum CliCommand {
     ValidateConfig,
     Status,
     StatusSocket(String),
+    UploadSocket(String, PathBuf),
     Stage(PathBuf),
     GarbageCollect(usize),
     Initialize(String),
@@ -137,6 +139,10 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
         status_socket::serve_stdin(&config_path, peer_user)?;
         return Ok(());
     }
+    if let CliCommand::UploadSocket(peer_user, spool) = &command {
+        upload_socket::serve_stdin(&config_path, peer_user, spool)?;
+        return Ok(());
+    }
     let config = load_config(&config_path)?;
     let receipt = match command {
         CliCommand::ValidateConfig => json!({"command": "validate_config", "result": "valid"}),
@@ -215,6 +221,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                         }
                         CliCommand::Stage(_)
                         | CliCommand::StatusSocket(_)
+                        | CliCommand::UploadSocket(_, _)
                         | CliCommand::GarbageCollect(_)
                         | CliCommand::ValidateConfig => {
                             unreachable!("command handled before supervisor creation")
@@ -256,7 +263,7 @@ fn parse_arguments(
         "ack-confirmed-apply-credential" => CliCommand::AckConfirmedApplyCredential,
         "validate-config" => CliCommand::ValidateConfig,
         "status" => CliCommand::Status,
-        "status-socket" => {
+        "status-socket" | "upload-socket" => {
             if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--peer-user")) {
                 return Err(SupervisorCliError::InvalidArguments);
             }
@@ -267,7 +274,22 @@ fn parse_arguments(
             if !status_socket::valid_peer_name(&user) {
                 return Err(SupervisorCliError::InvalidArguments);
             }
-            CliCommand::StatusSocket(user)
+            if command == "status-socket" {
+                CliCommand::StatusSocket(user)
+            } else {
+                if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--spool-root")) {
+                    return Err(SupervisorCliError::InvalidArguments);
+                }
+                let spool = PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or(SupervisorCliError::InvalidArguments)?,
+                );
+                if !spool.is_absolute() || spool.file_name().is_none() {
+                    return Err(SupervisorCliError::InvalidArguments);
+                }
+                CliCommand::UploadSocket(user, spool)
+            }
         }
         "watchdog-once" => CliCommand::WatchdogOnce,
         "confirm-stdin" => CliCommand::ConfirmStdin,

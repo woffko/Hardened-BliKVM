@@ -20,6 +20,112 @@ use tar::{Builder, EntryType, Header};
 const KEY_ID: &str = "app-supervisor-cli-test-key-1";
 
 #[test]
+fn upload_worker_stages_retries_and_rejects_without_activation() {
+    use bli_kvm_update_protocol::{
+        decode_frame, encode_frame,
+        upload::{
+            UploadDisposition, UploadRequest, UploadRequestEnvelope, UploadResponse,
+            decode_response, encode_request,
+        },
+    };
+    use std::{
+        io::Read,
+        net::Shutdown,
+        os::{fd::OwnedFd, unix::net::UnixStream},
+        time::Duration,
+    };
+    let uid = nix::unistd::Uid::effective();
+    // Production expressly rejects root peers; run the positive socket case
+    // only with an actual unprivileged test identity.
+    if uid.is_root() {
+        return;
+    }
+    let user = nix::unistd::User::from_uid(uid).unwrap().unwrap().name;
+    let root = tempfile::tempdir().unwrap();
+    let slots = create_private_directory(root.path(), "slots");
+    let state = create_private_directory(root.path(), "state");
+    let runtime = create_private_directory(root.path(), "runtime");
+    let spool = create_private_directory(root.path(), "spool");
+    let sources = create_private_directory(root.path(), "sources");
+    let signing = SigningKey::from_bytes(&[57; 32]);
+    let source = write_bundle(&sources, &signing, 1);
+    let config = root.path().join("supervisor.json");
+    fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "schemaVersion": 1, "product": APPLICATION_PRODUCT, "target": APPLICATION_TARGET,
+            "keyId": KEY_ID, "publicKeyHex": hex(&signing.verifying_key().to_bytes()),
+            "slotRoot": slots, "stateRoot": state, "runtimeRoot": runtime,
+            "systemSequence": 1, "healthTimeoutMs": 60_000,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&config, Permissions::from_mode(0o600)).unwrap();
+    let upload = |body: &[u8]| {
+        let (mut client, worker) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let fd: OwnedFd = worker.into();
+        let mut child = command(
+            env!("CARGO_BIN_EXE_bli-kvm-update-supervisor"),
+            &config,
+            &[
+                "upload-socket",
+                "--peer-user",
+                &user,
+                "--spool-root",
+                spool.to_str().unwrap(),
+            ],
+        )
+        .stdin(Stdio::from(fd))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+        client
+            .write_all(
+                &encode_frame(
+                    &encode_request(&UploadRequestEnvelope {
+                        schema_version: 1,
+                        request_id: 71,
+                        request: UploadRequest::Stage {
+                            archive_bytes: body.len() as u64,
+                        },
+                    })
+                    .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        client.write_all(body).unwrap();
+        client.shutdown(Shutdown::Write).unwrap();
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).unwrap();
+        assert!(child.wait().unwrap().success());
+        let response = decode_response(decode_frame(&bytes).unwrap()).unwrap();
+        assert_eq!(response.request_id, 71);
+        assert_eq!(fs::read_dir(&spool).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&state).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
+        assert!(!slots.join("current").exists());
+        response.response
+    };
+    let body = fs::read(&source).unwrap();
+    let UploadResponse::Staged { receipt: first } = upload(&body) else {
+        panic!("must publish")
+    };
+    assert_eq!(first.disposition, UploadDisposition::Published);
+    let UploadResponse::Staged { receipt: second } = upload(&body) else {
+        panic!("must retry")
+    };
+    assert_eq!(second.disposition, UploadDisposition::AlreadyPresent);
+    assert_eq!(first.slot, second.slot);
+    assert!(matches!(upload(&[0; 1024]), UploadResponse::Error { .. }));
+}
+
+#[test]
 fn validate_config_does_not_open_or_create_state_roots() {
     let root = tempfile::tempdir().unwrap();
     let config = root.path().join("config.json");

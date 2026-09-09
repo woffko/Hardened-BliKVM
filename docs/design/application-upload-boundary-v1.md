@@ -34,7 +34,31 @@ sequence, disposition, manifest digest and payload byte count. The digest must
 match the digest component of the validated slot ID. HTTP must serialize all
 64-bit counters as decimal strings, as the status boundary already does.
 
-## Required transport integration, not yet implemented
+## Host worker implementation
+
+The `upload-socket --peer-user USER --spool-root PATH` CLI entrypoint now
+authorizes the kernel Unix peer using the same identity checks as status,
+before config, admission or body access. It loads only trusted public config,
+then locks an independent updater-owned 0700 spool directory. Component-wise
+`openat` rejects symlinks and pins the directory. `O_TMPFILE` creates an anonymous
+0600 file with zero links; unsupported filesystems fail closed. No named spool
+is left after success, failure or process exit.
+
+After complete body and EOF, the worker rewinds the spool, opens the stager
+lock, checks staging filesystem headroom, and stages with the 8-slot / 512 MiB
+logical payload quota. It never opens the update manager or health store.
+Preliminary physical-space checks account for spool, snapshot and extraction,
+allocation/inode overhead and 64 MiB free headroom. They are availability
+checks, not reservations against unrelated writers. Physical exhaustion can
+still fail a retry that would fit the logical quota; even a retry needs spool
+and verification snapshot space.
+
+A real CLI socket-pair test under the unprivileged host UID covers signed
+publication, same-archive retry, invalid archive rejection, empty spool and
+untouched state/runtime directories and current pointer. This does not yet
+prove installed-worker identity/sandbox/lifetime or HTTP/browser acceptance.
+
+## Remaining installed and HTTP transport integration
 
 The supervisor library now provides a bounded reception primitive: it checks
 the closed metadata before creating a sink, copies in 64 KiB chunks, requires
@@ -43,8 +67,8 @@ and absolute total deadlines are independent; progress does not reset the
 total deadline. Its defaults are 2 s / 5 s / 120 s. Socket-pair tests cover
 truncation, surplus, missing EOF, stalled metadata, continuously progressing
 uploads exceeding total time, and sink destruction on failure. This primitive
-does not authorize peers or create the private spool: those worker integration
-gates below remain mandatory. Blocking local filesystem calls additionally
+does not itself authorize peers or create the private spool; the CLI wrapper
+now performs those steps. Blocking local filesystem calls additionally
 require an installed worker process lifetime bound.
 
 - Authenticate the HTTP request and enforce the existing same-origin/CSRF

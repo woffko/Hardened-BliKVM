@@ -43,6 +43,11 @@ pub(crate) fn valid_peer_name(value: &str) -> bool {
 }
 
 pub(crate) fn serve_stdin(config: &Path, peer_user: &str) -> Result<(), StatusSocketError> {
+    let (mut stream, uid) = authorized_stdin(peer_user)?;
+    serve_connection(&mut stream, uid, || read_status(config))
+}
+
+pub(crate) fn authorized_stdin(peer_user: &str) -> Result<(UnixStream, u32), StatusSocketError> {
     if !valid_peer_name(peer_user) {
         return Err(StatusSocketError::PeerRejected);
     }
@@ -61,8 +66,9 @@ pub(crate) fn serve_stdin(config: &Path, peer_user: &str) -> Result<(), StatusSo
     }
     // SAFETY: fcntl returned a new uniquely owned descriptor.
     let descriptor = unsafe { OwnedFd::from_raw_fd(duplicate) };
-    let mut stream = UnixStream::from(descriptor);
-    serve_connection(&mut stream, uid, || read_status(config))
+    let stream = UnixStream::from(descriptor);
+    authorize(&stream, uid)?;
+    Ok((stream, uid))
 }
 
 fn authorize(stream: &UnixStream, expected_uid: u32) -> Result<(), StatusSocketError> {
