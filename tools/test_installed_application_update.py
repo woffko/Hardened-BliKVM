@@ -18,6 +18,40 @@ from tools import status_api_wiring as status_wiring
 
 
 class InstalledApplicationUpdateTests(unittest.TestCase):
+    def test_seq7_requires_write_environment_absent_in_units_and_process(self) -> None:
+        profile = gate.PROFILES["seq6-to-seq7-write-optin"]
+        for name in ("BLI_KVM_UPDATE_UPLOAD_SOCKET", "BLI_KVM_UPDATE_ACTIVATION_SOCKET", "BLI_KVM_UPDATE_WRITES_ENABLED"):
+            for source in ("none", "current", "candidate", "process"):
+                with self.subTest(name=name, source=source), patch.object(gate, "active_profile", profile), patch.object(gate.u, "write_transports_inert"):
+                    def property_value(unit: str, key: str) -> str:
+                        if key == "MainPID":
+                            return "123"
+                        selected = gate.s.CURRENT_SERVER if source == "current" else gate.s.CANDIDATE_SERVER if source == "candidate" else None
+                        return name + "=1" if unit == selected else ""
+                    with patch.object(gate.s, "property_value", side_effect=property_value), patch.object(
+                            Path, "read_bytes", return_value=(name + "=1\0").encode() if source == "process" else b"SAFE=value\0"):
+                        if source == "none":
+                            gate.write_transports_disabled()
+                        else:
+                            with self.assertRaises(ValueError):
+                                gate.write_transports_disabled()
+
+    def test_sequence_seven_binds_signed_payload_and_dev9_without_write_transport(self) -> None:
+        profile = gate.PROFILES["seq6-to-seq7-write-optin"]
+        self.assertEqual(profile.source_slot, gate.PROFILES["seq5-to-seq6-mjpeg"].target_slot)
+        self.assertEqual((profile.source_sequence, profile.target_sequence), (6, 7))
+        self.assertEqual(profile.bundle_bytes, 8724480)
+        self.assertEqual(profile.bundle_sha, "ad36542bf330440717bf5b2ac0279258dfbd98e32834a6cf2a47f39722045a0f")
+        self.assertTrue(profile.persistent_status)
+        self.assertEqual(profile.updater_profile, "dev7-dev9")
+        with patch.object(gate, "active_profile", profile):
+            with patch.object(gate.u, "installed"), patch.object(gate.u, "write_transports_inert",
+                    side_effect=ValueError("write transport is live")) as inert, patch.object(gate.infrastructure, "audit_enabled") as audit:
+                with self.assertRaisesRegex(ValueError, "write transport is live"):
+                    gate.stable(Path("unused"), {"phase": "rehearsed"})
+                inert.assert_called_once_with()
+                audit.assert_not_called()
+
     def test_application_profile_pins_updater_and_restores_legacy_bindings(self) -> None:
         original = gate.active_profile
         fixture = replace(original, name="fixture-dev9", updater_profile="dev7-dev9")

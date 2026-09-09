@@ -14,6 +14,7 @@ import pwd
 from pathlib import Path
 import re
 import secrets
+import shlex
 import stat
 import subprocess
 import sys
@@ -66,6 +67,11 @@ PROFILES = {
         "seq5-to-seq6-mjpeg", "4f5a307e2d1014de360dc2cdb75cb5186a60511cfd772f3be0b98b8aff9a6036",
         8601600, 5, "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc", 6,
         "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac", True),
+    "seq6-to-seq7-write-optin": UpdateProfile(
+        "seq6-to-seq7-write-optin", "ad36542bf330440717bf5b2ac0279258dfbd98e32834a6cf2a47f39722045a0f",
+        8724480, 6, "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac", 7,
+        "app-00000000000000000007-f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140",
+        True, "dev7-dev9"),
 }
 active_profile = PROFILES["seq1-to-seq2"]
 
@@ -208,8 +214,24 @@ def validate_status_wiring(*, allow_rehearsal: bool = False) -> None:
             and meta.st_gid == grp.getgrnam("hardened-blikvm").gr_gid, "unsafe status socket metadata")
 
 
+def write_transports_disabled() -> None:
+    if active_profile.updater_profile != "dev7-dev9":
+        return
+    u.write_transports_inert()
+    forbidden = {"BLI_KVM_UPDATE_UPLOAD_SOCKET", "BLI_KVM_UPDATE_ACTIVATION_SOCKET", "BLI_KVM_UPDATE_WRITES_ENABLED"}
+    for unit in (s.CURRENT_SERVER, s.CANDIDATE_SERVER):
+        require(not any(item.partition("=")[0] in forbidden for item in shlex.split(s.property_value(unit, "Environment"))),
+                "loaded write environment unexpectedly configured")
+    pid = s.property_value(s.CURRENT_SERVER, "MainPID")
+    require(pid.isdecimal() and int(pid) > 0, "invalid confirmed server PID")
+    names = {name.encode() for name in forbidden}
+    require(not any(item.partition(b"=")[0] in names for item in (Path("/proc") / pid / "environ").read_bytes().split(b"\0")),
+            "running write environment unexpectedly configured")
+
+
 def stable(root: Path, plan: dict[str, object], expected_floor: int | None = None) -> dict[str, object]:
     u.installed(root, "new")
+    write_transports_disabled()
     infrastructure.audit_enabled(check_initial=False)
     if active_profile.persistent_status:
         validate_status_wiring(allow_rehearsal=plan.get("phase") == "staged")
@@ -338,6 +360,7 @@ def prepare(assets: Path) -> dict[str, object]:
     else:
         require(not infrastructure.exists(Path("/etc/systemd/system/hardened-blikvm-server-candidate.service.d")), "candidate override already exists")
     u.installed(assets, "new")
+    write_transports_disabled()
     s.bootstrap.trusted_code_and_config(expected_supervisor_sha=u.SUPERVISOR_HASHES["new"])
     infrastructure.audit_enabled(check_initial=False)
     require(u.digest(assets / "application.tar") == active_profile.bundle_sha, "application bundle hash mismatch")

@@ -41,10 +41,11 @@ def read_receipt(path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=flow.PROFILES, default=flow.PROFILE)
     for name in ("old-package", "new-package", "bundle", "endpoint", "base-url", "username", "output"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()
-    driver.native.select_profile(flow.PROFILE)
+    driver.native.select_profile(args.profile)
     host, _ = driver.transport.parse_endpoint(args.endpoint)
     url = urlsplit(cast(str, args.base_url))
     driver.require(url.scheme == "https" and url.hostname == host and not url.username and not url.password
@@ -80,7 +81,7 @@ def main() -> None:
                 recovering = True
             target = destination(action)
             argv = [sys.executable, "-B", "tools/stage_installed_application_update.py", action,
-                    "--profile", flow.PROFILE, "--endpoint", args.endpoint, "--output", str(target)]
+                    "--profile", args.profile, "--endpoint", args.endpoint, "--output", str(target)]
             if action == "prepare":
                 argv += ["--old-package", args.old_package, "--new-package", args.new_package, "--bundle", args.bundle]
             else:
@@ -93,7 +94,7 @@ def main() -> None:
                                       "cleanup": 60, "recover": 150}[action], recovery=recovering)
             value = read_receipt(target)
             expected_guard = driver.checkpoint(str(checkpoint)) if checkpoint is not None else None
-            flow.envelope(value, action, expected_guard)
+            flow.envelope(value, action, expected_guard, profile_name=args.profile)
             checkpoint = target
             if code != 0:
                 value["result"] = "failed"
@@ -114,7 +115,7 @@ def main() -> None:
                 "lastCheckpoint": str(checkpoint) if checkpoint else None,
                 "browserReceipts": {key: str(path) for key, path in browser_receipts.items()}})
 
-        result = flow.run_flow(app, browser, record)
+        result = flow.run_flow(app, browser, record, profile_name=args.profile)
     if result["result"] != "passed":
         raise SystemExit(1)
 

@@ -7,23 +7,26 @@ from tools import installed_application_update as native
 from tools import stage_installed_application_update as driver
 
 PROFILE = "seq5-to-seq6-mjpeg"
+PROFILES = (PROFILE, "seq6-to-seq7-write-optin")
 AppStep = Callable[[str], dict[str, object]]
 BrowserStep = Callable[[str, str], None]
 Recorder = Callable[[dict[str, object]], None]
 
 
-def envelope(value: dict[str, object], action: str, guard: str | None) -> str:
-    profile = native.PROFILES[PROFILE]
+def envelope(value: dict[str, object], action: str, guard: str | None, *, profile_name: str = PROFILE) -> str:
+    native.require(profile_name in PROFILES, "unreviewed application flow profile")
+    profile = native.PROFILES[profile_name]
     native.require(value.get("probe") == "installed-application-update" and value.get("action") == action
-                   and value.get("profile") == PROFILE and value.get("bundleSha256") == profile.bundle_sha,
+                   and value.get("profile") == profile_name and value.get("bundleSha256") == profile.bundle_sha,
                    "application step binding mismatch")
     found = driver.validate_guard(value.get("guardRoot"))
     native.require(guard is None or found == guard, "application guard changed")
     return found
 
 
-def accepted(value: dict[str, object], action: str, floor: int | None) -> int:
-    profile = native.PROFILES[PROFILE]
+def accepted(value: dict[str, object], action: str, floor: int | None, *, profile_name: str = PROFILE) -> int:
+    native.require(profile_name in PROFILES, "unreviewed application flow profile")
+    profile = native.PROFILES[profile_name]
     native.require(value.get("result") == "passed" and value.get("controllerStagingRemoved") is True,
                    "application step failed or staging remains")
     device = cast(dict[str, object], value["device"])
@@ -47,11 +50,13 @@ def accepted(value: dict[str, object], action: str, floor: int | None) -> int:
     return cast(int, actual)
 
 
-def run_flow(app: AppStep, browser: BrowserStep, record: Recorder) -> dict[str, object]:
-    result: dict[str, object] = {"probe": "application-update-flow", "profile": PROFILE,
+def run_flow(app: AppStep, browser: BrowserStep, record: Recorder, *, profile_name: str = PROFILE) -> dict[str, object]:
+    native.require(profile_name in PROFILES, "unreviewed application flow profile")
+    profile = native.PROFILES[profile_name]
+    result: dict[str, object] = {"probe": "application-update-flow", "profile": profile_name,
                                 "result": "failed", "guardMayRemain": True, "targetConfirmed": False}
     guard: str | None = None
-    observed_floor = native.PROFILES[PROFILE].source_sequence
+    observed_floor = profile.source_sequence
     recovering = False
 
     def checkpoint() -> None:
@@ -67,32 +72,32 @@ def run_flow(app: AppStep, browser: BrowserStep, record: Recorder) -> dict[str, 
         result["phase"] = action
         checkpoint()
         value = app(action)
-        guard = envelope(value, action, guard)
+        guard = envelope(value, action, guard, profile_name=profile_name)
         result["guardRoot"] = guard
         result[action] = value
         checkpoint()
-        actual = accepted(value, action, floor)
+        actual = accepted(value, action, floor, profile_name=profile_name)
         native.require(actual >= observed_floor, "application floor regressed")
         observed_floor = actual
         result["observedFloor"] = actual
-        result["targetConfirmed"] = actual == native.PROFILES[PROFILE].target_sequence
+        result["targetConfirmed"] = actual == profile.target_sequence
 
     try:
-        step("prepare", native.PROFILES[PROFILE].source_sequence)
+        step("prepare", profile.source_sequence)
         assert guard is not None
         result["phase"] = "browser-rehearsal"
         checkpoint()
         browser("rehearsal", guard)
         result["rehearsalBrowserPassed"] = True
         checkpoint()
-        step("activate", native.PROFILES[PROFILE].target_sequence)
+        step("activate", profile.target_sequence)
         result["phase"] = "browser-confirmed"
         checkpoint()
         browser("confirmed", guard)
         result["confirmedBrowserPassed"] = True
         checkpoint()
-        step("commit", native.PROFILES[PROFILE].target_sequence)
-        step("cleanup", native.PROFILES[PROFILE].target_sequence)
+        step("commit", profile.target_sequence)
+        step("cleanup", profile.target_sequence)
         result.update({"result": "passed", "guardMayRemain": False})
     except Exception as error:
         recovering = True

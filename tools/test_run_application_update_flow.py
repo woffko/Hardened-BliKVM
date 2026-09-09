@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import io
+import itertools
 import json
 from pathlib import Path
 import subprocess
@@ -19,12 +20,15 @@ from tools.test_application_update_flow import response
 
 class ApplicationFlowRunnerTests(unittest.TestCase):
     def test_real_receipt_paths_secret_roles_and_expired_normal_budget(self) -> None:
-        for failure in ("none", "confirmed-browser", "budget"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
+        for profile_name, failure in itertools.product(runner.flow.PROFILES, ("none", "confirmed-browser", "budget")):
+            with self.subTest(profile=profile_name, failure=failure), tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
                 stack.enter_context(patch.object(runner.driver.native, "active_profile", runner.driver.native.active_profile))
+                original_updater = runner.driver.native.u.selected_profile
+                stack.callback(runner.driver.native.u.select_profile, original_updater)
+                profile = runner.driver.native.PROFILES[profile_name]
                 output = Path(temporary) / "application-flow.json"
                 now = 0.0
-                floor = 5
+                floor = profile.source_sequence
                 events: list[str] = []
                 secret_values = {"ssh": b"synthetic-ssh-input", "gui": b"synthetic-gui-input"}
                 encoded = json.dumps({"schemaVersion": 1, "encoding": "base64", "secrets": {
@@ -50,15 +54,16 @@ class ApplicationFlowRunnerTests(unittest.TestCase):
                         write_json_0600_atomic(target, value)
                         return SimpleNamespace(returncode=1 if failed else 0)
                     action = argv[3]
+                    self.assertEqual(argv[argv.index("--profile") + 1], profile_name)
                     events.append(action)
                     if action == "activate":
-                        floor = 6
+                        floor = profile.target_sequence
                     if action == "prepare" and failure == "budget":
                         now = 500
                     target = Path(argv[argv.index("--output") + 1])
-                    write_json_0600_atomic(target, response(action, floor))
+                    write_json_0600_atomic(target, response(action, floor, profile_name=profile_name))
                     return SimpleNamespace(returncode=0)
-                stack.enter_context(patch.object(sys, "argv", ["flow", "--old-package", "old", "--new-package", "new", "--bundle", "bundle",
+                stack.enter_context(patch.object(sys, "argv", ["flow", "--profile", profile_name, "--old-package", "old", "--new-package", "new", "--bundle", "bundle",
                                                                 "--endpoint", "ssh://synthetic:22", "--base-url", "https://synthetic", "--username", "admin", "--output", str(output)]))
                 stack.enter_context(patch.object(runner.driver.transport, "validate_output_path", return_value=output))
                 stack.enter_context(patch.object(runner, "secret_pair_stdin", return_value=secret_pair_stdin(io.BytesIO(encoded))))

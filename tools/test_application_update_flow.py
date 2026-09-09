@@ -7,18 +7,19 @@ from tools import application_update_flow as flow
 GUARD = "/var/lib/hardened-blikvm-application-update-" + "a" * 24
 
 
-def response(action: str, floor: int, *, passed: bool = True, guard: str = GUARD) -> dict[str, object]:
-    profile = flow.native.PROFILES[flow.PROFILE]
-    slot = profile.source_slot if floor == 5 else profile.target_slot
-    return {"probe": "installed-application-update", "profile": flow.PROFILE, "action": action,
+def response(action: str, floor: int, *, passed: bool = True, guard: str = GUARD,
+             profile_name: str = flow.PROFILE) -> dict[str, object]:
+    profile = flow.native.PROFILES[profile_name]
+    slot = profile.source_slot if floor == profile.source_sequence else profile.target_slot
+    return {"probe": "installed-application-update", "profile": profile_name, "action": action,
             "bundleSha256": profile.bundle_sha, "guardRoot": guard, "result": "passed" if passed else "failed",
             "controllerStagingRemoved": True, "device": {
                 "result": {"prepare": "rehearsed", "recover": "recovered"}.get(action, action),
                 "phase": {"prepare": "rehearsed", "activate": "confirmed", "commit": "committed-update",
-                          "recover": "recovered", "cleanup": "committed-update" if floor == 6 else "recovered"}[action],
+                          "recover": "recovered", "cleanup": "committed-update" if floor == profile.target_sequence else "recovered"}[action],
                 "verification": {"accountTlsTrustPeersPreserved": True,
                                  "status": {"floorSequence": floor, "activeSlotId": slot, "confirmedSlotId": slot,
-                                            "pending": None, "lastRollback": "health_timeout" if floor == 5 else None}}}}
+                                            "pending": None, "lastRollback": "health_timeout" if floor == profile.source_sequence else None}}}}
 
 
 class ApplicationFlowTests(unittest.TestCase):
@@ -120,7 +121,7 @@ class ApplicationFlowTests(unittest.TestCase):
         source = Path("tools/run_application_update_flow.py").read_text()
         self.assertIn("driver.browser_gate(str(target), guard, phase)", source)
         self.assertIn('argv += ["--browser-receipt", str(browser_receipts[phase])]', source)
-        self.assertIn('"--profile", flow.PROFILE', source)
+        self.assertIn('"--profile", args.profile', source)
         self.assertIn('input=pair[role]', source)
         self.assertIn('stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL', source)
 
