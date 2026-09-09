@@ -39,3 +39,12 @@ controller command. Regression tests cover this and profile/receipt mismatch.
 Full host check `ae7000f64ec04e7a9f2cb6f26d3e81ec` passed, including 539 Python
 tests, Rust checks, static analysis, UI contracts, web build, lint and format
 checks. This does not establish device upgrade acceptance.
+
+Native preflight `d1209b25a3f049eebba25e034cd3372b` passed on the retained
+sequence-six device. Rehearsal `ee2592c1b9f84c21a05adc65c6bfeb3c` installed
+dev9, independently verified it, rolled back to dev7 and removed its guard.
+Retention `fe9f25727acd4da7b49ce7d85de372df` then installed and committed dev9.
+Both receipts verify unchanged serving/state and removal of guard and temporary
+controller files. The device now retains updater dev9 and application sequence
+six; write sockets remain inert. Fresh reboot and installed write-flow/browser
+acceptance are still outstanding.

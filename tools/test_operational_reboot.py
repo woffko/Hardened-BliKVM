@@ -5,11 +5,45 @@ from typing import cast
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from tools import stage_operational_reboot as gate
+from tools import capture_operational_boot as observer
 
 
 class OperationalRebootTests(unittest.TestCase):
+    def test_dev9_observer_checks_retained_snapshot_and_status_startup_order(self) -> None:
+        observer.u.select_profile("dev7-dev9")
+        properties = {"Requires": observer.RECOVERY, "After": observer.RECOVERY,
+                      "ActiveState": "active", "SubState": "exited", "Result": "success",
+                      "ExecMainStatus": "0", "ExecMainExitTimestampMonotonic": "100",
+                      "ExecMainStartTimestampMonotonic": "200", "ActiveEnterTimestampMonotonic": "150"}
+
+        def property_value(_unit: str, field: str) -> str:
+            return properties[field]
+
+        try:
+            with patch.object(observer.u, "installed") as installed, \
+                 patch.object(observer.u, "snapshot", return_value={}) as snapshot, \
+                 patch.object(observer.infrastructure, "enabled_snapshot") as legacy, \
+                 patch.object(observer.infrastructure, "current_status", return_value={}), \
+                 patch.object(observer.s, "property_value", side_effect=property_value), \
+                 patch.object(Path, "read_bytes", return_value=b"boot"), \
+                 patch.object(Path, "read_text", return_value="12.50 25.00"), \
+                 patch.object(observer.os, "statvfs", return_value=SimpleNamespace(f_flag=0)):
+                result = observer.capture(Path("/assets"), True)
+                self.assertTrue(result["recoveryOrderVerified"])
+                self.assertEqual(result["uptimeSeconds"], 12)
+                installed.assert_called_once_with(Path("/assets"), "new")
+                snapshot.assert_called_once_with("new")
+                legacy.assert_not_called()
+                for invalid in ("0", "201", "invalid"):
+                    properties["ActiveEnterTimestampMonotonic"] = invalid
+                    with self.assertRaises(ValueError):
+                        observer.capture(Path("/assets"), True)
+        finally:
+            observer.u.select_profile("dev6-dev7")
+
     def test_interruption_cleanup_without_ownership_preserves_user_override(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "probe"
@@ -70,6 +104,17 @@ class OperationalRebootTests(unittest.TestCase):
         for value in (None, "", "a" * 64):
             after = copy.deepcopy(before)
             after["bootIdSha256"] = value
+            with self.assertRaises(ValueError):
+                gate.compare(before, after)
+
+    def test_persistent_status_dropins_must_survive_reboot(self) -> None:
+        before = self.fixture()
+        cast(dict[str, object], before["snapshot"])["persistentDropinHashes"] = {"current": "a", "candidate": "b"}
+        after = copy.deepcopy(before)
+        after["bootIdSha256"] = "b" * 64
+        gate.compare(before, after)
+        for changed in (None, {}, {"current": "a", "candidate": "changed"}):
+            cast(dict[str, object], after["snapshot"])["persistentDropinHashes"] = changed
             with self.assertRaises(ValueError):
                 gate.compare(before, after)
 

@@ -35,6 +35,10 @@ def compare(before: dict[str, object], after: dict[str, object], pending: dict[s
     initial = cast(dict[str, object], before["snapshot"])
     final = cast(dict[str, object], after["snapshot"])
     require(final["nginxUnit"] == initial["nginxUnit"], "Nginx unit changed")
+    if "persistentDropinHashes" in initial or "persistentDropinHashes" in final:
+        require(isinstance(initial.get("persistentDropinHashes"), dict)
+                and len(cast(dict[str, object], initial["persistentDropinHashes"])) == 2
+                and final.get("persistentDropinHashes") == initial["persistentDropinHashes"], "persistent status wiring changed")
     if pending is None:
         require(after.get("status") == before.get("status"), "persistent update journal changed on clean reboot")
         require(final["state"] == initial["state"], "persistent application content changed")
@@ -67,7 +71,10 @@ def main() -> int:
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--reboot", action="store_true", help="Request exactly one software reboot after preflight")
     parser.add_argument("--pending-bundle", help="Bound sequence-three candidate for reboot during unconfirmed activation")
+    parser.add_argument("--profile", choices=packages.native.PROFILES, default="dev6-dev7")
     args = parser.parse_args()
+    require(args.pending_bundle is None or args.profile == "dev6-dev7", "interruption only supports legacy profile")
+    packages.select_profile(args.profile)
     require(args.pending_bundle is None or args.reboot, "interrupted update requires explicit reboot mode")
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new reboot receipt required")
@@ -87,10 +94,11 @@ def main() -> int:
     pending_attempted = False
     pending: dict[str, object] | None = None
     phase = "stage"
-    receipt: dict[str, object] = {"probe": "operational-signed-slot-reboot", "targetPowerControl": False, "softwareRebootRequested": False}
+    receipt: dict[str, object] = {"probe": "operational-signed-slot-reboot", "profile": args.profile,
+                                 "targetPowerControl": False, "softwareRebootRequested": False}
 
     def capture(post: bool) -> tuple[int, dict[str, object]]:
-        argv = ["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage]
+        argv = ["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage, "--profile", args.profile]
         if post:
             argv.append("--post")
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=40)
