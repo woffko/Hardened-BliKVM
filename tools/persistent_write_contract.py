@@ -170,3 +170,15 @@ def guard_units(root: Path) -> dict[str, bytes]:
         root.name + "-deadline.timer": ("[Timer]\nOnActiveSec=600\nOnUnitInactiveSec=30\n"
             + f"Unit={root.name}-restore.service\n[Install]\nWantedBy=timers.target\n").encode(),
     }
+
+
+def preparer_unit(root: Path) -> tuple[str, bytes]:
+    guard_units(root)
+    # Only the owned configuration preparer may be bounded by this cgroup.
+    # Upload/activation workers are separate installed services, never children
+    # of this unit. Recovery waits for this entire unit to become quiescent.
+    data = ("[Unit]\nStartLimitIntervalSec=0\n[Service]\nType=oneshot\nUser=root\nUMask=0077\n"
+            "KillMode=control-group\nTimeoutStartSec=180\nTimeoutStopSec=15\nSendSIGKILL=yes\n"
+            "NoNewPrivileges=yes\n"
+            f"ExecStart=/usr/bin/python3 -B {root}/controller.py wire --guard-root {root}\n")
+    return root.name + "-prepare.service", data.encode()

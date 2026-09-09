@@ -98,6 +98,22 @@ all owned targets before removal, and can detach only guard dependencies after
 commit. Its filesystem tests run solely in temporary host directories; a
 privileged device controller has not yet been implemented.
 
+The native admission adapter now closes only the two sockets, installs owned
+runtime masks, reloads systemd, and repeats closure. Early-boot stops are
+non-blocking. A failed first stop still attempts masking but remains a failure;
+an unsuccessful release reinstalls the fence. Release requires the exact owned
+preparer unit to have no process, control process, job or remaining cgroup, and
+requires all owned write-policy paths to be absent. The preparer is rendered
+with a bounded, control-group-scoped lifetime; it never owns update workers.
+These adapter tests mock systemd and do not prove installed recovery.
+
+Persistent settlement has a separate policy from the fixed 7-to-8 acceptance
+script. It durably records both floor and generation increases even while
+workers are busy, rejects regressions, and requires two identical idle terminal
+observations. Later confirmed slots are preserved, not reset to slot eight.
+The complete privileged coordinator, receipt qualification and CLI remain to
+be integrated before any device preparation.
+
 Offline systemd verification accepts the transaction dependency graph and
 rejects an injected `basic.target`/`sysinit.target` cycle. This proves static
 ordering only, not actual boot recovery. A local real-component browser test
