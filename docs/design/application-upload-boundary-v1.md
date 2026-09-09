@@ -15,6 +15,14 @@ unlinked snapshot feeds the same verifier and immutable atomic publication path
 as local file staging. Repeating the same verified archive returns the same
 slot as `AlreadyPresent`. Publication is not activation.
 
+`stage_reader_with_quota` additionally limits new publication by verified slot
+count and total logical payload bytes under the same exclusive root lock.
+It checks the candidate and existing slot identity before applying the quota,
+so a verified retry works at capacity. It neither removes slots nor changes
+the current pointer. Invalid policy is rejected before consuming the reader.
+This logical quota is not a filesystem free-space guarantee: the upload worker
+still needs a physical-space check including spool/snapshot/extraction overhead.
+
 The independent `bli-kvm-update-protocol::upload` metadata codec describes one
 length-prefixed JSON request, raw archive bytes, write-half EOF and one framed
 JSON response. The only request is `stage` with `archiveBytes`; no name, path,

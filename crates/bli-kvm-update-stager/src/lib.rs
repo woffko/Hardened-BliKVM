@@ -46,6 +46,23 @@ pub enum StageDisposition {
     AlreadyPresent,
 }
 
+/// Logical storage limits for network-originated staging. Physical free-space
+/// reservation for spool, snapshot and extraction is a separate transport gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageQuota {
+    pub max_slots: usize,
+    pub max_payload_bytes: u64,
+}
+
+impl StageQuota {
+    fn validate(self) -> Result<(), ApplicationStageError> {
+        if self.max_slots == 0 || self.max_slots > 32 || self.max_payload_bytes == 0 {
+            return Err(ApplicationStageError::InvalidQuota);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedApplication {
     pub slot_id: String,
@@ -114,6 +131,10 @@ pub enum ApplicationStageError {
     SourceChanged,
     #[error("application archive exceeded its size limit")]
     ArchiveTooLarge,
+    #[error("application staging quota is invalid")]
+    InvalidQuota,
+    #[error("application staging quota would be exceeded")]
+    QuotaExceeded,
     #[error("application archive verification failed")]
     Verify(#[from] UpdateVerifyError),
     #[error("application archive extraction failed")]
@@ -193,7 +214,7 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeDeletionState);
         }
         let (snapshot, archive_size) = self.snapshot_source(source.as_ref())?;
-        self.stage_snapshot(snapshot, archive_size, trust_root)
+        self.stage_snapshot(snapshot, archive_size, trust_root, None)
     }
 
     /// Stage a complete, length-delimited archive without accepting a source path.
@@ -212,7 +233,27 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeDeletionState);
         }
         let (snapshot, archive_size) = self.snapshot_reader(source, archive_size)?;
-        self.stage_snapshot(snapshot, archive_size, trust_root)
+        self.stage_snapshot(snapshot, archive_size, trust_root, None)
+    }
+
+    /// Apply a logical storage quota to new slots, while allowing a verified
+    /// idempotent retry without deleting any existing slot. The caller must
+    /// finish network reception before opening this stager's slot-root lock.
+    pub fn stage_reader_with_quota(
+        &self,
+        source: impl Read,
+        archive_size: u64,
+        trust_root: &ApplicationTrustRoot,
+        quota: StageQuota,
+    ) -> Result<StagedApplication, ApplicationStageError> {
+        quota.validate()?;
+        self.validate_root()?;
+        let (markers, tombstones) = self.collect_deletion_state()?;
+        if !markers.is_empty() || !tombstones.is_empty() {
+            return Err(ApplicationStageError::UnsafeDeletionState);
+        }
+        let (snapshot, archive_size) = self.snapshot_reader(source, archive_size)?;
+        self.stage_snapshot(snapshot, archive_size, trust_root, Some(quota))
     }
 
     fn stage_snapshot(
@@ -220,12 +261,29 @@ impl ApplicationSlotStager {
         mut snapshot: File,
         archive_size: u64,
         trust_root: &ApplicationTrustRoot,
+        quota: Option<StageQuota>,
     ) -> Result<StagedApplication, ApplicationStageError> {
         let verified = verify_application_reader(&mut snapshot, archive_size, trust_root)?;
         let slot_id = slot_id(&verified);
         let slot_path = self.root.join(&slot_id);
         if let Some(existing) = self.validate_if_present(&slot_path, &verified, trust_root)? {
             return Ok(existing);
+        }
+
+        if let Some(quota) = quota {
+            // The stager already owns the exclusive root lock. Count only
+            // verified immutable slots; unknown or corrupt entries fail closed.
+            let slots = self.list_slots(trust_root)?;
+            let payload_bytes = slots
+                .iter()
+                .try_fold(verified.payload_bytes, |total, slot| {
+                    total.checked_add(slot.payload_bytes)
+                });
+            if slots.len() >= quota.max_slots
+                || payload_bytes.is_none_or(|bytes| bytes > quota.max_payload_bytes)
+            {
+                return Err(ApplicationStageError::QuotaExceeded);
+            }
         }
 
         snapshot.seek(SeekFrom::Start(0))?;

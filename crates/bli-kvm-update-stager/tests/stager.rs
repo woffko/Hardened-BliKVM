@@ -7,7 +7,7 @@ use std::{
 
 use bli_kvm_update_stager::{
     ApplicationSlotStager, ApplicationStageError, SLOT_MANIFEST_PATH, SLOT_RECEIPT_PATH,
-    SLOT_SIGNATURE_PATH, StageDisposition,
+    SLOT_SIGNATURE_PATH, StageDisposition, StageQuota,
 };
 use bli_kvm_update_verifier::{
     APPLICATION_ARCHITECTURE, APPLICATION_FORMAT_V1, APPLICATION_MANIFEST_PATH,
@@ -290,6 +290,209 @@ fn streamed_archive_rejects_read_failure_and_untrusted_signature_without_publica
         Err(ApplicationStageError::Io(_))
     ));
     assert!(root_entries(slots.path()).is_empty());
+}
+
+#[test]
+fn upload_quota_preserves_existing_slot_and_allows_idempotent_retry_at_capacity() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let mut manifest = manifest(&payload);
+    let first_archive = bundle(&signing, &manifest, &payload);
+    manifest.sequence += 1;
+    let next_archive = bundle(&signing, &manifest, &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let quota = StageQuota {
+        max_slots: 1,
+        max_payload_bytes: 37,
+    };
+    let first = stager
+        .stage_reader_with_quota(
+            first_archive.as_slice(),
+            first_archive.len() as u64,
+            &trust,
+            quota,
+        )
+        .unwrap();
+    assert_eq!(first.disposition, StageDisposition::Published);
+    assert_eq!(first.payload_bytes, quota.max_payload_bytes);
+    symlink(&first.slot_id, slots.path().join("current")).unwrap();
+    let before = root_entries(slots.path());
+    assert!(matches!(
+        stager.stage_reader_with_quota(
+            next_archive.as_slice(),
+            next_archive.len() as u64,
+            &trust,
+            quota,
+        ),
+        Err(ApplicationStageError::QuotaExceeded)
+    ));
+    let retry = stager
+        .stage_reader_with_quota(
+            first_archive.as_slice(),
+            first_archive.len() as u64,
+            &trust,
+            quota,
+        )
+        .unwrap();
+    assert_eq!(retry.disposition, StageDisposition::AlreadyPresent);
+    assert_eq!(retry.slot_id, first.slot_id);
+    let lowered_quota_retry = stager
+        .stage_reader_with_quota(
+            first_archive.as_slice(),
+            first_archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 1,
+                max_payload_bytes: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        lowered_quota_retry.disposition,
+        StageDisposition::AlreadyPresent
+    );
+    assert_eq!(root_entries(slots.path()), before);
+    assert_eq!(
+        fs::read_link(slots.path().join("current")).unwrap(),
+        PathBuf::from(&first.slot_id)
+    );
+    assert_eq!(
+        stager
+            .inspect_slot(&first.slot_id, &trust)
+            .unwrap()
+            .manifest,
+        first.manifest
+    );
+}
+
+#[test]
+fn upload_payload_quota_counts_existing_and_new_slots() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let mut manifest = manifest(&payload);
+    let first_archive = bundle(&signing, &manifest, &payload);
+    manifest.sequence += 1;
+    let next_archive = bundle(&signing, &manifest, &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let first = stager
+        .stage_reader(first_archive.as_slice(), first_archive.len() as u64, &trust)
+        .unwrap();
+    assert!(matches!(
+        stager.stage_reader_with_quota(
+            next_archive.as_slice(),
+            next_archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 2,
+                max_payload_bytes: first.payload_bytes * 2 - 1
+            },
+        ),
+        Err(ApplicationStageError::QuotaExceeded)
+    ));
+    assert_eq!(root_entries(slots.path()), vec![first.slot_id]);
+    let next = stager
+        .stage_reader_with_quota(
+            next_archive.as_slice(),
+            next_archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 2,
+                max_payload_bytes: first.payload_bytes * 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(next.disposition, StageDisposition::Published);
+    assert_eq!(stager.list_slots(&trust).unwrap().len(), 2);
+}
+
+#[test]
+fn upload_quota_refuses_corrupt_existing_slot_without_overwriting_it() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let mut manifest = manifest(&payload);
+    let archive = bundle(&signing, &manifest, &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let first = stager
+        .stage_reader(archive.as_slice(), archive.len() as u64, &trust)
+        .unwrap();
+    let damaged = first.slot_path.join("share/web/index.html");
+    fs::set_permissions(&damaged, Permissions::from_mode(0o600)).unwrap();
+    fs::write(&damaged, b"tampered").unwrap();
+    fs::set_permissions(&damaged, Permissions::from_mode(0o444)).unwrap();
+    manifest.sequence += 1;
+    let next = bundle(&signing, &manifest, &payload);
+    assert!(
+        stager
+            .stage_reader_with_quota(
+                next.as_slice(),
+                next.len() as u64,
+                &trust,
+                StageQuota {
+                    max_slots: 2,
+                    max_payload_bytes: 1024
+                },
+            )
+            .is_err()
+    );
+    assert_eq!(root_entries(slots.path()), vec![first.slot_id]);
+    assert_eq!(fs::read(damaged).unwrap(), b"tampered");
+}
+
+#[test]
+fn upload_quota_refuses_unknown_root_content_without_removing_it() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let archive = bundle(&signing, &manifest(&payload), &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let unrelated = slots.path().join("unrelated");
+    fs::write(&unrelated, b"preserve").unwrap();
+    assert!(matches!(
+        stager.stage_reader_with_quota(
+            archive.as_slice(),
+            archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 2,
+                max_payload_bytes: 1024
+            },
+        ),
+        Err(ApplicationStageError::UnexpectedRootEntry)
+    ));
+    assert_eq!(root_entries(slots.path()), vec!["unrelated"]);
+    assert_eq!(fs::read(unrelated).unwrap(), b"preserve");
+}
+
+#[test]
+fn upload_quota_rejects_invalid_policy_before_consuming_source() {
+    let (_, trust) = keys();
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    for quota in [
+        StageQuota {
+            max_slots: 0,
+            max_payload_bytes: 1,
+        },
+        StageQuota {
+            max_slots: 33,
+            max_payload_bytes: 1,
+        },
+        StageQuota {
+            max_slots: 1,
+            max_payload_bytes: 0,
+        },
+    ] {
+        let mut source = std::io::Cursor::new(b"test");
+        assert!(matches!(
+            stager.stage_reader_with_quota(&mut source, 4, &trust, quota),
+            Err(ApplicationStageError::InvalidQuota)
+        ));
+        assert_eq!(source.position(), 0);
+        assert!(root_entries(slots.path()).is_empty());
+    }
 }
 
 #[test]
