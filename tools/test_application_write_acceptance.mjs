@@ -8,7 +8,33 @@ import {
   validateActivation,
   validateActivationRequest,
   validateStaged,
+  waitLoginInputs,
 } from "./playwright/application_write_acceptance.mjs";
+
+test("login waits for the lazy form instead of using document title as readiness", async () => {
+  let visible = false;
+  const inputs = {
+    nth(index) {
+      assert.equal(index, 1);
+      return {
+        async waitFor(options) {
+          assert.deepEqual(options, { state: "visible" });
+          visible = true;
+        },
+      };
+    },
+    async count() {
+      return visible ? 2 : 0;
+    },
+  };
+  const page = {
+    locator(selector) {
+      assert.equal(selector, "input");
+      return inputs;
+    },
+  };
+  assert.equal(await waitLoginInputs(page), inputs);
+});
 
 function staged() {
   const target = statusProfile("seq8");

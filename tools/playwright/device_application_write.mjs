@@ -10,6 +10,7 @@ import {
   bundleSha256,
   runApplicationWriteUi,
   validateActivationRequest,
+  waitLoginInputs,
 } from "./application_write_acceptance.mjs";
 import { verifyStatusPanel } from "./status_api_acceptance.mjs";
 
@@ -23,7 +24,7 @@ const [
   outputValue,
 ] = process.argv.slice(2);
 assert.equal(process.argv.slice(2).length, 7);
-assert.ok(["activate", "closed"].includes(mode));
+assert.ok(["activate", "closed", "preflight"].includes(mode));
 const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
 assert.ok(
@@ -120,16 +121,21 @@ try {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   page.on("pageerror", () => receipt.pageErrors++);
-  phase = "login";
+  phase = "login-document";
   const documentResponse = await page.goto(`${baseUrl}/#/auth/login`, {
     waitUntil: "domcontentloaded",
   });
+  receipt.documentStatus = documentResponse?.status() ?? null;
   assert.equal(documentResponse.status(), 200);
+  phase = "login-title";
   await page.waitForFunction(
     () => document.title === "Login - Hardened BliKVM",
   );
-  const inputs = page.locator("input");
-  assert.equal(await inputs.count(), 2);
+  phase = "login-inputs";
+  const inputs = await waitLoginInputs(page);
+  receipt.loginInputCount = await inputs.count();
+  assert.equal(receipt.loginInputCount, 2);
+  phase = "login-fill";
   await inputs.nth(0).fill(username);
   await inputs.nth(1).fill(password);
   const response = page.waitForResponse(
@@ -137,6 +143,7 @@ try {
       new URL(item.url()).pathname === "/api/auth/login" &&
       item.request().method() === "POST",
   );
+  phase = "login-submit";
   await page.getByRole("button", { name: "Login", exact: true }).click();
   assert.equal((await response).status(), 200);
   password = "";
@@ -149,7 +156,12 @@ try {
     assert.equal(receipt.uploadRequests, 1);
     assert.equal(receipt.activationRequests, 1);
   } else {
-    receipt.ui = await verifyStatusPanel(page, true, () => {}, "seq8");
+    receipt.ui = await verifyStatusPanel(
+      page,
+      true,
+      () => {},
+      mode === "preflight" ? "seq7" : "seq8",
+    );
     assert.equal(receipt.uploadRequests, 0);
     assert.equal(receipt.activationRequests, 0);
   }
@@ -161,6 +173,13 @@ try {
   receipt.phase = phase;
   receipt.errorType =
     error?.name === "TimeoutError" ? "TimeoutError" : "ProbeError";
+  receipt.localFrameLines = [
+    ...String(error?.stack ?? "").matchAll(
+      /device_application_write\.mjs:(\d+):\d+/g,
+    ),
+  ]
+    .slice(0, 3)
+    .map((match) => Number(match[1]));
 } finally {
   password = "";
   await browser?.close();

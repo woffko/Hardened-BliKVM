@@ -11,6 +11,14 @@ export const bundleSha256 =
   "d2acf270fa2aa9cb924c362066ece50f4b0fbd4c4c8b2975648dab5ac0b4f849";
 export const bundleBytes = 8724480;
 
+export async function waitLoginInputs(page) {
+  const inputs = page.locator("input");
+  // The title effect can precede rendering the lazily loaded form.
+  await inputs.nth(1).waitFor({ state: "visible" });
+  assert.equal(await inputs.count(), 2);
+  return inputs;
+}
+
 export function validateStaged(body) {
   const target = statusProfile("seq8");
   assert.equal(body.code, 0);

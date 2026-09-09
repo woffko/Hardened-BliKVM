@@ -284,7 +284,8 @@ node --check tools/playwright/device_test_account_setup_smoke.mjs
 if command -v basedpyright >/dev/null 2>&1; then
   basedpyright tools/application_write_*.py tools/test_application_write_*.py \
     tools/installed_application_write_gate.py tools/test_installed_application_write_gate.py \
-    tools/run_application_write_gate.py tools/test_run_application_write_gate.py
+    tools/run_application_write_gate.py tools/test_run_application_write_gate.py \
+    tools/cleanup_application_write_guard.py
   basedpyright \
     tools/upgrade_initialized_updater.py \
     tools/enable_update_services.py \

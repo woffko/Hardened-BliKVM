@@ -1045,8 +1045,12 @@ activation. Browser acceptance separates an awaiting-health receipt from
 confirmed sequence eight and the subsequent restored read-only desktop/mobile
 panels. Local failure-path tests and the complete host check pass, including
 Rust checks/tests/Clippy, Python tests/type checks and the web build/lint/format
-gates. Real-device HTTP acceptance is still pending. These tools have not yet
-enabled HTTP writes on the device.
+gates. The first device run temporarily wired HTTP writes, but the browser
+stopped before submitting login: the document title appeared before the lazy
+form inputs. No upload or activation request was sent. Recovery and a separate
+verified cleanup retained sequence seven/generation 37, closed write admission,
+and removed only the owned guard. The test now awaits visible form inputs;
+real-device HTTP upload/activation acceptance is still pending.
 
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
