@@ -89,7 +89,9 @@ export const BliApplicationUpdate = () => {
       )}
       <BliApplicationUpload
         enabled={writable}
-        ready={state === 'ready' && !!data && !data.pending}
+        ready={state === 'ready' && !refreshing}
+        status={data}
+        refresh={refresh}
       />
       {!writable && (
         <Alert showIcon type="info" message={t('settings.applicationUpdate.readOnly')} />

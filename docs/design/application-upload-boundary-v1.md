@@ -116,8 +116,10 @@ after the last declared byte still withholds that byte from the worker.
 
 The Bli update panel now includes a capability-gated upload component with a
 single File request, explicit upload action, progress, verification wait,
-cancel/retry and a validated staged-slot receipt. It does not send multipart,
-paths, URLs or activation commands. The browser supplies the exact File length.
+cancel/retry and a validated staged-slot receipt. Upload does not send multipart,
+paths, URLs or activation commands. A separate confirmation flow now handles
+generation-fenced activation; see `../api/application-activation-v1.md`.
+The browser supplies the exact File length.
 Zero/oversized files are blocked locally as well as by the server. Decimal
 counter and slot/hash identity validation is repeated before rendering success.
 100% transport progress is labelled as awaiting verification, never installation.

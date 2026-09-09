@@ -1,4 +1,6 @@
 import type {
+  ApplicationActivationIntent,
+  ApplicationActivationReceipt,
   ApplicationSlot,
   ApplicationUpdateStatus,
   ApplicationUploadReceipt
@@ -66,6 +68,64 @@ function sameSlot(left: ApplicationSlot, right: ApplicationSlot) {
     left.sequence === right.sequence &&
     left.minimumSystemSequence === right.minimumSystemSequence
   );
+}
+
+export function eligibleApplicationTarget(
+  target: ApplicationSlot,
+  status: ApplicationUpdateStatus
+) {
+  return (
+    status.pending === null &&
+    !atMost(target.sequence, status.floorSequence) &&
+    atMost(target.minimumSystemSequence, status.systemSequence) &&
+    target.slotId !== status.selected.slotId
+  );
+}
+
+export function currentApplicationIntent(
+  intent: ApplicationActivationIntent,
+  status: ApplicationUpdateStatus
+) {
+  return (
+    intent.expectedGeneration === status.generation &&
+    sameSlot(intent.current, status.confirmed) &&
+    eligibleApplicationTarget(intent.target, status)
+  );
+}
+
+export function isApplicationActivationReceipt(
+  value: unknown,
+  target: string
+): value is ApplicationActivationReceipt {
+  if (!object(value) || !keys(value, ['phase', 'receipt']) || value.phase !== 'awaiting_health')
+    return false;
+  const receipt = value.receipt;
+  return (
+    object(receipt) &&
+    keys(receipt, ['operationId', 'targetSlotId']) &&
+    receipt.targetSlotId === target &&
+    typeof receipt.operationId === 'string' &&
+    /^[a-f0-9]{32}$/.test(receipt.operationId) &&
+    !/^0+$/.test(receipt.operationId)
+  );
+}
+
+export function reconcileApplicationActivation(
+  intent: ApplicationActivationIntent,
+  receipt: ApplicationActivationReceipt | null,
+  status: ApplicationUpdateStatus
+): 'awaiting' | 'uncertain' | 'installed' | 'notApplied' | 'changed' {
+  // Old/in-flight reads do not settle a mutation, even if HTTP has replied.
+  if (atMost(status.generation, intent.expectedGeneration))
+    return receipt ? 'awaiting' : 'uncertain';
+  if (status.pending) {
+    return sameSlot(status.pending.target, intent.target) &&
+      (!receipt || receipt.receipt.operationId === status.pending.operationId)
+      ? 'awaiting'
+      : 'changed';
+  }
+  // This proves current confirmed target, not attribution to a particular request.
+  return sameSlot(status.confirmed, intent.target) ? 'installed' : 'notApplied';
 }
 
 export function isApplicationUploadReceipt(value: unknown): value is ApplicationUploadReceipt {

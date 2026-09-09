@@ -21,6 +21,8 @@ const receipt = {
   payloadBytes: String(archive.length),
 };
 let mode = "success";
+let activationMode = "accepted";
+const activations = [];
 let uploads = 0;
 let aborts = 0;
 const uploadModes = [];
@@ -49,7 +51,11 @@ const server = await createServer({
             import '/src/i18n/index.ts';
             import '/src/assets/styles/index.css';
             const root = ReactDOM.createRoot(document.getElementById('root'));
-            window.uploadHarness = (enabled = true, ready = true, visible = true) => root.render(visible ? React.createElement(BliApplicationUpload, {enabled, ready}) : null);
+            const current = { slotId: 'app-00000000000000000002-' + 'b'.repeat(64), version: '0.1.0', sequence: '2', minimumSystemSequence: '1' };
+            const initialStatus = { schemaVersion: 1, generation: '10', floorSequence: '2', systemSequence: '1', selected: current, confirmed: current, previous: null, pending: null, lastRollback: null };
+            let status = initialStatus;
+            window.uploadHarness = (enabled = true, ready = true, visible = true) => root.render(visible ? React.createElement(BliApplicationUpload, {enabled, ready, status, refresh: () => {}}) : null);
+            window.activationStatus = (patch) => { status = { ...initialStatus, ...patch }; window.uploadHarness(); };
             document.cookie = 'hardened-blikvm-csrf=synthetic-browser-fixture; SameSite=Strict; Path=/';
             window.uploadHarness();
           </script></body></html>`,
@@ -58,6 +64,47 @@ const server = await createServer({
             return;
           }
           if (route?.startsWith("/api/")) {
+            if (
+              route === "/api/application-update/activate" &&
+              request.method === "POST"
+            ) {
+              const chunks = [];
+              for await (const chunk of request) chunks.push(chunk);
+              const intent = JSON.parse(Buffer.concat(chunks).toString());
+              activations.push(intent);
+              if (
+                request.headers["x-csrf-token"] !== "synthetic-browser-fixture"
+              )
+                violations.push("activation CSRF");
+              if (request.headers["content-type"] !== "application/json")
+                violations.push("activation type");
+              if (
+                JSON.stringify(Object.keys(intent).sort()) !==
+                JSON.stringify(["expectedGeneration", "slotId"])
+              )
+                violations.push("activation fields");
+              response.setHeader("Content-Type", "application/json");
+              if (activationMode === "uncertain")
+                response
+                  .writeHead(503)
+                  .end(
+                    JSON.stringify({ code: -503, msg: "service unavailable" }),
+                  );
+              else
+                response.writeHead(202).end(
+                  JSON.stringify({
+                    code: 0,
+                    data: {
+                      phase: "awaiting_health",
+                      receipt: {
+                        operationId: "c".repeat(32),
+                        targetSlotId: receipt.slot.slotId,
+                      },
+                    },
+                  }),
+                );
+              return;
+            }
             if (
               route !== "/api/application-update/upload" ||
               request.method !== "POST"
@@ -198,6 +245,90 @@ try {
       (element) => element.scrollWidth <= element.clientWidth,
     ),
   );
+  phase = "activation-confirmation-fence";
+  const review = page.getByTestId("application-activation-review");
+  await review.click();
+  const dialog = page.getByRole("dialog");
+  await dialog.waitFor();
+  assert.equal(activations.length, 0);
+  await page.evaluate(() => window.activationStatus({ generation: "11" }));
+  assert.equal(
+    await page.getByTestId("application-activation-confirm").isEnabled(),
+    false,
+  );
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await review.click();
+  await page
+    .getByTestId("application-activation-confirm")
+    .evaluate((button) => {
+      button.click();
+      button.click();
+    });
+  await panel.getByText(/Activation is awaiting health confirmation/).waitFor();
+  assert.deepEqual(activations, [
+    { slotId: receipt.slot.slotId, expectedGeneration: "11" },
+  ]);
+  assert.equal(await picker.isEnabled(), false);
+  await page.evaluate(
+    (target) =>
+      window.activationStatus({
+        generation: "12",
+        selected: target,
+        pending: {
+          operationId: "c".repeat(32),
+          target,
+          phase: "awaiting_health",
+        },
+      }),
+    receipt.slot,
+  );
+  await panel.getByText(/Activation is awaiting health confirmation/).waitFor();
+  await page.evaluate(
+    (target) =>
+      window.activationStatus({
+        generation: "13",
+        selected: target,
+        confirmed: target,
+        floorSequence: target.sequence,
+      }),
+    receipt.slot,
+  );
+  await panel
+    .getByText("The requested target is now the confirmed application.", {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(await review.isEnabled(), false);
+  phase = "activation-uncertain-reconciliation";
+  await page.evaluate(() => window.activationStatus({ generation: "20" }));
+  activationMode = "uncertain";
+  await review.click();
+  await page.getByTestId("application-activation-confirm").click();
+  await panel.getByText(/The outcome is unknown/).waitFor();
+  await panel
+    .getByRole("button", { name: "Check current status", exact: true })
+    .click();
+  assert.equal(activations.length, 2);
+  await page.evaluate(
+    (target) =>
+      window.activationStatus({
+        generation: "22",
+        selected: target,
+        confirmed: target,
+        floorSequence: target.sequence,
+      }),
+    receipt.slot,
+  );
+  await panel
+    .getByText("The requested target is now the confirmed application.", {
+      exact: true,
+    })
+    .waitFor();
+  assert.deepEqual(activations, [
+    { slotId: receipt.slot.slotId, expectedGeneration: "11" },
+    { slotId: receipt.slot.slotId, expectedGeneration: "20" },
+  ]);
+  await page.evaluate(() => window.activationStatus({ generation: "30" }));
   phase = "lost-receipt-and-retry";
   mode = "lost";
   await choose();
@@ -278,6 +409,11 @@ try {
   // browser-visible sends independently; only the deliberately lost response
   // may have transport retries. This must not mask double UI submission.
   assert.equal(logicalUploads, 7);
+  assert.equal(
+    activations.length,
+    2,
+    "only the two explicitly confirmed activations may be sent",
+  );
   assert.deepEqual(
     uploadModes.filter((value) => value !== "lost"),
     ["success", "retry", "cancel", "retry", "rejected", "cancel"],
@@ -304,6 +440,7 @@ try {
       scope: "local component plus synthetic HTTP",
       uploads,
       logicalUploads,
+      activations: activations.length,
       aborts,
       mobile: true,
     }),

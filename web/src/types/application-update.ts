@@ -12,6 +12,17 @@ export type ApplicationUploadReceipt = {
   payloadBytes: string;
 };
 
+export type ApplicationActivationReceipt = {
+  phase: 'awaiting_health';
+  receipt: { operationId: string; targetSlotId: string };
+};
+
+export type ApplicationActivationIntent = {
+  target: ApplicationSlot;
+  current: ApplicationSlot;
+  expectedGeneration: string;
+};
+
 export type ApplicationRollbackReason =
   | 'interrupted_prepare'
   | 'boot_changed'

@@ -163,7 +163,7 @@ releases manager locks. Dev1–dev8 package file maps remain unchanged.
 Host tests cover generation fencing, repeated requests before/after health
 confirmation, preserved challenge identity, typed errors, exact receipts and
 success-for-dispatch after a lost reply. Offline package/systemd checks cover
-the new templates. UI activation wiring and installed identity, dispatch,
+the new templates. Installed identity, dispatch,
 restart/health/rollback and browser acceptance remain required; these source
 changes do not enable writable-update capability.
 
@@ -193,6 +193,36 @@ never silently retry or substitute a newer generation. Host HTTP/client tests
 cover authorization, closed bodies, exact u64 generation, receipt correlation,
 bounded concurrency/timeouts, lost replies and absence of automatic retry.
 These tests are not installed systemd dispatch or native browser acceptance.
+
+### Capability-gated browser confirmation
+
+The staged receipt exposes a separate review action only under writable
+capability. Eligibility requires fresh status, no pending operation, a target
+above the confirmed sequence floor and a compatible minimum system sequence.
+The dialog snapshots the exact verified target, current confirmed slot and
+decimal generation. It refreshes status; confirming stays disabled during
+refresh/staleness and if target, generation or eligibility changes. A changed
+intent must be closed and explicitly reviewed again; generation is not replaced
+inside an existing dialog. Activation uses a synchronous in-flight guard and
+never auto-resends, including after ambiguous HTTP errors.
+
+The UI distinguishes sending, awaiting health, unknown outcome, rejection,
+another pending operation and a currently confirmed target. A receipt cannot
+display success. Reconciliation ignores old generations, correlates pending
+operation/target when a receipt exists, and requires fresh status to report the
+target as currently confirmed. This observation does not attribute confirmation
+to a particular request. A changed terminal state with a different confirmed
+target directs the user to inspect status and rollback reason. Unknown outcome
+permits only an explicit new review, not an automatic retry. Unmount/capability
+loss aborts transport and ignores late callbacks; it does not promise rollback.
+
+Local Chromium acceptance uses the real component and HTTP adapter with
+synthetic receipts and controlled status props. It covers mobile layout,
+cancel without dispatch, stale-generation confirmation lockout, exact explicit
+sends, receipt-before-health waiting, confirmed-target reconciliation and an
+ambiguous 503 reconciled without resend. It is not an installed native test,
+nor proof of real supervisor health or systemd apply dispatch. Writable
+capability remains disabled until those gates pass.
 
 Supervisor stderr remains deliberately generic. When a runtime operation
 reaches the manager and fails, the local exit status identifies only the fixed

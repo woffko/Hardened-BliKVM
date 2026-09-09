@@ -749,6 +749,31 @@ const en = {
         stale: 'Connection lost. The displayed status may be outdated.',
         readOnly: 'Status only. Upload and activation are not enabled for this interface yet.',
         lastRollback: 'Last rollback',
+        activation: {
+          review: 'Review activation',
+          title: 'Activate this application?',
+          confirm: 'Activate application',
+          cancel: 'Cancel',
+          warning:
+            'The running application will restart and the connection may drop. Installation is complete only after the updater confirms candidate health. This does not reboot the device or update the system image.',
+          current: 'Current confirmed application',
+          target: 'Verified target',
+          staleIntent:
+            'Waiting for fresh status, or the state has changed. If it changed, close this dialog and review again. This confirmation will not switch to a newer generation automatically.',
+          sending: 'Sending activation once…',
+          awaiting:
+            'Activation is awaiting health confirmation. A receipt is not installation success.',
+          uncertain:
+            'The outcome is unknown. Checking status; the activation command will not be sent again automatically. Review fresh status before explicitly confirming another attempt.',
+          rejected:
+            'Activation was rejected. Refresh the status and review a new confirmation if appropriate.',
+          installed: 'The requested target is now the confirmed application.',
+          notApplied:
+            'The update state advanced, but this target is not confirmed. Inspect the current status and rollback reason before trying again.',
+          changed:
+            'Another operation is now pending. Inspect its status; this request will not be repeated.',
+          reconcile: 'Check current status'
+        },
         upload: {
           title: 'Upload a signed application archive',
           description:
@@ -770,7 +795,7 @@ const en = {
           published: 'Archive verified and staged',
           already_present: 'This verified archive is already staged',
           stagedOnly:
-            'Not activated. Switching the running application requires a separate confirmation.'
+            'Uploading alone does not activate the application. Switching requires a separate confirmation; the current status shows the result.'
         },
         phase: {
           prepared: 'Recovering a prepared update',

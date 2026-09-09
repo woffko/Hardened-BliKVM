@@ -1,9 +1,25 @@
 import type {
+  ApplicationActivationReceipt,
   ApplicationUpdateStatus,
   ApplicationUploadReceipt
 } from '@/types/application-update.ts';
 
 import { http } from '@/lib/http.ts';
+
+export function activateApplication(
+  slotId: string,
+  expectedGeneration: string,
+  signal: AbortSignal
+) {
+  return http.request<ApplicationActivationReceipt>({
+    method: 'post',
+    url: '/api/application-update/activate',
+    data: { slotId, expectedGeneration },
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    timeout: 15000
+  });
+}
 
 export function getApplicationUpdateStatus(signal?: AbortSignal) {
   return http.request<ApplicationUpdateStatus>({

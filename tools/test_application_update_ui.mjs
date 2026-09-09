@@ -19,6 +19,10 @@ const {
   isApplicationUpdateStatus: valid,
   isApplicationUploadReceipt: validReceipt,
   validApplicationArchiveSize: validSize,
+  eligibleApplicationTarget: eligible,
+  currentApplicationIntent: currentIntent,
+  isApplicationActivationReceipt: validActivation,
+  reconcileApplicationActivation: reconcile,
 } = await load("../web/src/lib/application-update.ts");
 const { supportsSettingsTab } = await load("../web/src/lib/capabilities.ts");
 const slot = (sequence) => ({
@@ -113,4 +117,79 @@ for (const value of [
 for (const value of [1, 134217728]) assert.equal(validSize(value), true);
 for (const value of [0, -1, 0.5, 134217729, NaN, Infinity, "1"])
   assert.equal(validSize(value), false);
+const intent = {
+  target: slot("3"),
+  current: slot("2"),
+  expectedGeneration: "10",
+};
+const activation = {
+  phase: "awaiting_health",
+  receipt: { operationId: "b".repeat(32), targetSlotId: slot("3").slotId },
+};
+assert.equal(eligible(slot("3"), fixture()), true);
+assert.equal(eligible(slot("2"), fixture()), false);
+assert.equal(
+  eligible({ ...slot("3"), minimumSystemSequence: "2" }, fixture()),
+  false,
+);
+assert.equal(eligible(slot("3"), pending), false);
+assert.equal(currentIntent(intent, fixture()), true);
+assert.equal(currentIntent(intent, { ...fixture(), generation: "11" }), false);
+assert.equal(validActivation(activation, slot("3").slotId), true);
+for (const invalid of [
+  null,
+  {},
+  { ...activation, confirmed: true },
+  { ...activation, phase: "confirmed" },
+  {
+    ...activation,
+    receipt: { ...activation.receipt, healthToken: "forbidden" },
+  },
+  {
+    ...activation,
+    receipt: { ...activation.receipt, operationId: "0".repeat(32) },
+  },
+]) {
+  assert.equal(validActivation(invalid, slot("3").slotId), false);
+}
+assert.equal(validActivation(activation, slot("4").slotId), false);
+assert.equal(reconcile(intent, activation, fixture()), "awaiting");
+assert.equal(reconcile(intent, null, fixture()), "uncertain");
+assert.equal(
+  reconcile(intent, activation, { ...pending, generation: "11" }),
+  "awaiting",
+);
+assert.equal(
+  reconcile(intent, null, { ...pending, generation: "11" }),
+  "awaiting",
+);
+assert.equal(
+  reconcile(intent, activation, {
+    ...pending,
+    generation: "11",
+    pending: { ...pending.pending, operationId: "c".repeat(32) },
+  }),
+  "changed",
+);
+assert.equal(
+  reconcile(intent, activation, { ...fixture(), generation: "12" }),
+  "notApplied",
+);
+assert.equal(
+  reconcile(intent, null, {
+    ...fixture(),
+    generation: "12",
+    confirmed: slot("3"),
+    selected: slot("3"),
+    floorSequence: "3",
+  }),
+  "installed",
+);
+assert.equal(
+  currentIntent(
+    { ...intent, expectedGeneration: "9007199254740992" },
+    { ...fixture(), generation: "9007199254740993" },
+  ),
+  false,
+);
 console.log("application update UI contract: passed");
