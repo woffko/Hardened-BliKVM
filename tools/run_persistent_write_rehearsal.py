@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Stage/read or rehearse revocable update wiring; never upload/activate an app."""
+"""Read/rehearse revocable wiring and stage-only GUI checks; never activate."""
 
 import argparse
 from collections.abc import Callable
+from contextlib import ExitStack
 import hashlib
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from typing import cast
+from urllib.parse import urlsplit
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -19,6 +21,7 @@ if not __package__:
 from tools import installed_persistent_write as native
 from tools import stage_initialized_updater_upgrade as packages
 from tools.capture_pikvm_baseline import write_json_0600_atomic
+from tools.secret_pair_stdin import secret_pair_stdin
 
 transport = packages.transport
 require = native.require
@@ -57,9 +60,11 @@ def validate_result(value: object, *, action: str, root: str) -> dict[str, objec
 
 
 def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str], dict[str, object]],
-               observe: Callable[[], dict[str, object]], save: Callable[[], None]) -> None:
+               observe: Callable[[], dict[str, object]], save: Callable[[], None],
+               exercise: Callable[[], dict[str, object]] | None = None) -> None:
     """Each state-changing phase is submitted once; reserve its receipt first."""
-    require(action in ("preflight", "rehearse"), "unreviewed rehearsal action")
+    require(action in ("preflight", "rehearse", "browser"), "unreviewed rehearsal action")
+    require((exercise is not None) == (action == "browser"), "browser phase binding differs")
     receipt["before"] = observe()
     receipt["runtimeWritesClosed"] = True
     save()
@@ -72,6 +77,9 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
         save()
         receipt["prepared"] = invoke("prepare")
         save()
+        if exercise is not None:
+            receipt["browser"] = exercise()
+            save()
         receipt["restored"] = invoke("restore")
         receipt["runtimeWritesClosed"] = True
         save()
@@ -85,6 +93,7 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
                 == native.object_value(receipt["after"])["bootIdSha256"], "unexpected reboot during same-boot rehearsal")
         receipt["result"] = "passed"
     except (OSError, ValueError, subprocess.SubprocessError) as error:
+        receipt["result"] = "failed"
         receipt["errorType"] = type(error).__name__
         if receipt.get("prepareSubmitted") is True and receipt.get("runtimeWritesClosed") is not True:
             try:
@@ -100,14 +109,28 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "rehearse"))
+    parser.add_argument("action", choices=("preflight", "rehearse", "browser"))
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
+    for name in ("bundle", "base-url", "username"):
+        parser.add_argument("--" + name)
     args = parser.parse_args()
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new rehearsal receipt required")
     uploads = build_uploads(args.old_package, args.new_package)
     host, port = transport.parse_endpoint(args.endpoint)
+    browser_mode = args.action == "browser"
+    require(all((value is not None) == browser_mode for value in (args.bundle, args.base_url, args.username)),
+            "browser arguments required only for browser action")
+    if browser_mode:
+        url = urlsplit(cast(str, args.base_url))
+        require(url.scheme == "https" and url.hostname == host and not url.username and not url.password
+                and not url.query and not url.fragment and url.path in ("", "/"), "browser endpoint differs")
+        require(native.re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", args.username) is not None, "invalid browser account")
+        archive = Path(args.bundle).read_bytes()
+        require(len(archive) == native.temporary.upload.probe.BUNDLE_BYTES
+                and hashlib.sha256(archive).hexdigest() == native.temporary.upload.probe.PROFILES["seq8-publish"].bundle_sha,
+                "browser archive is not the reviewed sequence eight")
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     run_id = secrets.token_hex(12)
     stage = "/tmp/blikvm-persistent-write-" + run_id
@@ -116,11 +139,22 @@ def main() -> int:
         "guardRoot": root, "stageRoot": stage, "prepareSubmitted": False, "cleanupSubmitted": False,
         "runtimeWritesClosed": False, "guardRetained": False, "applicationUploads": 0, "applicationActivations": 0,
         "targetPowerControl": False, "rebootRequested": False, "retentionApproved": False,
+        "runnerSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "sourceHashes": {name: hashlib.sha256(data).hexdigest() for name, data in uploads.items()}}
     def save() -> None:
         write_json_0600_atomic(output, receipt)
     save()  # Durable namespace receipt precedes staging or a remote invocation.
-    secret = transport.read_secret_stdin()
+    credentials = ExitStack()
+    gui: bytearray | None = None
+    try:
+        if browser_mode:
+            pair = credentials.enter_context(secret_pair_stdin())
+            secret, gui = pair["ssh"], pair["gui"]
+        else:
+            secret = transport.read_secret_stdin()
+    except BaseException:
+        credentials.close()
+        raise
     staged = False
     q = shlex.quote
     def ssh(command: str, timeout: int = 30) -> subprocess.CompletedProcess[bytes]:
@@ -145,6 +179,36 @@ def main() -> int:
                 and status.get("floorSequence") == 8 and status.get("generation") == 40 and status.get("pending") is None,
                 "seq8 baseline receipt differs")
         return {"status": status, "bootIdSha256": value.get("bootIdSha256"), "runtimeWritesClosed": True}
+    def exercise() -> dict[str, object]:
+        assert gui is not None
+        destination = output.with_name(output.stem + "-" + run_id + "-browser.json")
+        require(not destination.exists(), "new browser receipt required")
+        sources = ("device_application_upload_failures.mjs", "application_write_acceptance.mjs",
+            "application_response_capture.mjs", "status_api_acceptance.mjs")
+        receipt["browserSourceHashes"] = {name: hashlib.sha256((Path(__file__).parent / "playwright" / name).read_bytes()).hexdigest()
+            for name in sources}
+        receipt["browserReceipt"] = str(destination)
+        receipt["browserSubmitted"] = True
+        receipt["applicationUploads"] = None  # Unknown until the browser receipt.
+        save()
+        response = subprocess.run(["node", "tools/playwright/device_application_upload_failures.mjs",
+            "/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs",
+            "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome", args.base_url.rstrip("/"),
+            args.username, args.bundle, str(destination)], input=gui, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=240, check=False, close_fds=True)
+        path = transport.validate_private_file(str(destination))
+        require(path.stat().st_size <= 65536, "oversize browser receipt")
+        value = native.object_value(json.loads(path.read_bytes(), object_pairs_hook=native.temporary.upload.probe.unique_object))
+        receipt["browser"] = value
+        receipt["applicationUploads"] = value.get("uploadRequests")
+        receipt["applicationActivations"] = value.get("activationRequests")
+        save()
+        require(response.returncode == 0 and value.get("result") == "passed" and value.get("probe") == "application-upload-failures"
+                and value.get("uploadRequests") == 4 and value.get("activationRequests") == 0
+                and value.get("logoutRequests") == 1 and value.get("inflightUploadRevoked") is True
+                and value.get("retryAlreadyPresent") is True and value.get("cancelled") is True
+                and value.get("invalidArchiveRejected") is True, "installed browser acceptance failed")
+        return value
     try:
         require(ssh(f"set -eu\ntest ! -e {q(stage)} && test ! -L {q(stage)}\nmkdir -m 700 {q(stage)}").returncode == 0,
                 "rehearsal staging failed")
@@ -155,7 +219,7 @@ def main() -> int:
                 stream.write(data)
                 stream.seek(0)
                 require(transport.run_ssh(target, secret, script, stdin=stream, timeout=60).returncode == 0, "rehearsal staging upload failed")
-        run_phases(args.action, receipt, invoke=invoke, observe=observe, save=save)
+        run_phases(args.action, receipt, invoke=invoke, observe=observe, save=save, exercise=exercise if browser_mode else None)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt["errorType"] = type(error).__name__
         receipt["independentInspectionRequired"] = True
@@ -172,6 +236,7 @@ def main() -> int:
         if staged:
             receipt["result"] = "failed"
         secret[:] = b"\0" * len(secret)
+        credentials.close()
         save()
     return 0 if receipt["result"] == "passed" else 1
 

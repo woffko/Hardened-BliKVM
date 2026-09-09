@@ -1110,6 +1110,13 @@ guard never closes admission, runtime recovery drains before removal, and
 early-boot restoration leaves final verification/disarm to a later runtime
 phase. These are host-tested controller components, not an installed service.
 
+The first installed same-boot persistent-policy rehearsal now passed: guarded
+write wiring, idle restoration, owned-unit cleanup/archive, and independent
+closed-state observations retained seq8/floor8/generation40 without an upload,
+activation or reboot. Exact source/receipt bindings and the remaining live
+gates are recorded in `baselines/persistent-write-rehearsal.md`. Permanent
+write admission is still disabled.
+
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
 serving state (`baselines/updater-dev6-package.md`). Status transport is still

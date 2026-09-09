@@ -118,14 +118,15 @@ guard definitions and recovery metadata after restoration for explicit
 inspection/cleanup. Initial preparation is restricted to the accepted
 slot-eight baseline; recovery preserves later monotonic state. Host tests
 cover import closure, boot arming/restoration routing, write failure closure,
-counter persistence, and snapshot preservation. It has not been installed or
-qualified on the device. Cleanup first requires verified restoration, absent
+counter persistence, and snapshot preservation. Its installed idle rehearsal
+has now passed; boot and pending-work recovery still need qualification.
+Cleanup first requires verified restoration, absent
 enable links/masks, idle preparer/recovery units, and no loaded server dependency
 on the boot guard. It records a durable cleanup marker before removing owned
 unit definitions, then re-verifies closed runtime and archives the root-private
 code/backup instead of deleting it. An interrupted unit cleanup can resume;
-foreign data is left for inspection. Host orchestration and actual gate receipt
-qualification remain pending. There is no permanent-retention CLI.
+foreign data is left for inspection. Full gate receipt qualification remains
+pending. There is no permanent-retention CLI.
 
 The host driver now has separate `preflight` and `rehearse` actions. Both use
 pinned package/code inputs and a reserved private receipt before SSH staging.
@@ -134,8 +135,18 @@ restores admission to closed, cleans up, and independently re-reads the seq8
 state on the same boot. It sends no application archive and invokes no upload,
 activation, reboot or target-power operation. Ambiguous preparation triggers
 recovery, not another preparation; ambiguous cleanup requires inspection of
-the reserved root/archive instead of replay. This driver is host-tested, not
-yet device-qualified.
+the reserved root/archive instead of replay. Its installed idle rehearsal now
+passed; see `../baselines/persistent-write-rehearsal.md`. Pending-work, boot and
+browser acceptance remain separate; the rehearsal restored admission to closed.
+
+A separate `browser` action is prepared but not yet accepted on the device.
+It uses two pages of one authenticated session: one keeps the upload mounted,
+the other invokes the real Account/Logout control. A single-tab Account switch
+would first unmount/cancel the upload and could not isolate session revocation.
+The scenario checks an invalid archive, partial-progress cancellation, retry of
+the exact already-present seq8 archive, and HTTP 401 for an in-flight upload
+after logout. It forbids activation and restores/cleans the native policy after
+the browser phase. Its paired SSH/GUI credentials are supplied only on stdin.
 
 If plan/decision I/O or runtime recovery fails, the controller attempts an
 emergency owned fence under its common lock and still reports failure. It
@@ -157,16 +168,16 @@ transition; it does not establish installed-worker logout acceptance.
 
 Existing evidence and remaining checks are deliberately separate:
 
-| Gate | Current evidence | Work still required for persistent policy |
-| --- | --- | --- |
-| Host safety | Server/client authorization, length, quota and cancellation tests | Persistent controller ownership, phase and interruption tests |
-| Native upload/activation | Installed native worker gates and confirmed slot 8 | Preserve bindings while configuring permanent admission |
-| GUI happy path | Actual upload, reviewed activation, confirmation and restored desktop/mobile status | Verify the prospective persistent configuration |
-| Failure and retry | Synthetic component rejection and uncertain-response retry | Bounded installed GUI stage-only rejection/retry |
-| Cancel and progress | Synthetic verifying/cancel/retry and unmount abort | Intermediate progress and actual cancelled upload |
-| Logout | Host handler revocation tests | Browser logout during upload, session transition and no stale completion |
-| Boot recovery | Accepted persistent status recovery; temporary write recovery | Uncommitted persistent-write boot restore and committed-policy survival |
-| Disable/drain | Temporary seq8 controller settled a real activation before restore | Owned permanent policy disable with pending work and failure injection |
+| Gate                     | Current evidence                                                                    | Work still required for persistent policy                                |
+| ------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Host safety              | Server/client authorization, length, quota and cancellation tests                   | Persistent controller ownership, phase and interruption tests            |
+| Native upload/activation | Installed native worker gates and confirmed slot 8                                  | Preserve bindings while configuring permanent admission                  |
+| GUI happy path           | Actual upload, reviewed activation, confirmation and restored desktop/mobile status | Verify the prospective persistent configuration                          |
+| Failure and retry        | Synthetic component rejection and uncertain-response retry                          | Bounded installed GUI stage-only rejection/retry                         |
+| Cancel and progress      | Synthetic verifying/cancel/retry and unmount abort                                  | Intermediate progress and actual cancelled upload                        |
+| Logout                   | Host handler revocation tests                                                       | Browser logout during upload, session transition and no stale completion |
+| Boot recovery            | Accepted persistent status recovery; temporary write recovery                       | Uncommitted persistent-write boot restore and committed-policy survival  |
+| Disable/drain            | Temporary seq8 controller settled a real activation before restore                  | Owned permanent policy disable with pending work and failure injection   |
 
 Negative upload tests must not activate another slot or infer permission to
 publish sequence 9. Preserve all eight retained slots; quota-boundary retry is

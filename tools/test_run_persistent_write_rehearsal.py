@@ -87,3 +87,26 @@ class RehearsalTests(unittest.TestCase):
         self.assertEqual(set(uploads), {*runner.native.ASSETS, "installed_persistent_write.py"})
         self.assertNotIn("old.deb", uploads)
         self.assertNotIn("application.tar", uploads)
+
+    def test_browser_runs_only_inside_verified_preparation_window(self) -> None:
+        def exercise() -> dict[str, object]:
+            self.assertIn("prepared", self.receipt)
+            self.assertFalse(self.receipt["runtimeWritesClosed"])
+            self.calls.append("browser")
+            return {"result": "passed"}
+        runner.run_phases("browser", self.receipt, invoke=self.invoke, observe=self.observe, save=self.save, exercise=exercise)
+        self.assertEqual(self.calls, ["observe", "prepare", "browser", "restore", "cleanup", "observe"])
+
+    def test_browser_failure_still_restores_without_repreparing(self) -> None:
+        def exercise() -> dict[str, object]:
+            self.calls.append("browser")
+            raise ValueError("browser gate failed")
+        runner.run_phases("browser", self.receipt, invoke=self.invoke, observe=self.observe, save=self.save, exercise=exercise)
+        self.assertEqual(self.calls, ["observe", "prepare", "browser", "restore"])
+        self.assertTrue(self.receipt["runtimeWritesClosed"])
+        self.assertEqual(self.receipt["result"], "failed")
+
+    def test_browser_callback_cannot_be_injected_into_read_only_preflight(self) -> None:
+        with self.assertRaises(ValueError):
+            runner.run_phases("preflight", self.receipt, invoke=self.invoke, observe=self.observe, save=self.save, exercise=lambda: {})
+        self.assertEqual(self.calls, [])

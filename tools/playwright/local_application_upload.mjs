@@ -258,6 +258,14 @@ try {
   );
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await review.click();
+  // The following same-tick DOM clicks intentionally bypass Playwright's
+  // click actionability wait. Wait for React to enable the newly reviewed
+  // intent first; a still-disabled button would silently ignore both clicks.
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-testid="application-activation-confirm"]')
+        ?.disabled === false,
+  );
   await page
     .getByTestId("application-activation-confirm")
     .evaluate((button) => {
@@ -449,7 +457,15 @@ try {
   console.error(
     `local application upload failed at ${phase}: ${error.message}`,
   );
-  console.error(JSON.stringify({ uploads, aborts, uploadModes, violations }));
+  console.error(
+    JSON.stringify({
+      uploads,
+      aborts,
+      uploadModes,
+      activations: activations.length,
+      violations,
+    }),
+  );
   process.exitCode = 1;
 } finally {
   await browser?.close();

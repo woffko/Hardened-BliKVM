@@ -43,6 +43,7 @@ python3 -B -m unittest \
   tools.test_run_persistent_write_rehearsal
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --check tools/playwright/device_application_write.mjs
+node --check tools/playwright/device_application_upload_failures.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
