@@ -1032,6 +1032,22 @@ protocol (`design/application-upload-boundary-v1.md`). HTTP transport, private
 spooling before taking the slot lock, quotas, installed worker and GUI wiring
 remain required; this does not enable uploads or activation on the device.
 
+Checkpoint: the temporary installed HTTP/GUI acceptance controller now binds
+the already-staged sequence-eight archive to the confirmed sequence-seven
+baseline. It arms an independent same-boot recovery timer before adding
+runtime-only write configuration, closes admission before waiting for its
+controller lock, and waits for activation/confirmation workers and apply jobs
+without killing them. Recovery preserves an observed confirmed floor and all
+immutable slots; only the selected pointer and authoritative journal may
+change. A failed recovery is retried with admission closed. The host reserves
+its exact guard name before submission and never retries an uncertain GUI
+activation. Browser acceptance separates an awaiting-health receipt from
+confirmed sequence eight and the subsequent restored read-only desktop/mobile
+panels. Local failure-path tests and the complete host check pass, including
+Rust checks/tests/Clippy, Python tests/type checks and the web build/lint/format
+gates. Real-device HTTP acceptance is still pending. These tools have not yet
+enabled HTTP writes on the device.
+
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
 serving state (`baselines/updater-dev6-package.md`). Status transport is still

@@ -31,6 +31,13 @@ sh -n scripts/verify-aarch64-elf.sh
 scripts/check-source-boundary.sh
 scripts/verify-systemd-units.sh
 python3 -B tools/verify_persistent_status_ordering.py
+python3 -B -m unittest \
+  tools.test_application_write_contract tools.test_application_write_guard \
+  tools.test_application_write_pipeline tools.test_application_write_observer \
+  tools.test_application_write_overrides tools.test_application_write_state \
+  tools.test_installed_application_write_gate tools.test_run_application_write_gate
+node --test tools/test_application_write_acceptance.mjs
+node --check tools/playwright/device_application_write.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
@@ -275,6 +282,9 @@ node --check tools/playwright/device_existing_account_smoke.mjs
 node --check tools/playwright/device_test_account_setup_smoke.mjs
 
 if command -v basedpyright >/dev/null 2>&1; then
+  basedpyright tools/application_write_*.py tools/test_application_write_*.py \
+    tools/installed_application_write_gate.py tools/test_installed_application_write_gate.py \
+    tools/run_application_write_gate.py tools/test_run_application_write_gate.py
   basedpyright \
     tools/upgrade_initialized_updater.py \
     tools/enable_update_services.py \
