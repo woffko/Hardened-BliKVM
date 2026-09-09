@@ -31,11 +31,14 @@ sh -n scripts/verify-aarch64-elf.sh
 scripts/check-source-boundary.sh
 scripts/verify-systemd-units.sh
 python3 -B tools/verify_persistent_status_ordering.py
+python3 -B tools/verify_persistent_write_ordering.py
 python3 -B -m unittest \
   tools.test_application_write_contract tools.test_application_write_guard \
   tools.test_application_write_pipeline tools.test_application_write_observer \
   tools.test_application_write_overrides tools.test_application_write_state \
-  tools.test_installed_application_write_gate tools.test_run_application_write_gate
+  tools.test_installed_application_write_gate tools.test_run_application_write_gate \
+  tools.test_persistent_write_contract tools.test_persistent_write_files tools.test_persistent_write_decision \
+  tools.test_persistent_write_lifecycle
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --check tools/playwright/device_application_write.mjs
 
@@ -285,7 +288,11 @@ if command -v basedpyright >/dev/null 2>&1; then
   basedpyright tools/application_write_*.py tools/test_application_write_*.py \
     tools/installed_application_write_gate.py tools/test_installed_application_write_gate.py \
     tools/run_application_write_gate.py tools/test_run_application_write_gate.py \
-    tools/cleanup_application_write_guard.py tools/capture_application_write_failure.py
+    tools/cleanup_application_write_guard.py tools/capture_application_write_failure.py \
+    tools/persistent_write_contract.py tools/test_persistent_write_contract.py \
+    tools/persistent_write_files.py tools/test_persistent_write_files.py tools/verify_persistent_write_ordering.py \
+    tools/persistent_write_decision.py tools/test_persistent_write_decision.py \
+    tools/persistent_write_lifecycle.py tools/test_persistent_write_lifecycle.py
   basedpyright \
     tools/upgrade_initialized_updater.py \
     tools/enable_update_services.py \
@@ -464,6 +471,8 @@ fi
 node tools/test_application_update_ui.mjs
 node tools/test_notification_lifecycle.mjs
 node tools/test_status_soak.mjs
+node tools/playwright/local_application_upload.mjs
+node tools/playwright/local_upload_logout.mjs
 pnpm_web build
 pnpm_web lint
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'

@@ -1,0 +1,128 @@
+# Preparing persistent GUI application updates
+
+Status: preparation requested; persistent device writes are not enabled.
+The accepted baseline is slot 8, floor 8, generation 40, previous slot 7,
+read-only status enabled and both write transports disabled. See
+`../baselines/application-http-seq8-acceptance.md`.
+
+## Configuration boundary
+
+Keep the application/package defaults closed. Add one owned
+`90-application-update-writes.conf` to each existing current/candidate server
+drop-in directory, preserving the accepted status drop-in byte-for-byte.
+The new file supplies the existing three explicit write settings; it does not
+alter account, TLS, trust, Nginx, signed slots, update limits, or network ports.
+
+Enable the two installed write sockets through exact owned
+`sockets.target.wants` links. Server drop-ins contain `After` ordering but no
+`Wants` or `Requires` dependency on write sockets: an apply/confirmed restart
+must not reopen admission during shutdown or recovery. The status dependency
+remains unchanged. A failed updater transport must not prevent the core KVM
+server from starting; capability evidence is not worker-health evidence.
+
+While uncommitted, four separate `89-write-policy-transaction.conf` drop-ins
+add `Requires` and `After` on the transaction's boot-guard service to both
+servers and both write sockets. Ordering alone cannot fail closed when the
+guard fails. This dependency is on the guard, never on a write socket. A failed
+uncommitted guard intentionally blocks those units until recovery succeeds.
+The boot guard remains active after successful execution. Initial arming may
+complete without restoration only after proving the same boot, prepared phase,
+and still-absent write policy; otherwise it performs boot restoration.
+
+The controller must reject pre-existing/foreign files and enable links, retain
+their original absence in a durable backup manifest, and validate every owned
+path, inode type, ownership, mode and content before removal. The manifest and
+recovery code are root-private. No private configuration contents or secrets
+belong in public receipts, source, command arguments or environment.
+
+## Transaction and recovery
+
+1. Verify the accepted installed package, slot/status, transport units,
+   protected runtime and absence of conflicting guards. Save exact original
+   configuration ownership and hashes before any configuration change.
+2. Install and verify an independent deadline and an early-boot recovery unit
+   before writing enable links or server overrides.
+3. Install the owned configuration, reload systemd, start write sockets and
+   restart only the confirmed server. Verify loaded/running settings, endpoint
+   identity, existing status, and unchanged protected state.
+4. Keep the transaction uncommitted through the required acceptance gates.
+   Browser evidence must bind the tested configuration and device state; a
+   generic `passed` flag or old happy-path receipt is insufficient.
+5. Persist a verified commit receipt before disarming recovery. A late deadline
+   or boot action must not undo an already committed policy.
+
+Every gate receipt binds the transaction ID, device fingerprint, exact
+configuration hash, baseline slot/floor/generation and receipt content hash.
+The root adapter must read and validate the actual receipt before constructing
+the typed evidence; accepting arbitrary supplied hashes is not verification.
+After a durable commit, remove all four temporary guard dependencies and reload
+the manager before stopping/disarming the guard. During rollback, remove write
+configuration and enable links before removing guard dependencies. Never leave
+unguarded writable configuration in an uncommitted crash window.
+
+Commit and deadline compete to publish one `decision.json` through an exclusive
+hard link to a fully written, synced proposal. The winner is immutable and
+authoritative even when the secondary phase marker has not been updated. A
+revoked winner prevents commit; a committed winner prevents a late deadline
+from closing admission. This avoids the check-then-close race between reading
+a phase and publishing the commit. Runtime revocation also needs exact owned
+socket masks plus stop/cancel, so a delayed preparer cannot reopen admission.
+The privileged backend must verify ownership and removal of this fence, not
+merely trust a boolean. Arbitrary host PIDs and activation workers must not be
+killed for installer recovery.
+
+Runtime recovery first closes admission independently of the controller lock.
+It then waits for upload, activation and confirmation workers, apply jobs,
+health token and apply receipt to settle naturally. Only then may it remove
+the owned configuration/enable links, reload systemd and restart the confirmed
+server. It must preserve any newly observed confirmed floor and never restore
+an old journal/pointer or delete a signed slot. A timeout keeps admission closed
+and recovery available; it is not permission to kill an activation worker.
+An already-restored invocation verifies closed state and disarms any remaining
+retry timer without another server restart. An already-committed invocation
+must not close accepted admission.
+
+Uncommitted boot recovery runs before both write sockets, `sockets.target` and
+both servers. It cancels queued write-socket starts non-blockingly, removes
+only the owned policy, and reloads systemd. It must not synchronously wait for
+or restart a downstream server while that server is ordered after the boot
+guard. Post-boot verification/cleanup is separate from early-boot restoration.
+The early-boot action retains the admission fence and recovery metadata for
+that later verification; it never stops its own running boot-guard service.
+
+`tools/persistent_write_contract.py` records these pure decisions and renders
+the proposed units. It is not an installer and performs no device operations.
+The companion file adapter records original absence, preserves status files,
+installs transaction dependencies before policy files/enable links, validates
+all owned targets before removal, and can detach only guard dependencies after
+commit. Its filesystem tests run solely in temporary host directories; a
+privileged device controller has not yet been implemented.
+
+Offline systemd verification accepts the transaction dependency graph and
+rejects an injected `basic.target`/`sysinit.target` cycle. This proves static
+ordering only, not actual boot recovery. A local real-component browser test
+now observes intermediate progress (6% in the verified run), cancels a partial
+upload, retries it, and invokes the actual Logout component while verification
+is pending. It proves unmount-driven XHR cancellation and the synthetic session
+transition; it does not establish installed-worker logout acceptance.
+
+## Acceptance before retention
+
+Existing evidence and remaining checks are deliberately separate:
+
+| Gate | Current evidence | Work still required for persistent policy |
+| --- | --- | --- |
+| Host safety | Server/client authorization, length, quota and cancellation tests | Persistent controller ownership, phase and interruption tests |
+| Native upload/activation | Installed native worker gates and confirmed slot 8 | Preserve bindings while configuring permanent admission |
+| GUI happy path | Actual upload, reviewed activation, confirmation and restored desktop/mobile status | Verify the prospective persistent configuration |
+| Failure and retry | Synthetic component rejection and uncertain-response retry | Bounded installed GUI stage-only rejection/retry |
+| Cancel and progress | Synthetic verifying/cancel/retry and unmount abort | Intermediate progress and actual cancelled upload |
+| Logout | Host handler revocation tests | Browser logout during upload, session transition and no stale completion |
+| Boot recovery | Accepted persistent status recovery; temporary write recovery | Uncommitted persistent-write boot restore and committed-policy survival |
+| Disable/drain | Temporary seq8 controller settled a real activation before restore | Owned permanent policy disable with pending work and failure injection |
+
+Negative upload tests must not activate another slot or infer permission to
+publish sequence 9. Preserve all eight retained slots; quota-boundary retry is
+idempotent, and uploads never perform automatic garbage collection. Permanent
+retention requires all exact gate receipts plus explicit approval to retain the
+policy. Preparing this controller does not itself provide that approval.

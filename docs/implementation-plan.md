@@ -1083,6 +1083,28 @@ boundaries are recorded in `baselines/application-http-seq8-acceptance.md`.
 The retained deployment still exposes read-only status, not permanent HTTP
 write admission.
 
+Preparation of permanent GUI update admission is now requested. The proposed
+configuration and acceptance order are in
+`design/persistent-application-writes-v1.md`; pure contract tests cover complete
+retention gates, committed-policy survival, early-boot nonblocking recovery,
+no socket-reopening server dependencies, and natural runtime drain ordering.
+The installer and missing browser logout/cancellation/negative gates remain
+under preparation; this checkpoint does not enable permanent device writes.
+The local logout/progress/cancel/retry scenario now passes with actual upload
+and logout components against synthetic local services. Both this test and the
+existing local upload/activation browser scenario are included in the complete
+host check. Offline verification accepts the temporary guard dependency graph
+and rejects an injected cycle. The owned-file adapter has temporary-filesystem
+tests for preservation, ordering, interruption, commit detachment and refusal
+to delete foreign files. The privileged controller and live persistent-policy
+acceptance are still pending.
+Commit/revocation publication now uses a single atomic, immutable decision;
+tests cover competing publishers and reject partial decisions. Controller
+sequencing tests ensure that revocation prevents commit, a late committed
+guard never closes admission, runtime recovery drains before removal, and
+early-boot restoration leaves final verification/disarm to a later runtime
+phase. These are host-tested controller components, not an installed service.
+
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
 serving state (`baselines/updater-dev6-package.md`). Status transport is still
