@@ -58,6 +58,21 @@ publication, same-archive retry, invalid archive rejection, empty spool and
 untouched state/runtime directories and current pointer. This does not yet
 prove installed-worker identity/sandbox/lifetime or HTTP/browser acceptance.
 
+The host CLI test also observes the child's anonymous spool during a partial
+upload and acquires the slot-root lock independently, then proves disconnect
+does not publish the incomplete candidate. A complete upload with a deliberately
+lost response is recovered as `AlreadyPresent` on retry.
+
+Inert updater package revision `0.1.0~dev8` includes separate upload socket and
+service templates; dev1-dev7 file maps remain unchanged. The socket admits one
+connection. The service uses a disk-backed private state directory (not `/run`
+tmpfs), `Type=simple` with a 180 s process limit and 5 s stop timeout, bounded
+memory/file size, and write access only to the slots and spool. No journal or
+health directory is writable. Offline systemd syntax/security verification and
+package-map tests cover these templates; no service is enabled by packaging.
+An installed filesystem/sandbox check is still required, especially anonymous
+file support and timeout behaviour under the actual service identity.
+
 ## Remaining installed and HTTP transport integration
 
 The supervisor library now provides a bounded reception primitive: it checks

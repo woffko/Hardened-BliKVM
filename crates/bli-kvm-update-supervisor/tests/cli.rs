@@ -62,13 +62,13 @@ fn upload_worker_stages_retries_and_rejects_without_activation() {
     )
     .unwrap();
     fs::set_permissions(&config, Permissions::from_mode(0o600)).unwrap();
-    let upload = |body: &[u8]| {
-        let (mut client, worker) = UnixStream::pair().unwrap();
+    let connect = || {
+        let (client, worker) = UnixStream::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let fd: OwnedFd = worker.into();
-        let mut child = command(
+        let child = command(
             env!("CARGO_BIN_EXE_bli-kvm-update-supervisor"),
             &config,
             &[
@@ -84,6 +84,23 @@ fn upload_worker_stages_retries_and_rejects_without_activation() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+        (client, child)
+    };
+    let metadata = |size: usize| {
+        encode_frame(
+            &encode_request(&UploadRequestEnvelope {
+                schema_version: 1,
+                request_id: 71,
+                request: UploadRequest::Stage {
+                    archive_bytes: size as u64,
+                },
+            })
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let upload = |body: &[u8]| {
+        let (mut client, mut child) = connect();
         client
             .write_all(
                 &encode_frame(
@@ -123,6 +140,62 @@ fn upload_worker_stages_retries_and_rejects_without_activation() {
     assert_eq!(second.disposition, UploadDisposition::AlreadyPresent);
     assert_eq!(first.slot, second.slot);
     assert!(matches!(upload(&[0; 1024]), UploadResponse::Error { .. }));
+
+    // The process owns admission while waiting for a partial body, but the
+    // slot lock remains available to watchdog/status. Cancellation publishes
+    // nothing and drops the anonymous spool and admission guard.
+    let body2 = fs::read(write_bundle(&sources, &signing, 2)).unwrap();
+    let list_slots = || {
+        fs::read_dir(&slots)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<BTreeSet<_>>()
+    };
+    let before = list_slots();
+    let (mut client, mut child) = connect();
+    client.write_all(&metadata(body2.len())).unwrap();
+    client.write_all(&body2[..body2.len() / 2]).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        use std::os::unix::fs::MetadataExt;
+        // Observe the child's anonymous spool without competing for its lock.
+        let has_spool = fs::read_dir(format!("/proc/{}/fd", child.id()))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| fs::metadata(entry.path()).ok())
+            .any(|metadata| metadata.is_file() && metadata.nlink() == 0);
+        if has_spool {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("worker did not acquire admission");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let stager = bli_kvm_update_stager::ApplicationSlotStager::open(&slots).unwrap();
+    assert_eq!(list_slots(), before);
+    drop(stager);
+    drop(client);
+    assert!(!child.wait().unwrap().success());
+    assert_eq!(list_slots(), before);
+    assert_eq!(fs::read_dir(&spool).unwrap().count(), 0);
+    assert!(bli_kvm_update_supervisor::upload_storage::UploadStorage::open(&spool).is_ok());
+
+    // Complete upload plus write EOF permits publication even if the client
+    // cannot receive its receipt. A retry must recover the published identity.
+    let (mut client, mut child) = connect();
+    client.write_all(&metadata(body2.len())).unwrap();
+    client.write_all(&body2).unwrap();
+    client.shutdown(Shutdown::Read).unwrap();
+    client.shutdown(Shutdown::Write).unwrap();
+    assert!(!child.wait().unwrap().success());
+    drop(client);
+    let UploadResponse::Staged { receipt } = upload(&body2) else {
+        panic!("must recover receipt")
+    };
+    assert_eq!(receipt.disposition, UploadDisposition::AlreadyPresent);
 }
 
 #[test]

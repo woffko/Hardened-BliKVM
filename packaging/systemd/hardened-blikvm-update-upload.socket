@@ -1,0 +1,17 @@
+[Unit]
+Description=Hardened BliKVM local signed application upload
+Documentation=https://github.com/woffko/Hardened-BliKVM
+
+[Socket]
+ListenStream=/run/hardened-blikvm-update-api/upload.sock
+Accept=yes
+SocketUser=hardened-blikvm-update
+SocketGroup=hardened-blikvm
+SocketMode=0620
+DirectoryMode=0755
+Backlog=1
+MaxConnections=1
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

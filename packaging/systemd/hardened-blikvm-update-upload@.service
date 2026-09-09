@@ -1,0 +1,55 @@
+[Unit]
+Description=Hardened BliKVM authenticated signed application staging
+Documentation=https://github.com/woffko/Hardened-BliKVM
+ConditionPathExists=/etc/hardened-blikvm/update-supervisor.json
+ConditionPathIsDirectory=/var/lib/hardened-blikvm-slots
+
+[Service]
+Type=simple
+User=hardened-blikvm-update
+Group=hardened-blikvm
+UMask=0077
+# Archives are disk-backed, not charged to the /run tmpfs. File contents are
+# anonymous and vanish on worker exit; only the empty private directory stays.
+StateDirectory=hardened-blikvm-upload
+StateDirectoryMode=0700
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+LoadCredential=update-supervisor-config:/etc/hardened-blikvm/update-supervisor.json
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor --config /run/credentials/%n/update-supervisor-config upload-socket --peer-user hardened-blikvm-server --spool-root /var/lib/hardened-blikvm-upload
+RuntimeMaxSec=180s
+TimeoutStopSec=5s
+KillMode=control-group
+Restart=no
+MemoryMax=256M
+TasksMax=16
+LimitNOFILE=128
+LimitFSIZE=128M
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-upload
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+IPAddressDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
