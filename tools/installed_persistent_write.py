@@ -168,6 +168,30 @@ def require_lease(root: Path, plan: dict[str, object]) -> None:
     require(s.property_value(root.name + "-boot.service", "ActiveState") == "active", "boot guard not armed")
 
 
+def emergency_closed_locked(root: Path, *, boot: bool) -> None:
+    """Best-effort closure, not restoration, with the controller lock held.
+
+    Future native retention must hold this SAME lock from runtime/evidence
+    verification through decision publication and detachment. There currently
+    is no retention CLI. Never make a check-then-close fallback outside it.
+    """
+    decisions.validate_root(root)
+    try:
+        winner = decisions.read(root)
+    except (OSError, ValueError):
+        winner = None  # Preserve damaged decision bytes for manual inspection.
+    if winner is not None and winner.outcome == "committed":
+        return
+    systemd.Admission(root).install_owned_fence(boot=boot)
+
+
+def emergency_close(root: Path, *, boot: bool) -> None:
+    # A failed publication has no immutable winner that would exclude a
+    # concurrent acceptance. Acquire the common lock before the fresh check.
+    with temporary.guard.locked(root):
+        emergency_closed_locked(root, boot=boot)
+
+
 class Restore:
     def __init__(self, root: Path, plan: dict[str, object]):
         self.root, self.plan = root, plan
@@ -288,7 +312,7 @@ def wire(root: Path) -> dict[str, object]:
             finally:
                 # An I/O failure publishing revocation must not skip the
                 # independent best-effort closure of known write transports.
-                temporary.observer.close_admission()
+                emergency_closed_locked(root, boot=False)
             raise
     return {"result": "wired", "guardRoot": str(root), "retentionApproved": False}
 
@@ -339,7 +363,11 @@ def prepare(assets: Path, root: Path) -> dict[str, object]:
     u.checked(["systemctl", "start", root.name + "-boot.service"], timeout=20)
     require_lease(root, plan)
     # No parent-held transaction lock: the child is its sole wiring owner.
-    u.checked(["systemctl", "start", contract.preparer_unit(root)[0]], timeout=200)
+    try:
+        u.checked(["systemctl", "start", contract.preparer_unit(root)[0]], timeout=200)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        emergency_close(root, boot=False)
+        raise
     current = load(root)
     require(current["phase"] == contract.Phase.WIRED.value and decisions.read(root) is None, "preparation did not finish")
     admission.require_preparer_quiescent()
@@ -348,16 +376,29 @@ def prepare(assets: Path, root: Path) -> dict[str, object]:
 
 
 def restore(root: Path, *, boot: bool) -> dict[str, object]:
-    plan = load(root)
-    require(not plan["cleanupStarted"], "cleanup already started; resume cleanup instead")
     if boot:
         require(any(line.endswith("/" + root.name + "-boot.service")
                     for line in Path("/proc/self/cgroup").read_text().splitlines()), "not executing in bound boot guard")
-        if plan["phase"] == contract.Phase.PREPARED.value and plan["boot"] == boot_identity() and decisions.read(root) is None:
-            snapshot.configuration(root, object_value(plan["backup"]), wired=False)
-            return {"result": "armed", "guardRoot": str(root), "retentionApproved": False}
+    try:
+        plan = load(root)
+    except (OSError, ValueError):
+        emergency_close(root, boot=boot)
+        raise
+    require(not plan["cleanupStarted"], "cleanup already started; resume cleanup instead")
+    if boot:
+        try:
+            if plan["phase"] == contract.Phase.PREPARED.value and plan["boot"] == boot_identity() and decisions.read(root) is None:
+                snapshot.configuration(root, object_value(plan["backup"]), wired=False)
+                return {"result": "armed", "guardRoot": str(root), "retentionApproved": False}
+        except (OSError, ValueError):
+            emergency_close(root, boot=True)
+            raise
     actions = Restore(root, plan)
-    lifecycle.recover(root, actions, binding=binding(plan), boot=boot)
+    try:
+        lifecycle.recover(root, actions, binding=binding(plan), boot=boot)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        emergency_close(root, boot=boot)
+        raise  # A closed fence is not evidence of completed restoration.
     winner = decisions.read(root)
     require(winner is not None, "missing recovery decision")
     assert winner is not None

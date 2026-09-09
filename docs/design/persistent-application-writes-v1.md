@@ -127,6 +127,24 @@ code/backup instead of deleting it. An interrupted unit cleanup can resume;
 foreign data is left for inspection. Host orchestration and actual gate receipt
 qualification remain pending. There is no permanent-retention CLI.
 
+The host driver now has separate `preflight` and `rehearse` actions. Both use
+pinned package/code inputs and a reserved private receipt before SSH staging.
+Preflight reads the closed seq8 state only. Rehearsal submits preparation once,
+restores admission to closed, cleans up, and independently re-reads the seq8
+state on the same boot. It sends no application archive and invokes no upload,
+activation, reboot or target-power operation. Ambiguous preparation triggers
+recovery, not another preparation; ambiguous cleanup requires inspection of
+the reserved root/archive instead of replay. This driver is host-tested, not
+yet device-qualified.
+
+If plan/decision I/O or runtime recovery fails, the controller attempts an
+emergency owned fence under its common lock and still reports failure. It
+preserves damaged metadata and does not manufacture a restoration receipt.
+A readable committed winner is never closed. Any future native retention
+implementation must hold that same lock continuously from runtime/evidence
+verification through decision publication and detachment; a check before
+taking the lock would race emergency closure.
+
 Offline systemd verification accepts the transaction dependency graph and
 rejects an injected `basic.target`/`sysinit.target` cycle. This proves static
 ordering only, not actual boot recovery. A local real-component browser test

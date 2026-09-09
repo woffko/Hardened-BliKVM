@@ -29,6 +29,9 @@ class CommitBackend(Protocol):
 def commit(root: Path, actions: CommitBackend, *, phase: contract.Phase,
            binding: contract.EvidenceBinding, evidence: tuple[contract.GateEvidence, ...],
            retention_approved: bool) -> decisions.Decision:
+    # A native caller MUST hold its common controller lock continuously from
+    # evidence/runtime validation through publication and detachment. This
+    # also excludes locked emergency closure when decision storage has failed.
     contract.require_commit(phase, evidence, current=binding, explicit_retention_approved=retention_approved)
     actions.verify_wired_and_preserved()
     proposal = decisions.Decision(binding, "committed", {item.gate: item.receipt_sha256 for item in evidence})

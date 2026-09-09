@@ -50,9 +50,11 @@ class ControllerTests(unittest.TestCase):
         with patch.object(native, "load", return_value=self.plan), patch.object(Path, "read_text", return_value=cgroup), \
                 patch.object(native, "boot_identity", return_value=self.plan["boot"]), \
                 patch.object(native.decisions, "read", return_value=None), \
+                patch.object(native, "emergency_close") as close, \
                 patch.object(native.snapshot, "configuration", side_effect=ValueError("policy exists")):
             with self.assertRaisesRegex(ValueError, "policy exists"):
                 native.restore(self.root, boot=True)
+        close.assert_called_once_with(self.root, boot=True)
 
     def test_real_boot_uses_recovery_not_same_boot_arm(self) -> None:
         cgroup = "0::/system.slice/" + self.root.name + "-boot.service\n"
@@ -73,11 +75,11 @@ class ControllerTests(unittest.TestCase):
                 patch.object(native, "load", return_value=self.plan), \
                 patch.object(native, "require_lease", side_effect=ValueError("expired")), \
                 patch.object(native.decisions, "publish", side_effect=OSError("disk failure")), \
-                patch.object(native.temporary.observer, "close_admission") as close, \
+                patch.object(native, "emergency_closed_locked") as close, \
                 patch.object(native.files, "install") as install:
             with self.assertRaises(OSError):
                 native.wire(self.root)
-        close.assert_called_once()
+        close.assert_called_once_with(self.root, boot=False)
         install.assert_not_called()
 
     def test_counter_persistence_precedes_terminal_marker(self) -> None:
@@ -165,3 +167,36 @@ class ControllerTests(unittest.TestCase):
                 native.cleanup(self.root)
         self.assertNotIn("save-cleanup", events)
         self.assertNotIn("unlink-unit", events)
+
+    def test_emergency_corrupt_decision_masks_but_never_rewrites_decision(self) -> None:
+        with patch.object(native.decisions, "validate_root"), \
+                patch.object(native.decisions, "read", side_effect=ValueError("corrupt")), \
+                patch.object(native.systemd.Admission, "install_owned_fence") as fence, \
+                patch.object(native.decisions, "publish") as publish:
+            native.emergency_closed_locked(self.root, boot=True)
+        fence.assert_called_once_with(boot=True)
+        publish.assert_not_called()
+
+    def test_emergency_valid_commit_is_never_closed(self) -> None:
+        winner = native.decisions.Decision(self.bound, "committed", dict.fromkeys(native.contract.REQUIRED_GATES, "d" * 64))
+        with patch.object(native.decisions, "validate_root"), patch.object(native.decisions, "read", return_value=winner), \
+                patch.object(native.systemd.Admission, "install_owned_fence") as fence:
+            native.emergency_closed_locked(self.root, boot=False)
+        fence.assert_not_called()
+
+    def test_restore_publication_failure_takes_locked_emergency_path_and_still_fails(self) -> None:
+        with patch.object(native, "load", return_value=self.plan), \
+                patch.object(native.lifecycle, "recover", side_effect=OSError("publication unavailable")), \
+                patch.object(native.temporary.guard, "locked", return_value=nullcontext()) as lock, \
+                patch.object(native, "emergency_closed_locked") as close:
+            with self.assertRaisesRegex(OSError, "publication unavailable"):
+                native.restore(self.root, boot=False)
+        lock.assert_called_once_with(self.root)
+        close.assert_called_once_with(self.root, boot=False)
+
+    def test_unreadable_plan_attempts_emergency_closure_without_success_receipt(self) -> None:
+        with patch.object(native, "load", side_effect=OSError("unreadable marker")), \
+                patch.object(native, "emergency_close") as close:
+            with self.assertRaisesRegex(OSError, "unreadable marker"):
+                native.restore(self.root, boot=False)
+        close.assert_called_once_with(self.root, boot=False)

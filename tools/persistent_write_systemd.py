@@ -44,6 +44,15 @@ class Admission:
 
     def fence_admission(self, *, boot: bool) -> None:
         self.require_revoked()
+        self.install_owned_fence(boot=boot)
+
+    def install_owned_fence(self, *, boot: bool) -> None:
+        """Primitive for a revoked winner or locked emergency recovery.
+
+        The coordinator must serialize emergency recovery against any native
+        retention check/publication using the common controller lock. This
+        primitive neither changes nor supplies a successful decision receipt.
+        """
         first_error: Exception | None = None
         try:
             self.stop_sockets(boot=boot)
