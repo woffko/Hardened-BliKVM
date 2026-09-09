@@ -121,3 +121,11 @@ reproduced on the installed fix.
 This closes the read-only two-page/startup regression for the tested Chromium
 and artifact. A real guarded status outage/stale/error/recovery check on slot
 six remains required, as do the other open plan gates.
+
+The host outage harness now accepts an explicit `--profile seq6`. It binds
+resource executable/current-slot checks, IPC generation/floor/confirmed and
+exact previous-slot metadata, arm/stop/restore/finish, the browser status cards,
+and recorded recovery to the accepted sequence-six baseline. Sequence five
+remains the default; cross-profile handoffs and unknown profiles fail closed.
+This is harness preparation, not evidence that a device outage passed. The
+fixed restore command and independent guard policy are unchanged.

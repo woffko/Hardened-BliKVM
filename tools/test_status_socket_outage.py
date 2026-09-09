@@ -35,6 +35,16 @@ class StatusSocketOutageTests(unittest.TestCase):
         self.stopped_and_drained.assert_called_once()
         self.cleanup.assert_not_called()
 
+    def test_sequence_six_reaches_every_phase_check(self):
+        for phase in (outage.stop, outage.restore, outage.finish):
+            self.handoff.reset_mock()
+            self.verified_serving.reset_mock()
+            phase(self.operation, self.state, "source", "seq6")
+            self.handoff.assert_called_once_with(self.operation, self.state, "seq6")
+            self.assertTrue(self.verified_serving.call_count)
+            for call in self.verified_serving.call_args_list:
+                self.assertEqual(call.args, (self.state, "source", "seq6"))
+
     def test_short_or_changed_guard_never_stops(self):
         for observation in ((120000000, 59), (120000001, 90)):
             self.guard.return_value = observation

@@ -21,6 +21,45 @@ def fixture() -> list[observer.Sample]:
 
 
 class ResourceTests(unittest.TestCase):
+    def test_snapshot_profile_checks_both_slot_links_and_executable(self) -> None:
+        root = Path("/var/lib/hardened-blikvm-slots")
+        current = root / "current"
+        executable = Path("/proc/100/exe")
+        seq6 = root / "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac"
+        seq5 = root / observer.SLOT
+        units = fixture()[0]["units"]
+        def unit_sample(unit: str) -> observer.UnitSample:
+            return units[unit]
+        boot = "12345678-1234-1234-1234-123456789abc"
+        for profile, slot in (("seq5", seq5), ("seq6", seq6)):
+            for failure in (None, "initial", "executable", "final"):
+                calls: list[Path] = []
+
+                def resolve(path: Path, strict: bool = False) -> Path:
+                    self.assertTrue(strict)
+                    calls.append(path)
+                    if path == executable:
+                        return (root / "foreign" if failure == "executable" else slot) / "bin/bli-kvm-server"
+                    self.assertEqual(path, current)
+                    if failure == "initial" or (failure == "final" and len(calls) == 3):
+                        return root / "foreign"
+                    return slot
+
+                with self.subTest(profile=profile, failure=failure), \
+                        patch.object(Path, "resolve", resolve), \
+                        patch.object(observer, "read_bounded", return_value=boot), \
+                        patch.object(observer, "unit_sample", side_effect=unit_sample):
+                    if failure is None:
+                        self.assertEqual(observer.snapshot(profile)["units"], units)
+                        self.assertEqual(calls, [current, executable, current])
+                    else:
+                        with self.assertRaises(ValueError):
+                            observer.snapshot(profile)
+        with patch.object(observer, "read_bounded") as read:
+            with self.assertRaisesRegex(ValueError, "unknown status profile"):
+                observer.snapshot("unknown")
+            read.assert_not_called()
+
     def test_cpu_units_peaks_and_growth(self) -> None:
         samples = fixture()
         summary = observer.summarize(samples)

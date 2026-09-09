@@ -41,14 +41,14 @@ def stopped_and_drained() -> None:
     raise ValueError("status workers did not drain")
 
 
-def handoff(operation: str, state: object) -> dict[str, object]:
+def handoff(operation: str, state: object, profile_name: str = "seq5") -> dict[str, object]:
     require(os.geteuid() == 0 and os.uname().machine == "aarch64", "unexpected outage host")
-    return timer.validate_handoff(state, operation)
+    return timer.validate_handoff(state, operation, profile_name)
 
 
-def verified_serving(state: dict[str, object], status_source: str) -> None:
-    require(probe.status_read(status_source) == state["status"], "application status changed")
-    probe.same_identity(cast(resources.Sample, state["baseline"]), resources.snapshot())
+def verified_serving(state: dict[str, object], status_source: str, profile_name: str = "seq5") -> None:
+    require(probe.status_read(status_source, profile_name) == state["status"], "application status changed")
+    probe.same_identity(cast(resources.Sample, state["baseline"]), resources.snapshot(profile_name))
     probe.quiet_socket()
 
 
@@ -57,16 +57,16 @@ def emergency_restore() -> None:
     probe.command(policy.restore_command(), timeout=15)
 
 
-def stop(operation: str, state: object, status_source: str) -> dict[str, object]:
-    value = handoff(operation, state)
-    verified_serving(value, status_source)
+def stop(operation: str, state: object, status_source: str, profile_name: str = "seq5") -> dict[str, object]:
+    value = handoff(operation, state, profile_name)
+    verified_serving(value, status_source, profile_name)
     deadline, remaining = timer.guard(operation)
     require(deadline == value["deadlineUsec"], "restore deadline changed")
     argv = policy.stop_command(policy.OutageObservation(True, True, 0, True, remaining))
     try:
         probe.command(argv, timeout=15)
         stopped_and_drained()
-        probe.same_identity(cast(resources.Sample, value["baseline"]), resources.snapshot())
+        probe.same_identity(cast(resources.Sample, value["baseline"]), resources.snapshot(profile_name))
         return {"result": "stopped", "operation": operation, "workersDrained": True,
                 "servingIdentityUnchanged": True, "guardMayRemain": True}
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
@@ -74,21 +74,21 @@ def stop(operation: str, state: object, status_source: str) -> dict[str, object]
         raise
 
 
-def restore(operation: str, state: object, status_source: str) -> dict[str, object]:
-    value = handoff(operation, state)
+def restore(operation: str, state: object, status_source: str, profile_name: str = "seq5") -> dict[str, object]:
+    value = handoff(operation, state, profile_name)
     emergency_restore()
-    verified_serving(value, status_source)
+    verified_serving(value, status_source, profile_name)
     return {"result": "restored", "operation": operation, "statusUnchanged": True,
             "servingIdentityUnchanged": True, "guardMayRemain": True}
 
 
-def finish(operation: str, state: object, status_source: str) -> dict[str, object]:
+def finish(operation: str, state: object, status_source: str, profile_name: str = "seq5") -> dict[str, object]:
     # Only the host's post-logout phase may call this. Timer removal follows
     # successful fixed restoration and verified status/serving observations.
-    value = handoff(operation, state)
+    value = handoff(operation, state, profile_name)
     emergency_restore()
-    verified_serving(value, status_source)
+    verified_serving(value, status_source, profile_name)
     require(timer.cleanup(operation), "restore guard removal not confirmed")
-    verified_serving(value, status_source)
+    verified_serving(value, status_source, profile_name)
     return {"result": "finished", "operation": operation, "statusUnchanged": True,
             "servingIdentityUnchanged": True, "guardMayRemain": False}

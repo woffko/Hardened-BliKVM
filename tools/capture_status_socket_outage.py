@@ -36,7 +36,8 @@ def browser_sources() -> dict[str, str]:
     return {name: hashlib.sha256(Path("tools/playwright", name + ".mjs").read_text().encode()).hexdigest() for name in names}
 
 
-def program(operation: str, phase: str, state: object = None) -> tuple[str, dict[str, str]]:
+def program(operation: str, phase: str, state: object = None, profile_name: str = "seq5") -> tuple[str, dict[str, str]]:
+    timer.resources.status_profile(profile_name)
     timer.policy.guard_name(operation)
     require(phase in PHASES, "invalid outage phase")
     sub = capture.subscription
@@ -46,22 +47,23 @@ def program(operation: str, phase: str, state: object = None) -> tuple[str, dict
     status_source = sources[timer.ipc.__name__] + "\nprint(json.dumps(read_status(),sort_keys=True))\n"
     source = sub.bootstrap(sources)
     if phase == "arm":
-        invocation = f"sys.modules['tools.status_timer_firing'].arm({operation!r},{status_source!r})"
+        invocation = f"sys.modules['tools.status_timer_firing'].arm({operation!r},{status_source!r},{profile_name!r})"
     elif phase == "emergency":
         source += "sys.modules['tools.status_socket_outage'].emergency_restore()\n"
         invocation = repr({"result": "restored-unverified", "operation": operation, "guardMayRemain": True})
     else:
-        state = capture.firing.validate_handoff(state, operation)
-        invocation = f"sys.modules['tools.status_socket_outage'].{phase}({operation!r},{state!r},{status_source!r})"
+        state = capture.firing.validate_handoff(state, operation, profile_name)
+        invocation = f"sys.modules['tools.status_socket_outage'].{phase}({operation!r},{state!r},{status_source!r},{profile_name!r})"
     source += f"result={invocation}\nimport json\nprint(json.dumps(result,sort_keys=True))\n"
     source += "raise SystemExit(1 if result['result']=='failed' else 0)\n"
     require(len(source.encode()) < 110000, "outage source exceeds bound")
     return source, {name: hashlib.sha256(value.encode()).hexdigest() for name, value in sources.items()}
 
 
-def validate_phase(value: object, operation: str, phase: str) -> dict[str, object]:
+def validate_phase(value: object, operation: str, phase: str, profile_name: str = "seq5") -> dict[str, object]:
+    timer.resources.status_profile(profile_name)
     if phase == "arm":
-        return capture.firing.validate_handoff(value, operation)
+        return capture.firing.validate_handoff(value, operation, profile_name)
     result = timer.ipc.object_value(value)
     checks = {"workersDrained", "servingIdentityUnchanged"} if phase == "stop" else {"statusUnchanged", "servingIdentityUnchanged"}
     expected = {"stop": "stopped", "restore": "restored", "finish": "finished"}.get(phase)
@@ -78,6 +80,7 @@ def main() -> None:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--username", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--profile", choices=("seq5", "seq6"), default="seq5")
     args = parser.parse_args()
     transport = timer.transport
     output = transport.validate_output_path(args.output)
@@ -92,11 +95,12 @@ def main() -> None:
     browser_output = output.with_name("status-outage-browser-" + operation + ".json")
     require(not browser_output.exists(), "new browser receipt required")
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
-    _, hashes = program(operation, "arm")
+    profile_name = args.profile
+    _, hashes = program(operation, "arm", profile_name=profile_name)
     browser_hashes = browser_sources()
     receipt: dict[str, object] = {"probe": "status-socket-browser-outage", "operation": operation,
                                 "result": "failed", "sourceSha256": hashes, "browserSourceSha256": browser_hashes,
-                                "guardMayRemain": False}
+                                "guardMayRemain": False, "statusProfileName": profile_name}
     handoff: dict[str, object] | None = None
     attempted = False
     browser: subprocess.Popen[bytes] | None = None
@@ -119,14 +123,14 @@ def main() -> None:
                     # Recovery must remain possible if probe sources changed.
                     completed = transport.run_ssh(target, ssh, shlex.join(timer.policy.restore_command()), timeout=20)
                 else:
-                    source, current_hashes = program(operation, phase, handoff)
+                    source, current_hashes = program(operation, phase, handoff, profile_name)
                     require(current_hashes == hashes, "outage sources changed")
                     completed = transport.run_ssh(target, ssh, shlex.join(["python3", "-B", "-c", source]),
                                                   timeout={"arm": 35, "stop": 30, "restore": 35, "finish": 70}[phase])
                 require(completed.returncode == 0 and len(completed.stdout) <= 32768, "outage SSH phase failed")
                 if phase == "emergency":
                     return {"restorationRequested": True}
-                return validate_phase(json.loads(completed.stdout), operation, phase)
+                return validate_phase(json.loads(completed.stdout), operation, phase, profile_name)
 
             try:
                 browser = subprocess.Popen([
@@ -134,7 +138,8 @@ def main() -> None:
                     "/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs",
                     "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
                     base_url, args.username, str(browser_output),
-                    "hardened-blikvm-status-api-" + operation + "-enabled", "enabled",
+                    "hardened-blikvm-status-api-" + operation + "-enabled",
+                    "enabled-seq6" if profile_name == "seq6" else "enabled",
                 ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    pass_fds=(child.fileno(),), close_fds=True)
                 child.close()
@@ -172,6 +177,7 @@ def main() -> None:
                 result = timer.ipc.object_value(json.loads(browser_output.read_bytes()))
                 require(result.get("result") == "passed" and result.get("runTag") == "hardened-blikvm-status-api-" + operation + "-enabled",
                         "browser outage acceptance failed")
+                require(result.get("statusProfileName") == profile_name, "browser status profile mismatch")
                 facts = timer.ipc.object_value(result.get("statusOutageAcceptance"))
                 require(set(facts) == {"staleVerified", "coldErrorVerified", "recoveryVerified", "videoPreserved"}
                         and all(value is True for value in facts.values()), "browser outage facts incomplete")

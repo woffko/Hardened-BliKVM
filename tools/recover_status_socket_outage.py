@@ -34,18 +34,22 @@ def main() -> None:
     operation = recorded.get("operation")
     capture.require(isinstance(operation, str), "missing recorded operation")
     operation = cast(str, operation)
-    state = capture.capture.firing.validate_handoff(recorded.get("handoff"), operation)
-    source, hashes = capture.program(operation, "finish", state)
+    profile_name = recorded.get("statusProfileName", "seq5")
+    capture.require(isinstance(profile_name, str), "invalid recorded status profile")
+    profile_name = cast(str, profile_name)
+    state = capture.capture.firing.validate_handoff(recorded.get("handoff"), operation, profile_name)
+    source, hashes = capture.program(operation, "finish", state, profile_name)
     capture.require(hashes == recorded.get("sourceSha256"), "outage recovery sources changed")
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
     result: dict[str, object] = {"probe": "status-outage-recovery", "operation": operation,
-                                "result": "failed", "guardMayRemain": True, "sourceSha256": hashes}
+                                "result": "failed", "guardMayRemain": True, "sourceSha256": hashes,
+                                "statusProfileName": profile_name}
     try:
         response = transport.run_ssh(target, secret, shlex.join(["python3", "-B", "-c", source]), timeout=80)
         capture.require(response.returncode == 0 and len(response.stdout) <= 8192, "outage recovery SSH failed")
-        result["finish"] = capture.validate_phase(json.loads(response.stdout), operation, "finish")
+        result["finish"] = capture.validate_phase(json.loads(response.stdout), operation, "finish", profile_name)
         result["guardMayRemain"] = False
         result["result"] = "passed"
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

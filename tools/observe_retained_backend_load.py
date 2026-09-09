@@ -27,14 +27,15 @@ MAX_REPLY = 20000
 require = ipc.require
 
 
-def retained_status(value: object) -> dict[str, object]:
+def retained_status(value: object, profile_name: str = "seq5") -> dict[str, object]:
+    profile = resources.status_profile(profile_name)
     status = ipc.object_value(value)
     require(set(status) == {"generation", "floorSequence", "systemSequence", "selected",
                             "confirmed", "previous", "pending", "lastRollback"}, "invalid status keys")
-    for key, expected in (("generation", 22), ("floorSequence", 5), ("systemSequence", 1)):
+    for key, expected in (("generation", profile.generation), ("floorSequence", profile.sequence), ("systemSequence", 1)):
         require(type(status[key]) is int and status[key] == expected, "retained status changed")
     require(status["pending"] is None and status["lastRollback"] is None, "update transaction present")
-    selected = {"slotId": resources.SLOT, "version": "0.1.0-dev4", "sequence": 5, "minimumSystemSequence": 1}
+    selected = {"slotId": profile.slot, "version": profile.version, "sequence": profile.sequence, "minimumSystemSequence": 1}
     for key in ("selected", "confirmed"):
         slot = ipc.object_value(status[key])
         require(slot == selected and type(slot["sequence"]) is int
@@ -43,13 +44,16 @@ def retained_status(value: object) -> dict[str, object]:
     # between observations; no unverified previous version/digest is guessed.
     previous = ipc.object_value(status["previous"])
     require(set(previous) == set(selected) and type(previous["sequence"]) is int
-            and previous["sequence"] == 4 and type(previous["minimumSystemSequence"]) is int
+            and previous["sequence"] == profile.sequence - 1 and type(previous["minimumSystemSequence"]) is int
             and previous["minimumSystemSequence"] == 1, "invalid previous application")
     slot_id, version = previous["slotId"], previous["version"]
-    require(isinstance(slot_id, str) and re.fullmatch(r"app-00000000000000000004-[a-f0-9]{64}", slot_id) is not None
+    require(isinstance(slot_id, str) and re.fullmatch(rf"app-{profile.sequence - 1:020d}-[a-f0-9]{{64}}", slot_id) is not None
             and slot_id[-64:] != "0" * 64, "invalid previous slot")
     require(isinstance(version, str) and re.fullmatch(r"[A-Za-z0-9.+-]{1,64}", version) is not None,
             "invalid previous version")
+    if profile.previous_slot is not None:
+        require(slot_id == profile.previous_slot and version == profile.previous_version,
+                "unexpected previous application")
     return status
 
 

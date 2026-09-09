@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { statusRoute, validateStatus } from "./status_api_acceptance.mjs";
+import {
+  statusProfile,
+  statusRoute,
+  validateStatus,
+} from "./status_api_acceptance.mjs";
 
 const idle = "No update awaiting confirmation";
 const stale = "Connection lost. The displayed status may be outdated.";
 const unavailable = "Update status is unavailable. Retrying automatically.";
-const version = "0.1.0-dev4 · #5";
 const sizes = [
   { width: 1280, height: 900 },
   { width: 390, height: 844 },
@@ -23,7 +26,7 @@ async function openPanel(page) {
   return { dialog, panel };
 }
 
-async function refresh(page, panel, status) {
+async function refresh(page, panel, status, profileName) {
   const response = page.waitForResponse(
     (item) =>
       new URL(item.url()).pathname === statusRoute &&
@@ -40,11 +43,13 @@ async function refresh(page, panel, status) {
   if (status === 200) {
     const body = await result.json();
     assert.equal(body.code, 0);
-    validateStatus(body.data);
+    validateStatus(body.data, profileName);
   }
 }
 
-async function verifyViewports(page, panel, state) {
+async function verifyViewports(page, panel, state, profileName) {
+  const profile = statusProfile(profileName);
+  const version = `${profile.version} · #${profile.sequence}`;
   for (const viewport of sizes) {
     await page.setViewportSize(viewport);
     if (state === "ready") {
@@ -86,7 +91,9 @@ export function createStatusOutageScenario(control) {
     activeStream,
     verifyVideoProgress,
     createObservedPage,
+    statusProfileName = "seq5",
   }) => {
+    statusProfile(statusProfileName);
     const originalStream = activeStream();
     assert.ok(originalStream);
     let cold = null;
@@ -94,16 +101,16 @@ export function createStatusOutageScenario(control) {
     let windowOpen = false;
     try {
       const warm = await openPanel(page);
-      await refresh(page, warm.panel, 200);
-      await verifyViewports(page, warm.panel, "ready");
+      await refresh(page, warm.panel, 200, statusProfileName);
+      await verifyViewports(page, warm.panel, "ready", statusProfileName);
       await verifyVideoProgress();
       beginOutage();
       windowOpen = true;
       // A failed stop acknowledgement may still mean the listener stopped.
       restoreRequired = true;
       await control("stop");
-      await refresh(page, warm.panel, 503);
-      await verifyViewports(page, warm.panel, "stale");
+      await refresh(page, warm.panel, 503, statusProfileName);
+      await verifyViewports(page, warm.panel, "stale", statusProfileName);
       await verifyVideoProgress();
 
       cold = await createObservedPage();
@@ -112,8 +119,8 @@ export function createStatusOutageScenario(control) {
       });
       assert.equal(document?.status(), 200);
       const fresh = await openPanel(cold);
-      await refresh(cold, fresh.panel, 503);
-      await verifyViewports(cold, fresh.panel, "error");
+      await refresh(cold, fresh.panel, 503, statusProfileName);
+      await verifyViewports(cold, fresh.panel, "error", statusProfileName);
       await verifyVideoProgress();
 
       await control("restore");
@@ -125,8 +132,8 @@ export function createStatusOutageScenario(control) {
         [page, warm],
       ]) {
         await target.bringToFront();
-        await refresh(target, view.panel, 200);
-        await verifyViewports(target, view.panel, "ready");
+        await refresh(target, view.panel, 200, statusProfileName);
+        await verifyViewports(target, view.panel, "ready", statusProfileName);
         await view.dialog.locator("button.ant-modal-close").click();
         await view.dialog.waitFor({ state: "hidden" });
       }

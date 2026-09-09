@@ -104,14 +104,15 @@ def quiet_socket() -> None:
     raise ValueError("status workers did not become idle")
 
 
-def status_read(source: str) -> dict[str, object]:
+def status_read(source: str, profile_name: str = "seq5") -> dict[str, object]:
+    resources.status_profile(profile_name)
     uid, gid = pwd.getpwnam("hardened-blikvm-server").pw_uid, grp.getgrnam("hardened-blikvm").gr_gid
     require(uid > 0 and gid > 0, "invalid status peer identity")
     result = subprocess.run([sys.executable, "-B", "-c", source], user=uid, group=gid, extra_groups=[],
                             env={}, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, timeout=8, check=True)
     require(len(result.stdout) <= 20000, "oversize status reply")
-    return retained_status(json.loads(result.stdout))
+    return retained_status(json.loads(result.stdout), profile_name)
 
 
 def same_identity(before: resources.Sample, after: resources.Sample) -> None:

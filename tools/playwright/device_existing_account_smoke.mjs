@@ -50,7 +50,7 @@ export async function runExistingAccountBrowser({
       (soakMode === "soak-10m" && statusMode === "enabled"),
   );
   if (statusOutageScenario) {
-    assert.equal(statusMode, "enabled");
+    assert.ok(["enabled", "enabled-seq6"].includes(statusMode));
     assert.equal(soakMode, undefined, "outage and soak are separate probes");
   }
   if (videoContinuityScenario) {
@@ -366,6 +366,7 @@ export async function runExistingAccountBrowser({
       const outcome = await statusOutageScenario({
         page,
         context,
+        statusProfileName,
         beginOutage: () => outageWindow.begin(),
         endOutage: () => outageWindow.end(),
         activeStream: () => activeStreamResponse,

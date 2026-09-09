@@ -99,7 +99,9 @@ function scenarioFixture({
   falseIdle = false,
   failRestore = false,
   endedStream = false,
+  profileName = "seq5",
 } = {}) {
+  const seq6 = profileName === "seq6";
   let outage = false;
   const events = [];
   const stream = {
@@ -111,7 +113,8 @@ function scenarioFixture({
     let closed = false;
     let state = cold ? "error" : "ready";
     const count = (text) => {
-      if (text === "0.1.0-dev4 · #5") return hasData ? 2 : 0;
+      if (text === (seq6 ? "0.1.0-dev5 · #6" : "0.1.0-dev4 · #5"))
+        return hasData ? 2 : 0;
       if (text === "No update awaiting confirmation")
         return state === "ready" || falseIdle ? 1 : 0;
       if (text === "Connection lost. The displayed status may be outdated.")
@@ -170,10 +173,11 @@ function scenarioFixture({
       isClosed: () => closed,
       async waitForResponse() {
         const slot = {
-          slotId:
-            "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc",
-          version: "0.1.0-dev4",
-          sequence: "5",
+          slotId: seq6
+            ? "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac"
+            : "app-00000000000000000005-41cb7620d36a47c3416e748296fa1512fc59aaf9012f12f04c0f659098629ebc",
+          version: seq6 ? "0.1.0-dev5" : "0.1.0-dev4",
+          sequence: seq6 ? "6" : "5",
           minimumSystemSequence: "1",
         };
         return {
@@ -182,8 +186,8 @@ function scenarioFixture({
             code: 0,
             data: {
               schemaVersion: 1,
-              generation: "22",
-              floorSequence: "5",
+              generation: seq6 ? "31" : "22",
+              floorSequence: seq6 ? "6" : "5",
               systemSequence: "1",
               pending: null,
               lastRollback: null,
@@ -207,6 +211,7 @@ function scenarioFixture({
       if (failStop && outage) throw new Error("stop acknowledgement lost");
     }),
     args: {
+      statusProfileName: profileName,
       page: makePage(),
       beginOutage: () => events.push("begin"),
       endOutage: () => events.push("end"),
@@ -218,6 +223,15 @@ function scenarioFixture({
     },
   };
 }
+
+test("sequence-six outage validates the matching status and cards", async () => {
+  const fixture = scenarioFixture({ profileName: "seq6" });
+  validateOutageResult(await fixture.scenario(fixture.args));
+  const wrong = scenarioFixture({ profileName: "seq6" });
+  wrong.args.statusProfileName = "seq5";
+  await assert.rejects(wrong.scenario(wrong.args));
+  assert.deepEqual(wrong.events, []);
+});
 
 test("outage scenario verifies warm/cold recovery and closes the extra page", async () => {
   const fixture = scenarioFixture();

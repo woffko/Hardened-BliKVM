@@ -43,13 +43,13 @@ def cleanup(operation: str) -> bool:
     return False
 
 
-def validate_handoff(value: object, operation: str) -> dict[str, object]:
+def validate_handoff(value: object, operation: str, profile_name: str = "seq5") -> dict[str, object]:
     policy.guard_name(operation)
     require(isinstance(value, dict), "invalid timer handoff")
     handoff = cast(dict[str, object], value)
     require(set(handoff) == {"result", "operation", "baseline", "status", "deadlineUsec"}
             and handoff["result"] == "armed" and handoff["operation"] == operation, "timer handoff identity mismatch")
-    retained_status(handoff["status"])
+    retained_status(handoff["status"], profile_name)
     require(isinstance(handoff["baseline"], dict), "invalid baseline")
     baseline = cast(dict[str, object], handoff["baseline"])
     require(set(baseline) == {"monotonicNs", "bootIdSha256", "units"}, "invalid baseline fields")
@@ -98,13 +98,13 @@ def manager_owner() -> str:
     return owner
 
 
-def arm(operation: str, status_source: str) -> dict[str, object]:
+def arm(operation: str, status_source: str, profile_name: str = "seq5") -> dict[str, object]:
     name = policy.guard_name(operation)
     attempted = False
     try:
         require(os.geteuid() == 0 and os.uname().machine == "aarch64", "unexpected host")
-        baseline = resources.snapshot()
-        status = probe.status_read(status_source)
+        baseline = resources.snapshot(profile_name)
+        status = probe.status_read(status_source, profile_name)
         probe.quiet_socket()
         probe.namespace_pristine(operation)
         unused = probe.unit_absent(name + ".timer") and probe.unit_absent(name + ".service")
@@ -113,7 +113,7 @@ def arm(operation: str, status_source: str) -> dict[str, object]:
         attempted = True
         probe.command(argv, timeout=15)
         deadline, _ = guard(operation)
-        probe.same_identity(baseline, resources.snapshot())
+        probe.same_identity(baseline, resources.snapshot(profile_name))
         return {"result": "armed", "operation": operation, "baseline": baseline,
                 "status": status, "deadlineUsec": deadline}
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

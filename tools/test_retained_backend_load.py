@@ -32,7 +32,39 @@ def samples() -> list[dict[str, Any]]:
             for index in range(resources.SAMPLES)]
 
 
+def status_seq6() -> dict[str, Any]:
+    value = status()
+    value.update(generation=31, floorSequence=6, previous=dict(value["selected"]))
+    selected = {
+        "slotId": "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac",
+        "version": "0.1.0-dev5", "sequence": 6, "minimumSystemSequence": 1,
+    }
+    value.update(selected=selected, confirmed=dict(selected))
+    return value
+
+
 class BackendTests(unittest.TestCase):
+    def test_sequence_six_profile_requires_exact_confirmed_and_previous_state(self) -> None:
+        value = status_seq6()
+        self.assertEqual(load.retained_status(value, "seq6"), value)
+        for other, name in ((value, "seq5"), (status(), "seq6"), (value, "unknown")):
+            with self.subTest(profile=name), self.assertRaises(ValueError):
+                load.retained_status(other, name)
+        invalid: tuple[tuple[str, object], ...] = (
+            ("generation", 30), ("floorSequence", 5), ("systemSequence", True),
+            ("pending", {}), ("lastRollback", {}),
+        )
+        for key, bad in invalid:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                load.retained_status(dict(value, **{key: bad}), "seq6")
+        for slot in ("selected", "confirmed", "previous"):
+            for key, bad in (("slotId", "app-00000000000000000005-" + "a" * 64),
+                             ("version", "0.1.0-other"), ("sequence", 4), ("minimumSystemSequence", True)):
+                changed = copy.deepcopy(value)
+                changed[slot][key] = bad
+                with self.subTest(slot=slot, key=key), self.assertRaises(ValueError):
+                    load.retained_status(changed, "seq6")
+
     def test_loaded_receipt_recomputes_both_summaries_and_requires_cleanup(self) -> None:
         observed, workload = resource_fixture(), samples()
         value: dict[str, Any] = {"result": "observed", "workload": load.WORKLOAD,

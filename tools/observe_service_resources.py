@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 
 SAMPLES = 61
@@ -27,6 +27,27 @@ UNITS = (
     "hardened-blikvm-video-proxy.service",
     "hardened-blikvm-nginx.service",
 )
+
+
+class StatusProfile(NamedTuple):
+    slot: str
+    version: str
+    sequence: int
+    generation: int
+    previous_slot: str | None
+    previous_version: str | None
+
+
+def status_profile(name: str = "seq5") -> StatusProfile:
+    """Exact accepted baselines; unknown names never select a fallback."""
+    if name == "seq5":
+        return StatusProfile(SLOT, "0.1.0-dev4", 5, 22, None, None)
+    if name == "seq6":
+        return StatusProfile(
+            "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac",
+            "0.1.0-dev5", 6, 31, SLOT, "0.1.0-dev4",
+        )
+    raise ValueError("unknown status profile")
 
 
 class UnitSample(TypedDict):
@@ -122,16 +143,17 @@ def unit_sample(unit: str) -> UnitSample:
             "rssKiB": rss, "threads": threads, "fileDescriptors": descriptors, "processes": len(pids)}
 
 
-def snapshot() -> Sample:
+def snapshot(profile_name: str = "seq5") -> Sample:
+    slot = status_profile(profile_name).slot
     boot = read_bounded(Path("/proc/sys/kernel/random/boot_id"), 64).strip()
     require(re.fullmatch(r"[a-f0-9-]{36}", boot) is not None, "invalid boot identifier")
     slot_root = Path("/var/lib/hardened-blikvm-slots")
-    require((slot_root / "current").resolve(strict=True) == slot_root / SLOT,
+    require((slot_root / "current").resolve(strict=True) == slot_root / slot,
             "unexpected selected slot")
     units = {unit: unit_sample(unit) for unit in UNITS}
     require((Path("/proc") / str(units[UNITS[0]]["mainPid"]) / "exe").resolve(strict=True)
-            == slot_root / SLOT / "bin/bli-kvm-server", "unexpected server executable")
-    require((slot_root / "current").resolve(strict=True) == slot_root / SLOT,
+            == slot_root / slot / "bin/bli-kvm-server", "unexpected server executable")
+    require((slot_root / "current").resolve(strict=True) == slot_root / slot,
             "selected slot changed during sample")
     require(read_bounded(Path("/proc/sys/kernel/random/boot_id"), 64).strip() == boot, "boot changed during sample")
     return {"monotonicNs": time.monotonic_ns(),
