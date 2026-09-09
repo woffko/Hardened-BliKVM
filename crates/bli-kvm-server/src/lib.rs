@@ -14,7 +14,7 @@ use bli_kvm_core::{
     RuntimeInventory,
 };
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
-use bli_kvm_update_client::UpdateStatusClient;
+use bli_kvm_update_client::{UpdateStatusClient, UpdateUploadClient};
 use bli_kvm_video_client::VideoReadClient;
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -39,6 +39,7 @@ pub(crate) struct AppState {
     pub inventory: Arc<BrokerReadClient>,
     pub video: Arc<VideoReadClient>,
     pub update_status: Option<Arc<UpdateStatusClient>>,
+    pub update_upload: Option<Arc<UpdateUploadClient>>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -59,6 +60,8 @@ pub struct ServerOptions {
     pub video_socket: PathBuf,
     /// Read-only updater IPC. No value keeps the capability unavailable.
     pub update_status_socket: Option<PathBuf>,
+    /// Stage-only IPC; disabled by default, never enables activation.
+    pub update_upload_socket: Option<PathBuf>,
 }
 
 impl Default for ServerOptions {
@@ -74,6 +77,7 @@ impl Default for ServerOptions {
             broker_socket: PathBuf::from("/run/hardened-blikvm/platform-broker.sock"),
             video_socket: PathBuf::from("/run/hardened-blikvm-video/mjpeg.sock"),
             update_status_socket: None,
+            update_upload_socket: None,
         }
     }
 }
@@ -103,6 +107,15 @@ pub fn app_with_web_root(web_root: Option<PathBuf>) -> Router {
 }
 
 pub fn app_with_options(options: ServerOptions) -> Router {
+    if let Some(upload) = &options.update_upload_socket {
+        assert!(
+            options
+                .update_status_socket
+                .as_ref()
+                .is_some_and(|status| status != upload),
+            "upload requires a separate configured status socket"
+        );
+    }
     let mut manifest = BliH616PikvmPlatform.capabilities();
     if options.update_status_socket.is_some() {
         manifest.system.signed_application_updates =
@@ -113,6 +126,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .expect("built-in Bli H616 capability manifest must be valid");
     let state = AppState {
         capabilities: Arc::new(manifest),
+        update_upload: options.update_upload_socket.as_ref().map(|path| {
+            Arc::new(
+                UpdateUploadClient::new(path)
+                    .expect("upload socket path must be a bounded absolute Unix path"),
+            )
+        }),
         update_status: options.update_status_socket.as_ref().map(|path| {
             Arc::new(
                 UpdateStatusClient::new(path)
@@ -159,6 +178,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/inventory", get(runtime_inventory))
         .route("/diagnostics", get(diagnostics_view))
         .route("/application-update/status", get(update::status))
+        .route("/application-update/upload", post(update::upload))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let api = public.merge(protected_routes).fallback(api_not_found);
@@ -377,6 +397,231 @@ mod tests {
             manifest["data"]["system"]["signedSystemUpdates"]["availability"],
             "unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn upload_authorization_and_headers_precede_body_and_ipc() {
+        struct NeverBody;
+        impl http_body::Body for NeverBody {
+            type Data = bytes::Bytes;
+            type Error = std::io::Error;
+            fn poll_frame(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>>
+            {
+                panic!("rejected upload body was consumed")
+            }
+        }
+        let root = tempdir().unwrap();
+        let socket = root.path().join("upload.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        for mode in [
+            "no-login",
+            "no-csrf",
+            "cross-origin",
+            "missing-origin",
+            "bad-type",
+        ] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/application-update/upload")
+                .header(header::HOST, "localhost")
+                .header(
+                    header::CONTENT_TYPE,
+                    if mode == "bad-type" {
+                        "multipart/form-data"
+                    } else {
+                        "application/octet-stream"
+                    },
+                )
+                .header(header::CONTENT_LENGTH, "3");
+            if mode != "no-login" {
+                request = request.header(header::COOKIE, &cookie);
+            }
+            if mode != "no-csrf" {
+                request = request.header("x-csrf-token", &csrf);
+            }
+            if mode != "missing-origin" {
+                request = request.header(
+                    header::ORIGIN,
+                    if mode == "cross-origin" {
+                        "https://elsewhere.invalid"
+                    } else {
+                        "https://localhost"
+                    },
+                );
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::new(NeverBody)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                match mode {
+                    "no-login" => StatusCode::UNAUTHORIZED,
+                    "bad-type" => StatusCode::OK,
+                    _ => StatusCode::FORBIDDEN,
+                }
+            );
+            if mode == "bad-type" {
+                assert_eq!(json_body(response).await["code"], -1);
+            }
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_upload_streams_stage_only_and_preserves_exact_counters() {
+        use bli_kvm_update_protocol::{self as updates, upload};
+        let root = tempdir().unwrap();
+        let socket = root.path().join("upload.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let worker = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let length = stream.read_u32().await.unwrap() as usize;
+            let mut metadata = vec![0; length];
+            stream.read_exact(&mut metadata).await.unwrap();
+            let request = upload::decode_request(&metadata).unwrap();
+            assert_eq!(
+                request.request,
+                upload::UploadRequest::Stage { archive_bytes: 3 }
+            );
+            let mut body = Vec::new();
+            stream.read_to_end(&mut body).await.unwrap();
+            assert_eq!(body, b"abc");
+            let receipt = upload::UploadReceipt {
+                slot: updates::ApplicationSlotVersion {
+                    slot_id: format!("app-{:020}-{}", u64::MAX, "a".repeat(64)),
+                    version: "1.0.0".into(),
+                    sequence: u64::MAX,
+                    minimum_system_sequence: 1,
+                },
+                disposition: upload::UploadDisposition::AlreadyPresent,
+                manifest_sha256: "a".repeat(64),
+                payload_bytes: 1,
+            };
+            let response = upload::UploadResponseEnvelope {
+                schema_version: 1,
+                request_id: request.request_id,
+                response: upload::UploadResponse::Staged { receipt },
+            };
+            stream
+                .write_all(
+                    &updates::encode_frame(&upload::encode_response(&response).unwrap()).unwrap(),
+                )
+                .await
+                .unwrap();
+        });
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/application-update/upload")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
+            .header(header::COOKIE, cookie)
+            .header("x-csrf-token", csrf)
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::CONTENT_LENGTH, "3")
+            .body(Body::from("abc"))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["slot"]["sequence"], "18446744073709551615");
+        assert_eq!(body["data"]["payloadBytes"], "1");
+        assert_eq!(body["data"]["disposition"], "already_present");
+        worker.await.unwrap();
+        let manifest = json_body(
+            app.oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
+            "read_only"
+        );
+    }
+
+    #[tokio::test]
+    async fn logout_interrupts_stalled_upload_without_complete_ipc_body() {
+        struct StalledBody;
+        impl http_body::Body for StalledBody {
+            type Data = bytes::Bytes;
+            type Error = std::io::Error;
+            fn poll_frame(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>>
+            {
+                std::task::Poll::Pending
+            }
+        }
+        let root = tempdir().unwrap();
+        let socket = root.path().join("upload.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/application-update/upload")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
+            .header(header::COOKIE, &cookie)
+            .header("x-csrf-token", &csrf)
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::CONTENT_LENGTH, "3")
+            .body(Body::new(StalledBody))
+            .unwrap();
+        let transfer = tokio::spawn(app.clone().oneshot(request));
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let length = stream.read_u32().await.unwrap() as usize;
+        stream.read_exact(&mut vec![0; length]).await.unwrap();
+        let mut logout = json_request(Method::POST, "/api/auth/logout", Value::Null);
+        logout
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        logout
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        assert_eq!(
+            json_body(app.oneshot(logout).await.unwrap()).await["code"],
+            0
+        );
+        let response = tokio::time::timeout(std::time::Duration::from_secs(1), transfer)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let mut bytes = Vec::new();
+        stream.read_to_end(&mut bytes).await.unwrap();
+        assert!(bytes.is_empty());
     }
 
     #[tokio::test]

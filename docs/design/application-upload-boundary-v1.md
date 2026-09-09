@@ -73,7 +73,36 @@ package-map tests cover these templates; no service is enabled by packaging.
 An installed filesystem/sandbox check is still required, especially anonymous
 file support and timeout behaviour under the actual service identity.
 
-## Remaining installed and HTTP transport integration
+## Host HTTP transport
+
+The opt-in `BLI_KVM_UPDATE_UPLOAD_SOCKET` configures
+`POST /api/application-update/upload`; it requires a separately configured
+status socket. Both are disabled by default. The protected router checks the
+session, CSRF token and existing origin policy before body polling or IPC.
+The handler requires a single exact decimal `Content-Length` of 1–128 MiB and
+one `application/octet-stream` content type. Content/transfer encoding,
+multipart, declared or actual trailers and short/surplus bodies are rejected.
+It adapts HTTP frames to bounded reader chunks without collecting the archive.
+
+The separate stage-only client admits one request, bounds connect/metadata to
+2 s, individual body reads/writes to 4 s, body transfer to 115 s and the whole
+operation including receipt to 175 s. It deliberately withholds the final
+archive byte until HTTP EOF is validated: otherwise closing IPC on a surplus
+body or trailer error could impersonate a valid archive followed by EOF.
+Session expiry/revocation is checked during body reads and every 100 ms even
+while stalled; cancellation drops IPC and releases admission. Cancellation
+after complete delivery/publication cannot undo a staged slot. An unavailable
+response is not proof that publication failed; retry the same archive.
+
+Host tests cover authorization/headers before body or IPC, exact signed-slot
+receipt serialization without u64 rounding, raw stage-only IPC, malformed
+headers/trailers, incomplete/surplus input, cancellation/admission, logout
+during a stalled body and oversized/mismatched/surplus receipts. The successful
+HTTP test uses a fake IPC peer, not the installed updater. These checks do not
+establish native or browser acceptance. Writable-update capability remains
+disabled; the upload does not expose an activation endpoint.
+
+## Remaining installed and browser transport integration
 
 The supervisor library now provides a bounded reception primitive: it checks
 the closed metadata before creating a sink, copies in 64 KiB chunks, requires
@@ -123,6 +152,5 @@ service identity, sandbox, storage limits and watchdog/status availability
 during a slow or interrupted upload. Browser acceptance must cover progress,
 failure/retry, logout/cancellation and a clear separate activation confirmation.
 
-The current stream and codec tests do not establish any HTTP, installed-worker
-or browser-upload acceptance. No upload endpoint is enabled on the device by
-these source changes.
+The host tests do not establish installed-worker or browser-upload acceptance.
+No upload endpoint is enabled on the device by these source changes.

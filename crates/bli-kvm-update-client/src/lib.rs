@@ -17,6 +17,9 @@ use tokio::{
     time::timeout,
 };
 
+mod upload;
+pub use upload::{UpdateUploadClient, UploadClientError};
+
 #[derive(Debug, Error)]
 pub enum UpdateClientError {
     #[error("update status socket path is invalid")]
