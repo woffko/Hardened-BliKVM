@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native, rollback-gated dev6 to dev7 replacement with retained status preserved."""
+"""Native, profile-bound updater replacement with retained status preserved."""
 
 from __future__ import annotations
 
@@ -38,11 +38,46 @@ SUPERVISOR_HASHES = {
     "new": "120add7f7086164709d5b1f9c5be7280b060a7c86e537741aa060bc85052471b",
 }
 VERSIONS = {"old": "0.1.0~dev6", "new": "0.1.0~dev7"}
+selected_profile = "dev6-dev7"
+PROFILES = ("dev6-dev7", "dev7-dev9")
+LEGACY_BINDINGS = (dict(PACKAGE_HASHES), dict(SUPERVISOR_HASHES), dict(VERSIONS))
+SEQ6_SLOT = "app-00000000000000000006-8eedeb5ce21ca08b90336cad27bdd7f16c6502388a1f13bc943a2026d80534ac"
 HELPERS = ("switch_signed_slot_server.py", "initialize_application_state.py", "application_bootstrap_roots.py",
            "enable_update_services.py", "upgrade_initialized_updater.py", "status_api_wiring.py",
            "persistent_status_wiring.py", "persistent_status_contract.py")
 STATE_ROOTS = (Path("/var/lib/hardened-blikvm-slots"), Path("/var/lib/hardened-blikvm-update"))
 UNIT_ROOT = Path("/etc/systemd/system")
+
+
+def select_profile(name: str) -> None:
+    """Select a fixed CLI profile before orchestration; legacy imports stay unchanged."""
+    global selected_profile
+    require(name in PROFILES, "unknown upgrade profile")
+    selected_profile = name
+    packages, supervisors, versions = LEGACY_BINDINGS
+    if name == "dev6-dev7":
+        PACKAGE_HASHES.update(packages)
+        SUPERVISOR_HASHES.update(supervisors)
+        VERSIONS.update(versions)
+    else:
+        PACKAGE_HASHES.update({"old": packages["new"], "new": "15f744ed21f4029cc5d913fd66a98d3e029ba19be0b3c60a6fe62fb2b0bd556d"})
+        SUPERVISOR_HASHES.update({"old": supervisors["new"], "new": "2a524958c5e20f859213935553b5b0c02e9dc6b33e88fef066666153684e3ac0"})
+        VERSIONS.update({"old": "0.1.0~dev7", "new": "0.1.0~dev9"})
+
+
+def write_transports_inert() -> None:
+    for name in ("upload", "activation"):
+        socket = f"hardened-blikvm-update-{name}.socket"
+        load_state = serving.property_value(socket, "LoadState")
+        require(load_state in ("loaded", "not-found"), "unexpected write socket load state")
+        serving.inactive(socket)
+        require(serving.enabled(socket) == "disabled" if load_state == "loaded" else
+                serving.enabled(socket) in ("", "not-found"), "write socket unexpectedly enabled")
+        endpoint = Path(f"/run/hardened-blikvm-update-api/{name}.sock")
+        require(not endpoint.exists() and not endpoint.is_symlink(), "write socket unexpectedly present")
+        workers = checked(["systemctl", "list-units", "--all", "--plain", "--no-legend",
+                           "--state=active,activating,deactivating,reloading", f"hardened-blikvm-update-{name}@*.service"])
+        require(not workers.strip(), "write worker unexpectedly active")
 
 
 def tree_fingerprint(roots: tuple[Path, ...]) -> dict[str, object]:
@@ -128,7 +163,14 @@ def snapshot(variant: str) -> dict[str, object]:
         from tools import status_api_wiring as status_api
         from tools import persistent_status_wiring as persistent
     persistent.validate_dropins(True)
-    value = status_api.snapshot(True, expected_version=VERSIONS[variant], expected_supervisor_sha=SUPERVISOR_HASHES[variant])
+    if selected_profile == "dev7-dev9":
+        write_transports_inert()
+        value = status_api.snapshot(True, expected_version=VERSIONS[variant], expected_supervisor_sha=SUPERVISOR_HASHES[variant],
+                                    expected_slot=SEQ6_SLOT, expected_floor=6, expected_generation=31)
+        # A package-only replacement must not restart the retained server.
+        cast(dict[str, object], value["serving"])["serverPid"] = serving.property_value(serving.CURRENT_SERVER, "MainPID")
+    else:
+        value = status_api.snapshot(True, expected_version=VERSIONS[variant], expected_supervisor_sha=SUPERVISOR_HASHES[variant])
     value["persistentDropinHashes"] = {str(path): digest(path) for path in persistent.dropins()}
     return value
 
@@ -151,6 +193,10 @@ def verify(root: Path, plan: dict[str, object], variant: str, boot: bool = False
 def guard_units(root: Path) -> dict[str, str]:
     common = "[Service]\nType=oneshot\nUser=root\nUMask=0077\nTimeoutStartSec=180\nNoNewPrivileges=yes\nProtectHome=yes\n"
     command = f"ExecStart=/usr/bin/python3 -B {root}/controller.py rollback --guard-root {root}"
+    # The legacy infrastructure controller shares these units but has no
+    # profile argument. Preserve its original command and default semantics.
+    if selected_profile != "dev6-dev7":
+        command += f" --profile {selected_profile}"
     return {
         root.name + "-boot.service": ("[Unit]\nDefaultDependencies=no\nAfter=local-fs.target\n"
             f"Before=multi-user.target {serving.CURRENT_SERVER} {serving.CANDIDATE_SERVER}\n"
@@ -232,6 +278,7 @@ def load_plan(root: Path) -> dict[str, object]:
     plan = cast(dict[str, object], json.loads(path.read_bytes()))
     require(plan.get("schemaVersion") == 1 and plan.get("phase") in ("prepared", "applied", "rolled_back", "committed"),
             "invalid plan")
+    require(plan.get("profile", "dev6-dev7") == selected_profile, "guard profile mismatch")
     return plan
 
 
@@ -246,7 +293,7 @@ def prepare(assets: Path) -> dict[str, object]:
     for name in ("old.deb", "new.deb", "bindings.json", *HELPERS):
         new_file(root / name, (assets / name).read_bytes())
     new_file(root / "controller.py", Path(__file__).read_bytes())
-    plan: dict[str, object] = {"schemaVersion": 1, "phase": "prepared", "before": before}
+    plan: dict[str, object] = {"schemaVersion": 1, "profile": selected_profile, "phase": "prepared", "before": before}
     save(root, plan)
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -312,7 +359,9 @@ def main() -> None:
     parser.add_argument("--guard-root")
     parser.add_argument("--boot", action="store_true")
     parser.add_argument("--variant", choices=("old", "new"), default="old")
+    parser.add_argument("--profile", choices=PROFILES, default="dev6-dev7")
     args = parser.parse_args()
+    select_profile(args.profile)
     require(os.geteuid() == 0, "root orchestration required")
     require(not args.boot or args.action == "rollback", "boot is rollback-only")
     if args.action == "preflight":

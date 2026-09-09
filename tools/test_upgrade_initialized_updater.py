@@ -14,6 +14,54 @@ from tools import persistent_status_wiring as persistent
 
 
 class InitializedUpdaterTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        driver.select_profile("dev6-dev7")
+
+    def test_dev9_profile_preserves_legacy_bindings_and_pins_seq6(self) -> None:
+        old_hash = gate.PACKAGE_HASHES["new"]
+        driver.select_profile("dev7-dev9")
+        self.assertEqual(gate.PACKAGE_HASHES["old"], old_hash)
+        self.assertEqual(gate.VERSIONS, {"old": "0.1.0~dev7", "new": "0.1.0~dev9"})
+        self.assertEqual(driver.SOURCE_BINDINGS["old"], driver.LEGACY_SOURCE_BINDINGS["new"])
+        for variant in ("old", "new"):
+            with patch.object(persistent, "validate_dropins"), \
+                 patch.object(status_api, "snapshot", return_value={"serving": {}}) as snapshot, \
+                 patch.object(gate, "digest", return_value="a" * 64), \
+                 patch.object(gate, "write_transports_inert") as inert, \
+                 patch.object(gate.serving, "property_value", return_value="123"):
+                value = gate.snapshot(variant)
+                snapshot.assert_called_once_with(True, expected_version=gate.VERSIONS[variant],
+                    expected_supervisor_sha=gate.SUPERVISOR_HASHES[variant], expected_slot=gate.SEQ6_SLOT,
+                    expected_floor=6, expected_generation=31)
+                self.assertEqual(value["serving"], {"serverPid": "123"})
+                inert.assert_called_once_with()
+        root = Path("/var/lib") / (gate.PREFIX + "a" * 24)
+        for name, unit in gate.guard_units(root).items():
+            if name.endswith(".service"):
+                self.assertIn("--profile dev7-dev9", unit)
+        with self.assertRaises(ValueError):
+            driver.select_profile("unknown")
+        driver.select_profile("dev6-dev7")
+        self.assertEqual(gate.PACKAGE_HASHES["new"], old_hash)
+
+    def test_dev9_write_sockets_and_workers_must_be_inert(self) -> None:
+        with patch.object(gate.serving, "inactive"), \
+             patch.object(gate.serving, "property_value", return_value="loaded"), \
+             patch.object(gate.serving, "enabled", return_value="disabled"), \
+             patch.object(Path, "exists", return_value=False), patch.object(Path, "is_symlink", return_value=False), \
+             patch.object(gate, "checked", return_value=b"") as checked:
+            gate.write_transports_inert()
+            self.assertIn("hardened-blikvm-update-activation@*.service", checked.call_args.args[0])
+            with patch.object(gate.serving, "enabled", return_value="enabled"), self.assertRaises(ValueError):
+                gate.write_transports_inert()
+            with patch.object(gate, "checked", return_value=b"active"), self.assertRaises(ValueError):
+                gate.write_transports_inert()
+            with patch.object(Path, "is_symlink", return_value=True), self.assertRaises(ValueError):
+                gate.write_transports_inert()
+            with patch.object(gate.serving, "property_value", return_value="not-found"), \
+                 patch.object(gate.serving, "enabled", return_value=""):
+                gate.write_transports_inert()
+
     def test_upgrade_preserves_retained_status_with_variant_bound_binaries(self) -> None:
         for variant in ("old", "new"):
             with patch.object(persistent, "validate_dropins") as validate, \
@@ -83,6 +131,43 @@ class InitializedUpdaterTests(unittest.TestCase):
                 gate.save(root, plan)
             self.assertEqual(partial.read_bytes(), b"unknown transition")
 
+    def test_guard_marker_cannot_select_another_package_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "plan.json"
+            metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0, st_nlink=1, st_size=200)
+            for selected in gate.PROFILES:
+                driver.select_profile(selected)
+                for recorded in (*gate.PROFILES, "unknown", None):
+                    plan: dict[str, object] = {"schemaVersion": 1, "phase": "prepared", "before": {}}
+                    if recorded is not None:
+                        plan["profile"] = recorded
+                    path.write_text(json.dumps(plan))
+                    with patch.object(Path, "lstat", return_value=metadata):
+                        if (recorded or "dev6-dev7") == selected:
+                            self.assertEqual(gate.load_plan(root), plan)
+                        else:
+                            with self.assertRaises(ValueError):
+                                gate.load_plan(root)
+
+    def test_dev9_rehearsal_requires_its_explicit_profile(self) -> None:
+        driver.select_profile("dev7-dev9")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "receipt.json"
+            receipt = {"probe": "initialized-updater-upgrade", "action": "rehearse", "result": "passed",
+                       "packageHashes": gate.PACKAGE_HASHES, "retainedVersion": gate.VERSIONS["old"],
+                       "guardRemoved": True, "controllerStagingRemoved": True}
+            with patch.object(driver.transport, "validate_private_file", return_value=path):
+                for profile in (None, "dev6-dev7", "dev7-dev9"):
+                    if profile is not None:
+                        receipt["profile"] = profile
+                    path.write_text(json.dumps(receipt))
+                    if profile == "dev7-dev9":
+                        driver.validate_rehearsal(str(path))
+                    else:
+                        with self.assertRaises(ValueError):
+                            driver.validate_rehearsal(str(path))
+
     def test_tree_snapshot_detects_contents_modes_and_link_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -106,10 +191,25 @@ class InitializedUpdaterTests(unittest.TestCase):
         rendered = gate.guard_units(root)
         self.assertEqual(len(rendered), 3)
         content = "\n".join(rendered.values())
+        self.assertNotIn("--profile", content)
         self.assertIn("OnActiveSec=600", content)
         self.assertIn(f"{root}/controller.py rollback --guard-root {root}", content)
         for forbidden in ("reboot", "poweroff", "reset", "rm -rf", "sh -c"):
             self.assertNotIn(forbidden, content)
+
+    def test_infrastructure_rehearsal_requires_retained_new_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "receipt.json"
+            receipt = {"probe": "updater-infrastructure", "action": "rehearse", "result": "passed",
+                       "packageHashes": gate.PACKAGE_HASHES, "retainedVersion": gate.VERSIONS["new"],
+                       "guardRemoved": True, "controllerStagingRemoved": True}
+            with patch.object(driver.transport, "validate_private_file", return_value=path):
+                path.write_text(json.dumps(receipt))
+                driver.validate_rehearsal(str(path), enable_services=True)
+                receipt["retainedVersion"] = gate.VERSIONS["old"]
+                path.write_text(json.dumps(receipt))
+                with self.assertRaises(ValueError):
+                    driver.validate_rehearsal(str(path), enable_services=True)
 
     def test_late_rollback_does_not_downgrade_committed_package(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

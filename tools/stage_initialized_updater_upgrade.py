@@ -31,6 +31,16 @@ SOURCE_BINDINGS = {
     "new": ("4d47974a13eea1e563107c6611a52d520d90ccf0",
             "a8b1d9ec9150baf8f6f67d57a3d268fa5854c8415b13ccce58a53091077d91cc"),
 }
+LEGACY_SOURCE_BINDINGS = dict(SOURCE_BINDINGS)
+
+
+def select_profile(name: str) -> None:
+    native.select_profile(name)
+    SOURCE_BINDINGS.update(LEGACY_SOURCE_BINDINGS if name == "dev6-dev7" else {
+        "old": LEGACY_SOURCE_BINDINGS["new"],
+        "new": ("77192d35a137e8d2c9658cb24a5b637d8915736d",
+                "4097793ec08d946071dfd871e343fd3ab66d67877017e1bf1f3e143892c467d3"),
+    })
 
 
 def validate_guard(value: object, *, prefix: str = native.PREFIX) -> str:
@@ -50,6 +60,7 @@ def validate_rehearsal(path: str | None, *, enable_services: bool = False) -> No
             and receipt.get("retainedVersion") == native.VERSIONS["new" if enable_services else "old"]
             and receipt.get("guardRemoved") is True and receipt.get("controllerStagingRemoved") is True,
             "rollback rehearsal receipt mismatch")
+    require(receipt.get("profile", "dev6-dev7") == native.selected_profile, "rehearsal profile mismatch")
 
 
 def upload_payloads(old_path: str, new_path: str) -> dict[str, bytes]:
@@ -74,7 +85,10 @@ def main() -> int:
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--rehearsal-receipt")
     parser.add_argument("--infrastructure", action="store_true", help="Enable idle updater services instead of changing the package")
+    parser.add_argument("--profile", choices=native.PROFILES, default="dev6-dev7")
     args = parser.parse_args()
+    require(not args.infrastructure or args.profile == "dev6-dev7", "infrastructure only supports legacy profile")
+    select_profile(args.profile)
     if args.action == "retain":
         validate_rehearsal(args.rehearsal_receipt, enable_services=args.infrastructure)
     output = transport.validate_output_path(args.output)
@@ -93,11 +107,13 @@ def main() -> int:
     guard: str | None = None
     phase = "stage"
     receipt: dict[str, object] = {"probe": "updater-infrastructure" if args.infrastructure else "initialized-updater-upgrade", "action": args.action,
-                                  "packageHashes": native.PACKAGE_HASHES, "targetPowerControl": False}
+                                  "profile": native.selected_profile, "packageHashes": native.PACKAGE_HASHES, "targetPowerControl": False}
 
     def invoke(action: str, *, variant: str = "old") -> tuple[int, dict[str, object]]:
         script = stage + "/" + controller_name if action in ("preflight", "prepare") else cast(str, guard) + "/controller.py"
         argv = ["python3", "-B", script, action]
+        if not args.infrastructure:
+            argv += ["--profile", native.selected_profile]
         argv += ["--assets", stage, "--variant", variant] if action in ("preflight", "prepare") else ["--guard-root", cast(str, guard)]
         result = transport.run_ssh(target, secret, shlex.join(argv), timeout=240)
         decoded = cast(dict[str, object], json.loads(result.stdout)) if result.stdout else {}
