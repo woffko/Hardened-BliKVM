@@ -70,3 +70,20 @@ and negative-state-preservation checks without executing a payload or
 contacting the device. Private receipt:
 `application-write-optin-seq8-host-verification.json`.
 Native publication and activation of this candidate have not occurred.
+
+The explicit `seq8-publish` profile now prepends a `published` receipt check
+to the original nine vectors. It requires seven existing slots and an absent
+seq8 target before opening admission. After publication it permits only the
+new candidate tree: all prior entries, authoritative status and serving PID
+must match. It verifies the complete new tree, owner/group, immutable modes,
+signed proof bytes and payload against the bound archive, then pins that tree
+for subsequent comparisons. The default remains `seq7-retry`.
+
+The durable plan records an attempted publication before sending the archive.
+On a failed or lost reply, restoration stops admission and workers, inspects
+the actual state, and retains a valid published candidate without activation.
+An invalid or unexplained delta fails closed; it never rolls back the journal
+or deletes a candidate. Manual `restore` cleans the owned guard only after
+verification succeeds. This is a same-boot gate, not post-reboot acceptance:
+a changed serving PID/runtime or lost temporary archive requires a separate
+read-only recovery assessment, not skipping verification from a saved receipt.

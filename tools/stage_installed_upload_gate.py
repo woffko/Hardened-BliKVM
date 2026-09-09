@@ -25,11 +25,11 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 require = native.require
 
 
-def build_uploads(old: str, new: str, bundle: str) -> dict[str, bytes]:
+def build_uploads(old: str, new: str, bundle: str, profile: native.probe.UploadProfile = native.probe.DEFAULT_PROFILE) -> dict[str, bytes]:
     packages.select_profile("dev7-dev9")
     uploads = packages.upload_payloads(old, new)
     archive = Path(bundle).read_bytes()
-    require(len(archive) == native.probe.BUNDLE_BYTES and hashlib.sha256(archive).hexdigest() == native.probe.BUNDLE_SHA,
+    require(len(archive) == native.probe.BUNDLE_BYTES and hashlib.sha256(archive).hexdigest() == profile.bundle_sha,
             "upload rehearsal archive binding mismatch")
     uploads["application.tar"] = archive
     for name in ("installed_upload_gate.py", *native.HELPERS):
@@ -37,16 +37,18 @@ def build_uploads(old: str, new: str, bundle: str) -> dict[str, bytes]:
     return uploads
 
 
-def validate_result(decoded: object) -> dict[str, object]:
+def validate_result(decoded: object, profile: native.probe.UploadProfile = native.probe.DEFAULT_PROFILE) -> dict[str, object]:
     require(isinstance(decoded, dict), "invalid native gate object")
     value = cast(dict[str, object], decoded)
     packages.validate_guard(value.get("guardRoot"), prefix=native.PREFIX)
     require(value.get("result") == "passed" and value.get("guardMayRemain") is False
             and value.get("stateAndServingPreserved") is True, "native upload rehearsal did not pass")
+    require(value.get("profile") == profile.name and value.get("newSlotPublished") is profile.publish
+            and value.get("publicationAttempted") is profile.publish, "native publication profile mismatch")
     require(isinstance(value.get("vectors"), list), "native vectors missing")
     vectors = cast(list[object], value["vectors"])
-    require(len(vectors) == len(native.MODES), "native vectors incomplete")
-    for decoded_item, mode in zip(vectors, native.MODES, strict=True):
+    require(len(vectors) == len(native.modes(profile)), "native vectors incomplete")
+    for decoded_item, mode in zip(vectors, native.modes(profile), strict=True):
         require(isinstance(decoded_item, dict), "invalid vector object")
         item = cast(dict[str, object], decoded_item)
         require(item.get("mode") == mode and item.get("result") == ("reply-unobserved" if mode == "lost-reply" else "passed"),
@@ -66,10 +68,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("old-package", "new-package", "bundle", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--profile", choices=tuple(native.probe.PROFILES), default=native.probe.DEFAULT_PROFILE.name)
     args = parser.parse_args()
+    profile = native.probe.PROFILES[args.profile]
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new native upload receipt required")
-    uploads = build_uploads(args.old_package, args.new_package, args.bundle)
+    uploads = build_uploads(args.old_package, args.new_package, args.bundle, profile)
     host, port = transport.parse_endpoint(args.endpoint)
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     secret = transport.read_secret_stdin()
@@ -77,7 +81,7 @@ def main() -> int:
     q = shlex.quote
     staged = False
     receipt: dict[str, object] = {"probe": "installed-upload-rehearsal", "result": "failed",
-        "bundleSha256": native.probe.BUNDLE_SHA, "targetPowerControl": False, "httpWritesEnabled": False,
+        "profile": profile.name, "bundleSha256": profile.bundle_sha, "targetPowerControl": False, "httpWritesEnabled": False,
         "newSlotPublicationTested": False, "sourceHashes": {name: hashlib.sha256(data).hexdigest() for name, data in uploads.items()}}
     try:
         require(transport.run_ssh(target, secret, f"set -eu\ntest ! -e {q(stage)} && test ! -L {q(stage)}\nmkdir -m 700 {q(stage)}").returncode == 0,
@@ -89,14 +93,16 @@ def main() -> int:
                 stream.write(data)
                 stream.seek(0)
                 require(transport.run_ssh(target, secret, script, stdin=stream, timeout=60).returncode == 0, "native probe upload failed")
-        result = transport.run_ssh(target, secret, shlex.join(["python3", "-B", stage + "/installed_upload_gate.py", "run", "--assets", stage]), timeout=540)
+        result = transport.run_ssh(target, secret, shlex.join(["python3", "-B", stage + "/installed_upload_gate.py", "run", "--assets", stage,
+                                                             "--profile", profile.name]), timeout=540)
         require(len(result.stdout) <= 65536, "oversize native gate receipt")
         decoded: object = json.loads(result.stdout)
         receipt["device"] = decoded
-        value = validate_result(decoded)
+        value = validate_result(decoded, profile)
         receipt["guardRoot"] = value["guardRoot"]
         require(result.returncode == 0, "native upload command failed")
         receipt["result"] = "passed"
+        receipt["newSlotPublicationTested"] = profile.publish
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt["errorType"] = type(error).__name__
         receipt["independentInspectionRequired"] = True

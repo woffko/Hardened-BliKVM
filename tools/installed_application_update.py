@@ -303,8 +303,12 @@ def disarm(root: Path, boot: bool = False) -> None:
     u.sync_directory(u.UNIT_ROOT)
 
 
-def verify_staged_payload(archive_path: Path, slot: Path) -> None:
-    require(archive_path.stat().st_size == active_profile.bundle_bytes and u.digest(archive_path) == active_profile.bundle_sha,
+def verify_staged_payload(archive_path: Path, slot: Path, *, expected_bundle_sha: str | None = None,
+                          expected_bundle_bytes: int | None = None) -> None:
+    require((expected_bundle_sha is None) == (expected_bundle_bytes is None), "incomplete archive binding")
+    bundle_sha = active_profile.bundle_sha if expected_bundle_sha is None else expected_bundle_sha
+    bundle_bytes = active_profile.bundle_bytes if expected_bundle_bytes is None else expected_bundle_bytes
+    require(archive_path.stat().st_size == bundle_bytes and u.digest(archive_path) == bundle_sha,
             "staged archive binding changed")
     expected: set[str] = set()
     with tarfile.open(archive_path, mode="r:") as archive:

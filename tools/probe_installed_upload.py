@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import io
 import json
@@ -24,7 +25,29 @@ BUNDLE_SHA = "ad36542bf330440717bf5b2ac0279258dfbd98e32834a6cf2a47f39722045a0f"
 BUNDLE_BYTES = 8724480
 MANIFEST_SHA = "f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140"
 SLOT = "app-00000000000000000007-" + MANIFEST_SHA
-MODES = ("retry", "invalid-archive", "short", "surplus", "malformed", "lost-reply", "unauthorized", "idle")
+MODES = ("publish", "retry", "invalid-archive", "short", "surplus", "malformed", "lost-reply", "unauthorized", "idle")
+
+
+@dataclass(frozen=True)
+class UploadProfile:
+    name: str
+    bundle_sha: str
+    manifest_sha: str
+    sequence: int
+    publish: bool
+
+    @property
+    def slot(self) -> str:
+        return f"app-{self.sequence:020d}-{self.manifest_sha}"
+
+
+PROFILES = {
+    "seq7-retry": UploadProfile("seq7-retry", BUNDLE_SHA, MANIFEST_SHA, 7, False),
+    "seq8-publish": UploadProfile("seq8-publish",
+        "d2acf270fa2aa9cb924c362066ece50f4b0fbd4c4c8b2975648dab5ac0b4f849",
+        "375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b", 8, True),
+}
+DEFAULT_PROFILE = PROFILES["seq7-retry"]
 
 
 def require(condition: bool, message: str) -> None:
@@ -78,10 +101,11 @@ def receive(stream: socket.socket) -> dict[str, object] | None:
     return cast(dict[str, object], response)
 
 
-def validate_retry(response: dict[str, object] | None) -> None:
+def validate_retry(response: dict[str, object] | None, profile: UploadProfile = DEFAULT_PROFILE, *, publish: bool = False) -> None:
+    require(not publish or profile.publish, "profile does not permit publication")
     expected = {"type": "staged", "receipt": {
-        "slot": {"slotId": SLOT, "version": "0.1.0-dev6", "sequence": 7, "minimumSystemSequence": 1},
-        "disposition": "already_present", "manifestSha256": MANIFEST_SHA, "payloadBytes": 8683648}}
+        "slot": {"slotId": profile.slot, "version": "0.1.0-dev6", "sequence": profile.sequence, "minimumSystemSequence": 1},
+        "disposition": "published" if publish else "already_present", "manifestSha256": profile.manifest_sha, "payloadBytes": 8683648}}
     # Canonical JSON also distinguishes booleans from integer counters.
     require(json.dumps(response, sort_keys=True) == json.dumps(expected, sort_keys=True), "unexpected staging receipt")
 
@@ -112,8 +136,10 @@ def await_release(stream: socket.socket, body: bytes) -> bytes:
     raise TimeoutError("upload observer did not release body")
 
 
-def exchange(stream: socket.socket, archive: bytes, mode: str, *, hold: bool = False) -> dict[str, object]:
+def exchange(stream: socket.socket, archive: bytes, mode: str, *, hold: bool = False,
+             profile: UploadProfile = DEFAULT_PROFILE) -> dict[str, object]:
     require(mode in MODES, "unknown probe mode")
+    require(mode != "publish" or profile.publish, "profile does not permit publication")
     if mode == "malformed":
         wire, body = struct.pack(">I", 1) + b"{", b""
     elif mode == "unauthorized":
@@ -151,7 +177,7 @@ def exchange(stream: socket.socket, archive: bytes, mode: str, *, hold: bool = F
     elif mode == "invalid-archive":
         require(response == {"type": "error", "code": "invalid_archive"}, "archive rejection differs")
     else:
-        validate_retry(response)
+        validate_retry(response, profile, publish=mode == "publish")
     return {"mode": mode, "result": "passed"}
 
 
@@ -160,18 +186,20 @@ def main() -> None:
     parser.add_argument("mode", choices=MODES)
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--hold", action="store_true")
+    parser.add_argument("--profile", choices=tuple(PROFILES), default=DEFAULT_PROFILE.name)
     args = parser.parse_args()
+    profile = PROFILES[args.profile]
     expected_uid = 0 if args.mode == "unauthorized" else pwd.getpwnam("hardened-blikvm-server").pw_uid
     require(os.geteuid() == expected_uid and (expected_uid > 0 or args.mode == "unauthorized"), "wrong probe identity")
     meta = args.archive.lstat()
     require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
             and not meta.st_mode & 0o022 and meta.st_size == BUNDLE_BYTES, "unsafe bound archive")
     archive = args.archive.read_bytes()
-    require(hashlib.sha256(archive).hexdigest() == BUNDLE_SHA, "bound archive differs")
+    require(hashlib.sha256(archive).hexdigest() == profile.bundle_sha, "bound archive differs")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
         stream.settimeout(20)
         stream.connect(ENDPOINT)
-        result = exchange(stream, archive, args.mode, hold=args.hold)
+        result = exchange(stream, archive, args.mode, hold=args.hold, profile=profile)
     print(json.dumps(result, sort_keys=True))
 
 

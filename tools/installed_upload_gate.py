@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import time
+import tarfile
 from typing import cast
 
 sys.dont_write_bytecode = True
@@ -25,10 +26,12 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import capture_operational_boot as boot
     import probe_installed_upload as probe
+    import installed_application_update as application
     from upload_unit_reference import UploadUnitReference
 else:
     from tools import capture_operational_boot as boot
     from tools import probe_installed_upload as probe
+    from tools import installed_application_update as application
     from tools.upload_unit_reference import UploadUnitReference
 
 u, s = boot.u, boot.s
@@ -37,8 +40,95 @@ PREFIX = "hardened-blikvm-upload-gate-"
 UNITS = Path("/run/systemd/system")
 SOCKET = "hardened-blikvm-update-upload.socket"
 SPOOL = Path("/var/lib/hardened-blikvm-upload")
-HELPERS = tuple(dict.fromkeys(("capture_operational_boot.py", "probe_installed_upload.py", "upload_unit_reference.py", *u.HELPERS)))
+HELPERS = tuple(dict.fromkeys(("capture_operational_boot.py", "probe_installed_upload.py", "upload_unit_reference.py",
+                              "installed_application_update.py", *u.HELPERS)))
 MODES = ("retry", "invalid-archive", "short", "surplus", "malformed", "unauthorized", "idle", "lost-reply", "retry")
+
+
+def modes(profile: probe.UploadProfile) -> tuple[str, ...]:
+    return ("publish", *MODES) if profile.publish else MODES
+
+
+def plan_profile(plan: dict[str, object]) -> probe.UploadProfile:
+    name = plan.get("profile", probe.DEFAULT_PROFILE.name)
+    require(isinstance(name, str) and name in probe.PROFILES, "unknown upload profile")
+    return probe.PROFILES[cast(str, name)]
+
+
+def publication_preflight(before: dict[str, object], profile: probe.UploadProfile) -> None:
+    if not profile.publish:
+        return
+    state = cast(dict[str, object], before["state"])
+    root = u.STATE_ROOTS[0]
+    entries = {Path(key).name for key in state if Path(key).parent == root}
+    require(profile.slot not in entries, "publication target already exists; inspect previous attempt")
+    slots = {name for name in entries if re.fullmatch(r"app-[0-9]{20}-[a-f0-9]{64}", name)}
+    require(len(slots) == 7 and entries == slots | {"current"}, "unexpected pre-publication slot inventory")
+
+
+def verify_publication(archive: Path, profile: probe.UploadProfile, added: dict[str, object]) -> None:
+    require(archive.stat().st_size == probe.BUNDLE_BYTES and u.digest(archive) == profile.bundle_sha, "publication archive binding differs")
+    slot = u.STATE_ROOTS[0] / profile.slot
+    uid = pwd.getpwnam("hardened-blikvm-update").pw_uid
+    gid = grp.getgrnam("hardened-blikvm").gr_gid
+    expected: dict[str, int] = {".": 0o555, ".hardened-blikvm": 0o500,
+        **{".hardened-blikvm/" + name: 0o400 for name in ("receipt.json", "manifest.json", "manifest.sig")}}
+    proofs: dict[str, bytes] = {}
+    with tarfile.open(archive, mode="r:") as source:
+        for member in source:
+            if member.name.startswith("payload/") and member.isfile():
+                relative = Path(member.name).relative_to("payload")
+                require(".." not in relative.parts and not relative.is_absolute(), "unsafe archive path")
+                expected[str(relative)] = member.mode & ~0o222
+                for parent in relative.parents:
+                    if parent != Path("."):
+                        expected[str(parent)] = 0o555
+        for name in ("manifest.json", "manifest.sig"):
+            stream = source.extractfile(name)
+            require(stream is not None, "archive proof missing")
+            assert stream is not None
+            proofs[name] = stream.read()
+    require(set(added) == {str(slot / name) for name in expected}, "unexpected published tree entries")
+    for relative, mode in expected.items():
+        entry = cast(dict[str, object], added[str(slot / relative)])
+        actual_mode = cast(int, entry["mode"])
+        directory = relative in (".", ".hardened-blikvm") or any(name.startswith(relative + "/") for name in expected)
+        require((stat.S_ISDIR(actual_mode) if directory else stat.S_ISREG(actual_mode))
+                and stat.S_IMODE(actual_mode) == mode and entry["uid"] == uid and entry["gid"] == gid,
+                "published inode identity or mode differs")
+    for name, data in proofs.items():
+        require((slot / ".hardened-blikvm" / name).read_bytes() == data, "published proof differs")
+    receipt = json.loads((slot / ".hardened-blikvm/receipt.json").read_bytes(), object_pairs_hook=probe.unique_object)
+    expected_receipt = {"schemaVersion": 1, "slotId": profile.slot,
+                        "manifestSha256": profile.manifest_sha, "payloadBytes": 8683648}
+    require(json.dumps(receipt, sort_keys=True) == json.dumps(expected_receipt, sort_keys=True), "published receipt differs")
+    application.verify_staged_payload(archive, slot, expected_bundle_sha=profile.bundle_sha,
+                                      expected_bundle_bytes=probe.BUNDLE_BYTES)
+
+
+def preserved(plan: dict[str, object], after: dict[str, object], archive: Path) -> bool:
+    before = cast(dict[str, object], plan["before"])
+    profile = plan_profile(plan)
+    if not profile.publish or not plan.get("publicationAttempted", False):
+        require(after == before, "retained application or serving state changed")
+        return False
+    original = cast(dict[str, object], before["state"])
+    current = cast(dict[str, object], after["state"])
+    require({key: value for key, value in before.items() if key != "state"}
+            == {key: value for key, value in after.items() if key != "state"}, "serving or authoritative state changed")
+    require(all(key in current and current[key] == value for key, value in original.items()), "existing persistent entry changed")
+    added = {key: value for key, value in current.items() if key not in original}
+    if not added:
+        require(not plan.get("newSlotPublished", False), "published slot disappeared")
+        return False
+    slot = str(u.STATE_ROOTS[0] / profile.slot)
+    require(all(key == slot or key.startswith(slot + "/") for key in added), "publication changed another path")
+    verify_publication(archive, profile, added)
+    previous = plan.get("publishedTree")
+    require(previous is None or previous == added, "published slot changed after verification")
+    plan["publishedTree"] = added
+    plan["newSlotPublished"] = True
+    return True
 
 
 def source_root(root: Path) -> Path:
@@ -75,7 +165,7 @@ def load(root: Path) -> dict[str, object]:
     require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
             and stat.S_IMODE(meta.st_mode) == 0o600 and meta.st_size <= 2 * 1024 * 1024, "unsafe guard plan")
     value = cast(dict[str, object], json.loads(path.read_bytes()))
-    require(value.get("schemaVersion") == 1 and value.get("bundleSha256") == probe.BUNDLE_SHA
+    require(value.get("schemaVersion") == 1 and value.get("bundleSha256") == plan_profile(value).bundle_sha
             and value.get("phase") in ("prepared", "running", "restored")
             and type(value.get("spoolExisted")) is bool, "invalid guard plan")
     return value
@@ -159,7 +249,7 @@ def live_worker(unit: str) -> dict[str, object]:
 
 
 def natural_exit(unit: str, mode: str, invocation: str | None = None) -> dict[str, object]:
-    expected = {"retry": {0}, "invalid-archive": {0}, "short": {50}, "surplus": {50},
+    expected = {"publish": {0}, "retry": {0}, "invalid-archive": {0}, "short": {50}, "surplus": {50},
                 "malformed": {50}, "unauthorized": {96}, "idle": {50}, "lost-reply": {0, 50}}[mode]
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
@@ -205,10 +295,10 @@ def held_handshake(stream: object) -> None:
     require(bytes(value) == expected, "unexpected probe handshake")
 
 
-def run_vector(source: Path, mode: str) -> dict[str, object]:
+def run_vector(source: Path, mode: str, profile: probe.UploadProfile = probe.DEFAULT_PROFILE) -> dict[str, object]:
     previous = set(workers())
     held = mode not in ("malformed", "unauthorized")
-    argv = ["python3", "-B", str(source / "probe.py"), mode, "--archive", str(source / "application.tar")]
+    argv = ["python3", "-B", str(source / "probe.py"), mode, "--archive", str(source / "application.tar"), "--profile", profile.name]
     if held:
         argv.append("--hold")
     if mode != "unauthorized":
@@ -319,7 +409,7 @@ def emergency_stop(root: Path) -> None:
 def restore(root: Path, plan: dict[str, object]) -> None:
     checked(["systemctl", "stop", SOCKET])
     drain()
-    require(snapshot(False) == plan["before"], "retained application or serving state changed")
+    preserved(plan, snapshot(False), source_root(root) / "application.tar")
     if not plan["spoolExisted"] and SPOOL.exists():
         empty_spool()
         SPOOL.rmdir()
@@ -340,7 +430,7 @@ def restore(root: Path, plan: dict[str, object]) -> None:
     checked(["systemctl", "daemon-reload"])
 
 
-def cleanup(root: Path) -> None:
+def cleanup(root: Path, profile: probe.UploadProfile = probe.DEFAULT_PROFILE) -> None:
     source = source_root(root)
     if source.exists() or source.is_symlink():
         meta = source.lstat()
@@ -350,7 +440,7 @@ def cleanup(root: Path) -> None:
             meta = path.lstat()
             require(stat.S_ISREG(meta.st_mode) and meta.st_uid == 0 and meta.st_nlink == 1
                     and not meta.st_mode & 0o022, "unsafe probe source file")
-            expected_hash = probe.BUNDLE_SHA if path.name == "application.tar" else u.digest(root / "probe_installed_upload.py")
+            expected_hash = profile.bundle_sha if path.name == "application.tar" else u.digest(root / "probe_installed_upload.py")
             require(u.digest(path) == expected_hash, "probe source contents changed")
         for path in source.iterdir():
             path.unlink()
@@ -366,19 +456,34 @@ def cleanup(root: Path) -> None:
     u.sync_directory(root.parent)
 
 
-def run(assets: Path) -> dict[str, object]:
+def restore_and_cleanup(root: Path) -> dict[str, object]:
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        plan = load(root)
+        restore(root, plan)
+        cleanup(root, plan_profile(plan))
+        return {"result": "restored", "guardRoot": str(root), "guardMayRemain": False,
+                "newSlotPublished": plan.get("newSlotPublished", False)}
+    finally:
+        os.close(descriptor)
+
+
+def run(assets: Path, profile: probe.UploadProfile = probe.DEFAULT_PROFILE) -> dict[str, object]:
     require(not list(Path("/var/lib").glob(PREFIX + "*")), "unfinished upload gate")
     require(not list(Path("/var/lib").glob("hardened-blikvm-application-update-*")), "unfinished application transaction")
     u.installed(assets, "new")
-    require(u.digest(assets / "application.tar") == probe.BUNDLE_SHA, "unexpected candidate input")
+    require(u.digest(assets / "application.tar") == profile.bundle_sha, "unexpected candidate input")
     empty_spool()
     before = snapshot(False)
+    publication_preflight(before, profile)
     require(not workers(), "old upload instances remain")
     root = Path("/var/lib") / (PREFIX + secrets.token_hex(12))
     root.mkdir(mode=0o700)
-    plan: dict[str, object] = {"schemaVersion": 1, "bundleSha256": probe.BUNDLE_SHA, "phase": "prepared",
+    plan: dict[str, object] = {"schemaVersion": 1, "bundleSha256": profile.bundle_sha, "profile": profile.name, "phase": "prepared",
+                              "publicationAttempted": False, "newSlotPublished": False,
                               "before": before, "spoolExisted": SPOOL.exists()}
-    result: dict[str, object] = {"result": "failed", "guardRoot": str(root), "guardMayRemain": True, "vectors": []}
+    result: dict[str, object] = {"result": "failed", "profile": profile.name, "guardRoot": str(root), "guardMayRemain": True, "vectors": []}
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     prepared = False
     deadline = time.monotonic() + 450
@@ -403,10 +508,15 @@ def run(assets: Path) -> dict[str, object]:
         require(time.monotonic() < deadline, "preparation exceeded guard budget")
         checked(["systemctl", "start", SOCKET])
         require(snapshot(True) == before, "starting upload changed retained state")
-        for mode in MODES:
+        for mode in modes(profile):
             require(time.monotonic() + 90 < deadline, "insufficient guard budget for next vector")
-            value = run_vector(source, mode)
-            require(snapshot(True) == before, "upload changed protected state or serving process")
+            if mode == "publish":
+                plan["publicationAttempted"] = True
+                save(root, plan)
+            value = run_vector(source, mode, profile)
+            published = preserved(plan, snapshot(True), source / "application.tar")
+            require(published == profile.publish, "expected publication not observed")
+            save(root, plan)
             cast(list[object], result["vectors"]).append(value)
         require(time.monotonic() < deadline, "native gate exceeded its deadline")
         result["result"] = "passed"
@@ -418,12 +528,14 @@ def run(assets: Path) -> dict[str, object]:
                 restore(root, plan)
             else:
                 require(snapshot(False) == before, "state changed during partial preparation")
-            cleanup(root)
+            cleanup(root, profile)
             result["guardMayRemain"] = False
             result["stateAndServingPreserved"] = True
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             result.update({"result": "failed", "restoreErrorType": type(error).__name__})
         os.close(descriptor)
+    result["publicationAttempted"] = plan["publicationAttempted"]
+    result["newSlotPublished"] = plan["newSlotPublished"]
     return result
 
 
@@ -432,24 +544,18 @@ def main() -> None:
     parser.add_argument("action", choices=("run", "restore", "emergency-stop"))
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--guard-root")
+    parser.add_argument("--profile", choices=tuple(probe.PROFILES), default=probe.DEFAULT_PROFILE.name)
     args = parser.parse_args()
     require(os.geteuid() == 0, "root gate controller required")
     u.select_profile("dev7-dev9")
     if args.action == "run":
-        result = run(args.assets)
+        result = run(args.assets, probe.PROFILES[args.profile])
     elif args.action == "emergency-stop":
         root = guard_root(args.guard_root)
         emergency_stop(root)
         result = {"result": "stopped-unverified", "guardRoot": str(root)}
     else:
-        root = guard_root(args.guard_root)
-        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            restore(root, load(root))
-            result = {"result": "restored", "guardRoot": str(root)}
-        finally:
-            os.close(descriptor)
+        result = restore_and_cleanup(guard_root(args.guard_root))
     print(json.dumps(result, sort_keys=True))
     if result["result"] == "failed":
         raise SystemExit(1)

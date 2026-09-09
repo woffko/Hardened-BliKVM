@@ -40,6 +40,22 @@ def receipt() -> dict[str, object]:
 
 
 class InstalledUploadProbeTests(unittest.TestCase):
+    def test_publication_requires_explicit_profile_and_exact_disposition(self) -> None:
+        profile = probe.PROFILES["seq8-publish"]
+        response: dict[str, object] = {"type": "staged", "receipt": {
+            "slot": {"slotId": profile.slot, "version": "0.1.0-dev6", "sequence": 8, "minimumSystemSequence": 1},
+            "disposition": "published", "manifestSha256": profile.manifest_sha, "payloadBytes": 8683648}}
+        stream = Stream(framed({"schemaVersion": 1, "requestId": 1, "response": response}))
+        self.assertEqual(probe.exchange(cast(socket.socket, stream), b"archive", "publish", profile=profile)["result"], "passed")
+        with self.assertRaises(ValueError):
+            probe.exchange(cast(socket.socket, Stream()), b"archive", "publish")
+        with self.assertRaises(ValueError):
+            probe.validate_retry(response, profile)
+        cast(dict[str, object], response["receipt"])["disposition"] = "already_present"
+        probe.validate_retry(response, profile)
+        with self.assertRaises(ValueError):
+            probe.validate_retry(response, profile, publish=True)
+
     def test_tamper_changes_payload_without_changing_archive_structure(self) -> None:
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as archive:
