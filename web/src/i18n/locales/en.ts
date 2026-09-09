@@ -749,6 +749,29 @@ const en = {
         stale: 'Connection lost. The displayed status may be outdated.',
         readOnly: 'Status only. Upload and activation are not enabled for this interface yet.',
         lastRollback: 'Last rollback',
+        upload: {
+          title: 'Upload a signed application archive',
+          description:
+            'Upload and verify an archive of up to 128 MiB. This does not activate it or restart the device.',
+          choose: 'Application archive',
+          start: 'Upload and verify',
+          retry: 'Retry the same archive',
+          cancel: 'Cancel upload',
+          notReady: 'Wait for a current update status with no pending operation.',
+          uploading: 'Sending archive…',
+          verifying: 'Archive sent. Waiting for signature verification and staging…',
+          invalidFile: 'Choose a nonempty archive no larger than 128 MiB.',
+          rejected: 'The archive was rejected. Check its format and signature.',
+          busyOrQuota: 'Staging is busy or its quota is full. No slots were removed automatically.',
+          uncertain:
+            'The upload result is unknown. Retry the same archive to check whether it was staged. Nothing was activated.',
+          cancelled:
+            'Transfer cancelled. If the archive had already arrived, it may still be staged. Retry the same archive to check. Nothing was activated.',
+          published: 'Archive verified and staged',
+          already_present: 'This verified archive is already staged',
+          stagedOnly:
+            'Not activated. Switching the running application requires a separate confirmation.'
+        },
         phase: {
           prepared: 'Recovering a prepared update',
           awaiting_health: 'Waiting for candidate health confirmation'

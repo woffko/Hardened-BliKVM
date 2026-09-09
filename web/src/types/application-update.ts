@@ -5,6 +5,13 @@ export type ApplicationSlot = {
   minimumSystemSequence: string;
 };
 
+export type ApplicationUploadReceipt = {
+  slot: ApplicationSlot;
+  disposition: 'published' | 'already_present';
+  manifestSha256: string;
+  payloadBytes: string;
+};
+
 export type ApplicationRollbackReason =
   | 'interrupted_prepare'
   | 'boot_changed'

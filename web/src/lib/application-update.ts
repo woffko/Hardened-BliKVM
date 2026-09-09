@@ -1,4 +1,14 @@
-import type { ApplicationSlot, ApplicationUpdateStatus } from '@/types/application-update.ts';
+import type {
+  ApplicationSlot,
+  ApplicationUpdateStatus,
+  ApplicationUploadReceipt
+} from '@/types/application-update.ts';
+
+export const MAX_APPLICATION_ARCHIVE_BYTES = 128 * 1024 * 1024;
+
+export function validApplicationArchiveSize(size: number) {
+  return Number.isSafeInteger(size) && size > 0 && size <= MAX_APPLICATION_ARCHIVE_BYTES;
+}
 
 const MAX_COUNTER = '18446744073709551615';
 const ROLLBACK_REASONS = new Set([
@@ -55,6 +65,18 @@ function sameSlot(left: ApplicationSlot, right: ApplicationSlot) {
     left.version === right.version &&
     left.sequence === right.sequence &&
     left.minimumSystemSequence === right.minimumSystemSequence
+  );
+}
+
+export function isApplicationUploadReceipt(value: unknown): value is ApplicationUploadReceipt {
+  return (
+    object(value) &&
+    keys(value, ['slot', 'disposition', 'manifestSha256', 'payloadBytes']) &&
+    slot(value.slot) &&
+    (value.disposition === 'published' || value.disposition === 'already_present') &&
+    value.manifestSha256 === value.slot.slotId.slice(25) &&
+    counter(value.payloadBytes) &&
+    atMost(value.payloadBytes, String(MAX_APPLICATION_ARCHIVE_BYTES))
   );
 }
 

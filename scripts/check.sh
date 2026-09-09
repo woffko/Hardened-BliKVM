@@ -269,6 +269,7 @@ python3 -m py_compile \
   tools/test_build_system_image_test_fixture.py
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
+node --check tools/playwright/local_application_upload.mjs
 node --check tools/playwright/device_cutover_setup_smoke.mjs
 node --check tools/playwright/device_existing_account_smoke.mjs
 node --check tools/playwright/device_test_account_setup_smoke.mjs

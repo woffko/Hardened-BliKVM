@@ -15,9 +15,11 @@ async function load(relative) {
   );
 }
 
-const { isApplicationUpdateStatus: valid } = await load(
-  "../web/src/lib/application-update.ts",
-);
+const {
+  isApplicationUpdateStatus: valid,
+  isApplicationUploadReceipt: validReceipt,
+  validApplicationArchiveSize: validSize,
+} = await load("../web/src/lib/application-update.ts");
 const { supportsSettingsTab } = await load("../web/src/lib/capabilities.ts");
 const slot = (sequence) => ({
   slotId: `app-${sequence.padStart(20, "0")}-${"a".repeat(64)}`,
@@ -84,4 +86,31 @@ assert.equal(
   false,
 );
 assert.equal(supportsSettingsTab(null, "update"), false);
+const receipt = {
+  slot: slot("18446744073709551615"),
+  disposition: "published",
+  manifestSha256: "a".repeat(64),
+  payloadBytes: "134217728",
+};
+assert.equal(validReceipt(receipt), true);
+assert.equal(
+  validReceipt({ ...receipt, disposition: "already_present" }),
+  true,
+);
+for (const value of [
+  null,
+  {},
+  { ...receipt, path: "/tmp/archive" },
+  { ...receipt, disposition: "activated" },
+  { ...receipt, manifestSha256: "b".repeat(64) },
+  { ...receipt, payloadBytes: 1 },
+  { ...receipt, payloadBytes: "0" },
+  { ...receipt, payloadBytes: "134217729" },
+  { ...receipt, slot: { ...receipt.slot, sequence: "1" } },
+]) {
+  assert.equal(validReceipt(value), false);
+}
+for (const value of [1, 134217728]) assert.equal(validSize(value), true);
+for (const value of [0, -1, 0.5, 134217729, NaN, Infinity, "1"])
+  assert.equal(validSize(value), false);
 console.log("application update UI contract: passed");

@@ -1,0 +1,320 @@
+// Local browser/component acceptance only. No device, real account, signing
+// key, or privileged worker is used. HTTP receipts below are synthetic.
+import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { createServer } from "../../web/node_modules/vite/dist/node/index.js";
+import { chromium } from "/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs";
+
+const webRoot = fileURLToPath(new URL("../../web", import.meta.url));
+// Tailwind/PostCSS resolve project-relative sources from the process cwd.
+process.chdir(webRoot);
+const archive = Buffer.from("synthetic archive browser fixture");
+const receipt = {
+  slot: {
+    slotId: `app-18446744073709551615-${"a".repeat(64)}`,
+    version: "1.0.0",
+    sequence: "18446744073709551615",
+    minimumSystemSequence: "1",
+  },
+  disposition: "published",
+  manifestSha256: "a".repeat(64),
+  payloadBytes: String(archive.length),
+};
+let mode = "success";
+let uploads = 0;
+let aborts = 0;
+const uploadModes = [];
+const abortedModes = [];
+const violations = [];
+const server = await createServer({
+  root: webRoot,
+  configFile: `${webRoot}/vite.config.ts`,
+  server: { host: "127.0.0.1", port: 0, hmr: false, open: false },
+  logLevel: "error",
+  plugins: [
+    {
+      name: "local-upload-fixture",
+      configureServer(server) {
+        server.middlewares.use(async (request, response, next) => {
+          const route = request.url?.split("?")[0];
+          if (route === "/__upload-test") {
+            response.setHeader("Content-Type", "text/html");
+            response.end(
+              await server.transformIndexHtml(
+                route,
+                `<!doctype html><html><body><div id="root"></div><script type="module">
+            import React from 'react';
+            import ReactDOM from 'react-dom/client';
+            import { BliApplicationUpload } from '/src/pages/desktop/menu/settings/update/bli-upload.tsx';
+            import '/src/i18n/index.ts';
+            import '/src/assets/styles/index.css';
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            window.uploadHarness = (enabled = true, ready = true, visible = true) => root.render(visible ? React.createElement(BliApplicationUpload, {enabled, ready}) : null);
+            document.cookie = 'hardened-blikvm-csrf=synthetic-browser-fixture; SameSite=Strict; Path=/';
+            window.uploadHarness();
+          </script></body></html>`,
+              ),
+            );
+            return;
+          }
+          if (route?.startsWith("/api/")) {
+            if (
+              route !== "/api/application-update/upload" ||
+              request.method !== "POST"
+            ) {
+              violations.push("unexpected API route");
+              response.writeHead(404).end();
+              return;
+            }
+            uploads += 1;
+            const selectedMode = mode;
+            uploadModes.push(selectedMode);
+            response.on("close", () => {
+              if (!response.writableEnded) {
+                aborts += 1;
+                abortedModes.push(selectedMode);
+              }
+            });
+            const chunks = [];
+            for await (const chunk of request) chunks.push(chunk);
+            if (request.headers["content-type"] !== "application/octet-stream")
+              violations.push("content type");
+            if (request.headers["content-length"] !== String(archive.length))
+              violations.push("content length");
+            if (request.headers["x-csrf-token"] !== "synthetic-browser-fixture")
+              violations.push("CSRF header");
+            if (!Buffer.concat(chunks).equals(archive))
+              violations.push("archive bytes");
+            if (request.headers["transfer-encoding"])
+              violations.push("transfer encoding");
+            // Keep the response separate from transport completion so the UI's
+            // 100%-but-not-verified state is observable in a real browser.
+            setTimeout(
+              () => {
+                if (response.destroyed) return;
+                if (selectedMode === "lost") {
+                  response.destroy();
+                  return;
+                }
+                const body =
+                  selectedMode === "rejected"
+                    ? { code: -1, msg: "fixture rejection" }
+                    : {
+                        code: 0,
+                        data: {
+                          ...receipt,
+                          disposition:
+                            selectedMode === "retry"
+                              ? "already_present"
+                              : "published",
+                        },
+                      };
+                response.setHeader("Content-Type", "application/json");
+                response.end(JSON.stringify(body));
+              },
+              selectedMode === "cancel" ? 1500 : 500,
+            );
+            return;
+          }
+          next();
+        });
+      },
+    },
+  ],
+});
+let browser;
+let phase = "start";
+try {
+  await server.listen();
+  const address = server.httpServer.address();
+  browser = await chromium.launch({
+    executablePath:
+      "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
+    headless: true,
+  });
+  const page = await browser.newPage({
+    locale: "en-US",
+    viewport: { width: 390, height: 844 },
+  });
+  page.setDefaultTimeout(10000);
+  const errors = [];
+  let logicalUploads = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/application-update/upload")
+      logicalUploads += 1;
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${address.port}/__upload-test`);
+  const panel = page.getByTestId("bli-application-upload");
+  const picker = page.getByTestId("application-archive");
+  const choose = () =>
+    picker.setInputFiles({
+      name: "fixture.tar",
+      mimeType: "application/octet-stream",
+      buffer: archive,
+    });
+  phase = "invalid-size";
+  await picker.setInputFiles({
+    name: "empty.tar",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(0),
+  });
+  await panel
+    .getByText("Choose a nonempty archive no larger than 128 MiB.", {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(
+    await panel
+      .getByRole("button", { name: "Upload and verify", exact: true })
+      .isEnabled(),
+    false,
+  );
+  assert.equal(uploads, 0);
+  phase = "verified-receipt";
+  await choose();
+  await panel
+    .getByRole("button", { name: "Upload and verify", exact: true })
+    .click();
+  await panel
+    .getByText(
+      "Archive sent. Waiting for signature verification and staging…",
+      { exact: true },
+    )
+    .waitFor();
+  assert.equal(await picker.isEnabled(), false);
+  await panel
+    .getByText("Archive verified and staged", { exact: true })
+    .waitFor();
+  await panel
+    .getByText("1.0.0 · #18446744073709551615", { exact: true })
+    .waitFor();
+  assert.equal(
+    await panel.getByRole("button", { name: /activate|install/i }).count(),
+    0,
+  );
+  assert.ok(
+    await panel.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  );
+  phase = "lost-receipt-and-retry";
+  mode = "lost";
+  await choose();
+  await panel
+    .getByRole("button", { name: "Upload and verify", exact: true })
+    .click();
+  await panel.getByText(/The upload result is unknown/).waitFor();
+  mode = "retry";
+  await panel
+    .getByRole("button", { name: "Retry the same archive", exact: true })
+    .click();
+  await panel
+    .getByText("This verified archive is already staged", { exact: true })
+    .waitFor();
+  phase = "cancel-and-retry";
+  mode = "cancel";
+  await choose();
+  await panel
+    .getByRole("button", { name: "Upload and verify", exact: true })
+    .click();
+  await panel
+    .getByText(
+      "Archive sent. Waiting for signature verification and staging…",
+      { exact: true },
+    )
+    .waitFor();
+  await panel
+    .getByRole("button", { name: "Cancel upload", exact: true })
+    .click();
+  await panel.getByText(/Transfer cancelled/).waitFor();
+  mode = "retry";
+  await panel
+    .getByRole("button", { name: "Retry the same archive", exact: true })
+    .click();
+  await panel
+    .getByText("This verified archive is already staged", { exact: true })
+    .waitFor();
+  phase = "rejection";
+  mode = "rejected";
+  await choose();
+  await panel
+    .getByRole("button", { name: "Upload and verify", exact: true })
+    .click();
+  await panel
+    .getByText("The archive was rejected. Check its format and signature.", {
+      exact: true,
+    })
+    .waitFor();
+  phase = "unmount-cancellation";
+  mode = "cancel";
+  await panel
+    .getByRole("button", { name: "Upload and verify", exact: true })
+    .click();
+  await panel
+    .getByText(
+      "Archive sent. Waiting for signature verification and staging…",
+      { exact: true },
+    )
+    .waitFor();
+  await page.evaluate(() => window.uploadHarness(true, true, false));
+  await panel.waitFor({ state: "detached" });
+  phase = "capability-gate";
+  await page.evaluate(() => window.uploadHarness(false));
+  assert.equal(await panel.count(), 0);
+  await page.evaluate(() => window.uploadHarness(true, false));
+  await panel
+    .getByText("Wait for a current update status with no pending operation.", {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(
+    await panel
+      .getByRole("button", { name: "Upload and verify", exact: true })
+      .isEnabled(),
+    false,
+  );
+  // Chromium may replay a POST internally after ERR_EMPTY_RESPONSE. Count
+  // browser-visible sends independently; only the deliberately lost response
+  // may have transport retries. This must not mask double UI submission.
+  assert.equal(logicalUploads, 7);
+  assert.deepEqual(
+    uploadModes.filter((value) => value !== "lost"),
+    ["success", "retry", "cancel", "retry", "rejected", "cancel"],
+  );
+  assert.ok(uploadModes.filter((value) => value === "lost").length >= 1);
+  for (
+    let attempt = 0;
+    attempt < 50 &&
+    abortedModes.filter((value) => value === "cancel").length < 2;
+    attempt += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(
+    abortedModes.filter((value) => value === "cancel").length,
+    2,
+    "both explicit cancellation and unmount must close HTTP",
+  );
+  assert.deepEqual(violations, []);
+  assert.deepEqual(errors, []);
+  console.log(
+    JSON.stringify({
+      ok: true,
+      scope: "local component plus synthetic HTTP",
+      uploads,
+      logicalUploads,
+      aborts,
+      mobile: true,
+    }),
+  );
+} catch (error) {
+  console.error(
+    `local application upload failed at ${phase}: ${error.message}`,
+  );
+  console.error(JSON.stringify({ uploads, aborts, uploadModes, violations }));
+  process.exitCode = 1;
+} finally {
+  await browser?.close();
+  await server.close();
+}

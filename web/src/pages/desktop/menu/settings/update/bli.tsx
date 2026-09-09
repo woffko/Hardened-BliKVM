@@ -1,9 +1,14 @@
 import type { ApplicationSlot } from '@/types/application-update.ts';
 import { Alert, Button, Divider, Spin } from 'antd';
+import { useAtomValue } from 'jotai';
 import { RefreshCwIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { isWritable } from '@/lib/capabilities.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { useApplicationUpdateStatus } from '@/hooks/useApplicationUpdateStatus.ts';
+
+import { BliApplicationUpload } from './bli-upload.tsx';
 
 const Slot = ({ label, slot }: { label: string; slot: ApplicationSlot }) => (
   <div className="min-w-0 rounded-lg border border-neutral-700/70 bg-neutral-800/40 p-3">
@@ -18,6 +23,8 @@ const Slot = ({ label, slot }: { label: string; slot: ApplicationSlot }) => (
 export const BliApplicationUpdate = () => {
   const { t } = useTranslation();
   const { data, state, refreshing, refresh } = useApplicationUpdateStatus();
+  const capabilities = useAtomValue(capabilitiesAtom);
+  const writable = !!capabilities && isWritable(capabilities.system.signedApplicationUpdates);
   return (
     <div className="space-y-4" data-testid="bli-application-update">
       <div className="flex items-start justify-between gap-3">
@@ -80,7 +87,13 @@ export const BliApplicationUpdate = () => {
           )}
         </>
       )}
-      <Alert showIcon type="info" message={t('settings.applicationUpdate.readOnly')} />
+      <BliApplicationUpload
+        enabled={writable}
+        ready={state === 'ready' && !!data && !data.pending}
+      />
+      {!writable && (
+        <Alert showIcon type="info" message={t('settings.applicationUpdate.readOnly')} />
+      )}
     </div>
   );
 };

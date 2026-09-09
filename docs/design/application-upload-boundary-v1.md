@@ -102,6 +102,34 @@ HTTP test uses a fake IPC peer, not the installed updater. These checks do not
 establish native or browser acceptance. Writable-update capability remains
 disabled; the upload does not expose an activation endpoint.
 
+## Browser UI source
+
+The Bli update panel now includes a capability-gated upload component with a
+single File request, explicit upload action, progress, verification wait,
+cancel/retry and a validated staged-slot receipt. It does not send multipart,
+paths, URLs or activation commands. The browser supplies the exact File length.
+Zero/oversized files are blocked locally as well as by the server. Decimal
+counter and slot/hash identity validation is repeated before rendering success.
+100% transport progress is labelled as awaiting verification, never installation.
+Cancellation or response loss warns that staging may have completed and retains
+the same File for an idempotent retry. Unmount/capability loss aborts the request
+and stale callbacks cannot overwrite a newer transfer. English and Russian
+messages explicitly separate staging from activation.
+
+This component remains hidden under the current read-only capability. No
+source change here enables writable update support on the device. The bounded
+`tools/playwright/local_application_upload.mjs` fixture exercises the real
+component and browser HTTP adapter against synthetic local receipts; it is not
+an installed updater or signature-verification acceptance test.
+
+The local Chromium scenario passed with seven browser-visible sends: publish,
+lost response, retry, cancel, retry, rejection and unmount cancellation. In the
+lost-response case Chromium performed seven transport attempts for one logical
+POST; assertions distinguish those retries from duplicate UI submissions.
+Exact raw body, browser-generated length and CSRF header were observed, along
+with the verification wait, decimal u64 receipt, 390 px layout and capability
+gate. Native HTTP-to-worker and explicit activation acceptance remain required.
+
 ## Remaining installed and browser transport integration
 
 The supervisor library now provides a bounded reception primitive: it checks
