@@ -69,7 +69,7 @@ The local Rust supervisor passed the signed archive verification, idempotence
 and negative-state-preservation checks without executing a payload or
 contacting the device. Private receipt:
 `application-write-optin-seq8-host-verification.json`.
-Native publication and activation of this candidate have not occurred.
+Native publication passed on 2026-09-09; activation has not occurred.
 
 The explicit `seq8-publish` profile now prepends a `published` receipt check
 to the original nine vectors. It requires seven existing slots and an absent
@@ -87,3 +87,13 @@ or deletes a candidate. Manual `restore` cleans the owned guard only after
 verification succeeds. This is a same-boot gate, not post-reboot acceptance:
 a changed serving PID/runtime or lost temporary archive requires a separate
 read-only recovery assessment, not skipping verification from a saved receipt.
+
+The device passed all ten `seq8-publish` vectors, including a new `published`
+receipt followed by verified idempotent retries at eight retained slots.
+The complete seq8 tree matched its bound archive; all prior state and the
+serving seq7 PID remained unchanged. Authorized body probes again observed
+the dedicated identity, empty capabilities, sandbox and anonymous spool;
+all worker exits were natural. The upload socket was stopped, the new empty
+spool and owned guard/controller files removed. Private receipt:
+`installed-upload-seq8-publication-20260909.json`.
+Post-publication browser preservation and HTTP/GUI activation remain pending.
