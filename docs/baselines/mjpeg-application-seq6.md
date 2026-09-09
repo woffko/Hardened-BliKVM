@@ -129,3 +129,25 @@ and recorded recovery to the accepted sequence-six baseline. Sequence five
 remains the default; cross-profile handoffs and unknown profiles fail closed.
 This is harness preparation, not evidence that a device outage passed. The
 fixed restore command and independent guard policy are unchanged.
+
+## Guarded status outage acceptance
+
+The installed sequence-six gate `1c00137f28bc40dabe3d33944a4db24b` passed in
+40.057 seconds with harness commit `89de359`. The real status listener was
+stopped after arming the independent restoration timer and collecting its
+workers. The warm page showed stale data, the cold page showed unavailable
+status, and both recovered on desktop/mobile after listener restoration.
+The original MJPEG response continued making byte progress. Logout returned
+200, revoked the stream and cleared the session; control requests and
+WebSockets remained zero.
+
+Both restoration and final cleanup verified unchanged application status and
+serving process identities. Final cleanup removed the owned guard and recorded
+`guardMayRemain=false`. No application activation, server restart or hardware
+control was performed. The private receipts are
+`evidence/private/status-socket-browser-outage-seq6.json` and
+`evidence/private/status-outage-browser-e10584ac70f17d02a64970f8.json`.
+
+This closes the bounded sequence-six status-outage gate. It does not establish
+long-duration loaded resource bounds, GUI upload/activation, physical hardware
+acceptance or release readiness.

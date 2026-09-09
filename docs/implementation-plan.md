@@ -1128,6 +1128,16 @@ three successful video responses, continued primary byte progress and correct
 logout. The secondary startup 503 is resolved for the tested artifact/browser;
 the guarded status-outage/stale/error/recovery gate still remains open.
 
+The guarded sequence-six outage gate has now passed: the warm/cold status UI
+recovered on desktop/mobile while primary MJPEG bytes continued, followed by
+logout revocation and verified guard removal. Native application status and
+serving process identities stayed unchanged
+(`baselines/mjpeg-application-seq6.md`). This closes the bounded status outage
+acceptance, not long-duration resource or writable update acceptance. The next
+implementation slice is the separate bounded authenticated signed-upload
+boundary, followed by activation and GUI/device acceptance; status remains
+read-only and cannot dispatch mutation services.
+
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A
 root-owned policy binds the accepted layout ID, exact inactive rootfs/boot
