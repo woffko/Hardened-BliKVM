@@ -46,6 +46,27 @@ unchanged; the socket, new empty spool, guard and controller staging were
 removed/restored as designed. Private receipt:
 `installed-upload-seq7-rehearsal-20260909.json`.
 
-The post-gate browser preservation check remains pending. These results do not
-establish new-slot publication, HTTP/GUI upload, activation, or forced expiry
-of the packaged RuntimeMax limit.
+The post-gate browser preservation check passed for seq7: desktop/mobile
+read-status, video decoding and logout revocation, with no control request or
+WebSocket. Private receipt: `installed-upload-seq7-postgate-browser-20260909.json`.
+These results do not establish new-slot publication, HTTP/GUI upload,
+activation, or forced expiry of the packaged RuntimeMax limit.
+
+## Next publication candidate
+
+Sequence eight deliberately uses the same verified payload and version
+`0.1.0-dev6` from source `7c813a7844b75774fea451516fc2b82d6a579d13`.
+Only the signed application sequence changes; this is a controlled reinstall
+candidate for exercising the actual publication and later GUI activation path,
+not a claim of new application code. Two independently signed archives match:
+
+- Archive SHA-256 `d2acf270fa2aa9cb924c362066ece50f4b0fbd4c4c8b2975648dab5ac0b4f849`.
+- Archive size 8,724,480 bytes; payload 8,683,648 bytes in 27 files.
+- Manifest SHA-256 `375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b`.
+- Expected slot `app-00000000000000000008-375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b`.
+
+The local Rust supervisor passed the signed archive verification, idempotence
+and negative-state-preservation checks without executing a payload or
+contacting the device. Private receipt:
+`application-write-optin-seq8-host-verification.json`.
+Native publication and activation of this candidate have not occurred.
