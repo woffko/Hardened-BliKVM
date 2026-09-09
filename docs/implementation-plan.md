@@ -1071,6 +1071,18 @@ only the two update-route responses, without altering request or response data
 or observing login. Unit tests and the same real localhost upload verified this
 observer. Activation remains unattempted pending the corrected device check.
 
+Checkpoint: the corrected real-device HTTP/GUI gate now passed. One verified
+upload and one reviewed activation confirmed sequence eight at floor 8,
+generation 40, with previous slot seven and no pending/rollback state.
+Restoration preserved every immutable slot and protected runtime, removed the
+temporary write configuration, and passed fresh desktop/mobile status and
+Refresh checks. Owned guard/staging cleanup and an independent read-only seq8
+observation passed, without reboot or target power control. Exact source,
+archive and receipt bindings, earlier test-observer failures, and remaining
+boundaries are recorded in `baselines/application-http-seq8-acceptance.md`.
+The retained deployment still exposes read-only status, not permanent HTTP
+write admission.
+
 Updater dev6 now includes the read-only status worker and socket and is retained
 after an exact-package rollback rehearsal, preserving signed slot two and all
 serving state (`baselines/updater-dev6-package.md`). Status transport is still

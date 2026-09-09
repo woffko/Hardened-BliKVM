@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -29,11 +30,12 @@ require = u.require
 RECOVERY = "hardened-blikvm-update-recover.service"
 SLOT = "app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53"
 SEQ7_SLOT = "app-00000000000000000007-f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140"
-APPLICATION_PROFILES = ("seq2", "seq6", "seq7")
+SEQ8_SLOT = "app-00000000000000000008-375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b"
+APPLICATION_PROFILES = ("seq2", "seq6", "seq7", "seq8")
 
 
 def resolve_application_profile(updater_profile: str, requested: str | None) -> str:
-    allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7") if updater_profile == "dev7-dev9" else ()
+    allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7", "seq8") if updater_profile == "dev7-dev9" else ()
     if not allowed:
         raise ValueError("unknown updater profile")
     selected = requested if requested is not None else allowed[0]
@@ -58,7 +60,9 @@ def seq7_snapshot() -> dict[str, object]:
 def capture(assets: Path, post: bool, application_profile: str | None = None) -> dict[str, object]:
     application_profile = resolve_application_profile(u.selected_profile, application_profile)
     u.installed(assets, "new")
-    if application_profile == "seq7":
+    if application_profile == "seq8":
+        snapshot = seq8_snapshot()
+    elif application_profile == "seq7":
         snapshot = seq7_snapshot()
     elif u.selected_profile == "dev7-dev9":
         snapshot = u.snapshot("new")
@@ -83,6 +87,32 @@ def capture(assets: Path, post: bool, application_profile: str | None = None) ->
             "snapshot": snapshot, "status": infrastructure.current_status(), "recovery": recovery,
             "serverStartedMonotonic": started, "recoveryOrderVerified": post,
             "rootfsMode": "ro" if os.statvfs("/").f_flag & os.ST_RDONLY else "rw"}
+
+
+def seq8_snapshot() -> dict[str, object]:
+    require(u.selected_profile == "dev7-dev9", "sequence eight requires retained dev9")
+    persistent.validate_dropins(True)
+    u.write_transports_inert()
+    for root in (Path("/var/lib"), Path("/run/systemd/system")):
+        require(not list(root.glob("hardened-blikvm-http-update-*")), "HTTP acceptance guard remains")
+    value = status_api.snapshot(True, expected_version=u.VERSIONS["new"],
+        expected_supervisor_sha=u.SUPERVISOR_HASHES["new"], expected_slot=SEQ8_SLOT,
+        expected_floor=8, expected_generation=40)
+    status = cast(dict[str, object], value["managerStatus"])
+    require(status.get("previousSlotId") == SEQ7_SLOT and status.get("lastRollback") is None,
+            "sequence-eight confirmation or rollback anchor changed")
+    forbidden = {"BLI_KVM_UPDATE_UPLOAD_SOCKET", "BLI_KVM_UPDATE_ACTIVATION_SOCKET", "BLI_KVM_UPDATE_WRITES_ENABLED"}
+    for unit in (s.CURRENT_SERVER, s.CANDIDATE_SERVER):
+        require(not any(item.partition("=")[0] in forbidden for item in shlex.split(s.property_value(unit, "Environment"))),
+                "HTTP write configuration remains")
+    pid = s.property_value(s.CURRENT_SERVER, "MainPID")
+    require(pid.isascii() and pid.isdecimal() and int(pid) > 0, "invalid serving PID")
+    environment = (Path("/proc") / pid / "environ").read_bytes()
+    require(len(environment) <= 65536 and not any(item.partition(b"=")[0] in {name.encode() for name in forbidden}
+            for item in environment.split(b"\0")), "running HTTP write configuration remains")
+    cast(dict[str, object], value["serving"])["serverPid"] = pid
+    value["persistentDropinHashes"] = {str(path): u.digest(path) for path in persistent.dropins()}
+    return value
 
 
 def main() -> None:

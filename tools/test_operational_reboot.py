@@ -16,7 +16,8 @@ class OperationalRebootTests(unittest.TestCase):
         self.assertEqual(observer.resolve_application_profile("dev6-dev7", None), "seq2")
         self.assertEqual(observer.resolve_application_profile("dev7-dev9", None), "seq6")
         self.assertEqual(observer.resolve_application_profile("dev7-dev9", "seq7"), "seq7")
-        for updater, application in (("dev6-dev7", "seq7"), ("dev6-dev7", "seq6"), ("dev7-dev9", "seq2"), ("unknown", None)):
+        self.assertEqual(observer.resolve_application_profile("dev7-dev9", "seq8"), "seq8")
+        for updater, application in (("dev6-dev7", "seq8"), ("dev6-dev7", "seq7"), ("dev6-dev7", "seq6"), ("dev7-dev9", "seq2"), ("unknown", None)):
             with self.assertRaises(ValueError):
                 observer.resolve_application_profile(updater, application)
         self.assertIn('"--application-profile", application_profile', inspect.getsource(gate.main))
@@ -74,12 +75,42 @@ class OperationalRebootTests(unittest.TestCase):
                     result = observer.capture(Path("/assets"), True, "seq7")
                     self.assertEqual(result["applicationProfile"], "seq7")
                     seq7.assert_called_once_with()
+                with patch.object(observer, "seq8_snapshot", return_value={}) as seq8:
+                    result = observer.capture(Path("/assets"), True, "seq8")
+                    self.assertEqual(result["applicationProfile"], "seq8")
+                    seq8.assert_called_once_with()
                 for invalid in ("0", "201", "invalid"):
                     properties["ActiveEnterTimestampMonotonic"] = invalid
                     with self.assertRaises(ValueError):
                         observer.capture(Path("/assets"), True)
         finally:
             observer.u.select_profile("dev6-dev7")
+
+    def test_seq8_observer_requires_confirmed_target_and_no_write_environment(self) -> None:
+        original = observer.u.selected_profile
+        observer.u.select_profile("dev7-dev9")
+        value: dict[str, object] = {"managerStatus": {"previousSlotId": observer.SEQ7_SLOT, "lastRollback": None}, "serving": {}}
+        def property_value(_unit: str, field: str) -> str:
+            return "123" if field == "MainPID" else ""
+        try:
+            with patch.object(observer.persistent, "validate_dropins"), patch.object(observer.u, "write_transports_inert"), \
+                 patch.object(observer.status_api, "snapshot", return_value=value) as snapshot, \
+                 patch.object(observer.s, "property_value", side_effect=property_value), \
+                 patch.object(observer.persistent, "dropins", return_value=()), \
+                 patch.object(Path, "glob", return_value=iter(())), \
+                 patch.object(Path, "read_bytes", return_value=b"SAFE=value"):
+                observer.seq8_snapshot()
+                snapshot.assert_called_once_with(True, expected_version="0.1.0~dev9",
+                    expected_supervisor_sha=observer.u.SUPERVISOR_HASHES["new"], expected_slot=observer.SEQ8_SLOT,
+                    expected_floor=8, expected_generation=40)
+                with patch.object(Path, "read_bytes", return_value=b"BLI_KVM_UPDATE_WRITES_ENABLED=1"):
+                    with self.assertRaisesRegex(ValueError, "running HTTP"):
+                        observer.seq8_snapshot()
+                cast(dict[str, object], value["managerStatus"])["lastRollback"] = "health_timeout"
+                with self.assertRaisesRegex(ValueError, "confirmation or rollback"):
+                    observer.seq8_snapshot()
+        finally:
+            observer.u.select_profile(original)
 
     def test_interruption_cleanup_without_ownership_preserves_user_override(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

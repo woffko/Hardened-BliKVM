@@ -99,4 +99,6 @@ spool and owned guard/controller files removed. Private receipt:
 The post-publication browser gate also passed: video decoded, logout revoked
 the stream and session, and no control request or WebSocket was issued.
 Private receipt: `installed-upload-seq8-postgate-browser-20260909.json`.
-HTTP/GUI upload and activation remain pending.
+The subsequent temporary HTTP/GUI upload and activation gate is accepted in
+`application-http-seq8-acceptance.md`; sequence eight is now confirmed and
+temporary HTTP write admission has been removed.
