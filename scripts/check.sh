@@ -94,6 +94,8 @@ python3 -m unittest \
   tools/test_enable_update_services.py \
   tools/test_installed_application_update.py \
   tools/test_application_update_preflight.py \
+  tools/test_application_update_flow.py \
+  tools/test_run_application_update_flow.py \
   tools/test_status_api_wiring.py \
   tools/test_capture_retained_status.py \
   tools/test_persistent_status_contract.py \
@@ -184,6 +186,8 @@ python3 -m py_compile \
   tools/enable_update_services.py \
   tools/installed_application_update.py \
   tools/application_update_preflight.py \
+  tools/application_update_flow.py \
+  tools/run_application_update_flow.py \
   tools/capture_application_update_preflight.py \
   tools/stage_installed_application_update.py \
   tools/capture_operational_boot.py \
@@ -275,6 +279,10 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/enable_update_services.py \
     tools/installed_application_update.py \
     tools/application_update_preflight.py \
+    tools/application_update_flow.py \
+    tools/run_application_update_flow.py \
+    tools/test_application_update_flow.py \
+    tools/test_run_application_update_flow.py \
     tools/capture_application_update_preflight.py \
     tools/test_application_update_preflight.py \
     tools/stage_installed_application_update.py \

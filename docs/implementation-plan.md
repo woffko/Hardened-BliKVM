@@ -1113,6 +1113,11 @@ passed. Dev7, source slot five/generation 22, persistent status wiring and an
 idle transaction namespace were verified without device writes. The next live
 step is the guarded sequence-six failure/rollback rehearsal, not direct
 retention of the new slot.
+That rehearsal and the restored-application browser gate passed, but the
+transaction deadline settled it before activation across separate turns.
+Verified cleanup preserved floor five/generation 25 and both slots. A bounded
+host coordinator now keeps the existing phase/browser gates in one process
+without changing the device guard duration; its host/live checks remain pending.
 
 Checkpoint: the first host-only system-image verifier now uses a separate
 `sys-` Ed25519 domain and canonical `hardened-blikvm-system-v1` manifest. A

@@ -60,3 +60,32 @@ activation were created. Rehearsal and activation remain pending.
 
 The complete host check including the read-only preflight tools passed in job
 `140741b6fa0b40ae963479065d16b416` (exit 0).
+
+## First live rehearsal and deadline settlement
+
+Rehearsal `1b62263bd0f842c4ab1c9437ac9f5027` passed: the candidate failed
+its deliberately injected health check, and the device returned to confirmed
+slot five/floor five, generation 25, with `health_timeout` and no pending
+operation. Browser `846d8707849c41eeb12930151b48803d` then passed the
+phase-bound login/video/logout/TLS checks on the restored application.
+
+The 600-second guard elapsed across separate agent turns before activation.
+Inspection `deea879e074841afbda5366aec020db1` found phase `recovered`, the
+same server PID and unchanged floor/state. Cleanup
+`c00900f7f2a94c21bb3c2f3bf35129f3` removed only this transaction's temporary
+controller/guard files. Slots, journal and host artifacts were preserved; target
+six remains staged but unconfirmed.
+
+`run_application_update_flow.py` now orchestrates the existing phase-bound
+driver and browser checks in one host process. The normal host budget is 450
+seconds; the device's 600-second protection is unchanged. Only a successful
+rehearsal browser check permits activation, and only a successful confirmed
+browser check permits commit. Known-guard failures recover and clean up through
+the existing driver; unknown preparation outcomes require independent inspection
+and are not retried. Observed confirmed floors cannot regress during recovery.
+SSH and GUI inputs remain separate finite child stdin streams, with captured
+output suppressed. This coordinator still requires full host verification and
+a new live run; sequence six is not accepted by this checkpoint.
+
+The coordinator's complete host check passed in job
+`49c47526bd494465b165c68a7f21c7fb` (exit 0).
