@@ -18,6 +18,94 @@ impl<T> Drop for OwnedTask<T> {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires reviewed TLS nginx and locally installed Playwright"]
+async fn nginx_tls_browser_logout_transport_diagnostic() {
+    timeout(Duration::from_secs(60), async {
+        let binary = std::env::var_os("BLI_KVM_TEST_NGINX").expect("explicit nginx path required");
+        let root = tempdir().unwrap();
+        let worker = UnixListener::bind(root.path().join("upload.sock")).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(root.path().join("upload.sock")),
+            update_activation_socket: Some(root.path().join("activation.sock")),
+            update_writes_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let app = app.route("/transport-probe", axum::routing::get(|| async {
+            axum::response::Html("<!doctype html><title>Local transport probe</title>")
+        }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = listener.local_addr().unwrap();
+        let _server = OwnedTask(tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+        }));
+        // Drain the synthetic worker until cancellation, without publishing or
+        // accepting an archive. Record only a byte count, never request bytes.
+        let mut worker_task = OwnedTask(tokio::spawn(async move {
+            let (mut stream, _) = worker.accept().await.unwrap();
+            let header_length = stream.read_u32().await.unwrap() as usize;
+            assert!(header_length < 65536);
+            stream.read_exact(&mut vec![0; header_length]).await.unwrap();
+            tokio::io::copy(&mut stream, &mut tokio::io::sink()).await.unwrap()
+        }));
+        let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = port_probe.local_addr().unwrap();
+        drop(port_probe);
+        let cert = root.path().join("cert.pem");
+        let key = root.path().join("key.pem");
+        assert!(Command::new("openssl").args([
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+            "-subj", "/CN=localhost", "-keyout", key.to_str().unwrap(),
+            "-out", cert.to_str().unwrap(),
+        ]).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success());
+        let config = root.path().join("nginx.conf");
+        std::fs::write(&config, format!(
+            "daemon off; master_process off; pid {0}/nginx.pid; error_log {0}/error.log info;\n\
+             events {{ worker_connections 64; }}\n\
+             http {{ access_log off; client_body_temp_path {0}/body; proxy_temp_path {0}/proxy;\n\
+             fastcgi_temp_path {0}/fastcgi; uwsgi_temp_path {0}/uwsgi; scgi_temp_path {0}/scgi;\n\
+             server {{ listen {1} ssl; ssl_certificate {0}/cert.pem; ssl_certificate_key {0}/key.pem;\n\
+             client_max_body_size 16m;\n\
+             location / {{ proxy_pass http://{2}; proxy_http_version 1.1;\n\
+             proxy_set_header Host $http_host; proxy_set_header Connection close;\n\
+             proxy_set_header X-Forwarded-Proto https; proxy_buffering off; }}\n\
+             location = /api/application-update/upload {{ proxy_pass http://{2}; proxy_http_version 1.1;\n\
+             proxy_set_header Host $http_host; proxy_set_header Connection close;\n\
+             proxy_set_header X-Forwarded-Proto https; proxy_buffering off; proxy_request_buffering off; }} }} }}\n",
+            root.path().display(), address, upstream
+        )).unwrap();
+        let mut nginx = OwnedNginx(Command::new(binary)
+            .args(["-p", root.path().to_str().unwrap(), "-c", config.to_str().unwrap()])
+            .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+        loop {
+            assert!(nginx.0.try_wait().unwrap().is_none(), "TLS nginx startup failed");
+            if tokio::net::TcpStream::connect(address).await.is_ok() { break; }
+            sleep(Duration::from_millis(10)).await;
+        }
+        let input = root.path().join("browser.json");
+        std::fs::write(&input, serde_json::to_vec(&serde_json::json!({
+            "origin": format!("https://{address}"), "cookie": cookie, "csrf": csrf,
+            "proxyPid": nginx.0.id(),
+        })).unwrap()).unwrap();
+        let mut browser = OwnedNginx(Command::new("node")
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/playwright/local_logout_transport.mjs"))
+            .arg(input).spawn().unwrap());
+        let status = loop {
+            if let Some(status) = browser.0.try_wait().unwrap() { break status; }
+            sleep(Duration::from_millis(50)).await;
+        };
+        let log = std::fs::read_to_string(root.path().join("error.log")).unwrap();
+        println!("tls_proxy_writev_errors={}, tls_proxy_upstream_send_errors={}",
+            log.matches("writev() failed").count(), log.matches("while sending request to upstream").count());
+        assert!(status.success(), "local browser transport failed");
+        let received = timeout(Duration::from_secs(2), &mut worker_task.0).await.unwrap().unwrap();
+        assert!(received > 0 && received < 8_724_480, "worker must see only a partial upload");
+    }).await.expect("bounded TLS browser fixture timed out");
+}
+
 // Explicitly opt-in: uses an unpacked local binary, not a system daemon. All
 // sockets, account data and proxy temp files live in one disposable directory.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

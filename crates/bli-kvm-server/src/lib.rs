@@ -40,6 +40,7 @@ pub(crate) struct AppState {
     pub video: Arc<VideoReadClient>,
     pub update_status: Option<Arc<UpdateStatusClient>>,
     pub update_upload: Option<Arc<UpdateUploadClient>>,
+    pub update_http_upload: Arc<tokio::sync::Semaphore>,
     pub update_activation: Option<Arc<UpdateActivationClient>>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
@@ -157,6 +158,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .expect("built-in Bli H616 capability manifest must be valid");
     let state = AppState {
         capabilities: Arc::new(manifest),
+        update_http_upload: Arc::new(tokio::sync::Semaphore::new(1)),
         update_activation: options
             .update_activation_socket
             .as_ref()
@@ -955,18 +957,79 @@ mod tests {
             .headers_mut()
             .insert("x-csrf-token", csrf.parse().unwrap());
         assert_eq!(
-            json_body(app.oneshot(logout).await.unwrap()).await["code"],
+            json_body(app.clone().oneshot(logout).await.unwrap()).await["code"],
             0
         );
-        let response = tokio::time::timeout(std::time::Duration::from_secs(1), transfer)
+        // Native cancellation must not wait for the HTTP discard deadline.
+        let mut bytes = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            stream.read_to_end(&mut bytes),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(bytes.is_empty());
+        assert!(
+            !transfer.is_finished(),
+            "stalled HTTP discard should still hold admission"
+        );
+        let login = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({"username": "operator", "password": "initial password"}),
+            ))
+            .await
+            .unwrap();
+        let next_cookie = login.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+        let next_csrf = json_body(login).await["data"]["csrfToken"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let next_upload = || {
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/application-update/upload")
+                .header(header::HOST, "localhost")
+                .header(header::ORIGIN, "https://localhost")
+                .header(header::COOKIE, &next_cookie)
+                .header("x-csrf-token", &next_csrf)
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .header(header::CONTENT_LENGTH, "3")
+                .body(Body::from("abc"))
+                .unwrap()
+        };
+        assert_eq!(
+            json_body(app.clone().oneshot(next_upload()).await.unwrap()).await["code"],
+            -409
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+        let response = tokio::time::timeout(std::time::Duration::from_secs(6), transfer)
             .await
             .unwrap()
             .unwrap()
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let mut bytes = Vec::new();
-        stream.read_to_end(&mut bytes).await.unwrap();
-        assert!(bytes.is_empty());
+        let retry = tokio::spawn(app.oneshot(next_upload()));
+        let admitted =
+            tokio::time::timeout(std::time::Duration::from_secs(1), listener.accept()).await;
+        retry.abort();
+        assert!(
+            admitted.is_ok(),
+            "HTTP admission must be released after discard"
+        );
     }
 
     #[tokio::test]

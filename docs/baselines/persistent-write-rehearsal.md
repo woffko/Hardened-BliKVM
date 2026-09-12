@@ -362,3 +362,34 @@ dispatch (job `5e3ea36900504e4c8add1960f48a159c`). Buffered control cases return
 acceptance; they do not establish that the device failure is fixed. No
 production handler change or permanent write-policy retention follows from
 these results. Current seq9 pending/boot qualification also remains outstanding.
+
+### Local Logout transport reproduction and bounded-discard fix
+
+A TLS Chromium fixture then reproduced the failure without touching the device.
+It sends a synthetic 8,724,480-byte body at 64KiB/s, logs out at partial progress,
+and releases the throttle. Pausing only its disposable Nginx process for 150ms
+after Logout queues both upstream closure and resumed upload data. Before the
+fix, job `e1399383032d4b4aaeccfbadbe8e6175` returned upload502 with one `writev`
+failure while sending upstream. Without that scheduling perturbation, the same
+fixture returned401. This isolates a transport race; it does not prove the
+physical device experienced precisely that scheduling sequence.
+
+The server now retains ownership of the HTTP body across native-stage
+cancellation. It drops the native IPC future first, then discards remaining
+HTTP frames for at most five seconds under a single HTTP-upload admission
+permit, with a 128MiB frame-byte budget and explicit yielding. Trailers/body
+errors stop discard. No discarded bytes are forwarded to the updater; stalled
+or oversized streams may still be closed rather than drained indefinitely.
+This change covers authenticated in-flight session revocation, not every
+possible early HTTP rejection.
+
+The same failing TLS fixture returned401 with no upstream-send errors in job
+`414ba1fbafea42898759f5060c6a7fba`. Full host checks and both opt-in Nginx
+fixtures passed job `0d4a6fbc35694fb6a2bf564996890e9b`. Native cancellation is
+tested independently of delayed HTTP completion, and a second authenticated
+upload receives API code -409 while discard holds admission. Additional checks
+cover stalled-body timeout, byte exhaustion, trailers and body errors.
+Independent advisory review `bf1af5c3c86a4ab291ec63ec86e7ca22` found no blockers;
+it is not installed acceptance. The source fix has not yet been built into a
+new signed device application or deployed, and the seq9 browser gate remains
+failed until a new installed run proves otherwise.

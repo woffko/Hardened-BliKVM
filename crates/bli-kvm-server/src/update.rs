@@ -338,6 +338,34 @@ impl AsyncRead for UploadBody {
     }
 }
 
+impl UploadBody {
+    // Cancellation drops native IPC first. Only discard HTTP data here, so
+    // nginx can finish its pending write before receiving our 401. Bound both
+    // elapsed time and bytes; a stalled or malformed client still gets closed.
+    async fn discard_after_revocation(&mut self) {
+        self.chunk = Bytes::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut remaining = MAX_UPLOAD_ARCHIVE_BYTES;
+            while let Some(frame) =
+                std::future::poll_fn(|cx| Pin::new(&mut self.body).poll_frame(cx)).await
+            {
+                let Ok(frame) = frame else { break };
+                let Ok(data) = frame.into_data() else { break };
+                let Some(next) = remaining.checked_sub(data.len() as u64) else {
+                    break;
+                };
+                remaining = next;
+                if remaining == 0 {
+                    break;
+                }
+                // Empty or immediately ready frames must not starve timeout.
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+    }
+}
+
 pub(crate) async fn upload(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
@@ -350,7 +378,13 @@ pub(crate) async fn upload(
         .as_ref()
         .ok_or_else(|| AppError::ServiceUnavailable("upload is not configured".into()))?;
     let length = upload_length(request.headers())?;
-    let reader = UploadBody {
+    // Unlike the native IPC permit, this permit survives cancellation and is
+    // held until bounded HTTP discard finishes. No detached drains accumulate.
+    let _http_permit = state
+        .update_http_upload
+        .try_acquire()
+        .map_err(|_| AppError::Conflict("another upload is in progress".into()))?;
+    let mut reader = UploadBody {
         body: request.into_body(),
         chunk: Bytes::new(),
         session: session.clone(),
@@ -361,12 +395,14 @@ pub(crate) async fn upload(
             while session.is_active() {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-        } => return Err(AppError::Unauthorized),
-        result = client.stage(length, reader) => result,
+        } => None,
+        result = client.stage(length, &mut reader) => Some(result),
     };
     if !session.is_active() {
+        reader.discard_after_revocation().await;
         return Err(AppError::Unauthorized);
     }
+    let result = result.ok_or(AppError::Unauthorized)?;
     let receipt = result.map_err(|error| match error {
         UploadClientError::LengthMismatch => {
             AppError::BadRequest("upload body length mismatch".into())
@@ -518,6 +554,55 @@ mod tests {
             session,
         };
         assert!(reader.read(&mut [0; 1]).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn revoked_body_discard_is_byte_bounded_and_stops_on_invalid_frames() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        struct Frames {
+            polls: Arc<AtomicUsize>,
+            mode: u8,
+            data: Bytes,
+        }
+        impl http_body::Body for Frames {
+            type Data = Bytes;
+            type Error = std::io::Error;
+            fn poll_frame(
+                self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+            ) -> Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
+                self.polls.fetch_add(1, Ordering::SeqCst);
+                Poll::Ready(Some(match self.mode {
+                    0 => Ok(http_body::Frame::data(self.data.clone())),
+                    1 => Ok(http_body::Frame::trailers(HeaderMap::new())),
+                    _ => Err(std::io::Error::other("fixture failure")),
+                }))
+            }
+        }
+        let sessions = crate::auth::session::SessionStore::new();
+        let session = sessions.issue("operator", 60).await;
+        sessions.revoke(&session.token).await;
+        for mode in 0..3 {
+            let polls = Arc::new(AtomicUsize::new(0));
+            let mut reader = UploadBody {
+                body: Body::new(Frames {
+                    polls: polls.clone(),
+                    mode,
+                    data: Bytes::from(vec![0; 1024 * 1024]),
+                }),
+                chunk: Bytes::from_static(b"discard buffered bytes too"),
+                session: session.clone(),
+            };
+            reader.discard_after_revocation().await;
+            assert!(reader.chunk.is_empty());
+            assert_eq!(
+                polls.load(Ordering::SeqCst),
+                if mode == 0 { 128 } else { 1 }
+            );
+        }
     }
 
     #[test]
