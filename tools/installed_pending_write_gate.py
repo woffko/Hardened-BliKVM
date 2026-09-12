@@ -23,6 +23,17 @@ upload = native.temporary.upload
 require = native.require
 
 
+def profile_for(binding: native.contract.EvidenceBinding) -> upload.probe.UploadProfile:
+    binding.validate()
+    name = {8: 'seq8-publish', 9: 'seq9-retry'}.get(binding.baseline_floor)
+    require(name is not None, 'unreviewed pending baseline')
+    assert name is not None
+    profile = upload.probe.PROFILES[name]
+    require(profile.slot == binding.baseline_slot and binding.baseline_generation == {8: 40, 9: 43}[binding.baseline_floor],
+            'pending profile binding differs')
+    return profile
+
+
 class Operations:
     def __init__(self, root: Path, source: Path) -> None:
         native.u.select_profile('dev7-dev9')
@@ -33,6 +44,8 @@ class Operations:
         self.reference: upload.UploadUnitReference | None = None
         self.baseline = native.load(root)
         require(self.baseline['phase'] == 'wired', 'temporary policy is not wired')
+        self.binding = native.binding(self.baseline)
+        self.profile = profile_for(self.binding)
 
     def hold_upload(self) -> pending.Worker:
         self.phase = 'probe-start'
@@ -41,7 +54,7 @@ class Operations:
                 'pre-existing pipeline worker')
         self.client = subprocess.Popen(['runuser', '-u', 'hardened-blikvm-server', '--',
             'python3', '-B', str(self.source / 'probe.py'), 'idle', '--hold',
-            '--archive', str(self.source / 'application.tar'), '--profile', 'seq8-publish'],
+            '--archive', str(self.source / 'application.tar'), '--profile', self.profile.name],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         assert self.client.stdout is not None
         self.phase = 'probe-handshake'
@@ -115,15 +128,17 @@ class Operations:
         self.phase = 'terminal-verification'
         upload.empty_spool()
         observation = native.temporary.observer.observe()
-        terminal = native.pipeline.terminal(observation, native.pipeline.Counters(8, 40))
-        require(terminal is not None and terminal.floor == 8 and terminal.generation == 40,
+        terminal = native.pipeline.terminal(observation, native.pipeline.Counters(self.binding.baseline_floor, self.binding.baseline_generation))
+        require(terminal is not None and terminal.slot == self.binding.baseline_slot
+                and terminal.floor == self.binding.baseline_floor and terminal.generation == self.binding.baseline_generation,
                 'pending gate terminal differs')
-        require(observation.status.get('floorSequence') == 8 and observation.status.get('generation') == 40,
+        require(observation.status.get('floorSequence') == self.binding.baseline_floor
+                and observation.status.get('generation') == self.binding.baseline_generation,
                 'pending gate counters changed')
         current = native.load(self.root)
         require(current['phase'] == 'restored', 'native plan not restored')
         # Native restore validates the retained immutable snapshot and settings;
-        # host independently repeats complete seq8 observation after cleanup.
+        # Host independently repeats the selected baseline observation after cleanup.
         require(native.binding(current) == native.binding(self.baseline), 'transaction binding changed')
 
     def close_probe_client(self) -> None:
@@ -148,7 +163,9 @@ def main() -> int:
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
     root = Path(args.guard_root)
+    native.u.select_profile('dev7-dev9')
     transaction = native.decisions.validate_root(root)
+    profile = profile_for(native.binding(native.load(root)))
     source = Path(args.source)
     require(source == Path('/tmp') / ('blikvm-pending-probe-' + transaction)
             and not source.exists() and not source.is_symlink(), 'fresh owned probe source required')
@@ -156,8 +173,8 @@ def main() -> int:
     require(stage.stat().st_uid == 0 and stage.stat().st_mode & 0o777 == 0o700, 'unsafe helper staging')
     payloads = {'probe.py': Path(upload.probe.__file__).read_bytes(), 'application.tar': (stage / 'application.tar').read_bytes()}
     require(len(payloads['application.tar']) == upload.probe.BUNDLE_BYTES and
-            hashlib.sha256(payloads['application.tar']).hexdigest() == upload.probe.PROFILES['seq8-publish'].bundle_sha,
-            'only reviewed seq8 archive may be used')
+            hashlib.sha256(payloads['application.tar']).hexdigest() == profile.bundle_sha,
+            'only the baseline-bound archive may be used')
     output = Path(args.output)
     require(output.parent == Path(__file__).resolve().parent and not output.exists(), 'fresh staged receipt required')
     receipt: dict[str, object] = {'result': 'failed', 'guardRoot': str(root)}

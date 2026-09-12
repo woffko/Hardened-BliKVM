@@ -141,8 +141,8 @@ def main() -> int:
     for name in ("bundle", "base-url", "username"):
         parser.add_argument("--" + name)
     args = parser.parse_args()
-    require(args.application_profile == 'seq8' or args.action in ('preflight', 'rehearse'),
-            'this scenario is not qualified for the selected baseline')
+    require(args.application_profile == 'seq8' or args.action != 'activate',
+            'next activation beyond seq9 is not a reviewed scenario')
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new rehearsal receipt required")
     uploads = build_uploads(args.old_package, args.new_package)
@@ -166,7 +166,7 @@ def main() -> int:
     if browser_mode or pending_mode:
         archive = Path(args.bundle).read_bytes()
         archive_sha = ('8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f' if activation_mode
-                       else native.temporary.upload.probe.PROFILES["seq8-publish"].bundle_sha)
+                       else native.temporary.upload.probe.PROFILES['seq9-retry' if args.application_profile == 'seq9' else 'seq8-publish'].bundle_sha)
         require(len(archive) == native.temporary.upload.probe.BUNDLE_BYTES
                 and hashlib.sha256(archive).hexdigest() == archive_sha,
                 "browser archive differs from reviewed profile")
@@ -244,7 +244,8 @@ def main() -> int:
         response = subprocess.run(["node", "tools/playwright/device_application_upload_failures.mjs",
             "/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs",
             "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome", args.base_url.rstrip("/"),
-            args.username, args.bundle, str(destination)], input=gui, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            args.username, args.bundle, str(destination), 'seq9-retry' if args.application_profile == 'seq9' else 'seq7-to8'],
+            input=gui, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=240, check=False, close_fds=True)
         path = transport.validate_private_file(str(destination))
         require(path.stat().st_size <= 65536, "oversize browser receipt")
@@ -254,6 +255,7 @@ def main() -> int:
         receipt["applicationActivations"] = value.get("activationRequests")
         save()
         require(response.returncode == 0 and value.get("result") == "passed" and value.get("probe") == "application-upload-failures"
+                and value.get('profile') == ('seq9-retry' if args.application_profile == 'seq9' else 'seq7-to8')
                 and value.get("uploadRequests") == 4 and value.get("activationRequests") == 0
                 and value.get("logoutRequests") == 1 and value.get("inflightUploadRevoked") is True
                 and value.get("retryAlreadyPresent") is True and value.get("cancelled") is True
@@ -306,7 +308,7 @@ def main() -> int:
         terminal = native.object_value(value.get('workerNaturalExit'))
         require(type(terminal.get('code')) is int and terminal['code'] == 1
                 and type(terminal.get('status')) is int and terminal['status'] == 50, 'natural worker exit missing')
-        validate_result(value.get('restored'), action='restore', root=root)
+        validate_result(value.get('restored'), action='restore', root=root, application_profile=args.application_profile)
         return value
     def exercise_boot() -> dict[str, object]:
         before_boot = native.object_value(receipt['before'])['bootIdSha256']
@@ -333,7 +335,8 @@ def main() -> int:
                     value = native.object_value(json.loads(response.stdout,
                         object_pairs_hook=native.temporary.upload.probe.unique_object))
                     facts = native.object_value(value.get('facts'))
-                    qualified = boot_proof.validate(facts, prepared_boot=before_boot, transaction=run_id)
+                    prepared_binding = native.binding({'binding': native.object_value(receipt['prepared'])['binding']})
+                    qualified = boot_proof.validate(facts, prepared_boot=before_boot, transaction=run_id, baseline=prepared_binding)
                     require(value.get('readOnly') is True and value.get('qualification') == qualified,
                             'boot collector qualification differs')
                     receipt['bootRecoveryProbes'] = attempts

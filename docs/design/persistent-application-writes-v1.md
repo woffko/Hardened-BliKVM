@@ -247,6 +247,14 @@ remain for explicit inspection. Production integration must acquire the controll
 lock before the store lock. This implementation has only host temporary-directory
 tests and has not created an evidence store on the device.
 
+Seq9 replay qualification is now explicitly profiled in the existing browser,
+held-upload and boot scenarios. The new native `seq9-retry` profile cannot publish;
+the held probe derives its archive/terminal tuple from the validated transaction
+binding. Boot observation and host validation use that same explicit binding.
+Negative GUI checks require an already-present disposition and never send an
+activation. These paths have host tests only at this checkpoint; the earlier
+seq8 receipts have not been promoted to seq9 evidence.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing

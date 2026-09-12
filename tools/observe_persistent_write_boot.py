@@ -76,7 +76,7 @@ def observe(root: Path) -> dict[str, object]:
     # Do not let a concurrent late deadline convert this into runtime evidence.
     require_unfinalized(root, boot)
     return {'facts': value, 'qualification': proof.validate(value,
-        prepared_boot=cast(str, plan['boot']), transaction=transaction), 'readOnly': True}
+        prepared_boot=cast(str, plan['boot']), transaction=transaction, baseline=native.binding(plan)), 'readOnly': True}
 
 
 def main() -> None:

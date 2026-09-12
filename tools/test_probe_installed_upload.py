@@ -40,6 +40,15 @@ def receipt() -> dict[str, object]:
 
 
 class InstalledUploadProbeTests(unittest.TestCase):
+    def test_seq9_retry_profile_cannot_publish(self) -> None:
+        stream = Stream()
+        profile = probe.PROFILES['seq9-retry']
+        self.assertFalse(profile.publish)
+        self.assertEqual(profile.sequence, 9)
+        with self.assertRaises(ValueError):
+            probe.exchange(cast(socket.socket, stream), b'archive', 'publish', profile=profile)
+        self.assertEqual(stream.sent, b'')
+
     def test_publication_requires_explicit_profile_and_exact_disposition(self) -> None:
         profile = probe.PROFILES["seq8-publish"]
         response: dict[str, object] = {"type": "staged", "receipt": {

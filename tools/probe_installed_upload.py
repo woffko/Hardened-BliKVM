@@ -46,6 +46,9 @@ PROFILES = {
     "seq8-publish": UploadProfile("seq8-publish",
         "d2acf270fa2aa9cb924c362066ece50f4b0fbd4c4c8b2975648dab5ac0b4f849",
         "375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b", 8, True),
+    "seq9-retry": UploadProfile("seq9-retry",
+        "8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f",
+        "5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2", 9, False),
 }
 DEFAULT_PROFILE = PROFILES["seq7-retry"]
 

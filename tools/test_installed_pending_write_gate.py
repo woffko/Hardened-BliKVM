@@ -1,5 +1,6 @@
 import subprocess
 import unittest
+from dataclasses import asdict, replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -7,6 +8,11 @@ from tools import installed_pending_write_gate as gate
 
 
 class AdapterTests(unittest.TestCase):
+    def plan(self) -> dict[str, object]:
+        binding = gate.native.contract.EvidenceBinding('a' * 24, 'b' * 64, gate.native.contract.CONFIG_SHA256,
+            gate.upload.boot.SEQ8_SLOT, 8, 40)
+        return {'phase': 'wired', 'binding': asdict(binding)}
+
     def test_profile_is_selected_before_loading_native_state(self) -> None:
         calls: list[str] = []
         def select(name: str) -> None:
@@ -15,14 +21,22 @@ class AdapterTests(unittest.TestCase):
         def load(_: Path) -> dict[str, object]:
             self.assertEqual(calls, ['profile'])
             calls.append('load')
-            return {'phase': 'wired'}
+            return self.plan()
         with patch.object(gate.native.u, 'select_profile', side_effect=select), patch.object(gate.native, 'load', side_effect=load):
             gate.Operations(Path('/var/lib/fixture'), Path('/tmp/fixture'))
         self.assertEqual(calls, ['profile', 'load'])
 
     def make_ops(self) -> gate.Operations:
-        with patch.object(gate.native, 'load', return_value={'phase': 'wired'}):
+        with patch.object(gate.native, 'load', return_value=self.plan()):
             return gate.Operations(Path('/var/lib/fixture'), Path('/tmp/fixture'))
+
+    def test_seq9_profile_is_retry_only_and_exactly_bound(self) -> None:
+        binding = gate.native.contract.EvidenceBinding('a' * 24, 'b' * 64, gate.native.contract.CONFIG_SHA256,
+            gate.upload.boot.SEQ9_SLOT, 9, 43)
+        profile = gate.profile_for(binding)
+        self.assertEqual(profile.name, 'seq9-retry')
+        self.assertFalse(profile.publish)
+        with self.assertRaises(ValueError): gate.profile_for(replace(binding, baseline_generation=40))
 
     def test_refuses_unwired_policy(self) -> None:
         with patch.object(gate.native, 'load', return_value={'phase': 'restored'}), self.assertRaises(ValueError):

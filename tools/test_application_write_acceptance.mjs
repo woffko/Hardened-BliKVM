@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { writeProfile } from "./playwright/application_write_profiles.mjs";
+
+test("seq9 retry is distinct from initial seq9 publication", () => {
+  const retry = writeProfile("seq9-retry");
+  assert.equal(retry.source, "seq9");
+  assert.equal(retry.target, "seq9");
+  assert.equal(retry.disposition, "already_present");
+  assert.equal(retry.bundleSha256, writeProfile("seq8-to9").bundleSha256);
+  assert.notEqual(retry.disposition, writeProfile("seq8-to9").disposition);
+});
 import {
   statusProfile,
   validateStatus,

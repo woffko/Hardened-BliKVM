@@ -10,21 +10,31 @@ import {
 import {
   uploadRoute,
   activationRoute,
-  bundleBytes,
-  bundleSha256,
   waitLoginInputs,
   readStatus,
   validateStaged,
 } from "./application_write_acceptance.mjs";
+import { writeProfile } from "./application_write_profiles.mjs";
 import {
   installResponseCapture,
   readCapturedResponse,
   responseCaptureKey,
 } from "./application_response_capture.mjs";
 
-const [modulePath, executablePath, baseUrl, username, archive, outputValue] =
-  process.argv.slice(2);
-assert.equal(process.argv.slice(2).length, 6);
+const [
+  modulePath,
+  executablePath,
+  baseUrl,
+  username,
+  archive,
+  outputValue,
+  profileName = "seq7-to8",
+] = process.argv.slice(2);
+assert.ok([6, 7].includes(process.argv.slice(2).length));
+const profile = writeProfile(profileName);
+assert.equal(profile.disposition, "already_present");
+const { bundleBytes, bundleSha256 } = profile;
+const selectionName = "signed-" + profile.target;
 const origin = new URL(baseUrl);
 assert.equal(origin.protocol, "https:");
 assert.ok(
@@ -53,6 +63,7 @@ password = password.replace(/[\r\n]+$/, "");
 assert.ok(password.length >= 8 && password.length <= 256);
 const receipt = {
   probe: "application-upload-failures",
+  profile: profileName,
   result: "failed",
   uploadRequests: 0,
   activationRequests: 0,
@@ -104,7 +115,7 @@ try {
       );
       assert.equal(
         receipt.selectionVerified,
-        index === 0 ? "invalid" : "signed-seq8",
+        index === 0 ? "invalid" : selectionName,
       );
       const body = request.postDataBuffer();
       if (body !== null) {
@@ -166,7 +177,7 @@ try {
   await page.waitForFunction(
     () => document.title === "Remote Desktop - Hardened BliKVM",
   );
-  await readStatus(page, "seq8");
+  await readStatus(page, profile.target);
   const desktopUrl = page.url();
   await page.mouse.move(640, 1);
   await page.locator("svg.lucide-settings").first().click();
@@ -239,7 +250,7 @@ try {
   phase = "cancel-partial";
   await nextObservedUpload();
   await input.setInputFiles(archive);
-  await verifySelection(bundleBytes, bundleSha256, "signed-seq8");
+  await verifySelection(bundleBytes, bundleSha256, selectionName);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Network.enable");
   async function throttle(enabled) {
@@ -283,12 +294,15 @@ try {
     .getByRole("button", { name: "Retry the same archive", exact: true })
     .click();
   assert.equal((await response).status(), 200);
-  validateStaged(await readCapturedResponse(page, uploadRoute, 200));
+  validateStaged(
+    await readCapturedResponse(page, uploadRoute, 200),
+    profileName,
+  );
   await panel
     .getByText("This verified archive is already staged", { exact: true })
     .waitFor();
   receipt.retryAlreadyPresent = true;
-  await readStatus(page, "seq8");
+  await readStatus(page, profile.target);
 
   phase = "second-account-page";
   const account = await context.newPage();
@@ -308,7 +322,7 @@ try {
   await logout.waitFor();
   await nextObservedUpload();
   await input.setInputFiles(archive);
-  await verifySelection(bundleBytes, bundleSha256, "signed-seq8");
+  await verifySelection(bundleBytes, bundleSha256, selectionName);
   await throttle(true);
   phase = "logout-partial";
   termination = watchUploadTermination(page, uploadRoute);
