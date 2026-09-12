@@ -14,6 +14,32 @@ if not __package__:
 from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
+REMOTE_POST = r'''
+import json, os, pathlib, subprocess
+facts = {'readOnly': True, 'freshSshConnection': True, 'kernel': os.uname().release}
+facts['availableBytes'] = {p: os.statvfs(p).f_bavail * os.statvfs(p).f_frsize for p in ('/', '/mnt')}
+facts['aptCaches'] = {p: pathlib.Path(p).stat().st_size if pathlib.Path(p).exists() else 0
+    for p in ('/var/cache/apt/pkgcache.bin', '/var/cache/apt/srcpkgcache.bin')}
+archives = list(pathlib.Path('/var/cache/apt/archives').glob('*.deb'))
+facts['rootArchiveCount'] = len(archives)
+facts['rootArchiveBytes'] = sum(p.stat().st_size for p in archives)
+facts['temporaryPolicyAbsent'] = not os.path.lexists('/usr/sbin/policy-rc.d')
+facts['rebootRequired'] = pathlib.Path('/run/reboot-required').exists()
+facts['services'] = {}
+for u in ('nginx.service', 'ssh.service', 'NetworkManager.service', 'kvmd.service', 'kvmd-nginx.service',
+    'hardened-blikvm-nginx.service', 'hardened-blikvm-server-current.service',
+    'hardened-blikvm-platform-broker.service', 'hardened-blikvm-video-proxy.service'):
+    r = subprocess.run(['systemctl', 'show', u, '--property=ActiveState,SubState,UnitFileState'],
+        capture_output=True, check=True, timeout=10)
+    facts['services'][u] = dict(line.split('=', 1) for line in r.stdout.decode().splitlines() if '=' in line)
+r = subprocess.run(['dpkg', '--audit'], capture_output=True, timeout=30)
+facts['dpkgAuditClean'] = r.returncode == 0 and not r.stdout.strip()
+r = subprocess.run(['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\n',
+    'nginx-core', 'systemd', 'libc6', 'openssh-server', 'network-manager'], capture_output=True, check=True, timeout=30)
+facts['versions'] = dict(line.split('\t', 1) for line in r.stdout.decode().splitlines())
+print(json.dumps(facts, sort_keys=True))
+'''
+
 REMOTE = r'''
 import json, os, pathlib, re, shutil, subprocess, time
 from urllib.parse import urlsplit
@@ -217,16 +243,17 @@ def main() -> int:
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--storage-only", action="store_true")
     modes.add_argument("--cleanup-audit", action="store_true")
+    modes.add_argument("--post-upgrade", action="store_true")
     args = parser.parse_args()
     output = common.transport.validate_output_path(args.output)
     common.require(not output.exists(), "new system audit receipt required")
     host, port = common.transport.parse_endpoint(args.endpoint)
     target = common.transport.RemoteTarget(host, port, "root", common.transport.validate_private_file("evidence/private/ssh-known-hosts"))
-    mode = "cleanup-audit" if args.cleanup_audit else "storage-audit" if args.storage_only else "system-upgrade-audit"
+    mode = "post-upgrade" if args.post_upgrade else "cleanup-audit" if args.cleanup_audit else "storage-audit" if args.storage_only else "system-upgrade-audit"
     receipt: dict[str, object] = {"probe": mode, "result": "failed", "readOnly": True}
     secret = common.transport.read_secret_stdin()
     try:
-        remote = REMOTE_CLEANUP if args.cleanup_audit else REMOTE_STORAGE if args.storage_only else REMOTE
+        remote = REMOTE_POST if args.post_upgrade else REMOTE_CLEANUP if args.cleanup_audit else REMOTE_STORAGE if args.storage_only else REMOTE
         result = common.transport.run_ssh(target, secret, shlex.join(["python3", "-B", "-c", remote]),
             timeout=330 if args.storage_only or args.cleanup_audit else 140)
         common.require(result.returncode == 0 and len(result.stdout) <= 262144, "system audit failed")

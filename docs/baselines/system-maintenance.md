@@ -77,4 +77,26 @@ private result. It rechecks exact versions, hashes, simulation, package state an
 only stock Nginx and NetworkManager actions; normal libc/systemd handling remains
 enabled. Needrestart is list-only, existing conffiles are preferred, and no reboot
 is requested. Cleanup runs in the worker's `finally` with ExecStopPost as fallback.
-Installation is not yet recorded as completed at this checkpoint.
+Installation completed successfully: all 214 packages match the reviewed versions,
+with no package additions/removals, changed holds, or changed automatic/manual
+flags. The dpkg audit is clean and the checked SSH/custom Nginx configurations
+are unchanged. The temporary service policy was removed. A fresh authenticated
+SSH connection and HTTPS root response (HTTP 200; availability check only, not
+TLS identity or authenticated GUI acceptance) succeeded.
+
+SSH, NetworkManager, KVMD, the custom Nginx, application server, broker and video
+proxy are active. Stock Nginx and kvmd-nginx remain inactive/disabled. Kernel is
+still `5.19.4-sunxi64`; no reboot was performed and no reboot-required marker was
+present. This is a Jammy package update, not an Ubuntu release or BSP upgrade.
+
+Verified package versions now include Nginx `1.18.0-6ubuntu14.20`, systemd
+`249.11-0ubuntu3.22`, libc6 `2.35-0ubuntu3.15`, OpenSSH server
+`1:8.9p1-3ubuntu0.17`, and NetworkManager `1.36.6-0ubuntu2.5`.
+
+APT recreated its two derived binary caches during maintenance; the final scoped
+cleanup removed 161,427,456 bytes with no `.deb` files on root and unchanged dpkg
+status. Final measured available space: root **760,246,272 bytes**, `/mnt`
+**11,241,553,920 bytes**. Downloaded packages and isolated metadata remain on
+`/mnt`; future APT use can recreate derived caches. Running services may still
+have old libraries mapped until an appropriate restart. The installed
+Logout/upload gate remains unaccepted and has not been rerun after this update.
