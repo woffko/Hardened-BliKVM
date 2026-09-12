@@ -198,7 +198,13 @@ try {
   await panel
     .getByRole("button", { name: "Upload and verify", exact: true })
     .click();
-  assert.equal((await response).status(), 400);
+  receipt.invalidHttpStatus = (await response).status();
+  assert.equal(receipt.invalidHttpStatus, 200);
+  const rejected = await readCapturedResponse(page, uploadRoute, 200);
+  receipt.invalidCode = rejected.code;
+  assert.equal(rejected.code, -1);
+  assert.equal(rejected.msg, "archive verification failed");
+  assert.ok(!("data" in rejected));
   await panel
     .getByText("The archive was rejected. Check its format and signature.", {
       exact: true,
