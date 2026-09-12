@@ -41,7 +41,8 @@ python3 -B -m unittest \
   tools.test_persistent_write_lifecycle tools.test_persistent_write_fence tools.test_persistent_write_pipeline \
   tools.test_persistent_write_systemd tools.test_persistent_write_snapshot tools.test_installed_persistent_write \
   tools.test_run_persistent_write_rehearsal tools.test_finish_persistent_write_rehearsal \
-  tools.test_upload_proxy_streaming tools.test_install_system_upgrade tools.test_persistent_write_pending
+  tools.test_upload_proxy_streaming tools.test_install_system_upgrade tools.test_persistent_write_pending \
+  tools.test_installed_pending_write_gate
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -305,6 +306,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/persistent_write_fence.py tools/test_persistent_write_fence.py \
     tools/persistent_write_pipeline.py tools/test_persistent_write_pipeline.py \
     tools/persistent_write_pending.py tools/test_persistent_write_pending.py \
+    tools/installed_pending_write_gate.py tools/test_installed_pending_write_gate.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
     tools/installed_persistent_write.py tools/test_installed_persistent_write.py \

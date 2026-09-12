@@ -178,8 +178,11 @@ next held-upload restoration gate: reserve restoration before submission,
 observe the owned fence while the same worker/spool is live, release only the
 client heartbeat, require natural exit code 50 rather than a signal, then verify
 native restoration and preserved terminal state. Errors close only the fixture
-client and never submit a second restore. The native adapter and installed run
-are not implemented/accepted yet; these tests are not pending-work evidence.
+client and never submit a second restore. `tools/installed_pending_write_gate.py`
+now provides a host-tested native adapter using the existing idle/held IPC probe,
+exact worker/spool inspection and real restore command. Integration into the
+host rehearsal driver and the installed run remain pending; these tests are
+not installed pending-work evidence.
 
 Existing evidence and remaining checks are deliberately separate:
 
