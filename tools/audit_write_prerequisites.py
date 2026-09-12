@@ -51,8 +51,36 @@ for source in sources:
         'packageSha256': hashlib.sha256(read(root / 'new.deb')).hexdigest(),
         'protectedRuntimeHashes': runtime_hashes,
         'servingExecutableSha256': before['serving']['executableSha256']})
-print(json.dumps({'result': 'audited', 'archives': results, 'retentionApproved': False,
-    'commitQualificationPerformed': False, 'readOnly': True}, sort_keys=True))
+facts = {'result': 'audited', 'archives': results, 'retentionApproved': False,
+    'commitQualificationPerformed': False, 'readOnly': True}
+if len(sys.argv) > 2 and sys.argv[2] == 'slots':
+    # Import only the archived helper set whose complete hashes were checked.
+    require(all(all(v['nativeSourceMatches'].values()) for v in results))
+    sys.path.insert(0, str(root))
+    import enable_update_services as infra
+    infra.upgrade.select_profile('dev7-dev9')
+    status = infra.current_status()
+    require(status.get('pending') is None)
+    for unit in ('hardened-blikvm-update-upload.socket', 'hardened-blikvm-update-activation.socket'):
+        require(infra.s.property_value(unit, 'ActiveState') == 'inactive')
+    slots_root = pathlib.Path('/var/lib/hardened-blikvm-slots')
+    entries = list(slots_root.iterdir())
+    slots = sorted(p.name for p in entries if re.fullmatch(r'app-[0-9]{20}-[a-f0-9]{64}', p.name))
+    require(set(p.name for p in entries) == set(slots) | {'current'})
+    protected = {status.get(k) for k in ('activeSlotId', 'confirmedSlotId', 'previousSlotId')} - {None}
+    require(protected <= set(slots))
+    trees = {}
+    for name in slots:
+        path = slots_root / name
+        require(path.is_dir() and not path.is_symlink())
+        tree = infra.upgrade.tree_fingerprint((path,))
+        trees[name] = hashlib.sha256(json.dumps(tree, sort_keys=True).encode()).hexdigest()
+    unreferenced = [name for name in slots if name not in protected]
+    require(status == infra.current_status())
+    facts['slotInventory'] = {'status': status, 'slots': slots, 'protectedSlots': sorted(protected),
+        'unreferencedSlotsOldestFirst': unreferenced, 'treeSha256': trees,
+        'proposedDeletion': unreferenced[:1], 'retainUnreferencedForOneDeletion': max(0, len(unreferenced) - 1)}
+print(json.dumps(facts, sort_keys=True))
 '''
 
 
@@ -61,6 +89,7 @@ def main() -> int:
     parser.add_argument('--endpoint', required=True)
     parser.add_argument('--receipt', action='append', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--slot-inventory', action='store_true')
     args = parser.parse_args()
     names = ('installed_persistent_write.py', *common.native.HELPERS)
     current = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in names}
@@ -83,7 +112,8 @@ def main() -> int:
     result: dict[str, object] = {'result': 'failed', 'readOnly': True}
     secret = common.transport.read_secret_stdin()
     try:
-        response = common.transport.run_ssh(target, secret, shlex.join(['python3', '-B', '-c', REMOTE, json.dumps(sources)]), timeout=120)
+        response = common.transport.run_ssh(target, secret,
+            shlex.join(['python3', '-B', '-c', REMOTE, json.dumps(sources), 'slots' if args.slot_inventory else 'archives']), timeout=180)
         common.require(response.returncode == 0 and len(response.stdout) <= 262144, 'archive audit failed')
         result = common.native.object_value(json.loads(response.stdout))
         common.require(result.get('result') == 'audited', 'archive audit unverified')

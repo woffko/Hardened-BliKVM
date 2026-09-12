@@ -242,3 +242,13 @@ all eight retained slots have been preserved. A new positive seq9 cycle therefor
 requires separately reviewed/authorized slot reclamation or another explicitly
 approved capacity strategy; neither garbage collection nor seq9 publication/
 activation has been performed. Permanent retention also remains unapproved.
+
+The user subsequently authorized one old unprotected slot reclamation and a
+new seq9 cycle. Fresh inventory `ae59fd7755d64bae939f2b035448cc35` confirmed
+exactly eight slots and no pending operation; seq8 and previous seq7 are protected.
+The reviewed oldest unreferenced target is
+`app-00000000000000000001-7a088d20f639fabf5ed4f59b7223cd34b8f39cb9fe2c5764acff6df1789fbc6f`.
+Native `gc 5` retains the other five unreferenced slots. The guarded host tool
+rechecks the complete inventory/tree hashes and idle closed pipeline, invokes
+only native GC, and requires exactly that deletion with unchanged remaining
+trees and status. No reclamation result is claimed at this preparation point.
