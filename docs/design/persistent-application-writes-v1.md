@@ -184,8 +184,10 @@ exact worker/spool inspection and real restore command. The host driver's
 separate `pending` action now stages the pinned seq8 fixture, records the remote
 submission before execution, and does not replay restore after an ambiguous
 reply. Failed pending runs retain staging/receipts for inspection and native
-deadline recovery. The installed run remains pending; host tests are not
-installed pending-work evidence.
+deadline recovery. The corrected installed run passed on September 12: owned
+fence while the exact upload worker remained live, natural timeout exit 50,
+restoration, cleanup and unchanged seq8 state. See the detailed baseline receipt.
+This is pending-upload evidence only, not activation/confirmation or boot recovery.
 
 Existing evidence and remaining checks are deliberately separate:
 
@@ -195,10 +197,10 @@ Existing evidence and remaining checks are deliberately separate:
 | Native upload/activation | Installed native worker gates and confirmed slot 8                                  | Preserve bindings while configuring permanent admission                  |
 | GUI happy path           | Actual upload, reviewed activation, confirmation and restored desktop/mobile status | Verify the prospective persistent configuration                          |
 | Failure and retry        | Installed invalid archive rejection and already-present seq8 retry                  | Bind qualified receipt to prospective retained transaction               |
-| Cancel and progress      | Installed cancellation at 1% and successful retry                                   | Pending-worker restoration remains a separate gate                       |
+| Cancel and progress      | Installed cancellation at 1% and successful retry                                   | Bind qualified receipt to prospective retained transaction               |
 | Logout                   | Two-page installed logout, original request abort, both Login screens, status 401   | Native worker stop latency and retention-bound evidence                  |
 | Boot recovery            | Accepted persistent status recovery; temporary write recovery                       | Uncommitted persistent-write boot restore and committed-policy survival  |
-| Disable/drain            | Temporary seq8 controller settled a real activation before restore                  | Owned permanent policy disable with pending work and failure injection   |
+| Disable/drain            | Revocable policy fenced a live upload and waited for its natural timeout            | Pending activation/confirmation, failure injection and retained policy    |
 
 Negative upload tests must not activate another slot or infer permission to
 publish sequence 9. Preserve all eight retained slots; quota-boundary retry is

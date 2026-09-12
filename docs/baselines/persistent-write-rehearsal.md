@@ -172,3 +172,24 @@ transaction, preserved floor 8/generation 40 and closed writes. Subsequent
 hash-bound cleanup `63742ca38e854521988df3adfc5dccd6` removed its 35 staged files
 and preserved the private recovery archive. The pending-work gate still needs
 a successful installed run with the corrected adapter.
+
+### Held-upload restoration passed
+
+The corrected adapter at source `7249a8e` passed installed job
+`65c31e48b7824eda8c7959076bc43f74`. It observed an exact upload instance and its
+anonymous spool, submitted native restore once, then proved owned admission
+masks and closed sockets while that same worker was still live and restoration
+had not finished. Only then did it stop the probe heartbeat. The worker exited
+naturally (`ExecMainCode=1`, `ExecMainStatus=50`) on the incomplete upload; no
+complete archive, publication, activation, reboot or worker signal was issued.
+
+Native restore/cleanup and the independent same-boot postcheck passed. Selected
+and confirmed slot 8, floor 8, generation 40, previous slot 7 and absent pending/
+rollback state were preserved. Temporary probe source and controller staging
+were removed; the private recovery archive was retained.
+
+Receipt: `evidence/private/persistent-write-pending-20260912-b.json`.
+SHA-256: `06192da0603595f70bd85087c24bb6cea5f27d02d177fc4265d7a529d09dbb9e`.
+This qualifies one real pending-upload timeout/restoration path. It does not
+qualify pending activation/confirmation failure injection, early-boot recovery,
+committed-policy survival, or permanent retention.
