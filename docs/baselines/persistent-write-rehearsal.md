@@ -331,3 +331,34 @@ also passed for the original seq8 boot receipt with producer
 `2f467a07d676c2d25e3a6ef538513e01fc9d4d23`. Archived source hashes and terminal
 state matched the independently parsed receipt. This remains historical seq8
 evidence and performs no current-policy qualification or device mutation.
+
+### Seq9 negative browser gate remains failed (2026-09-13)
+
+Job `7718cfa5e91d4c36a3e3495ca624877c` rejected the invalid archive, exercised
+partial cancellation and the exact seq9 retry, but failed the Logout upload
+transport gate: Logout returned HTTP200 while the upload returned HTTP502.
+This is not accepted as session-revocation success. Receipt:
+`evidence/private/persistent-write-seq9-browser-20260913-a.json`.
+Independent cleanup job `3535d939fa724f2f8a4ec98bc3f19c99` passed, proved writes
+closed at floor9/generation43, and archived the transaction as
+`hardened-blikvm-write-restored-b60a9e4e598047794618e147`.
+
+Read-only diagnostic job `ee34325f64e941f891c1c6d5a759a1c1` captured Nginx
+1.18.0 `writev` errno32 while sending the request upstream. Its bounded journal
+window contained no connection-refused, disk-space or permission errors.
+The exact upload location still had request buffering disabled, no includes,
+and configuration SHA-256
+`a1bf9d746c15988c3806b50f5dc7a3f7a30660d2a7ead7e95d7b0b32340deb16`.
+Receipt: `evidence/private/seq9-logout-502-diagnostic-20260913-a.json`.
+This supports investigating early upstream closure, not a proved root cause.
+
+Local opt-in transport diagnostics have not yet reproduced this streaming
+failure. An unpacked Nginx1.24 and locally compiled upstream Nginx1.18 both
+returned401 with an unread-body pressure case. Nginx1.18 also returned401 with
+continuous transmission, with two Tokio worker threads (ten bounded runs,
+job `67b4ec2562034c5ab51744a45db3510b`), and when the session was revoked before
+dispatch (job `5e3ea36900504e4c8add1960f48a159c`). Buffered control cases returned
+502. These synthetic HTTP fixtures are not browser/TLS or installed-device
+acceptance; they do not establish that the device failure is fixed. No
+production handler change or permanent write-policy retention follows from
+these results. Current seq9 pending/boot qualification also remains outstanding.
