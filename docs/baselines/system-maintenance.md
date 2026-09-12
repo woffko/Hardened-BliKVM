@@ -56,3 +56,12 @@ without installing. Existing holds and kernel/bootloader/Armbian packages are
 protected in the in-memory plan. Net installed-size growth is not a peak disk
 usage estimate; unpacking and maintainer scripts require additional headroom.
 Detailed machine receipts and metadata diagnostics remain private.
+
+Fresh metadata refresh completed successfully without APT warnings. The reviewed
+same-release plan contains 214 upgrades, 143,835,594 download bytes and 758,784
+bytes of net installed growth. Root still has 803,225,600 bytes available; data
+has 11,386,343,424 bytes after metadata. Netplan and selinux-policy-default remain
+kept back; kernel, DTB, bootloader and Armbian packages are excluded from this step.
+`tools/download_system_upgrade.py` verifies that APT's command-line simulation
+matches the reviewed versions before downloading, then checks the complete
+archive set and unchanged dpkg/APT state. It does not install anything.
