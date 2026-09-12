@@ -186,6 +186,16 @@ the privileged raw-receipt/archive adapters and native retention entrypoint are
 still absent. `require_commit` remains unchanged and cannot consume a
 Compatibility object as a passed current-transaction GateEvidence.
 
+The activation raw-receipt reader now preserves exact bytes, digest and original
+binding; it checks a separately pinned runner/browser producer set, one real
+publication/activation, reviewed generation, forward confirmation, same boot,
+closed boundaries, restoration and matching cleanup counters. It rejects
+duplicate JSON fields, non-finite values, bool-as-counter substitutions and
+summary-only `passed` objects. The real seq8-to9 receipt passes with producer
+hashes independently computed from Git source `1acd504`. This validates content,
+not root-owned custody or archived-state correspondence; it is still not wired
+to commit and does not supply permanent-retention approval.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing
