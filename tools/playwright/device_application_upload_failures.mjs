@@ -86,7 +86,7 @@ try {
       assert.ok(await request.headerValue("x-csrf-token"));
       if (url.pathname === "/api/auth/logout") {
         assert.equal(receipt.logoutRequests++, 0);
-        assert.equal(phase, "logout-partial");
+        assert.ok(["logout-partial", "await-logout-response"].includes(phase));
         return route.continue();
       }
       if (url.pathname === activationRoute) receipt.activationRequests++;
@@ -118,6 +118,26 @@ try {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   page.on("pageerror", () => receipt.pageErrors++);
+  receipt.uploadHttpStatuses = [];
+  receipt.uploadTransportFailures = [];
+  page.on("response", (item) => {
+    if (new URL(item.url()).pathname === uploadRoute)
+      receipt.uploadHttpStatuses.push(item.status());
+  });
+  page.on("requestfailed", (item) => {
+    if (new URL(item.url()).pathname !== uploadRoute) return;
+    const error = item.failure()?.errorText;
+    receipt.uploadTransportFailures.push(
+      [
+        "net::ERR_ABORTED",
+        "net::ERR_FAILED",
+        "net::ERR_CONNECTION_RESET",
+        "net::ERR_HTTP2_PROTOCOL_ERROR",
+      ].includes(error)
+        ? error
+        : "other",
+    );
+  });
   phase = "login";
   assert.equal(
     (
@@ -298,9 +318,19 @@ try {
   );
   await logout.click();
   await account.getByRole("button", { name: "Yes", exact: true }).click();
-  assert.equal((await loggedOut).status(), 200);
-  assert.equal((await response).status(), 401);
+  phase = "await-logout-response";
+  receipt.logoutHttpStatus = (await loggedOut).status();
+  assert.equal(receipt.logoutHttpStatus, 200);
+  // Partial progress was recorded before the real logout. Stop artificially
+  // stretching the remaining HTTP body while awaiting its rejected result;
+  // still require this exact in-flight request, not a replacement, to be 401.
+  await throttle(false);
+  receipt.throttleReleasedAfterLogout = true;
+  phase = "await-upload-revocation";
+  receipt.revokedUploadHttpStatus = (await response).status();
+  assert.equal(receipt.revokedUploadHttpStatus, 401);
   receipt.inflightUploadRevoked = true;
+  phase = "logged-out-navigation";
   await page.waitForFunction(
     () => document.title === "Login - Hardened BliKVM",
   );
@@ -327,6 +357,13 @@ try {
   receipt.phase = phase;
   receipt.errorType =
     error?.name === "TimeoutError" ? "TimeoutError" : "ProbeError";
+  receipt.localFrameLines = [
+    ...String(error?.stack ?? "").matchAll(
+      /device_application_upload_failures\.mjs:(\d+):\d+/g,
+    ),
+  ]
+    .slice(0, 3)
+    .map((match) => Number(match[1]));
   // No error messages, response bodies, cookies, credentials or DOM snapshots.
 } finally {
   password = "";
