@@ -39,6 +39,20 @@ from this repository; a fresh deployment/configuration will be needed.
    private runtime settings; do not run blind autoremove or repartitioning.
 5. Re-establish the system/runtime baseline before resuming final BLi-KVM gates.
 
-At this checkpoint, cache relocation and package installation have not yet been
-executed. The audit and relocation tools are provided under `tools/`; detailed
-machine receipts remain local and Git-excluded.
+Source history was synchronized to the private canonical GitHub repository at
+`dd9e2b8`; the remote commit was verified against local HEAD. A full-history
+credential scan produced one manually verified false positive: a parser field
+literal named `journal_redacted_b64`, not a credential.
+
+Cache relocation completed with all 179 `.deb` files hash-verified on `/mnt`.
+The two regenerable binary caches were removed, freeing 207,810,560 bytes.
+Root available space became 803,225,600 bytes; `/mnt` available space became
+11,691,372,544 bytes. The dpkg status hash was unchanged.
+
+Package installation has not been executed. `tools/prepare_system_upgrade_plan.py`
+refreshes metadata in a fresh directory on `/mnt`, disables update hooks, keeps
+the configured repository/signature policy, and calculates a no-removal upgrade
+without installing. Existing holds and kernel/bootloader/Armbian packages are
+protected in the in-memory plan. Net installed-size growth is not a peak disk
+usage estimate; unpacking and maintainer scripts require additional headroom.
+Detailed machine receipts and metadata diagnostics remain private.
