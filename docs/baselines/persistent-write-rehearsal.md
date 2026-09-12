@@ -281,3 +281,30 @@ The persistent rehearsal driver's separate `activate` action performs one GUI
 upload/activation under the existing deadline, then natural settlement,
 restoration and cleanup. It does not retain write permission or retry activation
 after an uncertain response. Installed acceptance of this action is pending.
+
+### Authorized seq8-to9 activation passed
+
+Source `1acd504` passed full host job `c8dfd4f9ab014f92abc5fefbf0bd2ce8` and
+installed activation job `4fd9db143649488c8deb4ca21d65e13a`. The real GUI verified
+the exact seq9 File, published it with one upload, reviewed generation40 and
+issued one activation. HTTP202 carried the expected awaiting-health receipt;
+no request was retried and there were no page errors or blocked mutations.
+
+Native restoration waited for the pipeline and independently proved selected/
+confirmed seq9, floor9, generation43, previous seq8, and no pending or rollback
+state on the same boot. The prior seq2–seq8 immutable trees were preserved.
+Write admission was closed again, the guard archived/cleaned, and staging removed.
+No device reboot or target power/reset was issued by this activation gate.
+
+Receipt: `evidence/private/persistent-write-seq9-activation-20260912-a.json`.
+SHA-256: `f33ac87ccf4b30f7404895e75a892256780d1fe344807f12cbb7312aa99d72f1`.
+This is a completed real update cycle, not permanent write-policy retention.
+
+Post-activation closed-mode Chromium job `b44a4b63f0554929a66aa72283ffff19`
+passed authenticated desktop/mobile seq9 status, three repeated reads and two
+refresh checks, with zero uploads/activations or page errors. Receipt:
+`evidence/private/seq9-gui-closed-20260912-a.json`, SHA-256
+`6688d078e60921fae607709bb5ab996bd5d59730834ae8befe1981aca4675760`.
+The current retained baseline is now seq9/floor9/generation43, previous seq8,
+with seq2–seq9 present and writes disabled. Earlier seq8-only preparation gates
+must not be rerun against this baseline without an explicitly bound new profile.
