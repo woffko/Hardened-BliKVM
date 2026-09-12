@@ -185,7 +185,11 @@ root-private persistent observation staging. It reserves reboot intent before
 one software-reboot command, polls read-only evidence, and only then invokes
 runtime verification/release and cleanup. An ambiguous reboot/proof/finalize
 leaves staging and the native guard for inspection, without another reboot or
-automatic duplicate restore. No installed early-boot acceptance is claimed.
+automatic duplicate restore. The installed uncommitted early-boot gate passed
+on September 12: guard exit at 17.033103 seconds, server start at 36.060253
+seconds, no deadline execution, verified closed policy and preserved seq8 state;
+runtime finalization and cleanup passed afterwards. Committed-policy survival
+remains a separate unaccepted gate.
 A missed network-down sample is not itself
 reboot proof or disproof; the changed boot identity is required.
 
@@ -215,7 +219,7 @@ Existing evidence and remaining checks are deliberately separate:
 | Failure and retry        | Installed invalid archive rejection and already-present seq8 retry                  | Bind qualified receipt to prospective retained transaction               |
 | Cancel and progress      | Installed cancellation at 1% and successful retry                                   | Bind qualified receipt to prospective retained transaction               |
 | Logout                   | Two-page installed logout, original request abort, both Login screens, status 401   | Native worker stop latency and retention-bound evidence                  |
-| Boot recovery            | Accepted persistent status recovery; temporary write recovery                       | Uncommitted persistent-write boot restore and committed-policy survival  |
+| Boot recovery            | Installed uncommitted write policy restored before serving on a new boot            | Committed-policy boot survival and retention-bound evidence               |
 | Disable/drain            | Revocable policy fenced a live upload and waited for its natural timeout            | Pending activation/confirmation, failure injection and retained policy    |
 
 Negative upload tests must not activate another slot or infer permission to

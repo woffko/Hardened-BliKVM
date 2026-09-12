@@ -193,3 +193,32 @@ SHA-256: `06192da0603595f70bd85087c24bb6cea5f27d02d177fc4265d7a529d09dbb9e`.
 This qualifies one real pending-upload timeout/restoration path. It does not
 qualify pending activation/confirmation failure injection, early-boot recovery,
 committed-policy survival, or permanent retention.
+
+### Uncommitted policy early-boot restoration passed
+
+Source `2f467a0` passed full host checks in job
+`f849395344ed48ca8dd3d37908e79190` and the single-reboot installed gate
+`d2b686bf2d944edfad5ca6f3a23fb2f1`. The boot identity changed. The exact owned
+guard exited successfully at 17,033,103 monotonic microseconds after boot;
+the current server started at 36,060,253 microseconds. The deadline recovery
+service had not executed. Before runtime finalization, the observer proved
+revoked/restored state with no terminal marker, owned closed socket masks,
+absent write settings/links/dependencies, unchanged protected configuration,
+zero workers/jobs and unchanged selected/confirmed seq8, floor 8, generation 40.
+
+Only after that early-boot proof did the driver perform runtime verification,
+release the fence and clean/archive the guard. Final independent observation
+passed; private observation staging was removed. No upload or activation was
+issued and the attached target's power/reset controls were not used.
+
+Receipt: `evidence/private/persistent-write-boot-20260912-a.json`.
+SHA-256: `453ba6a61db73dfe7ae5396789342ab9d455d27d1033bd941c7db236ce0ccd00`.
+This qualifies uncommitted early-boot restoration only. Permanent retention and
+committed-policy boot survival remain unaccepted.
+
+Post-reboot Chromium closed-mode check `919ad409ac9e4e68baecfcd87680541a`
+also passed: login, desktop/mobile seq8 status, three reads and two refresh
+checks, no page errors and zero upload/activation requests. Receipt:
+`evidence/private/persistent-write-boot-20260912-a-gui-closed.json`.
+This is authenticated UI availability/status evidence, not permission to retain
+write admission or proof of committed-policy boot survival.
