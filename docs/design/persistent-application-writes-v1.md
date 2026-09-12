@@ -173,6 +173,17 @@ transition; it does not establish installed-worker logout acceptance.
 
 ## Acceptance before retention
 
+Early-boot evidence now has a separate strict validator and read-only collector
+(`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
+require a changed boot identity, the exact successful owned boot unit completing
+before the current server starts, absent write settings/enable links/dependencies,
+owned masks, unchanged protected snapshot and seq8 state, and no execution of the
+deadline recovery service. They reject already-finalized runtime state. This
+separates early-boot proof from later runtime verification/release and cleanup.
+No reboot driver has yet been connected to this collector and no installed
+early-boot acceptance is claimed. A missed network-down sample is not itself
+reboot proof or disproof; the changed boot identity is required.
+
 `tools/persistent_write_pending.py` now defines the host-tested ordering for the
 next held-upload restoration gate: reserve restoration before submission,
 observe the owned fence while the same worker/spool is live, release only the
