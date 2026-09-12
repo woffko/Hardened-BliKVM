@@ -393,3 +393,42 @@ Independent advisory review `bf1af5c3c86a4ab291ec63ec86e7ca22` found no blockers
 it is not installed acceptance. The source fix has not yet been built into a
 new signed device application or deployed, and the seq9 browser gate remains
 failed until a new installed run proves otherwise.
+
+Final source validation job `fdcd033aae5249b799ad7d8b70f8d494` passed after adding
+admission-release coverage and stopping discard at exact byte-budget exhaustion.
+The fix and tests are committed as `3b57ee45463a7c90a06b61a2b7b874c7fd66df81`.
+
+### Prepared seq10 artifact; installation not performed
+
+The first ARM64 build rejected host paths inherited from an existing dependency
+cache before producing any bundle. A fresh remapped cache passed all ELF checks.
+Job `0f8c7fd0183d4f71845e372b0bdff2f6` produced two byte-identical prototype
+archives in `/mnt/d/debug/blikvm/hardened-blikvm/runtime-logout-fix-{a,b}`:
+4,966,024 bytes, SHA-256
+`0649103c5ed24b0becd64b2aef1bfa57b98adfa3401a858ef69849041ce1c984`.
+Both packaging passes used the same fresh compiler cache; this comparison is
+not a claim of independent clean-room compilation.
+
+The inert runtime packages in `runtime-logout-fix-deb-{a,b}` also match:
+2,676,120 bytes, SHA-256
+`6df67f5bf124e5d7eaeb40adb770359662d22a609c654fdcdb6fb21be35bf289`.
+Source and builder are both the full commit above. These packages were not
+installed over device services.
+
+Signed application archives in `production-application-seq10-{a,b}` are
+byte-identical, version `0.1.0-dev7`, sequence10, minimum system sequence1,
+8,724,480 bytes. Bundle SHA-256:
+`85e06d1b68e54480bab89c3cdc5e0d9f80cc3ee007e7ba1e425432af4b250f1f`.
+Manifest SHA-256:
+`8a30162d0b620c2f7a6679061d2c9c4bf863aa8ac1be2d2e6dfa77caacc6ae01`.
+The existing enrolled key was used without changing trust or including private
+key material. Host Rust verification job `f22f3d72561a4384b98767164a5f9dcb`
+passed signature/payload validation, idempotent stage, wrong-key/tamper rejection,
+repeat-initialize refusal and temporary-root cleanup. Receipt:
+`evidence/private/seq10-host-verification-20260913-a.json`.
+No payload executable was run and no device was contacted by these checks.
+
+Device installation is pending a new reviewed cycle and slot-capacity check.
+The last observed device retains seq2–seq9; the previous authorization reclaimed
+only seq1 for seq9. Do not overwrite immutable slots or silently reclaim another
+slot to install seq10. No permanent write-policy retention is authorized here.
