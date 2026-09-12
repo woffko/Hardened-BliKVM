@@ -41,7 +41,7 @@ python3 -B -m unittest \
   tools.test_persistent_write_lifecycle tools.test_persistent_write_fence tools.test_persistent_write_pipeline \
   tools.test_persistent_write_systemd tools.test_persistent_write_snapshot tools.test_installed_persistent_write \
   tools.test_run_persistent_write_rehearsal tools.test_finish_persistent_write_rehearsal \
-  tools.test_upload_proxy_streaming
+  tools.test_upload_proxy_streaming tools.test_install_system_upgrade
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -296,6 +296,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/cleanup_application_write_guard.py tools/capture_application_write_failure.py \
     tools/capture_system_upgrade_audit.py tools/relocate_apt_cache.py tools/prepare_system_upgrade_plan.py \
     tools/download_system_upgrade.py \
+    tools/install_system_upgrade.py tools/test_install_system_upgrade.py \
     tools/persistent_write_contract.py tools/test_persistent_write_contract.py \
     tools/persistent_write_files.py tools/test_persistent_write_files.py tools/verify_persistent_write_ordering.py \
     tools/persistent_write_decision.py tools/test_persistent_write_decision.py \

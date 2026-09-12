@@ -65,3 +65,16 @@ kept back; kernel, DTB, bootloader and Armbian packages are excluded from this s
 `tools/download_system_upgrade.py` verifies that APT's command-line simulation
 matches the reviewed versions before downloading, then checks the complete
 archive set and unchanged dpkg/APT state. It does not install anything.
+
+Download preparation initially hit its 60-second simulation limit before any
+archives were downloaded. Read-only inspection proved installed versions were
+unchanged. With a 300-second simulation bound and identical prepared inputs,
+all 214 archives downloaded and verified successfully (143,835,594 bytes).
+
+The installation runner uses an independent on-device systemd unit and a durable
+private result. It rechecks exact versions, hashes, simulation, package state and
+600 MiB root headroom before installation. A temporary owned `policy-rc.d` blocks
+only stock Nginx and NetworkManager actions; normal libc/systemd handling remains
+enabled. Needrestart is list-only, existing conffiles are preferred, and no reboot
+is requested. Cleanup runs in the worker's `finally` with ExecStopPost as fallback.
+Installation is not yet recorded as completed at this checkpoint.
