@@ -14,6 +14,32 @@ if not __package__:
 from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
+REMOTE_INSPECT = r'''
+import json, pathlib, re, subprocess, sys
+plan = json.loads(sys.argv[1])
+root = pathlib.Path(plan['planRoot'])
+if root.parent != pathlib.Path('/mnt') or not re.fullmatch(r'blikvm-apt-plan-[a-f0-9]{24}', root.name):
+    raise ValueError('invalid plan directory')
+facts = {'result': 'passed', 'readOnly': True, 'files': {}}
+for name in ('reviewed.pref', 'download.conf', 'reviewed-plan.json', 'download-simulation.log', 'download.log', 'archives-verified.json'):
+    path = root / name
+    entry = {'exists': path.is_file(), 'bytes': path.stat().st_size if path.is_file() else 0}
+    if name.endswith('.log') and path.is_file() and path.stat().st_size < 8388608:
+        raw = path.read_text(errors='replace')
+        entry['lines'] = len(raw.splitlines())
+        entry['classifications'] = {p: raw.count(p) for p in ('E:', 'W:', 'Err:', 'Get:', 'Inst ', 'Remv ',
+            'Permission denied', 'No space left', 'Could not get lock', 'Failed to fetch', 'Hash Sum mismatch',
+            'Temporary failure', 'Unable to locate', 'Download complete', 'Connection failed')}
+    facts['files'][name] = entry
+files = list((root / 'archives').glob('*.deb'))
+facts['archiveCount'] = len(files)
+facts['archiveBytes'] = sum(p.stat().st_size for p in files)
+query = subprocess.run(['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\n'], capture_output=True, check=True)
+installed = dict(line.split('\t', 1) for line in query.stdout.decode().splitlines())
+facts['reviewedInstalledVersionsUnchanged'] = all(installed.get(p['package'], installed.get(p['package'] + ':arm64')) == p['installed'] for p in plan['changes'])
+print(json.dumps(facts, sort_keys=True))
+'''
+
 REMOTE = r'''
 import hashlib, io, json, os, pathlib, re, stat, subprocess, sys, tarfile
 plan = json.loads(sys.argv[1])
@@ -23,9 +49,17 @@ def require(value, message):
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 def run(argv, timeout=60):
-    return subprocess.run(argv, capture_output=True, timeout=timeout,
-        env={**os.environ, 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive'})
-def private(path, content):
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=timeout,
+            env={**os.environ, 'LC_ALL': 'C', 'DEBIAN_FRONTEND': 'noninteractive'})
+    except subprocess.TimeoutExpired as error:
+        return subprocess.CompletedProcess(argv, 124, error.stdout or b'',
+            (error.stderr or b'') + b'\nBLiKVM bounded command timeout\n')
+def private(path, content, reuse=False):
+    if reuse and path.exists():
+        require(not path.is_symlink() and path.stat().st_uid == 0 and
+            not path.stat().st_mode & 0o077 and path.read_text() == content, 'prepared file differs')
+        return
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as f:
         f.write(content); f.flush(); os.fsync(f.fileno())
@@ -51,14 +85,15 @@ require(len(original) < 1048576, 'oversize preferences')
 pins = ''.join('Package: ' + p['package'] + '\nPin: version ' + version + '\nPin-Priority: 1001\n\n'
     for p, version in [(p, p['candidate']) for p in changes] +
                       [(p, p['installed']) for p in plan['protectedCandidates']])
-private(root / 'reviewed.pref', pins + original)
+private(root / 'reviewed.pref', pins + original, reuse=True)
 conf = (root / 'plan.conf').read_text()
 conf += '\nDir::Etc::preferences ' + json.dumps(str(root / 'reviewed.pref')) + ';\n'
 conf += 'APT::Get::Upgrade-Allow-New "false";\nAPT::Get::AutomaticRemove "false";\n'
-private(root / 'download.conf', conf)
-private(root / 'reviewed-plan.json', json.dumps(plan, sort_keys=True))
+private(root / 'download.conf', conf, reuse=True)
+private(root / 'reviewed-plan.json', json.dumps(plan, sort_keys=True), reuse=True)
 base = ['apt-get', '-c', str(root / 'download.conf'), '--no-remove']
-simulation = run([*base, '-s', 'upgrade'])
+simulation = run([*base, '-s', 'upgrade'], timeout=300)
+private(root / 'simulation-result.json', json.dumps({'exitCode': simulation.returncode}))
 private(root / 'download-simulation.log', (simulation.stdout + simulation.stderr).decode(errors='replace'))
 require(simulation.returncode == 0, 'APT simulation failed')
 actual = {}
@@ -119,6 +154,7 @@ def main() -> int:
     parser.add_argument('--endpoint', required=True)
     parser.add_argument('--plan', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--inspect', action='store_true')
     args = parser.parse_args()
     output = common.transport.validate_output_path(args.output)
     common.require(not output.exists(), 'new download receipt required')
@@ -133,11 +169,12 @@ def main() -> int:
     secret = common.transport.read_secret_stdin()
     try:
         result = common.transport.run_ssh(target, secret,
-            shlex.join(['python3', '-B', '-c', REMOTE, json.dumps(device)]), timeout=1080)
+            shlex.join(['python3', '-B', '-c', REMOTE_INSPECT if args.inspect else REMOTE, json.dumps(device)]), timeout=1080)
         common.require(result.returncode == 0 and len(result.stdout) <= 2097152, 'package download failed')
         value = common.native.object_value(json.loads(result.stdout))
         receipt['device'] = value
-        common.require(value.get('result') == 'passed' and value.get('packageStateUnchanged') is True, 'unverified download')
+        common.require(value.get('result') == 'passed' and
+            (value.get('readOnly') is True if args.inspect else value.get('packageStateUnchanged') is True), 'unverified download')
         receipt['result'] = 'passed'
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt['errorType'] = type(error).__name__
