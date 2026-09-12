@@ -236,6 +236,17 @@ Host tests cover revocation during evidence reading and failures before/after
 disarm. The adapter has no CLI or production evidence provider and has not been
 executed on the device; no retention permission is implied by these tests.
 
+The evidence store now preserves exact original bytes under their SHA-256 names
+in a separate transaction-bound root-private directory. It bounds object count/
+size, rejects foreign names, symlinks/hardlinks, mismatched metadata/bindings and
+partial/corrupt files, and never overwrites an existing object. Sealing requires
+complete gate references, verifies and fsyncs contents plus both directories;
+verification of a missing seal never creates one. A seal is only durable storage,
+not validation of arbitrary blob contents or permission to commit. Partial writes
+remain for explicit inspection. Production integration must acquire the controller
+lock before the store lock. This implementation has only host temporary-directory
+tests and has not created an evidence store on the device.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing
