@@ -61,6 +61,34 @@ class RehearsalTests(unittest.TestCase):
                               observe=self.observe, save=self.save)
         self.assertEqual(self.calls, [])
 
+    def test_boot_proof_precedes_runtime_finalization(self) -> None:
+        observations = iter(('a' * 64, 'b' * 64))
+        def observe() -> dict[str, object]:
+            self.calls.append('observe')
+            return {'bootIdSha256': next(observations)}
+        def boot() -> dict[str, object]:
+            self.assertTrue(self.saved[-1]['bootSubmissionAttempted'])
+            self.calls.append('reboot-and-proof')
+            return {'readOnly': True}
+        runner.run_phases('boot', self.receipt, invoke=self.invoke, observe=observe, save=self.save, boot_exercise=boot)
+        self.assertEqual(self.calls, ['observe', 'prepare', 'reboot-and-proof', 'restore', 'cleanup', 'observe'])
+        self.assertEqual(self.receipt['result'], 'passed')
+
+    def test_boot_observation_failure_does_not_repeat_reboot_or_restore(self) -> None:
+        def boot() -> dict[str, object]:
+            self.calls.append('reboot-and-proof')
+            raise TimeoutError('new boot not observed')
+        runner.run_phases('boot', self.receipt, invoke=self.invoke, observe=self.observe, save=self.save, boot_exercise=boot)
+        self.assertEqual(self.calls, ['observe', 'prepare', 'reboot-and-proof'])
+        self.assertEqual(self.receipt['result'], 'failed')
+        self.assertTrue(self.receipt['independentInspectionRequired'])
+
+    def test_boot_action_rejects_same_boot_after_cleanup(self) -> None:
+        runner.run_phases('boot', self.receipt, invoke=self.invoke, observe=self.observe,
+                          save=self.save, boot_exercise=lambda: {'readOnly': True})
+        self.assertEqual(self.receipt['result'], 'failed')
+        self.assertEqual(self.calls.count('restore'), 1)
+
     def test_rehearsal_is_one_prepare_restore_cleanup_and_two_observations(self) -> None:
         runner.run_phases("rehearse", self.receipt, invoke=self.invoke, observe=self.observe, save=self.save)
         self.assertEqual(self.calls, ["observe", "prepare", "restore", "cleanup", "observe"])

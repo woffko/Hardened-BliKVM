@@ -180,8 +180,13 @@ before the current server starts, absent write settings/enable links/dependencie
 owned masks, unchanged protected snapshot and seq8 state, and no execution of the
 deadline recovery service. They reject already-finalized runtime state. This
 separates early-boot proof from later runtime verification/release and cleanup.
-No reboot driver has yet been connected to this collector and no installed
-early-boot acceptance is claimed. A missed network-down sample is not itself
+The host driver's `boot --reboot` action now connects this collector using
+root-private persistent observation staging. It reserves reboot intent before
+one software-reboot command, polls read-only evidence, and only then invokes
+runtime verification/release and cleanup. An ambiguous reboot/proof/finalize
+leaves staging and the native guard for inspection, without another reboot or
+automatic duplicate restore. No installed early-boot acceptance is claimed.
+A missed network-down sample is not itself
 reboot proof or disproof; the changed boot identity is required.
 
 `tools/persistent_write_pending.py` now defines the host-tested ordering for the

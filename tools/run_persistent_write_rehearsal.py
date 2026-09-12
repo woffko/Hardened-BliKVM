@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from typing import cast
 from urllib.parse import urlsplit
 
@@ -22,6 +23,8 @@ from tools import installed_persistent_write as native
 from tools import stage_initialized_updater_upgrade as packages
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 from tools.secret_pair_stdin import secret_pair_stdin
+from tools import persistent_write_boot_proof as boot_proof
+from tools.stage_operational_reboot import REBOOT_COMMAND
 
 transport = packages.transport
 require = native.require
@@ -62,11 +65,13 @@ def validate_result(value: object, *, action: str, root: str) -> dict[str, objec
 def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str], dict[str, object]],
                observe: Callable[[], dict[str, object]], save: Callable[[], None],
                exercise: Callable[[], dict[str, object]] | None = None,
-               pending_exercise: Callable[[], dict[str, object]] | None = None) -> None:
+               pending_exercise: Callable[[], dict[str, object]] | None = None,
+               boot_exercise: Callable[[], dict[str, object]] | None = None) -> None:
     """Each state-changing phase is submitted once; reserve its receipt first."""
-    require(action in ("preflight", "rehearse", "browser", "pending"), "unreviewed rehearsal action")
+    require(action in ("preflight", "rehearse", "browser", "pending", "boot"), "unreviewed rehearsal action")
     require((exercise is not None) == (action == "browser"), "browser phase binding differs")
     require((pending_exercise is not None) == (action == "pending"), "pending phase binding differs")
+    require((boot_exercise is not None) == (action == "boot"), 'boot phase binding differs')
     receipt["before"] = observe()
     receipt["runtimeWritesClosed"] = True
     save()
@@ -81,6 +86,11 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
         save()
         if exercise is not None:
             receipt["browser"] = exercise()
+            save()
+        if boot_exercise is not None:
+            receipt['bootSubmissionAttempted'] = True
+            save()
+            receipt['earlyBoot'] = boot_exercise()
             save()
         if pending_exercise is not None:
             # Reserve before remote submission. A lost reply must not cause
@@ -99,14 +109,16 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
         receipt["guardRetained"] = False
         save()
         receipt["after"] = observe()
-        require(native.object_value(receipt["before"])["bootIdSha256"]
-                == native.object_value(receipt["after"])["bootIdSha256"], "unexpected reboot during same-boot rehearsal")
+        changed_boot = (native.object_value(receipt["before"])["bootIdSha256"]
+                        != native.object_value(receipt["after"])["bootIdSha256"])
+        require(changed_boot == (action == 'boot'), 'boot identity differs from requested rehearsal')
         receipt["result"] = "passed"
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt["result"] = "failed"
         receipt["errorType"] = type(error).__name__
         if (receipt.get("prepareSubmitted") is True and receipt.get("runtimeWritesClosed") is not True
-                and receipt.get("pendingSubmissionAttempted") is not True):
+                and receipt.get("pendingSubmissionAttempted") is not True
+                and receipt.get('bootSubmissionAttempted') is not True):
             try:
                 receipt["recovery"] = invoke("restore")
                 receipt["runtimeWritesClosed"] = True
@@ -120,7 +132,8 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending"))
+    parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending", "boot"))
+    parser.add_argument('--reboot', action='store_true', help='Explicitly allow one software reboot in boot mode')
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     for name in ("bundle", "base-url", "username"):
@@ -132,6 +145,11 @@ def main() -> int:
     host, port = transport.parse_endpoint(args.endpoint)
     browser_mode = args.action == "browser"
     pending_mode = args.action == "pending"
+    boot_mode = args.action == 'boot'
+    require(args.reboot == boot_mode, 'boot action requires explicit --reboot and other actions forbid it')
+    if boot_mode:
+        for name in ('persistent_write_boot_proof.py', 'observe_persistent_write_boot.py'):
+            uploads[name] = Path(__file__).with_name(name).read_bytes()
     require(all((value is not None) == browser_mode for value in (args.base_url, args.username)),
             "browser arguments required only for browser action")
     require((args.bundle is not None) == (browser_mode or pending_mode), 'archive required only for upload scenarios')
@@ -151,7 +169,7 @@ def main() -> int:
                 uploads[name] = Path(__file__).with_name(name).read_bytes()
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     run_id = secrets.token_hex(12)
-    stage = "/tmp/blikvm-persistent-write-" + run_id
+    stage = ('/var/lib/blikvm-write-boot-probe-' if boot_mode else '/tmp/blikvm-persistent-write-') + run_id
     root = "/var/lib/" + native.contract.PREFIX + run_id
     receipt: dict[str, object] = {"probe": "persistent-write-wiring-rehearsal", "action": args.action, "result": "failed",
         "guardRoot": root, "stageRoot": stage, "prepareSubmitted": False, "cleanupSubmitted": False,
@@ -246,6 +264,43 @@ def main() -> int:
                 and type(terminal.get('status')) is int and terminal['status'] == 50, 'natural worker exit missing')
         validate_result(value.get('restored'), action='restore', root=root)
         return value
+    def exercise_boot() -> dict[str, object]:
+        before_boot = native.object_value(receipt['before'])['bootIdSha256']
+        require(isinstance(before_boot, str), 'prepared boot identity missing')
+        assert isinstance(before_boot, str)
+        receipt['rebootRequested'] = True
+        save()  # Persist intent before a command whose successful reply may disappear.
+        try:
+            request = ssh(REBOOT_COMMAND, 20)
+            require(request.returncode in (0, 255), 'reboot request rejected')
+            receipt['rebootReplyCode'] = request.returncode
+        except subprocess.TimeoutExpired:
+            receipt['rebootReplyUnavailable'] = True
+        save()
+        deadline = time.monotonic() + 360
+        attempts = 0
+        while time.monotonic() < deadline:
+            attempts += 1
+            try:
+                response = ssh(shlex.join(['python3', '-B', stage + '/observe_persistent_write_boot.py',
+                    '--guard-root', root]), 45)
+                receipt['lastBootProbeExitCode'] = response.returncode
+                if response.returncode == 0 and len(response.stdout) <= 65536:
+                    value = native.object_value(json.loads(response.stdout,
+                        object_pairs_hook=native.temporary.upload.probe.unique_object))
+                    facts = native.object_value(value.get('facts'))
+                    qualified = boot_proof.validate(facts, prepared_boot=before_boot, transaction=run_id)
+                    require(value.get('readOnly') is True and value.get('qualification') == qualified,
+                            'boot collector qualification differs')
+                    receipt['bootRecoveryProbes'] = attempts
+                    return value
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                receipt['lastBootProbeErrorType'] = type(error).__name__
+                # Observation is retried; reboot and recovery actions are not.
+            time.sleep(2)
+        receipt['bootRecoveryProbes'] = attempts
+        save()
+        raise TimeoutError('new-boot early recovery proof unavailable; retain guard for inspection')
     try:
         require(ssh(f"set -eu\ntest ! -e {q(stage)} && test ! -L {q(stage)}\nmkdir -m 700 {q(stage)}").returncode == 0,
                 "rehearsal staging failed")
@@ -258,12 +313,15 @@ def main() -> int:
                 require(transport.run_ssh(target, secret, script, stdin=stream, timeout=60).returncode == 0, "rehearsal staging upload failed")
         run_phases(args.action, receipt, invoke=invoke, observe=observe, save=save,
                    exercise=exercise if browser_mode else None,
-                   pending_exercise=exercise_pending if pending_mode else None)
+                   pending_exercise=exercise_pending if pending_mode else None,
+                   boot_exercise=exercise_boot if boot_mode else None)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt["errorType"] = type(error).__name__
         receipt["independentInspectionRequired"] = True
     finally:
-        if staged and not (pending_mode and receipt.get('pendingSubmissionAttempted') and receipt.get('result') != 'passed'):
+        keep_failed_evidence = (receipt.get('result') != 'passed' and
+            ((pending_mode and receipt.get('pendingSubmissionAttempted')) or (boot_mode and receipt.get('bootSubmissionAttempted'))))
+        if staged and not keep_failed_evidence:
             staged_names = [*uploads, *(['pending-result.json'] if pending_mode else [])]
             allowed = " ".join("! -name " + q(name) for name in staged_names)
             paths = " ".join(q(stage + "/" + name) for name in staged_names)

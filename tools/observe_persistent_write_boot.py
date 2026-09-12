@@ -15,6 +15,14 @@ else:
     from tools import persistent_write_boot_proof as proof
 
 
+def require_unfinalized(root: Path, boot: str) -> None:
+    current = native.load(root)
+    native.require(current['phase'] == 'restored' and current['terminal'] is None, 'runtime finalize raced observer')
+    deadline = native.temporary.upload.properties(root.name + '-restore.service', ('ExecMainStartTimestampMonotonic',))
+    native.require(deadline['ExecMainStartTimestampMonotonic'] == '0', 'deadline started during observation')
+    native.require(native.boot_identity() == boot, 'boot changed during observation')
+
+
 def observe(root: Path) -> dict[str, object]:
     require = native.require
     require(os.geteuid() == 0, 'root observer required')
@@ -65,10 +73,8 @@ def observe(root: Path) -> dict[str, object]:
         'ownedFenceVerified': True, 'writePolicyAbsent': True, 'writeEnableLinksAbsent': True,
         'guardDependenciesAbsent': True, 'protectedConfigurationUnchanged': True, 'serverWritesDisabled': True,
         **{key: pipeline.status.get(key) for key in ('activeSlotId', 'confirmedSlotId', 'floorSequence', 'generation', 'pending')}}
-    require(native.boot_identity() == boot, 'boot changed during observation')
     # Do not let a concurrent late deadline convert this into runtime evidence.
-    current = native.load(root)
-    require(current['phase'] == 'restored' and current['terminal'] is None, 'runtime finalize raced observer')
+    require_unfinalized(root, boot)
     return {'facts': value, 'qualification': proof.validate(value,
         prepared_boot=cast(str, plan['boot']), transaction=transaction), 'readOnly': True}
 
