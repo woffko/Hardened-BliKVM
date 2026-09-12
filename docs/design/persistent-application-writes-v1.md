@@ -204,6 +204,17 @@ state. Its output labels the selected historical source rather than calling it
 current code. This diagnostic mode cannot import historical helpers for live slot
 inventory and still performs no commit qualification or policy change.
 
+Recovery content parsing now validates separately pinned pending/boot probe
+producers, original bindings, complete restoration/cleanup and unchanged
+baseline. Pending evidence requires a correlated worker, live admission fence,
+incomplete archive and natural exit1/status50. Boot evidence requires the
+read-only early proof, changed boot and final-state correspondence. The real
+seq8 pending and boot receipts pass with producer hashes taken independently
+from their Git revisions; they remain seq8 prerequisites, not seq9 acceptance.
+An explicit baseline can be supplied to the pure boot-proof validator without
+changing the legacy default or weakening timestamp/deadline checks. No additional
+device tests or permanent policy actions were performed for this parser work.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing

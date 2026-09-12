@@ -21,6 +21,14 @@ class BootProofTests(unittest.TestCase):
     def test_valid_proof_still_requires_runtime_finalization(self) -> None:
         self.assertTrue(self.check(self.value())['runtimeFinalizationStillRequired'])
 
+    def test_explicit_baseline_does_not_silently_use_legacy_floor(self) -> None:
+        slot = 'app-00000000000000000009-' + 'd' * 64
+        bound = proof.contract.EvidenceBinding('a' * 24, 'e' * 64, proof.contract.CONFIG_SHA256, slot, 9, 43)
+        value = {**self.value(), 'activeSlotId': slot, 'confirmedSlotId': slot, 'floorSequence': 9, 'generation': 43}
+        with self.assertRaises(ValueError): self.check(value)
+        result = proof.validate(value, prepared_boot='c' * 64, transaction='a' * 24, baseline=bound)
+        self.assertTrue(result['runtimeFinalizationStillRequired'])
+
     def test_every_required_field_is_checked(self) -> None:
         original = self.value()
         for key in original:

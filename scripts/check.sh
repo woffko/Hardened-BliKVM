@@ -43,7 +43,8 @@ python3 -B -m unittest \
   tools.test_run_persistent_write_rehearsal tools.test_finish_persistent_write_rehearsal \
   tools.test_upload_proxy_streaming tools.test_install_system_upgrade tools.test_persistent_write_pending \
   tools.test_installed_pending_write_gate tools.test_persistent_write_boot_proof tools.test_observe_persistent_write_boot \
-  tools.test_persistent_write_evidence_compatibility tools.test_persistent_write_activation_receipt
+  tools.test_persistent_write_evidence_compatibility tools.test_persistent_write_activation_receipt \
+  tools.test_persistent_write_recovery_receipt
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -315,6 +316,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_observe_persistent_write_boot.py \
     tools/persistent_write_evidence_compatibility.py tools/test_persistent_write_evidence_compatibility.py \
     tools/persistent_write_activation_receipt.py tools/test_persistent_write_activation_receipt.py \
+    tools/persistent_write_recovery_receipt.py tools/test_persistent_write_recovery_receipt.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
     tools/installed_persistent_write.py tools/test_installed_persistent_write.py \

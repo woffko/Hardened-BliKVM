@@ -14,7 +14,11 @@ else:
 require = contract.temporary.require
 
 
-def validate(value: dict[str, object], *, prepared_boot: str, transaction: str) -> dict[str, object]:
+def validate(value: dict[str, object], *, prepared_boot: str, transaction: str,
+             baseline: contract.EvidenceBinding | None = None) -> dict[str, object]:
+    if baseline is not None:
+        baseline.validate()
+        require(baseline.transaction_id == transaction, 'baseline transaction differs')
     require(re.fullmatch(r'[a-f0-9]{64}', prepared_boot) is not None
             and re.fullmatch(r'[a-f0-9]{24}', transaction) is not None, 'invalid prepared binding')
     require(value.get('transaction') == transaction, 'boot observation belongs to another transaction')
@@ -38,10 +42,12 @@ def validate(value: dict[str, object], *, prepared_boot: str, transaction: str) 
     for name in ('ownedFenceVerified', 'writePolicyAbsent', 'writeEnableLinksAbsent',
                  'guardDependenciesAbsent', 'protectedConfigurationUnchanged', 'serverWritesDisabled'):
         require(value.get(name) is True, 'closed boot policy evidence missing')
-    slot = contract.temporary.TARGET_SLOT
+    slot = baseline.baseline_slot if baseline is not None else contract.temporary.TARGET_SLOT
+    floor = baseline.baseline_floor if baseline is not None else 8
+    generation = baseline.baseline_generation if baseline is not None else 40
     require(value.get('activeSlotId') == slot and value.get('confirmedSlotId') == slot
-            and type(value.get('floorSequence')) is int and value['floorSequence'] == 8
-            and type(value.get('generation')) is int and value['generation'] == 40
+            and type(value.get('floorSequence')) is int and value['floorSequence'] == floor
+            and type(value.get('generation')) is int and value['generation'] == generation
             and 'pending' in value and value['pending'] is None, 'boot baseline changed')
     return {'result': 'passed', 'transaction': transaction, 'bootIdSha256': boot,
             'guardCompletedBeforeServing': True, 'deadlineNotExecuted': True,

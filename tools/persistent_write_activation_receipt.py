@@ -45,6 +45,19 @@ def reject_nonfinite(_value: str) -> object:
     raise ValueError('nonfinite receipt value')
 
 
+def read_binding(value: object) -> contract.EvidenceBinding:
+    bound = object_value(value)
+    require(set(bound) == {'transaction_id', 'device_fingerprint', 'configuration_sha256',
+                          'baseline_slot', 'baseline_floor', 'baseline_generation'}, 'invalid binding fields')
+    require(all(isinstance(bound[k], str) for k in ('transaction_id', 'device_fingerprint', 'configuration_sha256', 'baseline_slot')),
+            'invalid binding types')
+    binding = contract.EvidenceBinding(cast(str, bound['transaction_id']), cast(str, bound['device_fingerprint']),
+        cast(str, bound['configuration_sha256']), cast(str, bound['baseline_slot']),
+        number(bound['baseline_floor']), number(bound['baseline_generation']))
+    binding.validate()
+    return binding
+
+
 @dataclass(frozen=True)
 class Contents:
     original_bytes: bytes
@@ -81,15 +94,7 @@ def parse(raw: bytes, *, expected_runner: str, expected_browser_sources: Mapping
     require(number(value.get('applicationUploads')) == 1 and number(value.get('applicationActivations')) == 1,
             'activation was missing or repeated')
     prepared = object_value(value.get('prepared'))
-    bound = object_value(prepared.get('binding'))
-    require(set(bound) == {'transaction_id', 'device_fingerprint', 'configuration_sha256',
-                          'baseline_slot', 'baseline_floor', 'baseline_generation'}, 'invalid binding fields')
-    require(all(isinstance(bound[k], str) for k in ('transaction_id', 'device_fingerprint', 'configuration_sha256', 'baseline_slot')),
-            'invalid binding types')
-    binding = contract.EvidenceBinding(cast(str, bound['transaction_id']), cast(str, bound['device_fingerprint']),
-        cast(str, bound['configuration_sha256']), cast(str, bound['baseline_slot']),
-        number(bound['baseline_floor']), number(bound['baseline_generation']))
-    binding.validate()
+    binding = read_binding(prepared.get('binding'))
     root = '/var/lib/' + contract.PREFIX + binding.transaction_id
     require(value.get('guardRoot') == root and prepared.get('guardRoot') == root
         and prepared.get('result') == 'prepared' and prepared.get('phase') == 'wired'
