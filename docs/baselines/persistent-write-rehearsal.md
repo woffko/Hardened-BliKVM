@@ -325,3 +325,9 @@ Receipt: `evidence/private/seq9-activation-archive-audit-20260912-b.json`.
 An earlier mistyped producer SHA was rejected locally before device access.
 This audit proves archive correspondence, not current-controller equivalence
 or permanent-write permission.
+
+Strict recovery-content plus archive audit `37f875da99a84b0196a95acd1b6e1d36`
+also passed for the original seq8 boot receipt with producer
+`2f467a07d676c2d25e3a6ef538513e01fc9d4d23`. Archived source hashes and terminal
+state matched the independently parsed receipt. This remains historical seq8
+evidence and performs no current-policy qualification or device mutation.

@@ -14,6 +14,7 @@ if not __package__:
 from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 from tools import persistent_write_activation_receipt as activation_receipt
+from tools import persistent_write_recovery_receipt as recovery_receipt
 
 REMOTE = r'''
 import hashlib, json, os, pathlib, re, stat, sys
@@ -107,16 +108,19 @@ def main() -> int:
     parser.add_argument('--receipt', action='append', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--slot-inventory', action='store_true')
-    parser.add_argument('--activation-source-commit', help='Diagnostic historical producer revision; does not approve reuse')
+    producers = parser.add_mutually_exclusive_group()
+    producers.add_argument('--activation-source-commit', help='Diagnostic historical activation producer; does not approve reuse')
+    producers.add_argument('--recovery-source-commit', help='Diagnostic historical recovery producer; does not approve reuse')
     args = parser.parse_args()
-    common.require(not (args.slot_inventory and args.activation_source_commit), 'historical code is never imported for slot inventory')
+    producer_commit = args.activation_source_commit or args.recovery_source_commit
+    common.require(not (args.slot_inventory and producer_commit), 'historical code is never imported for slot inventory')
     names = ('installed_persistent_write.py', *common.native.HELPERS)
     def producer_hash(path: str) -> str:
-        commit = args.activation_source_commit
+        commit = producer_commit
         common.require(isinstance(commit, str) and common.native.re.fullmatch(r'[a-f0-9]{40}', commit) is not None,
                        'full reviewed producer commit required')
         return hashlib.sha256(subprocess.check_output(['git', 'show', commit + ':' + path], timeout=10)).hexdigest()
-    current = {name: producer_hash('tools/' + name) if args.activation_source_commit
+    current = {name: producer_hash('tools/' + name) if producer_commit
                else hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in names}
     sources: list[dict[str, object]] = []
     for value in args.receipt:
@@ -126,6 +130,12 @@ def main() -> int:
         if args.activation_source_commit:
             parsed = activation_receipt.parse(raw, expected_runner=producer_hash('tools/run_persistent_write_rehearsal.py'),
                 expected_browser_sources={n: producer_hash('tools/playwright/' + n) for n in activation_receipt.BROWSER_SOURCES})
+        elif args.recovery_source_commit:
+            action = receipt.get('action')
+            common.require(action in recovery_receipt.PROBES, 'not a reviewed recovery action')
+            parsed = recovery_receipt.parse(raw, action=action,
+                expected_runner=producer_hash('tools/run_persistent_write_rehearsal.py'),
+                expected_probe_sources={n: producer_hash('tools/' + n) for n in recovery_receipt.PROBES[action]})
         common.require(receipt.get('result') == 'passed' and receipt.get('runtimeWritesClosed') is True
             and receipt.get('guardRetained') is False and receipt.get('controllerStagingRemoved') is True,
             'completed restored rehearsal required')
@@ -133,7 +143,7 @@ def main() -> int:
         common.require(all(receipt['sourceHashes'].get(name) == sha for name, sha in current.items()), 'native source does not match selected reference')
         entry: dict[str, object] = {'action': receipt['action'], 'archiveRoot': cleanup['archiveRoot'],
             'binding': receipt['prepared']['binding'], 'sourceReceiptSha256': hashlib.sha256(raw).hexdigest(),
-            'sourceReference': args.activation_source_commit or 'current-code', 'nativeSourceHashes': current}
+            'sourceReference': producer_commit or 'current-code', 'nativeSourceHashes': current}
         if parsed is not None:
             entry['expectedTerminal'] = {'slot': parsed.terminal_slot, 'floor': parsed.terminal_floor, 'generation': parsed.terminal_generation}
         sources.append(entry)

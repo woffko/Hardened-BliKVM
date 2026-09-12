@@ -215,6 +215,16 @@ An explicit baseline can be supplied to the pure boot-proof validator without
 changing the legacy default or weakening timestamp/deadline checks. No additional
 device tests or permanent policy actions were performed for this parser work.
 
+A separate read-only retained-policy snapshot now checks the previously missing
+post-detachment state: durable committed winner matching the plan, retained write
+files and enable links, no transaction drop-ins/Requires edges, exact loaded
+fragments, running write environment and active endpoints with mode0620 and
+dedicated identities. It returns the usual protected snapshot for the caller to
+compare. It does not alter the existing recovery snapshot or enable/commit policy.
+The guard unit's own Before edge can still imply After until unloaded; this is
+not mistaken for a remaining Requires dependency. Native commit/evidence-store
+integration and installed retained-policy acceptance are still pending.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing
