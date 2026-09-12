@@ -144,8 +144,13 @@ It uses two pages of one authenticated session: one keeps the upload mounted,
 the other invokes the real Account/Logout control. A single-tab Account switch
 would first unmount/cancel the upload and could not isolate session revocation.
 The scenario checks an invalid archive, partial-progress cancellation, retry of
-the exact already-present seq8 archive, and HTTP 401 for an in-flight upload
-after logout. It forbids activation and restores/cleans the native policy after
+the exact already-present seq8 archive, and termination of the original upload
+after logout. It accepts either an observed HTTP 401 or a request-specific
+`ERR_ABORTED` after Logout was requested, while the browser remains open.
+Both pages must reach Login and protected status must return HTTP 401; a
+successful upload response, a pre-logout abort, or browser teardown cannot
+pass. The receipt distinguishes HTTP rejection from client cancellation, and
+does not measure native worker stop latency. It forbids activation and restores/cleans the native policy after
 the browser phase. Its paired SSH/GUI credentials are supplied only on stdin.
 
 If plan/decision I/O or runtime recovery fails, the controller attempts an

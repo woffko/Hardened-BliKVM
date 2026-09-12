@@ -42,6 +42,7 @@ python3 -B -m unittest \
   tools.test_persistent_write_systemd tools.test_persistent_write_snapshot tools.test_installed_persistent_write \
   tools.test_run_persistent_write_rehearsal tools.test_finish_persistent_write_rehearsal
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
+node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
 

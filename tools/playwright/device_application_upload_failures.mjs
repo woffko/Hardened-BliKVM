@@ -4,6 +4,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
+  watchUploadTermination,
+  validateUploadTermination,
+} from "./upload_termination.mjs";
+import {
   uploadRoute,
   activationRoute,
   bundleBytes,
@@ -60,6 +64,7 @@ const receipt = {
   twoPagesOneSession: true,
 };
 let browser;
+let termination;
 let phase = "launch";
 try {
   const { chromium } = await import(pathToFileURL(modulePath).href);
@@ -306,7 +311,7 @@ try {
   await verifySelection(bundleBytes, bundleSha256, "signed-seq8");
   await throttle(true);
   phase = "logout-partial";
-  response = uploadResponse();
+  termination = watchUploadTermination(page, uploadRoute);
   await panel
     .getByRole("button", { name: "Upload and verify", exact: true })
     .click();
@@ -317,19 +322,22 @@ try {
       r.request().method() === "POST",
   );
   await logout.click();
+  termination.markLogoutRequested();
   await account.getByRole("button", { name: "Yes", exact: true }).click();
   phase = "await-logout-response";
   receipt.logoutHttpStatus = (await loggedOut).status();
   assert.equal(receipt.logoutHttpStatus, 200);
   // Partial progress was recorded before the real logout. Stop artificially
   // stretching the remaining HTTP body while awaiting its rejected result;
-  // still require this exact in-flight request, not a replacement, to be 401.
+  // still observe this exact request ending (401 or abort), then independently
+  // require both login screens and protected status HTTP 401 before success.
   await throttle(false);
   receipt.throttleReleasedAfterLogout = true;
   phase = "await-upload-revocation";
-  receipt.revokedUploadHttpStatus = (await response).status();
-  assert.equal(receipt.revokedUploadHttpStatus, 401);
-  receipt.inflightUploadRevoked = true;
+  const ended = await termination.done;
+  validateUploadTermination(ended);
+  receipt.uploadTermination = ended;
+  termination.dispose();
   phase = "logged-out-navigation";
   await page.waitForFunction(
     () => document.title === "Login - Hardened BliKVM",
@@ -347,6 +355,7 @@ try {
   );
   assert.equal(status, 401);
   receipt.unauthenticatedStatus = status;
+  receipt.inflightUploadRevoked = true;
   assert.equal(receipt.uploadRequests, 4);
   assert.equal(receipt.activationRequests, 0);
   assert.equal(receipt.logoutRequests, 1);
@@ -367,6 +376,7 @@ try {
   // No error messages, response bodies, cookies, credentials or DOM snapshots.
 } finally {
   password = "";
+  termination?.dispose();
   await browser?.close();
   fs.writeFileSync(output, JSON.stringify(receipt, null, 2), {
     mode: 0o600,

@@ -184,7 +184,7 @@ def main() -> int:
         destination = output.with_name(output.stem + "-" + run_id + "-browser.json")
         require(not destination.exists(), "new browser receipt required")
         sources = ("device_application_upload_failures.mjs", "application_write_acceptance.mjs",
-            "application_response_capture.mjs", "status_api_acceptance.mjs")
+            "application_response_capture.mjs", "status_api_acceptance.mjs", "upload_termination.mjs")
         receipt["browserSourceHashes"] = {name: hashlib.sha256((Path(__file__).parent / "playwright" / name).read_bytes()).hexdigest()
             for name in sources}
         receipt["browserReceipt"] = str(destination)
