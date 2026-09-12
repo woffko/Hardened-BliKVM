@@ -222,3 +222,23 @@ checks, no page errors and zero upload/activation requests. Receipt:
 `evidence/private/persistent-write-boot-20260912-a-gui-closed.json`.
 This is authenticated UI availability/status evidence, not permission to retain
 write admission or proof of committed-policy boot survival.
+
+### Provenance audit and next activation boundary
+
+Read-only audit `932a894f28724f009b3dd580b1f13de9` compared the successful
+browser, pending-upload and boot receipts against their retained root-private
+archives. All native controller/helper source hashes matched the current code;
+the package, serving executable and protected account/TLS/trust/Nginx-config
+hashes matched across these three archives. No raw private configuration was
+exported. This is provenance evidence, not a current-transaction qualification,
+an audit of the earlier activation receipt, or approval for permanent writes.
+
+The current commit contract still requires exact current-transaction evidence.
+Destructive recovery prerequisites must not be relabeled as if they ran in that
+transaction. Current GUI checks can be repeated without policy revocation, but
+a new full activation cannot use the already-active seq8: the network supervisor
+rejects it as `AlreadyActive`. Upload admission is limited to eight slots, and
+all eight retained slots have been preserved. A new positive seq9 cycle therefore
+requires separately reviewed/authorized slot reclamation or another explicitly
+approved capacity strategy; neither garbage collection nor seq9 publication/
+activation has been performed. Permanent retention also remains unapproved.

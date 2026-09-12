@@ -308,6 +308,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/persistent_write_pending.py tools/test_persistent_write_pending.py \
     tools/installed_pending_write_gate.py tools/test_installed_pending_write_gate.py \
     tools/cleanup_pending_staging.py \
+    tools/audit_write_prerequisites.py \
     tools/persistent_write_boot_proof.py tools/test_persistent_write_boot_proof.py tools/observe_persistent_write_boot.py \
     tools/test_observe_persistent_write_boot.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
