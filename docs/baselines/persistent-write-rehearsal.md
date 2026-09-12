@@ -252,3 +252,22 @@ Native `gc 5` retains the other five unreferenced slots. The guarded host tool
 rechecks the complete inventory/tree hashes and idle closed pipeline, invokes
 only native GC, and requires exactly that deletion with unchanged remaining
 trees and status. No reclamation result is claimed at this preparation point.
+
+Native reclamation `f7b2bdfefb59471889278742465ffb2a` subsequently passed:
+only the inventoried seq1 was removed; seq2–seq8 tree fingerprints and the full
+status were unchanged, including active/confirmed seq8, previous seq7, floor8
+and generation40. Write admission remained closed. No disk clone was created.
+
+Two independently packaged seq9 application archives were then built under
+`/mnt/d/debug/blikvm/hardened-blikvm/production-application-seq9-{a,b}` using the
+same accepted application payload/source `7c813a7844b75774fea451516fc2b82d6a579d13`,
+runtime package SHA `da51a1990e39cbc7889cd369a599ddd5a62b1b2544237cb96d30bf2287fd67fb`,
+and existing enrolled signing key. They are byte-identical (8,724,480 bytes):
+bundle SHA `8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f`,
+manifest SHA `5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2`.
+Version remains `0.1.0-dev6`, sequence9, minimum system sequence1; no new
+application implementation is implied by this activation-test artifact.
+Host verification `evidence/private/seq9-host-verification-20260912-a.json`
+passed signature/payload validation, idempotent stage, repeat-initialize refusal,
+tamper/wrong-key rejection and temporary-root cleanup. It contacted no device
+and executed no payload binary. Seq9 device staging/activation is still pending.
