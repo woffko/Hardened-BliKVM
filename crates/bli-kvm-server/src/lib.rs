@@ -311,6 +311,7 @@ async fn security_headers(request: Request, next: Next) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod http_transport;
     use std::{fs, net::SocketAddr};
 
     use axum::{
@@ -837,6 +838,72 @@ mod tests {
             manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
             "read_write"
         );
+    }
+
+    #[tokio::test]
+    async fn logout_upload_returns_unauthorized_over_real_http1() {
+        use tokio::net::{TcpListener, TcpStream};
+        use tokio::time::{Duration, timeout};
+
+        timeout(Duration::from_secs(10), async {
+            let root = tempdir().unwrap();
+            let socket = root.path().join("upload.sock");
+            let worker = UnixListener::bind(&socket).unwrap();
+            let app = app_with_options(ServerOptions {
+                state_dir: root.path().join("account"),
+                update_status_socket: Some(root.path().join("status.sock")),
+                update_upload_socket: Some(socket),
+                update_activation_socket: Some(root.path().join("activation.sock")),
+                update_writes_enabled: true,
+                ..ServerOptions::default()
+            });
+            let (cookie, csrf) = setup_and_login(&app).await;
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .await
+                .unwrap();
+            });
+            let mut upload = TcpStream::connect(address).await.unwrap();
+            upload.write_all(format!(
+                "POST /api/application-update/upload HTTP/1.1\r\nHost: localhost\r\nOrigin: https://localhost\r\nCookie: {cookie}\r\nx-csrf-token: {csrf}\r\nContent-Type: application/octet-stream\r\nContent-Length: 32768\r\nConnection: close\r\n\r\na"
+            ).as_bytes()).await.unwrap();
+            let (mut ipc, _) = worker.accept().await.unwrap();
+            let length = ipc.read_u32().await.unwrap() as usize;
+            assert!(length < 65536);
+            ipc.read_exact(&mut vec![0; length]).await.unwrap();
+            let mut first = [0; 1];
+            ipc.read_exact(&mut first).await.unwrap();
+            assert_eq!(first, [b'a']);
+
+            let mut logout = TcpStream::connect(address).await.unwrap();
+            logout.write_all(format!(
+                "POST /api/auth/logout HTTP/1.1\r\nHost: localhost\r\nOrigin: https://localhost\r\nCookie: {cookie}\r\nx-csrf-token: {csrf}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            ).as_bytes()).await.unwrap();
+            let mut logout_response = Vec::new();
+            logout.read_to_end(&mut logout_response).await.unwrap();
+            assert!(logout_response.starts_with(b"HTTP/1.1 200"));
+            // Bytes sent after logout must not be delivered to the worker.
+            let _ = upload.write_all(b"not-for-the-worker").await;
+            let mut upload_response = Vec::new();
+            let read = upload.read_to_end(&mut upload_response).await;
+            server.abort();
+            assert!(
+                upload_response.starts_with(b"HTTP/1.1 401"),
+                "missing HTTP 401, transport={:?}, response_bytes={}",
+                read.err().map(|error| error.kind()),
+                upload_response.len()
+            );
+            let mut remaining = Vec::new();
+            ipc.read_to_end(&mut remaining).await.unwrap();
+            assert!(remaining.is_empty());
+        })
+        .await
+        .expect("bounded real HTTP logout test timed out");
     }
 
     #[tokio::test]

@@ -15,10 +15,21 @@ from tools import run_application_write_gate as runner
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 REMOTE = r'''
-import json, pathlib, subprocess
+import json, pathlib, re, subprocess
 units = ("hardened-blikvm-nginx.service", "hardened-blikvm-server-current.service", "hardened-blikvm-update-upload@*.service")
 patterns = ("Permission denied", "No space left on device", "Connection refused", "client intended to send too large body", "upstream prematurely closed", "Failed", "failed", "status=", "quota", "invalid_archive")
+patterns += ("recv() failed", "send() failed", "Connection reset by peer", "while sending request to upstream", "while reading response header from upstream")
 facts = {}
+config = pathlib.Path("/etc/hardened-blikvm/nginx.conf").read_bytes()
+if len(config) > 65536:
+    raise ValueError("oversize proxy configuration")
+directives = b"\n".join(line.split(b"#", 1)[0] for line in config.splitlines())
+# Return only constrained directive values, never private configuration text.
+facts["proxyPolicy"] = {
+    "requestBuffering": [value.decode() for value in re.findall(rb"\bproxy_request_buffering\s+(on|off)\s*;", directives)],
+    "responseBuffering": [value.decode() for value in re.findall(rb"\bproxy_buffering\s+(on|off)\s*;", directives)],
+    "includesPresent": re.search(rb"\binclude\s", directives) is not None,
+}
 for unit in units:
     result = subprocess.run(["journalctl", "--no-pager", "--output=cat", "--since=-20min", "--lines=100", "--unit=" + unit], capture_output=True, timeout=10)
     if result.returncode != 0 or len(result.stdout) > 262144:
