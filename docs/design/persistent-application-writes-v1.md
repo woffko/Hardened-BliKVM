@@ -196,6 +196,14 @@ hashes independently computed from Git source `1acd504`. This validates content,
 not root-owned custody or archived-state correspondence; it is still not wired
 to commit and does not supply permanent-retention approval.
 
+The read-only archive auditor now supports an explicitly selected historical
+activation producer commit. It derives code hashes from Git, parses the original
+receipt with independently pinned producers, and checks the retained root-owned
+archive's binding, canonical revoked decision, observed counters and terminal
+state. Its output labels the selected historical source rather than calling it
+current code. This diagnostic mode cannot import historical helpers for live slot
+inventory and still performs no commit qualification or policy change.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing

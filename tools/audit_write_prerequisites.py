@@ -6,12 +6,14 @@ import hashlib
 import json
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
+from tools import persistent_write_activation_receipt as activation_receipt
 
 REMOTE = r'''
 import hashlib, json, os, pathlib, re, stat, sys
@@ -39,6 +41,19 @@ for source in sources:
         archived = 'controller.py' if name == 'installed_persistent_write.py' else name
         matches[name] = hashlib.sha256(read(root / archived)).hexdigest() == expected
     decision_raw = read(root / 'decision.json')
+    decision = json.loads(decision_raw)
+    require(set(decision) == {'schemaVersion', 'binding', 'outcome', 'receipt_hashes'}
+        and type(decision['schemaVersion']) is int and decision['schemaVersion'] == 1
+        and decision['binding'] == plan['binding'] and decision['outcome'] == 'revoked'
+        and decision['receipt_hashes'] == {}
+        and json.dumps(decision, sort_keys=True, separators=(',', ':')).encode() == decision_raw)
+    if 'expectedTerminal' in source:
+        require(plan['terminal'] == source['expectedTerminal']
+            and plan['observed'] == {k: source['expectedTerminal'][k] for k in ('floor', 'generation')})
+        initial = plan['before']['managerStatus']
+        require(initial['activeSlotId'] == initial['confirmedSlotId'] == plan['binding']['baseline_slot']
+            and initial['floorSequence'] == plan['binding']['baseline_floor']
+            and initial['generation'] == plan['binding']['baseline_generation'] and initial['pending'] is None)
     before = plan['before']
     runtime = before['runtime']
     fields = ('account', 'nginxConfig', 'certificate', 'tlsKey', 'trust')
@@ -47,6 +62,8 @@ for source in sources:
     require(re.fullmatch(r'[a-f0-9]{64}', before['serving']['executableSha256']))
     results.append({'action': source['action'], 'sourceReceiptSha256': source['sourceReceiptSha256'],
         'sourceBinding': plan['binding'], 'archivePlanSha256': hashlib.sha256(raw).hexdigest(),
+        'sourceReference': source.get('sourceReference', 'current-code'),
+        'terminalMatchesParsedReceipt': 'expectedTerminal' in source,
         'archiveDecisionSha256': hashlib.sha256(decision_raw).hexdigest(), 'nativeSourceMatches': matches,
         'packageSha256': hashlib.sha256(read(root / 'new.deb')).hexdigest(),
         'protectedRuntimeHashes': runtime_hashes,
@@ -90,21 +107,36 @@ def main() -> int:
     parser.add_argument('--receipt', action='append', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--slot-inventory', action='store_true')
+    parser.add_argument('--activation-source-commit', help='Diagnostic historical producer revision; does not approve reuse')
     args = parser.parse_args()
+    common.require(not (args.slot_inventory and args.activation_source_commit), 'historical code is never imported for slot inventory')
     names = ('installed_persistent_write.py', *common.native.HELPERS)
-    current = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in names}
+    def producer_hash(path: str) -> str:
+        commit = args.activation_source_commit
+        common.require(isinstance(commit, str) and common.native.re.fullmatch(r'[a-f0-9]{40}', commit) is not None,
+                       'full reviewed producer commit required')
+        return hashlib.sha256(subprocess.check_output(['git', 'show', commit + ':' + path], timeout=10)).hexdigest()
+    current = {name: producer_hash('tools/' + name) if args.activation_source_commit
+               else hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in names}
     sources: list[dict[str, object]] = []
     for value in args.receipt:
         raw = common.transport.validate_private_file(value).read_bytes()
         receipt = json.loads(raw)
+        parsed = None
+        if args.activation_source_commit:
+            parsed = activation_receipt.parse(raw, expected_runner=producer_hash('tools/run_persistent_write_rehearsal.py'),
+                expected_browser_sources={n: producer_hash('tools/playwright/' + n) for n in activation_receipt.BROWSER_SOURCES})
         common.require(receipt.get('result') == 'passed' and receipt.get('runtimeWritesClosed') is True
             and receipt.get('guardRetained') is False and receipt.get('controllerStagingRemoved') is True,
             'completed restored rehearsal required')
         cleanup = common.validate_result(receipt['cleaned'], action='cleanup', root=receipt['guardRoot'])
-        common.require(all(receipt['sourceHashes'].get(name) == sha for name, sha in current.items()), 'native source changed since receipt')
-        sources.append({'action': receipt['action'], 'archiveRoot': cleanup['archiveRoot'],
+        common.require(all(receipt['sourceHashes'].get(name) == sha for name, sha in current.items()), 'native source does not match selected reference')
+        entry: dict[str, object] = {'action': receipt['action'], 'archiveRoot': cleanup['archiveRoot'],
             'binding': receipt['prepared']['binding'], 'sourceReceiptSha256': hashlib.sha256(raw).hexdigest(),
-            'nativeSourceHashes': current})
+            'sourceReference': args.activation_source_commit or 'current-code', 'nativeSourceHashes': current}
+        if parsed is not None:
+            entry['expectedTerminal'] = {'slot': parsed.terminal_slot, 'floor': parsed.terminal_floor, 'generation': parsed.terminal_generation}
+        sources.append(entry)
     output = common.transport.validate_output_path(args.output)
     common.require(not output.exists(), 'fresh provenance audit receipt required')
     host, port = common.transport.parse_endpoint(args.endpoint)

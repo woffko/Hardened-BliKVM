@@ -316,3 +316,12 @@ loaded/running policy, restoration, cleanup and independent final observation
 passed without uploads, activation or reboot. Receipt
 `evidence/private/persistent-write-seq9-idle-20260912-a.json` has SHA-256
 `7271592c080280f9bfea6d01c0829ba6fb979d253623c7181571e750531708eb`.
+
+Historical seq9 activation archive audit `589a5472ace34f2fa4bc6d02d51bfe07`
+matched producer `1acd504be4b1fabc8114915d57c6864e2e51f812`, the original receipt
+digest, root-owned archive binding, canonical revoked decision and terminal/
+observed counters 9/43. All selected native source files matched that producer.
+Receipt: `evidence/private/seq9-activation-archive-audit-20260912-b.json`.
+An earlier mistyped producer SHA was rejected locally before device access.
+This audit proves archive correspondence, not current-controller equivalence
+or permanent-write permission.
