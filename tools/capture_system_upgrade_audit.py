@@ -15,7 +15,7 @@ from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 REMOTE_POST = r'''
-import json, os, pathlib, subprocess
+import hashlib, json, os, pathlib, subprocess
 facts = {'readOnly': True, 'freshSshConnection': True, 'kernel': os.uname().release}
 facts['availableBytes'] = {p: os.statvfs(p).f_bavail * os.statvfs(p).f_frsize for p in ('/', '/mnt')}
 facts['aptCaches'] = {p: pathlib.Path(p).stat().st_size if pathlib.Path(p).exists() else 0
@@ -37,6 +37,25 @@ facts['dpkgAuditClean'] = r.returncode == 0 and not r.stdout.strip()
 r = subprocess.run(['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\n',
     'nginx-core', 'systemd', 'libc6', 'openssh-server', 'network-manager'], capture_output=True, check=True, timeout=30)
 facts['versions'] = dict(line.split('\t', 1) for line in r.stdout.decode().splitlines())
+def nginx_pid():
+    value = subprocess.run(['systemctl', 'show', 'hardened-blikvm-nginx.service',
+        '--property=MainPID', '--value'], capture_output=True, check=True, timeout=10)
+    pid = int(value.stdout.strip())
+    if pid <= 1: raise ValueError('custom nginx has no running master')
+    return pid
+def binary_hash(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        if os.fstat(stream.fileno()).st_size > 16777216:
+            raise ValueError('oversize nginx executable')
+        for chunk in iter(lambda: stream.read(1048576), b''): digest.update(chunk)
+    return digest.hexdigest()
+pid = nginx_pid()
+installed_hash = binary_hash('/usr/sbin/nginx')
+running_hash = binary_hash('/proc/' + str(pid) + '/exe')
+if nginx_pid() != pid: raise ValueError('nginx master changed during observation')
+facts['nginxExecutable'] = {'masterPid': pid, 'installedSha256': installed_hash,
+    'runningSha256': running_hash, 'runningMatchesInstalled': installed_hash == running_hash}
 print(json.dumps(facts, sort_keys=True))
 '''
 

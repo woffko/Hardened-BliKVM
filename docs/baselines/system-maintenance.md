@@ -6,7 +6,7 @@ That choice does not authorize publishing device secrets. No image clone has
 been made. Restoring stock firmware later will not restore private settings
 from this repository; a fresh deployment/configuration will be needed.
 
-## Verified device baseline
+## Initial device baseline (before maintenance)
 
 - Ubuntu 22.04/Jammy userspace, Armbian board-support package 22.08.2,
   `mangopimcore`/sunxi64, running kernel 5.19.4.
@@ -49,7 +49,7 @@ The two regenerable binary caches were removed, freeing 207,810,560 bytes.
 Root available space became 803,225,600 bytes; `/mnt` available space became
 11,691,372,544 bytes. The dpkg status hash was unchanged.
 
-Package installation has not been executed. `tools/prepare_system_upgrade_plan.py`
+Before installation, `tools/prepare_system_upgrade_plan.py`
 refreshes metadata in a fresh directory on `/mnt`, disables update hooks, keeps
 the configured repository/signature policy, and calculates a no-removal upgrade
 without installing. Existing holds and kernel/bootloader/Armbian packages are

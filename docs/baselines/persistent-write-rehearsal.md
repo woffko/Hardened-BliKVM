@@ -101,8 +101,36 @@ path from `BLI_KVM_TEST_NGINX`.
 Nginx request buffering defaults to `on`; `proxy_buffering off` affects
 responses, not uploaded bodies. See the
 [Nginx directive documentation](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_request_buffering).
-The proposed device remedy is streaming only the application-upload route
+The device remedy proposed at that checkpoint was streaming only the application-upload route
 with `proxy_request_buffering off`, preserving authentication/CSRF and body
-limits. This changes the previously preserved Nginx boundary, so it has not
-been applied to the device. Backed-up configuration validation/reload and a
-new guarded browser acceptance are required before retention can proceed.
+limits. This changed the previously preserved Nginx boundary and required
+separate approval before application.
+
+### Subsequent device streaming and system maintenance
+
+With user approval, upload-only streaming was applied and reload-verified.
+The retained configuration hash became
+`a1bf9d746c15988c3806b50f5dc7a3f7a30660d2a7ead7e95d7b0b32340deb16`.
+The following browser run (`persistent-write-browser-20260912-e.json`) still
+returned HTTP 502 for the original upload after Logout. Its restoration and
+cleanup completed; this is not a passed session-revocation gate.
+
+The subsequent same-release system update installed 214 packages, including
+Nginx `1.18.0-6ubuntu14.20`, while preserving the custom Nginx configuration.
+See [system maintenance](system-maintenance.md) for the verified package and
+storage baseline. The custom Nginx service was deliberately not restarted by
+package installation. Its running executable must be checked and, if necessary,
+restarted under the existing device authorization before attributing a new
+Logout/upload result to the updated package. No post-update browser gate has
+yet been recorded; permanent write retention remains unaccepted.
+
+Full host checks passed in job `339cbfe6f14149978eb8b0ed42ac99cc` after system
+maintenance. Independent executable inspection found the old Nginx master;
+the scoped restart subsequently replaced it with the installed executable
+(`8c9a61fc3185bb31cd5e9b82b0640ca416fadb8b1764c293d3cce6472787e0a6`).
+The restart controller itself returned failure in its postchecks, so it is not
+claimed as fully accepted. Independent inspection proved the new executable,
+unchanged proxy configuration, active application services and closed sockets.
+The subsequent native preflight (`20c0dfc052c74b0a800919ffba71a4a9`) passed:
+selected/confirmed sequence 8, floor 8, generation 40, no pending/rollback, writes
+closed and staging removed. A new guarded browser gate is the next step.

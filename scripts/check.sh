@@ -296,6 +296,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/cleanup_application_write_guard.py tools/capture_application_write_failure.py \
     tools/capture_system_upgrade_audit.py tools/relocate_apt_cache.py tools/prepare_system_upgrade_plan.py \
     tools/download_system_upgrade.py \
+    tools/refresh_nginx_runtime.py \
     tools/install_system_upgrade.py tools/test_install_system_upgrade.py \
     tools/persistent_write_contract.py tools/test_persistent_write_contract.py \
     tools/persistent_write_files.py tools/test_persistent_write_files.py tools/verify_persistent_write_ordering.py \
