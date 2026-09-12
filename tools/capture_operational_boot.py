@@ -35,6 +35,12 @@ SEQ9_SLOT = "app-00000000000000000009-5f1aee4802addd6c0c0b444224345624cd8b9b8c46
 APPLICATION_PROFILES = ("seq2", "seq6", "seq7", "seq8", "seq9")
 
 
+def retained_profile(name: str) -> tuple[str, int, int, str]:
+    profiles = {'seq8': (SEQ8_SLOT, 8, 40, SEQ7_SLOT), 'seq9': (SEQ9_SLOT, 9, 43, SEQ8_SLOT)}
+    require(name in profiles, 'unreviewed persistent application baseline')
+    return profiles[name]
+
+
 def resolve_application_profile(updater_profile: str, requested: str | None) -> str:
     allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7", "seq8", "seq9") if updater_profile == "dev7-dev9" else ()
     if not allowed:
@@ -62,7 +68,7 @@ def capture(assets: Path, post: bool, application_profile: str | None = None) ->
     application_profile = resolve_application_profile(u.selected_profile, application_profile)
     u.installed(assets, "new")
     if application_profile == "seq9":
-        snapshot = retained_snapshot(SEQ9_SLOT, 9, 43, SEQ8_SLOT)
+        snapshot = retained_snapshot(*retained_profile('seq9'))
     elif application_profile == "seq8":
         snapshot = seq8_snapshot()
     elif application_profile == "seq7":
@@ -93,7 +99,7 @@ def capture(assets: Path, post: bool, application_profile: str | None = None) ->
 
 
 def seq8_snapshot() -> dict[str, object]:
-    return retained_snapshot(SEQ8_SLOT, 8, 40, SEQ7_SLOT)
+    return retained_snapshot(*retained_profile('seq8'))
 
 
 def retained_snapshot(slot: str, floor: int, generation: int, previous: str) -> dict[str, object]:

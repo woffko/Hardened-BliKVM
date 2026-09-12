@@ -115,8 +115,9 @@ The candidate privileged coordinator now exposes `prepare`, cgroup-bound
 `wire`, `restore`, and `cleanup` commands. It stages root-private pinned code and backups,
 arms boot/deadline recovery before policy installation, and leaves dormant
 guard definitions and recovery metadata after restoration for explicit
-inspection/cleanup. Initial preparation is restricted to the accepted
-slot-eight baseline; recovery preserves later monotonic state. Host tests
+inspection/cleanup. Initial preparation requires a reviewed baseline: legacy
+seq8/floor8/generation40 or confirmed seq9/floor9/generation43. Recovery uses the
+persisted binding/counters and preserves later monotonic state. Host tests
 cover import closure, boot arming/restoration routing, write failure closure,
 counter persistence, and snapshot preservation. Its installed idle rehearsal
 has now passed; boot and pending-work recovery still need qualification.

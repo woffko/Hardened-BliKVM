@@ -154,6 +154,18 @@ class RehearsalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.validate_result({**value, "retentionApproved": True}, action="prepare", root=root)
 
+    def test_seq9_preparation_is_explicit_and_cannot_accept_seq8(self) -> None:
+        root = '/var/lib/' + runner.native.contract.PREFIX + 'a' * 24
+        binding = runner.native.contract.EvidenceBinding('a' * 24, 'b' * 64,
+            runner.native.contract.CONFIG_SHA256, runner.native.temporary.upload.boot.SEQ9_SLOT, 9, 43)
+        value = {'result': 'prepared', 'guardRoot': root, 'phase': 'wired', 'deadlineArmed': True,
+                 'retentionApproved': False, 'binding': asdict(binding)}
+        runner.validate_result(value, action='prepare', root=root, application_profile='seq9')
+        with self.assertRaises(ValueError): runner.validate_result(value, action='prepare', root=root)
+        invalid = {**asdict(binding), 'baseline_generation': 40}
+        with self.assertRaises(ValueError):
+            runner.validate_result({**value, 'binding': invalid}, action='prepare', root=root, application_profile='seq9')
+
     def test_payload_contains_no_application_archive_or_old_package(self) -> None:
         with patch.object(runner.packages, "select_profile"), \
                 patch.object(runner.packages, "upload_payloads", return_value={"bindings.json": b"{}", "new.deb": b"test", "old.deb": b"old"}):

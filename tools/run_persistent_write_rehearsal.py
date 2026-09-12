@@ -40,7 +40,8 @@ def build_uploads(old: str, new: str) -> dict[str, bytes]:
     return selected
 
 
-def validate_result(value: object, *, action: str, root: str) -> dict[str, object]:
+def validate_result(value: object, *, action: str, root: str, application_profile: str = 'seq8') -> dict[str, object]:
+    slot, floor, generation, _ = native.temporary.upload.boot.retained_profile(application_profile)
     result = native.object_value(value)
     expected = {"prepare": "prepared", "restore": "restored", "cleanup": "cleaned"}[action]
     require(result.get("result") == expected and result.get("guardRoot") == root, "controller receipt differs")
@@ -49,16 +50,16 @@ def validate_result(value: object, *, action: str, root: str) -> dict[str, objec
                 and result.get("retentionApproved") is False, "revocable preparation unproven")
         bound = native.binding({"binding": result.get("binding")})
         require(bound.transaction_id == Path(root).name[len(native.contract.PREFIX):]
-                and bound.baseline_slot == native.temporary.upload.boot.SEQ8_SLOT
-                and bound.baseline_floor == 8 and bound.baseline_generation == 40, "preparation baseline differs")
+                and bound.baseline_slot == slot
+                and bound.baseline_floor == floor and bound.baseline_generation == generation, "preparation baseline differs")
     elif action == "restore":
         require(result.get("runtimeVerified") is True and result.get("boot") is False
                 and result.get("retentionApproved") is False, "closed runtime restoration unproven")
     else:
         archive = "/var/lib/" + native.ARCHIVE_PREFIX + Path(root).name[len(native.contract.PREFIX):]
         require(result.get("runtimeWritesClosed") is True and result.get("archiveRoot") == archive
-                and type(result.get("floor")) is int and cast(int, result["floor"]) >= 8
-                and type(result.get("generation")) is int and cast(int, result["generation"]) >= 40, "cleanup or retained counters unproven")
+                and type(result.get("floor")) is int and cast(int, result["floor"]) >= floor
+                and type(result.get("generation")) is int and cast(int, result["generation"]) >= generation, "cleanup or retained counters unproven")
     return result
 
 
@@ -134,11 +135,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending", "boot", "activate"))
     parser.add_argument('--reboot', action='store_true', help='Explicitly allow one software reboot in boot mode')
+    parser.add_argument('--application-profile', choices=('seq8', 'seq9'), default='seq8')
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     for name in ("bundle", "base-url", "username"):
         parser.add_argument("--" + name)
     args = parser.parse_args()
+    require(args.application_profile == 'seq8' or args.action in ('preflight', 'rehearse'),
+            'this scenario is not qualified for the selected baseline')
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new rehearsal receipt required")
     uploads = build_uploads(args.old_package, args.new_package)
@@ -175,6 +179,7 @@ def main() -> int:
     stage = ('/var/lib/blikvm-write-boot-probe-' if boot_mode else '/tmp/blikvm-persistent-write-') + run_id
     root = "/var/lib/" + native.contract.PREFIX + run_id
     receipt: dict[str, object] = {"probe": "persistent-write-wiring-rehearsal", "action": args.action, "result": "failed",
+        'applicationProfile': args.application_profile,
         "guardRoot": root, "stageRoot": stage, "prepareSubmitted": False, "cleanupSubmitted": False,
         "runtimeWritesClosed": False, "guardRetained": False, "applicationUploads": 0, "applicationActivations": 0,
         "targetPowerControl": False, "rebootRequested": False, "retentionApproved": False,
@@ -204,13 +209,15 @@ def main() -> int:
         if action == "prepare":
             receipt["guardRetained"] = True
             save()
-            argv += ["--assets", stage]
+            argv += ["--assets", stage, '--application-profile', args.application_profile]
         response = ssh(shlex.join(argv), {"prepare": 260, "restore": 300, "cleanup": 180}[action])
         require(response.returncode == 0 and len(response.stdout) <= 65536, "native controller phase failed")
-        return validate_result(json.loads(response.stdout, object_pairs_hook=native.temporary.upload.probe.unique_object), action=action, root=root)
+        return validate_result(json.loads(response.stdout, object_pairs_hook=native.temporary.upload.probe.unique_object),
+                               action=action, root=root, application_profile=args.application_profile)
     def observe() -> dict[str, object]:
         target_confirmed = activation_mode and receipt.get('prepareSubmitted') is True and receipt.get('runtimeWritesClosed') is True
-        profile, floor, generation = ('seq9', 9, 43) if target_confirmed else ('seq8', 8, 40)
+        profile = 'seq9' if target_confirmed else args.application_profile
+        _, floor, generation, _ = native.temporary.upload.boot.retained_profile(profile)
         response = ssh(shlex.join(["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage,
             "--profile", "dev7-dev9", "--application-profile", profile]), 100)
         require(response.returncode == 0 and len(response.stdout) <= 1024 * 1024, "closed seq8 baseline unproven")

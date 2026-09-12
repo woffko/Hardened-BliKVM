@@ -317,7 +317,8 @@ def wire(root: Path) -> dict[str, object]:
     return {"result": "wired", "guardRoot": str(root), "retentionApproved": False}
 
 
-def prepare(assets: Path, root: Path) -> dict[str, object]:
+def prepare(assets: Path, root: Path, *, application_profile: str = 'seq8') -> dict[str, object]:
+    slot, floor, generation, previous = temporary.upload.boot.retained_profile(application_profile)
     contract.guard_units(root)
     require(not files.exists(root) and assets.resolve(strict=True) == assets, "invalid new preparation namespace")
     meta = assets.lstat()
@@ -332,14 +333,14 @@ def prepare(assets: Path, root: Path) -> dict[str, object]:
         private_file(assets / name)
     u.installed(assets, "new")
     temporary.audit_templates()
-    before = temporary.upload.boot.seq8_snapshot()
+    before = temporary.upload.boot.retained_snapshot(slot, floor, generation, previous)
     object_value(before["serving"]).pop("serverPid")
     temporary.upload.empty_spool()
     backup = files.preflight(root)
     identity = Path("/etc/machine-id").read_bytes().strip()
     require(re.fullmatch(rb"[a-f0-9]{32}", identity) is not None, "invalid device identity")
     bound = contract.EvidenceBinding(root.name[len(contract.PREFIX):], hashlib.sha256(identity).hexdigest(),
-        contract.CONFIG_SHA256, temporary.upload.boot.SEQ8_SLOT, 8, 40)
+        contract.CONFIG_SHA256, slot, floor, generation)
     root.mkdir(mode=0o700)
     root.chmod(0o700)
     u.sync_directory(root.parent)
@@ -349,7 +350,7 @@ def prepare(assets: Path, root: Path) -> dict[str, object]:
     plan: dict[str, object] = {"schemaVersion": 1, "phase": contract.Phase.PREPARED.value,
         "binding": asdict(bound), "boot": boot_identity(), "started": time.monotonic(), "backup": backup,
         "before": before, "files": {name: u.digest(root / name) for name in (*ASSETS, "controller.py")},
-        "observed": asdict(pipeline.Counters(8, 40)), "terminal": None, "cleanupStarted": False}
+        "observed": asdict(pipeline.Counters(floor, generation)), "terminal": None, "cleanupStarted": False}
     save(root, plan)
     # Nothing writable is installed before all recovery files and enable links.
     for path, data in guard_files(root).items():
@@ -462,14 +463,16 @@ def main() -> int:
     parser.add_argument("--guard-root", type=Path, required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--boot", action="store_true")
+    parser.add_argument('--application-profile', choices=('seq8', 'seq9'))
     args = parser.parse_args()
     require(os.geteuid() == 0, "root controller required")
     contract.guard_units(args.guard_root)
     require(not args.boot or args.action == "restore", "boot flag is only for restoration")
     require((args.assets is not None) == (args.action == "prepare"), "assets required only for preparation")
+    require(args.application_profile is None or args.action == 'prepare', 'profile is only for new preparation')
     u.select_profile("dev7-dev9")
     if args.action == "prepare":
-        result = prepare(cast(Path, args.assets), args.guard_root)
+        result = prepare(cast(Path, args.assets), args.guard_root, application_profile=args.application_profile or 'seq8')
     elif args.action == "wire":
         result = wire(args.guard_root)
     elif args.action == "cleanup":
