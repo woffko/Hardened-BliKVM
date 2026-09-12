@@ -139,7 +139,9 @@ the reserved root/archive instead of replay. Its installed idle rehearsal now
 passed; see `../baselines/persistent-write-rehearsal.md`. Pending-work, boot and
 browser acceptance remain separate; the rehearsal restored admission to closed.
 
-A separate `browser` action is prepared but not yet accepted on the device.
+A separate `browser` action passed its bounded installed stage-only scenario
+on September 12 after system maintenance and Nginx executable refresh; see
+`../baselines/persistent-write-rehearsal.md`.
 It uses two pages of one authenticated session: one keeps the upload mounted,
 the other invokes the real Account/Logout control. A single-tab Account switch
 would first unmount/cancel the upload and could not isolate session revocation.
@@ -178,9 +180,9 @@ Existing evidence and remaining checks are deliberately separate:
 | Host safety              | Server/client authorization, length, quota and cancellation tests                   | Persistent controller ownership, phase and interruption tests            |
 | Native upload/activation | Installed native worker gates and confirmed slot 8                                  | Preserve bindings while configuring permanent admission                  |
 | GUI happy path           | Actual upload, reviewed activation, confirmation and restored desktop/mobile status | Verify the prospective persistent configuration                          |
-| Failure and retry        | Synthetic component rejection and uncertain-response retry                          | Bounded installed GUI stage-only rejection/retry                         |
-| Cancel and progress      | Synthetic verifying/cancel/retry and unmount abort                                  | Intermediate progress and actual cancelled upload                        |
-| Logout                   | Host handler revocation tests                                                       | Browser logout during upload, session transition and no stale completion |
+| Failure and retry        | Installed invalid archive rejection and already-present seq8 retry                  | Bind qualified receipt to prospective retained transaction               |
+| Cancel and progress      | Installed cancellation at 1% and successful retry                                   | Pending-worker restoration remains a separate gate                       |
+| Logout                   | Two-page installed logout, original request abort, both Login screens, status 401   | Native worker stop latency and retention-bound evidence                  |
 | Boot recovery            | Accepted persistent status recovery; temporary write recovery                       | Uncommitted persistent-write boot restore and committed-policy survival  |
 | Disable/drain            | Temporary seq8 controller settled a real activation before restore                  | Owned permanent policy disable with pending work and failure injection   |
 

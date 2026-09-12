@@ -134,3 +134,25 @@ unchanged proxy configuration, active application services and closed sockets.
 The subsequent native preflight (`20c0dfc052c74b0a800919ffba71a4a9`) passed:
 selected/confirmed sequence 8, floor 8, generation 40, no pending/rollback, writes
 closed and staging removed. A new guarded browser gate is the next step.
+
+### Post-update guarded browser gate passed
+
+Job `a19e0e96d2c743f1898cb98e87f4d42d` passed on source `a0a5504`.
+The native controller prepared its deadline/boot-protected temporary policy,
+ran the real Chromium scenario, restored closed admission, cleaned the guard
+and staging, and independently verified selected/confirmed slot 8, floor 8,
+generation 40, previous slot 7, and no pending or rollback state on the same boot.
+
+The browser observed invalid archive HTTP 200/code -1, cancellation at 1%,
+successful retry of the exact already-present seq8 archive, and Logout HTTP 200
+from a second page in the same session. The original upload ended with
+`net::ERR_ABORTED` after Logout was requested and before browser teardown.
+Both pages reached Login and protected status returned HTTP 401. There were
+four upload requests, no activation requests, no blocked mutations and no page
+errors. This proves the specified browser acceptance, not HTTP 401 on the
+original upload, native worker stop latency, or causation by one package update.
+
+Private receipt: `evidence/private/persistent-write-browser-20260912-f.json`.
+Receipt SHA-256: `c635900372411b2a3518c79e047e68cbb8eae6d49bad11bc22c89c49be696815`.
+Pending-work restoration, uncommitted boot recovery, retained-policy receipt
+qualification and explicit permanent-retention approval remain separate gates.

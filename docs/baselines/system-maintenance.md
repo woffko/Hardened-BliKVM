@@ -98,5 +98,7 @@ cleanup removed 161,427,456 bytes with no `.deb` files on root and unchanged dpk
 status. Final measured available space: root **760,246,272 bytes**, `/mnt`
 **11,241,553,920 bytes**. Downloaded packages and isolated metadata remain on
 `/mnt`; future APT use can recreate derived caches. Running services may still
-have old libraries mapped until an appropriate restart. The installed
-Logout/upload gate remains unaccepted and has not been rerun after this update.
+have old libraries mapped until an appropriate restart. The custom Nginx was
+subsequently restarted and its new executable independently verified. The
+bounded installed Logout/upload gate then passed, with full closed-state
+restoration; see [the browser checkpoint](persistent-write-rehearsal.md).
