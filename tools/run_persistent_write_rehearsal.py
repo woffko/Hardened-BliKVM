@@ -61,10 +61,12 @@ def validate_result(value: object, *, action: str, root: str) -> dict[str, objec
 
 def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str], dict[str, object]],
                observe: Callable[[], dict[str, object]], save: Callable[[], None],
-               exercise: Callable[[], dict[str, object]] | None = None) -> None:
+               exercise: Callable[[], dict[str, object]] | None = None,
+               pending_exercise: Callable[[], dict[str, object]] | None = None) -> None:
     """Each state-changing phase is submitted once; reserve its receipt first."""
-    require(action in ("preflight", "rehearse", "browser"), "unreviewed rehearsal action")
+    require(action in ("preflight", "rehearse", "browser", "pending"), "unreviewed rehearsal action")
     require((exercise is not None) == (action == "browser"), "browser phase binding differs")
+    require((pending_exercise is not None) == (action == "pending"), "pending phase binding differs")
     receipt["before"] = observe()
     receipt["runtimeWritesClosed"] = True
     save()
@@ -80,7 +82,15 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
         if exercise is not None:
             receipt["browser"] = exercise()
             save()
-        receipt["restored"] = invoke("restore")
+        if pending_exercise is not None:
+            # Reserve before remote submission. A lost reply must not cause
+            # another restore racing the fixture's already-running controller.
+            receipt["pendingSubmissionAttempted"] = True
+            save()
+            receipt["pending"] = pending_exercise()
+            receipt["restored"] = native.object_value(receipt["pending"])["restored"]
+        else:
+            receipt["restored"] = invoke("restore")
         receipt["runtimeWritesClosed"] = True
         save()
         receipt["cleanupSubmitted"] = True
@@ -95,7 +105,8 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt["result"] = "failed"
         receipt["errorType"] = type(error).__name__
-        if receipt.get("prepareSubmitted") is True and receipt.get("runtimeWritesClosed") is not True:
+        if (receipt.get("prepareSubmitted") is True and receipt.get("runtimeWritesClosed") is not True
+                and receipt.get("pendingSubmissionAttempted") is not True):
             try:
                 receipt["recovery"] = invoke("restore")
                 receipt["runtimeWritesClosed"] = True
@@ -109,7 +120,7 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "rehearse", "browser"))
+    parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending"))
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     for name in ("bundle", "base-url", "username"):
@@ -120,17 +131,24 @@ def main() -> int:
     uploads = build_uploads(args.old_package, args.new_package)
     host, port = transport.parse_endpoint(args.endpoint)
     browser_mode = args.action == "browser"
-    require(all((value is not None) == browser_mode for value in (args.bundle, args.base_url, args.username)),
+    pending_mode = args.action == "pending"
+    require(all((value is not None) == browser_mode for value in (args.base_url, args.username)),
             "browser arguments required only for browser action")
+    require((args.bundle is not None) == (browser_mode or pending_mode), 'archive required only for upload scenarios')
     if browser_mode:
         url = urlsplit(cast(str, args.base_url))
         require(url.scheme == "https" and url.hostname == host and not url.username and not url.password
                 and not url.query and not url.fragment and url.path in ("", "/"), "browser endpoint differs")
         require(native.re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", args.username) is not None, "invalid browser account")
+    if browser_mode or pending_mode:
         archive = Path(args.bundle).read_bytes()
         require(len(archive) == native.temporary.upload.probe.BUNDLE_BYTES
                 and hashlib.sha256(archive).hexdigest() == native.temporary.upload.probe.PROFILES["seq8-publish"].bundle_sha,
                 "browser archive is not the reviewed sequence eight")
+        if pending_mode:
+            uploads['application.tar'] = archive
+            for name in ('persistent_write_pending.py', 'installed_pending_write_gate.py'):
+                uploads[name] = Path(__file__).with_name(name).read_bytes()
     target = transport.RemoteTarget(host, port, "root", transport.validate_private_file("evidence/private/ssh-known-hosts"))
     run_id = secrets.token_hex(12)
     stage = "/tmp/blikvm-persistent-write-" + run_id
@@ -209,6 +227,25 @@ def main() -> int:
                 and value.get("retryAlreadyPresent") is True and value.get("cancelled") is True
                 and value.get("invalidArchiveRejected") is True, "installed browser acceptance failed")
         return value
+    def exercise_pending() -> dict[str, object]:
+        receipt['applicationUploads'] = 1
+        save()
+        response = ssh(shlex.join(['python3', '-B', stage + '/installed_pending_write_gate.py',
+            '--guard-root', root, '--source', '/tmp/blikvm-pending-probe-' + run_id,
+            '--output', stage + '/pending-result.json']), 330)
+        require(len(response.stdout) <= 65536, 'oversize pending gate receipt')
+        value = native.object_value(json.loads(response.stdout, object_pairs_hook=native.temporary.upload.probe.unique_object))
+        receipt['pending'] = value
+        save()
+        require(response.returncode == 0 and value.get('result') == 'passed' and value.get('guardRoot') == root
+                and value.get('restoreSubmissionAttempted') is True and value.get('fencedWhileWorkerLive') is True
+                and value.get('completeArchiveSent') is False and value.get('terminalPreserved') is True
+                and value.get('probeSourceRemoved') is True, 'installed pending gate not verified')
+        terminal = native.object_value(value.get('workerNaturalExit'))
+        require(type(terminal.get('code')) is int and terminal['code'] == 1
+                and type(terminal.get('status')) is int and terminal['status'] == 50, 'natural worker exit missing')
+        validate_result(value.get('restored'), action='restore', root=root)
+        return value
     try:
         require(ssh(f"set -eu\ntest ! -e {q(stage)} && test ! -L {q(stage)}\nmkdir -m 700 {q(stage)}").returncode == 0,
                 "rehearsal staging failed")
@@ -219,14 +256,17 @@ def main() -> int:
                 stream.write(data)
                 stream.seek(0)
                 require(transport.run_ssh(target, secret, script, stdin=stream, timeout=60).returncode == 0, "rehearsal staging upload failed")
-        run_phases(args.action, receipt, invoke=invoke, observe=observe, save=save, exercise=exercise if browser_mode else None)
+        run_phases(args.action, receipt, invoke=invoke, observe=observe, save=save,
+                   exercise=exercise if browser_mode else None,
+                   pending_exercise=exercise_pending if pending_mode else None)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         receipt["errorType"] = type(error).__name__
         receipt["independentInspectionRequired"] = True
     finally:
-        if staged:
-            allowed = " ".join("! -name " + q(name) for name in uploads)
-            paths = " ".join(q(stage + "/" + name) for name in uploads)
+        if staged and not (pending_mode and receipt.get('pendingSubmissionAttempted') and receipt.get('result') != 'passed'):
+            staged_names = [*uploads, *(['pending-result.json'] if pending_mode else [])]
+            allowed = " ".join("! -name " + q(name) for name in staged_names)
+            paths = " ".join(q(stage + "/" + name) for name in staged_names)
             script = f"set -eu\ntest ! -L {q(stage)}\ntest \"$(stat -c '%a:%u:%g' {q(stage)})\" = 700:0:0\ntest -z \"$(find {q(stage)} -mindepth 1 -maxdepth 1 {allowed} -print -quit)\"\nrm -f -- {paths}\nrmdir {q(stage)}"
             try:
                 staged = ssh(script).returncode != 0

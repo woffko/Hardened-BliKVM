@@ -114,16 +114,18 @@ class Operations:
         require(native.binding(current) == native.binding(self.baseline), 'transaction binding changed')
 
     def close_probe_client(self) -> None:
-        if self.client is not None:
-            if self.client.poll() is None:
-                if self.client.stdin is not None: self.client.stdin.close()
-                # Closing input makes await_release reject EOF and close only
-                # the client's socket. Never stop the installed worker unit.
-                self.client.wait(timeout=35)
-            for stream in (self.client.stdin, self.client.stdout):
-                if stream is not None and not stream.closed: stream.close()
-        if self.reference is not None:
-            self.reference.close()
+        try:
+            if self.client is not None:
+                if self.client.poll() is None:
+                    if self.client.stdin is not None: self.client.stdin.close()
+                    # Closing input makes await_release reject EOF and close only
+                    # the client's socket. Never stop the installed worker unit.
+                    self.client.wait(timeout=35)
+                for stream in (self.client.stdin, self.client.stdout):
+                    if stream is not None and not stream.closed: stream.close()
+        finally:
+            if self.reference is not None:
+                self.reference.close()
 
 
 def main() -> int:
@@ -133,16 +135,16 @@ def main() -> int:
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
     root = Path(args.guard_root)
-    native.decisions.validate_root(root)
+    transaction = native.decisions.validate_root(root)
     source = Path(args.source)
-    require(source.resolve(strict=True) == source and source.stat().st_uid == 0
-            and (source.stat().st_mode & 0o777) == 0o755, 'unsafe pending source')
-    require(set(p.name for p in source.iterdir()) == {'probe.py', 'application.tar'}, 'unexpected pending source files')
-    for name, expected in (('probe.py', hashlib.sha256(Path(upload.probe.__file__).read_bytes()).hexdigest()),
-                           ('application.tar', upload.probe.PROFILES['seq8-publish'].bundle_sha)):
-        path = source / name
-        require(not path.is_symlink() and path.stat().st_uid == 0 and not path.stat().st_mode & 0o022
-                and hashlib.sha256(path.read_bytes()).hexdigest() == expected, 'pending source hash/owner differs')
+    require(source == Path('/tmp') / ('blikvm-pending-probe-' + transaction)
+            and not source.exists() and not source.is_symlink(), 'fresh owned probe source required')
+    stage = Path(__file__).resolve().parent
+    require(stage.stat().st_uid == 0 and stage.stat().st_mode & 0o777 == 0o700, 'unsafe helper staging')
+    payloads = {'probe.py': Path(upload.probe.__file__).read_bytes(), 'application.tar': (stage / 'application.tar').read_bytes()}
+    require(len(payloads['application.tar']) == upload.probe.BUNDLE_BYTES and
+            hashlib.sha256(payloads['application.tar']).hexdigest() == upload.probe.PROFILES['seq8-publish'].bundle_sha,
+            'only reviewed seq8 archive may be used')
     output = Path(args.output)
     require(output.parent == Path(__file__).resolve().parent and not output.exists(), 'fresh staged receipt required')
     receipt: dict[str, object] = {'result': 'failed', 'guardRoot': str(root)}
@@ -153,11 +155,35 @@ def main() -> int:
             json.dump(receipt, stream, sort_keys=True); stream.flush(); os.fsync(stream.fileno())
         os.replace(part, output)
         native.u.sync_directory(output.parent)
+    created = False
     try:
+        source.mkdir(mode=0o755)
+        created = True
+        for name, data in payloads.items():
+            fd = os.open(source / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        native.u.sync_directory(source)
         pending.exercise(Operations(root, source), receipt, save)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         receipt.update(result='failed', errorType=type(error).__name__)
         save()
+    finally:
+        if created:
+            try:
+                require(not source.is_symlink() and source.stat().st_uid == 0 and
+                        set(p.name for p in source.iterdir()) <= set(payloads), 'foreign probe source')
+                for name, data in payloads.items():
+                    path = source / name
+                    if path.exists() or path.is_symlink():
+                        require(not path.is_symlink() and path.stat().st_uid == 0
+                                and path.stat().st_nlink == 1 and path.read_bytes() == data, 'probe source changed')
+                for name in payloads: (source / name).unlink(missing_ok=True)
+                source.rmdir()
+                receipt['probeSourceRemoved'] = True
+            except (OSError, ValueError) as error:
+                receipt.update(result='failed', sourceCleanupErrorType=type(error).__name__)
+            save()
     print(json.dumps(receipt, sort_keys=True))
     return 0 if receipt['result'] == 'passed' else 1
 

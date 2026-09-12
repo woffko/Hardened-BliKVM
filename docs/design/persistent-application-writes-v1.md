@@ -180,9 +180,12 @@ client heartbeat, require natural exit code 50 rather than a signal, then verify
 native restoration and preserved terminal state. Errors close only the fixture
 client and never submit a second restore. `tools/installed_pending_write_gate.py`
 now provides a host-tested native adapter using the existing idle/held IPC probe,
-exact worker/spool inspection and real restore command. Integration into the
-host rehearsal driver and the installed run remain pending; these tests are
-not installed pending-work evidence.
+exact worker/spool inspection and real restore command. The host driver's
+separate `pending` action now stages the pinned seq8 fixture, records the remote
+submission before execution, and does not replay restore after an ambiguous
+reply. Failed pending runs retain staging/receipts for inspection and native
+deadline recovery. The installed run remains pending; host tests are not
+installed pending-work evidence.
 
 Existing evidence and remaining checks are deliberately separate:
 

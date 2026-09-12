@@ -33,6 +33,34 @@ class RehearsalTests(unittest.TestCase):
         self.assertTrue(self.receipt["runtimeWritesClosed"])
         self.assertFalse(self.receipt["prepareSubmitted"])
 
+    def test_pending_fixture_owns_only_restore_submission(self) -> None:
+        def pending() -> dict[str, object]:
+            self.assertTrue(self.saved[-1]['pendingSubmissionAttempted'])
+            self.calls.append('pending-restore')
+            return {'result': 'passed', 'restored': {'result': 'restored'}}
+        runner.run_phases('pending', self.receipt, invoke=self.invoke, observe=self.observe,
+                          save=self.save, pending_exercise=pending)
+        self.assertEqual(self.calls, ['observe', 'prepare', 'pending-restore', 'cleanup', 'observe'])
+        self.assertEqual(self.receipt['result'], 'passed')
+        self.assertTrue(self.receipt['runtimeWritesClosed'])
+
+    def test_pending_ambiguous_reply_does_not_start_second_restore(self) -> None:
+        def pending() -> dict[str, object]:
+            self.calls.append('pending-restore')
+            raise subprocess.TimeoutExpired('ssh', 330)
+        runner.run_phases('pending', self.receipt, invoke=self.invoke, observe=self.observe,
+                          save=self.save, pending_exercise=pending)
+        self.assertEqual(self.calls, ['observe', 'prepare', 'pending-restore'])
+        self.assertEqual(self.receipt['result'], 'failed')
+        self.assertTrue(self.receipt['independentInspectionRequired'])
+        self.assertFalse(self.receipt['runtimeWritesClosed'])
+
+    def test_pending_requires_explicit_fixture(self) -> None:
+        with self.assertRaises(ValueError):
+            runner.run_phases('pending', self.receipt, invoke=self.invoke,
+                              observe=self.observe, save=self.save)
+        self.assertEqual(self.calls, [])
+
     def test_rehearsal_is_one_prepare_restore_cleanup_and_two_observations(self) -> None:
         runner.run_phases("rehearse", self.receipt, invoke=self.invoke, observe=self.observe, save=self.save)
         self.assertEqual(self.calls, ["observe", "prepare", "restore", "cleanup", "observe"])
