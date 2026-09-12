@@ -7,6 +7,19 @@ from tools import installed_pending_write_gate as gate
 
 
 class AdapterTests(unittest.TestCase):
+    def test_profile_is_selected_before_loading_native_state(self) -> None:
+        calls: list[str] = []
+        def select(name: str) -> None:
+            self.assertEqual(name, 'dev7-dev9')
+            calls.append('profile')
+        def load(_: Path) -> dict[str, object]:
+            self.assertEqual(calls, ['profile'])
+            calls.append('load')
+            return {'phase': 'wired'}
+        with patch.object(gate.native.u, 'select_profile', side_effect=select), patch.object(gate.native, 'load', side_effect=load):
+            gate.Operations(Path('/var/lib/fixture'), Path('/tmp/fixture'))
+        self.assertEqual(calls, ['profile', 'load'])
+
     def make_ops(self) -> gate.Operations:
         with patch.object(gate.native, 'load', return_value={'phase': 'wired'}):
             return gate.Operations(Path('/var/lib/fixture'), Path('/tmp/fixture'))

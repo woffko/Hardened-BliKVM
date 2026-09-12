@@ -25,6 +25,8 @@ require = native.require
 
 class Operations:
     def __init__(self, root: Path, source: Path) -> None:
+        native.u.select_profile('dev7-dev9')
+        self.phase = 'initialization'
         self.root, self.source = root, source
         self.client: subprocess.Popen[bytes] | None = None
         self.restore: subprocess.Popen[bytes] | None = None
@@ -33,6 +35,7 @@ class Operations:
         require(self.baseline['phase'] == 'wired', 'temporary policy is not wired')
 
     def hold_upload(self) -> pending.Worker:
+        self.phase = 'probe-start'
         previous = set(upload.workers())
         require(native.temporary.observer.live_workers() == 0,
                 'pre-existing pipeline worker')
@@ -41,26 +44,32 @@ class Operations:
             '--archive', str(self.source / 'application.tar'), '--profile', 'seq8-publish'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         assert self.client.stdout is not None
+        self.phase = 'probe-handshake'
         upload.held_handshake(self.client.stdout)
+        self.phase = 'worker-identification'
         selected = set(upload.workers()) - previous
         require(len(selected) == 1, 'cannot correlate one pending upload instance')
         unit = selected.pop()
         self.reference = upload.UploadUnitReference(unit)
+        self.phase = 'worker-sandbox'
         live = upload.wait_live(unit)
         return pending.Worker(unit, cast(str, live['invocationId']), cast(int, live['pid']))
 
     def verify_live_spool(self, worker: pending.Worker) -> None:
+        self.phase = 'held-worker-proof'
         live = upload.live_worker(worker.unit)
         require(live['invocationId'] == worker.invocation and live['pid'] == worker.pid
                 and live['anonymousSpool'] is True, 'held worker identity/spool changed')
 
     def submit_restore(self) -> None:
+        self.phase = 'restore-submission'
         require(self.restore is None, 'restore already submitted')
         self.restore = subprocess.Popen(['python3', '-B', str(self.root / 'controller.py'),
             'restore', '--guard-root', str(self.root)], stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     def await_closed_owned_fence(self) -> None:
+        self.phase = 'fence-observation'
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
             require(self.restore_still_running(), 'restore ended before live-fence observation')
@@ -81,17 +90,20 @@ class Operations:
         self.client.stdin.flush()
 
     def await_probe_idle_timeout(self) -> None:
+        self.phase = 'probe-idle-timeout'
         assert self.client is not None
         raw, _ = self.client.communicate(timeout=25)
         require(self.client.returncode == 0 and len(raw) <= 1024 and
                 json.loads(raw) == {'mode': 'idle', 'result': 'passed'}, 'idle probe did not pass')
 
     def natural_worker_exit(self, worker: pending.Worker) -> tuple[int, int]:
+        self.phase = 'worker-natural-exit'
         value = upload.natural_exit(worker.unit, 'idle', worker.invocation)
         require(value['naturalExit'] is True and value['exitCode'] == 50, 'worker timeout not proved')
         return 1, 50  # natural_exit requires ExecMainCode=1 and exact InvocationID.
 
     def await_restore(self) -> dict[str, object]:
+        self.phase = 'restore-completion'
         assert self.restore is not None
         raw, _ = self.restore.communicate(timeout=180)
         require(self.restore.returncode == 0 and len(raw) <= 65536, 'native restoration failed')
@@ -100,6 +112,7 @@ class Operations:
         return value
 
     def verify_preserved_terminal(self) -> None:
+        self.phase = 'terminal-verification'
         upload.empty_spool()
         observation = native.temporary.observer.observe()
         terminal = native.pipeline.terminal(observation, native.pipeline.Counters(8, 40))
@@ -156,6 +169,7 @@ def main() -> int:
         os.replace(part, output)
         native.u.sync_directory(output.parent)
     created = False
+    ops: Operations | None = None
     try:
         source.mkdir(mode=0o755)
         created = True
@@ -164,9 +178,11 @@ def main() -> int:
             with os.fdopen(fd, 'wb') as stream:
                 stream.write(data); stream.flush(); os.fsync(stream.fileno())
         native.u.sync_directory(source)
-        pending.exercise(Operations(root, source), receipt, save)
+        ops = Operations(root, source)
+        pending.exercise(ops, receipt, save)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         receipt.update(result='failed', errorType=type(error).__name__)
+        receipt['phase'] = ops.phase if ops is not None else 'source-preparation'
         save()
     finally:
         if created:

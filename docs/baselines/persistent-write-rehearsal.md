@@ -156,3 +156,19 @@ Private receipt: `evidence/private/persistent-write-browser-20260912-f.json`.
 Receipt SHA-256: `c635900372411b2a3518c79e047e68cbb8eae6d49bad11bc22c89c49be696815`.
 Pending-work restoration, uncommitted boot recovery, retained-policy receipt
 qualification and explicit permanent-retention approval remain separate gates.
+
+### Pending-work fixture preparation and recovered first attempt
+
+The first `pending` attempt (`45485feebfd04ee8b9fb8dd850b229e1`) timed out
+before submitting native restore; it sent no complete archive. The adapter was
+missing the explicit `dev7-dev9` profile initialization used by the native
+controllers, so its worker executable verifier could use the wrong hash.
+Profile-before-state initialization is now regression-tested. This explains a
+concrete adapter defect; the first receipt did not retain the exact timed-out
+observation and is not treated as a passed gate.
+
+Bound recovery `a9251a829b2e4c96851fe568471c3d99` restored/cleaned the owned
+transaction, preserved floor 8/generation 40 and closed writes. Subsequent
+hash-bound cleanup `63742ca38e854521988df3adfc5dccd6` removed its 35 staged files
+and preserved the private recovery archive. The pending-work gate still needs
+a successful installed run with the corrected adapter.

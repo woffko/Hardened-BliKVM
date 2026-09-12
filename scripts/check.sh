@@ -307,6 +307,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/persistent_write_pipeline.py tools/test_persistent_write_pipeline.py \
     tools/persistent_write_pending.py tools/test_persistent_write_pending.py \
     tools/installed_pending_write_gate.py tools/test_installed_pending_write_gate.py \
+    tools/cleanup_pending_staging.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
     tools/installed_persistent_write.py tools/test_installed_persistent_write.py \

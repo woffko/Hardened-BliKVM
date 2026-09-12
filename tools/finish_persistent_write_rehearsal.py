@@ -28,24 +28,53 @@ def restored_root(value: object) -> str:
     return root
 
 
+def unsubmitted_pending_root(value: object) -> str:
+    receipt = runner.native.object_value(value)
+    runner.require(receipt.get('probe') == 'persistent-write-wiring-rehearsal'
+        and receipt.get('action') == 'pending' and receipt.get('result') == 'failed'
+        and receipt.get('prepareSubmitted') is True and receipt.get('guardRetained') is True
+        and receipt.get('cleanupSubmitted') is False and receipt.get('retentionApproved') is False,
+        'failed pending preparation receipt required')
+    root = runner.packages.validate_guard(receipt.get('guardRoot'), prefix=runner.native.contract.PREFIX)
+    pending = runner.native.object_value(receipt.get('pending'))
+    runner.require(pending.get('guardRoot') == root and pending.get('result') == 'failed'
+        and pending.get('completeArchiveSent') is False and pending.get('probeSourceRemoved') is True
+        and 'restoreSubmissionAttempted' not in pending and 'restored' not in pending,
+        'pending restore may already have been submitted')
+    return root
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("endpoint", "receipt", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument('--recover-unsubmitted-pending', action='store_true')
     args = parser.parse_args()
     source = runner.transport.validate_private_file(args.receipt)
     runner.require(source.stat().st_size <= 1024 * 1024, "oversize source receipt")
     raw = source.read_bytes()
-    root = restored_root(json.loads(raw, object_pairs_hook=runner.native.temporary.upload.probe.unique_object))
+    value = json.loads(raw, object_pairs_hook=runner.native.temporary.upload.probe.unique_object)
+    root = unsubmitted_pending_root(value) if args.recover_unsubmitted_pending else restored_root(value)
     output = runner.transport.validate_output_path(args.output)
     runner.require(not output.exists(), "new cleanup receipt required")
     host, port = runner.transport.parse_endpoint(args.endpoint)
     target = runner.transport.RemoteTarget(host, port, "root", runner.transport.validate_private_file("evidence/private/ssh-known-hosts"))
     receipt: dict[str, object] = {"probe": "finish-persistent-write-rehearsal", "result": "failed", "guardRoot": root,
-        "sourceReceiptSha256": hashlib.sha256(raw).hexdigest(), "cleanupSubmitted": False, "runtimeWritesClosed": True}
+        "sourceReceiptSha256": hashlib.sha256(raw).hexdigest(), "cleanupSubmitted": False,
+        "runtimeWritesClosed": not args.recover_unsubmitted_pending}
     write_json_0600_atomic(output, receipt)
     secret = runner.transport.read_secret_stdin()
     try:
+        if args.recover_unsubmitted_pending:
+            receipt['restoreSubmissionAttempted'] = True
+            write_json_0600_atomic(output, receipt)
+            result = runner.transport.run_ssh(target, secret, shlex.join(['python3', '-B', root + '/controller.py',
+                'restore', '--guard-root', root]), timeout=300)
+            runner.require(result.returncode == 0 and len(result.stdout) <= 65536, 'pending recovery failed or ambiguous')
+            receipt['restored'] = runner.validate_result(json.loads(result.stdout,
+                object_pairs_hook=runner.native.temporary.upload.probe.unique_object), action='restore', root=root)
+            receipt['runtimeWritesClosed'] = True
+            write_json_0600_atomic(output, receipt)
         receipt["cleanupSubmitted"] = True
         write_json_0600_atomic(output, receipt)
         result = runner.transport.run_ssh(target, secret, shlex.join(["python3", "-B", root + "/controller.py",
