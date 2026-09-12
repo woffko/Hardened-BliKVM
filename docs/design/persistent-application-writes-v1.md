@@ -225,6 +225,17 @@ The guard unit's own Before edge can still imply After until unloaded; this is
 not mistaken for a remaining Requires dependency. Native commit/evidence-store
 integration and installed retained-policy acceptance are still pending.
 
+The separate native commit adapter now keeps the common lock across the trusted
+evidence callback, wired verification, atomic decision, marker, transaction-only
+detachment, retained verification and disarm. An existing committed winner can
+resume partial detachment only with identical binding and receipt digests; a
+revoked winner or a committed marker without a decision fails closed. It does
+not call restore on a post-publication failure. A final retained snapshot is
+intentional because disarm itself removes enable links and reloads systemd.
+Host tests cover revocation during evidence reading and failures before/after
+disarm. The adapter has no CLI or production evidence provider and has not been
+executed on the device; no retention permission is implied by these tests.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing
