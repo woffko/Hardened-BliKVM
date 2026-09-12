@@ -15,7 +15,7 @@ from tools import run_application_write_gate as runner
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 REMOTE = r'''
-import json, pathlib, re, subprocess
+import hashlib, json, pathlib, re, subprocess
 units = ("hardened-blikvm-nginx.service", "hardened-blikvm-server-current.service", "hardened-blikvm-update-upload@*.service")
 patterns = ("Permission denied", "No space left on device", "Connection refused", "client intended to send too large body", "upstream prematurely closed", "Failed", "failed", "status=", "quota", "invalid_archive")
 patterns += ("recv() failed", "send() failed", "Connection reset by peer", "while sending request to upstream", "while reading response header from upstream")
@@ -26,16 +26,27 @@ if len(config) > 65536:
 directives = b"\n".join(line.split(b"#", 1)[0] for line in config.splitlines())
 # Return only constrained directive values, never private configuration text.
 facts["proxyPolicy"] = {
+    "configurationSha256": hashlib.sha256(config).hexdigest(),
+    "exactUploadLocations": len(re.findall(rb"\blocation\s*=\s*/api/application-update/upload\s*\{", directives)),
     "requestBuffering": [value.decode() for value in re.findall(rb"\bproxy_request_buffering\s+(on|off)\s*;", directives)],
     "responseBuffering": [value.decode() for value in re.findall(rb"\bproxy_buffering\s+(on|off)\s*;", directives)],
     "includesPresent": re.search(rb"\binclude\s", directives) is not None,
 }
+version = subprocess.run(["/usr/sbin/nginx", "-v"], capture_output=True, timeout=5, check=True)
+version_bytes = version.stdout + version.stderr
+if len(version_bytes) > 4096:
+    raise ValueError("oversize nginx version output")
+matched = re.search(rb"nginx/([0-9]+\.[0-9]+\.[0-9]+)", version_bytes)
+facts["nginxVersion"] = matched[1].decode() if matched else None
 for unit in units:
     result = subprocess.run(["journalctl", "--no-pager", "--output=cat", "--since=-20min", "--lines=100", "--unit=" + unit], capture_output=True, timeout=10)
     if result.returncode != 0 or len(result.stdout) > 262144:
         raise ValueError("bounded journal read failed")
     text = result.stdout.decode(errors="replace")
     facts[unit] = {"lines": len(text.splitlines()), "counts": {pattern: text.count(pattern) for pattern in patterns}}
+    facts[unit]["systemErrors"] = [{"operation": operation, "errno": int(number)}
+        for operation, number in re.findall(r"\b([a-z_]+)\(\) failed \(([0-9]{1,3}):", text)
+        if operation in ("writev", "readv", "send", "recv", "connect", "read", "write", "open")]
 for unit in ("hardened-blikvm-update-upload.socket", "hardened-blikvm-update-activation.socket"):
     result = subprocess.run(["systemctl", "show", unit, "--property=ActiveState,SubState,Result,Job"], capture_output=True, check=True, timeout=5)
     if len(result.stdout) > 4096:

@@ -8,8 +8,14 @@ The target is not a themed copy of the existing BliKVM application. BLi-KVM
 uses a platform-neutral core and explicit hardware adapters so that security,
 API, update, and recovery invariants remain testable across platforms.
 
-The planned canonical GitHub repository is `woffko/Hardened-BliKVM`. It has
-not been created or published from this worktree yet.
+The canonical GitHub repository is
+[`woffko/Hardened-BliKVM`](https://github.com/woffko/Hardened-BliKVM).
+Private device credentials, runtime configuration and hardware receipts are
+excluded from Git. This source repository is not a complete device image.
+
+The current maintenance priority is updating the existing device's OS/package
+baseline before final project acceptance. See
+[`docs/baselines/system-maintenance.md`](docs/baselines/system-maintenance.md).
 
 ## Current status
 
