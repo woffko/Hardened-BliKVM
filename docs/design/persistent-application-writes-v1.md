@@ -174,6 +174,18 @@ transition; it does not establish installed-worker logout acceptance.
 
 ## Acceptance before retention
 
+The new host-only evidence-compatibility layer explicitly distinguishes fresh
+transaction checks (host, native retry upload, GUI failure/retry/cancel/logout)
+from historical forward-activation and destructive-recovery prerequisites. It
+retains the original source transaction, receipt hash and immutable component
+map. Historical activation must end at the current baseline; historical recovery
+must start and end at that same baseline with matching controller/recovery
+components. Seq8 recovery is therefore not silently reused for seq9.
+Compatibility is **not** receipt authenticity, gate acceptance or permission:
+the privileged raw-receipt/archive adapters and native retention entrypoint are
+still absent. `require_commit` remains unchanged and cannot consume a
+Compatibility object as a passed current-transaction GateEvidence.
+
 Early-boot evidence now has a separate strict validator and read-only collector
 (`persistent_write_boot_proof.py`, `observe_persistent_write_boot.py`). They
 require a changed boot identity, the exact successful owned boot unit completing

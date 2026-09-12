@@ -308,3 +308,11 @@ refresh checks, with zero uploads/activations or page errors. Receipt:
 The current retained baseline is now seq9/floor9/generation43, previous seq8,
 with seq2–seq9 present and writes disabled. Earlier seq8-only preparation gates
 must not be rerun against this baseline without an explicitly bound new profile.
+
+Explicit seq9 idle preparation/restoration at source `4b25cef` passed host job
+`4479b93c984f40c8a09053f979522143` and installed job
+`9d1dd1bebf5946eb9eec92f2926cbcda`. Its binding was seq9/floor9/generation43;
+loaded/running policy, restoration, cleanup and independent final observation
+passed without uploads, activation or reboot. Receipt
+`evidence/private/persistent-write-seq9-idle-20260912-a.json` has SHA-256
+`7271592c080280f9bfea6d01c0829ba6fb979d253623c7181571e750531708eb`.
