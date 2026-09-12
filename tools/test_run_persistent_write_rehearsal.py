@@ -61,6 +61,24 @@ class RehearsalTests(unittest.TestCase):
                               observe=self.observe, save=self.save)
         self.assertEqual(self.calls, [])
 
+    def test_activation_still_restores_and_cleans_once(self) -> None:
+        def activate() -> dict[str, object]:
+            self.calls.append('activate')
+            return {'result': 'passed'}
+        runner.run_phases('activate', self.receipt, invoke=self.invoke, observe=self.observe,
+                          save=self.save, exercise=activate)
+        self.assertEqual(self.calls, ['observe', 'prepare', 'activate', 'restore', 'cleanup', 'observe'])
+        self.assertTrue(self.receipt['runtimeWritesClosed'])
+
+    def test_ambiguous_activation_does_not_retry_activation(self) -> None:
+        def activate() -> dict[str, object]:
+            self.calls.append('activate')
+            raise subprocess.TimeoutExpired('browser', 150)
+        runner.run_phases('activate', self.receipt, invoke=self.invoke, observe=self.observe,
+                          save=self.save, exercise=activate)
+        self.assertEqual(self.calls, ['observe', 'prepare', 'activate', 'restore'])
+        self.assertEqual(self.receipt['result'], 'failed')
+
     def test_boot_proof_precedes_runtime_finalization(self) -> None:
         observations = iter(('a' * 64, 'b' * 64))
         def observe() -> dict[str, object]:

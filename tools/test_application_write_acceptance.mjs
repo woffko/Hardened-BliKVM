@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { writeProfile } from "./playwright/application_write_profiles.mjs";
 import {
   statusProfile,
   validateStatus,
@@ -11,6 +12,52 @@ import {
   waitLoginInputs,
   validateUploadBody,
 } from "./playwright/application_write_acceptance.mjs";
+
+test("seq8-to9 profile binds new archive, publication and generation40", () => {
+  const profile = writeProfile("seq8-to9");
+  assert.equal(profile.disposition, "published");
+  assert.notEqual(profile.bundleSha256, writeProfile().bundleSha256);
+  const target = statusProfile("seq9");
+  validateActivationRequest(
+    { slotId: target.slot, expectedGeneration: "40" },
+    "seq8-to9",
+  );
+  assert.throws(() =>
+    validateActivationRequest(
+      { slotId: target.slot, expectedGeneration: "37" },
+      "seq8-to9",
+    ),
+  );
+  assert.throws(() =>
+    validateActivationRequest(
+      { slotId: statusProfile("seq8").slot, expectedGeneration: "40" },
+      "seq8-to9",
+    ),
+  );
+  const body = {
+    code: 0,
+    data: {
+      slot: {
+        slotId: target.slot,
+        version: target.version,
+        sequence: "9",
+        minimumSystemSequence: "1",
+      },
+      disposition: "published",
+      manifestSha256: target.slot.slice(25),
+      payloadBytes: "8683648",
+    },
+  };
+  validateStaged(body, "seq8-to9");
+  assert.throws(() => validateStaged(body));
+  assert.throws(() =>
+    validateStaged(
+      { ...body, data: { ...body.data, disposition: "already_present" } },
+      "seq8-to9",
+    ),
+  );
+  assert.throws(() => writeProfile("seq9-to10"));
+});
 
 test("omitted File-backed XHR body requires prior selected-file verification", () => {
   assert.equal(validateUploadBody(null, true), false);

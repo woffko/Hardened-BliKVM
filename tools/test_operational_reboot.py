@@ -16,6 +16,7 @@ class OperationalRebootTests(unittest.TestCase):
         self.assertEqual(observer.resolve_application_profile("dev6-dev7", None), "seq2")
         self.assertEqual(observer.resolve_application_profile("dev7-dev9", None), "seq6")
         self.assertEqual(observer.resolve_application_profile("dev7-dev9", "seq7"), "seq7")
+        self.assertEqual(observer.resolve_application_profile("dev7-dev9", "seq9"), "seq9")
         self.assertEqual(observer.resolve_application_profile("dev7-dev9", "seq8"), "seq8")
         for updater, application in (("dev6-dev7", "seq8"), ("dev6-dev7", "seq7"), ("dev6-dev7", "seq6"), ("dev7-dev9", "seq2"), ("unknown", None)):
             with self.assertRaises(ValueError):

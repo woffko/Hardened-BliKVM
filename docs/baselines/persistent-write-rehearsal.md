@@ -271,3 +271,13 @@ Host verification `evidence/private/seq9-host-verification-20260912-a.json`
 passed signature/payload validation, idempotent stage, repeat-initialize refusal,
 tamper/wrong-key rejection and temporary-root cleanup. It contacted no device
 and executed no payload binary. Seq9 device staging/activation is still pending.
+
+Post-GC native preflight `739b01623b4e4e19a1efa620f3ee5c9b` passed with closed
+seq8 state and removed temporary staging. The browser harness now has explicit
+`seq7-to8` (existing default) and `seq8-to9` profiles. The latter binds the new
+archive hash, `published` disposition, generation40 confirmation and target9;
+closed-state observation requires seq9/floor9/generation43 with previous8.
+The persistent rehearsal driver's separate `activate` action performs one GUI
+upload/activation under the existing deadline, then natural settlement,
+restoration and cleanup. It does not retain write permission or retry activation
+after an uncertain response. Installed acceptance of this action is pending.

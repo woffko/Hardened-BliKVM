@@ -6,13 +6,12 @@ import { pathToFileURL } from "node:url";
 import {
   activationRoute,
   uploadRoute,
-  bundleBytes,
-  bundleSha256,
   runApplicationWriteUi,
   validateActivationRequest,
   waitLoginInputs,
   validateUploadBody,
 } from "./application_write_acceptance.mjs";
+import { writeProfile } from "./application_write_profiles.mjs";
 import { verifyStatusPanel } from "./status_api_acceptance.mjs";
 import { installResponseCapture } from "./application_response_capture.mjs";
 
@@ -24,8 +23,10 @@ const [
   username,
   archive,
   outputValue,
+  profileName = "seq7-to8",
 ] = process.argv.slice(2);
-assert.equal(process.argv.slice(2).length, 7);
+assert.ok([7, 8].includes(process.argv.slice(2).length));
+const profile = writeProfile(profileName);
 assert.ok(["activate", "closed", "preflight"].includes(mode));
 const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
@@ -42,10 +43,10 @@ assert.equal(path.dirname(output), path.resolve("evidence/private"));
 assert.ok(!fs.existsSync(output));
 if (mode === "activate") {
   const bytes = fs.readFileSync(archive);
-  assert.equal(bytes.length, bundleBytes);
+  assert.equal(bytes.length, profile.bundleBytes);
   assert.equal(
     crypto.createHash("sha256").update(bytes).digest("hex"),
-    bundleSha256,
+    profile.bundleSha256,
   );
 }
 let password = "";
@@ -58,6 +59,7 @@ assert.ok(password.length >= 8 && password.length <= 256);
 const receipt = {
   probe: "application-http-write",
   mode,
+  profile: profileName,
   result: "failed",
   uploadRequests: 0,
   activationRequests: 0,
@@ -103,10 +105,11 @@ try {
           receipt.uploadBodyVisibleToObserver = validateUploadBody(
             request.postDataBuffer(),
             receipt.selectedArchiveVerified,
+            profileName,
           );
         } else {
           assert.equal(receipt.activationRequests++, 0);
-          validateActivationRequest(request.postDataJSON());
+          validateActivationRequest(request.postDataJSON(), profileName);
         }
         return route.continue();
       } catch {
@@ -162,6 +165,7 @@ try {
       (fact) => {
         receipt.lastUpdateFact = fact;
       },
+      profileName,
     );
     assert.equal(receipt.uploadRequests, 1);
     assert.equal(receipt.activationRequests, 1);
@@ -170,7 +174,7 @@ try {
       page,
       true,
       () => {},
-      mode === "preflight" ? "seq7" : "seq8",
+      mode === "preflight" ? profile.source : profile.target,
     );
     assert.equal(receipt.uploadRequests, 0);
     assert.equal(receipt.activationRequests, 0);

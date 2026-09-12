@@ -26,6 +26,12 @@ const profiles = Object.freeze({
     version: "0.1.0-dev6",
     slot: "app-00000000000000000008-375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b",
   }),
+  seq9: Object.freeze({
+    generation: "43",
+    sequence: "9",
+    version: "0.1.0-dev6",
+    slot: "app-00000000000000000009-5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2",
+  }),
 });
 
 export function statusProfile(name = "seq5") {

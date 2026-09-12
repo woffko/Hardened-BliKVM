@@ -31,11 +31,12 @@ RECOVERY = "hardened-blikvm-update-recover.service"
 SLOT = "app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53"
 SEQ7_SLOT = "app-00000000000000000007-f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140"
 SEQ8_SLOT = "app-00000000000000000008-375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b"
-APPLICATION_PROFILES = ("seq2", "seq6", "seq7", "seq8")
+SEQ9_SLOT = "app-00000000000000000009-5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2"
+APPLICATION_PROFILES = ("seq2", "seq6", "seq7", "seq8", "seq9")
 
 
 def resolve_application_profile(updater_profile: str, requested: str | None) -> str:
-    allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7", "seq8") if updater_profile == "dev7-dev9" else ()
+    allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7", "seq8", "seq9") if updater_profile == "dev7-dev9" else ()
     if not allowed:
         raise ValueError("unknown updater profile")
     selected = requested if requested is not None else allowed[0]
@@ -60,7 +61,9 @@ def seq7_snapshot() -> dict[str, object]:
 def capture(assets: Path, post: bool, application_profile: str | None = None) -> dict[str, object]:
     application_profile = resolve_application_profile(u.selected_profile, application_profile)
     u.installed(assets, "new")
-    if application_profile == "seq8":
+    if application_profile == "seq9":
+        snapshot = retained_snapshot(SEQ9_SLOT, 9, 43, SEQ8_SLOT)
+    elif application_profile == "seq8":
         snapshot = seq8_snapshot()
     elif application_profile == "seq7":
         snapshot = seq7_snapshot()
@@ -90,17 +93,23 @@ def capture(assets: Path, post: bool, application_profile: str | None = None) ->
 
 
 def seq8_snapshot() -> dict[str, object]:
-    require(u.selected_profile == "dev7-dev9", "sequence eight requires retained dev9")
+    return retained_snapshot(SEQ8_SLOT, 8, 40, SEQ7_SLOT)
+
+
+def retained_snapshot(slot: str, floor: int, generation: int, previous: str) -> dict[str, object]:
+    require((slot, floor, generation, previous) in ((SEQ8_SLOT, 8, 40, SEQ7_SLOT), (SEQ9_SLOT, 9, 43, SEQ8_SLOT)),
+            'unreviewed retained application profile')
+    require(u.selected_profile == "dev7-dev9", "application profile requires retained dev9")
     persistent.validate_dropins(True)
     u.write_transports_inert()
     for root in (Path("/var/lib"), Path("/run/systemd/system")):
         require(not list(root.glob("hardened-blikvm-http-update-*")), "HTTP acceptance guard remains")
     value = status_api.snapshot(True, expected_version=u.VERSIONS["new"],
-        expected_supervisor_sha=u.SUPERVISOR_HASHES["new"], expected_slot=SEQ8_SLOT,
-        expected_floor=8, expected_generation=40)
+        expected_supervisor_sha=u.SUPERVISOR_HASHES["new"], expected_slot=slot,
+        expected_floor=floor, expected_generation=generation)
     status = cast(dict[str, object], value["managerStatus"])
-    require(status.get("previousSlotId") == SEQ7_SLOT and status.get("lastRollback") is None,
-            "sequence-eight confirmation or rollback anchor changed")
+    require(status.get("previousSlotId") == previous and status.get("lastRollback") is None,
+            "confirmation or rollback anchor changed")
     forbidden = {"BLI_KVM_UPDATE_UPLOAD_SOCKET", "BLI_KVM_UPDATE_ACTIVATION_SOCKET", "BLI_KVM_UPDATE_WRITES_ENABLED"}
     for unit in (s.CURRENT_SERVER, s.CANDIDATE_SERVER):
         require(not any(item.partition("=")[0] in forbidden for item in shlex.split(s.property_value(unit, "Environment"))),

@@ -68,8 +68,8 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
                pending_exercise: Callable[[], dict[str, object]] | None = None,
                boot_exercise: Callable[[], dict[str, object]] | None = None) -> None:
     """Each state-changing phase is submitted once; reserve its receipt first."""
-    require(action in ("preflight", "rehearse", "browser", "pending", "boot"), "unreviewed rehearsal action")
-    require((exercise is not None) == (action == "browser"), "browser phase binding differs")
+    require(action in ("preflight", "rehearse", "browser", "pending", "boot", "activate"), "unreviewed rehearsal action")
+    require((exercise is not None) == (action in ("browser", "activate")), "browser phase binding differs")
     require((pending_exercise is not None) == (action == "pending"), "pending phase binding differs")
     require((boot_exercise is not None) == (action == "boot"), 'boot phase binding differs')
     receipt["before"] = observe()
@@ -132,7 +132,7 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending", "boot"))
+    parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending", "boot", "activate"))
     parser.add_argument('--reboot', action='store_true', help='Explicitly allow one software reboot in boot mode')
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
@@ -143,7 +143,8 @@ def main() -> int:
     require(not output.exists(), "new rehearsal receipt required")
     uploads = build_uploads(args.old_package, args.new_package)
     host, port = transport.parse_endpoint(args.endpoint)
-    browser_mode = args.action == "browser"
+    browser_mode = args.action in ("browser", "activate")
+    activation_mode = args.action == 'activate'
     pending_mode = args.action == "pending"
     boot_mode = args.action == 'boot'
     require(args.reboot == boot_mode, 'boot action requires explicit --reboot and other actions forbid it')
@@ -160,9 +161,11 @@ def main() -> int:
         require(native.re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", args.username) is not None, "invalid browser account")
     if browser_mode or pending_mode:
         archive = Path(args.bundle).read_bytes()
+        archive_sha = ('8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f' if activation_mode
+                       else native.temporary.upload.probe.PROFILES["seq8-publish"].bundle_sha)
         require(len(archive) == native.temporary.upload.probe.BUNDLE_BYTES
-                and hashlib.sha256(archive).hexdigest() == native.temporary.upload.probe.PROFILES["seq8-publish"].bundle_sha,
-                "browser archive is not the reviewed sequence eight")
+                and hashlib.sha256(archive).hexdigest() == archive_sha,
+                "browser archive differs from reviewed profile")
         if pending_mode:
             uploads['application.tar'] = archive
             for name in ('persistent_write_pending.py', 'installed_pending_write_gate.py'):
@@ -206,20 +209,24 @@ def main() -> int:
         require(response.returncode == 0 and len(response.stdout) <= 65536, "native controller phase failed")
         return validate_result(json.loads(response.stdout, object_pairs_hook=native.temporary.upload.probe.unique_object), action=action, root=root)
     def observe() -> dict[str, object]:
+        target_confirmed = activation_mode and receipt.get('prepareSubmitted') is True and receipt.get('runtimeWritesClosed') is True
+        profile, floor, generation = ('seq9', 9, 43) if target_confirmed else ('seq8', 8, 40)
         response = ssh(shlex.join(["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage,
-            "--profile", "dev7-dev9", "--application-profile", "seq8"]), 100)
+            "--profile", "dev7-dev9", "--application-profile", profile]), 100)
         require(response.returncode == 0 and len(response.stdout) <= 1024 * 1024, "closed seq8 baseline unproven")
         value = native.object_value(json.loads(response.stdout, object_pairs_hook=native.temporary.upload.probe.unique_object))
         status = native.object_value(value.get("status"))
-        require(value.get("result") == "ready" and value.get("applicationProfile") == "seq8"
-                and status.get("floorSequence") == 8 and status.get("generation") == 40 and status.get("pending") is None,
-                "seq8 baseline receipt differs")
+        require(value.get("result") == "ready" and value.get("applicationProfile") == profile
+                and status.get("floorSequence") == floor and status.get("generation") == generation and status.get("pending") is None,
+                "application profile receipt differs")
         return {"status": status, "bootIdSha256": value.get("bootIdSha256"), "runtimeWritesClosed": True}
     def exercise() -> dict[str, object]:
         assert gui is not None
+        if activation_mode:
+            return exercise_activation()
         destination = output.with_name(output.stem + "-" + run_id + "-browser.json")
         require(not destination.exists(), "new browser receipt required")
-        sources = ("device_application_upload_failures.mjs", "application_write_acceptance.mjs",
+        sources = ("device_application_upload_failures.mjs", "application_write_acceptance.mjs", "application_write_profiles.mjs",
             "application_response_capture.mjs", "status_api_acceptance.mjs", "upload_termination.mjs")
         receipt["browserSourceHashes"] = {name: hashlib.sha256((Path(__file__).parent / "playwright" / name).read_bytes()).hexdigest()
             for name in sources}
@@ -244,6 +251,36 @@ def main() -> int:
                 and value.get("logoutRequests") == 1 and value.get("inflightUploadRevoked") is True
                 and value.get("retryAlreadyPresent") is True and value.get("cancelled") is True
                 and value.get("invalidArchiveRejected") is True, "installed browser acceptance failed")
+        return value
+    def exercise_activation() -> dict[str, object]:
+        assert gui is not None
+        destination = output.with_name(output.stem + '-' + run_id + '-activation-browser.json')
+        require(not destination.exists(), 'fresh activation browser receipt required')
+        sources = ('device_application_write.mjs', 'application_write_acceptance.mjs', 'application_write_profiles.mjs',
+                   'status_api_acceptance.mjs', 'application_response_capture.mjs')
+        receipt['browserSourceHashes'] = {name: hashlib.sha256((Path(__file__).parent / 'playwright' / name).read_bytes()).hexdigest()
+                                        for name in sources}
+        receipt.update(browserReceipt=str(destination), browserSubmitted=True, applicationUploads=None, applicationActivations=None)
+        save()
+        response = subprocess.run(['node', 'tools/playwright/device_application_write.mjs', 'activate',
+            '/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs',
+            '/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome',
+            args.base_url.rstrip('/'), args.username, args.bundle, str(destination), 'seq8-to9'],
+            input=gui, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=150, check=False)
+        path = transport.validate_private_file(str(destination))
+        require(path.stat().st_size <= 65536, 'oversize activation browser receipt')
+        value = native.object_value(json.loads(path.read_bytes()))
+        receipt['browser'] = value
+        receipt['applicationUploads'] = value.get('uploadRequests')
+        receipt['applicationActivations'] = value.get('activationRequests')
+        save()
+        ui = native.object_value(value.get('ui'))
+        require(response.returncode == 0 and value.get('result') == 'passed' and value.get('profile') == 'seq8-to9'
+            and value.get('selectedArchiveVerified') is True and value.get('uploadRequests') == 1
+            and value.get('activationRequests') == 1 and value.get('blockedMutations') == 0 and value.get('pageErrors') == 0
+            and ui.get('stagingDisposition') == 'published' and ui.get('generationReviewed') == '40'
+            and ui.get('activationStatus') == 202 and ui.get('activationReceiptValidated') is True,
+            'seq9 GUI activation receipt unverified')
         return value
     def exercise_pending() -> dict[str, object]:
         receipt['applicationUploads'] = 1

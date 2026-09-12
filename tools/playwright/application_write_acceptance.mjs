@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readCapturedResponse } from "./application_response_capture.mjs";
+import { writeProfile } from "./application_write_profiles.mjs";
 import {
   statusProfile,
   statusRoute,
@@ -9,19 +10,23 @@ import {
 
 export const uploadRoute = "/api/application-update/upload";
 export const activationRoute = "/api/application-update/activate";
-export const bundleSha256 =
-  "d2acf270fa2aa9cb924c362066ece50f4b0fbd4c4c8b2975648dab5ac0b4f849";
-export const bundleBytes = 8724480;
+export const bundleSha256 = writeProfile().bundleSha256;
+export const bundleBytes = writeProfile().bundleBytes;
 
-export function validateUploadBody(body, selectedArchiveVerified) {
+export function validateUploadBody(
+  body,
+  selectedArchiveVerified,
+  profileName = "seq7-to8",
+) {
+  const profile = writeProfile(profileName);
   assert.equal(selectedArchiveVerified, true);
   // Chromium omits File-backed XHR post data (including Content-Length)
   // from interception. Never replace it with a synthetic request body.
   if (body === null) return false;
-  assert.equal(body.length, bundleBytes);
+  assert.equal(body.length, profile.bundleBytes);
   assert.equal(
     crypto.createHash("sha256").update(body).digest("hex"),
-    bundleSha256,
+    profile.bundleSha256,
   );
   return true;
 }
@@ -34,23 +39,24 @@ export async function waitLoginInputs(page) {
   return inputs;
 }
 
-export function validateStaged(body) {
-  const target = statusProfile("seq8");
+export function validateStaged(body, profileName = "seq7-to8") {
+  const profile = writeProfile(profileName);
+  const target = statusProfile(profile.target);
   assert.equal(body.code, 0);
   assert.deepEqual(body.data, {
     slot: {
       slotId: target.slot,
       version: target.version,
-      sequence: "8",
+      sequence: target.sequence,
       minimumSystemSequence: "1",
     },
-    disposition: "already_present",
+    disposition: profile.disposition,
     manifestSha256: target.slot.slice(25),
     payloadBytes: "8683648",
   });
 }
 
-export function validateActivation(body) {
+export function validateActivation(body, profileName = "seq7-to8") {
   assert.equal(body.code, 0);
   assert.deepEqual(Object.keys(body.data).sort(), ["phase", "receipt"]);
   assert.equal(body.data.phase, "awaiting_health");
@@ -58,15 +64,19 @@ export function validateActivation(body) {
     "operationId",
     "targetSlotId",
   ]);
-  assert.equal(body.data.receipt.targetSlotId, statusProfile("seq8").slot);
+  assert.equal(
+    body.data.receipt.targetSlotId,
+    statusProfile(writeProfile(profileName).target).slot,
+  );
   assert.match(body.data.receipt.operationId, /^[a-f0-9]{32}$/);
   assert.notEqual(body.data.receipt.operationId, "0".repeat(32));
 }
 
-export function validateActivationRequest(body) {
+export function validateActivationRequest(body, profileName = "seq7-to8") {
+  const profile = writeProfile(profileName);
   assert.deepEqual(body, {
-    slotId: statusProfile("seq8").slot,
-    expectedGeneration: "37",
+    slotId: statusProfile(profile.target).slot,
+    expectedGeneration: statusProfile(profile.source).generation,
   });
 }
 
@@ -86,9 +96,12 @@ export async function runApplicationWriteUi(
   archivePath,
   archiveVerified = () => {},
   progress = () => {},
+  profileName = "seq7-to8",
 ) {
+  const profile = writeProfile(profileName);
+  const source = statusProfile(profile.source);
   progress({ step: "status-before" });
-  await readStatus(page, "seq7");
+  await readStatus(page, profile.source);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.mouse.move(640, 1);
   await page.locator("svg.lucide-settings").first().click();
@@ -111,7 +124,10 @@ export async function runApplicationWriteUi(
         ).join(""),
       };
     });
-  assert.deepEqual(selected, { bytes: bundleBytes, sha256: bundleSha256 });
+  assert.deepEqual(selected, {
+    bytes: profile.bundleBytes,
+    sha256: profile.bundleSha256,
+  });
   archiveVerified();
   progress({ step: "upload-send" });
   const uploaded = page.waitForResponse(
@@ -148,23 +164,28 @@ export async function runApplicationWriteUi(
       : "unclassified",
   });
   assert.equal(response.status(), 200);
-  validateStaged(uploadBody);
+  validateStaged(uploadBody, profileName);
   progress({ step: "staged-ui" });
-  await panel
-    .getByText("This verified archive is already staged", { exact: true })
-    .waitFor();
-  await readStatus(page, "seq7");
+  await panel.getByText(profile.stagedMessage, { exact: true }).waitFor();
+  await readStatus(page, profile.source);
   progress({ step: "review" });
   await panel.getByTestId("application-activation-review").click();
   const confirm = page.getByTestId("application-activation-confirm");
   const dialog = page.getByRole("dialog").filter({ has: confirm });
   await dialog
-    .getByText("Current confirmed application: 0.1.0-dev6 · #7", {
-      exact: true,
-    })
+    .getByText(
+      `Current confirmed application: ${source.version} · #${source.sequence}`,
+      {
+        exact: true,
+      },
+    )
     .waitFor();
-  await dialog.getByText("Journal generation: 37", { exact: true }).waitFor();
-  await dialog.getByText(statusProfile("seq8").slot, { exact: true }).waitFor();
+  await dialog
+    .getByText(`Journal generation: ${source.generation}`, { exact: true })
+    .waitFor();
+  await dialog
+    .getByText(statusProfile(profile.target).slot, { exact: true })
+    .waitFor();
   const activated = page.waitForResponse(
     (item) =>
       new URL(item.url()).pathname === activationRoute &&
@@ -175,14 +196,16 @@ export async function runApplicationWriteUi(
   // authoritative state before restoration; a click is never called success.
   await confirm.click();
   const activation = await activated;
-  validateActivationRequest(activation.request().postDataJSON());
+  validateActivationRequest(activation.request().postDataJSON(), profileName);
   assert.equal(activation.status(), 202);
   validateActivation(
     await readCapturedResponse(page, activationRoute, activation.status()),
+    profileName,
   );
   return {
-    uploadedAlreadyPresent: true,
-    generationReviewed: "37",
+    uploadedAlreadyPresent: profile.disposition === "already_present",
+    stagingDisposition: profile.disposition,
+    generationReviewed: source.generation,
     activationStatus: 202,
     activationReceiptValidated: true,
     confirmedApplication: false,
