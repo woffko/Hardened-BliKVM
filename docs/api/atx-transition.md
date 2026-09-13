@@ -69,7 +69,9 @@ Before any ATX action can be wired or advertised:
 2. combine policy Pending persistence, the fixed client call, and completion
    persistence in one broker state machine — attached to the control broker
    under the `atx-transition-profile` feature and host-tested with a mock KVMD
-   socket, still unwired to a running daemon;
+   socket; `run_with_atx_profile` reconciles supplied Pending operations from
+   non-Unknown read-only evidence before serving, still unwired to a packaged
+   service;
 3. add startup reconciliation and visible indeterminate/cooldown feedback —
    the reconciliation entry point now requires non-Unknown read-only LED
    evidence; the GUI feedback is still missing;

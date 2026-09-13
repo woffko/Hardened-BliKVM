@@ -9,5 +9,7 @@ pub use attestation::{
 pub use config::{ControlBrokerConfig, ControlBrokerConfigError};
 #[cfg(feature = "hid-transition-profile")]
 pub use server::run_with_hid_profile;
+#[cfg(feature = "atx-transition-profile")]
+pub use server::{AtxReconciliation, run_with_atx_profile};
 pub use server::{ControlBrokerError, run};
 pub use v2::ControlV2State;

@@ -93,8 +93,9 @@ ATX:
   removed;
 - reconciliation now enforces non-Unknown read-only power-LED evidence before
   recording a Pending outcome, and a busy/failed KVMD response is persisted as
-  rejected without retry (`48f06d4` baseline, this checkpoint adds the gate);
-  the daemon wiring and GUI feedback remain;
+  rejected without retry. `run_with_atx_profile` applies reviewed
+  reconciliations before the broker starts serving, proven end-to-end on host;
+  a packaged ATX service and GUI feedback remain;
 - GUI indeterminate/cooldown feedback.
 
 All device-mutating steps require explicit confirmation before execution.

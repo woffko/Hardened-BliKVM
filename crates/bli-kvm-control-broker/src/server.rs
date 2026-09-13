@@ -109,6 +109,66 @@ pub async fn run_with_hid_profile(
     result
 }
 
+/// One reviewed reconciliation decision applied before the daemon serves.
+///
+/// The observation is mandatory read-only evidence and never infers the
+/// completion; the operator still classifies the outcome.
+#[cfg(feature = "atx-transition-profile")]
+#[derive(Debug, Clone, Copy)]
+pub struct AtxReconciliation {
+    pub operation_id: [u8; 16],
+    pub completion: bli_kvm_atx_policy::AtxCompletion,
+    pub observation: bli_kvm_atx_transition::PowerLedObservation,
+}
+
+/// Serves the broker with the persisted ATX state machine attached.
+///
+/// Pending operations are reconciled from the supplied reviewed evidence
+/// before the socket starts serving. Only the `atx-transition-profile` feature
+/// builds this entry point.
+#[cfg(feature = "atx-transition-profile")]
+pub async fn run_with_atx_profile(
+    config: ControlBrokerConfig,
+    journal_path: impl Into<std::path::PathBuf>,
+    kvmd_socket: impl Into<std::path::PathBuf>,
+    credentials: bli_kvm_kvmd_client::KvmdCredentials,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let client = bli_kvm_kvmd_atx_client::KvmdAtxClient::new(kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let mut engine =
+        bli_kvm_atx_transition::AtxTransitionEngine::open(journal_path, client, credentials)
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let reconciled_at_ms = now_unix_millis();
+    for reconciliation in reconciliations {
+        engine
+            .resolve_pending(
+                reconciliation.operation_id,
+                reconciliation.completion,
+                reconciliation.observation,
+                reconciled_at_ms,
+            )
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    }
+    let state = ControlV2State::with_atx_engine(engine);
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
+#[cfg(feature = "atx-transition-profile")]
+fn now_unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 async fn serve<D>(
     config: ControlBrokerConfig,
     diagnostics: D,
@@ -556,6 +616,66 @@ mod tests {
             }
             other => panic!("expected a lease grant, got {other:?}"),
         }
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "atx-transition-profile")]
+    #[tokio::test]
+    async fn atx_profile_reconciles_pending_before_serving() {
+        use bli_kvm_atx_policy::{
+            AtxCompletion, AtxDecision, AtxEligibility, AtxOperation, AtxPolicyEngine,
+        };
+        use bli_kvm_atx_transition::PowerLedObservation;
+        use bli_kvm_core::AtxConfirmation;
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let journal = directory.path().join("journal.json");
+        let now_ms = now_unix_millis();
+        {
+            let mut policy = AtxPolicyEngine::open(&journal).unwrap();
+            let eligibility = AtxEligibility::reviewed_for_confirmation(
+                9, [0x44; 32], now_ms, now_ms, true, true,
+            )
+            .unwrap();
+            let operation =
+                AtxOperation::new([5; 16], 9, [0x44; 32], now_ms, AtxControlAction::PowerShort)
+                    .unwrap();
+            assert_eq!(
+                policy.prepare(operation, eligibility, now_ms).unwrap(),
+                AtxDecision::Permit
+            );
+        }
+        let credentials =
+            bli_kvm_kvmd_client::KvmdCredentials::new("test-user", "not-a-real-password").unwrap();
+        let mut broker = tokio::spawn(run_with_atx_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            journal,
+            directory.path().join("absent-atx.sock"),
+            credentials,
+            vec![AtxReconciliation {
+                operation_id: [5; 16],
+                completion: AtxCompletion::Applied,
+                observation: PowerLedObservation::Off,
+            }],
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let response = client
+            .execute_v2(
+                "05".repeat(16),
+                PlatformControlRequestV2::Atx {
+                    action: AtxControlAction::PowerShort,
+                    confirmation: AtxConfirmation {
+                        session_binding: 9,
+                        confirmation_binding: [0x44; 32],
+                        confirmed_at_unix_ms: now_ms,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(response, ControlResponse::Applied);
         stop_broker(broker).await;
     }
 
