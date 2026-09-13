@@ -78,3 +78,11 @@ capability-gated through `supportsSettingsTab`:
   removed; the regression test pins the route and the read-only boundary.
 - The deployed profile bundle `74cbae36` includes the slice
   (`restricted-control-profile-gate-20260913-h.json`).
+
+## Coherence guard
+
+`tools/test_hardened_settings_coherence.py` parses the implemented server routes
+and the always-visible API modules (`capabilities`, `inventory`, `diagnostics`,
+`auth`) and fails when any of them calls a route the hardened server does not
+implement. It also pins the core settings routes and the read-only hostname
+route, so a legacy call cannot silently return to a visible surface.
