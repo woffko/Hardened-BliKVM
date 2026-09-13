@@ -1,0 +1,20 @@
+[package]
+name = "bli-kvm-atx-transition"
+description = "Persisted ATX transition state machine for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy" }
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+thiserror.workspace = true
+
+[dev-dependencies]
+bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", features = ["atx-reviewed-profile"] }
+tempfile.workspace = true
+tokio.workspace = true

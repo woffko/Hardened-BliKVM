@@ -50,6 +50,10 @@ impl AtxOperation {
     pub const fn action(self) -> AtxControlAction {
         self.action
     }
+
+    pub const fn operation_id(self) -> [u8; 16] {
+        self.operation_id
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +279,15 @@ impl AtxPolicyEngine {
             .iter()
             .filter(|record| record.status == OperationStatus::Pending)
             .count()
+    }
+
+    pub fn pending_operation_ids(&self) -> Vec<[u8; 16]> {
+        self.document
+            .records
+            .iter()
+            .filter(|record| record.status == OperationStatus::Pending)
+            .map(|record| record.operation_id)
+            .collect()
     }
 
     fn cooldown_active(&self, action: AtxControlAction, now_ms: u64) -> bool {
