@@ -87,6 +87,19 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("mode: 'relative_mouse'", (mouse / "relative.tsx").read_text())
         self.assertIn("mode: 'relative_mouse'", (mouse / "mobile-trackpad.tsx").read_text())
 
+    def test_explicit_operator_confirmation_is_required(self) -> None:
+        atom = (ROOT / "web/src/jotai/restricted-control.ts").read_text()
+        self.assertIn("focusConfirmedAtom = atom(false)", atom)
+        confirmation = (ROOT / "web/src/hooks/useFocusConfirmation.ts").read_text()
+        self.assertIn("Modal.confirm(", confirmation)
+        self.assertIn("onOk:", confirmation)
+        self.assertIn("setConfirmed(true)", confirmation)
+        self.assertIn("pendingRef", confirmation)
+        for hook in ("useRestrictedPower.ts", "useHidLease.ts"):
+            text = (ROOT / "web/src/hooks" / hook).read_text()
+            self.assertIn("useFocusConfirmation", text)
+            self.assertIn("ensureConfirmed", text)
+
 
 if __name__ == "__main__":
     unittest.main()

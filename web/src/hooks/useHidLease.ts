@@ -6,6 +6,7 @@ import { supportsRestrictedControls } from '@/lib/capabilities.ts';
 import { HidLeaseSession } from '@/lib/hid-lease.ts';
 import { ensureFocus } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
+import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
 const LEASE_TTL_SECONDS = 30;
 
@@ -17,6 +18,7 @@ const LEASE_TTL_SECONDS = 30;
 export function useHidLease() {
   const manifest = useAtomValue(capabilitiesAtom);
   const restricted = supportsRestrictedControls(manifest);
+  const { ensureConfirmed } = useFocusConfirmation();
   const sessionRef = useRef<HidLeaseSession | null>(null);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -38,6 +40,9 @@ export function useHidLease() {
       }
       queueRef.current = queueRef.current
         .then(async () => {
+          if (!(await ensureConfirmed())) {
+            return;
+          }
           await ensureFocus(manifest.platform.id);
           if (!sessionRef.current) {
             const session = new HidLeaseSession();
@@ -50,7 +55,7 @@ export function useHidLease() {
           sessionRef.current = null;
         });
     },
-    [manifest]
+    [manifest, ensureConfirmed]
   );
 
   const release = useCallback(() => {

@@ -123,11 +123,11 @@ ATX:
   and mobile mouse surfaces route through `/api/hid/focus`, `/api/hid/lease`
   and `/api/application-power` only when the capability is advertised, and keep
   the legacy path otherwise.
-- BLOCKING before capability enablement: the HID/power GUI must present an
-  explicit operator target/focus confirmation prompt. The current client
-  confirms automatically when a capability is advertised, which satisfies the
-  protocol shape but not the reviewed explicit-confirmation requirement; the
-  capability must stay unavailable until that prompt is implemented and gated.
+- Explicit operator confirmation: `focusConfirmedAtom` starts false and the
+  HID/power hooks require an antd `Modal.confirm` operator acknowledgement
+  before any restricted action; cancelling keeps controls inactive. This
+  resolves the earlier blocking gap, though the capability still stays
+  unavailable until the device and release gates pass.
 
 ## Phase 4 baseline
 

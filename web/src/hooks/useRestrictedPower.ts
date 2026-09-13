@@ -4,14 +4,20 @@ import { useAtomValue } from 'jotai';
 import { supportsPowerControl } from '@/lib/capabilities.ts';
 import { performPowerAction } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
+import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
 export function useRestrictedPower() {
   const manifest = useAtomValue(capabilitiesAtom);
   const restricted = supportsPowerControl(manifest);
+  const { ensureConfirmed } = useFocusConfirmation();
 
   async function run(action: 'power_short' | 'power_long' | 'reset') {
     if (!manifest) {
       throw new Error('capabilities are not available');
+    }
+    if (restricted && !(await ensureConfirmed())) {
+      message.info('Remote control confirmation was cancelled');
+      return { applied: false, rejection: 'confirmation_required' };
     }
     const result = await performPowerAction(manifest.platform.id, action);
     if (!result.applied) {
