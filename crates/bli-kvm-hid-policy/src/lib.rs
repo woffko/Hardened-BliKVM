@@ -490,6 +490,95 @@ mod tests {
         assert_eq!(policy.disconnect().await, HidDecision::Applied);
     }
 
+    #[tokio::test]
+    async fn startup_replays_a_persisted_release_before_any_new_lease() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let ledger_path = directory.path().join("ledger.json");
+        {
+            let ledger = HidReleaseLedger::new(&ledger_path).unwrap();
+            ledger
+                .store(&[bli_kvm_hid_adapter::KvmdHidEvent::Key {
+                    key: bli_kvm_hid_adapter::KvmdKeyCode::from_usb_usage(4).unwrap(),
+                    pressed: false,
+                }])
+                .unwrap();
+        }
+        let server = serve_statuses(&socket, &["200 OK"]).await;
+        let mut policy = policy(&ledger_path, &socket);
+        assert_eq!(policy.pending_release_count(), 1);
+        assert_eq!(policy.disconnect().await, HidDecision::Applied);
+        let requests = server.await.unwrap();
+        assert!(requests[0].contains("key=KeyA&state=0"));
+        assert_eq!(policy.pending_release_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn expiry_releases_held_keys_through_the_fixed_route() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let server = serve_statuses(&socket, &["200 OK", "200 OK"]).await;
+        let mut policy = policy(&directory.path().join("ledger.json"), &socket);
+        let owner = identity(1);
+        let now = Instant::now();
+        let eligible = HidEligibility::verified_for_test();
+
+        assert_eq!(
+            policy
+                .acquire(owner, eligible, now, Duration::from_secs(30))
+                .await,
+            HidDecision::Applied
+        );
+        assert_eq!(
+            policy
+                .report(owner, eligible, now, &keyboard([0, 0, 4, 0, 0, 0, 0, 0]))
+                .await,
+            HidDecision::Applied
+        );
+        assert_eq!(
+            policy.expire(now + Duration::from_secs(31)).await,
+            HidDecision::Applied
+        );
+        let requests = server.await.unwrap();
+        assert!(requests[0].contains("key=KeyA&state=1"));
+        assert!(requests[1].contains("key=KeyA&state=0"));
+        assert_eq!(policy.pending_release_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn mismatched_identity_is_rejected_without_backend_io() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = unreachable_socket(directory.path());
+        let mut policy = policy(&directory.path().join("ledger.json"), &socket);
+        let now = Instant::now();
+        let eligible = HidEligibility::verified_for_test();
+
+        assert_eq!(
+            policy
+                .acquire(identity(1), eligible, now, Duration::from_secs(30))
+                .await,
+            HidDecision::Applied
+        );
+        assert_eq!(
+            policy
+                .report(
+                    identity(2),
+                    eligible,
+                    now,
+                    &keyboard([0, 0, 4, 0, 0, 0, 0, 0])
+                )
+                .await,
+            HidDecision::Reject(HidRejection::LeaseMismatch)
+        );
+        assert_eq!(
+            policy
+                .renew(identity(2), eligible, now, Duration::from_secs(30))
+                .await,
+            HidDecision::Reject(HidRejection::LeaseMismatch)
+        );
+        assert!(!socket.exists());
+    }
+
     struct ReportingSink {
         accepted: bool,
     }
