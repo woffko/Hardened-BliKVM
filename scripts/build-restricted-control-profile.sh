@@ -12,10 +12,11 @@ umask 022
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 target_dir=${1:-/mnt/d/debug/blikvm/hardened-blikvm/target-aarch64-restricted-control}
 output_dir=${2:-/mnt/d/debug/blikvm/hardened-blikvm/bundles}
+pnpm_store=${BLI_KVM_PNPM_STORE:-/mnt/d/debug/blikvm/hardened-blikvm/pnpm-store}
 bundle_name=hardened-blikvm-restricted-control-profile-aarch64
 cargo_features=restricted-control-surface,hid-transition-profile,atx-transition-profile
 
-for directory in "$target_dir" "$output_dir"; do
+for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
   case "$directory" in
     /*) ;;
     *)
@@ -28,6 +29,7 @@ done
 cd "$project_root"
 BLI_KVM_CARGO_FEATURES="$cargo_features" \
   scripts/build-aarch64.sh "$target_dir"
+PNPM_CONFIG_STORE_DIR="$pnpm_store" corepack pnpm --dir web build
 
 release_dir="$target_dir/aarch64-unknown-linux-musl/release"
 server_binary="$release_dir/bli-kvm-server"
@@ -47,9 +49,11 @@ install -d -m 0755 \
   "$stage/libexec" \
   "$stage/share/systemd" \
   "$stage/share/tmpfiles.d" \
-  "$stage/share/server-dropin"
+  "$stage/share/server-dropin" \
+  "$stage/share/web"
 install -m 0755 "$server_binary" "$stage/libexec/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-control-broker"
+cp -a web/dist/. "$stage/share/web/"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-control-transition.service \
   "$stage/share/systemd/"
@@ -75,12 +79,15 @@ if git diff --quiet \
   source_state=committed-development-checkpoint
 fi
 
+web_index_sha=$(sha256sum "$stage/share/web/index.html" | cut -d ' ' -f 1)
+
 jq -n \
   --arg server_sha "$server_sha" \
   --arg broker_sha "$broker_sha" \
   --arg source_state "$source_state" \
   --arg source_commit "$(git rev-parse HEAD)" \
   --arg cargo_features "$cargo_features" \
+  --arg web_index_sha "$web_index_sha" \
   --argjson server_size "$server_size" \
   --argjson broker_size "$broker_size" \
   '{
@@ -94,7 +101,8 @@ jq -n \
     deviceAccepted: false,
     artifacts: {
       server: {path: "libexec/bli-kvm-server", sha256: $server_sha, size: $server_size},
-      controlBroker: {path: "libexec/bli-kvm-control-broker", sha256: $broker_sha, size: $broker_size}
+      controlBroker: {path: "libexec/bli-kvm-control-broker", sha256: $broker_sha, size: $broker_size},
+      webIndex: {path: "share/web/index.html", sha256: $web_index_sha}
     }
   }' > "$stage/MANIFEST.json"
 chmod 0644 "$stage/MANIFEST.json"

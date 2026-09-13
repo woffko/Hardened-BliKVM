@@ -46,6 +46,7 @@ def write_profile_bundle(
         "share/systemd/hardened-blikvm-control-transition.service": b"unit",
         "share/tmpfiles.d/hardened-blikvm-control-transition.conf": b"tmpfiles",
         "share/server-dropin/90-restricted-control.conf": b"dropin",
+        "share/web/index.html": b"<!doctype html>",
     }
     with tarfile.open(path, mode="w:gz") as archive:
         root = tarfile.TarInfo(gate.EXPECTED_ROOT)
@@ -109,7 +110,11 @@ class RestrictedControlProfileTests(unittest.TestCase):
         self.assertIn("BLI_KVM_HID_PROFILE=1", script)
         self.assertIn("BLI_KVM_ATX_PROFILE=1", script)
         self.assertIn("BLI_KVM_RESTRICTED_CONTROLS=1", script)
+        self.assertIn(f"BLI_KVM_WEB_ROOT={validated.runtime_root}/share/web", script)
         self.assertIn(f"BLI_KVM_CONTROL_SOCKET={validated.runtime_root}/state/control.sock", script)
+        self.assertIn("web_ready", script)
+        source = (ROOT / "tools/stage_device_restricted_control_profile.py").read_text()
+        self.assertIn('"web_assets_missing_restricted_gui"', source)
         for key in (
             "extracted",
             "broker_started",
@@ -119,6 +124,7 @@ class RestrictedControlProfileTests(unittest.TestCase):
             "hid_availability",
             "power_availability",
             "https_ready",
+            "web_ready",
         ):
             self.assertIn(f'emit {key} ', script)
         self.assertNotIn("not-a-real", script)

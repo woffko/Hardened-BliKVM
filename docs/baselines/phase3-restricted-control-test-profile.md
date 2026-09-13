@@ -12,10 +12,12 @@ out.
   `atx-transition-profile`.
 - Bundle:
   `bundles/hardened-blikvm-restricted-control-profile-aarch64.tar.gz`, SHA-256
-  `72270c8f16859bebf2f919d9244b63d443dbac859662f278f853ac7b6fc43ce2`,
+  `30c23c872dc60462b62a787ca0cb38031987aa91134e39bdff889af7ebd7e56e`,
   profile `restricted-control-test`, source commit
-  `0af9717348d1e451382846deea79443d6451c517`.
+  `43f63da` (the earlier `72270c8f` bundle served the pre-Phase-3 slot web and
+  is superseded).
 - Contents: feature-built `bli-kvm-server` and `bli-kvm-control-broker`, the
+  operator web assets built from the current tree, the
   `hardened-blikvm-control-transition.service` unit, its tmpfiles entry and the
   `hardened-blikvm-server-current.service.d/90-restricted-control.conf` drop-in.
 - Build entry point: `scripts/build-restricted-control-profile.sh`; host test
@@ -55,10 +57,14 @@ this is a deliberate test-harness deviation, while the credential still arrives
 through `LoadCredential`.
 
 Observed receipt facts
-(`restricted-control-profile-gate-20260913-a.json`): `extracted=yes`,
+(`restricted-control-profile-gate-20260913-b.json`): `extracted=yes`,
 `broker_started=yes`, `control_socket_present=yes`, `server_started=yes`,
 `health=ok`, `hid_availability=read_write`, `power_availability=read_write`,
 `https_ready=yes`, `persistentChangeScope=runtime-only`.
+
+The operator web assets are served from the bundle itself; serving the retained
+slot web by mistake leaves the restricted HID/power GUI absent even while the
+server advertises `read_write`.
 
 ## Manual acceptance checklist (operator)
 

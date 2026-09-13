@@ -822,6 +822,70 @@ mod tests {
         stop_broker(broker).await;
     }
 
+    #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+    #[tokio::test]
+    async fn control_profile_reconciles_pending_before_serving() {
+        use bli_kvm_atx_policy::{
+            AtxCompletion, AtxDecision, AtxEligibility, AtxOperation, AtxPolicyEngine,
+        };
+        use bli_kvm_atx_transition::PowerLedObservation;
+        use bli_kvm_core::{AtxConfirmation, AtxControlAction};
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let credentials = directory.path().join("credentials");
+        std::fs::create_dir(&credentials).unwrap();
+        std::fs::write(credentials.join("kvmd-user"), b"test-user\n").unwrap();
+        std::fs::write(credentials.join("kvmd-password"), b"not-a-real-password\n").unwrap();
+        let journal = directory.path().join("atx-journal.json");
+        let now_ms = now_unix_millis();
+        {
+            let mut policy = AtxPolicyEngine::open(&journal).unwrap();
+            let eligibility = AtxEligibility::reviewed_for_confirmation(
+                9, [0x44; 32], now_ms, now_ms, true, true,
+            )
+            .unwrap();
+            let operation =
+                AtxOperation::new([5; 16], 9, [0x44; 32], now_ms, AtxControlAction::PowerShort)
+                    .unwrap();
+            assert_eq!(
+                policy.prepare(operation, eligibility, now_ms).unwrap(),
+                AtxDecision::Permit
+            );
+        }
+        let mut broker = tokio::spawn(run_with_control_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("hid-ledger.json"),
+            directory.path().join("absent-hid.sock"),
+            journal,
+            directory.path().join("absent-atx.sock"),
+            credentials,
+            vec![AtxReconciliation {
+                operation_id: [5; 16],
+                completion: AtxCompletion::Applied,
+                observation: PowerLedObservation::Off,
+            }],
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let response = client
+            .execute_v2(
+                "05".repeat(16),
+                PlatformControlRequestV2::Atx {
+                    action: AtxControlAction::PowerShort,
+                    confirmation: AtxConfirmation {
+                        session_binding: 9,
+                        confirmation_binding: [0x44; 32],
+                        confirmed_at_unix_ms: now_ms,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(response, ControlResponse::Applied);
+        stop_broker(broker).await;
+    }
+
     #[derive(Clone)]
     struct ScriptedDiagnostics {
         state: Arc<StdMutex<ScriptedDiagnosticState>>,

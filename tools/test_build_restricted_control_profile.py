@@ -24,6 +24,8 @@ class RestrictedControlProfileBuildTests(unittest.TestCase):
             "bundle_name=hardened-blikvm-restricted-control-profile-aarch64", script
         )
         self.assertIn("scripts/build-aarch64.sh", script)
+        self.assertIn("corepack pnpm --dir web build", script)
+        self.assertIn('cp -a web/dist/. "$stage/share/web/"', script)
         self.assertIn('install -m 0755 "$server_binary" "$stage/libexec/bli-kvm-server"', script)
         self.assertIn(
             'install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-control-broker"', script

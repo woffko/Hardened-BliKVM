@@ -53,6 +53,7 @@ REQUIRED_MEMBERS = {
     f"{EXPECTED_ROOT}/share/systemd/hardened-blikvm-control-transition.service",
     f"{EXPECTED_ROOT}/share/tmpfiles.d/hardened-blikvm-control-transition.conf",
     f"{EXPECTED_ROOT}/share/server-dropin/90-restricted-control.conf",
+    f"{EXPECTED_ROOT}/share/web/index.html",
 }
 MAX_PROFILE_BUNDLE_BYTES = 256 * 1024 * 1024
 MAX_PROFILE_BUNDLE_FILES = 256
@@ -67,6 +68,7 @@ APPLY_KEYS = {
     "hid_availability",
     "power_availability",
     "https_ready",
+    "web_ready",
 }
 TEARDOWN_KEYS = {
     "units_removed",
@@ -282,7 +284,7 @@ User=hardened-blikvm-server
 Group=hardened-blikvm
 UMask=0077
 Environment=BLI_KVM_BIND=127.0.0.1:__PORT__
-Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots/current/share/web
+Environment=BLI_KVM_WEB_ROOT=__ROOT__/share/web
 Environment=BLI_KVM_STATE_DIR=__ROOT__/server-state
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
@@ -448,6 +450,7 @@ export LC_ALL=C
 {header}
 emit() {{ printf '%s=%s\\n' "$1" "$2"; }}
 extracted=no
+web_ready=no
 broker_started=no
 control_socket_present=no
 server_started=no
@@ -463,6 +466,9 @@ if [ "$(uname -m)" = aarch64 ]; then
     && [ "$(sha256sum "$root/libexec/bli-kvm-server" | cut -d ' ' -f 1)" = "$expected_server_sha" ] \
     && [ "$(sha256sum "$root/libexec/bli-kvm-control-broker" | cut -d ' ' -f 1)" = "$expected_broker_sha" ]; then
     extracted=yes
+    if grep -rq 'hid/lease' "$root/share/web" && grep -rq 'application-power' "$root/share/web"; then
+      web_ready=yes
+    fi
   fi
 fi
 
@@ -534,6 +540,7 @@ except Exception:
 fi
 
 emit extracted "$extracted"
+emit web_ready "$web_ready"
 emit broker_started "$broker_started"
 emit control_socket_present "$control_socket_present"
 emit server_started "$server_started"
@@ -580,6 +587,8 @@ emit units_removed yes
 def validate_apply(facts: dict[str, str]) -> None:
     if facts.get("extracted") != "yes":
         raise GateError("apply", "extraction_failed")
+    if facts.get("web_ready") != "yes":
+        raise GateError("apply", "web_assets_missing_restricted_gui")
     if facts.get("control_socket_present") != "yes" or facts.get("broker_started") != "yes":
         raise GateError("apply", "broker_did_not_start")
     if facts.get("server_started") != "yes" or facts.get("health") != "ok":
