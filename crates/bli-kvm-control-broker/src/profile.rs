@@ -11,9 +11,17 @@ use bli_kvm_kvmd_client::KvmdCredentials;
 
 const MAX_CREDENTIAL_BYTES: u64 = 1024;
 
+#[cfg(feature = "hid-transition-profile")]
 #[derive(Debug)]
 pub struct HidProfile {
     pub ledger: PathBuf,
+    pub kvmd_socket: PathBuf,
+}
+
+#[cfg(feature = "atx-transition-profile")]
+#[derive(Debug)]
+pub struct AtxProfile {
+    pub journal: PathBuf,
     pub kvmd_socket: PathBuf,
 }
 
@@ -23,6 +31,10 @@ pub enum ProfileError {
     InvalidLedger,
     MissingKvmdSocket,
     InvalidKvmdSocket,
+    MissingAtxJournal,
+    InvalidAtxJournal,
+    MissingAtxKvmdSocket,
+    InvalidAtxKvmdSocket,
     MissingCredentials,
     InvalidCredentials,
 }
@@ -34,8 +46,14 @@ impl std::fmt::Display for ProfileError {
             Self::MissingKvmdSocket | Self::InvalidKvmdSocket => {
                 "HID profile KVMD socket path is invalid"
             }
+            Self::MissingAtxJournal | Self::InvalidAtxJournal => {
+                "ATX profile journal path is invalid"
+            }
+            Self::MissingAtxKvmdSocket | Self::InvalidAtxKvmdSocket => {
+                "ATX profile KVMD socket path is invalid"
+            }
             Self::MissingCredentials | Self::InvalidCredentials => {
-                "HID profile credential is invalid"
+                "transition profile credential is invalid"
             }
         })
     }
@@ -45,6 +63,7 @@ impl std::error::Error for ProfileError {}
 
 /// Parses the HID test-profile selection. A disabled profile returns `None`
 /// even when the path values are absent.
+#[cfg(feature = "hid-transition-profile")]
 pub fn hid_profile_from_values(
     enabled: bool,
     ledger: Option<&str>,
@@ -59,6 +78,27 @@ pub fn hid_profile_from_values(
     let kvmd_socket = absolute_path(kvmd_socket).ok_or(ProfileError::InvalidKvmdSocket)?;
     Ok(Some(HidProfile {
         ledger,
+        kvmd_socket,
+    }))
+}
+
+/// Parses the ATX test-profile selection. A disabled profile returns `None`
+/// even when the path values are absent.
+#[cfg(feature = "atx-transition-profile")]
+pub fn atx_profile_from_values(
+    enabled: bool,
+    journal: Option<&str>,
+    kvmd_socket: Option<&str>,
+) -> Result<Option<AtxProfile>, ProfileError> {
+    if !enabled {
+        return Ok(None);
+    }
+    let journal = journal.ok_or(ProfileError::MissingAtxJournal)?;
+    let kvmd_socket = kvmd_socket.ok_or(ProfileError::MissingAtxKvmdSocket)?;
+    let journal = absolute_path(journal).ok_or(ProfileError::InvalidAtxJournal)?;
+    let kvmd_socket = absolute_path(kvmd_socket).ok_or(ProfileError::InvalidAtxKvmdSocket)?;
+    Ok(Some(AtxProfile {
+        journal,
         kvmd_socket,
     }))
 }
@@ -100,6 +140,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "hid-transition-profile")]
     fn disabled_profile_ignores_missing_values() {
         assert!(matches!(
             hid_profile_from_values(false, None, None),
@@ -112,6 +153,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "hid-transition-profile")]
     fn enabled_profile_requires_absolute_paths() {
         assert!(matches!(
             hid_profile_from_values(true, None, Some("/run/kvmd/kvmd.sock")),
@@ -134,6 +176,37 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!(profile.ledger, PathBuf::from("/tmp/ledger.json"));
+        assert_eq!(profile.kvmd_socket, PathBuf::from("/run/kvmd/kvmd.sock"));
+    }
+
+    #[test]
+    #[cfg(feature = "atx-transition-profile")]
+    fn atx_profile_requires_absolute_paths() {
+        assert!(matches!(
+            atx_profile_from_values(true, None, Some("/run/kvmd/kvmd.sock")),
+            Err(ProfileError::MissingAtxJournal)
+        ));
+        assert!(matches!(
+            atx_profile_from_values(true, Some("/tmp/atx.json"), None),
+            Err(ProfileError::MissingAtxKvmdSocket)
+        ));
+        assert!(matches!(
+            atx_profile_from_values(true, Some("relative.json"), Some("/run/kvmd/kvmd.sock")),
+            Err(ProfileError::InvalidAtxJournal)
+        ));
+        assert!(matches!(
+            atx_profile_from_values(true, Some("/tmp/atx.json"), Some("relative.sock")),
+            Err(ProfileError::InvalidAtxKvmdSocket)
+        ));
+        assert!(matches!(
+            atx_profile_from_values(false, None, None),
+            Ok(None)
+        ));
+        let profile =
+            atx_profile_from_values(true, Some("/tmp/atx.json"), Some("/run/kvmd/kvmd.sock"))
+                .unwrap()
+                .unwrap();
+        assert_eq!(profile.journal, PathBuf::from("/tmp/atx.json"));
         assert_eq!(profile.kvmd_socket, PathBuf::from("/run/kvmd/kvmd.sock"));
     }
 

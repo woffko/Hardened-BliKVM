@@ -70,6 +70,20 @@ impl ControlV2State {
         }
     }
 
+    /// Serves both transition backends from one state, for the restricted
+    /// control test profile. Only a build with both profile features compiles
+    /// this constructor; HID requests still require a current attestation and
+    /// ATX requests still require a reviewed confirmation.
+    #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+    pub fn with_hid_and_atx(hid: HidControlPolicy, atx: AtxTransitionEngine) -> Self {
+        Self {
+            enabled: true,
+            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            atx: Some(atx),
+            hid: Some(hid),
+        }
+    }
+
     #[cfg(test)]
     fn enabled_for_test() -> Self {
         Self {

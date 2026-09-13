@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .map(PathBuf::from),
         update_writes_enabled: env::var("BLI_KVM_UPDATE_WRITES_ENABLED").as_deref() == Ok("1"),
         control_socket: env::var_os("BLI_KVM_CONTROL_SOCKET").map(PathBuf::from),
+        restricted_controls_enabled: env::var("BLI_KVM_RESTRICTED_CONTROLS").as_deref() == Ok("1"),
         ..ServerOptions::default()
     };
 

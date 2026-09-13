@@ -161,6 +161,53 @@ pub async fn run_with_atx_profile(
     result
 }
 
+/// Serves the broker with both the HID and the ATX transition backends from
+/// one state, for the restricted control test profile.
+///
+/// The KVMD credential is read twice from the systemd credential directory so
+/// each backend owns an independent, non-shareable credential instance. Only a
+/// build with both profile features compiles this entry point; shipped builds
+/// keep both capabilities disabled.
+#[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+pub async fn run_with_control_profile(
+    config: ControlBrokerConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hid_kvmd_socket: impl Into<std::path::PathBuf>,
+    atx_journal: impl Into<std::path::PathBuf>,
+    atx_kvmd_socket: impl Into<std::path::PathBuf>,
+    credentials_directory: impl Into<std::path::PathBuf>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let credentials_directory = credentials_directory.into();
+    let hid_credentials = crate::profile::kvmd_credentials_from_directory(&credentials_directory)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let atx_credentials = crate::profile::kvmd_credentials_from_directory(&credentials_directory)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let hid_client = bli_kvm_kvmd_hid_client::KvmdHidClient::new(hid_kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let hid_engine =
+        bli_kvm_hid_transition::HidTransitionEngine::new(hid_client, hid_credentials, ledger)
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let atx_client = bli_kvm_kvmd_atx_client::KvmdAtxClient::new(atx_kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let atx_engine =
+        bli_kvm_atx_transition::AtxTransitionEngine::open(atx_journal, atx_client, atx_credentials)
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state = ControlV2State::with_hid_and_atx(
+        bli_kvm_hid_policy::HidControlPolicy::new(hid_engine),
+        atx_engine,
+    );
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 #[cfg(feature = "atx-transition-profile")]
 fn now_unix_millis() -> u64 {
     std::time::SystemTime::now()
@@ -168,7 +215,6 @@ fn now_unix_millis() -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
-
 async fn serve<D>(
     config: ControlBrokerConfig,
     diagnostics: D,
@@ -676,6 +722,90 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response, ControlResponse::Applied);
+        stop_broker(broker).await;
+    }
+
+    #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+    #[tokio::test]
+    async fn control_profile_serves_hid_and_atx_from_one_state() {
+        use bli_kvm_core::{AtxConfirmation, TargetAttestation};
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let credentials = directory.path().join("credentials");
+        std::fs::create_dir(&credentials).unwrap();
+        std::fs::write(credentials.join("kvmd-user"), b"test-user\n").unwrap();
+        std::fs::write(credentials.join("kvmd-password"), b"not-a-real-password\n").unwrap();
+        let mut broker = tokio::spawn(run_with_control_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("hid-ledger.json"),
+            directory.path().join("absent-hid.sock"),
+            directory.path().join("atx-journal.json"),
+            directory.path().join("absent-atx.sock"),
+            credentials,
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => {
+                assert!(lease_id.iter().any(|byte| *byte != 0));
+            }
+            other => panic!("expected a lease grant, got {other:?}"),
+        }
+
+        let response = client
+            .execute_v2(
+                "05".repeat(16),
+                PlatformControlRequestV2::Atx {
+                    action: AtxControlAction::PowerShort,
+                    confirmation: AtxConfirmation {
+                        session_binding: 9,
+                        confirmation_binding: [0x44; 32],
+                        confirmed_at_unix_ms: now_unix_millis(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            },
+            "the ATX route must be active and reach the (absent) backend"
+        );
         stop_broker(broker).await;
     }
 

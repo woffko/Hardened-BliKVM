@@ -128,6 +128,31 @@ response write, and diagnostics can never change a control response.
   cooldown, restart and recovery gates with physically disconnected Power and
   Reset.
 
+## Test-profile environment
+
+The restricted-control test profile is a separate build, never a shipped or
+released artifact. It compiles `restricted-control-surface`,
+`hid-transition-profile` and `atx-transition-profile` together and selects the
+backends from fixed environment keys:
+
+- application server: `BLI_KVM_CONTROL_SOCKET` (absolute control socket) and
+  `BLI_KVM_RESTRICTED_CONTROLS=1` (explicit opt-in). Without both, HID and
+  power stay `not_exposed` even in a feature build.
+- control broker HID backend: `BLI_KVM_HID_PROFILE=1`, `BLI_KVM_HID_LEDGER`
+  and `BLI_KVM_HID_KVMD_SOCKET`, all absolute.
+- control broker ATX backend: `BLI_KVM_ATX_PROFILE=1`, `BLI_KVM_ATX_JOURNAL`
+  and `BLI_KVM_ATX_KVMD_SOCKET`, all absolute.
+- KVMD credential: delivered by systemd through `CREDENTIALS_DIRECTORY` as
+  `kvmd-user` and `kvmd-password`; every attached backend reads its own
+  instance and the broker refuses to start without the directory.
+
+When both profile selects are present the broker serves HID and ATX from one
+state: HID leases still require a current target attestation and ATX actions
+still require a reviewed confirmation. Reconciliation input for the test
+profile is empty by design; a pending operation is reported as
+`pending_unreconciled` until it is reviewed. The profile bundle is labelled
+`restricted-control-test` with `releaseAccepted` and `deviceAccepted` false.
+
 ## Boundaries
 
 - No generic method, command, path, URL, filename, device name, GPIO number,
