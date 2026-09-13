@@ -204,8 +204,13 @@ gates remain device/recovery-card bound.
   `logrotateValid=true`, `journaldStorage=persistent`, `failedUnits=0`); a
   stacked duplicate bind mount found during that check was reduced to a single
   mount.
-- Remaining for the HID reboot gate: one explicitly confirmed reboot to observe
-  a changed boot identity together with `previousBootJournalPresent=true`; no
-  further reboot is invoked without that confirmation.
+- Reboot gate result: the device rebooted for real; the post-reboot receipt
+  (`hid-reboot-gate-20260913-c.json`) confirms `kvmd` active, retained slots and
+  guard/evidence intact, no staging or test account, and
+  `previousBootJournalPresent=true`, so log persistence across boot is proven.
+  Caveat: this board's software reboot stalls for roughly half an hour between
+  journal stop and the next boot (no `stop job` line), so the gate's default
+  window was raised to 1800 s. A pre-existing `kvmd-main.sh` error stream
+  ("Error reading from GPIO 0") was observed and left untouched.
 
 All device-mutating steps require explicit confirmation before execution.
