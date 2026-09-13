@@ -3,11 +3,12 @@
 //! This protocol does not enable a capability by itself. Runtime policy,
 //! arming, cooldown, idempotency, and backend gates remain mandatory.
 
-use bli_kvm_core::PlatformControlRequest;
+use bli_kvm_core::{PlatformControlRequest, PlatformControlRequestV2};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const CONTROL_SCHEMA_VERSION: u16 = 1;
+pub const CONTROL_SCHEMA_VERSION_V2: u16 = 2;
 pub const MAX_CONTROL_MESSAGE_BYTES: usize = 4 * 1024;
 const OPERATION_ID_LENGTH: usize = 32;
 
@@ -25,7 +26,13 @@ pub struct ControlRequestEnvelope {
 pub enum ControlRejectionCode {
     CapabilityDisabled,
     NotArmed,
+    NotAttested,
+    LeaseConflict,
+    LeaseExpired,
     CooldownActive,
+    ConfirmationStale,
+    Duplicate,
+    PendingUnreconciled,
     InvalidState,
     BackendUnavailable,
     BackendRejected,
@@ -46,6 +53,15 @@ pub struct ControlResponseEnvelope {
     pub request_id: u64,
     pub operation_id: String,
     pub response: ControlResponse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ControlRequestEnvelopeV2 {
+    pub schema_version: u16,
+    pub request_id: u64,
+    pub operation_id: String,
+    pub request: PlatformControlRequestV2,
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
@@ -93,9 +109,11 @@ pub fn decode_frame(frame: &[u8]) -> Result<&[u8], ControlProtocolError> {
 
 pub fn decode_request(bytes: &[u8]) -> Result<ControlRequestEnvelope, ControlProtocolError> {
     ensure_bounded(bytes)?;
+    ensure_version(peek_schema_version(bytes)?, CONTROL_SCHEMA_VERSION)?;
     let request: ControlRequestEnvelope =
         serde_json::from_slice(bytes).map_err(|_| ControlProtocolError::InvalidJson)?;
     validate_common(
+        CONTROL_SCHEMA_VERSION,
         request.schema_version,
         request.request_id,
         &request.operation_id,
@@ -109,6 +127,41 @@ pub fn decode_request(bytes: &[u8]) -> Result<ControlRequestEnvelope, ControlPro
 
 pub fn encode_request(request: &ControlRequestEnvelope) -> Result<Vec<u8>, ControlProtocolError> {
     validate_common(
+        CONTROL_SCHEMA_VERSION,
+        request.schema_version,
+        request.request_id,
+        &request.operation_id,
+    )?;
+    request
+        .request
+        .validate()
+        .map_err(|_| ControlProtocolError::InvalidControlRequest)?;
+    encode_json(request)
+}
+
+pub fn decode_request_v2(bytes: &[u8]) -> Result<ControlRequestEnvelopeV2, ControlProtocolError> {
+    ensure_bounded(bytes)?;
+    ensure_version(peek_schema_version(bytes)?, CONTROL_SCHEMA_VERSION_V2)?;
+    let request: ControlRequestEnvelopeV2 =
+        serde_json::from_slice(bytes).map_err(|_| ControlProtocolError::InvalidJson)?;
+    validate_common(
+        CONTROL_SCHEMA_VERSION_V2,
+        request.schema_version,
+        request.request_id,
+        &request.operation_id,
+    )?;
+    request
+        .request
+        .validate()
+        .map_err(|_| ControlProtocolError::InvalidControlRequest)?;
+    Ok(request)
+}
+
+pub fn encode_request_v2(
+    request: &ControlRequestEnvelopeV2,
+) -> Result<Vec<u8>, ControlProtocolError> {
+    validate_common(
+        CONTROL_SCHEMA_VERSION_V2,
         request.schema_version,
         request.request_id,
         &request.operation_id,
@@ -122,9 +175,11 @@ pub fn encode_request(request: &ControlRequestEnvelope) -> Result<Vec<u8>, Contr
 
 pub fn decode_response(bytes: &[u8]) -> Result<ControlResponseEnvelope, ControlProtocolError> {
     ensure_bounded(bytes)?;
+    ensure_version(peek_schema_version(bytes)?, CONTROL_SCHEMA_VERSION)?;
     let response: ControlResponseEnvelope =
         serde_json::from_slice(bytes).map_err(|_| ControlProtocolError::InvalidJson)?;
     validate_common(
+        CONTROL_SCHEMA_VERSION,
         response.schema_version,
         response.request_id,
         &response.operation_id,
@@ -136,6 +191,33 @@ pub fn encode_response(
     response: &ControlResponseEnvelope,
 ) -> Result<Vec<u8>, ControlProtocolError> {
     validate_common(
+        CONTROL_SCHEMA_VERSION,
+        response.schema_version,
+        response.request_id,
+        &response.operation_id,
+    )?;
+    encode_json(response)
+}
+
+pub fn decode_response_v2(bytes: &[u8]) -> Result<ControlResponseEnvelope, ControlProtocolError> {
+    ensure_bounded(bytes)?;
+    ensure_version(peek_schema_version(bytes)?, CONTROL_SCHEMA_VERSION_V2)?;
+    let response: ControlResponseEnvelope =
+        serde_json::from_slice(bytes).map_err(|_| ControlProtocolError::InvalidJson)?;
+    validate_common(
+        CONTROL_SCHEMA_VERSION_V2,
+        response.schema_version,
+        response.request_id,
+        &response.operation_id,
+    )?;
+    Ok(response)
+}
+
+pub fn encode_response_v2(
+    response: &ControlResponseEnvelope,
+) -> Result<Vec<u8>, ControlProtocolError> {
+    validate_common(
+        CONTROL_SCHEMA_VERSION_V2,
         response.schema_version,
         response.request_id,
         &response.operation_id,
@@ -150,11 +232,12 @@ fn encode_json(value: &impl Serialize) -> Result<Vec<u8>, ControlProtocolError> 
 }
 
 fn validate_common(
+    expected_version: u16,
     schema_version: u16,
     request_id: u64,
     operation_id: &str,
 ) -> Result<(), ControlProtocolError> {
-    if schema_version != CONTROL_SCHEMA_VERSION {
+    if schema_version != expected_version {
         return Err(ControlProtocolError::UnsupportedSchemaVersion(
             schema_version,
         ));
@@ -181,13 +264,37 @@ fn ensure_bounded(bytes: &[u8]) -> Result<(), ControlProtocolError> {
     }
 }
 
+fn peek_schema_version(bytes: &[u8]) -> Result<u16, ControlProtocolError> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct VersionPeek {
+        schema_version: u16,
+    }
+    let peek: VersionPeek =
+        serde_json::from_slice(bytes).map_err(|_| ControlProtocolError::InvalidJson)?;
+    Ok(peek.schema_version)
+}
+
+fn ensure_version(actual: u16, expected: u16) -> Result<(), ControlProtocolError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ControlProtocolError::UnsupportedSchemaVersion(actual))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use bli_kvm_core::{AtxControlAction, HidReport, VirtualMediaCommand};
+    use bli_kvm_core::{
+        AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, TargetAttestation,
+        VirtualMediaCommand,
+    };
 
     use super::*;
 
     const OPERATION_ID: &str = "0123456789abcdef0123456789abcdef";
+    const TARGET: [u8; 32] = [0x11; 32];
+    const LEASE: [u8; 16] = [0x33; 16];
 
     fn keyboard_request() -> ControlRequestEnvelope {
         ControlRequestEnvelope {
@@ -301,5 +408,116 @@ mod tests {
             encode_frame(&vec![0; MAX_CONTROL_MESSAGE_BYTES + 1]),
             Err(ControlProtocolError::MessageTooLarge)
         );
+    }
+
+    fn lease_report_v2() -> ControlRequestEnvelopeV2 {
+        ControlRequestEnvelopeV2 {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 21,
+            operation_id: OPERATION_ID.into(),
+            request: PlatformControlRequestV2::HidLease {
+                lease: HidLeaseRequest::Report {
+                    lease_id: LEASE,
+                    session_binding: 9,
+                    target_binding: TARGET,
+                    report: HidReport::Keyboard {
+                        data: [0, 0, 4, 0, 0, 0, 0, 0],
+                    },
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn v2_lease_messages_roundtrip_without_generic_fields() {
+        let request = lease_report_v2();
+        let json = encode_request_v2(&request).unwrap();
+        assert_eq!(decode_request_v2(&json).unwrap(), request);
+        for forbidden in ["path", "url", "shell", "gpio", "duration", "credential"] {
+            assert!(!String::from_utf8_lossy(&json).contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn v1_and_v2_endpoints_reject_each_other() {
+        let v1 = encode_request(&keyboard_request()).unwrap();
+        assert_eq!(
+            decode_request_v2(&v1),
+            Err(ControlProtocolError::UnsupportedSchemaVersion(
+                CONTROL_SCHEMA_VERSION
+            ))
+        );
+        let v2 = encode_request_v2(&lease_report_v2()).unwrap();
+        assert_eq!(
+            decode_request(&v2),
+            Err(ControlProtocolError::UnsupportedSchemaVersion(
+                CONTROL_SCHEMA_VERSION_V2
+            ))
+        );
+    }
+
+    #[test]
+    fn v2_rejects_unknown_fields_and_keeps_fixed_ttl_bounds() {
+        let with_extra = br#"{"schemaVersion":2,"requestId":1,"operationId":"0123456789abcdef0123456789abcdef","request":{"type":"hid_lease","lease":{"op":"release","leaseId":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"sessionBinding":9,"targetBinding":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"path":"/dev/hidg0"}}}"#;
+        assert_eq!(
+            decode_request_v2(with_extra),
+            Err(ControlProtocolError::InvalidJson)
+        );
+
+        let mut attestation = lease_report_v2();
+        attestation.request = PlatformControlRequestV2::TargetAttest {
+            attestation: TargetAttestation {
+                session_binding: 9,
+                target_binding: TARGET,
+                focus_binding: [0x22; 16],
+                ttl_seconds: 61,
+            },
+        };
+        assert_eq!(
+            encode_request_v2(&attestation),
+            Err(ControlProtocolError::InvalidControlRequest)
+        );
+
+        let mut long_lease = lease_report_v2();
+        long_lease.request = PlatformControlRequestV2::HidLease {
+            lease: HidLeaseRequest::Acquire {
+                session_binding: 9,
+                target_binding: TARGET,
+                ttl_seconds: 31,
+            },
+        };
+        assert_eq!(
+            encode_request_v2(&long_lease),
+            Err(ControlProtocolError::InvalidControlRequest)
+        );
+    }
+
+    #[test]
+    fn v2_atx_confirmation_is_typed_and_responses_use_fixed_codes() {
+        let request = ControlRequestEnvelopeV2 {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 22,
+            operation_id: OPERATION_ID.into(),
+            request: PlatformControlRequestV2::Atx {
+                action: AtxControlAction::Reset,
+                confirmation: AtxConfirmation {
+                    session_binding: 9,
+                    confirmation_binding: [0x44; 32],
+                    confirmed_at_unix_ms: 1_700_000_000_000,
+                },
+            },
+        };
+        assert!(encode_request_v2(&request).is_ok());
+        let response = ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: request.request_id,
+            operation_id: request.operation_id,
+            response: ControlResponse::Rejected {
+                code: ControlRejectionCode::NotAttested,
+            },
+        };
+        let json = encode_response_v2(&response).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), response);
+        assert!(!String::from_utf8_lossy(&json).contains("message"));
     }
 }

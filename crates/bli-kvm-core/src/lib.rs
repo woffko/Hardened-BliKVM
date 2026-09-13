@@ -6,6 +6,7 @@
 
 mod capabilities;
 mod control;
+mod control_v2;
 mod diagnostics;
 mod inventory;
 mod platform;
@@ -19,6 +20,11 @@ pub use capabilities::{
 pub use control::{
     AtxControlAction, ControlValidationError, HidReport, PlatformControlRequest,
     VirtualMediaCommand, VirtualMediaControlMode,
+};
+pub use control_v2::{
+    AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest,
+    PlatformControlRequestV2, TARGET_ATTESTATION_MAX_TTL_SECONDS,
+    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,
