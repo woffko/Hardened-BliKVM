@@ -154,6 +154,7 @@ python3 -m unittest \
   tools/test_stage_device_hid_credential_gate.py \
   tools/test_stage_device_hid_isolated_gate.py \
   tools/test_stage_device_atx_live_gate.py \
+  tools/test_stage_device_hid_profile_gate.py \
   tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_system_action_maintenance.py \
   tools/test_stage_device_diagnostic_maintenance.py \
@@ -258,6 +259,7 @@ python3 -m py_compile \
   tools/stage_device_hid_credential_gate.py \
   tools/stage_device_hid_isolated_gate.py \
   tools/stage_device_atx_live_gate.py \
+  tools/stage_device_hid_profile_gate.py \
   tools/stage_device_system_action_store.py \
   tools/stage_device_system_action_maintenance.py \
   tools/stage_device_diagnostic_maintenance.py \
@@ -316,6 +318,7 @@ python3 -m py_compile \
   tools/test_stage_device_hid_credential_gate.py \
   tools/test_stage_device_hid_isolated_gate.py \
   tools/test_stage_device_atx_live_gate.py \
+  tools/test_stage_device_hid_profile_gate.py \
   tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_system_action_maintenance.py \
   tools/test_stage_device_diagnostic_maintenance.py \
@@ -498,6 +501,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_hid_credential_gate.py \
     tools/stage_device_hid_isolated_gate.py \
     tools/stage_device_atx_live_gate.py \
+    tools/stage_device_hid_profile_gate.py \
     tools/stage_device_system_action_store.py \
     tools/stage_device_system_action_maintenance.py \
     tools/stage_device_diagnostic_maintenance.py \
@@ -555,6 +559,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_hid_credential_gate.py \
     tools/test_stage_device_hid_isolated_gate.py \
     tools/test_stage_device_atx_live_gate.py \
+    tools/test_stage_device_hid_profile_gate.py \
     tools/test_stage_device_system_action_store.py \
     tools/test_stage_device_system_action_maintenance.py \
     tools/test_stage_device_diagnostic_maintenance.py \
