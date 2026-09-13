@@ -67,3 +67,14 @@ capability-gated through `supportsSettingsTab`:
 - Appearance stops probing the absent terminal/download endpoints and derives
   those menu entries from capabilities instead.
 - Host tests pin the route, the read-only boundary and the GUI wiring.
+
+## Slice 0 result
+
+- `GET /api/hostname` is live: authenticated `200 {"hostname":"mangopimcore"}`,
+  unauthenticated `401`; the value is validated against a conservative
+  character/length bound and read from `/etc/hostname` because the sandbox
+  hides `/proc/sys`.
+- The About panel shows the hostname read-only and its dead legacy setter was
+  removed; the regression test pins the route and the read-only boundary.
+- The deployed profile bundle `74cbae36` includes the slice
+  (`restricted-control-profile-gate-20260913-h.json`).
