@@ -160,4 +160,9 @@ image-ID authority and no upload, download or device path exists. Host tests
 drive a mock media socket and cover duplicate replay, backend-failure
 persistence without retry, restart with a Pending journal plus explicit
 reconciliation, and operation-ID conflict and cooldown rejection.
-Interruption, reconnect, reboot and BIOS-boot gates remain device-bound.
+Interruption, reboot and BIOS-boot gates remain device-bound. The isolated
+media gate also passed on the test H616 (private receipt
+`media-isolated-gate-20260913-a.json`): attach, eject, catalog selection,
+duplicate replay, backend failure with reconnect recovery and restart with a
+Pending journal plus reconciliation all passed against local mock media
+sockets, with `physical_actions_invoked=no` and `persistentChangeScope=none`.
