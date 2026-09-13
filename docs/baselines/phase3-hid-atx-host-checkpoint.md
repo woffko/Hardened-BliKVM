@@ -195,4 +195,17 @@ gates remain device/recovery-card bound.
   line, a broken `rsyslog` rotation example, and kernel noise for HDMI audio,
   `spi-nor`, and `axp2101`.
 
+- The reboot gate was hardened: it distinguishes an unreachable device from an
+  unchanged boot identity, records `pollAttempts`, and has a `--verify-only`
+  mode that records the post-reboot state without another reboot. Because the
+  journal is now persistent on `/mnt`, its postflight also records whether the
+  previous boot journal is present. `tools/check_device_log_health.py` provides
+  a read-only health receipt (`device-log-health-20260913-a.json`,
+  `logrotateValid=true`, `journaldStorage=persistent`, `failedUnits=0`); a
+  stacked duplicate bind mount found during that check was reduced to a single
+  mount.
+- Remaining for the HID reboot gate: one explicitly confirmed reboot to observe
+  a changed boot identity together with `previousBootJournalPresent=true`; no
+  further reboot is invoked without that confirmation.
+
 All device-mutating steps require explicit confirmation before execution.
