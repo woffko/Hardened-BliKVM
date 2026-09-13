@@ -36,8 +36,10 @@ PREFLIGHT_KEYS = {
     "retained_state",
     "staging_absent",
     "account_absent",
+    "previous_boot_journal",
 }
 POSTFLIGHT_KEYS = {
+    "architecture",
     "boot_token",
     "kvmd_active",
     "retained_state",
@@ -47,7 +49,7 @@ POSTFLIGHT_KEYS = {
 }
 REBOOT_KEYS = {"reboot_requested"}
 FINAL_KEYS = {"cleanup_confirmed"}
-DEFAULT_REBOOT_TIMEOUT_SECONDS = 600
+DEFAULT_REBOOT_TIMEOUT_SECONDS = 1800
 POLL_INTERVAL_SECONDS = 5.0
 
 
