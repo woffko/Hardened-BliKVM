@@ -94,11 +94,12 @@ HID:
   startup-ledger replay, lease apply/release, expiry release, identity mismatch
   without backend I/O, backend-failure release-all, absolute and relative mouse
   modes with buttons and wheel, six-key rollover with release-before-press
-  ordering, a 10,000-event soak and backend-outage reconnect recovery all
-  passed against local mock KVMD sockets, with `physical_actions_invoked=no`,
-  `persistentChangeScope=none` and confirmed staging cleanup;
-- still pending a safe visible target and a reboot confirmation: BliKVM reboot
-  and stuck-input recovery;
+  ordering, a 10,000-event soak, backend-outage reconnect recovery and a
+  stuck-input crash/restart recovery all passed against local mock KVMD
+  sockets, with `physical_actions_invoked=no`, `persistentChangeScope=none`
+  and confirmed staging cleanup;
+- still pending a safe visible target and a reboot confirmation: BliKVM
+  reboot;
 - reversible credential-delivery gate passed on the test H616 on 2026-09-13
   (private receipt `hid-credential-delivery-gate-20260913-a.json`):
   `deliveryToken=ok`, `sourceReadDenied=true`, `cleanupConfirmed=true`,
