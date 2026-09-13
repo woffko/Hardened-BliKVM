@@ -44,7 +44,10 @@ disabled and the denial broker is unchanged in shipped builds.
 - ATX: reviewed feature-gated eligibility constructor (`97a186b`) and the
   persisted Pending -> fixed KVMD waiting route -> completion state machine
   with duplicate/conflict replay and explicit reconciliation
-  (`bli-kvm-atx-transition`, `c64550e`). The only representable routes are the
+  (`bli-kvm-atx-transition`, `c64550e`). The control broker can attach it only
+  under the `atx-transition-profile` feature, using the reviewed eligibility
+  constructor; a host test drives a mock KVMD socket and proves one real call
+  plus duplicate replay (`d14b29d`). The only representable routes are the
   three fixed `wait=1` KVMD clicks; no native GPIO or device path exists in the
   ATX path, pinned by `tools/test_phase3_control_boundaries.py`.
 - Fail-closed invariants are pinned by
@@ -78,10 +81,12 @@ HID:
 
 ATX:
 
-- wire the transition state machine to the broker/server with a startup
-  reconciliation that compares read-only LED/state evidence;
-- live gates with Power and Reset physically disconnected: pulse timing, busy,
-  duplicate, cooldown, restart in Pending, reconciliation;
+- run live gates on H616 with Power and Reset physically disconnected: real
+  KVMD `wait=1` pulse timing, busy, duplicate, cooldown, restart in Pending and
+  reconciliation. These need the enrolled KVMD credential and `/run/kvmd/kvmd.sock`
+  on the device and explicit operator confirmation;
+- startup reconciliation must compare read-only LED/state evidence before
+  recording a Pending outcome;
 - GUI indeterminate/cooldown feedback.
 
 All device-mutating steps require explicit confirmation before execution.
