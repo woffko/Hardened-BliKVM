@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tools import installed_persistent_write as native
 
@@ -22,7 +22,8 @@ class ControllerTests(unittest.TestCase):
         self.bound = native.contract.EvidenceBinding("a" * 24, "b" * 64, native.contract.CONFIG_SHA256,
             "app-00000000000000000008-" + "c" * 64, 8, 40)
         self.plan: dict[str, object] = {"phase": "prepared", "binding": asdict(self.bound),
-            "backup": {}, "boot": "d" * 64, "observed": {"floor": 8, "generation": 40}, "terminal": None, "cleanupStarted": False}
+            "backup": {}, "boot": "d" * 64, "observed": {"floor": 8, "generation": 40}, "terminal": None,
+            "cleanupStarted": False, "disableStarted": False}
 
     def test_staged_controller_import_closure_and_no_retention_cli(self) -> None:
         source = Path(native.__file__).parent
@@ -34,7 +35,7 @@ class ControllerTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-B", str(root / "controller.py"), "--help"],
                 capture_output=True, timeout=5, check=False)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
-            self.assertIn(b"{prepare,wire,restore,cleanup}", result.stdout)
+            self.assertIn(b"{prepare,wire,restore,cleanup,disable}", result.stdout)
             self.assertNotIn(b"--retention-approved", result.stdout)
 
     def test_boot_initial_arm_requires_absent_policy_and_no_decision(self) -> None:
@@ -197,6 +198,79 @@ class ControllerTests(unittest.TestCase):
                 native.restore(self.root, boot=False)
         lock.assert_called_once_with(self.root)
         close.assert_called_once_with(self.root, boot=False)
+
+    def committed_decision(self) -> native.decisions.Decision:
+        return native.decisions.Decision(self.bound, "committed",
+            dict.fromkeys(native.contract.REQUIRED_GATES, "d" * 64))
+
+    def retained_plan(self, phase: str, *, disable_started: bool) -> dict[str, object]:
+        return {**self.plan, "phase": phase, "disableStarted": disable_started,
+            "terminal": {"slot": self.bound.baseline_slot, "floor": 8, "generation": 40}}
+
+    def test_disable_requires_committed_retained_policy(self) -> None:
+        plan = self.retained_plan("wired", disable_started=False)
+        with patch.object(native, "load", return_value=plan), \
+                patch.object(native.decisions, "read", return_value=native.decisions.Decision(self.bound, "revoked", {})), \
+                patch.object(native.temporary.guard, "locked", return_value=nullcontext()), \
+                patch.object(native, "save") as save:
+            with self.assertRaisesRegex(ValueError, "committed retained policy"):
+                native.disable(self.root)
+        save.assert_not_called()
+
+    def test_disable_closes_drains_removes_unmasks_and_marks_disabled(self) -> None:
+        plan = self.retained_plan("committed", disable_started=False)
+        events: list[str] = []
+
+        def event(name: str) -> Callable[..., None]:
+            def record(*_args: object, **_kwargs: object) -> None:
+                events.append(name)
+            return record
+
+        def save(_root: Path, value: dict[str, object]) -> None:
+            events.append("save-" + str(value["phase"]))
+
+        admission = MagicMock()
+        admission.install_owned_fence.side_effect = event("fence")
+        admission.reload_manager.side_effect = event("reload")
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(native.temporary.guard, "locked", return_value=nullcontext()))
+            stack.enter_context(patch.object(native, "load", return_value=plan))
+            stack.enter_context(patch.object(native.decisions, "read", return_value=self.committed_decision()))
+            stack.enter_context(patch.object(native.systemd, "Admission", return_value=admission))
+            stack.enter_context(patch.object(native, "save", side_effect=save))
+            stack.enter_context(patch.object(native.Restore, "await_terminal_pipeline", side_effect=event("drain")))
+            stack.enter_context(patch.object(native.files, "remove", side_effect=event("remove")))
+            stack.enter_context(patch.object(native.Restore, "reload_and_restart_confirmed", side_effect=event("restart")))
+            stack.enter_context(patch.object(native.fence, "remove", side_effect=event("unmask")))
+            stack.enter_context(patch.object(native.temporary.observer, "require_closed_admission", side_effect=event("closed")))
+            stack.enter_context(patch.object(native, "verify_runtime", side_effect=event("verify")))
+            result = native.disable(self.root)
+        self.assertEqual(result["result"], "disabled")
+        self.assertTrue(result["runtimeWritesClosed"])
+        self.assertFalse(result["retentionApproved"])
+        self.assertEqual(plan["phase"], "disabled")
+        self.assertTrue(plan["disableStarted"])
+        self.assertEqual(events, ["save-committed", "fence", "drain", "remove", "restart", "unmask", "reload",
+                                  "save-disabled", "closed", "verify"])
+
+    def test_disabled_policy_resume_verifies_without_repeating_removal(self) -> None:
+        plan = self.retained_plan("disabled", disable_started=True)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(native.temporary.guard, "locked", return_value=nullcontext()))
+            stack.enter_context(patch.object(native, "load", return_value=plan))
+            stack.enter_context(patch.object(native.decisions, "read", return_value=self.committed_decision()))
+            stack.enter_context(patch.object(native.systemd, "Admission"))
+            stack.enter_context(patch.object(native.temporary.observer, "require_closed_admission"))
+            fence_remove = stack.enter_context(patch.object(native.fence, "remove"))
+            files_remove = stack.enter_context(patch.object(native.files, "remove"))
+            save = stack.enter_context(patch.object(native, "save"))
+            verify = stack.enter_context(patch.object(native, "verify_runtime"))
+            result = native.disable(self.root)
+        self.assertEqual(result["result"], "disabled")
+        fence_remove.assert_not_called()
+        files_remove.assert_not_called()
+        save.assert_not_called()
+        verify.assert_called_once()
 
     def test_unreadable_plan_attempts_emergency_closure_without_success_receipt(self) -> None:
         with patch.object(native, "load", side_effect=OSError("unreadable marker")), \

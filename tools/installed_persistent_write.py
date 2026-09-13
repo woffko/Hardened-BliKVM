@@ -45,7 +45,8 @@ HELPERS = tuple(dict.fromkeys(("installed_application_write_gate.py", *temporary
     "persistent_write_files.py", "persistent_write_lifecycle.py", "persistent_write_pipeline.py",
     "persistent_write_snapshot.py", "persistent_write_systemd.py")))
 ASSETS = ("bindings.json", "new.deb", *HELPERS)
-PLAN_KEYS = {"schemaVersion", "phase", "binding", "boot", "started", "backup", "before", "files", "observed", "terminal", "cleanupStarted"}
+PLAN_KEYS = {"schemaVersion", "phase", "binding", "boot", "started", "backup", "before", "files", "observed", "terminal",
+             "cleanupStarted", "disableStarted"}
 ARCHIVE_PREFIX = "hardened-blikvm-write-restored-"
 
 
@@ -93,6 +94,8 @@ def validate(root: Path, plan: dict[str, object]) -> None:
     contract.Phase(plan["phase"])
     require(type(plan["cleanupStarted"]) is bool and (not plan["cleanupStarted"] or plan["phase"] == contract.Phase.RESTORED.value),
             "invalid cleanup marker")
+    require(type(plan["disableStarted"]) is bool and (not plan["disableStarted"]
+            or plan["phase"] in (contract.Phase.COMMITTED.value, contract.Phase.DISABLED.value)), "invalid disable marker")
     bound = binding(plan)
     require(bound.transaction_id == transaction, "controller transaction differs")
     observed = counters(plan)
@@ -350,7 +353,8 @@ def prepare(assets: Path, root: Path, *, application_profile: str = 'seq8') -> d
     plan: dict[str, object] = {"schemaVersion": 1, "phase": contract.Phase.PREPARED.value,
         "binding": asdict(bound), "boot": boot_identity(), "started": time.monotonic(), "backup": backup,
         "before": before, "files": {name: u.digest(root / name) for name in (*ASSETS, "controller.py")},
-        "observed": asdict(pipeline.Counters(floor, generation)), "terminal": None, "cleanupStarted": False}
+        "observed": asdict(pipeline.Counters(floor, generation)), "terminal": None, "cleanupStarted": False,
+        "disableStarted": False}
     save(root, plan)
     # Nothing writable is installed before all recovery files and enable links.
     for path, data in guard_files(root).items():
@@ -457,9 +461,49 @@ def cleanup(root: Path) -> dict[str, object]:
             "runtimeWritesClosed": True, "floor": terminal.floor, "generation": terminal.generation}
 
 
+def disable(root: Path) -> dict[str, object]:
+    """Permanently close a committed retained policy; keep decision and backup.
+
+    Unlike cleanup this never requires a revoked winner: the immutable committed
+    decision is preserved as the historical record, the owned policy files and
+    enable links are removed, and the plan is marked disabled for idempotent
+    inspection. The dormant guard units remain for explicit later removal.
+    """
+    with temporary.guard.locked(root):
+        plan = load(root)
+        winner = decisions.read(root)
+        require(winner is not None and winner.outcome == "committed" and winner.binding == binding(plan),
+                "committed retained policy required before disable")
+        require(plan["cleanupStarted"] is False, "cleanup already started")
+        require(plan["phase"] in (contract.Phase.COMMITTED.value, contract.Phase.DISABLED.value),
+                "retained policy phase cannot be disabled")
+        actions = Restore(root, plan)
+        admission = systemd.Admission(root)
+        if plan["phase"] != contract.Phase.DISABLED.value:
+            plan["disableStarted"] = True
+            save(root, plan)  # Durable retry permission before stopping admission.
+            admission.install_owned_fence(boot=False)
+            actions.await_terminal_pipeline()
+            files.remove(root, object_value(plan["backup"]))
+            actions.reload_and_restart_confirmed()
+            fence.remove(root)
+            admission.reload_manager()
+            plan["phase"] = contract.Phase.DISABLED.value
+            save(root, plan)
+        else:
+            require(plan["disableStarted"] is True, "invalid disabled policy state")
+        temporary.observer.require_closed_admission()
+        value = object_value(plan["terminal"])
+        terminal = contract.temporary.TerminalState(cast(str, value["slot"]), cast(int, value["floor"]),
+            cast(int, value["generation"]))
+        verify_runtime(root, plan, terminal, wired=False, masked=False)
+        return {"result": "disabled", "guardRoot": str(root), "runtimeWritesClosed": True,
+            "floor": terminal.floor, "generation": terminal.generation, "retentionApproved": False}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup"))
+    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable"))
     parser.add_argument("--guard-root", type=Path, required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--boot", action="store_true")
@@ -477,6 +521,8 @@ def main() -> int:
         result = wire(args.guard_root)
     elif args.action == "cleanup":
         result = cleanup(args.guard_root)
+    elif args.action == "disable":
+        result = disable(args.guard_root)
     else:
         result = restore(args.guard_root, boot=args.boot)
     print(json.dumps(result, sort_keys=True))

@@ -34,6 +34,7 @@ class Phase(str, Enum):
     WIRED = "wired"
     RESTORED = "restored"
     COMMITTED = "committed"
+    DISABLED = "disabled"
 
 
 @dataclass(frozen=True)
@@ -48,9 +49,11 @@ class RecoveryDecision:
 def recovery_decision(phase: object, *, boot: bool) -> RecoveryDecision:
     if not isinstance(phase, Phase) or type(boot) is not bool:
         raise ValueError("invalid write recovery context")
-    if phase in (Phase.COMMITTED, Phase.RESTORED):
+    if phase in (Phase.COMMITTED, Phase.RESTORED, Phase.DISABLED):
         # Durable commit precedes disarm. A late deadline/boot invocation may
         # remove its own guard, but must not undo accepted persistent policy.
+        # A permanently disabled policy is already closed; late recovery must
+        # neither reopen admission nor treat disable as uncommitted preparation.
         return RecoveryDecision(False, False, False, False, phase)
     # Before serving at boot: cancel queued socket jobs non-blockingly. Never
     # synchronously start or wait for a service ordered after this boot guard.

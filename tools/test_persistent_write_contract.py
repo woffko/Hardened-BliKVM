@@ -34,7 +34,7 @@ class PersistentWriteContractTests(unittest.TestCase):
 
     def test_committed_policy_survives_late_deadline_or_boot_recovery(self) -> None:
         for boot in (False, True):
-            for phase in (contract.Phase.COMMITTED, contract.Phase.RESTORED):
+            for phase in (contract.Phase.COMMITTED, contract.Phase.RESTORED, contract.Phase.DISABLED):
                 value = contract.recovery_decision(phase, boot=boot)
                 self.assertEqual(value, contract.RecoveryDecision(False, False, False, False, phase))
 
