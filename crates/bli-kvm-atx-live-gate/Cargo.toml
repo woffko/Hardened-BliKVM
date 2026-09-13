@@ -1,0 +1,19 @@
+[package]
+name = "bli-kvm-atx-live-gate"
+description = "Live ATX waiting-route gate for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", features = ["atx-reviewed-profile"] }
+bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition" }
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true

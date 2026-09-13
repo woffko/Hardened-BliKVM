@@ -12,6 +12,7 @@ members = [
   "crates/bli-kvm-hid-isolated-gate",
   "crates/bli-kvm-atx-policy",
   "crates/bli-kvm-atx-transition",
+  "crates/bli-kvm-atx-live-gate",
   "crates/bli-kvm-fan-policy",
   "crates/bli-kvm-fan-supervisor",
   "crates/bli-kvm-serial-switch-codec",
