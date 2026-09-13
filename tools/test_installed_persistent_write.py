@@ -14,6 +14,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 from tools import installed_persistent_write as native
+from tools import persistent_write_retained_snapshot as retained
 
 
 class ControllerTests(unittest.TestCase):
@@ -39,7 +40,7 @@ class ControllerTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-B", str(root / "controller.py"), "--help"],
                 capture_output=True, timeout=5, check=False)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
-            self.assertIn(b"{prepare,wire,restore,cleanup,disable,evidence,commit}", result.stdout)
+            self.assertIn(b"{prepare,wire,restore,cleanup,disable,evidence,commit,verify-retained}", result.stdout)
             self.assertIn(b"--approve-retention", result.stdout)
             self.assertIn(b"--evidence-seal", result.stdout)
 
@@ -312,6 +313,33 @@ class ControllerTests(unittest.TestCase):
                     gate: base64.b64encode(data).decode("ascii") for gate, data in changed.items()}}).encode()
                 with self.assertRaises(OSError):
                     native.evidence(self.root, envelope=changed_envelope)
+
+
+    def committed_retained_plan(self) -> dict[str, object]:
+        return {**self.plan, "phase": "committed", "disableStarted": False, "before": {},
+                "terminal": {"slot": self.bound.baseline_slot, "floor": 8, "generation": 40}}
+
+    def test_verify_retained_requires_committed_policy(self) -> None:
+        plan = {**self.plan, "phase": "wired", "disableStarted": False}
+        with patch.object(native, "load", return_value=plan), \
+                patch.object(native.temporary.guard, "locked", return_value=nullcontext()):
+            with self.assertRaisesRegex(ValueError, "committed retained policy"):
+                native.verify_retained(self.root)
+
+    def test_verify_retained_returns_preserved_snapshot(self) -> None:
+        plan = self.committed_retained_plan()
+        with patch.object(native, "load", return_value=plan), \
+                patch.object(native.temporary.guard, "locked", return_value=nullcontext()), \
+                patch.object(native, "boot_identity", return_value="e" * 64), \
+                patch.object(native.snapshot, "preserve") as preserve, \
+                patch.object(retained, "capture", return_value={"sample": "snapshot"}) as capture:
+            result = native.verify_retained(self.root)
+        self.assertEqual(result["result"], "retained")
+        self.assertEqual(result["snapshot"], {"sample": "snapshot"})
+        self.assertTrue(result["retentionApproved"])
+        capture.assert_called_once()
+        preserve.assert_called_once_with(plan["before"], {"sample": "snapshot"}, new_boot=True,
+                                         allow_transition=False)
 
     def test_commit_requires_operator_approval_and_seal(self) -> None:
         with patch.object(native.commit_backend, "commit") as backend:

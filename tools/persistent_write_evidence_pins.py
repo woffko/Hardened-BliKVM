@@ -17,7 +17,7 @@ CURRENT_PINS = {
         "upload_termination.mjs": "fb08fe8c593beeca8c489583bdc4a0894e03b304d73f51485cbb87b9ac38ba14"
     },
     "host_sources": {
-        "tools/test_installed_persistent_write.py": "09880755ddf1342d295d1dc64a5d9a8edb30aa17935f263b9a02326b5b500fa1",
+        "tools/test_installed_persistent_write.py": "4f5fc36fd0ce717c4fcf8884aae9e5b5b8ba769a3729dbc385b7f40af51ecd57",
         "tools/test_persistent_write_commit.py": "c39b9b76cfc32b5cd3759c225c72ae0edfabaa42114270e6fd7f0ed5823e663c",
         "tools/test_persistent_write_contract.py": "cdaf276071037456ff77c9cdf61b9aac6671b1addf526c085532746ddfd007cb",
         "tools/test_persistent_write_decision.py": "fea79727045ca9ccfc297af1f2863d9c4573e10df7829b37cecc8acffe80d4c0",

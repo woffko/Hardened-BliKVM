@@ -574,9 +574,29 @@ def commit(root: Path, *, evidence_seal: str, approve_retention: bool) -> dict[s
             "outcome": winner.outcome, "gateReceiptHashes": winner.receipt_hashes}
 
 
+def verify_retained(root: Path) -> dict[str, object]:
+    """Read-only retained-policy verification for a committed transaction."""
+    with temporary.guard.locked(root):
+        plan = load(root)
+        require(plan["phase"] == contract.Phase.COMMITTED.value, "committed retained policy required")
+        if not __package__:
+            import persistent_write_retained_snapshot as retained
+        else:
+            from tools import persistent_write_retained_snapshot as retained
+        value = object_value(plan["terminal"])
+        terminal = contract.temporary.TerminalState(cast(str, value["slot"]), cast(int, value["floor"]),
+            cast(int, value["generation"]))
+        after = retained.capture(root, object_value(plan["backup"]), terminal)
+        snapshot.preserve(object_value(plan["before"]), after,
+                          new_boot=plan["boot"] != boot_identity(), allow_transition=False)
+        return {"result": "retained", "guardRoot": str(root), "bootIdSha256": boot_identity(),
+                "retentionApproved": True, "snapshot": after}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable", "evidence", "commit"))
+    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable", "evidence", "commit",
+                                           "verify-retained"))
     parser.add_argument("--guard-root", type=Path, required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--boot", action="store_true")
@@ -605,6 +625,8 @@ def main() -> int:
     elif args.action == "commit":
         result = commit(args.guard_root, evidence_seal=cast(str, args.evidence_seal),
                         approve_retention=args.approve_retention)
+    elif args.action == "verify-retained":
+        result = verify_retained(args.guard_root)
     else:
         result = restore(args.guard_root, boot=args.boot)
     print(json.dumps(result, sort_keys=True))
