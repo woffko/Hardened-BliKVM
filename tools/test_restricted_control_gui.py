@@ -73,9 +73,19 @@ class RestrictedControlGuiTests(unittest.TestCase):
         hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
         self.assertIn("HidLeaseSession", hook)
         self.assertIn("ensureFocus", hook)
-        self.assertIn("queueRef", hook)
+        self.assertIn("sharedQueue", hook)
         self.assertIn("supportsRestrictedControls", hook)
         self.assertIn("session.stop()", hook)
+
+    def test_all_input_surfaces_share_one_broker_lease(self) -> None:
+        hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
+        # The broker admits one active HID lease; a per-surface lease would make
+        # the keyboard and the mouse mutually exclusive with lease_conflict.
+        self.assertIn("let sharedSession: HidLeaseSession | null = null;", hook)
+        self.assertIn("let sharedQueue: Promise<void> = Promise.resolve();", hook)
+        self.assertEqual(hook.count("new HidLeaseSession()"), 1)
+        self.assertIn("let consumers = 0;", hook)
+        self.assertIn("consumers === 0", hook)
 
     def test_mouse_uses_the_lease_path_when_advertised(self) -> None:
         mouse = ROOT / "web/src/pages/desktop/mouse"
