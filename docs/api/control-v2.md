@@ -2,7 +2,10 @@
 
 Status: design for the HID/ATX mutation path. No capability is enabled by this
 document. Protocol v1 remains the denial-only contract, and shipped builds keep
-HID, ATX and virtual media unavailable until every gate passes.
+HID, ATX and virtual media unavailable until every gate passes. The control
+broker now decodes v2 frames and routes them through a compile-time-disabled
+`ControlV2State`, which rejects every v2 request with `capability_disabled` and
+reports a fixed rejection after the response write.
 
 ## Framing, versions and identity
 
