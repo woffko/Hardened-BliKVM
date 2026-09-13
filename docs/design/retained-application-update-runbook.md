@@ -48,8 +48,10 @@ device or executing payload code.
    receipt; the retained updater confirms the candidate automatically.
 2. Poll the authoritative native status read-only until the confirmed floor
    advances and `pending` is `null`; capture the observed generation.
-3. Run the closed GUI probe with the target profile for desktop/mobile
-   read-only checks and Refresh.
+3. The legacy `closed` GUI probe asserts read-only update controls and does not
+   apply while admission is retained; the activate probe above is the writable
+   GUI-path check. A dedicated writable desktop/mobile panel probe can be added
+   later.
 4. Confirm the retained guard and evidence store are untouched and that the
    committed decision still matches.
 
