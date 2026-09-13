@@ -185,6 +185,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-control-focus"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-control-protocol"
 version = "0.1.0"
 dependencies = [

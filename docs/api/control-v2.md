@@ -26,7 +26,10 @@ HID and ATX requests require a bounded, expiring target attestation:
   control connection only after an explicit operator safe-target/focus
   confirmation for that authenticated session. The broker verifies the peer
   identity (dedicated server UID/GID through `SO_PEERCRED`) and the request
-  shape; it never derives a binding from a HID report or HTTP field.
+  shape; it never derives a binding from a HID report or HTTP field. The
+  server derives the three bindings with `bli-kvm-control-focus`, which mixes a
+  domain-separated SHA-256 over the authenticated session identity, the hashed
+  target identity, a fresh focus nonce, and the operator confirmation time.
 - One attestation per session: a new `target_attest` replaces the previous one,
   `target_release` drops it, and both expire at `ttl_seconds`. An expired or
   replaced attestation fails closed.

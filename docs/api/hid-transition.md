@@ -58,7 +58,9 @@ non-release ledger content is rejected.
 Before HID can be wired or advertised:
 
 1. add a control protocol revision carrying lease acquire/renew/report/release
-   messages plus a broker-side target attestation verifier;
+   messages plus a broker-side target attestation verifier — provided by
+   `control-v2.md`, the `bli-kvm-control-broker` attestation registry, and the
+   `bli-kvm-control-focus` binding derivation, all still unwired;
 2. provision a dedicated transition credential and sandbox without sharing it
    with the network server;
 3. test startup-ledger replay and disconnect release on H616 without injecting

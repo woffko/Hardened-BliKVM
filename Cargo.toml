@@ -4,6 +4,7 @@ members = [
   "crates/bli-kvm-control-protocol",
   "crates/bli-kvm-control-client",
   "crates/bli-kvm-control-broker",
+  "crates/bli-kvm-control-focus",
   "crates/bli-kvm-hid-adapter",
   "crates/bli-kvm-hid-transition",
   "crates/bli-kvm-hid-policy",
