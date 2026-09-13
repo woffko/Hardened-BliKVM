@@ -93,3 +93,38 @@ server advertises `read_write`.
   operator watches the video while issuing events.
 - The runtime units and `/tmp` root are transient; a device reboot removes
   them.
+
+## Restricted HID verification and fixes (2026-09-13)
+
+Live verification against the running test profile:
+
+- The KVMD internal socket accepts the enrolled credential and the fixed HID
+  mutation routes directly (`send_key` and `send_mouse_relative` both return
+  `{"ok":true}`), so the socket, credential and KVMD routes are not the fault.
+- `tools/probe_restricted_control.py` drives login, focus attestation, lease
+  acquire, a real `KeyA` press and release, and release through the server:
+  every step returns `applied` with no rejection.
+- `tools/playwright/restricted_control_gui_probe.mjs` drives the same flow
+  through the operator UI (real keystroke plus the confirmation modal) and
+  observes `GET /api/hid/focus 200`, `POST /api/hid/focus 200` and three
+  `POST /api/hid/lease 200` responses.
+
+Fixes delivered while diagnosing the operator report:
+
+- the focus confirmation is shared across queued reports, so confirming once no
+  longer reopens the modal for every buffered event;
+- the keyboard, mouse and mobile trackpad share one broker lease and one
+  ordered queue, because the broker admits a single active HID lease and
+  per-surface leases conflicted with `lease_conflict`;
+- the profile bundle now carries the operator web assets from the same source
+  commit and the harness fails closed when the restricted GUI markers are
+  absent;
+- the test proxy sends `Cache-Control: no-store` so a stale bundle cannot
+  silently persist in the operator browser.
+
+Boundary found during debugging: a bare broker restart leaves the runtime
+control socket behind because the harness state directory is not a systemd
+`RuntimeDirectory`, so the next start failed with `SocketAlreadyExists`. The
+harness now removes the socket and clears the failed unit before starting the
+broker. The production units use `RuntimeDirectory`, which systemd removes on
+stop.

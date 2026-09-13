@@ -113,6 +113,7 @@ class RestrictedControlProfileTests(unittest.TestCase):
         self.assertIn(f"BLI_KVM_WEB_ROOT={validated.runtime_root}/share/web", script)
         self.assertIn(f"BLI_KVM_CONTROL_SOCKET={validated.runtime_root}/state/control.sock", script)
         self.assertIn("web_ready", script)
+        self.assertIn('rm -f "$root/state/control.sock"', script)
         source = (ROOT / "tools/stage_device_restricted_control_profile.py").read_text()
         self.assertIn('"web_assets_missing_restricted_gui"', source)
         self.assertIn('add_header Cache-Control "no-store" always;', source)

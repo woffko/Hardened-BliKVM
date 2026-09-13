@@ -488,6 +488,8 @@ if [ "$extracted" = yes ]; then
   cat > /run/systemd/system/hardened-blikvm-rc-server.service <<'UNIT'
 {server_unit}UNIT
   systemctl daemon-reload
+  rm -f "$root/state/control.sock"
+  systemctl reset-failed hardened-blikvm-rc-broker.service >/dev/null 2>&1 || true
   systemctl start hardened-blikvm-rc-broker.service >"$root/broker.log" 2>&1 || true
   i=0
   while [ "$i" -lt 80 ]; do
