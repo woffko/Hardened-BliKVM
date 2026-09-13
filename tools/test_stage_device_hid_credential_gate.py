@@ -17,6 +17,7 @@ class HidCredentialGateTests(unittest.TestCase):
         self.assertIn("hardened-blikvm-hid", script)
         self.assertIn("systemd-run", script)
         self.assertIn("unit_free", script)
+        self.assertIn("hid_account_absent", script)
         self.assertIn("test_root_absent", script)
 
     def test_apply_delivers_credentials_without_host_secrets(self) -> None:
@@ -29,6 +30,8 @@ class HidCredentialGateTests(unittest.TestCase):
             f'--property=LoadCredential="kvmd-password:$cred/kvmd-password"', script
         )
         self.assertIn('chmod 400 "$cred/kvmd-user" "$cred/kvmd-password"', script)
+        self.assertIn("useradd --system --user-group", script)
+        self.assertIn("--property=Group=hardened-blikvm-hid", script)
         self.assertIn("od -An -N8 -tx1 /dev/urandom", script)
         self.assertIn("setpriv", script)
         self.assertIn("source_read_denied", script)
@@ -41,6 +44,7 @@ class HidCredentialGateTests(unittest.TestCase):
         self.assertIn(f'rm -rf -- "$root"', script)
         self.assertIn('systemctl stop "$unit"', script)
         self.assertIn('systemctl reset-failed "$unit"', script)
+        self.assertIn("userdel hardened-blikvm-hid", script)
         self.assertIn("credentials_removed", script)
         self.assertIn("unit_absent", script)
 

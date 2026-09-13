@@ -28,19 +28,20 @@ UNIT = "hardened-blikvm-hid-credential.service"
 GATE_PATH = "libexec/bli-kvm-hid-credential-gate"
 PREFLIGHT_KEYS = {
     "architecture",
-    "hid_account",
+    "hid_account_absent",
     "systemd_run",
     "test_root_absent",
     "unit_free",
 }
 APPLY_KEYS = {
+    "account_created",
     "credential_delivery",
     "delivery_token",
     "gate_present",
     "gate_sha256",
     "source_read_denied",
 }
-ROLLBACK_KEYS = {"credentials_removed", "stage_absent", "unit_absent"}
+ROLLBACK_KEYS = {"account_removed", "credentials_removed", "stage_absent", "unit_absent"}
 FINAL_KEYS = {"cleanup_confirmed", "stage_absent"}
 
 
@@ -132,7 +133,11 @@ def build_preflight_script(paths: GatePaths) -> str:
 emit() {{ printf '%s %s\\n' "$1" "$2"; }}
 case "$(uname -m)" in aarch64) arch=ok ;; *) arch=no ;; esac
 emit architecture "$arch"
-if id -u hardened-blikvm-hid >/dev/null 2>&1; then emit hid_account yes; else emit hid_account no; fi
+if id -u hardened-blikvm-hid >/dev/null 2>&1; then
+  emit hid_account_absent no
+else
+  emit hid_account_absent yes
+fi
 if command -v systemd-run >/dev/null 2>&1; then emit systemd_run yes; else emit systemd_run no; fi
 if [ ! -e "$root" ]; then emit test_root_absent yes; else emit test_root_absent no; fi
 if systemctl show -p LoadState --value "$unit" 2>/dev/null | grep -q .; then
@@ -164,10 +169,22 @@ install -d -m 0700 "$payload"
 tar -xzf "$archive" -C "$payload" --strip-components=1
 if [ ! -f "$gate" ]; then emit gate_present no; exit 1; fi
 emit gate_present yes
+account_created=no
+if ! id -u hardened-blikvm-hid >/dev/null 2>&1; then
+  useradd --system --user-group --home-dir /nonexistent \
+    --shell /usr/sbin/nologin hardened-blikvm-hid
+  account_created=yes
+fi
+printf '%s\n' "$account_created" > "$root/account_created"
+if [ "$account_created" = yes ]; then
+  emit account_created yes
+else
+  emit account_created reused
+fi
 install -d -m 0700 "$cred"
-printf '%s\\n' hid-gate-user > "$cred/kvmd-user"
-printf '%s\\n' "hid-gate-$(
-  od -An -N8 -tx1 /dev/urandom | tr -d ' \\n'
+printf '%s\n' hid-gate-user > "$cred/kvmd-user"
+printf '%s\n' "hid-gate-$(
+  od -An -N8 -tx1 /dev/urandom | tr -d ' \n'
 )" > "$cred/kvmd-password"
 chmod 400 "$cred/kvmd-user" "$cred/kvmd-password"
 delivery=failed
@@ -175,7 +192,7 @@ if systemd-run --quiet --wait --pipe --collect \
   --unit=hardened-blikvm-hid-credential \
   --property=Type=oneshot \
   --property=User=hardened-blikvm-hid \
-  --property=Group=hardened-blikvm \
+  --property=Group=hardened-blikvm-hid \
   --property=LoadCredential="kvmd-user:$cred/kvmd-user" \
   --property=LoadCredential="kvmd-password:$cred/kvmd-password" \
   "$gate" > "$out" 2>/dev/null; then
@@ -212,6 +229,16 @@ def build_rollback_script(paths: GatePaths) -> str:
 emit() {{ printf '%s %s\\n' "$1" "$2"; }}
 systemctl stop "$unit" 2>/dev/null || true
 systemctl reset-failed "$unit" 2>/dev/null || true
+account_created=$(cat "$root/account_created" 2>/dev/null || echo no)
+if [ "$account_created" = yes ]; then
+  userdel hardened-blikvm-hid 2>/dev/null || true
+  groupdel hardened-blikvm-hid 2>/dev/null || true
+fi
+if id -u hardened-blikvm-hid >/dev/null 2>&1; then
+  emit account_removed no
+else
+  emit account_removed yes
+fi
 rm -rf -- "$root"
 rm -rf -- "$stage_root"
 if [ ! -e "$root" ]; then emit credentials_removed yes; else emit credentials_removed no; fi
@@ -240,7 +267,7 @@ printf '%s\\n' "stage_absent $([ ! -e "$stage_root" ] && echo yes || echo no)"
 
 
 def validate_preflight(facts: dict[str, str]) -> None:
-    for key in ("architecture", "hid_account", "systemd_run", "test_root_absent", "unit_free"):
+    for key in ("architecture", "hid_account_absent", "systemd_run", "test_root_absent", "unit_free"):
         if key == "architecture":
             if facts.get(key) != "ok":
                 raise GateError("preflight", "architecture_invalid")
@@ -286,6 +313,8 @@ def execute(options: Options) -> int:
         checks = prototype.parse_facts(apply_result.stdout, APPLY_KEYS)
         if checks.get("gate_present") != "yes":
             raise GateError("apply", "gate_binary_missing")
+        if checks.get("account_created") not in ("yes", "reused"):
+            raise GateError("apply", "account_not_prepared")
         if checks.get("credential_delivery") != "ok":
             raise GateError("apply", "credential_delivery_failed")
         if checks.get("delivery_token") != "ok":
@@ -300,6 +329,7 @@ def execute(options: Options) -> int:
         )
         if (
             rollback.get("credentials_removed") != "yes"
+            or rollback.get("account_removed") != "yes"
             or rollback.get("stage_absent") != "yes"
             or rollback.get("unit_absent") != "yes"
         ):
