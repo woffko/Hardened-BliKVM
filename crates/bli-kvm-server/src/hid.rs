@@ -281,6 +281,8 @@ pub(crate) struct HidLeaseResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lease_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_seconds: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rejection: Option<&'static str>,
 }
 
@@ -306,6 +308,7 @@ pub(crate) async fn hid_lease(
         .bindings(&session.token, now)
         .ok_or_else(|| AppError::BadRequest("a current focus confirmation is required".into()))?;
     let lease = build_lease_request(&request, &bindings)?;
+    let requested_ttl = lease_ttl(&request);
     let response = control
         .execute_v2(operation_id, PlatformControlRequestV2::HidLease { lease })
         .await
@@ -314,19 +317,31 @@ pub(crate) async fn hid_lease(
         ControlResponse::Applied => HidLeaseResponse {
             applied: true,
             lease_id: None,
+            ttl_seconds: requested_ttl,
             rejection: None,
         },
         ControlResponse::LeaseGranted { lease_id } => HidLeaseResponse {
             applied: true,
             lease_id: Some(to_hex(&lease_id)),
+            ttl_seconds: requested_ttl,
             rejection: None,
         },
         ControlResponse::Rejected { code } => HidLeaseResponse {
             applied: false,
             lease_id: None,
+            ttl_seconds: None,
             rejection: Some(rejection_name(code)),
         },
     })))
+}
+
+fn lease_ttl(request: &HidLeaseBody) -> Option<u16> {
+    match request {
+        HidLeaseBody::Acquire { ttl_seconds, .. } | HidLeaseBody::Renew { ttl_seconds, .. } => {
+            Some(*ttl_seconds)
+        }
+        HidLeaseBody::Report { .. } | HidLeaseBody::Release { .. } => None,
+    }
 }
 
 fn lease_operation_id(request: &HidLeaseBody) -> &str {

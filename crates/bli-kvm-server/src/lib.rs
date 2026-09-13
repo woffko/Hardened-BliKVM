@@ -1956,6 +1956,7 @@ mod tests {
         assert_eq!(lease_body["code"], 0);
         assert_eq!(lease_body["data"]["applied"], true);
         assert_eq!(lease_body["data"]["leaseId"], "55".repeat(16));
+        assert_eq!(lease_body["data"]["ttlSeconds"], 30);
         broker.await.unwrap();
     }
 
