@@ -394,7 +394,7 @@ fn build_lease_request(
     })
 }
 
-fn session_identity(token: &str) -> u64 {
+pub(crate) fn session_identity(token: &str) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(b"hardened-blikvm-session-binding-v1");
     hasher.update(token.as_bytes());

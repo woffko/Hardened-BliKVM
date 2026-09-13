@@ -32,6 +32,7 @@ mod atx;
 mod auth;
 mod error;
 mod hid;
+mod media;
 mod update;
 mod video;
 
@@ -170,6 +171,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     if options.restricted_controls_enabled && options.control_socket.is_some() {
         manifest.hid.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        manifest.virtual_media.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
     }
     manifest
         .validate()
@@ -258,6 +260,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
         )
         .route("/hid/lease", post(hid::hid_lease))
+        .route("/virtual-media", post(media::virtual_media))
         .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
@@ -2165,5 +2168,40 @@ mod tests {
             .unwrap();
         let text = serde_json::to_string(&json_body(response).await).unwrap();
         assert!(!text.contains("read_write"));
+    }
+
+    #[tokio::test]
+    async fn virtual_media_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/virtual-media",
+                serde_json::json!({
+                    "operationId": "0123456789abcdef0123456789abcdef",
+                    "command": { "action": "set_connected", "connected": true }
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn restricted_surface_advertises_virtual_media_writes() {
+        let app = app_with_options(ServerOptions {
+            control_socket: Some(PathBuf::from("/run/hardened-blikvm-test/control.sock")),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let response = app
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let body = json_body(response).await;
+        assert_eq!(
+            body["data"]["virtualMedia"]["status"]["availability"],
+            "read_write"
+        );
     }
 }

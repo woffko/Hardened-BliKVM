@@ -87,6 +87,8 @@ persists Pending, calls exactly one fixed route and persists the completion.
 Shipped builds keep the profile compiled out and reject the request with
 `backend_unavailable`. A dedicated `run_with_media_profile` entry point selects
 the journal, the opaque-ID catalog and the KVMD socket from absolute paths, and
-the KVMD credential arrives only through `LoadCredential`. Server routes and the
-storage/image GUI remain the next slice; real-target attach/eject gates remain
-deferred.
+the KVMD credential arrives only through `LoadCredential`. The server exposes
+`POST /api/virtual-media` (opaque image ID and a typed command) and advertises
+`virtualMedia` `read_write` only when a `restricted-control-surface` build is
+explicitly enabled with a configured control socket. The storage/image GUI
+using opaque IDs and real-target attach/eject gates remain the next slices.
