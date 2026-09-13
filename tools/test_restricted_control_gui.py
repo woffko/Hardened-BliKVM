@@ -65,6 +65,18 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("ensureFocus", helper)
         self.assertIn("submitPowerAction", helper)
 
+    def test_keyboard_uses_the_lease_path_when_advertised(self) -> None:
+        keyboard = (ROOT / "web/src/pages/desktop/keyboard/index.tsx").read_text()
+        self.assertIn("useHidLease", keyboard)
+        self.assertIn("mode: 'keyboard'", keyboard)
+        self.assertIn("client.send", keyboard)
+        hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
+        self.assertIn("HidLeaseSession", hook)
+        self.assertIn("ensureFocus", hook)
+        self.assertIn("queueRef", hook)
+        self.assertIn("supportsRestrictedControls", hook)
+        self.assertIn("session.stop()", hook)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ import { isModifier } from '@/lib/keymap';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
 import { picoclawTakeoverStateAtom } from '@/jotai/picoclaw.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import { Recorder } from './recorder.tsx';
 import { useAltGr } from './useAltGr.ts';
@@ -23,10 +24,19 @@ export const Keyboard = () => {
   const pressedKeys = useRef(new Set<string>());
   const isComposing = useRef(false);
 
-  const sendReport = useCallback((report: Uint8Array) => {
-    const data = new Uint8Array([MessageEvent.Keyboard, ...report]);
-    client.send(data);
-  }, []);
+  const { restricted, reportHid } = useHidLease();
+
+  const sendReport = useCallback(
+    (report: Uint8Array) => {
+      if (restricted) {
+        reportHid({ mode: 'keyboard', data: Array.from(report) });
+        return;
+      }
+      const data = new Uint8Array([MessageEvent.Keyboard, ...report]);
+      client.send(data);
+    },
+    [restricted, reportHid]
+  );
 
   // Send key event helper
   const sendKeyEvent = useCallback(
