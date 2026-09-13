@@ -51,6 +51,31 @@ python3 -B tools/stage_device_hid_profile_gate.py \
 Expected facts: `broker_present=yes`, `refused_without_credentials=yes`,
 `started_with_credentials=yes`, `persistentChangeScope=none`.
 
+## 1a. Combined HID + ATX manual test profile (reversible)
+
+For operator-driven manual testing of both restricted capabilities at once on a
+separate port, without touching the retained slots or the live GUI:
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/stage_device_restricted_control_profile.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --bundle /mnt/d/debug/blikvm/hardened-blikvm/bundles/hardened-blikvm-restricted-control-profile-aarch64.tar.gz \
+  --expected-sha256 <sha256> \
+  --output evidence/private/<receipt>.json
+```
+
+Expected facts: `extracted=yes`, `broker_started=yes`,
+`control_socket_present=yes`, `server_started=yes`, `health=ok`,
+`hid_availability=read_write`, `power_availability=read_write`,
+`https_ready=yes`, `persistentChangeScope=runtime-only`. The profile then serves
+the operator UI at `https://<host>:8443` (self-signed). Run the same command
+with `--teardown` and a new output path to stop the transient units and remove
+the `/tmp` runtime root. See
+`docs/baselines/phase3-restricted-control-test-profile.md` for the manual
+checklist and boundaries.
+
 ## 2. HID keyboard and mouse modes (safe target only)
 
 Prerequisite: a controlled target and its video visible to the operator.
