@@ -150,11 +150,6 @@ export function getHostname() {
   return http.get('/api/hostname');
 }
 
-// set Hostname
-export function setHostname(hostname: string) {
-  return http.post('/api/vm/hostname', { hostname });
-}
-
 // get mDNS state
 export function getMdnsState() {
   return http.get('/api/vm/mdns');
