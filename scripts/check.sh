@@ -46,7 +46,8 @@ python3 -B -m unittest \
   tools.test_installed_pending_write_gate tools.test_persistent_write_boot_proof tools.test_observe_persistent_write_boot \
   tools.test_persistent_write_evidence_compatibility tools.test_persistent_write_activation_receipt \
   tools.test_persistent_write_recovery_receipt tools.test_persistent_write_retained_snapshot tools.test_persistent_write_commit \
-  tools.test_persistent_write_evidence_store tools.test_stage_persistent_write_evidence
+  tools.test_persistent_write_evidence_store tools.test_stage_persistent_write_evidence \
+  tools.test_persistent_write_evidence_pins tools.test_persistent_write_evidence_provider
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -323,6 +324,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/persistent_write_commit.py tools/test_persistent_write_commit.py \
     tools/persistent_write_evidence_store.py tools/test_persistent_write_evidence_store.py \
     tools/stage_persistent_write_evidence.py tools/test_stage_persistent_write_evidence.py \
+    tools/persistent_write_evidence_pins.py tools/test_persistent_write_evidence_pins.py \
+    tools/generate_persistent_write_evidence_pins.py \
+    tools/persistent_write_evidence_provider.py tools/test_persistent_write_evidence_provider.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
     tools/installed_persistent_write.py tools/test_installed_persistent_write.py \
