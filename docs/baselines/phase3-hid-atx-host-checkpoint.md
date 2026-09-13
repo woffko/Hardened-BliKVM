@@ -65,13 +65,15 @@ backend.
 HID:
 
 - isolated-backend device gate passed on the test H616 on 2026-09-13 (private
-  receipt `hid-isolated-gate-20260913-a.json`): startup-ledger replay, lease
-  apply/release, expiry release, identity mismatch without backend I/O and
-  backend-failure release-all all passed against a local mock KVMD socket, with
-  `physical_actions_invoked=no`, `persistentChangeScope=none` and confirmed
-  staging cleanup;
-- still pending a safe visible target: keyboard and mouse modes, rollover,
-  10,000 events, reconnect, BliKVM reboot and stuck-input recovery;
+  receipts `hid-isolated-gate-20260913-a.json` and `-b.json`):
+  startup-ledger replay, lease apply/release, expiry release, identity mismatch
+  without backend I/O, backend-failure release-all, absolute and relative mouse
+  modes with buttons and wheel, six-key rollover with release-before-press
+  ordering, and a 10,000-event soak all passed against local mock KVMD sockets,
+  with `physical_actions_invoked=no`, `persistentChangeScope=none` and
+  confirmed staging cleanup;
+- still pending a safe visible target: reconnect after a real backend outage,
+  BliKVM reboot and stuck-input recovery;
 - reversible credential-delivery gate passed on the test H616 on 2026-09-13
   (private receipt `hid-credential-delivery-gate-20260913-a.json`):
   `deliveryToken=ok`, `sourceReadDenied=true`, `cleanupConfirmed=true`,
