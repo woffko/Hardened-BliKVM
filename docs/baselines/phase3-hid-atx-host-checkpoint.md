@@ -41,8 +41,11 @@ disabled and the denial broker is unchanged in shipped builds.
   packaged for that test build and pass the systemd static verifier, separate
   from the network server and from the credential-gate unit.
   `scripts/build-hid-transition-profile.sh` builds that test bundle (feature
-  opt-in through `scripts/build-aarch64.sh`) with `releaseAccepted: false`; no
-  feature-built bundle has been produced yet.
+  opt-in through `scripts/build-aarch64.sh`) with `releaseAccepted: false`.
+  A test-profile bundle was produced from commit `d8caa54`
+  (`hardened-blikvm-hid-transition-profile-aarch64.tar.gz`, sha256
+  `8b6ee32f…`), containing the feature-built broker and the transition unit;
+  it is not a release artifact and has not been installed on a device.
 - Safe-target/focus bindings: domain-separated SHA-256 derivation in
   `bli-kvm-control-focus` (`90aa7f5`) and the session-bound, one-time
   `GET/POST /api/hid/focus` server endpoint that submits only a v2
