@@ -128,3 +128,33 @@ control socket behind because the harness state directory is not a systemd
 harness now removes the socket and clears the failed unit before starting the
 broker. The production units use `RuntimeDirectory`, which systemd removes on
 stop.
+
+## ATX/LED provenance and operator input fixes (2026-09-13)
+
+- The ATX pinout is the original BliKVM v4 vendor configuration already on the
+  device, not a woffko/Bli-PiKVM mapping. `/etc/kvmd/override.yaml` sets
+  `gpiochip0` with `power_switch_pin=228`, `reset_switch_pin=272`,
+  `power_led_pin=234` and `hdd_led_pin=233`, and the ATX actions call the vendor
+  `/usr/bin/atx --v v4 --c power_on|power_off|power_reset` (the binary also
+  exposes `led_power`/`led_hdd`). `gpioinfo` labels those lines
+  `kvmd::atx::power_switch`, `kvmd::atx::reset_switch` and `kvmd::atx::leds`.
+  `docs/baselines/upstream.md` pins `blikvm/blikvm` `v2.2.3-alpha` as the
+  hardware reference and uses `woffko/Bli-PiKVM` only for the KVMD-on-H616
+  procedure and MSD compatibility.
+- The hardened layer never drives GPIO: power and reset use KVMD's fixed
+  `/atx/click?button=...&wait=1` routes, and the read-only LED state comes from
+  KVMD `GET /atx`. Observed: `{"enabled":true,"busy":false,
+  "leds":{"power":false,"hdd":false}}`. A physical mismatch (different board
+  revision, ribbon orientation, or unconnected target front-panel LED) is not
+  detectable from the control path.
+- The operator power menu read the legacy `/api/vm/gpio` for the power LED,
+  which the hardened server does not expose; it now reads `powerLed` from
+  `/api/inventory`.
+- The on-screen virtual keyboard and the mobile soft keyboard sent input over
+  the legacy websocket or `/api/hid/paste`, which the hardened server does not
+  expose, so mobile input never reached the broker. Both now use the shared HID
+  lease when the restricted capability is advertised; the mobile soft keyboard
+  expands bounded US-layout ASCII to key reports and the on-screen keyboard
+  sends the physical key codes for its language layouts.
+- Mouse movement is coalesced to the latest report per flush so a burst of
+  pointer events cannot build an HTTP backlog.
