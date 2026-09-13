@@ -151,6 +151,12 @@ class NegativeBrowserReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no reviewed baseline profile"):
             self.parse(changed)
 
+    def test_seq11_browser_profile_is_pinned(self) -> None:
+        binding = contract.EvidenceBinding("e" * 24, "f" * 64, contract.CONFIG_SHA256,
+            "app-00000000000000000011-" + "c" * 64, 11, 49)
+        self.assertEqual(receipt.browser_profile(binding), ("seq11-retry", "signed-seq11"))
+        self.assertEqual(receipt.GATE_PROFILES[11], "seq11-retry")
+
     def test_unknown_gate_is_rejected(self) -> None:
         contents = self.parse(document())
         with self.assertRaisesRegex(ValueError, "unknown negative browser gate"):

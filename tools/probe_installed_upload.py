@@ -54,6 +54,9 @@ PROFILES = {
     "seq10-retry": UploadProfile("seq10-retry",
         "85e06d1b68e54480bab89c3cdc5e0d9f80cc3ee007e7ba1e425432af4b250f1f",
         "8a30162d0b620c2f7a6679061d2c9c4bf863aa8ac1be2d2e6dfa77caacc6ae01", 10, False, '0.1.0-dev7', 8683976),
+    "seq11-retry": UploadProfile("seq11-retry",
+        "e113e4bc1d9091d294ea499e775a03e685f51f75f362c3cbb08c0fbaf005ec40",
+        "d6283a7be390423188d8931bae148d9555305a187f18049796cca6b793621d25", 11, False, '0.1.0-dev7', 8683976),
 }
 DEFAULT_PROFILE = PROFILES["seq7-retry"]
 

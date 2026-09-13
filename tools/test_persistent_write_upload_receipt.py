@@ -65,6 +65,11 @@ class UploadReceiptTests(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 self.parse(changed)
 
+    def test_seq11_profile_is_pinned(self) -> None:
+        self.assertEqual(receipt.PROFILES[11][0], "seq11-retry")
+        self.assertEqual(receipt.PROFILES[11][1],
+                         "e113e4bc1d9091d294ea499e775a03e685f51f75f362c3cbb08c0fbaf005ec40")
+
     def test_unreviewed_baseline_is_rejected(self) -> None:
         changed = copy.deepcopy(document())
         slot = "app-00000000000000000008-" + "c" * 64

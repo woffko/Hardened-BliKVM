@@ -16,7 +16,8 @@ require = common.require
 MODES = ("retry", "invalid-archive", "short", "surplus", "malformed", "unauthorized")
 SOURCES = ("probe_installed_upload.py", "upload_unit_reference.py")
 PROFILES = {9: ("seq9-retry", "8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f"),
-            10: ("seq10-retry", "85e06d1b68e54480bab89c3cdc5e0d9f80cc3ee007e7ba1e425432af4b250f1f")}
+            10: ("seq10-retry", "85e06d1b68e54480bab89c3cdc5e0d9f80cc3ee007e7ba1e425432af4b250f1f"),
+            11: ("seq11-retry", "e113e4bc1d9091d294ea499e775a03e685f51f75f362c3cbb08c0fbaf005ec40")}
 
 
 @dataclass(frozen=True)

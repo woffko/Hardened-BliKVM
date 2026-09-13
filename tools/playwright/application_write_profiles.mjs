@@ -21,6 +21,16 @@ const profiles = Object.freeze({
     disposition: "published",
     stagedMessage: "Archive verified and staged",
   }),
+  "seq11-retry": Object.freeze({
+    source: "seq11",
+    target: "seq11",
+    bundleBytes: 8724480,
+    bundleSha256:
+      "e113e4bc1d9091d294ea499e775a03e685f51f75f362c3cbb08c0fbaf005ec40",
+    payloadBytes: "8683976",
+    disposition: "already_present",
+    stagedMessage: "This verified archive is already staged",
+  }),
   "seq10-retry": Object.freeze({
     source: "seq10",
     target: "seq10",

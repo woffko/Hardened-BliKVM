@@ -17,8 +17,9 @@ require = common.require
 NEGATIVE_BROWSER_SOURCES = frozenset({'application_response_capture.mjs', 'application_write_acceptance.mjs',
     'application_write_profiles.mjs', 'device_application_upload_failures.mjs', 'status_api_acceptance.mjs',
     'upload_termination.mjs'})
-RETRY_PROFILES = {9: ('seq9', 'seq9-retry', 'signed-seq9'), 10: ('seq10', 'seq10-retry', 'signed-seq10')}
-GATE_PROFILES = {9: 'seq9-retry', 10: 'seq10-retry'}
+RETRY_PROFILES = {9: ('seq9', 'seq9-retry', 'signed-seq9'), 10: ('seq10', 'seq10-retry', 'signed-seq10'),
+                  11: ('seq11', 'seq11-retry', 'signed-seq11')}
+GATE_PROFILES = {9: 'seq9-retry', 10: 'seq10-retry', 11: 'seq11-retry'}
 ABORT_TERMINATION = {'aborted': True, 'afterLogoutRequested': True, 'kind': 'failed'}
 RESPONSE_TERMINATION = {'kind': 'response', 'status': 401, 'afterLogoutRequested': True}
 TRANSPORT_ABORT = 'net::ERR_ABORTED'
