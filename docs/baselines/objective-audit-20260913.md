@@ -105,6 +105,12 @@ never committed. Nothing below is a release acceptance.
 - Isolated H616 gate passed (`media-isolated-gate-20260913-a.json`): attach,
   eject, catalog selection, duplicate replay, backend failure with reconnect and
   restart with Pending plus reconciliation.
+- Broker, server and GUI wiring now exist: the typed control-v2 media request
+  (`7c61f2e`), the `media-transition-profile` broker with a read-only `/msd`
+  observation (`a479424`), the restricted `POST /api/virtual-media` and
+  read-only `GET /api/virtual-media/catalog` (`7837ef7`, `e9ee15f`), the
+  hardened opaque-ID Image panel (`1713142`) and the media transition systemd
+  unit (`acdbe89`).
 - OUTSTANDING (device/release): real-target attach/eject, upload interruption,
   read-only/writable modes, BIOS boot, reconnect, reboot and storage exhaustion;
   visible indeterminate/cooldown feedback.
