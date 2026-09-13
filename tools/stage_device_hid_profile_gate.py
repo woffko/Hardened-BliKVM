@@ -13,8 +13,14 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
 import secrets
+import stat
 import sys
+import tarfile
 from typing import TypedDict, cast
 
 if not __package__:
@@ -25,6 +31,15 @@ from tools import stage_device_prototype as prototype
 
 
 GATE_PATH = "libexec/bli-kvm-control-broker"
+EXPECTED_ROOT = "hardened-blikvm-hid-transition-profile-aarch64"
+REQUIRED_MEMBERS = {
+    f"{EXPECTED_ROOT}/MANIFEST.json",
+    f"{EXPECTED_ROOT}/SHA256SUMS",
+    f"{EXPECTED_ROOT}/libexec/bli-kvm-control-broker",
+    f"{EXPECTED_ROOT}/share/systemd/hardened-blikvm-hid-transition.service",
+}
+MAX_PROFILE_BUNDLE_BYTES = 256 * 1024 * 1024
+MAX_PROFILE_BUNDLE_FILES = 256
 PREFLIGHT_KEYS = {"architecture", "test_root_absent"}
 APPLY_KEYS = {
     "broker_present",
@@ -68,6 +83,66 @@ class Options:
 class GatePaths:
     stage: prototype.StagePaths
     test_root: str
+
+
+@dataclass(frozen=True)
+class ProfileBundle:
+    path: Path
+    sha256: str
+
+
+def validate_profile_bundle(path_value: str, expected_sha256: str) -> ProfileBundle:
+    source = Path(path_value)
+    if source.is_symlink():
+        raise ValueError("bundle must be a regular non-symlink file")
+    path = source.resolve(strict=True)
+    metadata = path.stat()
+    if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= MAX_PROFILE_BUNDLE_BYTES:
+        raise ValueError("bundle size or type is invalid")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != expected_sha256:
+        raise ValueError("bundle SHA-256 mismatch")
+
+    with tarfile.open(path, mode="r:gz") as archive:
+        members = archive.getmembers()
+        if not members or len(members) > MAX_PROFILE_BUNDLE_FILES:
+            raise ValueError("bundle member count is invalid")
+        names: set[str] = set()
+        total_size = 0
+        for member in members:
+            member_path = PurePosixPath(member.name)
+            if (
+                member_path.is_absolute()
+                or ".." in member_path.parts
+                or not member_path.parts
+                or member_path.parts[0] != EXPECTED_ROOT
+                or member.name in names
+                or not (member.isfile() or member.isdir())
+            ):
+                raise ValueError("bundle contains an unsafe member")
+            names.add(member.name)
+            total_size += member.size
+            if total_size > MAX_PROFILE_BUNDLE_BYTES:
+                raise ValueError("bundle uncompressed size exceeded the limit")
+        if not REQUIRED_MEMBERS.issubset(names):
+            raise ValueError("bundle is missing a required profile member")
+        manifest_file = archive.extractfile(f"{EXPECTED_ROOT}/MANIFEST.json")
+        if manifest_file is None:
+            raise ValueError("bundle manifest is missing")
+        manifest = json.loads(manifest_file.read().decode("utf-8"))
+
+    if (
+        manifest.get("schemaVersion") != 1
+        or manifest.get("product") != "Hardened BliKVM"
+        or manifest.get("profile") != "hid-transition-test"
+        or manifest.get("releaseAccepted") is not False
+        or manifest.get("deviceAccepted") is not False
+    ):
+        raise ValueError("bundle manifest does not describe the expected profile")
+    source_commit = manifest.get("sourceCommit")
+    if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise ValueError("bundle source commit is invalid")
+    return ProfileBundle(path=path, sha256=digest)
 
 
 def parse_args() -> Options:
@@ -215,7 +290,7 @@ def validate_apply(facts: dict[str, str]) -> None:
 def execute(options: Options) -> int:
     output = prototype.validate_output_path(options.output)
     expected_sha256 = prototype.validate_sha256(options.expected_sha256)
-    bundle = prototype.validate_bundle(options.bundle, expected_sha256)
+    bundle = validate_profile_bundle(options.bundle, expected_sha256)
     host, ssh_port = prototype.parse_endpoint(options.endpoint)
     username = prototype.validate_username(options.username)
     known_hosts = prototype.validate_private_file(options.known_hosts)
