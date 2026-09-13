@@ -7,7 +7,7 @@ from tools.reclaim_application_slot import reviewed_inventory
 def inventory(oldest=2):
     slots = [f'app-{n:020d}-' + 'a' * 64 for n in range(oldest, oldest + 8)]
     return {'slots': slots, 'proposedDeletion': slots[:1], 'retainUnreferencedForOneDeletion': 5,
-            'status': {'floorSequence': oldest + 7, 'generation': 43 if oldest == 2 else 40,
+            'status': {'floorSequence': oldest + 7, 'generation': 37 + 3 * oldest,
                        'pending': None, 'activeSlotId': slots[-1], 'confirmedSlotId': slots[-1],
                        'previousSlotId': slots[-2]}}
 
@@ -20,6 +20,13 @@ class ReclaimProfileTests(unittest.TestCase):
     def test_old_default_does_not_authorize_next_deletion(self):
         with self.assertRaises(ValueError):
             reviewed_inventory(inventory(), 'seq1-for-seq9')
+
+    def test_seq3_cycle_authorizes_only_the_oldest_slot(self):
+        self.assertEqual(reviewed_inventory(inventory(3), 'seq3-for-seq11')['oldest'], 3)
+        with self.assertRaises(ValueError):
+            reviewed_inventory(inventory(2), 'seq3-for-seq11')
+        with self.assertRaises(ValueError):
+            reviewed_inventory(inventory(3), 'seq2-for-seq10')
 
     def test_rejects_drift_and_broader_deletion(self):
         original = inventory()

@@ -15,7 +15,7 @@ if not __package__:
 from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
 
-PROFILES = {'seq1-for-seq9': (1, 8, 40), 'seq2-for-seq10': (2, 9, 43)}
+PROFILES = {'seq1-for-seq9': (1, 8, 40), 'seq2-for-seq10': (2, 9, 43), 'seq3-for-seq11': (3, 10, 46)}
 
 
 def reviewed_inventory(inventory: dict[str, object], profile: str) -> dict[str, int]:
@@ -70,7 +70,7 @@ target = baseline['proposedDeletion']
 require(len(baseline['slots']) == 8 and target == unreferenced[:1] and len(target) == 1
     and target[0].startswith('app-%020d-' % data['profile']['oldest']), 'not the reviewed single oldest slot')
 profile = data['profile']
-require((profile['oldest'], profile['current'], profile['generation']) in ((1, 8, 40), (2, 9, 43))
+require((profile['oldest'], profile['current'], profile['generation']) in ((1, 8, 40), (2, 9, 43), (3, 10, 46))
     and sorted(int(n.split('-')[1]) for n in baseline['slots']) == list(range(profile['oldest'], profile['current'] + 1))
     and baseline['status']['floorSequence'] == profile['current']
     and baseline['status']['generation'] == profile['generation'], 'unreviewed GC baseline')
