@@ -12,10 +12,11 @@ out.
   `atx-transition-profile`.
 - Bundle:
   `bundles/hardened-blikvm-restricted-control-profile-aarch64.tar.gz`, SHA-256
-  `d3cba1bc3d4bd77e0d8f8739e0a67830b651905b97184f698e537bea8523548d`,
+  `e8f45c7c7d58df3392936cdf09d8a345525914fbfa8bf18557d67b1a442953c3`,
   profile `restricted-control-test`, source commit
-  `1ddcbd8`. Earlier bundles `72270c8f` (pre-Phase-3 slot web) and `30c23c87`
-  (queued-report confirmation loop) are superseded.
+  `ccbb3fe`. Earlier bundles `72270c8f` (pre-Phase-3 slot web), `30c23c87`
+  (queued-report confirmation loop) and `d3cba1bc` (per-surface HID lease)
+  are superseded.
 - Contents: feature-built `bli-kvm-server` and `bli-kvm-control-broker`, the
   operator web assets built from the current tree, the
   `hardened-blikvm-control-transition.service` unit, its tmpfiles entry and the
@@ -57,7 +58,7 @@ this is a deliberate test-harness deviation, while the credential still arrives
 through `LoadCredential`.
 
 Observed receipt facts
-(`restricted-control-profile-gate-20260913-c.json`): `extracted=yes`,
+(`restricted-control-profile-gate-20260913-d.json`): `extracted=yes`,
 `broker_started=yes`, `control_socket_present=yes`, `server_started=yes`,
 `health=ok`, `hid_availability=read_write`, `power_availability=read_write`,
 `https_ready=yes`, `persistentChangeScope=runtime-only`.
