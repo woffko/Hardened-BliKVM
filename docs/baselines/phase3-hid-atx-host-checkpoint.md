@@ -58,8 +58,11 @@ HID:
 - device gates on H616: startup-ledger replay with an isolated backend,
   disconnect/expiry/mismatch, then keyboard and mouse modes, rollover,
   10,000 events, reconnect, BliKVM reboot and stuck-input recovery;
-- reversible credential-delivery gate execution (tooling ready, run pending
-  user confirmation);
+- reversible credential-delivery gate passed on the test H616 on 2026-09-13
+  (private receipt `hid-credential-delivery-gate-20260913-a.json`):
+  `deliveryToken=ok`, `sourceReadDenied=true`, `cleanupConfirmed=true`,
+  `persistentChangeScope=none`, with the temporary account, transient unit and
+  staging independently confirmed absent afterwards;
 - GUI capability advertisement and lease TTL UX after the above.
 
 ATX:

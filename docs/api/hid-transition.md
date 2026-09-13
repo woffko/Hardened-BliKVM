@@ -62,7 +62,10 @@ Before HID can be wired or advertised:
    `control-v2.md`, the `bli-kvm-control-broker` attestation registry, and the
    `bli-kvm-control-focus` binding derivation, all still unwired;
 2. provision a dedicated transition credential and sandbox without sharing it
-   with the network server;
+   with the network server — the fixed-path loader, the dedicated
+   `hardened-blikvm-hid-credential.service` sandbox and a reversible H616
+   delivery gate exist, and the gate passed on the test device without leaving
+   an account, unit or staging path behind;
 3. test startup-ledger replay and disconnect release on H616 without injecting
    into an uncontrolled external host;
 4. establish a safe visible target/focus and then run keyboard/mouse mode,
