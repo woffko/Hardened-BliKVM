@@ -116,13 +116,28 @@ class NegativeBrowserReceiptTests(unittest.TestCase):
             (rejected, "negative browser assertion missing"),
             (cancelled, "negative browser counter differs"),
             (termination, "logout upload termination differs"),
-            (aborted, "request-specific abort missing"),
+            (aborted, "logout upload termination differs"),
         )
         for mutation, message in mutations:
             changed = copy.deepcopy(document())
             mutation(changed)
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 self.parse(changed)
+
+    def test_logout_response_termination_is_accepted(self) -> None:
+        def response(value: dict[str, object]) -> None:
+            section(value, "browser").update(uploadHttpStatuses=[200, 200, 401],
+                uploadTransportFailures=["net::ERR_ABORTED"],
+                uploadTermination={"kind": "response", "status": 401, "afterLogoutRequested": True})
+
+        good = copy.deepcopy(document())
+        response(good)
+        contents = self.parse(good)
+        receipt.validate_gate("gui_logout", contents)
+        bad = copy.deepcopy(good)
+        section(bad, "browser")["uploadHttpStatuses"] = [200, 200]
+        with self.assertRaisesRegex(ValueError, "logout response termination differs"):
+            self.parse(bad)
 
     def test_unreviewed_baseline_profile_is_rejected(self) -> None:
         changed = copy.deepcopy(document())

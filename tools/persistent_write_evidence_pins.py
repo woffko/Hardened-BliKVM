@@ -26,7 +26,7 @@ CURRENT_PINS = {
         "tools/test_persistent_write_evidence_store.py": "ac89859771c696ab24f1f8a08ded6f813c6f5eec59f3e40e7d5e89a03b9edd4e",
         "tools/test_persistent_write_fence.py": "55df7aa995b22dd07c8d65e0627e97b90460185348c9441bb3120ffb4e82aa7b",
         "tools/test_persistent_write_files.py": "8004567ac160a50f70c98eb3c5d982ac62a14f00c5c3c33b55f08f3637e597c2",
-        "tools/test_persistent_write_gui_failure_receipt.py": "1e9b25d006c54ba2710010b75e40df1e3e670964a50fa0d8f1789cb0c69707d2",
+        "tools/test_persistent_write_gui_failure_receipt.py": "0921b0136f371e521f9b78cd5ec50c98178b47279adbf680d66730d8ca63e363",
         "tools/test_persistent_write_lifecycle.py": "8ba32912744d91dc25876d93df0ee912db03b230d99b19b3738360a73a3147fe",
         "tools/test_persistent_write_pipeline.py": "76c5d03c6c7c0a153e1a1488341949e2c8db6ef76a1eb4ee0c06d227e5440077",
         "tools/test_persistent_write_snapshot.py": "3e0f33956da9ce8ec6dd9117b2a510907745ff29b0b242bc41831f51ac397d0b",

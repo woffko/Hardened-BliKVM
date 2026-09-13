@@ -19,8 +19,9 @@ NEGATIVE_BROWSER_SOURCES = frozenset({'application_response_capture.mjs', 'appli
     'upload_termination.mjs'})
 RETRY_PROFILES = {9: ('seq9', 'seq9-retry', 'signed-seq9'), 10: ('seq10', 'seq10-retry', 'signed-seq10')}
 GATE_PROFILES = {9: 'seq9-retry', 10: 'seq10-retry'}
-TERMINATION = {'aborted': True, 'afterLogoutRequested': True, 'kind': 'failed'}
-TRANSPORT_FAILURES = ['net::ERR_ABORTED', 'net::ERR_ABORTED']
+ABORT_TERMINATION = {'aborted': True, 'afterLogoutRequested': True, 'kind': 'failed'}
+RESPONSE_TERMINATION = {'kind': 'response', 'status': 401, 'afterLogoutRequested': True}
+TRANSPORT_ABORT = 'net::ERR_ABORTED'
 
 
 @dataclass(frozen=True)
@@ -118,10 +119,24 @@ def validate_browser(browser: Mapping[str, object]) -> None:
     for key in ('invalidArchiveRejected', 'cancelled', 'retryAlreadyPresent', 'throttleReleasedAfterLogout',
                 'twoPagesOneSession'):
         require(browser.get(key) is True, 'negative browser assertion missing')
-    require(browser.get('uploadHttpStatuses') == [200, 200], 'negative upload statuses differ')
-    require(browser.get('uploadTransportFailures') == TRANSPORT_FAILURES, 'request-specific abort missing')
-    require(common.object_value(browser.get('uploadTermination')) == TERMINATION, 'logout upload termination differs')
+    validate_logout_termination(browser)
 
+
+def validate_logout_termination(browser: Mapping[str, object]) -> None:
+    """Accept only the two reviewed in-flight logout terminations."""
+    failures_value = browser.get('uploadTransportFailures')
+    statuses_value = browser.get('uploadHttpStatuses')
+    require(type(failures_value) is list and type(statuses_value) is list, 'logout transport failures differ')
+    failures = cast(list[object], failures_value)
+    statuses = cast(list[object], statuses_value)
+    require(0 < len(failures) <= 2 and all(value == TRANSPORT_ABORT for value in failures),
+            'logout transport failures differ')
+    termination = common.object_value(browser.get('uploadTermination'))
+    if termination == RESPONSE_TERMINATION:
+        require(statuses == [200, 200, 401] and len(failures) == 1, 'logout response termination differs')
+    else:
+        require(termination == ABORT_TERMINATION and statuses == [200, 200] and len(failures) == 2,
+                'logout upload termination differs')
 
 def validate_gate(gate: str, contents: Contents) -> None:
     """Assert the per-gate facts already parsed from one shared receipt."""
@@ -139,8 +154,8 @@ def assert_gate(gate: str, browser: Mapping[str, object]) -> None:
     else:
         require(common.number(browser.get('logoutRequests')) == 1
                 and common.number(browser.get('logoutHttpStatus')) == 200
-                and browser.get('uploadTransportFailures') == TRANSPORT_FAILURES
                 and browser.get('throttleReleasedAfterLogout') is True, 'gui logout evidence missing')
+        validate_logout_termination(browser)
 
 
 def runner_pin(pins: Mapping[str, object]) -> str:
