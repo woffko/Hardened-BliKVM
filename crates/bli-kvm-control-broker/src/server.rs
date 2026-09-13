@@ -803,6 +803,97 @@ mod tests {
 
     #[cfg(feature = "hid-transition-profile")]
     #[tokio::test]
+    async fn hid_profile_renews_only_the_active_lease() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let credentials =
+            bli_kvm_kvmd_client::KvmdCredentials::new("test-user", "not-a-real-password").unwrap();
+        let mut broker = tokio::spawn(run_with_hid_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("ledger.json"),
+            directory.path().join("absent-kvmd.sock"),
+            credentials,
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let lease_id = match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => lease_id,
+            other => panic!("expected a lease grant, got {other:?}"),
+        };
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Renew {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let mut other_id = lease_id;
+        other_id[0] ^= 0xff;
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Renew {
+                            lease_id: other_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::LeaseConflict
+            }
+        );
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
     async fn hid_profile_applies_mouse_reports_to_the_kvmd_backend() {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("control.sock");

@@ -34,6 +34,8 @@ class RestrictedControlGuiProbeTests(unittest.TestCase):
             "Confirm and control",
             'page.keyboard.press("KeyA")',
             'path.resolve("evidence/private")',
+            "renewWaitValue",
+            'phase = "renew";',
         ):
             self.assertIn(required, source)
 

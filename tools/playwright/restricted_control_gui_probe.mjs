@@ -3,11 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, executablePath, baseUrl, usernameFile, outputValue] =
-  process.argv.slice(2);
+const [
+  modulePath,
+  executablePath,
+  baseUrl,
+  usernameFile,
+  outputValue,
+  renewWaitValue,
+] = process.argv.slice(2);
 assert.ok(
   modulePath && executablePath && baseUrl && usernameFile && outputValue,
   "missing arguments",
+);
+assert.ok(
+  renewWaitValue === undefined ||
+    (/^[0-9]{1,3}$/.test(renewWaitValue) && Number(renewWaitValue) <= 60),
+  "invalid renew wait",
 );
 assert.equal(new URL(baseUrl).protocol, "https:");
 
@@ -84,17 +95,23 @@ try {
 
   phase = "settle";
   await page.waitForTimeout(1500);
+  if (renewWaitValue) {
+    phase = "renew";
+    await page.waitForTimeout(Number(renewWaitValue) * 1000 - 1500);
+  }
 
   const leaseResponses = events.filter((event) =>
     event.route.startsWith("/api/hid/lease"),
   );
+  const expectedLeaseResponses = renewWaitValue ? 4 : 1;
+  const passed = leaseResponses.length >= expectedLeaseResponses;
   write({
-    result: leaseResponses.length > 0 ? "passed" : "failed",
+    result: passed ? "passed" : "failed",
     phase,
     events,
     leaseResponseCount: leaseResponses.length,
   });
-  if (leaseResponses.length === 0) {
+  if (!passed) {
     process.exitCode = 1;
   }
 } catch (error) {
