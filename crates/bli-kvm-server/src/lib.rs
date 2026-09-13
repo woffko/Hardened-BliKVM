@@ -2207,6 +2207,42 @@ mod tests {
 
     #[cfg(feature = "restricted-control-surface")]
     #[tokio::test]
+    async fn restricted_surface_serves_the_sanitized_catalog() {
+        let root = std::env::temp_dir().join(format!("blikvm-catalog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let catalog = root.join("catalog.json");
+        std::fs::write(
+            &catalog,
+            r#"{"schemaVersion":1,"entries":[{"imageId":7,"imageName":"rescue.iso","size":4096,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}]}"#,
+        )
+        .unwrap();
+        let app = app_with_options(ServerOptions {
+            control_socket: Some(root.join("control.sock")),
+            restricted_controls_enabled: true,
+            media_catalog: Some(catalog),
+            ..ServerOptions::default()
+        });
+        let (cookie, _csrf) = setup_and_login(&app).await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/virtual-media/catalog")
+            .header(header::COOKIE, cookie)
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["images"][0]["imageId"], 7);
+        assert_eq!(body["data"]["images"][0]["imageName"], "rescue.iso");
+        assert!(body["data"]["images"][0].get("sha256").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
     async fn restricted_surface_advertises_virtual_media_writes() {
         let app = app_with_options(ServerOptions {
             control_socket: Some(PathBuf::from("/run/hardened-blikvm-test/control.sock")),
