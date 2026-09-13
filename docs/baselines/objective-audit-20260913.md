@@ -47,6 +47,20 @@ never committed. Nothing below is a release acceptance.
   recovery.
 - Checkpoint `docs/baselines/phase3-hid-atx-host-checkpoint.md`; plan checkpoint
   `docs/implementation-plan.md` (`93ced66`).
+- Combined HID+ATX restricted-control test profile (`run_with_control_profile`,
+  server `BLI_KVM_RESTRICTED_CONTROLS`) deployed reversibly on the H616 and
+  verified: `docs/baselines/phase3-restricted-control-test-profile.md`. The
+  API and headless GUI probes prove login, focus attestation, lease
+  acquire/report/release with a real `KeyA`
+  (`restricted-control-probe-20260913-c.json`), and KVMD accepts the enrolled
+  credential and the fixed HID routes directly.
+- Operator-path fixes found while diagnosing the live target: the focus
+  confirmation is shared across queued reports, all input surfaces share one
+  broker lease, the bundle carries the current operator web assets, the mobile
+  and on-screen keyboards use the restricted lease instead of absent legacy
+  endpoints, and the power LED is read from `/api/inventory`.
+- OUTSTANDING (operator): confirm real-target keyboard and mouse behaviour from
+  a fresh browser session.
 
 ## Phase 3 — ATX: complete for the initial code
 
@@ -60,6 +74,15 @@ never committed. Nothing below is a release acceptance.
 - Live H616 gates passed with Power/Reset physically disconnected
   (`atx-live-gate-20260913-a.json`): `power`, `power_long`, `reset`, duplicate,
   cooldown, restart-in-Pending and reconciliation.
+- Startup reconciliation now also loads operator-reviewed decisions from the
+  bounded absolute `BLI_KVM_ATX_RECONCILIATIONS` file; no outcome is inferred.
+- ATX pinout provenance: original BliKVM v4 vendor KVMD configuration
+  (`gpiochip0` 228/272/234/233, vendor `/usr/bin/atx --v v4`), not
+  `woffko/Bli-PiKVM`; the hardened layer only calls KVMD `/atx/click` and reads
+  `GET /atx` (`{"enabled":true,"busy":false,"leds":{...}}`).
+- OUTSTANDING (operator/hardware): real power/reset and LED behaviour depend on
+  the exact board revision and ATX ribbon wiring; the operator connected the
+  header and is checking.
 - Capability decision: stays unavailable; enablement is a later release
   decision after the remaining gates.
 
@@ -101,11 +124,13 @@ never committed. Nothing below is a release acceptance.
 
 ## Required external inputs to continue
 
-1. Explicit confirmation to run the BliKVM reboot gate.
+1. Explicit confirmation to run the BliKVM reboot gate. (done 2026-09-13)
 2. A safe, visible, authorized target for HID keyboard/mouse and real media
-   gates.
+   gates. (available; real-target keyboard/mouse confirmation still open)
 3. A capability-enable/release decision.
 4. An accepted A/B system-image layout and the second recovery card.
+5. The exact board revision and ATX ribbon wiring for physical Power/Reset and
+   LED behaviour.
 
 Until then the capabilities stay unavailable and no device-mutating step is
 executed without confirmation.
