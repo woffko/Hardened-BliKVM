@@ -4,6 +4,7 @@
 import argparse
 from contextlib import AbstractContextManager
 from dataclasses import asdict
+import base64
 import hashlib
 import json
 import os
@@ -21,6 +22,7 @@ if not __package__:
     import installed_application_write_gate as temporary
     import persistent_write_contract as contract
     import persistent_write_decision as decisions
+    import persistent_write_evidence_store as storage
     import persistent_write_fence as fence
     import persistent_write_files as files
     import persistent_write_lifecycle as lifecycle
@@ -31,6 +33,7 @@ else:
     from tools import installed_application_write_gate as temporary
     from tools import persistent_write_contract as contract
     from tools import persistent_write_decision as decisions
+    from tools import persistent_write_evidence_store as storage
     from tools import persistent_write_fence as fence
     from tools import persistent_write_files as files
     from tools import persistent_write_lifecycle as lifecycle
@@ -41,13 +44,14 @@ else:
 u, s = snapshot.u, snapshot.s
 require = contract.temporary.require
 HELPERS = tuple(dict.fromkeys(("installed_application_write_gate.py", *temporary.HELPERS,
-    "persistent_write_contract.py", "persistent_write_decision.py", "persistent_write_fence.py",
-    "persistent_write_files.py", "persistent_write_lifecycle.py", "persistent_write_pipeline.py",
-    "persistent_write_snapshot.py", "persistent_write_systemd.py")))
+    "persistent_write_contract.py", "persistent_write_decision.py", "persistent_write_evidence_store.py",
+    "persistent_write_fence.py", "persistent_write_files.py", "persistent_write_lifecycle.py",
+    "persistent_write_pipeline.py", "persistent_write_snapshot.py", "persistent_write_systemd.py")))
 ASSETS = ("bindings.json", "new.deb", *HELPERS)
 PLAN_KEYS = {"schemaVersion", "phase", "binding", "boot", "started", "backup", "before", "files", "observed", "terminal",
              "cleanupStarted", "disableStarted"}
 ARCHIVE_PREFIX = "hardened-blikvm-write-restored-"
+EVIDENCE_ENVELOPE_LIMIT = 16 * 1024 * 1024
 
 
 def boot_identity() -> str:
@@ -501,9 +505,49 @@ def disable(root: Path) -> dict[str, object]:
             "floor": terminal.floor, "generation": terminal.generation, "retentionApproved": False}
 
 
+def evidence(root: Path, *, envelope: bytes | None = None) -> dict[str, object]:
+    """Stage and seal original gate receipts for this wired transaction.
+
+    Custody only: bytes are hash-addressed and sealed under the plan binding.
+    Semantic qualification stays with the privileged commit provider.
+    """
+    with temporary.guard.locked(root):
+        plan = load(root)
+        require(plan["phase"] == contract.Phase.WIRED.value, "evidence requires an undecided wired policy")
+        require(decisions.read(root) is None, "policy is already decided")
+        bound = binding(plan)
+        raw = sys.stdin.buffer.read(EVIDENCE_ENVELOPE_LIMIT + 1) if envelope is None else envelope
+        require(0 < len(raw) <= EVIDENCE_ENVELOPE_LIMIT, "invalid evidence envelope size")
+        value = object_value(json.loads(raw, object_pairs_hook=temporary.upload.probe.unique_object))
+        require(set(value) == {"schemaVersion", "gates"} and type(value["schemaVersion"]) is int
+                and value["schemaVersion"] == 1, "invalid evidence envelope schema")
+        gates = object_value(value["gates"])
+        require(set(gates) == set(contract.REQUIRED_GATES), "complete gate receipts required")
+        receipts: dict[str, bytes] = {}
+        for gate in sorted(contract.REQUIRED_GATES):
+            encoded = gates[gate]
+            require(isinstance(encoded, str), "invalid gate receipt encoding")
+            text = cast(str, encoded)
+            receipt = base64.b64decode(text, validate=True)
+            require(base64.b64encode(receipt).decode("ascii") == text, "noncanonical gate receipt encoding")
+            require(0 < len(receipt) <= storage.MAX_BYTES, "gate receipt size outside bounds")
+            receipts[gate] = receipt
+        try:
+            store = storage.Store.create(bound)
+        except FileExistsError:
+            store = storage.Store(bound)
+        digests = {gate: hashlib.sha256(receipts[gate]).hexdigest() for gate in sorted(receipts)}
+        if "seal.json" not in store.names():
+            for gate in sorted(receipts):
+                store.put(receipts[gate])
+        seal = store.seal(digests)
+        return {"result": "sealed", "guardRoot": str(root), "evidenceRoot": str(store.root),
+                "sealSha256": seal, "receipts": digests}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable"))
+    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable", "evidence"))
     parser.add_argument("--guard-root", type=Path, required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--boot", action="store_true")
@@ -523,6 +567,8 @@ def main() -> int:
         result = cleanup(args.guard_root)
     elif args.action == "disable":
         result = disable(args.guard_root)
+    elif args.action == "evidence":
+        result = evidence(args.guard_root)
     else:
         result = restore(args.guard_root, boot=args.boot)
     print(json.dumps(result, sort_keys=True))

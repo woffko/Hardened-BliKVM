@@ -1,7 +1,10 @@
 from contextlib import ExitStack, nullcontext
 from collections.abc import Callable
 from dataclasses import asdict
+import base64
 import hashlib
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -35,7 +38,7 @@ class ControllerTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-B", str(root / "controller.py"), "--help"],
                 capture_output=True, timeout=5, check=False)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
-            self.assertIn(b"{prepare,wire,restore,cleanup,disable}", result.stdout)
+            self.assertIn(b"{prepare,wire,restore,cleanup,disable,evidence}", result.stdout)
             self.assertNotIn(b"--retention-approved", result.stdout)
 
     def test_boot_initial_arm_requires_absent_policy_and_no_decision(self) -> None:
@@ -271,6 +274,42 @@ class ControllerTests(unittest.TestCase):
         files_remove.assert_not_called()
         save.assert_not_called()
         verify.assert_called_once()
+
+    def test_evidence_staging_requires_wired_undecided_policy(self) -> None:
+        plan = {**self.plan, "phase": "committed", "disableStarted": False}
+        with patch.object(native, "load", return_value=plan), \
+                patch.object(native.decisions, "read", return_value=None), \
+                patch.object(native.temporary.guard, "locked", return_value=nullcontext()):
+            with self.assertRaisesRegex(ValueError, "undecided wired policy"):
+                native.evidence(self.root, envelope=b"{}")
+
+    def test_evidence_staging_seals_exact_gate_receipts_idempotently(self) -> None:
+        plan = {**self.plan, "phase": "wired", "disableStarted": False}
+        receipts = {gate: ("receipt-" + gate).encode() for gate in native.contract.REQUIRED_GATES}
+        gates = {gate: base64.b64encode(data).decode("ascii") for gate, data in receipts.items()}
+        envelope = json.dumps({"schemaVersion": 1, "gates": gates}).encode()
+        expected = {gate: hashlib.sha256(data).hexdigest() for gate, data in receipts.items()}
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            with patch.object(native.storage, "PARENT", parent), \
+                    patch.object(native.storage, "OWNER_UID", os.getuid()), \
+                    patch.object(native, "load", return_value=plan), \
+                    patch.object(native.decisions, "read", return_value=None), \
+                    patch.object(native.temporary.guard, "locked", return_value=nullcontext()):
+                result = native.evidence(self.root, envelope=envelope)
+                self.assertEqual(result["result"], "sealed")
+                self.assertEqual(result["receipts"], expected)
+                store = native.storage.Store(native.binding(plan))
+                self.assertEqual(store.root.parent, parent)
+                store.verify_seal(expected, str(result["sealSha256"]))
+                repeat = native.evidence(self.root, envelope=envelope)
+                self.assertEqual(repeat["sealSha256"], result["sealSha256"])
+                changed = dict(receipts)
+                changed["host"] = b"different receipt"
+                changed_envelope = json.dumps({"schemaVersion": 1, "gates": {
+                    gate: base64.b64encode(data).decode("ascii") for gate, data in changed.items()}}).encode()
+                with self.assertRaises(OSError):
+                    native.evidence(self.root, envelope=changed_envelope)
 
     def test_unreadable_plan_attempts_emergency_closure_without_success_receipt(self) -> None:
         with patch.object(native, "load", side_effect=OSError("unreadable marker")), \
