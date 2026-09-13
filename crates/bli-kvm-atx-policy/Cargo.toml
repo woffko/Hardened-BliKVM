@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+atx-reviewed-profile = []
+
 [dependencies]
 bli-kvm-core = { path = "../bli-kvm-core" }
 serde.workspace = true

@@ -22,8 +22,10 @@ enum action: `power_short`, `power_long`, or `reset`.
 The policy persists a private, atomically replaced and fsynced journal before
 returning an internal permit. It provides these invariants:
 
-- the public eligibility constructor is disabled; no external caller can
-  create a permit in the current source;
+- the public eligibility constructor is disabled; shipped builds can only
+  create an ineligible policy, and the reviewed constructor exists behind the
+  `atx-reviewed-profile` feature after a recent non-zero session/confirmation
+  binding and explicit backend and physical-readiness review;
 - a confirmation is valid for at most ten seconds and a backwards clock fails
   closed;
 - a pending operation survives restart and is never automatically repeated;
@@ -57,7 +59,8 @@ socket and is not reachable from the denied control broker.
 Before any ATX action can be wired or advertised:
 
 1. add a reviewed internal eligibility constructor backed by explicit user
-   confirmation and the current device/session identity;
+   confirmation and the current device/session identity — provided by the
+   feature-gated `AtxEligibility::reviewed_for_confirmation`, still unwired;
 2. combine policy Pending persistence, the fixed client call, and completion
    persistence in one broker state machine;
 3. add startup reconciliation and visible indeterminate/cooldown feedback;

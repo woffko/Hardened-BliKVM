@@ -79,6 +79,38 @@ impl AtxEligibility {
             confirmation_verified: true,
         }
     }
+
+    /// Reviewed internal constructor for the explicit-confirmation profile.
+    ///
+    /// Shipped builds expose only [`AtxEligibility::disabled`]; this
+    /// constructor exists behind the `atx-reviewed-profile` feature and still
+    /// requires a recent, non-zero session and confirmation binding. Backend
+    /// readiness and physically-disconnected Power/Reset are separate reviewed
+    /// inputs, never inferred from the confirmation alone.
+    #[cfg(feature = "atx-reviewed-profile")]
+    pub fn reviewed_for_confirmation(
+        session_binding: u64,
+        confirmation_binding: [u8; 32],
+        confirmation_issued_at_ms: u64,
+        now_ms: u64,
+        backend_ready: bool,
+        physical_actions_allowed: bool,
+    ) -> Option<Self> {
+        if session_binding == 0
+            || confirmation_binding.iter().all(|byte| *byte == 0)
+            || confirmation_issued_at_ms == 0
+            || now_ms < confirmation_issued_at_ms
+            || now_ms.saturating_sub(confirmation_issued_at_ms) > MAX_CONFIRMATION_AGE_MS
+        {
+            return None;
+        }
+        Some(Self {
+            capability_enabled: true,
+            backend_ready,
+            physical_actions_allowed,
+            confirmation_verified: true,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,5 +642,43 @@ mod tests {
             AtxPolicyEngine::open(dangling),
             Err(AtxPolicyError::UnsafeFile)
         ));
+    }
+
+    #[cfg(feature = "atx-reviewed-profile")]
+    #[test]
+    fn reviewed_constructor_requires_a_recent_nonzero_confirmation() {
+        let binding = [0x44; 32];
+        assert!(
+            AtxEligibility::reviewed_for_confirmation(9, binding, 1_000, 1_500, true, true)
+                .is_some()
+        );
+        for rejected in [
+            AtxEligibility::reviewed_for_confirmation(0, binding, 1_000, 1_500, true, true),
+            AtxEligibility::reviewed_for_confirmation(9, [0; 32], 1_000, 1_500, true, true),
+            AtxEligibility::reviewed_for_confirmation(9, binding, 0, 1_500, true, true),
+            AtxEligibility::reviewed_for_confirmation(9, binding, 2_000, 1_500, true, true),
+            AtxEligibility::reviewed_for_confirmation(
+                9,
+                binding,
+                1_000,
+                1_000 + MAX_CONFIRMATION_AGE_MS + 1,
+                true,
+                true,
+            ),
+        ] {
+            assert!(rejected.is_none());
+        }
+    }
+
+    #[cfg(feature = "atx-reviewed-profile")]
+    #[test]
+    fn reviewed_constructor_does_not_infer_backend_or_physical_readiness() {
+        let eligibility =
+            AtxEligibility::reviewed_for_confirmation(9, [0x44; 32], 1_000, 1_500, false, false)
+                .unwrap();
+        assert!(eligibility.capability_enabled);
+        assert!(eligibility.confirmation_verified);
+        assert!(!eligibility.backend_ready);
+        assert!(!eligibility.physical_actions_allowed);
     }
 }
