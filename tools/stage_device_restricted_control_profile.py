@@ -406,6 +406,7 @@ http {
         ssl_session_tickets off;
 
         client_max_body_size 16m;
+        add_header Cache-Control "no-store" always;
 
         location / {
             proxy_pass http://127.0.0.1:__PORT__;

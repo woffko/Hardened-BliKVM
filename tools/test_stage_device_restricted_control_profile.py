@@ -115,6 +115,7 @@ class RestrictedControlProfileTests(unittest.TestCase):
         self.assertIn("web_ready", script)
         source = (ROOT / "tools/stage_device_restricted_control_profile.py").read_text()
         self.assertIn('"web_assets_missing_restricted_gui"', source)
+        self.assertIn('add_header Cache-Control "no-store" always;', source)
         for key in (
             "extracted",
             "broker_started",
