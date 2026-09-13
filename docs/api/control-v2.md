@@ -33,6 +33,11 @@ HID and ATX requests require a bounded, expiring target attestation:
   server derives the three bindings with `bli-kvm-control-focus`, which mixes a
   domain-separated SHA-256 over the authenticated session identity, the hashed
   target identity, a fresh focus nonce, and the operator confirmation time.
+  The implemented operator flow is `GET /api/hid/focus` (session-bound,
+  one-time, 30-second challenge) followed by `POST /api/hid/focus` with the
+  challenge, target identity, operation ID and explicit confirmation. The
+  endpoint requires the authenticated session and CSRF token, and reports the
+  broker's fixed rejection unchanged; the capability stays unavailable.
 - One attestation per session: a new `target_attest` replaces the previous one,
   `target_release` drops it, and both expire at `ttl_seconds`. An expired or
   replaced attestation fails closed.
