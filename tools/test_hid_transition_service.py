@@ -57,6 +57,13 @@ class HidTransitionServiceTests(unittest.TestCase):
         self.assertIn(UNIT_NAME, verifier)
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-hid.conf", verifier)
 
+    def test_default_prototype_bundle_excludes_the_transition_profile(self) -> None:
+        default_bundle = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertNotIn(UNIT_NAME, default_bundle)
+        self.assertNotIn("BLI_KVM_CARGO_FEATURES", default_bundle)
+        profile_bundle = (ROOT / "scripts/build-hid-transition-profile.sh").read_text()
+        self.assertIn(UNIT_NAME, profile_bundle)
+
 
 if __name__ == "__main__":
     unittest.main()
