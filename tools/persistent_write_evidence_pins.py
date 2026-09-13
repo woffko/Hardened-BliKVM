@@ -49,7 +49,7 @@ CURRENT_PINS = {
         "probe_installed_upload.py": "02a23ab7739b1ca67a73338ad2bc11f970fef427f162a9e85d95f2e72e4d20a5",
         "upload_unit_reference.py": "5f86b41b4acc6b1e59da2bc122c15eef0175aeb018faec39c165971efe77953f"
     },
-    "upload_tool": "2ce8246a8880aea39df1b7f4f347a8f0f74065890d991f141732244472cf07db"
+    "upload_tool": "025b8ae003a78bc31f12463d09ed961db96ccec1bb29bbcc1f199fb0e7ef6f34"
 }
 
 HISTORICAL_PINS = {

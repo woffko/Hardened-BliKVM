@@ -82,8 +82,8 @@ def main() -> int:
 
     try:
         uid = int(ssh('id -u hardened-blikvm-server').stdout.decode().strip())
-        gid = int(ssh('id -g hardened-blikvm-server').stdout.decode().strip())
-        common.require(0 < uid and uid != 0, 'invalid upload server identity')
+        gid = int(ssh('getent group hardened-blikvm | cut -d: -f3').stdout.decode().strip())
+        common.require(0 < uid and uid != 0 and 0 < gid, 'invalid upload server identity')
         staged = str(root / 'upload-gate-application.tar')
         with tempfile.TemporaryFile() as stream:
             stream.write(archive)
