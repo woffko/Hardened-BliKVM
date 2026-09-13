@@ -41,6 +41,18 @@ export function usesBliApplicationUpdates(manifest: CapabilityManifest | null) {
   return manifest?.platform.id === 'bli-h616-pikvm';
 }
 
+/**
+ * True when the hardened server backs virtual media. The GUI must then use the
+ * opaque-ID `/api/virtual-media` endpoints instead of the legacy storage API.
+ */
+export function supportsHardenedMedia(manifest: CapabilityManifest | null) {
+  return Boolean(
+    manifest &&
+    manifest.platform.id === 'bli-h616-pikvm' &&
+    isAvailable(manifest.virtualMedia.status)
+  );
+}
+
 export function isPhysicallyVerified(status: FeatureStatus) {
   return status.evidence === 'physical_verified';
 }

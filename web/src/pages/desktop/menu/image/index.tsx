@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Divider, Modal, Segmented, Tooltip } from 'antd';
 import clsx from 'clsx';
-import { useSetAtom } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { DiscIcon, HardDriveIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/storage.ts';
+import { supportsHardenedMedia } from '@/lib/capabilities.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { submenuOpenCountAtom } from '@/jotai/settings.ts';
 
+import { HardenedImage } from './hardened.tsx';
 import { Images } from './images.tsx';
 import { Tips } from './tips.tsx';
 
-export const Image = () => {
+const LegacyImage = () => {
   const { t } = useTranslation();
   const setSubmenuOpenCount = useSetAtom(submenuOpenCountAtom);
 
@@ -99,4 +102,16 @@ export const Image = () => {
       </Modal>
     </>
   );
+};
+
+/**
+ * Uses the hardened opaque-ID virtual-media panel when the hardened server
+ * backs virtual media, and the legacy storage panel otherwise.
+ */
+export const Image = () => {
+  const manifest = useAtomValue(capabilitiesAtom);
+  if (supportsHardenedMedia(manifest)) {
+    return <HardenedImage />;
+  }
+  return <LegacyImage />;
 };
