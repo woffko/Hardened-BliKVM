@@ -43,6 +43,7 @@ class HidIsolatedGateTests(unittest.TestCase):
             "rollover",
             "soak",
             "reconnect",
+            "stuck_input",
             "physical_actions_invoked",
         ):
             self.assertIn(key, gate.APPLY_KEYS)

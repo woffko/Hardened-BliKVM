@@ -40,6 +40,7 @@ APPLY_KEYS = {
     "rollover",
     "run_rc",
     "soak",
+    "stuck_input",
     "startup_replay",
 }
 ROLLBACK_KEYS = {"stage_absent"}
@@ -191,6 +192,7 @@ def validate_apply(facts: dict[str, str]) -> None:
         "rollover",
         "soak",
         "reconnect",
+        "stuck_input",
     ):
         if facts.get(phase) != "ok":
             raise GateError("apply", f"{phase}_failed")

@@ -319,6 +319,63 @@ async fn phase_reconnect(
     Ok(())
 }
 
+async fn phase_stuck_input(
+    root: &Path,
+    eligible: HidEligibility,
+    now: Instant,
+) -> Result<(), GateError> {
+    let socket = root.join("stuck.sock");
+    let ledger = root.join("stuck-ledger.json");
+    let server = serve(&socket, &["200 OK", "200 OK"]).await?;
+    {
+        let mut gate = policy(&ledger, &socket)?;
+        let owner = identity(11, [11; 16]);
+        if gate
+            .acquire(owner, eligible, now, Duration::from_secs(30))
+            .await
+            != HidDecision::Applied
+        {
+            return Err(GateError::Phase("stuck_acquire"));
+        }
+        let held = HidReport::Keyboard {
+            data: [0, 0, 4, 5, 0, 0, 0, 0],
+        };
+        if gate.report(owner, eligible, now, &held).await != HidDecision::Applied {
+            return Err(GateError::Phase("stuck_press"));
+        }
+        // Simulated crash: the policy is dropped without releasing the lease.
+    }
+    let requests = server.await.map_err(|_| GateError::Phase("stuck_server"))?;
+    if requests.len() != 2 || !requests[0].contains("state=1") || !requests[1].contains("state=1") {
+        return Err(GateError::Phase("stuck_press_routes"));
+    }
+
+    // Restart on the same ledger: the held releases must be pending and a new
+    // lease must flush them before it is granted.
+    let mut restarted = policy(&ledger, &socket)?;
+    if restarted.pending_release_count() != 2 {
+        return Err(GateError::Phase("stuck_ledger"));
+    }
+    let _ = std::fs::remove_file(&socket);
+    let server = serve(&socket, &["200 OK", "200 OK"]).await?;
+    let second = identity(12, [12; 16]);
+    if restarted
+        .acquire(second, eligible, now, Duration::from_secs(30))
+        .await
+        != HidDecision::Applied
+    {
+        return Err(GateError::Phase("stuck_recover"));
+    }
+    let requests = server.await.map_err(|_| GateError::Phase("stuck_server"))?;
+    if requests.len() != 2 || !requests[0].contains("state=0") || !requests[1].contains("state=0") {
+        return Err(GateError::Phase("stuck_release_all"));
+    }
+    if restarted.pending_release_count() != 0 {
+        return Err(GateError::Phase("stuck_pending"));
+    }
+    Ok(())
+}
+
 /// Runs every isolated phase and returns the fixed report lines.
 pub async fn run_isolated_checks(
     soak_events: usize,
@@ -493,6 +550,7 @@ pub async fn run_isolated_checks(
     phase_rollover(&root, eligible, now).await?;
     phase_soak(&root, eligible, now, soak_events).await?;
     phase_reconnect(&root, eligible, now).await?;
+    phase_stuck_input(&root, eligible, now).await?;
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(vec![
@@ -506,6 +564,7 @@ pub async fn run_isolated_checks(
         ("rollover", "ok"),
         ("soak", "ok"),
         ("reconnect", "ok"),
+        ("stuck_input", "ok"),
         ("physical_actions_invoked", "no"),
     ])
 }
@@ -524,7 +583,7 @@ mod tests {
         let facts = run_isolated_checks(200).await.unwrap();
         let values: Vec<&str> = facts.iter().map(|(_, value)| *value).collect();
         assert!(values.contains(&"ok"));
-        assert_eq!(facts.len(), 11);
+        assert_eq!(facts.len(), 12);
         let named: std::collections::HashMap<_, _> = facts.into_iter().collect();
         for key in [
             "startup_replay",
@@ -536,6 +595,7 @@ mod tests {
             "rollover",
             "soak",
             "reconnect",
+            "stuck_input",
         ] {
             assert_eq!(named.get(key), Some(&"ok"), "phase {key}");
         }
