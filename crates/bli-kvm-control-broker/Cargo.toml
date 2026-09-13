@@ -9,11 +9,11 @@ repository.workspace = true
 
 [dependencies]
 bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
+bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-diagnostic-producer-client = { path = "../bli-kvm-diagnostic-producer-client" }
 bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
 tokio.workspace = true
 
 [dev-dependencies]
 bli-kvm-control-client = { path = "../bli-kvm-control-client" }
-bli-kvm-core = { path = "../bli-kvm-core" }
 tempfile.workspace = true
