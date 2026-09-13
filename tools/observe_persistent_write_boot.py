@@ -46,7 +46,7 @@ def observe(root: Path) -> dict[str, object]:
         require(root.name + '-boot.service' not in native.s.property_value(unit, 'Requires').split(),
                 'temporary guard dependency remains')
     pipeline = native.temporary.observer.observe()
-    terminal = native.pipeline.terminal(pipeline, native.pipeline.Counters(8, 40))
+    terminal = native.pipeline.terminal(pipeline, native.counters(plan))
     require(terminal is not None, 'pipeline not settled after boot')
     assert terminal is not None
     after = native.snapshot.capture(root, backup, terminal, wired=False, masked=True)

@@ -32,6 +32,11 @@ class FinalObservationTests(unittest.TestCase):
             observer.require_unfinalized(Path('/var/lib/fixture'), 'b' * 64)
         self.assertEqual(calls, ['plan', 'deadline', 'boot'])
 
+    def test_observation_uses_retained_plan_counters(self) -> None:
+        source = Path(observer.__file__).read_text()
+        self.assertIn('native.counters(plan)', source)
+        self.assertNotIn('Counters(8, 40)', source)
+
 
 if __name__ == '__main__':
     unittest.main()
