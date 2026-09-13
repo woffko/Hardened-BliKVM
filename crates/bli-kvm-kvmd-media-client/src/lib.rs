@@ -247,6 +247,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stalled_backend_times_out_within_the_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            // Hold the request open without responding.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        });
+        let client =
+            KvmdMediaClient::with_limits(&socket, std::time::Duration::from_millis(50), 4096)
+                .unwrap();
+        let catalog = catalog(directory.path());
+        assert!(matches!(
+            client
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: true },
+                    &catalog,
+                    &credentials()
+                )
+                .await,
+            Err(KvmdMediaClientError::Timeout)
+        ));
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
     async fn sends_only_catalog_selection_and_connection_routes() {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("kvmd.sock");
