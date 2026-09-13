@@ -2221,6 +2221,7 @@ mod tests {
             control_socket: Some(root.join("control.sock")),
             restricted_controls_enabled: true,
             media_catalog: Some(catalog),
+            state_dir: root.join("state"),
             ..ServerOptions::default()
         });
         let (cookie, _csrf) = setup_and_login(&app).await;
