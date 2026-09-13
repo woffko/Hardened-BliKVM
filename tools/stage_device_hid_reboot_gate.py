@@ -6,6 +6,11 @@ for the device to return, and verifies the boot identity changed while the
 retained slots, retained guard and evidence store are intact and no HID test
 account or staging path survived. It performs no upload and stores no raw boot
 identifier in the receipt.
+
+`--verify-only` skips the reboot and only records the post-reboot state, which
+is useful after a manual power cycle. Note that the field image keeps a
+volatile journal (`Storage=volatile`), so the previous boot's shutdown lines
+are not available for post-mortem.
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ POSTFLIGHT_KEYS = {
 }
 REBOOT_KEYS = {"reboot_requested"}
 FINAL_KEYS = {"cleanup_confirmed"}
-REBOOT_TIMEOUT_SECONDS = 300.0
+DEFAULT_REBOOT_TIMEOUT_SECONDS = 600
 POLL_INTERVAL_SECONDS = 5.0
 
 
@@ -53,12 +58,15 @@ class GateError(Exception):
 
 
 class Receipt(TypedDict):
+    mode: str
     bootIdentityChanged: bool
+    deviceReachableAfterReboot: bool
     kvmdActive: bool
     retainedStateIntact: bool
     stagingAbsent: bool
     accountAbsent: bool
     cleanupConfirmed: bool
+    pollAttempts: int
     failureStage: str
     failureType: str
     physicalActionsInvoked: bool
@@ -71,6 +79,8 @@ class Options:
     username: str
     known_hosts: str
     output: str
+    timeout_seconds: int
+    verify_only: bool
 
 
 def parse_args() -> Options:
@@ -79,12 +89,25 @@ def parse_args() -> Options:
     _ = parser.add_argument("--username", required=True)
     _ = parser.add_argument("--known-hosts", required=True)
     _ = parser.add_argument("--output", required=True)
+    _ = parser.add_argument(
+        "--timeout-seconds", type=int, default=DEFAULT_REBOOT_TIMEOUT_SECONDS
+    )
+    _ = parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="skip the reboot and only record the current post-reboot state",
+    )
     namespace = parser.parse_args()
+    timeout_seconds = cast(int, namespace.timeout_seconds)
+    if timeout_seconds <= 0:
+        raise SystemExit("--timeout-seconds must be positive")
     return Options(
         endpoint=cast(str, namespace.endpoint),
         username=cast(str, namespace.username),
         known_hosts=cast(str, namespace.known_hosts),
         output=cast(str, namespace.output),
+        timeout_seconds=timeout_seconds,
+        verify_only=cast(bool, namespace.verify_only),
     )
 
 
@@ -137,14 +160,24 @@ def validate_preflight(facts: dict[str, str]) -> None:
         raise GateError("preflight", "boot_token_missing")
 
 
+def validate_postflight(facts: dict[str, str]) -> None:
+    for key in ("kvmd_active", "retained_state", "staging_absent", "account_absent"):
+        if facts.get(key) != "yes":
+            raise GateError("postflight", f"{key}_invalid")
+
+
 def wait_for_return(
     target: prototype.RemoteTarget,
     secret: bytearray,
     previous_token: str,
-) -> dict[str, str]:
-    deadline = time.monotonic() + REBOOT_TIMEOUT_SECONDS
+    timeout_seconds: int,
+) -> tuple[dict[str, str], int]:
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    reachable = False
     while time.monotonic() < deadline:
         time.sleep(POLL_INTERVAL_SECONDS)
+        attempts += 1
         try:
             result = prototype.run_ssh(
                 target, secret, build_postflight_script(), timeout=20
@@ -153,13 +186,16 @@ def wait_for_return(
             continue
         if result.returncode != 0:
             continue
+        reachable = True
         try:
             facts = prototype.parse_facts(result.stdout, POSTFLIGHT_KEYS)
         except ValueError:
             continue
         if facts.get(BOOT_TOKEN_KEY) and facts[BOOT_TOKEN_KEY] != previous_token:
-            return facts
-    raise GateError("reboot", "device_did_not_return_with_new_boot_identity")
+            return facts, attempts
+    if not reachable:
+        raise GateError("reboot", "device_unreachable_after_reboot")
+    raise GateError("reboot", "boot_identity_unchanged")
 
 
 def execute(options: Options) -> int:
@@ -171,7 +207,7 @@ def execute(options: Options) -> int:
     secret = prototype.read_secret_stdin()
 
     stage = "preflight"
-    previous_token = ""
+    attempts = 0
     postflight: dict[str, str] = {}
     try:
         preflight = prototype.parse_facts(
@@ -179,8 +215,41 @@ def execute(options: Options) -> int:
             PREFLIGHT_KEYS,
         )
         validate_preflight(preflight)
-        previous_token = preflight[BOOT_TOKEN_KEY]
 
+        if options.verify_only:
+            postflight = prototype.parse_facts(
+                prototype.run_ssh(
+                    target, secret, build_postflight_script(), timeout=25
+                ).stdout,
+                POSTFLIGHT_KEYS,
+            )
+            validate_postflight(postflight)
+            stage = "receipt"
+            cleanup = prototype.parse_facts(
+                prototype.run_ssh(target, secret, build_final_script(), timeout=25).stdout,
+                FINAL_KEYS,
+            )
+            if cleanup.get("cleanup_confirmed") != "yes":
+                raise GateError("receipt", "cleanup_unconfirmed")
+            verify_receipt: Receipt = {
+                "mode": "verify_only",
+                "bootIdentityChanged": False,
+                "deviceReachableAfterReboot": True,
+                "kvmdActive": True,
+                "retainedStateIntact": True,
+                "stagingAbsent": True,
+                "accountAbsent": True,
+                "cleanupConfirmed": True,
+                "pollAttempts": 0,
+                "failureStage": "",
+                "failureType": "",
+                "physicalActionsInvoked": False,
+                "persistentChangeScope": "none",
+            }
+            write_json_0600_atomic(output, verify_receipt)
+            return 0
+
+        previous_token = preflight[BOOT_TOKEN_KEY]
         stage = "reboot"
         reboot = prototype.parse_facts(
             prototype.run_ssh(target, secret, build_reboot_script(), timeout=25).stdout,
@@ -190,12 +259,10 @@ def execute(options: Options) -> int:
             raise GateError("reboot", "reboot_not_requested")
 
         stage = "postflight"
-        postflight = wait_for_return(
-            target, secret, previous_token
+        postflight, attempts = wait_for_return(
+            target, secret, previous_token, options.timeout_seconds
         )
-        for key in ("kvmd_active", "retained_state", "staging_absent", "account_absent"):
-            if postflight.get(key) != "yes":
-                raise GateError("postflight", f"{key}_invalid")
+        validate_postflight(postflight)
 
         stage = "final"
         final = prototype.parse_facts(
@@ -206,12 +273,15 @@ def execute(options: Options) -> int:
             raise GateError("final", "cleanup_unconfirmed")
     except GateError as error:
         receipt: Receipt = {
+            "mode": "verify_only" if options.verify_only else "reboot",
             "bootIdentityChanged": bool(postflight),
+            "deviceReachableAfterReboot": bool(postflight),
             "kvmdActive": postflight.get("kvmd_active") == "yes",
             "retainedStateIntact": postflight.get("retained_state") == "yes",
             "stagingAbsent": postflight.get("staging_absent") == "yes",
             "accountAbsent": postflight.get("account_absent") == "yes",
             "cleanupConfirmed": False,
+            "pollAttempts": attempts,
             "failureStage": stage,
             "failureType": error.failure_type,
             "physicalActionsInvoked": False,
@@ -221,12 +291,15 @@ def execute(options: Options) -> int:
         return 1
 
     receipt = {
+        "mode": "reboot",
         "bootIdentityChanged": True,
+        "deviceReachableAfterReboot": True,
         "kvmdActive": True,
         "retainedStateIntact": True,
         "stagingAbsent": True,
         "accountAbsent": True,
         "cleanupConfirmed": True,
+        "pollAttempts": attempts,
         "failureStage": "",
         "failureType": "",
         "physicalActionsInvoked": False,

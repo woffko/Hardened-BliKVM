@@ -29,18 +29,27 @@ class HidRebootGateTests(unittest.TestCase):
         keys = gate.Receipt.__annotations__
         self.assertNotIn("boot_token", keys)
         for required in (
+            "mode",
             "bootIdentityChanged",
+            "deviceReachableAfterReboot",
             "kvmdActive",
             "retainedStateIntact",
             "stagingAbsent",
             "accountAbsent",
             "cleanupConfirmed",
+            "pollAttempts",
             "persistentChangeScope",
         ):
             self.assertIn(required, keys)
         source = (ROOT / "tools/stage_device_hid_reboot_gate.py").read_text()
-        self.assertNotIn("boot_token\":", source)
+        self.assertNotIn('boot_token":', source)
         self.assertIn('"persistentChangeScope": "reboot"', source)
+
+    def test_verify_only_mode_skips_the_reboot(self) -> None:
+        source = (ROOT / "tools/stage_device_hid_reboot_gate.py").read_text()
+        self.assertIn("--verify-only", source)
+        self.assertIn('"mode": "verify_only"', source)
+        self.assertIn("if options.verify_only:", source)
 
     def test_validation_fails_closed(self) -> None:
         with self.assertRaises(gate.GateError):
