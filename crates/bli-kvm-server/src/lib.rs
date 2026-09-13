@@ -81,6 +81,9 @@ pub struct ServerOptions {
     /// `restricted-control-surface` build honours it; shipped builds always
     /// keep HID and ATX `not_exposed`.
     pub restricted_controls_enabled: bool,
+    /// Read-only virtual-media catalog path. No value keeps the catalog
+    /// endpoint unavailable.
+    pub media_catalog: Option<PathBuf>,
 }
 
 impl Default for ServerOptions {
@@ -101,6 +104,7 @@ impl Default for ServerOptions {
             update_writes_enabled: false,
             control_socket: None,
             restricted_controls_enabled: false,
+            media_catalog: None,
         }
     }
 }
@@ -261,6 +265,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route("/hid/lease", post(hid::hid_lease))
         .route("/virtual-media", post(media::virtual_media))
+        .route("/virtual-media/catalog", get(media::media_catalog))
         .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
@@ -2181,6 +2186,20 @@ mod tests {
                     "command": { "action": "set_connected", "connected": true }
                 }),
             ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn media_catalog_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/virtual-media/catalog")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

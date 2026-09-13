@@ -88,6 +88,7 @@ Shipped builds keep the profile compiled out and reject the request with
 `backend_unavailable`. A dedicated `run_with_media_profile` entry point selects
 the journal, the opaque-ID catalog and the KVMD socket from absolute paths, and
 the KVMD credential arrives only through `LoadCredential`. The server exposes
+`GET /api/virtual-media/catalog` (sanitized opaque IDs, names, sizes and allowed modes) and
 `POST /api/virtual-media` (opaque image ID and a typed command) and advertises
 `virtualMedia` `read_write` only when a `restricted-control-surface` build is
 explicitly enabled with a configured control socket. The storage/image GUI

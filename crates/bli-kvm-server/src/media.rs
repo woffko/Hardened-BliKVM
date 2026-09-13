@@ -123,3 +123,41 @@ pub(crate) async fn virtual_media(
         })))
     }
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MediaCatalogView {
+    pub images: Vec<bli_kvm_media_catalog::MediaSummary>,
+}
+
+/// Read-only opaque-ID virtual-media catalog for the operator UI.
+pub(crate) async fn media_catalog(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<MediaCatalogView>>> {
+    #[cfg(feature = "restricted-control-surface")]
+    {
+        if !state.options.restricted_controls_enabled {
+            return Err(AppError::ServiceUnavailable(
+                "virtual media catalog is not enabled".into(),
+            ));
+        }
+        let Some(path) = state.options.media_catalog.as_ref() else {
+            return Err(AppError::ServiceUnavailable(
+                "virtual media catalog is not configured".into(),
+            ));
+        };
+        let catalog = bli_kvm_media_catalog::MediaCatalog::open(path).map_err(|_| {
+            AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
+        })?;
+        Ok(Json(ApiResponse::ok(MediaCatalogView {
+            images: catalog.summaries(),
+        })))
+    }
+    #[cfg(not(feature = "restricted-control-surface"))]
+    {
+        let _ = &state;
+        Err(AppError::ServiceUnavailable(
+            "virtual media catalog is not available".into(),
+        ))
+    }
+}

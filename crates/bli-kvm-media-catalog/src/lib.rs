@@ -6,7 +6,7 @@ use std::{
 };
 
 use bli_kvm_core::VirtualMediaControlMode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const CATALOG_SCHEMA_VERSION: u16 = 1;
@@ -62,6 +62,18 @@ impl MediaSelection {
     }
 }
 
+/// Sanitized read-only view of one catalog entry for the operator UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaSummary {
+    pub image_id: u64,
+    pub image_name: String,
+    pub size: u64,
+    pub cdrom_allowed: bool,
+    pub removable_allowed: bool,
+    pub writable_allowed: bool,
+}
+
 #[derive(Debug)]
 pub struct MediaCatalog {
     entries: Vec<CatalogEntry>,
@@ -108,6 +120,21 @@ impl MediaCatalog {
         Ok(Self {
             entries: document.entries,
         })
+    }
+
+    /// Returns the sanitized catalog entries in a stable order.
+    pub fn summaries(&self) -> Vec<MediaSummary> {
+        self.entries
+            .iter()
+            .map(|entry| MediaSummary {
+                image_id: entry.image_id,
+                image_name: entry.image_name.clone(),
+                size: entry.size,
+                cdrom_allowed: entry.cdrom_allowed,
+                removable_allowed: entry.removable_allowed,
+                writable_allowed: entry.writable_allowed,
+            })
+            .collect()
     }
 
     pub fn resolve(
@@ -222,6 +249,28 @@ mod tests {
         format!(
             r#"{{"imageId":{id},"imageName":"{name}","size":4096,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}}"#
         )
+    }
+
+    #[test]
+    fn summaries_are_sanitized_and_ordered() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("catalog.json");
+        write_catalog(
+            &path,
+            &format!(
+                "{},{}",
+                valid_entry(7, "rescue.iso"),
+                valid_entry(8, "tools.img")
+            ),
+        );
+        let catalog = MediaCatalog::open(&path).unwrap();
+        let summaries = catalog.summaries();
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].image_id, 7);
+        assert_eq!(summaries[0].image_name, "rescue.iso");
+        assert!(summaries[0].cdrom_allowed);
+        assert!(!summaries[0].writable_allowed);
+        assert_eq!(summaries[1].image_id, 8);
     }
 
     #[test]

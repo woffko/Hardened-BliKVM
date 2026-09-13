@@ -668,6 +668,7 @@ dependencies = [
  "bli-kvm-control-focus",
  "bli-kvm-control-protocol",
  "bli-kvm-core",
+ "bli-kvm-media-catalog",
  "bli-kvm-platform-bli",
  "bli-kvm-update-client",
  "bli-kvm-update-protocol",
