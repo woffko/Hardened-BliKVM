@@ -150,6 +150,11 @@ operator session, each decoded its own 200 MJPEG response and both stayed live
 repeated mode-switch, latency, CPU/memory and the 24-hour soak remain open, as
 does the Janus/WebRTC transport integration.
 
+Checkpoint: a bounded continuous-MJPEG soak passed against the deployed profile
+(`video-soak-probe-20260913-a.json`, 60 s, 375 progress samples, no stall or
+disconnect). Physical acceptance of hotplug, resolution, repeated mode-switch,
+latency, CPU/memory and the full 24-hour soak is deferred by the operator.
+
 ## Phase 5: Virtual media and board functions
 
 - Reimplement configfs media insertion/ejection and safe upload.
