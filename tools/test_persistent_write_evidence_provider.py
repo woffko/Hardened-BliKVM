@@ -1,16 +1,26 @@
 from contextlib import ExitStack
+import copy
 import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from typing import cast
 from unittest.mock import patch
+
+# pyright: reportPrivateUsage=false
 
 from tools import persistent_write_contract as contract
 from tools import persistent_write_evidence_pins as pins
 from tools import persistent_write_evidence_provider as provider
 from tools import persistent_write_evidence_store as storage
+from tools import test_persistent_write_component_view as plan_fixture
 from tools import test_persistent_write_gui_failure_receipt as gui_fixture
+
+
+def section(value: dict[str, object], key: str) -> dict[str, object]:
+    return cast(dict[str, object], value[key])
 
 
 def binding(transaction: str = "a" * 24) -> contract.EvidenceBinding:
@@ -33,7 +43,7 @@ class ProviderTests(unittest.TestCase):
         self.seal = store.seal(gates)
         self.calls: list[tuple[str, bytes]] = []
 
-        def accept(_binding: contract.EvidenceBinding, raw: bytes, _pins: object) -> None:
+        def accept(_root: Path, _binding: contract.EvidenceBinding, raw: bytes, _pins: object) -> None:
             self.calls.append(("accept", raw))
 
         self.validators = {gate: accept for gate in contract.REQUIRED_GATES}
@@ -76,9 +86,8 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "receipt semantics differ"):
             self.read(validators=validators)
 
-    def test_default_registry_covers_fresh_gates(self) -> None:
-        self.assertEqual(set(provider.VALIDATORS),
-                         {"host", "native_upload", "gui_failure_retry", "gui_cancel", "gui_logout"})
+    def test_default_registry_covers_all_required_gates(self) -> None:
+        self.assertEqual(set(provider.VALIDATORS), contract.REQUIRED_GATES)
 
     def test_default_gui_validators_accept_a_pinned_receipt(self) -> None:
         value = gui_fixture.document()
@@ -88,7 +97,7 @@ class ProviderTests(unittest.TestCase):
         for gate in contract.REQUIRED_GATES - set(receipts):
             receipts[gate] = ("placeholder-" + gate).encode()
 
-        def accept(_binding: contract.EvidenceBinding, _raw: bytes, _pins: object) -> None:
+        def accept(_root: Path, _binding: contract.EvidenceBinding, _raw: bytes, _pins: object) -> None:
             return None
 
         binding = contract.EvidenceBinding("e" * 24, "f" * 64, contract.CONFIG_SHA256, gui_fixture.SLOT, 10, 46)
@@ -101,6 +110,61 @@ class ProviderTests(unittest.TestCase):
         evidence = provider.read_verified_evidence(Path("/var/lib/unused"), binding, expected_seal=seal,
                                                    pins=pins.CURRENT_PINS, validators=validators)
         self.assertEqual(frozenset(item.gate for item in evidence), contract.REQUIRED_GATES)
+
+
+
+    def archived_plan(self, parent: Path, transaction: str, document: dict[str, object]) -> Path:
+        archive = parent / (provider.ARCHIVE_PREFIX + transaction)
+        archive.mkdir(mode=0o700)
+        path = archive / "plan.json"
+        path.write_bytes(json.dumps(document).encode())
+        path.chmod(0o600)
+        return path
+
+    def test_component_views_require_private_root_plans(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            self.archived_plan(parent, "2" * 24, plan_fixture.plan())
+            guard = parent / (contract.PREFIX + "3" * 24)
+            guard.mkdir(mode=0o700)
+            guard_plan = guard / "plan.json"
+            guard_plan.write_bytes(json.dumps(plan_fixture.plan()).encode())
+            guard_plan.chmod(0o600)
+            with patch.object(provider, "ARCHIVE_PARENT", parent), \
+                    patch.object(provider, "PLAN_OWNER_UID", os.getuid()):
+                source = provider.source_components("2" * 24)
+                self.assertEqual(source, provider.current_components(guard))
+                with self.assertRaises(OSError):
+                    provider.source_components("4" * 24)
+                guard_plan.chmod(0o644)
+                with self.assertRaises(ValueError):
+                    provider.current_components(guard)
+
+    def test_historical_check_rejects_component_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            source_txn = "2" * 24
+            self.archived_plan(parent, source_txn, plan_fixture.plan())
+            guard = parent / (contract.PREFIX + "3" * 24)
+            guard.mkdir(mode=0o700)
+            current_plan = plan_fixture.plan()
+            guard_plan = guard / "plan.json"
+            guard_plan.write_bytes(json.dumps(current_plan).encode())
+            guard_plan.chmod(0o600)
+            binding = contract.EvidenceBinding("3" * 24, "b" * 64, contract.CONFIG_SHA256,
+                gui_fixture.SLOT, 10, 46)
+            source_binding = contract.EvidenceBinding(source_txn, "b" * 64, contract.CONFIG_SHA256,
+                gui_fixture.SLOT, 10, 46)
+            terminal = (binding.baseline_slot, 10, 46)
+            with patch.object(provider, "ARCHIVE_PARENT", parent), \
+                    patch.object(provider, "PLAN_OWNER_UID", os.getuid()):
+                provider._require_historical("boot_restore", binding, guard, source_binding, terminal, "d" * 64)
+                drifted = copy.deepcopy(current_plan)
+                section(section(drifted, "before"), "runtime")["trust"] = "9" * 64
+                guard_plan.write_bytes(json.dumps(drifted).encode())
+                guard_plan.chmod(0o600)
+                with self.assertRaises(ValueError):
+                    provider._require_historical("boot_restore", binding, guard, source_binding, terminal, "d" * 64)
 
 
 if __name__ == "__main__":

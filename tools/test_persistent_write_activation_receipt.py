@@ -73,6 +73,40 @@ class ReceiptTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 receipt.parse(raw, expected_runner='a' * 64, expected_browser_sources=self.producers)
 
+    def seq9_receipt(self) -> dict[str, Any]:
+        value = copy.deepcopy(self.value)
+        bound = receipt.contract.EvidenceBinding('b' * 24, 'c' * 64, receipt.contract.CONFIG_SHA256,
+            receipt.TARGET_SLOT, 9, 43)
+        root = '/var/lib/' + receipt.contract.PREFIX + bound.transaction_id
+        value['guardRoot'] = root
+        value['prepared']['binding'] = asdict(bound)
+        value['prepared']['guardRoot'] = root
+        value['before']['status'] = {'activeSlotId': bound.baseline_slot, 'confirmedSlotId': bound.baseline_slot,
+            'floorSequence': 9, 'generation': 43, 'pending': None}
+        value['after']['status'] = {'activeSlotId': receipt.SEQ10_SLOT, 'confirmedSlotId': receipt.SEQ10_SLOT,
+            'floorSequence': 10, 'generation': 46, 'pending': None, 'lastRollback': None,
+            'previousSlotId': bound.baseline_slot}
+        value['restored']['guardRoot'] = root
+        value['cleaned'].update(guardRoot=root,
+            archiveRoot='/var/lib/hardened-blikvm-write-restored-' + bound.transaction_id, floor=10, generation=46)
+        value['browser']['profile'] = 'seq9-to10'
+        value['browser']['ui']['generationReviewed'] = '43'
+        return value
+
+    def test_seq9_to_seq10_profile_is_accepted(self) -> None:
+        parsed = self.parse(self.seq9_receipt())
+        self.assertEqual(parsed.source_binding.baseline_floor, 9)
+        self.assertEqual(parsed.terminal_floor, 10)
+        self.assertEqual(parsed.terminal_slot, receipt.SEQ10_SLOT)
+
+    def test_unreviewed_profile_and_terminal_are_rejected(self) -> None:
+        wrong_profile = self.seq9_receipt()
+        wrong_profile['browser']['profile'] = 'seq8-to9'
+        with self.assertRaises(ValueError): self.parse(wrong_profile)
+        wrong_terminal = self.seq9_receipt()
+        wrong_terminal['after']['status']['generation'] = 47
+        with self.assertRaises(ValueError): self.parse(wrong_terminal)
+
 
 if __name__ == '__main__':
     unittest.main()

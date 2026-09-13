@@ -50,11 +50,13 @@ else:
 u, s = snapshot.u, snapshot.s
 require = contract.temporary.require
 HELPERS = tuple(dict.fromkeys(("installed_application_write_gate.py", *temporary.HELPERS,
-    "persistent_write_activation_receipt.py", "persistent_write_commit.py", "persistent_write_contract.py",
-    "persistent_write_decision.py", "persistent_write_evidence_pins.py",
+    "persistent_write_activation_receipt.py", "persistent_write_boot_proof.py", "persistent_write_commit.py",
+    "persistent_write_component_view.py", "persistent_write_contract.py", "persistent_write_decision.py",
+    "persistent_write_evidence_compatibility.py", "persistent_write_evidence_pins.py",
     "persistent_write_evidence_provider.py", "persistent_write_evidence_store.py", "persistent_write_fence.py",
     "persistent_write_files.py", "persistent_write_gui_failure_receipt.py", "persistent_write_host_receipt.py",
-    "persistent_write_lifecycle.py", "persistent_write_pipeline.py", "persistent_write_retained_snapshot.py",
+    "persistent_write_lifecycle.py", "persistent_write_pending.py", "persistent_write_pipeline.py",
+    "persistent_write_recovery_receipt.py", "persistent_write_retained_snapshot.py",
     "persistent_write_snapshot.py", "persistent_write_systemd.py", "persistent_write_upload_receipt.py")))
 ASSETS = ("bindings.json", "new.deb", *HELPERS)
 PLAN_KEYS = {"schemaVersion", "phase", "binding", "boot", "started", "backup", "before", "files", "observed", "terminal",

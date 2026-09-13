@@ -21,7 +21,7 @@ CURRENT_PINS = {
         "tools/test_persistent_write_commit.py": "c39b9b76cfc32b5cd3759c225c72ae0edfabaa42114270e6fd7f0ed5823e663c",
         "tools/test_persistent_write_contract.py": "cdaf276071037456ff77c9cdf61b9aac6671b1addf526c085532746ddfd007cb",
         "tools/test_persistent_write_decision.py": "fea79727045ca9ccfc297af1f2863d9c4573e10df7829b37cecc8acffe80d4c0",
-        "tools/test_persistent_write_evidence_provider.py": "5375cbe2d8a78ce1bce50761f9bef4be80d7249d26bbf7d8512943104bab005b",
+        "tools/test_persistent_write_evidence_provider.py": "a2bd7a9960db6ed0d6a8484bea892d3d1103f838903708b372132df43a3388e6",
         "tools/test_persistent_write_evidence_store.py": "ac89859771c696ab24f1f8a08ded6f813c6f5eec59f3e40e7d5e89a03b9edd4e",
         "tools/test_persistent_write_fence.py": "55df7aa995b22dd07c8d65e0627e97b90460185348c9441bb3120ffb4e82aa7b",
         "tools/test_persistent_write_files.py": "8004567ac160a50f70c98eb3c5d982ac62a14f00c5c3c33b55f08f3637e597c2",
