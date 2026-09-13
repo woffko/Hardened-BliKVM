@@ -9,6 +9,7 @@ members = [
   "crates/bli-kvm-hid-transition",
   "crates/bli-kvm-hid-policy",
   "crates/bli-kvm-hid-credential",
+  "crates/bli-kvm-hid-isolated-gate",
   "crates/bli-kvm-atx-policy",
   "crates/bli-kvm-atx-transition",
   "crates/bli-kvm-fan-policy",

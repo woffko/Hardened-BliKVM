@@ -430,6 +430,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-hid-isolated-gate"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "bli-kvm-hid-adapter",
+ "bli-kvm-hid-policy",
+ "bli-kvm-hid-transition",
+ "bli-kvm-kvmd-client",
+ "bli-kvm-kvmd-hid-client",
+ "tokio",
+]
+
+[[package]]
 name = "bli-kvm-hid-policy"
 version = "0.1.0"
 dependencies = [

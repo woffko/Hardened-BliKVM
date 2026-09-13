@@ -1,0 +1,17 @@
+[package]
+name = "bli-kvm-hid-isolated-gate"
+description = "Isolated-backend HID transition gate for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-hid-adapter = { path = "../bli-kvm-hid-adapter" }
+bli-kvm-hid-policy = { path = "../bli-kvm-hid-policy", features = ["hid-test-profile"] }
+bli-kvm-hid-transition = { path = "../bli-kvm-hid-transition" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bli-kvm-kvmd-hid-client = { path = "../bli-kvm-kvmd-hid-client" }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
