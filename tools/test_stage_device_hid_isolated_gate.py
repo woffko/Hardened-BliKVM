@@ -39,6 +39,9 @@ class HidIsolatedGateTests(unittest.TestCase):
             "expiry_release",
             "identity_mismatch",
             "failure_release_all",
+            "mouse_modes",
+            "rollover",
+            "soak",
             "physical_actions_invoked",
         ):
             self.assertIn(key, gate.APPLY_KEYS)

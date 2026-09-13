@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bli_kvm_core::HidReport;
 use bli_kvm_hid_adapter::{HidLeaseIdentity, KvmdHidEvent, KvmdKeyCode};
 use bli_kvm_hid_policy::{HidControlPolicy, HidDecision, HidEligibility, HidRejection};
 use bli_kvm_hid_transition::{HidReleaseLedger, HidTransitionEngine};
@@ -120,8 +121,158 @@ async fn serve(
     }))
 }
 
+async fn serve_repeat(
+    socket: &Path,
+    count: usize,
+    status: &'static str,
+) -> Result<tokio::task::JoinHandle<Vec<String>>, GateError> {
+    let statuses = vec![status; count];
+    serve(socket, &statuses).await
+}
+
+async fn phase_mouse(root: &Path, eligible: HidEligibility, now: Instant) -> Result<(), GateError> {
+    let socket = root.join("mouse.sock");
+    let ledger = root.join("mouse-ledger.json");
+    let server = serve(&socket, &["200 OK"; 5]).await?;
+    let mut gate = policy(&ledger, &socket)?;
+    let owner = identity(6, [6; 16]);
+    if gate
+        .acquire(owner, eligible, now, Duration::from_secs(30))
+        .await
+        != HidDecision::Applied
+    {
+        return Err(GateError::Phase("mouse_acquire"));
+    }
+    let reports = [
+        HidReport::AbsoluteMouse {
+            data: [0, 0x00, 0x40, 0x00, 0x20, 0],
+        },
+        HidReport::RelativeMouse {
+            data: [0, 10, 246, 0],
+        },
+        HidReport::RelativeMouse { data: [0, 0, 0, 5] },
+        HidReport::RelativeMouse {
+            data: [0x01, 0, 0, 0],
+        },
+        HidReport::RelativeMouse { data: [0, 0, 0, 0] },
+    ];
+    for report in &reports {
+        if gate.report(owner, eligible, now, report).await != HidDecision::Applied {
+            return Err(GateError::Phase("mouse_report"));
+        }
+    }
+    let requests = server.await.map_err(|_| GateError::Phase("mouse_server"))?;
+    if requests.len() != 5
+        || !requests[0].contains("send_mouse_move?")
+        || !requests[1].contains("send_mouse_relative?delta_x=10&delta_y=-10")
+        || !requests[2].contains("send_mouse_wheel?delta_x=0&delta_y=5")
+        || !requests[3].contains("send_mouse_button?button=left&state=1")
+        || !requests[4].contains("send_mouse_button?button=left&state=0")
+    {
+        return Err(GateError::Phase("mouse_routes"));
+    }
+    if gate.release(owner).await != HidDecision::Applied {
+        return Err(GateError::Phase("mouse_release"));
+    }
+    Ok(())
+}
+
+async fn phase_rollover(
+    root: &Path,
+    eligible: HidEligibility,
+    now: Instant,
+) -> Result<(), GateError> {
+    let socket = root.join("rollover.sock");
+    let ledger = root.join("rollover-ledger.json");
+    let server = serve(&socket, &["200 OK"; 24]).await?;
+    let mut gate = policy(&ledger, &socket)?;
+    let owner = identity(7, [7; 16]);
+    if gate
+        .acquire(owner, eligible, now, Duration::from_secs(30))
+        .await
+        != HidDecision::Applied
+    {
+        return Err(GateError::Phase("rollover_acquire"));
+    }
+    for report in [
+        HidReport::Keyboard {
+            data: [0, 0, 4, 5, 6, 7, 8, 9],
+        },
+        HidReport::Keyboard {
+            data: [0, 0, 10, 11, 12, 13, 14, 15],
+        },
+    ] {
+        if gate.report(owner, eligible, now, &report).await != HidDecision::Applied {
+            return Err(GateError::Phase("rollover_report"));
+        }
+    }
+    if gate.release(owner).await != HidDecision::Applied {
+        return Err(GateError::Phase("rollover_release"));
+    }
+    let requests = server
+        .await
+        .map_err(|_| GateError::Phase("rollover_server"))?;
+    if requests.len() != 24 {
+        return Err(GateError::Phase("rollover_count"));
+    }
+    for (index, request) in requests.iter().enumerate() {
+        let expected = match index {
+            0..=5 | 12..=17 => "state=1",
+            _ => "state=0",
+        };
+        if !request.contains(expected) {
+            return Err(GateError::Phase("rollover_order"));
+        }
+    }
+    Ok(())
+}
+
+async fn phase_soak(
+    root: &Path,
+    eligible: HidEligibility,
+    now: Instant,
+    events: usize,
+) -> Result<(), GateError> {
+    let socket = root.join("soak.sock");
+    let ledger = root.join("soak-ledger.json");
+    let server = serve_repeat(&socket, events, "200 OK").await?;
+    let mut gate = policy(&ledger, &socket)?;
+    let owner = identity(8, [8; 16]);
+    if gate
+        .acquire(owner, eligible, now, Duration::from_secs(30))
+        .await
+        != HidDecision::Applied
+    {
+        return Err(GateError::Phase("soak_acquire"));
+    }
+    for index in 0..events {
+        let data = if index % 2 == 0 {
+            [0, 0, KEY_A_USAGE, 0, 0, 0, 0, 0]
+        } else {
+            [0; 8]
+        };
+        if gate
+            .report(owner, eligible, now, &HidReport::Keyboard { data })
+            .await
+            != HidDecision::Applied
+        {
+            return Err(GateError::Phase("soak_report"));
+        }
+    }
+    let requests = server.await.map_err(|_| GateError::Phase("soak_server"))?;
+    if requests.len() != events {
+        return Err(GateError::Phase("soak_count"));
+    }
+    if gate.pending_release_count() != 0 {
+        return Err(GateError::Phase("soak_pending"));
+    }
+    Ok(())
+}
+
 /// Runs every isolated phase and returns the fixed report lines.
-pub async fn run_isolated_checks() -> Result<Vec<(&'static str, &'static str)>, GateError> {
+pub async fn run_isolated_checks(
+    soak_events: usize,
+) -> Result<Vec<(&'static str, &'static str)>, GateError> {
     let root = std::env::temp_dir().join(format!("bli-kvm-hid-gate-{}", std::process::id()));
     std::fs::create_dir_all(&root)?;
     let eligible = HidEligibility::verified_for_test_profile();
@@ -288,6 +439,10 @@ pub async fn run_isolated_checks() -> Result<Vec<(&'static str, &'static str)>, 
         return Err(GateError::Phase("failure_pending"));
     }
 
+    phase_mouse(&root, eligible, now).await?;
+    phase_rollover(&root, eligible, now).await?;
+    phase_soak(&root, eligible, now, soak_events).await?;
+
     let _ = std::fs::remove_dir_all(&root);
     Ok(vec![
         ("isolated_backend", "yes"),
@@ -296,6 +451,9 @@ pub async fn run_isolated_checks() -> Result<Vec<(&'static str, &'static str)>, 
         ("expiry_release", "ok"),
         ("identity_mismatch", "ok"),
         ("failure_release_all", "ok"),
+        ("mouse_modes", "ok"),
+        ("rollover", "ok"),
+        ("soak", "ok"),
         ("physical_actions_invoked", "no"),
     ])
 }
@@ -311,10 +469,10 @@ mod tests {
 
     #[tokio::test]
     async fn every_isolated_phase_passes() {
-        let facts = run_isolated_checks().await.unwrap();
+        let facts = run_isolated_checks(200).await.unwrap();
         let values: Vec<&str> = facts.iter().map(|(_, value)| *value).collect();
         assert!(values.contains(&"ok"));
-        assert_eq!(facts.len(), 7);
+        assert_eq!(facts.len(), 10);
         let named: std::collections::HashMap<_, _> = facts.into_iter().collect();
         for key in [
             "startup_replay",
@@ -322,6 +480,9 @@ mod tests {
             "expiry_release",
             "identity_mismatch",
             "failure_release_all",
+            "mouse_modes",
+            "rollover",
+            "soak",
         ] {
             assert_eq!(named.get(key), Some(&"ok"), "phase {key}");
         }

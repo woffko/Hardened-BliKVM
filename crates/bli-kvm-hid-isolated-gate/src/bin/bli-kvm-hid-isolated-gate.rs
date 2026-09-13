@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match bli_kvm_hid_isolated_gate::run_isolated_checks().await {
+    match bli_kvm_hid_isolated_gate::run_isolated_checks(10_000).await {
         Ok(facts) => {
             for (key, value) in facts {
                 println!("{key}={value}");

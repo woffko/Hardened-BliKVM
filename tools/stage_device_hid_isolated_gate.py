@@ -34,8 +34,11 @@ APPLY_KEYS = {
     "identity_mismatch",
     "isolated_backend",
     "lease_apply",
+    "mouse_modes",
     "physical_actions_invoked",
+    "rollover",
     "run_rc",
+    "soak",
     "startup_replay",
 }
 ROLLBACK_KEYS = {"stage_absent"}
@@ -183,6 +186,9 @@ def validate_apply(facts: dict[str, str]) -> None:
         "expiry_release",
         "identity_mismatch",
         "failure_release_all",
+        "mouse_modes",
+        "rollover",
+        "soak",
     ):
         if facts.get(phase) != "ok":
             raise GateError("apply", f"{phase}_failed")
