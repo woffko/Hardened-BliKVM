@@ -58,7 +58,7 @@ impl FocusChallengeStore {
             .push((session_token.to_owned(), bindings, now + CHALLENGE_TTL));
     }
 
-    fn bindings(&mut self, session_token: &str, now: Instant) -> Option<FocusBindings> {
+    pub(crate) fn bindings(&mut self, session_token: &str, now: Instant) -> Option<FocusBindings> {
         self.sweep_bindings(now);
         self.bindings
             .iter()
@@ -388,7 +388,7 @@ fn session_identity(token: &str) -> u64 {
     identity.max(1)
 }
 
-fn rejection_name(code: ControlRejectionCode) -> &'static str {
+pub(crate) fn rejection_name(code: ControlRejectionCode) -> &'static str {
     match code {
         ControlRejectionCode::CapabilityDisabled => "capability_disabled",
         ControlRejectionCode::NotArmed => "not_armed",
@@ -406,7 +406,7 @@ fn rejection_name(code: ControlRejectionCode) -> &'static str {
     }
 }
 
-fn valid_operation_id(value: &str) -> bool {
+pub(crate) fn valid_operation_id(value: &str) -> bool {
     value.len() == OPERATION_ID_LENGTH
         && value
             .bytes()

@@ -28,6 +28,7 @@ use crate::{
     error::{ApiResponse, AppError, AppResult},
 };
 
+mod atx;
 mod auth;
 mod error;
 mod hid;
@@ -246,6 +247,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
         )
         .route("/hid/lease", post(hid::hid_lease))
+        .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let api = public.merge(protected_routes).fallback(api_not_found);
@@ -1954,6 +1956,104 @@ mod tests {
         assert_eq!(lease_body["code"], 0);
         assert_eq!(lease_body["data"]["applied"], true);
         assert_eq!(lease_body["data"]["leaseId"], "55".repeat(16));
+        broker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn application_power_reports_broker_cooldown() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::Atx { .. } => {
+                        bli_kvm_control_protocol::ControlResponse::Rejected {
+                            code: bli_kvm_control_protocol::ControlRejectionCode::CooldownActive,
+                        }
+                    }
+                    _ => bli_kvm_control_protocol::ControlResponse::Applied,
+                };
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response,
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            secure_cookies: true,
+            control_socket: Some(control_socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let mut challenge_request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/hid/focus")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        challenge_request.extensions_mut().insert(ConnectInfo(
+            "192.0.2.10:4242".parse::<SocketAddr>().unwrap(),
+        ));
+        let challenge_body = json_body(app.clone().oneshot(challenge_request).await.unwrap()).await;
+        let challenge = challenge_body["data"]["challenge"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut confirm = json_request(
+            Method::POST,
+            "/api/hid/focus",
+            serde_json::json!({
+                "operationId": "0123456789abcdef0123456789abcdef",
+                "challenge": challenge,
+                "targetId": "11".repeat(16),
+                "operatorConfirmed": true,
+            }),
+        );
+        confirm
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        confirm
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let confirm_body = json_body(app.clone().oneshot(confirm).await.unwrap()).await;
+        assert_eq!(confirm_body["data"]["attested"], true);
+
+        let mut power = json_request(
+            Method::POST,
+            "/api/application-power",
+            serde_json::json!({
+                "operationId": "00112233445566778899aabbccddeeff",
+                "action": "power_short"
+            }),
+        );
+        power
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        power
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let power_body = json_body(app.clone().oneshot(power).await.unwrap()).await;
+        assert_eq!(power_body["code"], 0);
+        assert_eq!(power_body["data"]["applied"], false);
+        assert_eq!(power_body["data"]["rejection"], "cooldown_active");
         broker.await.unwrap();
     }
 }

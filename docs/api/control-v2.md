@@ -85,7 +85,12 @@ evidence before recording a Pending outcome and never retries automatically.
 The broker can attach the persisted state machine only under the
 `atx-transition-profile` feature, using the reviewed eligibility constructor
 with explicit backend and physical-readiness inputs; the shipped broker
-rejects every ATX request with `backend_unavailable`.
+rejects every ATX request with `backend_unavailable`. The server exposes
+`POST /api/application-power` with a typed action and operation ID; it uses
+only the session/target bindings remembered from a successful safe-target/focus
+confirmation, requires a current confirmation, and returns `applied` or the
+fixed broker rejection so the interface can show indeterminate and cooldown
+states.
 
 ## Responses
 

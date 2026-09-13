@@ -62,7 +62,11 @@ disabled and the denial broker is unchanged in shipped builds.
   (`bli-kvm-atx-transition`, `c64550e`). The control broker can attach it only
   under the `atx-transition-profile` feature, using the reviewed eligibility
   constructor; a host test drives a mock KVMD socket and proves one real call
-  plus duplicate replay (`d14b29d`). The only representable routes are the
+  plus duplicate replay (`d14b29d`). The server adds
+  `POST /api/application-power`, which submits one typed action from a current
+  focus confirmation and returns the fixed broker rejection, so cooldown and
+  indeterminate states are representable before any GUI panel exists. The only
+  representable routes are the
   three fixed `wait=1` KVMD clicks; no native GPIO or device path exists in the
   ATX path, pinned by `tools/test_phase3_control_boundaries.py`.
 - Fail-closed invariants are pinned by

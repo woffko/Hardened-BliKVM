@@ -38,11 +38,17 @@ class Phase3ControlBoundaryTests(unittest.TestCase):
         self.assertIn("control_socket: None,", server)
         self.assertIn('"/hid/focus"', server)
         self.assertIn('"/hid/lease"', server)
+        self.assertIn('"/application-power"', server)
         hid = (ROOT / "crates/bli-kvm-server/src/hid.rs").read_text()
         self.assertIn("TargetAttest", hid)
         self.assertIn("a current focus confirmation is required", hid)
         self.assertNotIn("/dev/", hid)
         self.assertNotIn("Command", hid)
+        atx = (ROOT / "crates/bli-kvm-server/src/atx.rs").read_text()
+        self.assertIn("PlatformControlRequestV2::Atx", atx)
+        self.assertIn("a current focus confirmation is required", atx)
+        for forbidden in ("/dev/", "gpio", "Command"):
+            self.assertNotIn(forbidden, atx)
 
     def test_control_v2_doc_keeps_mutation_disabled(self) -> None:
         doc = CONTROL_V2_DOC.read_text()
