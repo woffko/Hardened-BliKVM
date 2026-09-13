@@ -119,7 +119,15 @@ ATX:
   rejected without retry. `run_with_atx_profile` applies reviewed
   reconciliations before the broker starts serving, proven end-to-end on host;
   a packaged ATX service and GUI feedback remain;
-- GUI indeterminate/cooldown feedback.
+- GUI indeterminate/cooldown feedback: the power menu and the keyboard/desktop
+  and mobile mouse surfaces route through `/api/hid/focus`, `/api/hid/lease`
+  and `/api/application-power` only when the capability is advertised, and keep
+  the legacy path otherwise.
+- BLOCKING before capability enablement: the HID/power GUI must present an
+  explicit operator target/focus confirmation prompt. The current client
+  confirms automatically when a capability is advertised, which satisfies the
+  protocol shape but not the reviewed explicit-confirmation requirement; the
+  capability must stay unavailable until that prompt is implemented and gated.
 
 ## Phase 4 baseline
 
