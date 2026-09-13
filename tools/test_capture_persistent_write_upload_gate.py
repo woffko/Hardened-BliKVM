@@ -9,13 +9,15 @@ ROOT = Path("/var/lib/hardened-blikvm-write-retain-" + "e" * 24)
 
 class UploadGateCaptureTests(unittest.TestCase):
     def test_mode_command_uses_the_update_identity_except_for_the_root_probe(self) -> None:
-        command = gate.mode_command("retry", ROOT, "/x.tar", "seq10-retry", 123, 456)
+        command = gate.mode_command("retry", "/stage/probe.py", "/stage/app.tar", "seq10-retry", 123, 456)
         self.assertEqual(command[:4], ["setpriv", "--reuid=123", "--regid=456", "--clear-groups"])
         self.assertIn("retry", command)
-        unauthorized = gate.mode_command("unauthorized", ROOT, "/x.tar", "seq10-retry", 123, 456)
+        self.assertIn("/stage/probe.py", command)
+        self.assertEqual(command[command.index("--archive") + 1], "/stage/app.tar")
+        unauthorized = gate.mode_command("unauthorized", "/stage/probe.py", "/stage/app.tar", "seq10-retry", 123, 456)
         self.assertEqual(unauthorized[0], "python3")
         with self.assertRaises(ValueError):
-            gate.mode_command("publish", ROOT, "/x.tar", "seq10-retry", 1, 2)
+            gate.mode_command("publish", "/stage/probe.py", "/stage/app.tar", "seq10-retry", 1, 2)
 
     def test_mode_output_requires_an_exact_passed_vector(self) -> None:
         gate.validate_mode_output(b'{"mode": "retry", "result": "passed"}', "retry")

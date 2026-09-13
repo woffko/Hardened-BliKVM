@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Run the in-window native upload gate and bind its vectors to a transaction."""
+"""Capture the in-window native upload gate inside a wired write transaction."""
 
 import argparse
-from collections.abc import Callable
 from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
+import secrets
 import shlex
 import subprocess
 import sys
@@ -25,7 +25,7 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 
 TOOL = Path(__file__).resolve()
 SPOOL = '/var/lib/hardened-blikvm-upload'
-Runner = Callable[..., subprocess.CompletedProcess[bytes]]
+STAGE_PREFIX = '/tmp/blikvm-upload-gate-'
 
 
 def profile_for(binding: contract.EvidenceBinding) -> probe.UploadProfile:
@@ -35,10 +35,9 @@ def profile_for(binding: contract.EvidenceBinding) -> probe.UploadProfile:
     return probe.PROFILES[expected[0]]
 
 
-def mode_command(mode: str, root: Path, archive: str, profile: str, uid: int, gid: int) -> list[str]:
+def mode_command(mode: str, probe_path: str, archive: str, profile: str, uid: int, gid: int) -> list[str]:
     common.require(mode in receipt_module.MODES, 'unknown upload gate mode')
-    command = ['python3', '-B', str(root / 'probe_installed_upload.py'), mode,
-               '--archive', archive, '--profile', profile]
+    command = ['python3', '-B', probe_path, mode, '--archive', archive, '--profile', profile]
     if mode == 'unauthorized':
         return command
     return ['setpriv', f'--reuid={uid}', f'--regid={gid}', '--clear-groups', *command]
@@ -70,12 +69,13 @@ def main() -> int:
     receipt: dict[str, object] = {'probe': 'persistent-write-upload-gate', 'schemaVersion': 1, 'result': 'failed',
         'binding': asdict(binding), 'guardRoot': str(root), 'profile': profile.name,
         'archiveSha256': profile.bundle_sha, 'modes': {}, 'spoolEmpty': False,
-        'sourceHashes': upload_sources,
-        'toolSha256': hashlib.sha256(TOOL.read_bytes()).hexdigest()}
+        'sourceHashes': upload_sources, 'toolSha256': hashlib.sha256(TOOL.read_bytes()).hexdigest()}
     write_json_0600_atomic(output, receipt)
     secret = common.transport.read_secret_stdin()
     q = shlex.quote
-    staged: str | None = None
+    stage = STAGE_PREFIX + secrets.token_hex(12)
+    probe_path = stage + '/probe_installed_upload.py'
+    archive_path = stage + '/gate-application.tar'
 
     def ssh(script: str, timeout: float = 60) -> subprocess.CompletedProcess[bytes]:
         return common.transport.run_ssh(target, secret, script, timeout=timeout)
@@ -84,20 +84,22 @@ def main() -> int:
         uid = int(ssh('id -u hardened-blikvm-server').stdout.decode().strip())
         gid = int(ssh('getent group hardened-blikvm | cut -d: -f3').stdout.decode().strip())
         common.require(0 < uid and uid != 0 and 0 < gid, 'invalid upload server identity')
-        staged = str(root / 'upload-gate-application.tar')
+        prepared = ssh(f"set -eu\ntest ! -e {q(stage)} && test ! -L {q(stage)}\nmkdir -m 755 {q(stage)}\n"
+                       f"cp {q(str(root / 'probe_installed_upload.py'))} {q(probe_path)}\nchmod 644 {q(probe_path)}\n"
+                       f"sha256sum {q(probe_path)} | cut -d ' ' -f 1")
+        digest = prepared.stdout.decode().strip().splitlines()[-1] if prepared.returncode == 0 else ''
+        common.require(digest == upload_sources['probe_installed_upload.py'],
+                       'device upload probe differs from reviewed pins')
         with tempfile.TemporaryFile() as stream:
             stream.write(archive)
             stream.seek(0)
-            upload = (f"set -eu\numask 077\ncat > {q(staged)}\n"
-                      f"test \"$(sha256sum {q(staged)} | cut -d ' ' -f 1)\" = {profile.bundle_sha}")
+            upload = (f"set -eu\numask 022\ncat > {q(archive_path)}\nchmod 644 {q(archive_path)}\n"
+                      f"test \"$(sha256sum {q(archive_path)} | cut -d ' ' -f 1)\" = {profile.bundle_sha}")
             common.require(common.transport.run_ssh(target, secret, upload, stdin=stream, timeout=90).returncode == 0,
                            'upload gate archive staging failed')
-        digest = ssh(f"sha256sum {q(str(root / 'probe_installed_upload.py'))} | cut -d ' ' -f 1").stdout.decode().strip()
-        common.require(digest == upload_sources['probe_installed_upload.py'],
-                       'device upload probe differs from reviewed pins')
         modes: dict[str, object] = {}
         for mode in receipt_module.MODES:
-            response = ssh(shlex.join(mode_command(mode, root, staged, profile.name, uid, gid)), timeout=90)
+            response = ssh(shlex.join(mode_command(mode, probe_path, archive_path, profile.name, uid, gid)), timeout=90)
             common.require(response.returncode == 0 and len(response.stdout) <= 65536, 'upload vector failed: ' + mode)
             validate_mode_output(response.stdout, mode)
             modes[mode] = 'passed'
@@ -107,8 +109,10 @@ def main() -> int:
         receipt_module.parse(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode(),
                              expected_sources=upload_sources, expected_tool=str(receipt['toolSha256']))
     finally:
-        if staged is not None:
-            ssh(f"rm -f -- {q(staged)}")
+        try:
+            ssh(f"rm -rf -- {q(stage)}")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
         secret[:] = b'\0' * len(secret)
         write_json_0600_atomic(output, receipt)
     return 0 if receipt['result'] == 'passed' else 1
