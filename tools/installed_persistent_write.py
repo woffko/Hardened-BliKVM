@@ -54,7 +54,8 @@ HELPERS = tuple(dict.fromkeys(("installed_application_write_gate.py", *temporary
     "persistent_write_component_view.py", "persistent_write_contract.py", "persistent_write_decision.py",
     "persistent_write_evidence_compatibility.py", "persistent_write_evidence_pins.py",
     "persistent_write_evidence_provider.py", "persistent_write_evidence_store.py", "persistent_write_fence.py",
-    "persistent_write_files.py", "persistent_write_gui_failure_receipt.py", "persistent_write_host_receipt.py",
+    "persistent_write_files.py", "persistent_write_gui_failure_receipt.py", "persistent_write_gui_gate_receipt.py",
+    "persistent_write_host_receipt.py",
     "persistent_write_lifecycle.py", "persistent_write_pending.py", "persistent_write_pipeline.py",
     "persistent_write_recovery_receipt.py", "persistent_write_retained_snapshot.py",
     "persistent_write_snapshot.py", "persistent_write_systemd.py", "persistent_write_upload_receipt.py")))

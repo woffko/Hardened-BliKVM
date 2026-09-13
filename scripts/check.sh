@@ -51,7 +51,8 @@ python3 -B -m unittest \
   tools.test_persistent_write_gui_failure_receipt tools.test_persistent_write_host_receipt \
   tools.test_capture_persistent_write_host_gate tools.test_persistent_write_upload_receipt \
   tools.test_capture_persistent_write_upload_gate tools.test_persistent_write_component_view \
-  tools.test_run_persistent_write_retained_reboot
+  tools.test_run_persistent_write_retained_reboot tools.test_persistent_write_gui_gate_receipt \
+  tools.test_capture_persistent_write_gui_gate
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -332,6 +333,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/generate_persistent_write_evidence_pins.py \
     tools/persistent_write_evidence_provider.py tools/test_persistent_write_evidence_provider.py \
     tools/persistent_write_gui_failure_receipt.py tools/test_persistent_write_gui_failure_receipt.py \
+    tools/persistent_write_gui_gate_receipt.py tools/test_persistent_write_gui_gate_receipt.py \
+    tools/capture_persistent_write_gui_gate.py tools/test_capture_persistent_write_gui_gate.py \
     tools/persistent_write_host_receipt.py tools/test_persistent_write_host_receipt.py \
     tools/capture_persistent_write_host_gate.py tools/test_capture_persistent_write_host_gate.py \
     tools/persistent_write_upload_receipt.py tools/test_persistent_write_upload_receipt.py \

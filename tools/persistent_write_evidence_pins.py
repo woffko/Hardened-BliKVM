@@ -16,12 +16,13 @@ CURRENT_PINS = {
         "status_api_acceptance.mjs": "5be6f08951836cc3af26fac55e88a62164991043ac504b98698432ada10d214e",
         "upload_termination.mjs": "fb08fe8c593beeca8c489583bdc4a0894e03b304d73f51485cbb87b9ac38ba14"
     },
+    "gui_tool": "3a00a0527fb76466285229c899d2062aeec4f20bc5e2a678f1c16d8c29ca2a1b",
     "host_sources": {
         "tools/test_installed_persistent_write.py": "4f5fc36fd0ce717c4fcf8884aae9e5b5b8ba769a3729dbc385b7f40af51ecd57",
         "tools/test_persistent_write_commit.py": "c39b9b76cfc32b5cd3759c225c72ae0edfabaa42114270e6fd7f0ed5823e663c",
         "tools/test_persistent_write_contract.py": "cdaf276071037456ff77c9cdf61b9aac6671b1addf526c085532746ddfd007cb",
         "tools/test_persistent_write_decision.py": "fea79727045ca9ccfc297af1f2863d9c4573e10df7829b37cecc8acffe80d4c0",
-        "tools/test_persistent_write_evidence_provider.py": "a2bd7a9960db6ed0d6a8484bea892d3d1103f838903708b372132df43a3388e6",
+        "tools/test_persistent_write_evidence_provider.py": "2f3a4a382da6cc95010b7a7f5a017551d6a9238fe48cd0d5ee403915141a7478",
         "tools/test_persistent_write_evidence_store.py": "ac89859771c696ab24f1f8a08ded6f813c6f5eec59f3e40e7d5e89a03b9edd4e",
         "tools/test_persistent_write_fence.py": "55df7aa995b22dd07c8d65e0627e97b90460185348c9441bb3120ffb4e82aa7b",
         "tools/test_persistent_write_files.py": "8004567ac160a50f70c98eb3c5d982ac62a14f00c5c3c33b55f08f3637e597c2",

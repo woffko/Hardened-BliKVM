@@ -21,7 +21,7 @@ if not __package__:
     import persistent_write_contract as contract
     import persistent_write_evidence_pins as pins_module
     import persistent_write_evidence_store as storage
-    import persistent_write_gui_failure_receipt as gui_failure
+    import persistent_write_gui_gate_receipt as gui_gate
     import persistent_write_host_receipt as host_receipt
     import persistent_write_recovery_receipt as recovery_receipt
     import persistent_write_upload_receipt as upload_receipt
@@ -32,7 +32,7 @@ else:
     from tools import persistent_write_contract as contract
     from tools import persistent_write_evidence_pins as pins_module
     from tools import persistent_write_evidence_store as storage
-    from tools import persistent_write_gui_failure_receipt as gui_failure
+    from tools import persistent_write_gui_gate_receipt as gui_gate
     from tools import persistent_write_host_receipt as host_receipt
     from tools import persistent_write_recovery_receipt as recovery_receipt
     from tools import persistent_write_upload_receipt as upload_receipt
@@ -47,10 +47,12 @@ RECOVERY_ACTIONS = {"boot_restore": "boot", "disable_drain": "pending"}
 
 def _gui_failure_validator(gate: str) -> Validator:
     def validate(_root: Path, binding: contract.EvidenceBinding, raw: bytes, pins: Mapping[str, object]) -> None:
-        contents = gui_failure.parse(raw, expected_runner=gui_failure.runner_pin(pins),
-                                     expected_browser_sources=gui_failure.source_pins(pins))
-        require(contents.binding == binding, "negative browser receipt belongs to another transaction")
-        gui_failure.validate_gate(gate, contents)
+        sources, tool = pins.get("failure_browser_sources"), pins.get("gui_tool")
+        require(isinstance(sources, dict) and isinstance(tool, str), "GUI gate pins missing")
+        assert isinstance(tool, str)
+        contents = gui_gate.parse(raw, expected_sources=cast(Mapping[str, str], sources), expected_tool=tool)
+        require(contents.binding == binding, "GUI gate receipt belongs to another transaction")
+        gui_gate.validate_gate(gate, contents)
     return validate
 
 

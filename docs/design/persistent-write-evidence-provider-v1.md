@@ -127,7 +127,7 @@ Recovery prerequisites and the commit transaction are deliberately separate:
 | --- | --- |
 | native_activation, gui_happy_path | generalized activation-receipt parser over pinned profiles (existing seq8→seq9 plus seq9→seq10; old profiles and tests unchanged) |
 | boot_restore, disable_drain | existing recovery-receipt parser with historical probe pins |
-| gui_failure_retry, gui_cancel, gui_logout | one negative-browser-receipt parser with three assertion sets, current producers and binding |
+| gui_failure_retry, gui_cancel, gui_logout | one in-transaction negative-GUI-gate parser (`persistent_write_gui_gate_receipt.py`); the host producer (`capture_persistent_write_gui_gate.py`) verifies the live plan is wired and undecided, runs the pinned negative browser probe, and binds its receipt, profile, selection and source hashes to the transaction |
 | native_upload | in-window upload gate over the wired upload socket: the shipped probe runs `retry`, `invalid-archive`, `short`, `surplus` and `malformed` under the update server UID and `unauthorized` under root, against a root-owned copy of the exact signed archive inside the guard root; the receipt binds the current transaction, records each mode result, the archive hash, the on-device probe/worker-reference hashes against the upload pins, and an empty spool, and never selects or activates a slot |
 | host | bounded host-gate receipt from the reviewed `capture_persistent_write_host_gate.py` producer; v1 scope is the persistent-write controller suite, with server authorization/length/quota/cancellation families documented as a later extension |
 

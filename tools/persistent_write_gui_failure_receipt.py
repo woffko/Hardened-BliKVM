@@ -87,14 +87,26 @@ def parse(raw: bytes, *, expected_runner: str, expected_browser_sources: Mapping
             and common.number(cleaned.get('generation')) == binding.baseline_generation,
             'cleanup binding/counters differ')
     browser = common.object_value(value.get('browser'))
-    require(browser.get('probe') == 'application-upload-failures' and browser.get('result') == 'passed',
-            'negative browser result absent')
+    profile, selection = browser_profile(binding)
+    application_profile = RETRY_PROFILES[binding.baseline_floor][0]
+    require(value.get('applicationProfile') == application_profile and browser.get('profile') == profile
+            and browser.get('selectionVerified') == selection, 'negative browser profile differs')
+    validate_browser(browser)
+    return Contents(raw, hashlib.sha256(raw).hexdigest(), binding, browser)
+
+
+def browser_profile(binding: contract.EvidenceBinding) -> tuple[str, str]:
+    """Return the reviewed browser profile and selection for a baseline."""
     expected = RETRY_PROFILES.get(binding.baseline_floor)
     require(expected is not None, 'negative browser gate has no reviewed baseline profile')
     assert expected is not None
-    application_profile, browser_profile, selection = expected
-    require(value.get('applicationProfile') == application_profile and browser.get('profile') == browser_profile
-            and browser.get('selectionVerified') == selection, 'negative browser profile differs')
+    return expected[1], expected[2]
+
+
+def validate_browser(browser: Mapping[str, object]) -> None:
+    """Validate the negative browser facts shared by every receipt shape."""
+    require(browser.get('probe') == 'application-upload-failures' and browser.get('result') == 'passed',
+            'negative browser result absent')
     for key, expected_number in (('uploadRequests', 4), ('activationRequests', 0), ('loginRequests', 1),
                                  ('pageErrors', 0), ('blockedMutations', 0), ('invalidHttpStatus', 200),
                                  ('cancelProgress', 1), ('logoutRequests', 1), ('logoutHttpStatus', 200),
@@ -109,13 +121,15 @@ def parse(raw: bytes, *, expected_runner: str, expected_browser_sources: Mapping
     require(browser.get('uploadHttpStatuses') == [200, 200], 'negative upload statuses differ')
     require(browser.get('uploadTransportFailures') == TRANSPORT_FAILURES, 'request-specific abort missing')
     require(common.object_value(browser.get('uploadTermination')) == TERMINATION, 'logout upload termination differs')
-    return Contents(raw, hashlib.sha256(raw).hexdigest(), binding, browser)
 
 
 def validate_gate(gate: str, contents: Contents) -> None:
     """Assert the per-gate facts already parsed from one shared receipt."""
+    assert_gate(gate, contents.browser)
+
+
+def assert_gate(gate: str, browser: Mapping[str, object]) -> None:
     require(gate in ('gui_failure_retry', 'gui_cancel', 'gui_logout'), 'unknown negative browser gate')
-    browser = contents.browser
     if gate == 'gui_failure_retry':
         require(browser.get('invalidArchiveRejected') is True and browser.get('retryAlreadyPresent') is True
                 and common.number(browser.get('uploadRequests')) == 4, 'gui failure/retry evidence missing')

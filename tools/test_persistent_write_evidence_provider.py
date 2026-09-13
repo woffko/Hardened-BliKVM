@@ -16,7 +16,7 @@ from tools import persistent_write_evidence_pins as pins
 from tools import persistent_write_evidence_provider as provider
 from tools import persistent_write_evidence_store as storage
 from tools import test_persistent_write_component_view as plan_fixture
-from tools import test_persistent_write_gui_failure_receipt as gui_fixture
+from tools import test_persistent_write_gui_gate_receipt as gui_fixture
 
 
 def section(value: dict[str, object], key: str) -> dict[str, object]:
@@ -91,9 +91,9 @@ class ProviderTests(unittest.TestCase):
 
     def test_default_gui_validators_accept_a_pinned_receipt(self) -> None:
         value = gui_fixture.document()
-        value["runnerSha256"] = pins.CURRENT_PINS["runner"]
-        value["browserSourceHashes"] = pins.CURRENT_PINS["failure_browser_sources"]
-        receipts = {gate: gui_fixture.raw(value) for gate in ("gui_failure_retry", "gui_cancel", "gui_logout")}
+        value["sourceHashes"] = pins.CURRENT_PINS["failure_browser_sources"]
+        value["toolSha256"] = pins.CURRENT_PINS["gui_tool"]
+        receipts = {gate: json.dumps(value).encode() for gate in ("gui_failure_retry", "gui_cancel", "gui_logout")}
         for gate in contract.REQUIRED_GATES - set(receipts):
             receipts[gate] = ("placeholder-" + gate).encode()
 

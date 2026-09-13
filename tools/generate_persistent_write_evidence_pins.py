@@ -43,6 +43,7 @@ def build() -> dict[str, object]:
                                     for name in sorted(gui_failure.NEGATIVE_BROWSER_SOURCES)},
         "host_sources": {path: digest((ROOT / path).read_bytes()) for path in host_receipt.source_paths()},
         "host_tool": digest((TOOLS / "capture_persistent_write_host_gate.py").read_bytes()),
+        "gui_tool": digest((TOOLS / "capture_persistent_write_gui_gate.py").read_bytes()),
         "upload_sources": {name: digest((TOOLS / name).read_bytes()) for name in upload_receipt.SOURCES},
         "upload_tool": digest((TOOLS / "capture_persistent_write_upload_gate.py").read_bytes()),
         "probe_sources": {action: {name: digest((TOOLS / name).read_bytes())
