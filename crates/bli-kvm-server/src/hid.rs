@@ -204,6 +204,10 @@ pub(crate) async fn confirm_focus(
             attested: true,
             rejection: None,
         },
+        ControlResponse::LeaseGranted { .. } => FocusConfirmResponse {
+            attested: true,
+            rejection: None,
+        },
         ControlResponse::Rejected { code } => FocusConfirmResponse {
             attested: false,
             rejection: Some(rejection_name(code)),
