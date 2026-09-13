@@ -43,6 +43,7 @@ POSTFLIGHT_KEYS = {
     "retained_state",
     "staging_absent",
     "account_absent",
+    "previous_boot_journal",
 }
 REBOOT_KEYS = {"reboot_requested"}
 FINAL_KEYS = {"cleanup_confirmed"}
@@ -65,6 +66,7 @@ class Receipt(TypedDict):
     retainedStateIntact: bool
     stagingAbsent: bool
     accountAbsent: bool
+    previousBootJournalPresent: bool
     cleanupConfirmed: bool
     pollAttempts: int
     failureStage: str
@@ -127,6 +129,7 @@ else
 fi
 if ls -d /tmp/hardened-blikvm-* >/dev/null 2>&1; then emit staging_absent no; else emit staging_absent yes; fi
 if id -u hardened-blikvm-hid >/dev/null 2>&1; then emit account_absent no; else emit account_absent yes; fi
+if journalctl -b -1 -n 1 --no-pager >/dev/null 2>&1; then emit previous_boot_journal yes; else emit previous_boot_journal no; fi
 """
 
 
@@ -239,6 +242,7 @@ def execute(options: Options) -> int:
                 "retainedStateIntact": True,
                 "stagingAbsent": True,
                 "accountAbsent": True,
+                "previousBootJournalPresent": postflight.get("previous_boot_journal") == "yes",
                 "cleanupConfirmed": True,
                 "pollAttempts": 0,
                 "failureStage": "",
@@ -280,6 +284,7 @@ def execute(options: Options) -> int:
             "retainedStateIntact": postflight.get("retained_state") == "yes",
             "stagingAbsent": postflight.get("staging_absent") == "yes",
             "accountAbsent": postflight.get("account_absent") == "yes",
+            "previousBootJournalPresent": postflight.get("previous_boot_journal") == "yes",
             "cleanupConfirmed": False,
             "pollAttempts": attempts,
             "failureStage": stage,
@@ -298,6 +303,7 @@ def execute(options: Options) -> int:
         "retainedStateIntact": True,
         "stagingAbsent": True,
         "accountAbsent": True,
+        "previousBootJournalPresent": postflight.get("previous_boot_journal") == "yes",
         "cleanupConfirmed": True,
         "pollAttempts": attempts,
         "failureStage": "",

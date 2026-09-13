@@ -36,6 +36,7 @@ class HidRebootGateTests(unittest.TestCase):
             "retainedStateIntact",
             "stagingAbsent",
             "accountAbsent",
+            "previousBootJournalPresent",
             "cleanupConfirmed",
             "pollAttempts",
             "persistentChangeScope",
