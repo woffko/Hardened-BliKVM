@@ -479,6 +479,46 @@ mod tests {
         assert!(error.is_cancelled());
     }
 
+    #[cfg(feature = "hid-transition-profile")]
+    async fn serve_kvmd(
+        socket: &std::path::Path,
+        count: usize,
+    ) -> tokio::task::JoinHandle<Vec<String>> {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..count {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let Ok(read) = stream.read(&mut chunk).await else {
+                        break;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let body = r#"{"ok":true}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                requests.push(String::from_utf8_lossy(&request).into_owned());
+            }
+            requests
+        })
+    }
+
     fn request(index: usize, request: PlatformControlRequest) -> ControlRequestEnvelope {
         ControlRequestEnvelope {
             schema_version: CONTROL_SCHEMA_VERSION,
@@ -674,6 +714,90 @@ mod tests {
             }
             other => panic!("expected a lease grant, got {other:?}"),
         }
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
+    async fn hid_profile_applies_reports_to_the_kvmd_backend() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let kvmd = directory.path().join("kvmd.sock");
+        let backend = serve_kvmd(&kvmd, 1).await;
+        let credentials =
+            bli_kvm_kvmd_client::KvmdCredentials::new("test-user", "not-a-real-password").unwrap();
+        let mut broker = tokio::spawn(run_with_hid_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("ledger.json"),
+            kvmd,
+            credentials,
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let lease_id = match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => lease_id,
+            other => panic!("expected a lease grant, got {other:?}"),
+        };
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Report {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            report: HidReport::Keyboard {
+                                data: [0, 0, 4, 0, 0, 0, 0, 0],
+                            },
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let requests = timeout(TEST_WAIT, backend)
+            .await
+            .expect("mock KVMD did not finish")
+            .unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0].contains("send_key?"),
+            "unexpected KVMD request: {}",
+            requests[0]
+        );
         stop_broker(broker).await;
     }
 
