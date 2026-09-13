@@ -40,7 +40,9 @@ disabled and the denial broker is unchanged in shipped builds.
 - ATX: reviewed feature-gated eligibility constructor (`97a186b`) and the
   persisted Pending -> fixed KVMD waiting route -> completion state machine
   with duplicate/conflict replay and explicit reconciliation
-  (`bli-kvm-atx-transition`, `c64550e`).
+  (`bli-kvm-atx-transition`, `c64550e`). The only representable routes are the
+  three fixed `wait=1` KVMD clicks; no native GPIO or device path exists in the
+  ATX path, pinned by `tools/test_phase3_control_boundaries.py`.
 - Fail-closed invariants are pinned by
   `tools/test_phase3_control_boundaries.py`.
 

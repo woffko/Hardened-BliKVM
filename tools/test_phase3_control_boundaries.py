@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -47,6 +48,17 @@ class Phase3ControlBoundaryTests(unittest.TestCase):
         self.assertIn("compile-time-disabled", doc)
         self.assertIn("capability_disabled", doc)
         self.assertIn("the capability stays unavailable", doc)
+
+    def test_atx_uses_only_fixed_kvmd_waiting_routes(self) -> None:
+        client = (ROOT / "crates/bli-kvm-kvmd-atx-client/src/lib.rs").read_text()
+        routes = set(re.findall(r"/atx/click\?button=([a-z_]+)&wait=1", client))
+        self.assertEqual(routes, {"power", "power_long", "reset"})
+        for forbidden in ("/dev/", "gpio", "libc::", "std::process", "Command"):
+            self.assertNotIn(forbidden, client)
+        transition = (ROOT / "crates/bli-kvm-atx-transition/src/lib.rs").read_text()
+        self.assertIn("KvmdAtxClient", transition)
+        for forbidden in ("/dev/", "gpio", "libc::", "Command"):
+            self.assertNotIn(forbidden, transition)
 
 
 if __name__ == "__main__":
