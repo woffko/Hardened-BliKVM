@@ -16,6 +16,11 @@ require = contract.temporary.require
 BROWSER_SOURCES = frozenset({'device_application_write.mjs', 'application_write_acceptance.mjs',
     'application_write_profiles.mjs', 'status_api_acceptance.mjs', 'application_response_capture.mjs'})
 TARGET_SLOT = 'app-00000000000000000009-5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2'
+SEQ10_SLOT = 'app-00000000000000000010-8a30162d0b620c2f7a6679061d2c9c4bf863aa8ac1be2d2e6dfa77caacc6ae01'
+ACTIVATION_PROFILES = {
+    8: ('seq8-to9', contract.temporary.TARGET_SLOT, 40, TARGET_SLOT, 9, 43),
+    9: ('seq9-to10', TARGET_SLOT, 43, SEQ10_SLOT, 10, 46),
+}
 
 
 def object_value(value: object) -> dict[str, object]:
@@ -128,8 +133,8 @@ def parse(raw: bytes, *, expected_runner: str, expected_browser_sources: Mapping
         and number(cleaned.get('generation')) == generation, 'cleanup binding/counters differ')
     browser = object_value(value.get('browser'))
     require(browser.get('probe') == 'application-http-write' and browser.get('mode') == 'activate'
-        and browser.get('profile') == 'seq8-to9' and browser.get('result') == 'passed'
-        and browser.get('selectedArchiveVerified') is True, 'browser activation absent')
+        and browser.get('result') == 'passed' and browser.get('selectedArchiveVerified') is True,
+        'browser activation absent')
     for key, expected in (('uploadRequests', 1), ('activationRequests', 1), ('loginRequests', 1), ('blockedMutations', 0), ('pageErrors', 0)):
         require(number(browser.get(key)) == expected, 'browser request/error counts differ')
     ui = object_value(browser.get('ui'))
@@ -137,7 +142,12 @@ def parse(raw: bytes, *, expected_runner: str, expected_browser_sources: Mapping
         and ui.get('stagingDisposition') == 'published' and ui.get('uploadedAlreadyPresent') is False
         and number(ui.get('activationStatus')) == 202 and ui.get('activationReceiptValidated') is True,
         'browser staging/activation receipt incomplete')
-    require(binding.baseline_slot == contract.temporary.TARGET_SLOT and slot == TARGET_SLOT
-            and binding.baseline_floor == 8 and binding.baseline_generation == 40 and floor == 9 and generation == 43,
-            'receipt outside reviewed seq8-to9 producer profile')
+    published = ACTIVATION_PROFILES.get(binding.baseline_floor)
+    require(published is not None, 'activation receipt has no reviewed baseline profile')
+    assert published is not None
+    expected_profile, baseline_slot, baseline_generation, target_slot, target_floor, target_generation = published
+    require(browser.get('profile') == expected_profile, 'browser activation profile differs')
+    require(binding.baseline_slot == baseline_slot and binding.baseline_generation == baseline_generation
+            and slot == target_slot and floor == target_floor and generation == target_generation,
+            'receipt outside reviewed activation producer profile')
     return Contents(raw, hashlib.sha256(raw).hexdigest(), binding, slot, floor, generation)
