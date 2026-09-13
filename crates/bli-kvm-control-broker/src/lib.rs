@@ -10,7 +10,7 @@ pub use attestation::{
 };
 pub use config::{ControlBrokerConfig, ControlBrokerConfigError};
 #[cfg(feature = "atx-transition-profile")]
-pub use profile::{AtxProfile, atx_profile_from_values};
+pub use profile::{AtxProfile, atx_profile_from_values, atx_reconciliations_from_values};
 #[cfg(feature = "hid-transition-profile")]
 pub use profile::{HidProfile, hid_profile_from_values};
 #[cfg(any(feature = "hid-transition-profile", feature = "atx-transition-profile"))]

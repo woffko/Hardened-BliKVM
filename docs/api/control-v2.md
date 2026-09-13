@@ -141,7 +141,9 @@ backends from fixed environment keys:
 - control broker HID backend: `BLI_KVM_HID_PROFILE=1`, `BLI_KVM_HID_LEDGER`
   and `BLI_KVM_HID_KVMD_SOCKET`, all absolute.
 - control broker ATX backend: `BLI_KVM_ATX_PROFILE=1`, `BLI_KVM_ATX_JOURNAL`
-  and `BLI_KVM_ATX_KVMD_SOCKET`, all absolute.
+  and `BLI_KVM_ATX_KVMD_SOCKET`, all absolute. The optional absolute
+  `BLI_KVM_ATX_RECONCILIATIONS` selects a reviewed startup reconciliation file
+  whose format is documented in `docs/api/atx-transition.md`.
 - KVMD credential: delivered by systemd through `CREDENTIALS_DIRECTORY` as
   `kvmd-user` and `kvmd-password`; every attached backend reads its own
   instance and the broker refuses to start without the directory.

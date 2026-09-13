@@ -37,6 +37,7 @@ pub enum ProfileError {
     InvalidAtxKvmdSocket,
     MissingCredentials,
     InvalidCredentials,
+    InvalidReconciliation,
 }
 
 impl std::fmt::Display for ProfileError {
@@ -55,6 +56,7 @@ impl std::fmt::Display for ProfileError {
             Self::MissingCredentials | Self::InvalidCredentials => {
                 "transition profile credential is invalid"
             }
+            Self::InvalidReconciliation => "ATX reconciliation file is invalid",
         })
     }
 }
@@ -109,6 +111,116 @@ fn absolute_path(value: &str) -> Option<PathBuf> {
     }
     let path = PathBuf::from(value);
     if path.is_absolute() { Some(path) } else { None }
+}
+
+/// Parses the optional reviewed startup reconciliation file for the ATX
+/// profile.
+///
+/// Each non-empty, non-comment line is one reviewed decision with the exact
+/// fields `operationId=<32 hex>`, `completion=applied|rejected` and
+/// `observation=on|off`. The observation is mandatory read-only evidence and
+/// never infers the completion; the operator supplies both. A disabled profile
+/// returns an empty list even when a path is present.
+#[cfg(feature = "atx-transition-profile")]
+pub fn atx_reconciliations_from_values(
+    enabled: bool,
+    path: Option<&str>,
+) -> Result<Vec<crate::AtxReconciliation>, ProfileError> {
+    if !enabled {
+        return Ok(Vec::new());
+    }
+    let Some(path) = path else {
+        return Ok(Vec::new());
+    };
+    let path = absolute_path(path).ok_or(ProfileError::InvalidReconciliation)?;
+    atx_reconciliations_from_file(&path)
+}
+
+#[cfg(feature = "atx-transition-profile")]
+fn atx_reconciliations_from_file(
+    path: &Path,
+) -> Result<Vec<crate::AtxReconciliation>, ProfileError> {
+    use bli_kvm_atx_policy::AtxCompletion;
+    use bli_kvm_atx_transition::PowerLedObservation;
+
+    const MAX_RECONCILIATION_BYTES: u64 = 16 * 1024;
+    const MAX_RECONCILIATIONS: usize = 64;
+
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|_| ProfileError::InvalidReconciliation)?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_RECONCILIATION_BYTES
+    {
+        return Err(ProfileError::InvalidReconciliation);
+    }
+    let content = std::fs::read_to_string(path).map_err(|_| ProfileError::InvalidReconciliation)?;
+    let mut reconciliations = Vec::new();
+    let mut seen: Vec<[u8; 16]> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if reconciliations.len() >= MAX_RECONCILIATIONS {
+            return Err(ProfileError::InvalidReconciliation);
+        }
+        let mut operation_id = None;
+        let mut completion = None;
+        let mut observation = None;
+        for token in line.split_whitespace() {
+            let (key, value) = token
+                .split_once('=')
+                .ok_or(ProfileError::InvalidReconciliation)?;
+            match key {
+                "operationId" if operation_id.is_none() => {
+                    operation_id = Some(parse_operation_id(value)?);
+                }
+                "completion" if completion.is_none() => {
+                    completion = Some(match value {
+                        "applied" => AtxCompletion::Applied,
+                        "rejected" => AtxCompletion::Rejected,
+                        _ => return Err(ProfileError::InvalidReconciliation),
+                    });
+                }
+                "observation" if observation.is_none() => {
+                    observation = Some(match value {
+                        "on" => PowerLedObservation::On,
+                        "off" => PowerLedObservation::Off,
+                        _ => return Err(ProfileError::InvalidReconciliation),
+                    });
+                }
+                _ => return Err(ProfileError::InvalidReconciliation),
+            }
+        }
+        let operation_id = operation_id.ok_or(ProfileError::InvalidReconciliation)?;
+        let completion = completion.ok_or(ProfileError::InvalidReconciliation)?;
+        let observation = observation.ok_or(ProfileError::InvalidReconciliation)?;
+        if seen.contains(&operation_id) {
+            return Err(ProfileError::InvalidReconciliation);
+        }
+        seen.push(operation_id);
+        reconciliations.push(crate::AtxReconciliation {
+            operation_id,
+            completion,
+            observation,
+        });
+    }
+    Ok(reconciliations)
+}
+
+#[cfg(feature = "atx-transition-profile")]
+fn parse_operation_id(value: &str) -> Result<[u8; 16], ProfileError> {
+    if value.len() != 32 {
+        return Err(ProfileError::InvalidReconciliation);
+    }
+    let mut output = [0_u8; 16];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let text = std::str::from_utf8(chunk).map_err(|_| ProfileError::InvalidReconciliation)?;
+        output[index] =
+            u8::from_str_radix(text, 16).map_err(|_| ProfileError::InvalidReconciliation)?;
+    }
+    Ok(output)
 }
 
 /// Loads the KVMD credential that systemd delivered to the profile unit.
@@ -208,6 +320,62 @@ mod tests {
                 .unwrap();
         assert_eq!(profile.journal, PathBuf::from("/tmp/atx.json"));
         assert_eq!(profile.kvmd_socket, PathBuf::from("/run/kvmd/kvmd.sock"));
+    }
+
+    #[test]
+    #[cfg(feature = "atx-transition-profile")]
+    fn atx_reconciliations_are_reviewed_and_bounded() {
+        use crate::AtxReconciliation;
+        use bli_kvm_atx_policy::AtxCompletion;
+        use bli_kvm_atx_transition::PowerLedObservation;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("reconciliations.txt");
+        std::fs::write(
+            &path,
+            b"# reviewed at 2026-09-13\n\
+              operationId=00112233445566778899aabbccddeeff completion=applied observation=on\n",
+        )
+        .unwrap();
+        let parsed = atx_reconciliations_from_values(true, path.to_str()).unwrap();
+        assert_eq!(
+            parsed,
+            vec![AtxReconciliation {
+                operation_id: [
+                    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+                    0xdd, 0xee, 0xff,
+                ],
+                completion: AtxCompletion::Applied,
+                observation: PowerLedObservation::On,
+            }]
+        );
+
+        assert!(
+            atx_reconciliations_from_values(false, path.to_str())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(atx_reconciliations_from_values(true, Some("relative.txt")).is_err());
+        assert!(
+            atx_reconciliations_from_values(true, None)
+                .unwrap()
+                .is_empty()
+        );
+
+        for invalid in [
+            "operationId=00112233445566778899aabbccddeeff completion=applied observation=maybe\n",
+            "operationId=zz112233445566778899aabbccddeeff completion=applied observation=on\n",
+            "operationId=00112233445566778899aabbccddeeff completion=applied\n",
+            "operationId=00112233445566778899aabbccddeeff completion=applied observation=on extra=1\n",
+            "operationId=00112233445566778899aabbccddeeff completion=applied observation=on\n\
+             operationId=00112233445566778899aabbccddeeff completion=rejected observation=off\n",
+        ] {
+            std::fs::write(&path, invalid.as_bytes()).unwrap();
+            assert!(
+                atx_reconciliations_from_values(true, path.to_str()).is_err(),
+                "invalid reconciliation content was accepted: {invalid:?}"
+            );
+        }
     }
 
     #[test]

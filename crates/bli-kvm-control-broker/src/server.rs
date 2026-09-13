@@ -114,7 +114,7 @@ pub async fn run_with_hid_profile(
 /// The observation is mandatory read-only evidence and never infers the
 /// completion; the operator still classifies the outcome.
 #[cfg(feature = "atx-transition-profile")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtxReconciliation {
     pub operation_id: [u8; 16],
     pub completion: bli_kvm_atx_policy::AtxCompletion,
@@ -176,6 +176,7 @@ pub async fn run_with_control_profile(
     atx_journal: impl Into<std::path::PathBuf>,
     atx_kvmd_socket: impl Into<std::path::PathBuf>,
     credentials_directory: impl Into<std::path::PathBuf>,
+    reconciliations: Vec<AtxReconciliation>,
 ) -> Result<(), ControlBrokerError> {
     let diagnostic_reporter = DiagnosticReporter::start().ok();
     let diagnostics = diagnostic_reporter
@@ -196,9 +197,20 @@ pub async fn run_with_control_profile(
             .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let atx_client = bli_kvm_kvmd_atx_client::KvmdAtxClient::new(atx_kvmd_socket)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
-    let atx_engine =
+    let mut atx_engine =
         bli_kvm_atx_transition::AtxTransitionEngine::open(atx_journal, atx_client, atx_credentials)
             .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let reconciled_at_ms = now_unix_millis();
+    for reconciliation in reconciliations {
+        atx_engine
+            .resolve_pending(
+                reconciliation.operation_id,
+                reconciliation.completion,
+                reconciliation.observation,
+                reconciled_at_ms,
+            )
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    }
     let state = ControlV2State::with_hid_and_atx(
         bli_kvm_hid_policy::HidControlPolicy::new(hid_engine),
         atx_engine,
@@ -743,6 +755,7 @@ mod tests {
             directory.path().join("atx-journal.json"),
             directory.path().join("absent-atx.sock"),
             credentials,
+            Vec::new(),
         ));
         wait_for_socket(&socket, &mut broker).await;
         let client = ControlClient::new(&socket).unwrap();

@@ -36,6 +36,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         match (hid, atx) {
             (Some(hid), Some(atx)) => {
                 let directory = credentials_directory()?;
+                let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
+                    atx_profile_enabled(),
+                    std::env::var("BLI_KVM_ATX_RECONCILIATIONS").ok().as_deref(),
+                )?;
                 bli_kvm_control_broker::run_with_control_profile(
                     ControlBrokerConfig::from_environment()?,
                     hid.ledger,
@@ -43,6 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     atx.journal,
                     atx.kvmd_socket,
                     directory,
+                    reconciliations,
                 )
                 .await?;
                 return Ok(());
@@ -64,12 +69,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let directory = credentials_directory()?;
                 let credentials =
                     bli_kvm_control_broker::kvmd_credentials_from_directory(&directory)?;
+                let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
+                    true,
+                    std::env::var("BLI_KVM_ATX_RECONCILIATIONS").ok().as_deref(),
+                )?;
                 bli_kvm_control_broker::run_with_atx_profile(
                     ControlBrokerConfig::from_environment()?,
                     atx.journal,
                     atx.kvmd_socket,
                     credentials,
-                    Vec::new(),
+                    reconciliations,
                 )
                 .await?;
                 return Ok(());
@@ -110,12 +119,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )? {
         let credentials =
             bli_kvm_control_broker::kvmd_credentials_from_directory(&credentials_directory()?)?;
+        let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
+            true,
+            std::env::var("BLI_KVM_ATX_RECONCILIATIONS").ok().as_deref(),
+        )?;
         bli_kvm_control_broker::run_with_atx_profile(
             ControlBrokerConfig::from_environment()?,
             profile.journal,
             profile.kvmd_socket,
             credentials,
-            Vec::new(),
+            reconciliations,
         )
         .await?;
         return Ok(());

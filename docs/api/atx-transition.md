@@ -59,6 +59,24 @@ There is no generic URI, button, duration, GPIO line, or body. Responses must
 be bounded JSON with `ok=true`. The client is tested only against a mock Unix
 socket and is not reachable from the denied control broker.
 
+## Reviewed startup reconciliation input
+
+The test profile can load reviewed reconciliation decisions from an optional
+file selected by the absolute `BLI_KVM_ATX_RECONCILIATIONS` path. Each
+non-empty, non-comment line is one reviewed decision:
+
+```
+operationId=00112233445566778899aabbccddeeff completion=applied observation=on
+```
+
+`operationId` is 32 hex characters, `completion` is `applied` or `rejected`,
+and `observation` is the read-only `on` or `off` LED evidence; `unknown` is
+rejected so an outcome can never be recorded blind. A disabled profile ignores
+the value, duplicate operation IDs are rejected, and the file is bounded to 64
+decisions and 16 KiB. The decisions are applied from non-Unknown evidence
+before the socket starts serving. There is no automatic inference and no
+automatic retry.
+
 ## Remaining gates
 
 Before any ATX action can be wired or advertised:
@@ -70,11 +88,13 @@ Before any ATX action can be wired or advertised:
    persistence in one broker state machine — attached to the control broker
    under the `atx-transition-profile` feature and host-tested with a mock KVMD
    socket; `run_with_atx_profile` reconciles supplied Pending operations from
-   non-Unknown read-only evidence before serving, still unwired to a packaged
-   service;
-3. add startup reconciliation and visible indeterminate/cooldown feedback —
-   the reconciliation entry point now requires non-Unknown read-only LED
-   evidence; the GUI feedback is still missing;
+   non-Unknown read-only evidence before serving, and the profile loads those
+   decisions from the reviewed reconciliation file above;
+3. add startup reconciliation and visible indeterminate/cooldown feedback — the
+   reconciliation input and an operator-reviewed file are wired; the GUI shows
+   indeterminate and cooldown states from the fixed rejection codes, and the
+   remaining work is an automated read-only LED/state source instead of the
+   operator-supplied file;
 4. establish GPIO ownership/polarity and a separate physical test procedure;
 5. run pulse timing, busy, duplicate, restart, and recovery tests.
 

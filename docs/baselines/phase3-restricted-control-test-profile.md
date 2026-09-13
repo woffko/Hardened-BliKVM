@@ -78,9 +78,10 @@ Observed receipt facts
 
 - The capability decision for a shipped build remains open; this profile proves
   the control path only.
-- Reconciliation input for the ATX backend in the test profile is empty by
-  design; a pending operation is reported `pending_unreconciled` until
-  reviewed.
+- Reconciliation input for the ATX backend is operator-reviewed: the optional
+  `BLI_KVM_ATX_RECONCILIATIONS` file supplies `applied|rejected` plus `on|off`
+  LED evidence, and a pending operation is reported `pending_unreconciled`
+  until reviewed. An automated read-only LED/state source is future work.
 - Manual HID injection requires a safe, visible, authorized target; the
   operator watches the video while issuing events.
 - The runtime units and `/tmp` root are transient; a device reboot removes
