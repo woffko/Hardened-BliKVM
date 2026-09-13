@@ -78,6 +78,10 @@ Duplicates and conflicts return the persisted result without another backend
 call. Cooldowns are five seconds for `power_short` and thirty seconds for
 `power_long` and `reset`. Startup reconciliation compares read-only LED/state
 evidence before recording a Pending outcome and never retries automatically.
+The broker can attach the persisted state machine only under the
+`atx-transition-profile` feature, using the reviewed eligibility constructor
+with explicit backend and physical-readiness inputs; the shipped broker
+rejects every ATX request with `backend_unavailable`.
 
 ## Responses
 

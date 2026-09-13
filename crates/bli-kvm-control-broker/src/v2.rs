@@ -12,10 +12,14 @@ use std::time::Instant;
 use std::time::Duration;
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
-use bli_kvm_core::{HidLeaseRequest, PlatformControlRequestV2};
+use bli_kvm_core::{AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2};
 
 use crate::{DEFAULT_MAX_ATTESTATIONS, TargetAttestationRegistry};
 
+#[cfg(feature = "atx-transition-profile")]
+use bli_kvm_atx_policy::{AtxEligibility, AtxOperation, AtxRejection};
+#[cfg(feature = "atx-transition-profile")]
+use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome};
 #[cfg(feature = "hid-transition-profile")]
 use bli_kvm_hid_adapter::HidLeaseIdentity;
 #[cfg(feature = "hid-transition-profile")]
@@ -26,6 +30,8 @@ use rand_core::{OsRng, RngCore};
 pub struct ControlV2State {
     enabled: bool,
     attestations: TargetAttestationRegistry,
+    #[cfg(feature = "atx-transition-profile")]
+    atx: Option<AtxTransitionEngine>,
     #[cfg(feature = "hid-transition-profile")]
     hid: Option<HidControlPolicy>,
 }
@@ -35,6 +41,8 @@ impl ControlV2State {
         Self {
             enabled: false,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            #[cfg(feature = "atx-transition-profile")]
+            atx: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
         }
@@ -45,7 +53,20 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            #[cfg(feature = "atx-transition-profile")]
+            atx: None,
             hid: Some(policy),
+        }
+    }
+
+    #[cfg(feature = "atx-transition-profile")]
+    pub fn with_atx_engine(engine: AtxTransitionEngine) -> Self {
+        Self {
+            enabled: true,
+            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            atx: Some(engine),
+            #[cfg(feature = "hid-transition-profile")]
+            hid: None,
         }
     }
 
@@ -54,6 +75,8 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            #[cfg(feature = "atx-transition-profile")]
+            atx: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
         }
@@ -65,6 +88,15 @@ impl ControlV2State {
 
     pub async fn handle(
         &mut self,
+        request: &PlatformControlRequestV2,
+        now: Instant,
+    ) -> ControlResponse {
+        self.handle_request("", request, now).await
+    }
+
+    pub async fn handle_request(
+        &mut self,
+        operation_id: &str,
         request: &PlatformControlRequestV2,
         now: Instant,
     ) -> ControlResponse {
@@ -90,8 +122,12 @@ impl ControlV2State {
                 ControlResponse::Applied
             }
             PlatformControlRequestV2::HidLease { lease } => self.handle_hid_lease(lease, now).await,
-            PlatformControlRequestV2::Atx { .. } => {
-                reject(ControlRejectionCode::BackendUnavailable)
+            PlatformControlRequestV2::Atx {
+                action,
+                confirmation,
+            } => {
+                self.handle_atx(operation_id, *action, confirmation, now)
+                    .await
             }
         }
     }
@@ -214,6 +250,102 @@ impl ControlV2State {
 
 fn reject(code: ControlRejectionCode) -> ControlResponse {
     ControlResponse::Rejected { code }
+}
+
+#[cfg(not(feature = "atx-transition-profile"))]
+impl ControlV2State {
+    async fn handle_atx(
+        &mut self,
+        _operation_id: &str,
+        _action: AtxControlAction,
+        _confirmation: &AtxConfirmation,
+        _now: Instant,
+    ) -> ControlResponse {
+        reject(ControlRejectionCode::BackendUnavailable)
+    }
+}
+
+#[cfg(feature = "atx-transition-profile")]
+impl ControlV2State {
+    async fn handle_atx(
+        &mut self,
+        operation_id: &str,
+        action: AtxControlAction,
+        confirmation: &AtxConfirmation,
+        _now: Instant,
+    ) -> ControlResponse {
+        let Some(engine) = self.atx.as_mut() else {
+            return reject(ControlRejectionCode::BackendUnavailable);
+        };
+        let Some(operation_id) = hex_operation_id(operation_id) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let now_ms = unix_millis();
+        let Some(eligibility) = AtxEligibility::reviewed_for_confirmation(
+            confirmation.session_binding,
+            confirmation.confirmation_binding,
+            confirmation.confirmed_at_unix_ms,
+            now_ms,
+            true,
+            true,
+        ) else {
+            return reject(ControlRejectionCode::ConfirmationStale);
+        };
+        let Ok(operation) = AtxOperation::new(
+            operation_id,
+            confirmation.session_binding,
+            confirmation.confirmation_binding,
+            confirmation.confirmed_at_unix_ms,
+            action,
+        ) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        match engine.execute(operation, eligibility, now_ms).await {
+            Ok(AtxTransitionOutcome::Applied | AtxTransitionOutcome::ReplayedApplied) => {
+                ControlResponse::Applied
+            }
+            Ok(AtxTransitionOutcome::ReplayedRejected | AtxTransitionOutcome::BackendFailed) => {
+                reject(ControlRejectionCode::BackendRejected)
+            }
+            Ok(AtxTransitionOutcome::Rejected(rejection)) => reject(atx_code(rejection)),
+            Err(_) => reject(ControlRejectionCode::Internal),
+        }
+    }
+}
+
+#[cfg(feature = "atx-transition-profile")]
+fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
+    if value.len() != 32 {
+        return None;
+    }
+    let mut output = [0_u8; 16];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let text = std::str::from_utf8(chunk).ok()?;
+        output[index] = u8::from_str_radix(text, 16).ok()?;
+    }
+    Some(output)
+}
+
+#[cfg(feature = "atx-transition-profile")]
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(feature = "atx-transition-profile")]
+fn atx_code(rejection: AtxRejection) -> ControlRejectionCode {
+    match rejection {
+        AtxRejection::CapabilityDisabled => ControlRejectionCode::CapabilityDisabled,
+        AtxRejection::BackendUnavailable => ControlRejectionCode::BackendUnavailable,
+        AtxRejection::PhysicalActionsDisabled => ControlRejectionCode::InvalidState,
+        AtxRejection::ConfirmationInvalid => ControlRejectionCode::NotAttested,
+        AtxRejection::ConfirmationExpired => ControlRejectionCode::ConfirmationStale,
+        AtxRejection::OperationIdConflict => ControlRejectionCode::Duplicate,
+        AtxRejection::IndeterminatePending => ControlRejectionCode::PendingUnreconciled,
+        AtxRejection::CooldownActive => ControlRejectionCode::CooldownActive,
+    }
 }
 
 #[cfg(test)]
@@ -422,5 +554,78 @@ mod tests {
         };
         assert!(lease_id.iter().any(|byte| *byte != 0));
         assert!(!socket.exists());
+    }
+
+    #[cfg(feature = "atx-transition-profile")]
+    async fn serve_atx(socket: &std::path::Path) -> tokio::task::JoinHandle<Vec<String>> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixListener;
+
+        let listener = UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            let mut requests = Vec::new();
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}")
+                .await
+                .unwrap();
+            requests.push(String::from_utf8(request).unwrap());
+            requests
+        })
+    }
+
+    #[cfg(feature = "atx-transition-profile")]
+    #[tokio::test]
+    async fn atx_executes_once_and_replays_duplicates() {
+        use bli_kvm_atx_transition::AtxTransitionEngine;
+        use bli_kvm_kvmd_atx_client::KvmdAtxClient;
+        use bli_kvm_kvmd_client::KvmdCredentials;
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("atx.sock");
+        let server = serve_atx(&socket).await;
+        let engine = AtxTransitionEngine::open(
+            directory.path().join("journal.json"),
+            KvmdAtxClient::new(&socket).unwrap(),
+            KvmdCredentials::new("test-user", "not-a-real-password").unwrap(),
+        )
+        .unwrap();
+        let confirmed_at = unix_millis();
+        let confirmation = AtxConfirmation {
+            session_binding: 9,
+            confirmation_binding: [0x44; 32],
+            confirmed_at_unix_ms: confirmed_at,
+        };
+        let mut state = ControlV2State::with_atx_engine(engine);
+        let request = PlatformControlRequestV2::Atx {
+            action: AtxControlAction::PowerShort,
+            confirmation,
+        };
+        let operation_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            state
+                .handle_request(operation_id, &request, Instant::now())
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            state
+                .handle_request(operation_id, &request, Instant::now())
+                .await,
+            ControlResponse::Applied
+        );
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /atx/click?button=power&wait=1 HTTP/1.1\r\n"));
+        assert!(requests[0].contains("x-kvmd-user: test-user"));
     }
 }

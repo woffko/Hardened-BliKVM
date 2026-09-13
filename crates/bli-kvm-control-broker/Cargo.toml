@@ -8,6 +8,13 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+atx-transition-profile = [
+  "dep:bli-kvm-atx-policy",
+  "dep:bli-kvm-atx-transition",
+  "dep:bli-kvm-kvmd-atx-client",
+  "dep:bli-kvm-kvmd-client",
+  "bli-kvm-atx-policy/atx-reviewed-profile",
+]
 hid-transition-profile = [
   "dep:bli-kvm-hid-adapter",
   "dep:bli-kvm-hid-policy",
@@ -16,12 +23,16 @@ hid-transition-profile = [
 ]
 
 [dependencies]
+bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
+bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition", optional = true }
 bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
 bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-diagnostic-producer-client = { path = "../bli-kvm-diagnostic-producer-client" }
 bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
 bli-kvm-hid-adapter = { path = "../bli-kvm-hid-adapter", optional = true }
 bli-kvm-hid-policy = { path = "../bli-kvm-hid-policy", optional = true }
+bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client", optional = true }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client", optional = true }
 rand_core = { workspace = true, optional = true }
 tokio.workspace = true
 

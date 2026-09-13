@@ -14,10 +14,14 @@ cargo test --workspace --all-targets --locked
 cargo test -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export
 cargo test -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export
 cargo test -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export
+cargo test -p bli-kvm-control-broker --all-targets --locked --features hid-transition-profile
+cargo test -p bli-kvm-control-broker --all-targets --locked --features atx-transition-profile
+cargo test -p bli-kvm-control-broker --all-targets --locked --all-features
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export -- -D warnings
+cargo clippy -p bli-kvm-control-broker --all-targets --locked --features hid-transition-profile,atx-transition-profile -- -D warnings
 
 sh -n scripts/build-aarch64.sh
 sh -n scripts/build-prototype-bundle.sh

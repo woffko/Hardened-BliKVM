@@ -198,7 +198,7 @@ async fn respond(
             let response = v2
                 .lock()
                 .await
-                .handle(&request.request, Instant::now())
+                .handle_request(&request.operation_id, &request.request, Instant::now())
                 .await;
             Ok(ControlResponseEnvelope {
                 schema_version: CONTROL_SCHEMA_VERSION_V2,

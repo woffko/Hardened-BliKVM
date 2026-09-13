@@ -62,8 +62,9 @@ Before any ATX action can be wired or advertised:
    confirmation and the current device/session identity — provided by the
    feature-gated `AtxEligibility::reviewed_for_confirmation`, still unwired;
 2. combine policy Pending persistence, the fixed client call, and completion
-   persistence in one broker state machine — implemented by
-   `bli-kvm-atx-transition`, still unwired to the broker;
+   persistence in one broker state machine — attached to the control broker
+   under the `atx-transition-profile` feature and host-tested with a mock KVMD
+   socket, still unwired to a running daemon;
 3. add startup reconciliation and visible indeterminate/cooldown feedback —
    reconciliation entry point exists; the GUI feedback is still missing;
 4. establish GPIO ownership/polarity and a separate physical test procedure;

@@ -164,6 +164,8 @@ dependencies = [
 name = "bli-kvm-control-broker"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-atx-policy",
+ "bli-kvm-atx-transition",
  "bli-kvm-control-client",
  "bli-kvm-control-protocol",
  "bli-kvm-core",
@@ -172,6 +174,7 @@ dependencies = [
  "bli-kvm-hid-adapter",
  "bli-kvm-hid-policy",
  "bli-kvm-hid-transition",
+ "bli-kvm-kvmd-atx-client",
  "bli-kvm-kvmd-client",
  "bli-kvm-kvmd-hid-client",
  "rand_core",
