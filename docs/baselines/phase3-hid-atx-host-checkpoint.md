@@ -212,5 +212,10 @@ gates remain device/recovery-card bound.
   journal stop and the next boot (no `stop job` line), so the gate's default
   window was raised to 1800 s. A pre-existing `kvmd-main.sh` error stream
   ("Error reading from GPIO 0") was observed and left untouched.
+- After the reboot the isolated HID gate was re-run and passed every phase
+  again (`hid-isolated-gate-20260913-e.json`): startup replay, apply/release,
+  expiry, mismatch, failure release-all, mouse modes, rollover, 10,000-event
+  soak, reconnect and stuck-input recovery, with `physical_actions_invoked=no`
+  and `persistentChangeScope=none`.
 
 All device-mutating steps require explicit confirmation before execution.
