@@ -4,14 +4,41 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shlex
 import sys
+from typing import cast
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import run_persistent_write_rehearsal as common
 from tools.capture_pikvm_baseline import write_json_0600_atomic
+
+PROFILES = {'seq1-for-seq9': (1, 8, 40), 'seq2-for-seq10': (2, 9, 43)}
+
+
+def reviewed_inventory(inventory: dict[str, object], profile: str) -> dict[str, int]:
+    oldest, current, generation = PROFILES[profile]
+    raw_slots = inventory['slots']
+    common.require(isinstance(raw_slots, list), 'slot list required')
+    values = cast(list[object], raw_slots)
+    common.require(all(isinstance(value, str) for value in values), 'slot names required')
+    slots = cast(list[str], values)
+    status = common.native.object_value(inventory['status'])
+    active, previous = status['activeSlotId'], status['previousSlotId']
+    common.require(len(slots) == len(set(slots)) == 8 and all(
+        re.fullmatch(r'app-[0-9]{20}-[a-f0-9]{64}', slot) for slot in slots), 'invalid slot set')
+    common.require(sorted(int(slot.split('-')[1]) for slot in slots) == list(range(oldest, current + 1)),
+                   'slot sequences differ from reviewed cycle')
+    common.require(status['floorSequence'] == current and status['generation'] == generation
+        and status['pending'] is None and active == status['confirmedSlotId']
+        and isinstance(active, str) and active in slots and active.startswith(f'app-{current:020d}-')
+        and isinstance(previous, str) and previous in slots and previous.startswith(f'app-{current - 1:020d}-'),
+        'protected baseline differs from reviewed cycle')
+    common.require(inventory['proposedDeletion'] == [min(slots)]
+        and inventory['retainUnreferencedForOneDeletion'] == 5, 'not the reviewed single oldest slot')
+    return {'oldest': oldest, 'current': current, 'generation': generation}
 
 REMOTE = r'''
 import hashlib, json, os, pathlib, re, secrets, stat, subprocess, sys
@@ -41,7 +68,12 @@ protected = {baseline['status'][k] for k in ('activeSlotId', 'confirmedSlotId', 
 unreferenced = sorted(set(baseline['slots']) - protected)
 target = baseline['proposedDeletion']
 require(len(baseline['slots']) == 8 and target == unreferenced[:1] and len(target) == 1
-    and target[0].startswith('app-00000000000000000001-'), 'not the reviewed single oldest slot')
+    and target[0].startswith('app-%020d-' % data['profile']['oldest']), 'not the reviewed single oldest slot')
+profile = data['profile']
+require((profile['oldest'], profile['current'], profile['generation']) in ((1, 8, 40), (2, 9, 43))
+    and sorted(int(n.split('-')[1]) for n in baseline['slots']) == list(range(profile['oldest'], profile['current'] + 1))
+    and baseline['status']['floorSequence'] == profile['current']
+    and baseline['status']['generation'] == profile['generation'], 'unreviewed GC baseline')
 retain = len(unreferenced) - 1
 require(retain == baseline['retainUnreferencedForOneDeletion'] == 5, 'retention calculation differs')
 def tree_hash(name):
@@ -71,6 +103,7 @@ print(json.dumps({'result': 'passed', 'deletedSlotIds': target, 'remainingSlots'
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--profile', choices=tuple(PROFILES), default='seq1-for-seq9')
     for name in ('endpoint', 'inventory', 'source-receipt', 'output'): parser.add_argument('--' + name, required=True)
     args = parser.parse_args()
     inventory = json.loads(common.transport.validate_private_file(args.inventory).read_bytes())
@@ -81,12 +114,13 @@ def main() -> int:
     archive = common.validate_result(source['cleaned'], action='cleanup', root=source['guardRoot'])['archiveRoot']
     helpers = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
         for name in ('installed_persistent_write.py', *common.native.HELPERS)}
-    data = {'archive': archive, 'helpers': helpers, 'inventory': inventory['slotInventory']}
+    profile = reviewed_inventory(inventory['slotInventory'], args.profile)
+    data = {'archive': archive, 'helpers': helpers, 'inventory': inventory['slotInventory'], 'profile': profile}
     output = common.transport.validate_output_path(args.output)
     common.require(not output.exists(), 'fresh reclaim receipt required')
     host, port = common.transport.parse_endpoint(args.endpoint)
     target = common.transport.RemoteTarget(host, port, 'root', common.transport.validate_private_file('evidence/private/ssh-known-hosts'))
-    receipt: dict[str, object] = {'result': 'failed', 'submissionAttempted': True,
+    receipt: dict[str, object] = {'result': 'failed', 'submissionAttempted': True, 'profile': args.profile,
         'proposedDeletion': inventory['slotInventory']['proposedDeletion'], 'inventorySha256': hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()}
     write_json_0600_atomic(output, receipt)
     secret = common.transport.read_secret_stdin()

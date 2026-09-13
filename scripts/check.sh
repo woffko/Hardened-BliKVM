@@ -41,6 +41,7 @@ python3 -B -m unittest \
   tools.test_persistent_write_lifecycle tools.test_persistent_write_fence tools.test_persistent_write_pipeline \
   tools.test_persistent_write_systemd tools.test_persistent_write_snapshot tools.test_installed_persistent_write \
   tools.test_run_persistent_write_rehearsal tools.test_finish_persistent_write_rehearsal \
+  tools.test_reclaim_application_slot \
   tools.test_upload_proxy_streaming tools.test_install_system_upgrade tools.test_persistent_write_pending \
   tools.test_installed_pending_write_gate tools.test_persistent_write_boot_proof tools.test_observe_persistent_write_boot \
   tools.test_persistent_write_evidence_compatibility tools.test_persistent_write_activation_receipt \
