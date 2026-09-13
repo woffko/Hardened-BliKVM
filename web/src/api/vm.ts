@@ -147,7 +147,7 @@ export function setSessionLock(duration: number) {
 
 // get Hostname
 export function getHostname() {
-  return http.get('/api/vm/hostname');
+  return http.get('/api/hostname');
 }
 
 // set Hostname

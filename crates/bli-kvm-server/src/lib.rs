@@ -248,6 +248,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(auth::routes::password_state).post(auth::routes::change_password),
         )
         .route("/inventory", get(runtime_inventory))
+        .route("/hostname", get(hostname))
         .route("/diagnostics", get(diagnostics_view))
         .route("/application-update/status", get(update::status))
         .route("/application-update/upload", post(update::upload))
@@ -314,6 +315,36 @@ async fn current_application_version() -> Json<ApiResponse<CurrentApplicationVer
     Json(ApiResponse::ok(CurrentApplicationVersion {
         current: env!("CARGO_PKG_VERSION"),
     }))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Hostname {
+    hostname: String,
+}
+
+async fn hostname() -> AppResult<Json<ApiResponse<Hostname>>> {
+    Ok(Json(ApiResponse::ok(Hostname {
+        hostname: system_hostname()?,
+    })))
+}
+
+fn system_hostname() -> AppResult<String> {
+    let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map_err(|_| AppError::ServiceUnavailable("hostname is unavailable".into()))?;
+    validate_hostname(raw.trim())
+}
+
+fn validate_hostname(value: &str) -> AppResult<String> {
+    if value.is_empty()
+        || value.len() > 253
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+    {
+        return Err(AppError::Internal("hostname is invalid".into()));
+    }
+    Ok(value.to_string())
 }
 
 async fn api_not_found() -> (StatusCode, Json<ApiResponse<()>>) {
@@ -1314,6 +1345,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn hostname_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/hostname")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn hostname_validation_is_bounded_and_conservative() {
+        assert_eq!(validate_hostname("mangopimcore").unwrap(), "mangopimcore");
+        assert_eq!(validate_hostname("kvm-1.local").unwrap(), "kvm-1.local");
+        assert!(validate_hostname("").is_err());
+        assert!(validate_hostname(&"a".repeat(254)).is_err());
+        assert!(validate_hostname("bad host").is_err());
+        assert!(validate_hostname("bad$host").is_err());
     }
 
     #[tokio::test]
