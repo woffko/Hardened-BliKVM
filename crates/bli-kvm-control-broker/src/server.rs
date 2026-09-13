@@ -31,6 +31,7 @@ pub enum ControlBrokerError {
     Config(ControlBrokerConfigError),
     InvalidRuntimeDirectory,
     SocketAlreadyExists,
+    TransitionUnavailable,
     Io(io::Error),
 }
 
@@ -40,6 +41,7 @@ impl fmt::Display for ControlBrokerError {
             Self::Config(_) => "control broker configuration is invalid",
             Self::InvalidRuntimeDirectory => "control broker runtime directory is invalid",
             Self::SocketAlreadyExists => "control broker socket already exists",
+            Self::TransitionUnavailable => "control broker transition backend is unavailable",
             Self::Io(_) => "control broker I/O failed",
         })
     }
@@ -50,7 +52,9 @@ impl Error for ControlBrokerError {
         match self {
             Self::Config(error) => Some(error),
             Self::Io(error) => Some(error),
-            Self::InvalidRuntimeDirectory | Self::SocketAlreadyExists => None,
+            Self::InvalidRuntimeDirectory
+            | Self::SocketAlreadyExists
+            | Self::TransitionUnavailable => None,
         }
     }
 }
@@ -73,14 +77,42 @@ pub async fn run(config: ControlBrokerConfig) -> Result<(), ControlBrokerError> 
         .as_ref()
         .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
         .unwrap_or(ControlDiagnostics::Disabled);
-    let result = run_with_diagnostics(config, diagnostics).await;
+    let result = serve(config, diagnostics, ControlV2State::disabled()).await;
     drop(diagnostic_reporter);
     result
 }
 
-async fn run_with_diagnostics<D>(
+/// Serves the broker with a HID transition backend attached from the dedicated
+/// credential and sandbox. Only the `hid-transition-profile` feature builds
+/// this entry point; shipped builds keep the capability disabled.
+#[cfg(feature = "hid-transition-profile")]
+pub async fn run_with_hid_profile(
+    config: ControlBrokerConfig,
+    journal_path: impl Into<std::path::PathBuf>,
+    kvmd_socket: impl Into<std::path::PathBuf>,
+    credentials: bli_kvm_kvmd_client::KvmdCredentials,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let client = bli_kvm_kvmd_hid_client::KvmdHidClient::new(kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(journal_path)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let engine = bli_kvm_hid_transition::HidTransitionEngine::new(client, credentials, ledger)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state = ControlV2State::with_hid_policy(bli_kvm_hid_policy::HidControlPolicy::new(engine));
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
+async fn serve<D>(
     config: ControlBrokerConfig,
     diagnostics: D,
+    v2_state: ControlV2State,
 ) -> Result<(), ControlBrokerError>
 where
     D: DiagnosticSubmitter,
@@ -94,7 +126,7 @@ where
     let _cleanup = SocketCleanup(config.socket_path.clone());
     fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
-    let v2 = Arc::new(TokioMutex::new(ControlV2State::disabled()));
+    let v2 = Arc::new(TokioMutex::new(v2_state));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -467,6 +499,64 @@ mod tests {
                 reason: RejectReason::CapabilityDisabled
             }]
         );
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
+    async fn hid_profile_serves_attested_lease_grants_end_to_end() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let journal = directory.path().join("ledger.json");
+        let kvmd = directory.path().join("absent-kvmd.sock");
+        let credentials =
+            bli_kvm_kvmd_client::KvmdCredentials::new("test-user", "not-a-real-password").unwrap();
+        let mut broker = tokio::spawn(run_with_hid_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            journal,
+            kvmd,
+            credentials,
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let response = client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        match response {
+            ControlResponse::LeaseGranted { lease_id } => {
+                assert!(lease_id.iter().any(|byte| *byte != 0));
+            }
+            other => panic!("expected a lease grant, got {other:?}"),
+        }
+        stop_broker(broker).await;
     }
 
     #[derive(Clone)]

@@ -18,6 +18,9 @@ atx-transition-profile = [
 hid-transition-profile = [
   "dep:bli-kvm-hid-adapter",
   "dep:bli-kvm-hid-policy",
+  "dep:bli-kvm-hid-transition",
+  "dep:bli-kvm-kvmd-client",
+  "dep:bli-kvm-kvmd-hid-client",
   "dep:rand_core",
   "bli-kvm-hid-policy/hid-test-profile",
 ]
@@ -31,14 +34,13 @@ bli-kvm-diagnostic-producer-client = { path = "../bli-kvm-diagnostic-producer-cl
 bli-kvm-diagnostic-protocol = { path = "../bli-kvm-diagnostic-protocol" }
 bli-kvm-hid-adapter = { path = "../bli-kvm-hid-adapter", optional = true }
 bli-kvm-hid-policy = { path = "../bli-kvm-hid-policy", optional = true }
+bli-kvm-hid-transition = { path = "../bli-kvm-hid-transition", optional = true }
 bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client", optional = true }
 bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client", optional = true }
+bli-kvm-kvmd-hid-client = { path = "../bli-kvm-kvmd-hid-client", optional = true }
 rand_core = { workspace = true, optional = true }
 tokio.workspace = true
 
 [dev-dependencies]
 bli-kvm-control-client = { path = "../bli-kvm-control-client" }
-bli-kvm-hid-transition = { path = "../bli-kvm-hid-transition" }
-bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
-bli-kvm-kvmd-hid-client = { path = "../bli-kvm-kvmd-hid-client" }
 tempfile.workspace = true
