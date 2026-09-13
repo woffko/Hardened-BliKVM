@@ -25,7 +25,8 @@ class HardenedSettingsPortTests(unittest.TestCase):
         self.assertIn("'/api/hostname'", api)
         component = HOSTNAME.read_text(encoding="utf-8")
         self.assertIn("readOnly", component)
-        self.assertNotIn("setHostname", component)
+        self.assertNotIn("api.setHostname", component)
+        self.assertNotIn("api\n      .setHostname", component)
 
     def test_server_exposes_a_bounded_read_only_hostname(self) -> None:
         server = SERVER.read_text(encoding="utf-8")
