@@ -72,6 +72,7 @@ python3 -m unittest \
   tools/test_build_hid_transition_profile.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
+  tools/test_phase4_video_boundary.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_rustc_remap_wrapper.py \
   tools/test_capture_ssh_preflight.py \
@@ -270,6 +271,7 @@ python3 -m py_compile \
   tools/test_build_hid_transition_profile.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
+  tools/test_phase4_video_boundary.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_rustc_remap_wrapper.py \
   tools/test_capture_ssh_preflight.py \
@@ -507,6 +509,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_build_hid_transition_profile.py \
     tools/test_hid_keymap_alignment.py \
     tools/test_phase3_control_boundaries.py \
+    tools/test_phase4_video_boundary.py \
     tools/test_rust_lld_static_pie.py \
     tools/test_rustc_remap_wrapper.py \
     tools/test_capture_ssh_preflight.py \
