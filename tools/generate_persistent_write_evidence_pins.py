@@ -17,6 +17,7 @@ from tools import persistent_write_activation_receipt as activation
 from tools import persistent_write_gui_failure_receipt as gui_failure
 from tools import persistent_write_host_receipt as host_receipt
 from tools import persistent_write_recovery_receipt as recovery
+from tools import persistent_write_upload_receipt as upload_receipt
 
 HISTORICAL_COMMITS = {"gui_happy_path": "07a0b39", "native_activation": "07a0b39"}
 TARGET = TOOLS / "persistent_write_evidence_pins.py"
@@ -42,6 +43,8 @@ def build() -> dict[str, object]:
                                     for name in sorted(gui_failure.NEGATIVE_BROWSER_SOURCES)},
         "host_sources": {path: digest((ROOT / path).read_bytes()) for path in host_receipt.source_paths()},
         "host_tool": digest((TOOLS / "capture_persistent_write_host_gate.py").read_bytes()),
+        "upload_sources": {name: digest((TOOLS / name).read_bytes()) for name in upload_receipt.SOURCES},
+        "upload_tool": digest((TOOLS / "capture_persistent_write_upload_gate.py").read_bytes()),
         "probe_sources": {action: {name: digest((TOOLS / name).read_bytes())
                                    for name in sorted(recovery.PROBES[action])}
                           for action in sorted(recovery.PROBES)},

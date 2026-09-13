@@ -18,12 +18,14 @@ if not __package__:
     import persistent_write_evidence_store as storage
     import persistent_write_gui_failure_receipt as gui_failure
     import persistent_write_host_receipt as host_receipt
+    import persistent_write_upload_receipt as upload_receipt
 else:
     from tools import persistent_write_contract as contract
     from tools import persistent_write_evidence_pins as pins_module
     from tools import persistent_write_evidence_store as storage
     from tools import persistent_write_gui_failure_receipt as gui_failure
     from tools import persistent_write_host_receipt as host_receipt
+    from tools import persistent_write_upload_receipt as upload_receipt
 
 require = contract.temporary.require
 Validator = Callable[[contract.EvidenceBinding, bytes, Mapping[str, object]], None]
@@ -51,6 +53,19 @@ def _host_validator(binding: contract.EvidenceBinding, raw: bytes, pins: Mapping
 VALIDATORS: dict[str, Validator] = {gate: _gui_failure_validator(gate)
                                     for gate in ("gui_failure_retry", "gui_cancel", "gui_logout")}
 VALIDATORS["host"] = _host_validator
+
+
+def _upload_validator(binding: contract.EvidenceBinding, raw: bytes, pins: Mapping[str, object]) -> None:
+    sources = pins.get("upload_sources")
+    tool = pins.get("upload_tool")
+    require(isinstance(sources, dict) and isinstance(tool, str), "upload gate pins missing")
+    assert isinstance(tool, str)
+    contents = upload_receipt.parse(raw, expected_sources=cast(Mapping[str, str], sources),
+                                    expected_tool=tool)
+    require(contents.binding == binding, "upload gate receipt belongs to another transaction")
+
+
+VALIDATORS["native_upload"] = _upload_validator
 
 
 def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

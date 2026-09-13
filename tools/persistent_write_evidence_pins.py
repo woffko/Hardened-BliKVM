@@ -21,7 +21,7 @@ CURRENT_PINS = {
         "tools/test_persistent_write_commit.py": "c39b9b76cfc32b5cd3759c225c72ae0edfabaa42114270e6fd7f0ed5823e663c",
         "tools/test_persistent_write_contract.py": "cdaf276071037456ff77c9cdf61b9aac6671b1addf526c085532746ddfd007cb",
         "tools/test_persistent_write_decision.py": "fea79727045ca9ccfc297af1f2863d9c4573e10df7829b37cecc8acffe80d4c0",
-        "tools/test_persistent_write_evidence_provider.py": "81a90761a507445da000be4f4cdfdb76874c255bf89069c38b0e7a1533caf31b",
+        "tools/test_persistent_write_evidence_provider.py": "5375cbe2d8a78ce1bce50761f9bef4be80d7249d26bbf7d8512943104bab005b",
         "tools/test_persistent_write_evidence_store.py": "ac89859771c696ab24f1f8a08ded6f813c6f5eec59f3e40e7d5e89a03b9edd4e",
         "tools/test_persistent_write_fence.py": "55df7aa995b22dd07c8d65e0627e97b90460185348c9441bb3120ffb4e82aa7b",
         "tools/test_persistent_write_files.py": "8004567ac160a50f70c98eb3c5d982ac62a14f00c5c3c33b55f08f3637e597c2",
@@ -43,7 +43,12 @@ CURRENT_PINS = {
             "persistent_write_pending.py": "426c45aec7586839f7f27142220ad5ea7bad5a9ef0b35adcf96b178e676def85"
         }
     },
-    "runner": "db7f88e6ffe992afe7822f595da73f08af403d793a6e213ba23d6a738645e572"
+    "runner": "db7f88e6ffe992afe7822f595da73f08af403d793a6e213ba23d6a738645e572",
+    "upload_sources": {
+        "probe_installed_upload.py": "02a23ab7739b1ca67a73338ad2bc11f970fef427f162a9e85d95f2e72e4d20a5",
+        "upload_unit_reference.py": "5f86b41b4acc6b1e59da2bc122c15eef0175aeb018faec39c165971efe77953f"
+    },
+    "upload_tool": "2ce8246a8880aea39df1b7f4f347a8f0f74065890d991f141732244472cf07db"
 }
 
 HISTORICAL_PINS = {

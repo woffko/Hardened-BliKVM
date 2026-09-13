@@ -78,7 +78,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_default_registry_covers_fresh_gates(self) -> None:
         self.assertEqual(set(provider.VALIDATORS),
-                         {"host", "gui_failure_retry", "gui_cancel", "gui_logout"})
+                         {"host", "native_upload", "gui_failure_retry", "gui_cancel", "gui_logout"})
 
     def test_default_gui_validators_accept_a_pinned_receipt(self) -> None:
         value = gui_fixture.document()
