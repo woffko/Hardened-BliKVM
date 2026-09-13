@@ -24,6 +24,10 @@ use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome};
 use bli_kvm_hid_adapter::HidLeaseIdentity;
 #[cfg(feature = "hid-transition-profile")]
 use bli_kvm_hid_policy::{HidControlPolicy, HidDecision, HidEligibility};
+#[cfg(feature = "media-transition-profile")]
+use bli_kvm_media_policy::{MediaEligibility, MediaOperation, MediaRejection};
+#[cfg(feature = "media-transition-profile")]
+use bli_kvm_media_transition::{MediaTransitionEngine, MediaTransitionOutcome};
 #[cfg(feature = "hid-transition-profile")]
 use rand_core::{OsRng, RngCore};
 
@@ -32,6 +36,8 @@ pub struct ControlV2State {
     attestations: TargetAttestationRegistry,
     #[cfg(feature = "atx-transition-profile")]
     atx: Option<AtxTransitionEngine>,
+    #[cfg(feature = "media-transition-profile")]
+    media: Option<MediaTransitionEngine>,
     #[cfg(feature = "hid-transition-profile")]
     hid: Option<HidControlPolicy>,
 }
@@ -43,6 +49,8 @@ impl ControlV2State {
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             #[cfg(feature = "atx-transition-profile")]
             atx: None,
+            #[cfg(feature = "media-transition-profile")]
+            media: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
         }
@@ -55,6 +63,8 @@ impl ControlV2State {
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             #[cfg(feature = "atx-transition-profile")]
             atx: None,
+            #[cfg(feature = "media-transition-profile")]
+            media: None,
             hid: Some(policy),
         }
     }
@@ -65,9 +75,19 @@ impl ControlV2State {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(engine),
+            #[cfg(feature = "media-transition-profile")]
+            media: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
         }
+    }
+
+    /// Attaches the persisted media engine to an already enabled state.
+    #[cfg(feature = "media-transition-profile")]
+    pub fn with_media_engine(mut self, engine: MediaTransitionEngine) -> Self {
+        self.enabled = true;
+        self.media = Some(engine);
+        self
     }
 
     /// Serves both transition backends from one state, for the restricted
@@ -80,6 +100,8 @@ impl ControlV2State {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(atx),
+            #[cfg(feature = "media-transition-profile")]
+            media: None,
             hid: Some(hid),
         }
     }
@@ -91,6 +113,8 @@ impl ControlV2State {
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             #[cfg(feature = "atx-transition-profile")]
             atx: None,
+            #[cfg(feature = "media-transition-profile")]
+            media: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
         }
@@ -143,8 +167,8 @@ impl ControlV2State {
                 self.handle_atx(operation_id, *action, confirmation, now)
                     .await
             }
-            PlatformControlRequestV2::VirtualMedia { .. } => {
-                reject(ControlRejectionCode::BackendUnavailable)
+            PlatformControlRequestV2::VirtualMedia { request } => {
+                self.handle_media(operation_id, request, now).await
             }
         }
     }
@@ -330,7 +354,86 @@ impl ControlV2State {
     }
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(not(feature = "media-transition-profile"))]
+impl ControlV2State {
+    async fn handle_media(
+        &mut self,
+        _operation_id: &str,
+        _request: &bli_kvm_core::MediaRequest,
+        _now: Instant,
+    ) -> ControlResponse {
+        reject(ControlRejectionCode::BackendUnavailable)
+    }
+}
+
+#[cfg(feature = "media-transition-profile")]
+impl ControlV2State {
+    async fn handle_media(
+        &mut self,
+        operation_id: &str,
+        request: &bli_kvm_core::MediaRequest,
+        _now: Instant,
+    ) -> ControlResponse {
+        let Some(engine) = self.media.as_mut() else {
+            return reject(ControlRejectionCode::BackendUnavailable);
+        };
+        let Some(operation_id) = hex_operation_id(operation_id) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let Ok(operation) = MediaOperation::new(
+            operation_id,
+            request.session_binding,
+            request.target_binding,
+            request.issued_at_unix_ms,
+            request.command,
+        ) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let now_ms = unix_millis();
+        let Ok(observed) = engine.observe().await else {
+            return reject(ControlRejectionCode::BackendUnavailable);
+        };
+        match engine
+            .execute(
+                operation,
+                MediaEligibility::verified_for_test_profile(),
+                observed,
+                now_ms,
+            )
+            .await
+        {
+            Ok(
+                MediaTransitionOutcome::Applied
+                | MediaTransitionOutcome::Noop
+                | MediaTransitionOutcome::ReplayedApplied,
+            ) => ControlResponse::Applied,
+            Ok(
+                MediaTransitionOutcome::ReplayedRejected | MediaTransitionOutcome::BackendFailed,
+            ) => reject(ControlRejectionCode::BackendRejected),
+            Ok(MediaTransitionOutcome::Rejected(rejection)) => reject(media_code(rejection)),
+            Err(_) => reject(ControlRejectionCode::Internal),
+        }
+    }
+}
+
+#[cfg(feature = "media-transition-profile")]
+fn media_code(rejection: MediaRejection) -> ControlRejectionCode {
+    match rejection {
+        MediaRejection::CapabilityDisabled => ControlRejectionCode::CapabilityDisabled,
+        MediaRejection::BackendUnavailable => ControlRejectionCode::BackendUnavailable,
+        MediaRejection::ConfirmationInvalid => ControlRejectionCode::NotAttested,
+        MediaRejection::ConfirmationExpired => ControlRejectionCode::ConfirmationStale,
+        MediaRejection::OperationIdConflict => ControlRejectionCode::Duplicate,
+        MediaRejection::IndeterminatePending => ControlRejectionCode::PendingUnreconciled,
+        MediaRejection::Busy | MediaRejection::MustDisconnect => ControlRejectionCode::InvalidState,
+        MediaRejection::CooldownActive => ControlRejectionCode::CooldownActive,
+    }
+}
+
+#[cfg(any(
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
     if value.len() != 32 {
         return None;
@@ -343,7 +446,10 @@ fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
     Some(output)
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

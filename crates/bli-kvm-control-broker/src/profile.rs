@@ -25,6 +25,14 @@ pub struct AtxProfile {
     pub kvmd_socket: PathBuf,
 }
 
+#[cfg(feature = "media-transition-profile")]
+#[derive(Debug)]
+pub struct MediaProfile {
+    pub journal: PathBuf,
+    pub catalog: PathBuf,
+    pub kvmd_socket: PathBuf,
+}
+
 #[derive(Debug)]
 pub enum ProfileError {
     MissingLedger,
@@ -35,6 +43,12 @@ pub enum ProfileError {
     InvalidAtxJournal,
     MissingAtxKvmdSocket,
     InvalidAtxKvmdSocket,
+    MissingMediaJournal,
+    InvalidMediaJournal,
+    MissingMediaCatalog,
+    InvalidMediaCatalog,
+    MissingMediaKvmdSocket,
+    InvalidMediaKvmdSocket,
     MissingCredentials,
     InvalidCredentials,
     InvalidReconciliation,
@@ -52,6 +66,15 @@ impl std::fmt::Display for ProfileError {
             }
             Self::MissingAtxKvmdSocket | Self::InvalidAtxKvmdSocket => {
                 "ATX profile KVMD socket path is invalid"
+            }
+            Self::MissingMediaJournal | Self::InvalidMediaJournal => {
+                "media profile journal path is invalid"
+            }
+            Self::MissingMediaCatalog | Self::InvalidMediaCatalog => {
+                "media profile catalog path is invalid"
+            }
+            Self::MissingMediaKvmdSocket | Self::InvalidMediaKvmdSocket => {
+                "media profile KVMD socket path is invalid"
             }
             Self::MissingCredentials | Self::InvalidCredentials => {
                 "transition profile credential is invalid"
@@ -101,6 +124,31 @@ pub fn atx_profile_from_values(
     let kvmd_socket = absolute_path(kvmd_socket).ok_or(ProfileError::InvalidAtxKvmdSocket)?;
     Ok(Some(AtxProfile {
         journal,
+        kvmd_socket,
+    }))
+}
+
+/// Parses the media test-profile selection. A disabled profile returns `None`
+/// even when the path values are absent.
+#[cfg(feature = "media-transition-profile")]
+pub fn media_profile_from_values(
+    enabled: bool,
+    journal: Option<&str>,
+    catalog: Option<&str>,
+    kvmd_socket: Option<&str>,
+) -> Result<Option<MediaProfile>, ProfileError> {
+    if !enabled {
+        return Ok(None);
+    }
+    let journal = journal.ok_or(ProfileError::MissingMediaJournal)?;
+    let catalog = catalog.ok_or(ProfileError::MissingMediaCatalog)?;
+    let kvmd_socket = kvmd_socket.ok_or(ProfileError::MissingMediaKvmdSocket)?;
+    let journal = absolute_path(journal).ok_or(ProfileError::InvalidMediaJournal)?;
+    let catalog = absolute_path(catalog).ok_or(ProfileError::InvalidMediaCatalog)?;
+    let kvmd_socket = absolute_path(kvmd_socket).ok_or(ProfileError::InvalidMediaKvmdSocket)?;
+    Ok(Some(MediaProfile {
+        journal,
+        catalog,
         kvmd_socket,
     }))
 }

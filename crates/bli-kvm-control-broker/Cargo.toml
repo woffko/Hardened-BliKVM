@@ -24,6 +24,14 @@ hid-transition-profile = [
   "dep:rand_core",
   "bli-kvm-hid-policy/hid-test-profile",
 ]
+media-transition-profile = [
+  "dep:bli-kvm-media-catalog",
+  "dep:bli-kvm-media-policy",
+  "dep:bli-kvm-media-transition",
+  "dep:bli-kvm-kvmd-client",
+  "dep:bli-kvm-kvmd-media-client",
+  "bli-kvm-media-policy/media-test-profile",
+]
 
 [dependencies]
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
@@ -38,6 +46,10 @@ bli-kvm-hid-transition = { path = "../bli-kvm-hid-transition", optional = true }
 bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client", optional = true }
 bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client", optional = true }
 bli-kvm-kvmd-hid-client = { path = "../bli-kvm-kvmd-hid-client", optional = true }
+bli-kvm-kvmd-media-client = { path = "../bli-kvm-kvmd-media-client", optional = true }
+bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog", optional = true }
+bli-kvm-media-policy = { path = "../bli-kvm-media-policy", optional = true }
+bli-kvm-media-transition = { path = "../bli-kvm-media-transition", optional = true }
 rand_core = { workspace = true, optional = true }
 tokio.workspace = true
 

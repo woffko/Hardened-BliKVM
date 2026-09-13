@@ -122,13 +122,50 @@ impl KvmdMediaClient {
         uri: &str,
         credentials: &KvmdCredentials,
     ) -> Result<(), KvmdMediaClientError> {
+        let bytes = self.request_bytes(Method::POST, uri, credentials).await?;
+        let response: KvmdMutationEnvelope = serde_json::from_slice(&bytes)?;
+        if !response.ok {
+            return Err(KvmdMediaClientError::ApiRejected);
+        }
+        Ok(())
+    }
+
+    /// Reads the fixed read-only `/msd` state used for media eligibility.
+    pub async fn state(
+        &self,
+        credentials: &KvmdCredentials,
+    ) -> Result<KvmdMediaState, KvmdMediaClientError> {
+        let bytes = timeout(
+            self.timeout,
+            self.request_bytes(Method::GET, "/msd", credentials),
+        )
+        .await
+        .map_err(|_| KvmdMediaClientError::Timeout)??;
+        let response: KvmdStateEnvelope = serde_json::from_slice(&bytes)?;
+        if !response.ok {
+            return Err(KvmdMediaClientError::ApiRejected);
+        }
+        Ok(KvmdMediaState {
+            enabled: response.result.enabled,
+            online: response.result.online,
+            busy: response.result.busy,
+            connected: response.result.drive.connected,
+        })
+    }
+
+    async fn request_bytes(
+        &self,
+        method: Method,
+        uri: &str,
+        credentials: &KvmdCredentials,
+    ) -> Result<Vec<u8>, KvmdMediaClientError> {
         let stream = UnixStream::connect(&self.socket_path).await?;
         let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await?;
         let _connection_task = AbortTask(tokio::spawn(async move {
             let _ = connection.await;
         }));
         let mut request = Request::builder()
-            .method(Method::POST)
+            .method(method)
             .uri(uri)
             .header(header::ACCEPT, "application/json")
             .header(header::HOST, "localhost")
@@ -172,12 +209,36 @@ impl KvmdMediaClient {
                 bytes.extend_from_slice(&data);
             }
         }
-        let response: KvmdMutationEnvelope = serde_json::from_slice(&bytes)?;
-        if !response.ok {
-            return Err(KvmdMediaClientError::ApiRejected);
-        }
-        Ok(())
+        Ok(bytes)
     }
+}
+
+/// Read-only MSD state observed from KVMD, used to build media eligibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KvmdMediaState {
+    pub enabled: bool,
+    pub online: bool,
+    pub busy: bool,
+    pub connected: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct KvmdStateEnvelope {
+    ok: bool,
+    result: KvmdMsdState,
+}
+
+#[derive(Debug, Deserialize)]
+struct KvmdMsdState {
+    enabled: bool,
+    online: bool,
+    busy: bool,
+    drive: KvmdMsdDrive,
+}
+
+#[derive(Debug, Deserialize)]
+struct KvmdMsdDrive {
+    connected: bool,
 }
 
 fn selection_uri(name: &str, mode: VirtualMediaControlMode, writable: bool) -> String {
@@ -281,6 +342,45 @@ mod tests {
         ));
         server.abort();
         let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn reads_the_fixed_msd_state_route() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let read = stream.read(&mut chunk).await.unwrap();
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = r#"{"ok":true,"result":{"enabled":true,"online":true,"busy":false,"drive":{"connected":true}}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let client = KvmdMediaClient::new(&socket).unwrap();
+        let state = client.state(&credentials()).await.unwrap();
+        assert_eq!(
+            state,
+            KvmdMediaState {
+                enabled: true,
+                online: true,
+                busy: false,
+                connected: true,
+            }
+        );
+        let request = server.await.unwrap();
+        assert!(request.starts_with("GET /msd HTTP/1.1\r\n"));
     }
 
     #[tokio::test]

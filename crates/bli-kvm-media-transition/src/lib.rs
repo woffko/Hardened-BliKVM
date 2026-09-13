@@ -19,6 +19,8 @@ use thiserror::Error;
 pub enum MediaTransitionError {
     #[error("media policy journal failed")]
     Policy(#[from] MediaPolicyError),
+    #[error("media backend state is unavailable")]
+    Backend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +57,21 @@ impl MediaTransitionEngine {
 
     pub fn pending_count(&self) -> usize {
         self.policy.pending_count()
+    }
+
+    /// Reads the fixed read-only `/msd` state used for media eligibility.
+    pub async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
+        let state = self
+            .client
+            .state(&self.credentials)
+            .await
+            .map_err(|_| MediaTransitionError::Backend)?;
+        Ok(MediaObservedState {
+            enabled: state.enabled,
+            online: state.online,
+            busy: state.busy,
+            connected: state.connected,
+        })
     }
 
     pub async fn execute(

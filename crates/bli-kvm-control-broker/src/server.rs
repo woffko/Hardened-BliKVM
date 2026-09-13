@@ -220,6 +220,41 @@ pub async fn run_with_control_profile(
     result
 }
 
+/// Serves the broker with the persisted media engine attached.
+///
+/// The read-only `/msd` state is observed through the fixed KVMD client before
+/// each operation, and only the `media-transition-profile` feature builds this
+/// entry point. Shipped builds reject every media request.
+#[cfg(feature = "media-transition-profile")]
+pub async fn run_with_media_profile(
+    config: ControlBrokerConfig,
+    journal_path: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    kvmd_socket: impl Into<std::path::PathBuf>,
+    credentials: bli_kvm_kvmd_client::KvmdCredentials,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let client = bli_kvm_kvmd_media_client::KvmdMediaClient::new(kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let engine = bli_kvm_media_transition::MediaTransitionEngine::open(
+        journal_path,
+        client,
+        catalog,
+        credentials,
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state = ControlV2State::disabled().with_media_engine(engine);
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 #[cfg(feature = "atx-transition-profile")]
 fn now_unix_millis() -> u64 {
     std::time::SystemTime::now()
@@ -714,6 +749,108 @@ mod tests {
             }
             other => panic!("expected a lease grant, got {other:?}"),
         }
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "media-transition-profile")]
+    async fn serve_media_kvmd(
+        socket: &std::path::Path,
+        count: usize,
+    ) -> tokio::task::JoinHandle<Vec<String>> {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..count {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let Ok(read) = stream.read(&mut chunk).await else {
+                        break;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let body = if text.starts_with("GET /msd ") {
+                    r#"{"ok":true,"result":{"enabled":true,"online":true,"busy":false,"drive":{"connected":false}}}"#
+                } else {
+                    r#"{"ok":true}"#
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                requests.push(text);
+            }
+            requests
+        })
+    }
+
+    #[cfg(feature = "media-transition-profile")]
+    #[tokio::test]
+    async fn media_profile_applies_a_connect_command_to_the_kvmd_backend() {
+        use bli_kvm_core::{MediaRequest, VirtualMediaCommand};
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let kvmd = directory.path().join("kvmd.sock");
+        let catalog = directory.path().join("catalog.json");
+        std::fs::write(
+            &catalog,
+            r#"{"schemaVersion":1,"entries":[{"imageId":7,"imageName":"rescue.iso","size":4096,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}]}"#,
+        )
+        .unwrap();
+        let backend = serve_media_kvmd(&kvmd, 2).await;
+        let credentials =
+            bli_kvm_kvmd_client::KvmdCredentials::new("test-user", "not-a-real-password").unwrap();
+        let mut broker = tokio::spawn(run_with_media_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("journal.json"),
+            catalog,
+            kvmd,
+            credentials,
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let issued_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "0123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::SetConnected { connected: true },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let requests = timeout(TEST_WAIT, backend)
+            .await
+            .expect("mock KVMD did not finish")
+            .unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /msd "));
+        assert!(requests[1].starts_with("POST /msd/set_connected?connected=1 "));
         stop_broker(broker).await;
     }
 

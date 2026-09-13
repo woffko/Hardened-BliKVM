@@ -76,3 +76,17 @@ Before media mutation can be wired or advertised:
 3. add visible indeterminate/cooldown feedback;
 4. verify upload interruption, read-only/writable modes, BIOS boot, reconnect,
    reboot, storage exhaustion, and recovery.
+
+## Broker profile (Phase 5 slice)
+
+A compile-time `media-transition-profile` build attaches the persisted media
+engine to the control broker and routes the typed v2 `VirtualMedia` request to
+it. Before each operation the broker observes the fixed read-only KVMD
+`GET /msd` state and builds the media eligibility from it; the engine then
+persists Pending, calls exactly one fixed route and persists the completion.
+Shipped builds keep the profile compiled out and reject the request with
+`backend_unavailable`. A dedicated `run_with_media_profile` entry point selects
+the journal, the opaque-ID catalog and the KVMD socket from absolute paths, and
+the KVMD credential arrives only through `LoadCredential`. Server routes and the
+storage/image GUI remain the next slice; real-target attach/eject gates remain
+deferred.

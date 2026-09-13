@@ -1,6 +1,10 @@
 mod attestation;
 mod config;
-#[cfg(any(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 mod profile;
 mod server;
 mod v2;
@@ -13,12 +17,20 @@ pub use config::{ControlBrokerConfig, ControlBrokerConfigError};
 pub use profile::{AtxProfile, atx_profile_from_values, atx_reconciliations_from_values};
 #[cfg(feature = "hid-transition-profile")]
 pub use profile::{HidProfile, hid_profile_from_values};
-#[cfg(any(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+#[cfg(feature = "media-transition-profile")]
+pub use profile::{MediaProfile, media_profile_from_values};
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 pub use profile::{ProfileError, kvmd_credentials_from_directory};
 #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
 pub use server::run_with_control_profile;
 #[cfg(feature = "hid-transition-profile")]
 pub use server::run_with_hid_profile;
+#[cfg(feature = "media-transition-profile")]
+pub use server::run_with_media_profile;
 #[cfg(feature = "atx-transition-profile")]
 pub use server::{AtxReconciliation, run_with_atx_profile};
 pub use server::{ControlBrokerError, run};
