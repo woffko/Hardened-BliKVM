@@ -148,3 +148,14 @@ disconnect ends downstream cleanly, and the first frame is forwarded without
 buffering the whole response.
 
 All device-mutating steps require explicit confirmation before execution.
+
+## Phase 5 host baseline
+
+Virtual media gains a persisted transition engine
+(`bli-kvm-media-transition`, `9e911bf`): a permit persists Pending before the
+single fixed KVMD route, the completion is persisted after, duplicates and
+conflicts replay without another call, `Noop` never touches the journal, and
+busy/`must_disconnect` fail without backend I/O. The catalog stays the only
+image-ID authority and no upload, download or device path exists. Host tests
+drive a mock media socket; interruption, reconnect, reboot and BIOS-boot gates
+remain device-bound.
