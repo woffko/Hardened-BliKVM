@@ -158,3 +158,19 @@ stop.
   sends the physical key codes for its language layouts.
 - Mouse movement is coalesced to the latest report per flush so a burst of
   pointer events cannot build an HTTP backlog.
+
+## Operator acceptance on the physical target (2026-09-13)
+
+The operator connected a real target and confirmed keyboard input, mouse input
+and ATX power/reset control through the restricted-control test profile. This
+completes the HID item-5 real-target keyboard and mouse modes and the ATX
+physical control check for the initial code; the isolated gates already covered
+rollover, the 10,000-event soak, reconnect and stuck-input recovery.
+
+Minor items deferred by the operator: LED presentation and other cosmetic
+gaps; the ATX pinout remains the original BliKVM v4 vendor configuration
+(`gpiochip0` 228/272/234/233, vendor `/usr/bin/atx --v v4`).
+
+The capability decision for a shipped build is still open: the restricted
+control surface remains compile-time disabled in shipped builds and is enabled
+only in this test profile.
