@@ -36,7 +36,10 @@ disabled and the denial broker is unchanged in shipped builds.
   (`9c97967`). The device gate passed. The broker can additionally select the
   HID transition backend from fixed environment keys and systemd's
   `CREDENTIALS_DIRECTORY` (`bb4db0b`), but only when built with the
-  `hid-transition-profile` feature.
+  `hid-transition-profile` feature. A dedicated
+  `hardened-blikvm-hid-transition.service` unit and ledger tmpfiles entry are
+  packaged for that test build and pass the systemd static verifier, separate
+  from the network server and from the credential-gate unit.
 - Safe-target/focus bindings: domain-separated SHA-256 derivation in
   `bli-kvm-control-focus` (`90aa7f5`) and the session-bound, one-time
   `GET/POST /api/hid/focus` server endpoint that submits only a v2

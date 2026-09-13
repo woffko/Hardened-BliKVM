@@ -67,6 +67,7 @@ python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
   tools/test_hid_credential_service.py \
+  tools/test_hid_transition_service.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_rust_lld_static_pie.py \
@@ -263,6 +264,7 @@ python3 -m py_compile \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
   tools/test_hid_credential_service.py \
+  tools/test_hid_transition_service.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_rust_lld_static_pie.py \
@@ -498,6 +500,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_pikvm_baseline.py \
     tools/test_packaging_boundaries.py \
     tools/test_hid_credential_service.py \
+    tools/test_hid_transition_service.py \
     tools/test_hid_keymap_alignment.py \
     tools/test_phase3_control_boundaries.py \
     tools/test_rust_lld_static_pie.py \

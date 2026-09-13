@@ -47,6 +47,7 @@ install -m 0644 \
   "$test_root/usr/lib/sysusers.d/"
 install -m 0644 \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
+  "$project_root/packaging/tmpfiles.d/hardened-blikvm-hid.conf" \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-system-actions.conf" \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-diagnostics.conf" \
   "$test_root/usr/lib/tmpfiles.d/"
@@ -78,6 +79,7 @@ install -m 0755 /bin/true \
 systemd-analyze verify --root="$test_root" \
   hardened-blikvm-platform-broker.service \
   hardened-blikvm-control-broker.service \
+  hardened-blikvm-hid-transition.service \
   hardened-blikvm-hid-credential.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service \
@@ -107,6 +109,7 @@ systemd-analyze verify --root="$test_root" \
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-hid-transition.service" \
   "$project_root/packaging/systemd/hardened-blikvm-hid-credential.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
