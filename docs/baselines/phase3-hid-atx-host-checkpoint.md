@@ -142,7 +142,9 @@ enabled in the server or web dependencies. WebRTC, hotplug, resolution,
 two-client, latency and 24-hour soak gates remain ahead. A host soak test also
 streams 2,000 MJPEG frames through the loopback proxy without truncation or
 reordering, a capability-selected transport helper chooses only advertised
-transports with MJPEG as the sole default, and two concurrent clients receive
-independent streams without cross-contamination.
+transports with MJPEG as the sole default, two concurrent clients receive
+independent streams without cross-contamination, an upstream mid-stream
+disconnect ends downstream cleanly, and the first frame is forwarded without
+buffering the whole response.
 
 All device-mutating steps require explicit confirmation before execution.
