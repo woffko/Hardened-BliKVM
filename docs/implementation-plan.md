@@ -104,6 +104,24 @@ eligibility is compile-time disabled. A separate mock-tested KVMD client has
 only the three fixed waiting ATX routes and is not connected to the broker.
 No Power or Reset action was invoked.
 
+Checkpoint: the HID and ATX host and server paths now exist behind
+compile-time test profiles: control protocol v2 with broker-minted lease
+grants and broker-side target attestation, an eligibility-gated HID policy
+with release-all, ledger and session revocation, a dedicated credential loader
+and systemd sandbox whose reversible H616 credential-delivery gate passed,
+safe-target/focus binding derivation with server focus/lease/power endpoints
+and an explicit operator confirmation, a GUI key set aligned to the pinned
+adapter table, and broker HID/ATX profiles plus a transition unit that are
+compiled out of shipped builds. On the test H616, isolated-backend gates passed
+for startup-ledger replay, apply/release, expiry, identity mismatch,
+failure release-all, mouse modes, six-key rollover, a 10,000-event soak,
+backend reconnect and stuck-input crash recovery, and live ATX waiting-route
+gates passed for `power_short`, `power_long` and `reset`, duplicate replay,
+cooldown, restart in Pending and reconciliation with Power and Reset
+physically disconnected. The capabilities remain unavailable. Remaining
+before either can be enabled: the BliKVM reboot gate, an explicit safe visible
+target, and a release decision.
+
 ## Phase 4: Video
 
 - Proxy loopback-only MJPEG first.
