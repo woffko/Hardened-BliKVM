@@ -143,6 +143,13 @@ builds.
 Exit gate: no-signal, hotplug, resolution, two-client, repeated mode-switch,
 latency, CPU/memory, and 24-hour soak gates pass without new kernel alerts.
 
+Checkpoint: the two-client device gate passed against the deployed
+restricted-control test profile. The headless probe opened two pages in one
+operator session, each decoded its own 200 MJPEG response and both stayed live
+(`video-two-client-probe-20260913-a.json`). No-signal, hotplug, resolution,
+repeated mode-switch, latency, CPU/memory and the 24-hour soak remain open, as
+does the Janus/WebRTC transport integration.
+
 ## Phase 5: Virtual media and board functions
 
 - Reimplement configfs media insertion/ejection and safe upload.
