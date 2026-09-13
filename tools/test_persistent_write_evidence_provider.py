@@ -7,8 +7,10 @@ import unittest
 from unittest.mock import patch
 
 from tools import persistent_write_contract as contract
+from tools import persistent_write_evidence_pins as pins
 from tools import persistent_write_evidence_provider as provider
 from tools import persistent_write_evidence_store as storage
+from tools import test_persistent_write_gui_failure_receipt as gui_fixture
 
 
 def binding(transaction: str = "a" * 24) -> contract.EvidenceBinding:
@@ -73,6 +75,31 @@ class ProviderTests(unittest.TestCase):
         validators = {gate: reject for gate in contract.REQUIRED_GATES}
         with self.assertRaisesRegex(ValueError, "receipt semantics differ"):
             self.read(validators=validators)
+
+    def test_default_registry_covers_negative_browser_gates(self) -> None:
+        self.assertEqual(set(provider.VALIDATORS), {"gui_failure_retry", "gui_cancel", "gui_logout"})
+
+    def test_default_gui_validators_accept_a_pinned_receipt(self) -> None:
+        value = gui_fixture.document()
+        value["runnerSha256"] = pins.CURRENT_PINS["runner"]
+        value["browserSourceHashes"] = pins.CURRENT_PINS["failure_browser_sources"]
+        receipts = {gate: gui_fixture.raw(value) for gate in ("gui_failure_retry", "gui_cancel", "gui_logout")}
+        for gate in contract.REQUIRED_GATES - set(receipts):
+            receipts[gate] = ("placeholder-" + gate).encode()
+
+        def accept(_binding: contract.EvidenceBinding, _raw: bytes, _pins: object) -> None:
+            return None
+
+        binding = contract.EvidenceBinding("e" * 24, "f" * 64, contract.CONFIG_SHA256, gui_fixture.SLOT, 10, 46)
+        store = storage.Store.create(binding)
+        gates = {gate: store.put(receipts[gate]) for gate in sorted(receipts)}
+        seal = store.seal(gates)
+        validators = dict(provider.VALIDATORS)
+        for gate in contract.REQUIRED_GATES - set(validators):
+            validators[gate] = accept
+        evidence = provider.read_verified_evidence(Path("/var/lib/unused"), binding, expected_seal=seal,
+                                                   pins=pins.CURRENT_PINS, validators=validators)
+        self.assertEqual(frozenset(item.gate for item in evidence), contract.REQUIRED_GATES)
 
 
 if __name__ == "__main__":

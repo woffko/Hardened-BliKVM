@@ -10,7 +10,7 @@ class PinDriftTests(unittest.TestCase):
 
     def test_current_pin_shape(self) -> None:
         current = pins.CURRENT_PINS
-        self.assertEqual(set(current), {"runner", "browser_sources", "probe_sources"})
+        self.assertEqual(set(current), {"runner", "browser_sources", "failure_browser_sources", "probe_sources"})
         runner = current["runner"]
         self.assertIsInstance(runner, str)
         self.assertRegex(str(runner), r"^[a-f0-9]{64}$")

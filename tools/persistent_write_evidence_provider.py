@@ -15,14 +15,28 @@ if not __package__:
     import persistent_write_contract as contract
     import persistent_write_evidence_pins as pins_module
     import persistent_write_evidence_store as storage
+    import persistent_write_gui_failure_receipt as gui_failure
 else:
     from tools import persistent_write_contract as contract
     from tools import persistent_write_evidence_pins as pins_module
     from tools import persistent_write_evidence_store as storage
+    from tools import persistent_write_gui_failure_receipt as gui_failure
 
 require = contract.temporary.require
 Validator = Callable[[contract.EvidenceBinding, bytes, Mapping[str, object]], None]
-VALIDATORS: dict[str, Validator] = {}
+
+
+def _gui_failure_validator(gate: str) -> Validator:
+    def validate(binding: contract.EvidenceBinding, raw: bytes, pins: Mapping[str, object]) -> None:
+        contents = gui_failure.parse(raw, expected_runner=gui_failure.runner_pin(pins),
+                                     expected_browser_sources=gui_failure.source_pins(pins))
+        require(contents.binding == binding, "negative browser receipt belongs to another transaction")
+        gui_failure.validate_gate(gate, contents)
+    return validate
+
+
+VALIDATORS: dict[str, Validator] = {gate: _gui_failure_validator(gate)
+                                    for gate in ("gui_failure_retry", "gui_cancel", "gui_logout")}
 
 
 def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
