@@ -42,6 +42,7 @@ class HidIsolatedGateTests(unittest.TestCase):
             "mouse_modes",
             "rollover",
             "soak",
+            "reconnect",
             "physical_actions_invoked",
         ):
             self.assertIn(key, gate.APPLY_KEYS)

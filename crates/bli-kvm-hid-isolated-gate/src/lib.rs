@@ -269,6 +269,56 @@ async fn phase_soak(
     Ok(())
 }
 
+async fn phase_reconnect(
+    root: &Path,
+    eligible: HidEligibility,
+    now: Instant,
+) -> Result<(), GateError> {
+    let socket = root.join("reconnect.sock");
+    let ledger = root.join("reconnect-ledger.json");
+    let mut gate = policy(&ledger, &socket)?;
+    let owner = identity(9, [9; 16]);
+    if gate
+        .acquire(owner, eligible, now, Duration::from_secs(30))
+        .await
+        != HidDecision::Applied
+    {
+        return Err(GateError::Phase("reconnect_acquire"));
+    }
+    let press = HidReport::Keyboard {
+        data: [0, 0, KEY_A_USAGE, 0, 0, 0, 0, 0],
+    };
+    if gate.report(owner, eligible, now, &press).await
+        != HidDecision::Reject(HidRejection::BackendUnavailable)
+    {
+        return Err(GateError::Phase("reconnect_outage"));
+    }
+    if gate.pending_release_count() != 1 {
+        return Err(GateError::Phase("reconnect_ledger"));
+    }
+
+    // The backend recovers; the next lease flushes the pending release first.
+    let server = serve(&socket, &["200 OK"]).await?;
+    let second = identity(10, [10; 16]);
+    if gate
+        .acquire(second, eligible, now, Duration::from_secs(30))
+        .await
+        != HidDecision::Applied
+    {
+        return Err(GateError::Phase("reconnect_reacquire"));
+    }
+    let requests = server
+        .await
+        .map_err(|_| GateError::Phase("reconnect_server"))?;
+    if requests.len() != 1 || !requests[0].contains("key=KeyA&state=0") {
+        return Err(GateError::Phase("reconnect_flush"));
+    }
+    if gate.pending_release_count() != 0 {
+        return Err(GateError::Phase("reconnect_pending"));
+    }
+    Ok(())
+}
+
 /// Runs every isolated phase and returns the fixed report lines.
 pub async fn run_isolated_checks(
     soak_events: usize,
@@ -442,6 +492,7 @@ pub async fn run_isolated_checks(
     phase_mouse(&root, eligible, now).await?;
     phase_rollover(&root, eligible, now).await?;
     phase_soak(&root, eligible, now, soak_events).await?;
+    phase_reconnect(&root, eligible, now).await?;
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(vec![
@@ -454,6 +505,7 @@ pub async fn run_isolated_checks(
         ("mouse_modes", "ok"),
         ("rollover", "ok"),
         ("soak", "ok"),
+        ("reconnect", "ok"),
         ("physical_actions_invoked", "no"),
     ])
 }
@@ -472,7 +524,7 @@ mod tests {
         let facts = run_isolated_checks(200).await.unwrap();
         let values: Vec<&str> = facts.iter().map(|(_, value)| *value).collect();
         assert!(values.contains(&"ok"));
-        assert_eq!(facts.len(), 10);
+        assert_eq!(facts.len(), 11);
         let named: std::collections::HashMap<_, _> = facts.into_iter().collect();
         for key in [
             "startup_replay",
@@ -483,6 +535,7 @@ mod tests {
             "mouse_modes",
             "rollover",
             "soak",
+            "reconnect",
         ] {
             assert_eq!(named.get(key), Some(&"ok"), "phase {key}");
         }

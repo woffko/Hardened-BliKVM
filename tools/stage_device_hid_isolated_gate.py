@@ -36,6 +36,7 @@ APPLY_KEYS = {
     "lease_apply",
     "mouse_modes",
     "physical_actions_invoked",
+    "reconnect",
     "rollover",
     "run_rc",
     "soak",
@@ -189,6 +190,7 @@ def validate_apply(facts: dict[str, str]) -> None:
         "mouse_modes",
         "rollover",
         "soak",
+        "reconnect",
     ):
         if facts.get(phase) != "ok":
             raise GateError("apply", f"{phase}_failed")
