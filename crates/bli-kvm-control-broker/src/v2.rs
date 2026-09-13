@@ -143,6 +143,9 @@ impl ControlV2State {
                 self.handle_atx(operation_id, *action, confirmation, now)
                     .await
             }
+            PlatformControlRequestV2::VirtualMedia { .. } => {
+                reject(ControlRejectionCode::BackendUnavailable)
+            }
         }
     }
 
@@ -438,6 +441,33 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[tokio::test]
+    async fn virtual_media_is_unavailable_without_a_media_profile() {
+        use bli_kvm_core::{MediaRequest, VirtualMediaCommand};
+
+        let state_result = state().await;
+        let mut state = state_result;
+        let response = state
+            .handle(
+                &PlatformControlRequestV2::VirtualMedia {
+                    request: MediaRequest {
+                        command: VirtualMediaCommand::SetConnected { connected: false },
+                        session_binding: 9,
+                        target_binding: TARGET,
+                        issued_at_unix_ms: 1_700,
+                    },
+                },
+                Instant::now(),
+            )
+            .await;
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendUnavailable
+            }
+        );
     }
 
     #[tokio::test]

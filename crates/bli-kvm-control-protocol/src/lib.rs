@@ -302,8 +302,8 @@ fn ensure_version(actual: u16, expected: u16) -> Result<(), ControlProtocolError
 #[cfg(test)]
 mod tests {
     use bli_kvm_core::{
-        AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, TargetAttestation,
-        VirtualMediaCommand,
+        AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, MediaRequest,
+        TargetAttestation, VirtualMediaCommand, VirtualMediaControlMode,
     };
 
     use super::*;
@@ -559,5 +559,29 @@ mod tests {
         let json = encode_response_v2(&response).unwrap();
         assert_eq!(decode_response_v2(&json).unwrap(), response);
         assert!(!String::from_utf8_lossy(&json).contains("message"));
+    }
+
+    #[test]
+    fn v2_virtual_media_request_round_trips() {
+        let request = ControlRequestEnvelopeV2 {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 23,
+            operation_id: OPERATION_ID.into(),
+            request: PlatformControlRequestV2::VirtualMedia {
+                request: MediaRequest {
+                    command: VirtualMediaCommand::Select {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::CdRom,
+                        writable: false,
+                    },
+                    session_binding: 9,
+                    target_binding: [0x11; 32],
+                    issued_at_unix_ms: 1_700_000_000_000,
+                },
+            },
+        };
+        let json = encode_request_v2(&request).unwrap();
+        assert_eq!(decode_request_v2(&json).unwrap(), request);
+        assert!(!String::from_utf8_lossy(&json).contains("path"));
     }
 }

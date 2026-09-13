@@ -23,7 +23,7 @@ pub use control::{
 };
 pub use control_v2::{
     AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest,
-    PlatformControlRequestV2, TARGET_ATTESTATION_MAX_TTL_SECONDS,
+    MediaRequest, PlatformControlRequestV2, TARGET_ATTESTATION_MAX_TTL_SECONDS,
     TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease,
 };
 pub use diagnostics::{

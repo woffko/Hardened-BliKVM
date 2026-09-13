@@ -94,6 +94,26 @@ confirmation, requires a current confirmation, and returns `applied` or the
 fixed broker rejection so the interface can show indeterminate and cooldown
 states.
 
+## Virtual media request
+
+The v2 protocol now carries a typed virtual-media request:
+
+```
+VirtualMedia { request: MediaRequest }
+MediaRequest {
+  command: VirtualMediaCommand,   // select { image_id, mode, writable } | set_connected { connected }
+  sessionBinding: u64,
+  targetBinding: [u8; 32],
+  issuedAtUnixMs: u64,
+}
+```
+
+Validation requires non-zero session and target bindings, a non-zero issued
+timestamp and a valid command; there is no path, URL or filename field. Shipped
+builds reject it with `backend_unavailable`; a separate
+`media-transition-profile` build may attach the persisted media engine, and the
+broker/server wiring remains a Phase 5 slice.
+
 ## Responses
 
 A response is `applied`, `lease_granted { lease_id }` with a non-zero

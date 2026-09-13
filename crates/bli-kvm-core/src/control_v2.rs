@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{AtxControlAction, HidReport};
+use crate::{AtxControlAction, HidReport, VirtualMediaCommand};
 
 pub const HID_LEASE_MAX_TTL_SECONDS: u16 = 30;
 pub const TARGET_ATTESTATION_MIN_TTL_SECONDS: u16 = 5;
@@ -59,6 +59,15 @@ pub struct AtxConfirmation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MediaRequest {
+    pub command: VirtualMediaCommand,
+    pub session_binding: u64,
+    pub target_binding: [u8; 32],
+    pub issued_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlatformControlRequestV2 {
     TargetAttest {
@@ -73,6 +82,9 @@ pub enum PlatformControlRequestV2 {
     Atx {
         action: AtxControlAction,
         confirmation: AtxConfirmation,
+    },
+    VirtualMedia {
+        request: MediaRequest,
     },
 }
 
@@ -96,6 +108,10 @@ pub enum ControlV2ValidationError {
     InvalidConfirmationTimestamp,
     #[error("HID lease report is invalid")]
     InvalidHidReport,
+    #[error("virtual-media command is invalid")]
+    InvalidMediaCommand,
+    #[error("virtual-media request timestamp is invalid")]
+    InvalidMediaTimestamp,
 }
 
 impl PlatformControlRequestV2 {
@@ -105,6 +121,7 @@ impl PlatformControlRequestV2 {
             Self::TargetRelease { release } => release.validate(),
             Self::HidLease { lease } => lease.validate(),
             Self::Atx { confirmation, .. } => confirmation.validate(),
+            Self::VirtualMedia { request } => request.validate(),
         }
     }
 }
@@ -194,6 +211,19 @@ impl AtxConfirmation {
     }
 }
 
+impl MediaRequest {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        validate_session_binding(self.session_binding)?;
+        validate_target_binding(&self.target_binding)?;
+        if self.issued_at_unix_ms == 0 {
+            return Err(ControlV2ValidationError::InvalidMediaTimestamp);
+        }
+        self.command
+            .validate()
+            .map_err(|_| ControlV2ValidationError::InvalidMediaCommand)
+    }
+}
+
 fn validate_session_binding(session_binding: u64) -> Result<(), ControlV2ValidationError> {
     if session_binding == 0 {
         Err(ControlV2ValidationError::InvalidSessionBinding)
@@ -234,6 +264,48 @@ mod tests {
     const FOCUS: [u8; 16] = [0x22; 16];
     const LEASE: [u8; 16] = [0x33; 16];
     const CONFIRMATION: [u8; 32] = [0x44; 32];
+
+    #[test]
+    fn media_request_validation_is_bounded() {
+        let request = MediaRequest {
+            command: VirtualMediaCommand::SetConnected { connected: true },
+            session_binding: 9,
+            target_binding: TARGET,
+            issued_at_unix_ms: 1_700,
+        };
+        assert_eq!(request.validate(), Ok(()));
+        assert_eq!(
+            MediaRequest {
+                session_binding: 0,
+                ..request.clone()
+            }
+            .validate(),
+            Err(ControlV2ValidationError::InvalidSessionBinding)
+        );
+        assert_eq!(
+            MediaRequest {
+                target_binding: [0; 32],
+                ..request.clone()
+            }
+            .validate(),
+            Err(ControlV2ValidationError::InvalidTargetBinding)
+        );
+        assert_eq!(
+            MediaRequest {
+                issued_at_unix_ms: 0,
+                ..request.clone()
+            }
+            .validate(),
+            Err(ControlV2ValidationError::InvalidMediaTimestamp)
+        );
+        assert!(
+            PlatformControlRequestV2::VirtualMedia {
+                request: request.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
 
     fn attestation() -> TargetAttestation {
         TargetAttestation {
