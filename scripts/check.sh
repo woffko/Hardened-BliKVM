@@ -50,7 +50,8 @@ python3 -B -m unittest \
   tools.test_persistent_write_evidence_pins tools.test_persistent_write_evidence_provider \
   tools.test_persistent_write_gui_failure_receipt tools.test_persistent_write_host_receipt \
   tools.test_capture_persistent_write_host_gate tools.test_persistent_write_upload_receipt \
-  tools.test_capture_persistent_write_upload_gate tools.test_persistent_write_component_view
+  tools.test_capture_persistent_write_upload_gate tools.test_persistent_write_component_view \
+  tools.test_run_persistent_write_retained_reboot
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -336,6 +337,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/persistent_write_upload_receipt.py tools/test_persistent_write_upload_receipt.py \
     tools/capture_persistent_write_upload_gate.py tools/test_capture_persistent_write_upload_gate.py \
     tools/persistent_write_component_view.py tools/test_persistent_write_component_view.py \
+    tools/run_persistent_write_retained_reboot.py tools/test_run_persistent_write_retained_reboot.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
     tools/installed_persistent_write.py tools/test_installed_persistent_write.py \
