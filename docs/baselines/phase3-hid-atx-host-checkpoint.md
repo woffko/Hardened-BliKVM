@@ -91,8 +91,10 @@ ATX:
   returned in 1126 ms, `physical_actions_invoked=yes`,
   `persistentChangeScope=none` and the transient unit and staging were
   removed;
-- startup reconciliation must still compare read-only LED/state evidence
-  before recording a Pending outcome in the daemon;
+- reconciliation now enforces non-Unknown read-only power-LED evidence before
+  recording a Pending outcome, and a busy/failed KVMD response is persisted as
+  rejected without retry (`48f06d4` baseline, this checkpoint adds the gate);
+  the daemon wiring and GUI feedback remain;
 - GUI indeterminate/cooldown feedback.
 
 All device-mutating steps require explicit confirmation before execution.

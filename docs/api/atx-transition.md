@@ -38,8 +38,13 @@ returning an internal permit. It provides these invariants:
 - unknown, oversized, symlinked, or group/world-writable journals are rejected.
 
 Pending reconciliation is a future administrative workflow and must compare
-read-only LED/state evidence before recording an outcome. It is not an
-automatic retry mechanism.
+read-only LED/state evidence before recording an outcome. The transition engine
+enforces this: `resolve_pending` takes a read-only power-LED observation and
+rejects `Unknown` with `evidence_required`, so an outcome can never be recorded
+blind. The observation is recorded evidence only; the operator still classifies
+the completion and the engine never infers it. Reconciliation is not an
+automatic retry mechanism, and a busy or failed backend response is persisted
+as rejected without another call.
 
 ## Fixed transition client
 
@@ -66,7 +71,8 @@ Before any ATX action can be wired or advertised:
    under the `atx-transition-profile` feature and host-tested with a mock KVMD
    socket, still unwired to a running daemon;
 3. add startup reconciliation and visible indeterminate/cooldown feedback —
-   reconciliation entry point exists; the GUI feedback is still missing;
+   the reconciliation entry point now requires non-Unknown read-only LED
+   evidence; the GUI feedback is still missing;
 4. establish GPIO ownership/polarity and a separate physical test procedure;
 5. run pulse timing, busy, duplicate, restart, and recovery tests.
 

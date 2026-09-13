@@ -15,7 +15,7 @@ use std::{
 use bli_kvm_atx_policy::{
     AtxCompletion, AtxDecision, AtxEligibility, AtxOperation, AtxPolicyEngine, AtxRejection,
 };
-use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome};
+use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome, PowerLedObservation};
 use bli_kvm_core::AtxControlAction;
 use bli_kvm_kvmd_atx_client::KvmdAtxClient;
 use bli_kvm_kvmd_client::KvmdCredentials;
@@ -141,7 +141,12 @@ pub async fn run_live_checks(
         _ => return Err(GateError::Phase("restart_pending")),
     }
     restarted
-        .resolve_pending([5; 16], AtxCompletion::Applied, now + 1_000)
+        .resolve_pending(
+            [5; 16],
+            AtxCompletion::Applied,
+            PowerLedObservation::Off,
+            now + 1_000,
+        )
         .map_err(|_| GateError::Phase("reconciliation"))?;
     match restarted
         .execute(pending, eligibility(now + 1_000, now + 1_000), now + 1_000)

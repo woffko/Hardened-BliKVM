@@ -22,6 +22,19 @@ use thiserror::Error;
 pub enum AtxTransitionError {
     #[error("ATX policy journal failed")]
     Policy(#[from] AtxPolicyError),
+    #[error("ATX reconciliation requires read-only power-LED evidence")]
+    EvidenceRequired,
+}
+
+/// Read-only power-LED observation used when reconciling a Pending operation.
+///
+/// The observation is mandatory evidence; it never infers the completion.
+/// The operator still classifies the outcome explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerLedObservation {
+    On,
+    Off,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,8 +110,12 @@ impl AtxTransitionEngine {
         &mut self,
         operation_id: [u8; 16],
         completion: AtxCompletion,
+        observation: PowerLedObservation,
         reconciled_at_ms: u64,
     ) -> Result<(), AtxTransitionError> {
+        if observation == PowerLedObservation::Unknown {
+            return Err(AtxTransitionError::EvidenceRequired);
+        }
         self.policy
             .resolve_pending(operation_id, completion, reconciled_at_ms)
             .map_err(AtxTransitionError::Policy)
@@ -277,7 +294,12 @@ mod tests {
         );
 
         engine
-            .resolve_pending([1; 16], AtxCompletion::Applied, 1_700)
+            .resolve_pending(
+                [1; 16],
+                AtxCompletion::Applied,
+                PowerLedObservation::On,
+                1_700,
+            )
             .unwrap();
         assert_eq!(engine.pending_count(), 0);
         assert_eq!(
@@ -309,5 +331,68 @@ mod tests {
         );
         assert_eq!(engine.pending_count(), 0);
         assert!(!socket.exists());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_requires_read_only_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let journal = directory.path().join("journal.json");
+        {
+            let mut policy = AtxPolicyEngine::open(&journal).unwrap();
+            assert_eq!(
+                policy
+                    .prepare(operation(1, AtxControlAction::Reset), reviewed(), 1_500)
+                    .unwrap(),
+                AtxDecision::Permit
+            );
+        }
+        let socket = directory.path().join("missing-kvmd.sock");
+        let mut engine = AtxTransitionEngine::open(
+            &journal,
+            KvmdAtxClient::new(&socket).unwrap(),
+            credentials(),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine.resolve_pending(
+                [1; 16],
+                AtxCompletion::Applied,
+                PowerLedObservation::Unknown,
+                1_700
+            ),
+            Err(AtxTransitionError::EvidenceRequired)
+        ));
+        assert_eq!(engine.pending_count(), 1);
+        engine
+            .resolve_pending(
+                [1; 16],
+                AtxCompletion::Applied,
+                PowerLedObservation::Off,
+                1_700,
+            )
+            .unwrap();
+        assert_eq!(engine.pending_count(), 0);
+        assert!(!socket.exists());
+    }
+
+    #[tokio::test]
+    async fn busy_backend_response_is_persisted_without_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let server = serve(&socket, &["409 Conflict"]).await;
+        let mut engine = engine(&socket, &directory.path().join("journal.json"));
+        let request = operation(1, AtxControlAction::PowerShort);
+
+        assert_eq!(
+            engine.execute(request, reviewed(), 1_500).await.unwrap(),
+            AtxTransitionOutcome::BackendFailed
+        );
+        assert_eq!(
+            engine.execute(request, reviewed(), 1_600).await.unwrap(),
+            AtxTransitionOutcome::ReplayedRejected
+        );
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("/atx/click?button=power&wait=1"));
     }
 }
