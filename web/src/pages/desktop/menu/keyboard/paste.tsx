@@ -7,13 +7,16 @@ import { ClipboardIcon, ClipboardPasteIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { paste } from '@/api/hid';
+import { textToKeyReports } from '@/lib/hid-text.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 
 type InputStatus = '' | 'error';
 
 export const Paste = () => {
   const { t } = useTranslation();
   const setIsKeyboardEnable = useSetAtom(isKeyboardEnableAtom);
+  const { restricted, reportHid } = useHidLease();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -131,9 +134,25 @@ export const Paste = () => {
 
   function submit() {
     if (isLoading || !inputValue) return;
-    setIsLoading(true);
 
     const textToSend = langue === 'ru' ? translateRuToEnWithPunctuation(inputValue) : inputValue;
+
+    if (restricted) {
+      for (const step of textToKeyReports(textToSend)) {
+        reportHid({
+          mode: 'keyboard',
+          data: [step.modifier, 0, step.usage, 0, 0, 0, 0, 0]
+        });
+        reportHid({ mode: 'keyboard', data: [0, 0, 0, 0, 0, 0, 0, 0] });
+      }
+      setInputValue('');
+      setStatus('');
+      setErrMsg('');
+      setIsModalOpen(false);
+      return;
+    }
+
+    setIsLoading(true);
 
     paste(textToSend, langue)
       .then((rsp) => {

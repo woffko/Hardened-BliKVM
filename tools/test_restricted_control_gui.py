@@ -128,6 +128,17 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("getRuntimeInventory", power)
         self.assertIn("inventory.data.powerLed", power)
 
+    def test_paste_and_shortcuts_follow_the_restricted_capability(self) -> None:
+        paste = (ROOT / "web/src/pages/desktop/menu/keyboard/paste.tsx").read_text()
+        self.assertIn("useHidLease", paste)
+        self.assertIn("textToKeyReports", paste)
+        self.assertIn("if (restricted) {", paste)
+        menu = (ROOT / "web/src/pages/desktop/menu/keyboard/index.tsx").read_text()
+        # Shortcuts and the leader key rely on legacy endpoints that the
+        # hardened server does not expose, so they must be hidden.
+        self.assertIn("{!restricted && <Shortcuts />}", menu)
+        self.assertIn("{!restricted && <LeaderKey />}", menu)
+
     def test_explicit_operator_confirmation_is_required(self) -> None:
         atom = (ROOT / "web/src/jotai/restricted-control.ts").read_text()
         self.assertIn("focusConfirmedAtom = atom(false)", atom)
