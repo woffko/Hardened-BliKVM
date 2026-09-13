@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 from tools import installed_persistent_write as native
@@ -28,7 +29,7 @@ class ControllerTests(unittest.TestCase):
             "backup": {}, "boot": "d" * 64, "observed": {"floor": 8, "generation": 40}, "terminal": None,
             "cleanupStarted": False, "disableStarted": False}
 
-    def test_staged_controller_import_closure_and_no_retention_cli(self) -> None:
+    def test_staged_controller_import_closure_and_retention_cli(self) -> None:
         source = Path(native.__file__).parent
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -38,8 +39,9 @@ class ControllerTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-B", str(root / "controller.py"), "--help"],
                 capture_output=True, timeout=5, check=False)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
-            self.assertIn(b"{prepare,wire,restore,cleanup,disable,evidence}", result.stdout)
-            self.assertNotIn(b"--retention-approved", result.stdout)
+            self.assertIn(b"{prepare,wire,restore,cleanup,disable,evidence,commit}", result.stdout)
+            self.assertIn(b"--approve-retention", result.stdout)
+            self.assertIn(b"--evidence-seal", result.stdout)
 
     def test_boot_initial_arm_requires_absent_policy_and_no_decision(self) -> None:
         cgroup = "0::/system.slice/" + self.root.name + "-boot.service\n"
@@ -310,6 +312,35 @@ class ControllerTests(unittest.TestCase):
                     gate: base64.b64encode(data).decode("ascii") for gate, data in changed.items()}}).encode()
                 with self.assertRaises(OSError):
                     native.evidence(self.root, envelope=changed_envelope)
+
+    def test_commit_requires_operator_approval_and_seal(self) -> None:
+        with patch.object(native.commit_backend, "commit") as backend:
+            with self.assertRaisesRegex(ValueError, "retention approval"):
+                native.commit(self.root, evidence_seal="a" * 64, approve_retention=False)
+            with self.assertRaisesRegex(ValueError, "evidence seal"):
+                native.commit(self.root, evidence_seal="short", approve_retention=True)
+        backend.assert_not_called()
+
+    def test_commit_passes_sealed_provider_and_reports_winner(self) -> None:
+        winner = native.decisions.Decision(self.bound, "committed",
+            dict.fromkeys(native.contract.REQUIRED_GATES, "d" * 64))
+        captured: dict[str, object] = {}
+
+        def backend(root: Path, provider: object, *, retention_approved: bool) -> native.decisions.Decision:
+            captured["root"] = root
+            captured["provider"] = provider
+            captured["approved"] = retention_approved
+            return winner
+
+        with patch.object(native.commit_backend, "commit", side_effect=backend), \
+                patch.object(native.evidence_provider, "read_verified_evidence") as evidence:
+            result = native.commit(self.root, evidence_seal="e" * 64, approve_retention=True)
+            self.assertEqual(result["result"], "committed")
+            self.assertEqual(result["gateReceiptHashes"], winner.receipt_hashes)
+            self.assertIs(captured["approved"], True)
+            provider = cast(Callable[[Path, native.contract.EvidenceBinding], object], captured["provider"])
+            provider(self.root, self.bound)
+        evidence.assert_called_once_with(self.root, self.bound, expected_seal="e" * 64)
 
     def test_unreadable_plan_attempts_emergency_closure_without_success_receipt(self) -> None:
         with patch.object(native, "load", side_effect=OSError("unreadable marker")), \

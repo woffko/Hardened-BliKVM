@@ -5,16 +5,16 @@ current qualification may supply evidence. Compatibility objects and arbitrary
 client hashes are not a provider. No recovery implementation is modified here.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 import os
 from pathlib import Path
 
 if not __package__:
     import installed_persistent_write as native
-    import persistent_write_retained_snapshot as retained
 else:
     from tools import installed_persistent_write as native
-    from tools import persistent_write_retained_snapshot as retained
 
 
 class _Backend:
@@ -58,6 +58,10 @@ class _Backend:
 
     def verify_retained_and_detached(self) -> None:
         self.require_winner()
+        if not __package__:
+            import persistent_write_retained_snapshot as retained
+        else:
+            from tools import persistent_write_retained_snapshot as retained
         after = retained.capture(self.root, native.object_value(self.plan['backup']), self.terminal)
         native.snapshot.preserve(native.object_value(self.plan['before']), after,
             new_boot=self.plan['boot'] != native.boot_identity(), allow_transition=False)

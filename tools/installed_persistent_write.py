@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare revocable persistent update wiring; retention is not exposed."""
+"""Prepare revocable persistent update wiring; commit requires explicit approval."""
 
 import argparse
 from contextlib import AbstractContextManager
@@ -18,10 +18,14 @@ import time
 from typing import cast
 
 sys.dont_write_bytecode = True
+if __name__ == "__main__":
+    sys.modules.setdefault("installed_persistent_write", sys.modules[__name__])
 if not __package__:
     import installed_application_write_gate as temporary
+    import persistent_write_commit as commit_backend
     import persistent_write_contract as contract
     import persistent_write_decision as decisions
+    import persistent_write_evidence_provider as evidence_provider
     import persistent_write_evidence_store as storage
     import persistent_write_fence as fence
     import persistent_write_files as files
@@ -31,8 +35,10 @@ if not __package__:
     import persistent_write_systemd as systemd
 else:
     from tools import installed_application_write_gate as temporary
+    from tools import persistent_write_commit as commit_backend
     from tools import persistent_write_contract as contract
     from tools import persistent_write_decision as decisions
+    from tools import persistent_write_evidence_provider as evidence_provider
     from tools import persistent_write_evidence_store as storage
     from tools import persistent_write_fence as fence
     from tools import persistent_write_files as files
@@ -44,9 +50,11 @@ else:
 u, s = snapshot.u, snapshot.s
 require = contract.temporary.require
 HELPERS = tuple(dict.fromkeys(("installed_application_write_gate.py", *temporary.HELPERS,
-    "persistent_write_contract.py", "persistent_write_decision.py", "persistent_write_evidence_store.py",
-    "persistent_write_fence.py", "persistent_write_files.py", "persistent_write_lifecycle.py",
-    "persistent_write_pipeline.py", "persistent_write_snapshot.py", "persistent_write_systemd.py")))
+    "persistent_write_commit.py", "persistent_write_contract.py", "persistent_write_decision.py",
+    "persistent_write_evidence_pins.py", "persistent_write_evidence_provider.py",
+    "persistent_write_evidence_store.py", "persistent_write_fence.py", "persistent_write_files.py",
+    "persistent_write_lifecycle.py", "persistent_write_pipeline.py", "persistent_write_retained_snapshot.py",
+    "persistent_write_snapshot.py", "persistent_write_systemd.py")))
 ASSETS = ("bindings.json", "new.deb", *HELPERS)
 PLAN_KEYS = {"schemaVersion", "phase", "binding", "boot", "started", "backup", "before", "files", "observed", "terminal",
              "cleanupStarted", "disableStarted"}
@@ -545,19 +553,41 @@ def evidence(root: Path, *, envelope: bytes | None = None) -> dict[str, object]:
                 "sealSha256": seal, "receipts": digests}
 
 
+def commit(root: Path, *, evidence_seal: str, approve_retention: bool) -> dict[str, object]:
+    """Commit a wired policy to permanent admission with sealed gate evidence.
+
+    The commit backend holds the common lock across evidence reading,
+    publication and detachment; this action only supplies the operator anchor
+    and the explicit approval, and never revokes or repairs a decision.
+    """
+    require(approve_retention is True, "explicit retention approval required")
+    require(re.fullmatch(r"[a-f0-9]{64}", evidence_seal) is not None, "invalid expected evidence seal")
+
+    def provider(root_arg: Path, bound: contract.EvidenceBinding) -> tuple[contract.GateEvidence, ...]:
+        return evidence_provider.read_verified_evidence(root_arg, bound, expected_seal=evidence_seal)
+
+    winner = commit_backend.commit(root, provider, retention_approved=True)
+    return {"result": "committed", "guardRoot": str(root), "retentionApproved": True,
+            "outcome": winner.outcome, "gateReceiptHashes": winner.receipt_hashes}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable", "evidence"))
+    parser.add_argument("action", choices=("prepare", "wire", "restore", "cleanup", "disable", "evidence", "commit"))
     parser.add_argument("--guard-root", type=Path, required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--boot", action="store_true")
-    parser.add_argument('--application-profile', choices=('seq8', 'seq9', 'seq10'))
+    parser.add_argument("--application-profile", choices=('seq8', 'seq9', 'seq10'))
+    parser.add_argument("--evidence-seal")
+    parser.add_argument("--approve-retention", action="store_true")
     args = parser.parse_args()
     require(os.geteuid() == 0, "root controller required")
     contract.guard_units(args.guard_root)
     require(not args.boot or args.action == "restore", "boot flag is only for restoration")
     require((args.assets is not None) == (args.action == "prepare"), "assets required only for preparation")
     require(args.application_profile is None or args.action == 'prepare', 'profile is only for new preparation')
+    require((args.evidence_seal is not None) == (args.action == "commit"), "evidence seal is only for commit")
+    require(args.approve_retention == (args.action == "commit"), "retention approval is only for commit")
     u.select_profile("dev7-dev9")
     if args.action == "prepare":
         result = prepare(cast(Path, args.assets), args.guard_root, application_profile=args.application_profile or 'seq8')
@@ -569,6 +599,9 @@ def main() -> int:
         result = disable(args.guard_root)
     elif args.action == "evidence":
         result = evidence(args.guard_root)
+    elif args.action == "commit":
+        result = commit(args.guard_root, evidence_seal=cast(str, args.evidence_seal),
+                        approve_retention=args.approve_retention)
     else:
         result = restore(args.guard_root, boot=args.boot)
     print(json.dumps(result, sort_keys=True))
