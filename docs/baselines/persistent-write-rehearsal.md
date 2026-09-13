@@ -432,3 +432,19 @@ Device installation is pending a new reviewed cycle and slot-capacity check.
 The last observed device retains seq2–seq9; the previous authorization reclaimed
 only seq1 for seq9. Do not overwrite immutable slots or silently reclaim another
 slot to install seq10. No permanent write-policy retention is authorized here.
+
+The user subsequently explicitly authorized deleting only seq2 and installing
+seq10 for renewed acceptance. Fresh seq9 preflight
+`57dc3912e8d74318a6045cb3d699b241` and idle restoration
+`b09907d52ce0459e913e076778919840` passed. The latter archived the current helper
+set at `hardened-blikvm-write-restored-0315fcc232c041572435c5e2` with closed9/43.
+Inventory `c2acc6ce177b4441a7d11b686c050af8` bound all eight immutable trees and
+protected seq8/seq9. Native GC `8ecdaae074cd4ddeb97632a939eda04f` then deleted only
+`app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8a6619fa225cb41f53`.
+Seq3–seq9 trees and complete status were unchanged; admission remained closed.
+Receipt: `evidence/private/slot-reclamation-seq2-20260913-a.json`.
+
+The harness now explicitly supports seq9-to10 publication and seq10 retry,
+including the changed dev7 payload size and exact10/46/previous9 terminal
+baseline. Later seq11 activation is not enabled. Full host job
+`9511c9e1cf2c47fdbebcc487a2c3d85f` passed before submitting device activation.

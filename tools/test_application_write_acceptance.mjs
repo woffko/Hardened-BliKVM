@@ -65,7 +65,55 @@ test("seq8-to9 profile binds new archive, publication and generation40", () => {
       "seq8-to9",
     ),
   );
-  assert.throws(() => writeProfile("seq9-to10"));
+  assert.throws(() => writeProfile("seq10-to11"));
+});
+
+test("seq9-to10 and retry bind corrected payload and generation43", () => {
+  const profile = writeProfile("seq9-to10");
+  const target = statusProfile("seq10");
+  assert.equal(target.generation, "46");
+  assert.equal(target.version, "0.1.0-dev7");
+  assert.equal(
+    profile.bundleSha256,
+    "85e06d1b68e54480bab89c3cdc5e0d9f80cc3ee007e7ba1e425432af4b250f1f",
+  );
+  validateActivationRequest(
+    { slotId: target.slot, expectedGeneration: "43" },
+    "seq9-to10",
+  );
+  assert.throws(() =>
+    validateActivationRequest(
+      { slotId: target.slot, expectedGeneration: "40" },
+      "seq9-to10",
+    ),
+  );
+  const body = {
+    code: 0,
+    data: {
+      slot: {
+        slotId: target.slot,
+        version: target.version,
+        sequence: "10",
+        minimumSystemSequence: "1",
+      },
+      disposition: "published",
+      manifestSha256: target.slot.slice(25),
+      payloadBytes: "8683976",
+    },
+  };
+  validateStaged(body, "seq9-to10");
+  assert.throws(() =>
+    validateStaged(
+      { ...body, data: { ...body.data, payloadBytes: "8683648" } },
+      "seq9-to10",
+    ),
+  );
+  assert.throws(() => validateStaged(body, "seq10-retry"));
+  validateStaged(
+    { ...body, data: { ...body.data, disposition: "already_present" } },
+    "seq10-retry",
+  );
+  assert.equal(writeProfile("seq10-retry").bundleSha256, profile.bundleSha256);
 });
 
 test("omitted File-backed XHR body requires prior selected-file verification", () => {

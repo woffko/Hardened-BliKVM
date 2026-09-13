@@ -166,6 +166,24 @@ class RehearsalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.validate_result({**value, 'binding': invalid}, action='prepare', root=root, application_profile='seq9')
 
+    def test_seq10_profile_binds_artifact_and_expected_confirmation(self) -> None:
+        boot = runner.native.temporary.upload.boot
+        slot, floor, generation, previous = boot.retained_profile('seq10')
+        profile = runner.native.temporary.upload.probe.PROFILES['seq10-retry']
+        self.assertEqual((floor, generation, previous), (10, 46, boot.SEQ9_SLOT))
+        self.assertEqual(slot, profile.slot)
+        self.assertEqual((profile.version, profile.payload_bytes, profile.publish), ('0.1.0-dev7', 8683976, False))
+        self.assertEqual(runner.ACTIVATION_PROFILES['seq9'], ('seq9-to10', 'seq10'))
+        self.assertNotIn('seq10', runner.ACTIVATION_PROFILES)
+        root = '/var/lib/' + runner.native.contract.PREFIX + 'a' * 24
+        bound = runner.native.contract.EvidenceBinding('a' * 24, 'b' * 64,
+            runner.native.contract.CONFIG_SHA256, slot, floor, generation)
+        value = {'result': 'prepared', 'guardRoot': root, 'phase': 'wired', 'deadlineArmed': True,
+                 'retentionApproved': False, 'binding': asdict(bound)}
+        runner.validate_result(value, action='prepare', root=root, application_profile='seq10')
+        with self.assertRaises(ValueError):
+            runner.validate_result(value, action='prepare', root=root, application_profile='seq9')
+
     def test_payload_contains_no_application_archive_or_old_package(self) -> None:
         with patch.object(runner.packages, "select_profile"), \
                 patch.object(runner.packages, "upload_payloads", return_value={"bindings.json": b"{}", "new.deb": b"test", "old.deb": b"old"}):

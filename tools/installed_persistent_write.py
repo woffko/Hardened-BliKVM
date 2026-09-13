@@ -463,7 +463,7 @@ def main() -> int:
     parser.add_argument("--guard-root", type=Path, required=True)
     parser.add_argument("--assets", type=Path)
     parser.add_argument("--boot", action="store_true")
-    parser.add_argument('--application-profile', choices=('seq8', 'seq9'))
+    parser.add_argument('--application-profile', choices=('seq8', 'seq9', 'seq10'))
     args = parser.parse_args()
     require(os.geteuid() == 0, "root controller required")
     contract.guard_units(args.guard_root)

@@ -15,7 +15,7 @@ from tools import installed_persistent_write as native
 class ControllerTests(unittest.TestCase):
     def test_unknown_preparation_profile_rejected_before_filesystem_access(self) -> None:
         with self.assertRaisesRegex(ValueError, 'unreviewed'):
-            native.prepare(Path('/not-an-asset'), Path('/not-a-guard'), application_profile='seq10')
+            native.prepare(Path('/not-an-asset'), Path('/not-a-guard'), application_profile='seq11')
 
     def setUp(self) -> None:
         self.root = Path("/var/lib") / (native.contract.PREFIX + "a" * 24)

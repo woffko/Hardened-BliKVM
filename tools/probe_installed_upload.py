@@ -35,6 +35,8 @@ class UploadProfile:
     manifest_sha: str
     sequence: int
     publish: bool
+    version: str = '0.1.0-dev6'
+    payload_bytes: int = 8683648
 
     @property
     def slot(self) -> str:
@@ -49,6 +51,9 @@ PROFILES = {
     "seq9-retry": UploadProfile("seq9-retry",
         "8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f",
         "5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2", 9, False),
+    "seq10-retry": UploadProfile("seq10-retry",
+        "85e06d1b68e54480bab89c3cdc5e0d9f80cc3ee007e7ba1e425432af4b250f1f",
+        "8a30162d0b620c2f7a6679061d2c9c4bf863aa8ac1be2d2e6dfa77caacc6ae01", 10, False, '0.1.0-dev7', 8683976),
 }
 DEFAULT_PROFILE = PROFILES["seq7-retry"]
 
@@ -107,8 +112,8 @@ def receive(stream: socket.socket) -> dict[str, object] | None:
 def validate_retry(response: dict[str, object] | None, profile: UploadProfile = DEFAULT_PROFILE, *, publish: bool = False) -> None:
     require(not publish or profile.publish, "profile does not permit publication")
     expected = {"type": "staged", "receipt": {
-        "slot": {"slotId": profile.slot, "version": "0.1.0-dev6", "sequence": profile.sequence, "minimumSystemSequence": 1},
-        "disposition": "published" if publish else "already_present", "manifestSha256": profile.manifest_sha, "payloadBytes": 8683648}}
+        "slot": {"slotId": profile.slot, "version": profile.version, "sequence": profile.sequence, "minimumSystemSequence": 1},
+        "disposition": "published" if publish else "already_present", "manifestSha256": profile.manifest_sha, "payloadBytes": profile.payload_bytes}}
     # Canonical JSON also distinguishes booleans from integer counters.
     require(json.dumps(response, sort_keys=True) == json.dumps(expected, sort_keys=True), "unexpected staging receipt")
 

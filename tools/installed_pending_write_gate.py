@@ -25,11 +25,11 @@ require = native.require
 
 def profile_for(binding: native.contract.EvidenceBinding) -> upload.probe.UploadProfile:
     binding.validate()
-    name = {8: 'seq8-publish', 9: 'seq9-retry'}.get(binding.baseline_floor)
+    name = {8: 'seq8-publish', 9: 'seq9-retry', 10: 'seq10-retry'}.get(binding.baseline_floor)
     require(name is not None, 'unreviewed pending baseline')
     assert name is not None
     profile = upload.probe.PROFILES[name]
-    require(profile.slot == binding.baseline_slot and binding.baseline_generation == {8: 40, 9: 43}[binding.baseline_floor],
+    require(profile.slot == binding.baseline_slot and binding.baseline_generation == {8: 40, 9: 43, 10: 46}[binding.baseline_floor],
             'pending profile binding differs')
     return profile
 

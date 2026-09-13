@@ -52,7 +52,7 @@ export function validateStaged(body, profileName = "seq7-to8") {
     },
     disposition: profile.disposition,
     manifestSha256: target.slot.slice(25),
-    payloadBytes: "8683648",
+    payloadBytes: profile.payloadBytes ?? "8683648",
   });
 }
 

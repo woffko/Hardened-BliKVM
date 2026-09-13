@@ -32,17 +32,19 @@ SLOT = "app-00000000000000000002-5df0c19a152415011fe2fa3f9510fbd1d4c8d02d79c7db8
 SEQ7_SLOT = "app-00000000000000000007-f2262e8f9929dda83b2baf1005b5ae9262aa075b7ddaa16f4ad6200b5daf0140"
 SEQ8_SLOT = "app-00000000000000000008-375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b"
 SEQ9_SLOT = "app-00000000000000000009-5f1aee4802addd6c0c0b444224345624cd8b9b8c46950a2231ad7e2b42de37c2"
-APPLICATION_PROFILES = ("seq2", "seq6", "seq7", "seq8", "seq9")
+SEQ10_SLOT = "app-00000000000000000010-8a30162d0b620c2f7a6679061d2c9c4bf863aa8ac1be2d2e6dfa77caacc6ae01"
+APPLICATION_PROFILES = ("seq2", "seq6", "seq7", "seq8", "seq9", "seq10")
 
 
 def retained_profile(name: str) -> tuple[str, int, int, str]:
-    profiles = {'seq8': (SEQ8_SLOT, 8, 40, SEQ7_SLOT), 'seq9': (SEQ9_SLOT, 9, 43, SEQ8_SLOT)}
+    profiles = {'seq8': (SEQ8_SLOT, 8, 40, SEQ7_SLOT), 'seq9': (SEQ9_SLOT, 9, 43, SEQ8_SLOT),
+                'seq10': (SEQ10_SLOT, 10, 46, SEQ9_SLOT)}
     require(name in profiles, 'unreviewed persistent application baseline')
     return profiles[name]
 
 
 def resolve_application_profile(updater_profile: str, requested: str | None) -> str:
-    allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7", "seq8", "seq9") if updater_profile == "dev7-dev9" else ()
+    allowed = ("seq2",) if updater_profile == "dev6-dev7" else ("seq6", "seq7", "seq8", "seq9", "seq10") if updater_profile == "dev7-dev9" else ()
     if not allowed:
         raise ValueError("unknown updater profile")
     selected = requested if requested is not None else allowed[0]
@@ -67,8 +69,8 @@ def seq7_snapshot() -> dict[str, object]:
 def capture(assets: Path, post: bool, application_profile: str | None = None) -> dict[str, object]:
     application_profile = resolve_application_profile(u.selected_profile, application_profile)
     u.installed(assets, "new")
-    if application_profile == "seq9":
-        snapshot = retained_snapshot(*retained_profile('seq9'))
+    if application_profile in ("seq9", "seq10"):
+        snapshot = retained_snapshot(*retained_profile(application_profile))
     elif application_profile == "seq8":
         snapshot = seq8_snapshot()
     elif application_profile == "seq7":
@@ -103,7 +105,7 @@ def seq8_snapshot() -> dict[str, object]:
 
 
 def retained_snapshot(slot: str, floor: int, generation: int, previous: str) -> dict[str, object]:
-    require((slot, floor, generation, previous) in ((SEQ8_SLOT, 8, 40, SEQ7_SLOT), (SEQ9_SLOT, 9, 43, SEQ8_SLOT)),
+    require((slot, floor, generation, previous) in tuple(retained_profile(name) for name in ('seq8', 'seq9', 'seq10')),
             'unreviewed retained application profile')
     require(u.selected_profile == "dev7-dev9", "application profile requires retained dev9")
     persistent.validate_dropins(True)

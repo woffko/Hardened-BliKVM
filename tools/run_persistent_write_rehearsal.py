@@ -131,18 +131,25 @@ def run_phases(action: str, receipt: dict[str, object], *, invoke: Callable[[str
         save()
 
 
+RETRY_PROFILES = {'seq8': ('seq8-publish', 'seq7-to8'), 'seq9': ('seq9-retry', 'seq9-retry'),
+                  'seq10': ('seq10-retry', 'seq10-retry')}
+ACTIVATION_PROFILES = {'seq8': ('seq8-to9', 'seq9'), 'seq9': ('seq9-to10', 'seq10')}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("preflight", "rehearse", "browser", "pending", "boot", "activate"))
     parser.add_argument('--reboot', action='store_true', help='Explicitly allow one software reboot in boot mode')
-    parser.add_argument('--application-profile', choices=('seq8', 'seq9'), default='seq8')
+    parser.add_argument('--application-profile', choices=tuple(RETRY_PROFILES), default='seq8')
     for name in ("old-package", "new-package", "endpoint", "output"):
         parser.add_argument("--" + name, required=True)
     for name in ("bundle", "base-url", "username"):
         parser.add_argument("--" + name)
     args = parser.parse_args()
-    require(args.application_profile == 'seq8' or args.action != 'activate',
-            'next activation beyond seq9 is not a reviewed scenario')
+    require(args.application_profile in ACTIVATION_PROFILES or args.action != 'activate',
+            'next activation is not a reviewed scenario')
+    retry_native, retry_browser = RETRY_PROFILES[args.application_profile]
+    activation_browser, activation_target = ACTIVATION_PROFILES.get(args.application_profile, ('', ''))
     output = transport.validate_output_path(args.output)
     require(not output.exists(), "new rehearsal receipt required")
     uploads = build_uploads(args.old_package, args.new_package)
@@ -165,8 +172,8 @@ def main() -> int:
         require(native.re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", args.username) is not None, "invalid browser account")
     if browser_mode or pending_mode:
         archive = Path(args.bundle).read_bytes()
-        archive_sha = ('8f858ec697928f39bcfc6a7242aa2d1fdbb061b8cf9232048d9468d03dff247f' if activation_mode
-                       else native.temporary.upload.probe.PROFILES['seq9-retry' if args.application_profile == 'seq9' else 'seq8-publish'].bundle_sha)
+        archive_profile = activation_target + '-retry' if activation_mode else retry_native
+        archive_sha = native.temporary.upload.probe.PROFILES[archive_profile].bundle_sha
         require(len(archive) == native.temporary.upload.probe.BUNDLE_BYTES
                 and hashlib.sha256(archive).hexdigest() == archive_sha,
                 "browser archive differs from reviewed profile")
@@ -216,7 +223,7 @@ def main() -> int:
                                action=action, root=root, application_profile=args.application_profile)
     def observe() -> dict[str, object]:
         target_confirmed = activation_mode and receipt.get('prepareSubmitted') is True and receipt.get('runtimeWritesClosed') is True
-        profile = 'seq9' if target_confirmed else args.application_profile
+        profile = activation_target if target_confirmed else args.application_profile
         _, floor, generation, _ = native.temporary.upload.boot.retained_profile(profile)
         response = ssh(shlex.join(["python3", "-B", stage + "/capture_operational_boot.py", "--assets", stage,
             "--profile", "dev7-dev9", "--application-profile", profile]), 100)
@@ -244,7 +251,7 @@ def main() -> int:
         response = subprocess.run(["node", "tools/playwright/device_application_upload_failures.mjs",
             "/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs",
             "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome", args.base_url.rstrip("/"),
-            args.username, args.bundle, str(destination), 'seq9-retry' if args.application_profile == 'seq9' else 'seq7-to8'],
+            args.username, args.bundle, str(destination), retry_browser],
             input=gui, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=240, check=False, close_fds=True)
         path = transport.validate_private_file(str(destination))
@@ -255,7 +262,7 @@ def main() -> int:
         receipt["applicationActivations"] = value.get("activationRequests")
         save()
         require(response.returncode == 0 and value.get("result") == "passed" and value.get("probe") == "application-upload-failures"
-                and value.get('profile') == ('seq9-retry' if args.application_profile == 'seq9' else 'seq7-to8')
+                and value.get('profile') == retry_browser
                 and value.get("uploadRequests") == 4 and value.get("activationRequests") == 0
                 and value.get("logoutRequests") == 1 and value.get("inflightUploadRevoked") is True
                 and value.get("retryAlreadyPresent") is True and value.get("cancelled") is True
@@ -274,7 +281,7 @@ def main() -> int:
         response = subprocess.run(['node', 'tools/playwright/device_application_write.mjs', 'activate',
             '/home/w0w/.local/share/playwright/node_modules/playwright/index.mjs',
             '/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome',
-            args.base_url.rstrip('/'), args.username, args.bundle, str(destination), 'seq8-to9'],
+            args.base_url.rstrip('/'), args.username, args.bundle, str(destination), activation_browser],
             input=gui, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=150, check=False)
         path = transport.validate_private_file(str(destination))
         require(path.stat().st_size <= 65536, 'oversize activation browser receipt')
@@ -284,12 +291,13 @@ def main() -> int:
         receipt['applicationActivations'] = value.get('activationRequests')
         save()
         ui = native.object_value(value.get('ui'))
-        require(response.returncode == 0 and value.get('result') == 'passed' and value.get('profile') == 'seq8-to9'
+        require(response.returncode == 0 and value.get('result') == 'passed' and value.get('profile') == activation_browser
             and value.get('selectedArchiveVerified') is True and value.get('uploadRequests') == 1
             and value.get('activationRequests') == 1 and value.get('blockedMutations') == 0 and value.get('pageErrors') == 0
-            and ui.get('stagingDisposition') == 'published' and ui.get('generationReviewed') == '40'
+            and ui.get('stagingDisposition') == 'published'
+            and ui.get('generationReviewed') == str(native.temporary.upload.boot.retained_profile(args.application_profile)[2])
             and ui.get('activationStatus') == 202 and ui.get('activationReceiptValidated') is True,
-            'seq9 GUI activation receipt unverified')
+            'GUI activation receipt unverified')
         return value
     def exercise_pending() -> dict[str, object]:
         receipt['applicationUploads'] = 1
