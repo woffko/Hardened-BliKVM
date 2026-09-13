@@ -581,6 +581,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-media-transition"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "bli-kvm-kvmd-client",
+ "bli-kvm-kvmd-media-client",
+ "bli-kvm-media-catalog",
+ "bli-kvm-media-policy",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "bli-kvm-platform-bli"
 version = "0.1.0"
 dependencies = [

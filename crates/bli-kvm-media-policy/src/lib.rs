@@ -48,6 +48,14 @@ impl MediaOperation {
             command,
         })
     }
+
+    pub const fn operation_id(self) -> [u8; 16] {
+        self.operation_id
+    }
+
+    pub const fn command(self) -> VirtualMediaCommand {
+        self.command
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,8 +82,18 @@ impl MediaEligibility {
         }
     }
 
+    #[cfg(feature = "media-test-profile")]
+    pub const fn verified_for_test_profile() -> Self {
+        Self::verified()
+    }
+
     #[cfg(test)]
     const fn verified_for_test() -> Self {
+        Self::verified()
+    }
+
+    #[cfg(any(test, feature = "media-test-profile"))]
+    const fn verified() -> Self {
         Self {
             capability_enabled: true,
             backend_ready: true,
