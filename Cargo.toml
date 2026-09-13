@@ -6,6 +6,7 @@ members = [
   "crates/bli-kvm-control-broker",
   "crates/bli-kvm-hid-adapter",
   "crates/bli-kvm-hid-transition",
+  "crates/bli-kvm-hid-policy",
   "crates/bli-kvm-atx-policy",
   "crates/bli-kvm-fan-policy",
   "crates/bli-kvm-fan-supervisor",
