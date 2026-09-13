@@ -61,7 +61,7 @@ capability-gated through `supportsSettingsTab`:
 ## Slice 0 detail
 
 - Add `GET /api/hostname` returning the bounded system hostname from
-  `/proc/sys/kernel/hostname`; no setter.
+  the world-readable `/etc/hostname` (the sandbox hides `/proc/sys`); no setter.
 - About uses the new read-only endpoint and no longer renders a hostname editor
   unless a future writable capability exists.
 - Appearance stops probing the absent terminal/download endpoints and derives

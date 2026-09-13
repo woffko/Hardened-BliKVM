@@ -32,7 +32,7 @@ class HardenedSettingsPortTests(unittest.TestCase):
         server = SERVER.read_text(encoding="utf-8")
         self.assertIn('.route("/hostname", get(hostname))', server)
         self.assertIn("fn validate_hostname", server)
-        self.assertIn("/proc/sys/kernel/hostname", server)
+        self.assertIn("/etc/hostname", server)
 
 
 if __name__ == "__main__":

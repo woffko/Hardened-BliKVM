@@ -330,7 +330,7 @@ async fn hostname() -> AppResult<Json<ApiResponse<Hostname>>> {
 }
 
 fn system_hostname() -> AppResult<String> {
-    let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
+    let raw = std::fs::read_to_string("/etc/hostname")
         .map_err(|_| AppError::ServiceUnavailable("hostname is unavailable".into()))?;
     validate_hostname(raw.trim())
 }
