@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 
 const profiles = Object.freeze({
+  "seq10-to11": Object.freeze({
+    source: "seq10",
+    target: "seq11",
+    bundleBytes: 8724480,
+    bundleSha256:
+      "e113e4bc1d9091d294ea499e775a03e685f51f75f362c3cbb08c0fbaf005ec40",
+    payloadBytes: "8683976",
+    disposition: "published",
+    stagedMessage: "Archive verified and staged",
+  }),
   "seq9-to10": Object.freeze({
     source: "seq9",
     target: "seq10",

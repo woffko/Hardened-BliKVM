@@ -26,6 +26,12 @@ const profiles = Object.freeze({
     version: "0.1.0-dev6",
     slot: "app-00000000000000000008-375f9800a147b8f273073349af1613e3fb0cf9f7b97af914d7a75e9446ea694b",
   }),
+  seq11: Object.freeze({
+    generation: "49",
+    sequence: "11",
+    version: "0.1.0-dev7",
+    slot: "app-00000000000000000011-d6283a7be390423188d8931bae148d9555305a187f18049796cca6b793621d25",
+  }),
   seq10: Object.freeze({
     generation: "46",
     sequence: "10",

@@ -4,16 +4,16 @@ CURRENT_PINS = {
     "browser_sources": {
         "application_response_capture.mjs": "ee5e37599383bfbb9359c237bdc3905287fbc1bebfda3f5e5ef000b4b6ae4f7a",
         "application_write_acceptance.mjs": "3309ba903850814084286f72e88d79730a89a517e1e0d33c8d6f4e45a2ffb3dd",
-        "application_write_profiles.mjs": "cf0cb468ad2f422056bacc663cb88cd482cba5a37cdcc0db8958f8f976b486d7",
+        "application_write_profiles.mjs": "baead05903cf4c1268949ee1c00988fd1c3b93db73189f4e0407fdbb21d5e4e9",
         "device_application_write.mjs": "0ebccce6b1586c1d6abd60242c2b86522b7b0ebbd6b171bfbd948fbeec046625",
-        "status_api_acceptance.mjs": "5be6f08951836cc3af26fac55e88a62164991043ac504b98698432ada10d214e"
+        "status_api_acceptance.mjs": "257f093639f8ceb0024c3e4e2bb21e8828e46b173ede67cc7e55ad09ab2c32fd"
     },
     "failure_browser_sources": {
         "application_response_capture.mjs": "ee5e37599383bfbb9359c237bdc3905287fbc1bebfda3f5e5ef000b4b6ae4f7a",
         "application_write_acceptance.mjs": "3309ba903850814084286f72e88d79730a89a517e1e0d33c8d6f4e45a2ffb3dd",
-        "application_write_profiles.mjs": "cf0cb468ad2f422056bacc663cb88cd482cba5a37cdcc0db8958f8f976b486d7",
+        "application_write_profiles.mjs": "baead05903cf4c1268949ee1c00988fd1c3b93db73189f4e0407fdbb21d5e4e9",
         "device_application_upload_failures.mjs": "3bac915e44c86790c96bf2e7ae168b0992e3383c12d4e1e1104cb3619052d43b",
-        "status_api_acceptance.mjs": "5be6f08951836cc3af26fac55e88a62164991043ac504b98698432ada10d214e",
+        "status_api_acceptance.mjs": "257f093639f8ceb0024c3e4e2bb21e8828e46b173ede67cc7e55ad09ab2c32fd",
         "upload_termination.mjs": "fb08fe8c593beeca8c489583bdc4a0894e03b304d73f51485cbb87b9ac38ba14"
     },
     "gui_tool": "3a00a0527fb76466285229c899d2062aeec4f20bc5e2a678f1c16d8c29ca2a1b",
