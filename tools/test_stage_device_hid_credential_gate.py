@@ -32,6 +32,8 @@ class HidCredentialGateTests(unittest.TestCase):
         self.assertIn('chmod 400 "$cred/kvmd-user" "$cred/kvmd-password"', script)
         self.assertIn("useradd --system --user-group", script)
         self.assertIn("--property=Group=hardened-blikvm-hid", script)
+        self.assertIn('chmod 0711 "$base" "$root"', script)
+        self.assertIn('install -m 0755 "$gate"', script)
         self.assertIn("od -An -N8 -tx1 /dev/urandom", script)
         self.assertIn("setpriv", script)
         self.assertIn("source_read_denied", script)
@@ -55,6 +57,8 @@ class HidCredentialGateTests(unittest.TestCase):
             "gateSha256",
             "unit",
             "failureStage",
+            "failureType",
+            "failureFacts",
             "deliveryToken",
             "sourceReadDenied",
             "cleanupConfirmed",

@@ -58,6 +58,8 @@ class Receipt(TypedDict):
     gateSha256: str
     unit: str
     failureStage: str
+    failureType: str
+    failureFacts: dict[str, str]
     deliveryToken: str
     sourceReadDenied: bool
     cleanupConfirmed: bool
@@ -154,6 +156,7 @@ def build_apply_script(paths: GatePaths) -> str:
             "gate": paths.gate_binary,
             "archive": paths.stage.archive,
             "payload": paths.stage.payload,
+            "base": paths.stage.root,
             "unit": UNIT,
         }
     )
@@ -166,6 +169,10 @@ install -d -m 0700 "$payload"
 tar -xzf "$archive" -C "$payload" --strip-components=1
 if [ ! -f "$gate" ]; then emit gate_present no; exit 1; fi
 emit gate_present yes
+chmod 0711 "$base" "$root"
+install -d -m 0755 "$root/bin"
+install -m 0755 "$gate" "$root/bin/bli-kvm-hid-credential-gate"
+staged="$root/bin/bli-kvm-hid-credential-gate"
 account_created=no
 if ! id -u hardened-blikvm-hid >/dev/null 2>&1; then
   useradd --system --user-group --home-dir /nonexistent \
@@ -192,7 +199,7 @@ if systemd-run --quiet --wait --pipe --collect \
   --property=Group=hardened-blikvm-hid \
   --property=LoadCredential="kvmd-user:$cred/kvmd-user" \
   --property=LoadCredential="kvmd-password:$cred/kvmd-password" \
-  "$gate" > "$out" 2>/dev/null; then
+  "$staged" > "$out" 2>/dev/null; then
   delivery=ok
 fi
 case "$delivery" in ok) emit credential_delivery ok ;; *) emit credential_delivery failed ;; esac
@@ -280,8 +287,22 @@ def execute(options: Options) -> int:
     paths = gate_paths(bundle.sha256, secrets.token_hex(8))
     secret = prototype.read_secret_stdin()
     cleanup_confirmed = False
+    cleanup_required = False
     checks: dict[str, str] = {}
     stage = "preflight"
+
+    def run_rollback() -> bool:
+        rolled_back = prototype.parse_facts(
+            prototype.run_ssh(target, secret, build_rollback_script(paths), timeout=40).stdout,
+            ROLLBACK_KEYS,
+        )
+        return (
+            rolled_back.get("credentials_removed") == "yes"
+            and rolled_back.get("account_removed") == "yes"
+            and rolled_back.get("stage_absent") == "yes"
+            and rolled_back.get("unit_absent") == "yes"
+        )
+
     try:
         preflight = prototype.parse_facts(
             prototype.run_ssh(target, secret, build_preflight_script(paths), timeout=25).stdout,
@@ -298,6 +319,7 @@ def execute(options: Options) -> int:
                 stdin=bundle_stream,
                 timeout=90,
             ).check_returncode()
+        cleanup_required = True
 
         stage = "apply"
         apply_result = prototype.run_ssh(
@@ -317,16 +339,7 @@ def execute(options: Options) -> int:
             raise GateError("apply", "credential_source_readable")
 
         stage = "rollback"
-        rollback = prototype.parse_facts(
-            prototype.run_ssh(target, secret, build_rollback_script(paths), timeout=40).stdout,
-            ROLLBACK_KEYS,
-        )
-        if (
-            rollback.get("credentials_removed") != "yes"
-            or rollback.get("account_removed") != "yes"
-            or rollback.get("stage_absent") != "yes"
-            or rollback.get("unit_absent") != "yes"
-        ):
+        if not run_rollback():
             raise GateError("rollback", "rollback_incomplete")
 
         stage = "final"
@@ -338,11 +351,18 @@ def execute(options: Options) -> int:
             raise GateError("final", "cleanup_unconfirmed")
         cleanup_confirmed = True
     except GateError as error:
+        if cleanup_required and not cleanup_confirmed:
+            try:
+                cleanup_confirmed = run_rollback()
+            except (OSError, UnicodeError, ValueError):
+                cleanup_confirmed = False
         receipt: Receipt = {
             "bundleSha256": bundle.sha256,
             "gateSha256": checks.get("gate_sha256", ""),
             "unit": UNIT,
             "failureStage": stage,
+            "failureType": error.failure_type,
+            "failureFacts": checks,
             "deliveryToken": "",
             "sourceReadDenied": False,
             "cleanupConfirmed": cleanup_confirmed or error.cleanup_confirmed is True,
@@ -352,18 +372,20 @@ def execute(options: Options) -> int:
         write_json_0600_atomic(output, receipt)
         return 1
 
-    receipt = {
+    success_receipt: Receipt = {
         "bundleSha256": bundle.sha256,
         "gateSha256": checks["gate_sha256"],
         "unit": UNIT,
         "failureStage": "",
+        "failureType": "",
+        "failureFacts": {},
         "deliveryToken": "ok",
         "sourceReadDenied": True,
         "cleanupConfirmed": True,
         "physicalActionsInvoked": False,
         "persistentChangeScope": "none",
     }
-    write_json_0600_atomic(output, receipt)
+    write_json_0600_atomic(output, success_receipt)
     return 0
 
 
