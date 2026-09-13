@@ -32,6 +32,37 @@ class Inventory(TypedDict):
     missingLicense: list[str]
 
 
+class LicenseReport(TypedDict):
+    schemaVersion: int
+    totals: dict[str, int]
+    licenses: dict[str, int]
+    noassertion: list[str]
+
+
+def build_license_report(inventory: Inventory) -> LicenseReport:
+    licenses: dict[str, int] = {}
+    noassertion: list[str] = []
+    for entry in inventory["packages"]:
+        if entry["license"]:
+            expression = entry["license"]
+        elif entry["licenseFile"]:
+            expression = "LICENSE-FILE"
+        else:
+            expression = "NOASSERTION"
+        licenses[expression] = licenses.get(expression, 0) + 1
+        if expression == "NOASSERTION":
+            noassertion.append(f"{entry['name']}@{entry['version']}")
+    return {
+        "schemaVersion": 1,
+        "totals": {
+            "packages": inventory["packageCount"],
+            "noassertion": len(noassertion),
+        },
+        "licenses": dict(sorted(licenses.items())),
+        "noassertion": sorted(noassertion),
+    }
+
+
 def build_inventory(metadata: dict[str, object]) -> Inventory:
     packages = metadata.get("packages")
     if not isinstance(packages, list):
@@ -92,6 +123,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="record missing licenses without failing (audit only)",
     )
+    _ = parser.add_argument(
+        "--report",
+        action="store_true",
+        help="emit the grouped license report instead of the package inventory",
+    )
     return parser.parse_args()
 
 
@@ -102,7 +138,8 @@ def main() -> int:
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"license inventory failed: {error}", file=sys.stderr)
         return 1
-    payload = json.dumps(inventory, indent=2, sort_keys=True) + "\n"
+    document: object = build_license_report(inventory) if options.report else inventory
+    payload = json.dumps(document, indent=2, sort_keys=True) + "\n"
     if options.output:
         with open(options.output, "w", encoding="utf-8") as stream:
             stream.write(payload)

@@ -42,6 +42,30 @@ class LicenseInventoryTests(unittest.TestCase):
         )
         self.assertEqual(inventory["missingLicense"], [])
 
+    def test_license_report_groups_expressions_and_flags_noassertion(self) -> None:
+        inventory = license_inventory.build_inventory(
+            metadata(
+                [
+                    {"name": "a", "version": "1.0.0", "license": "MIT", "source": "registry"},
+                    {"name": "b", "version": "1.0.0", "license": "MIT", "source": "registry"},
+                    {"name": "c", "version": "1.0.0", "license": None, "source": "registry"},
+                    {
+                        "name": "d",
+                        "version": "1.0.0",
+                        "license": None,
+                        "license_file": "LICENSE",
+                        "source": "registry",
+                    },
+                ]
+            )
+        )
+        report = license_inventory.build_license_report(inventory)
+        self.assertEqual(report["totals"], {"packages": 4, "noassertion": 1})
+        self.assertEqual(
+            report["licenses"], {"LICENSE-FILE": 1, "MIT": 2, "NOASSERTION": 1}
+        )
+        self.assertEqual(report["noassertion"], ["c@1.0.0"])
+
     def test_invalid_metadata_fails_closed(self) -> None:
         bad_inputs: list[dict[str, object]] = [
             {},
