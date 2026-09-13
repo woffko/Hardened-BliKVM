@@ -94,7 +94,8 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("Modal.confirm(", confirmation)
         self.assertIn("onOk:", confirmation)
         self.assertIn("setConfirmed(true)", confirmation)
-        self.assertIn("pendingRef", confirmation)
+        self.assertIn("pendingConfirmation", confirmation)
+        self.assertIn("confirmedGlobal", confirmation)
         for hook in ("useRestrictedPower.ts", "useHidLease.ts"):
             text = (ROOT / "web/src/hooks" / hook).read_text()
             self.assertIn("useFocusConfirmation", text)

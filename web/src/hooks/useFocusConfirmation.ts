@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { Modal } from 'antd';
 import { useAtom } from 'jotai';
 
@@ -10,19 +10,34 @@ const CONFIRM_BODY =
   'This binds the current session to the visible target for a short time.';
 
 /**
+ * Shared confirmation state so that every queued HID report and every mounted
+ * control surface observes the same decision. The module-level flag and the
+ * single pending promise prevent a burst of queued events from opening a new
+ * modal after the operator already confirmed.
+ */
+let confirmedGlobal = false;
+let pendingConfirmation: Promise<boolean> | null = null;
+
+/**
  * Requires an explicit operator confirmation before any restricted HID or
- * power action. The confirmation is requested at most once at a time.
+ * power action. The confirmation is requested at most once at a time and is
+ * never re-requested while it is being decided.
  */
 export function useFocusConfirmation() {
   const [confirmed, setConfirmed] = useAtom(focusConfirmedAtom);
-  const pendingRef = useRef<Promise<boolean> | null>(null);
+
+  useEffect(() => {
+    if (confirmed) {
+      confirmedGlobal = true;
+    }
+  }, [confirmed]);
 
   const ensureConfirmed = useCallback(async () => {
-    if (confirmed) {
+    if (confirmedGlobal) {
       return true;
     }
-    if (pendingRef.current) {
-      return pendingRef.current;
+    if (pendingConfirmation) {
+      return pendingConfirmation;
     }
     const pending = new Promise<boolean>((resolve) => {
       Modal.confirm({
@@ -31,17 +46,18 @@ export function useFocusConfirmation() {
         okText: 'Confirm and control',
         cancelText: 'Cancel',
         onOk: () => {
+          confirmedGlobal = true;
           setConfirmed(true);
           resolve(true);
         },
         onCancel: () => resolve(false)
       });
     }).finally(() => {
-      pendingRef.current = null;
+      pendingConfirmation = null;
     });
-    pendingRef.current = pending;
+    pendingConfirmation = pending;
     return pending;
-  }, [confirmed, setConfirmed]);
+  }, [setConfirmed]);
 
   return { confirmed, ensureConfirmed };
 }

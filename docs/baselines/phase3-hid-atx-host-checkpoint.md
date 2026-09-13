@@ -219,3 +219,32 @@ gates remain device/recovery-card bound.
   and `persistentChangeScope=none`.
 
 All device-mutating steps require explicit confirmation before execution.
+
+## Restricted-control test profile and HID path coverage (2026-09-13)
+
+- The combined HID+ATX test profile is built by
+  `scripts/build-restricted-control-profile.sh` with
+  `restricted-control-surface`, `hid-transition-profile` and
+  `atx-transition-profile`, and deployed reversibly by
+  `tools/stage_device_restricted_control_profile.py`; see
+  `docs/baselines/phase3-restricted-control-test-profile.md`.
+- The server reads `BLI_KVM_RESTRICTED_CONTROLS`; the broker serves HID and ATX
+  from one state through `run_with_control_profile`, selecting each backend
+  from fixed environment keys and a per-backend `LoadCredential`.
+- ATX startup reconciliation now accepts reviewed decisions from the optional
+  absolute `BLI_KVM_ATX_RECONCILIATIONS` file (`operationId`, `completion`,
+  `observation`), bounded and rejecting unknown evidence or duplicates; no
+  outcome is inferred automatically.
+- Host coverage was extended: `hid_profile_applies_reports_to_the_kvmd_backend`
+  drives attestation, lease acquisition and a keyboard report through the real
+  policy and KVMD client to a mock Unix socket, asserting the fixed `send_key`
+  route; `control_profile_reconciles_pending_before_serving` covers the
+  combined profile applying a reviewed decision before serving.
+- A first test bundle served the pre-Phase-3 retained slot web, so the operator
+  UI had no restricted HID path even though the server advertised
+  `read_write`. The profile build now bundles the operator web assets, the
+  harness serves them from the runtime root, and it fails closed when the
+  restricted GUI markers are absent.
+- The deployed stand is runtime-only (`/tmp` root plus transient units) and
+  never touches the retained slots, the permanent write policy or the live 443
+  GUI. Real HID injection into a physical target remains an operator step.
