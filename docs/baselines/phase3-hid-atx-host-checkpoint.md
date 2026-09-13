@@ -81,12 +81,16 @@ HID:
 
 ATX:
 
-- run live gates on H616 with Power and Reset physically disconnected: real
-  KVMD `wait=1` pulse timing, busy, duplicate, cooldown, restart in Pending and
-  reconciliation. These need the enrolled KVMD credential and `/run/kvmd/kvmd.sock`
-  on the device and explicit operator confirmation;
-- startup reconciliation must compare read-only LED/state evidence before
-  recording a Pending outcome;
+- live waiting-route gate passed on the test H616 on 2026-09-13 (private
+  receipt `atx-live-gate-20260913-a.json`) with Power and Reset physically
+  disconnected: three real KVMD `wait=1` clicks (`power`, `power_long`,
+  `reset`), duplicate replay, same-ID conflict rejection, five-second cooldown,
+  restart with a Pending journal and explicit reconciliation. `power_short`
+  returned in 1126 ms, `physical_actions_invoked=yes`,
+  `persistentChangeScope=none` and the transient unit and staging were
+  removed;
+- startup reconciliation must still compare read-only LED/state evidence
+  before recording a Pending outcome in the daemon;
 - GUI indeterminate/cooldown feedback.
 
 All device-mutating steps require explicit confirmation before execution.
