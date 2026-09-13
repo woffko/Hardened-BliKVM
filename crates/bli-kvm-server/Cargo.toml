@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+restricted-control-surface = []
+
 [dependencies]
 argon2.workspace = true
 axum.workspace = true

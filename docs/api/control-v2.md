@@ -109,6 +109,10 @@ response write, and diagnostics can never change a control response.
 
 - Shipped builds keep HID, ATX and virtual media compile-time disabled. A
   separate test profile may enable one capability at a time for device gates.
+  The server advertises HID and power `read_write` only in a
+  `restricted-control-surface` build with an explicit opt-in and a configured
+  control socket; every other build keeps them unavailable, so advertising
+  cannot be turned on by configuration alone.
   The broker can attach a HID control policy only under the
   `hid-transition-profile` feature; even there each acquire, renew and report
   requires a current target attestation, a release stays unconditional for

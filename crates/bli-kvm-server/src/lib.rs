@@ -76,6 +76,10 @@ pub struct ServerOptions {
     /// Privileged control broker used only for safe-target/focus attestation.
     /// No value keeps the HID focus endpoint unavailable.
     pub control_socket: Option<PathBuf>,
+    /// Explicit opt-in for advertising the restricted control surface. Only a
+    /// `restricted-control-surface` build honours it; shipped builds always
+    /// keep HID and ATX `not_exposed`.
+    pub restricted_controls_enabled: bool,
 }
 
 impl Default for ServerOptions {
@@ -95,6 +99,7 @@ impl Default for ServerOptions {
             update_activation_socket: None,
             update_writes_enabled: false,
             control_socket: None,
+            restricted_controls_enabled: false,
         }
     }
 }
@@ -160,6 +165,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         } else {
             FeatureStatus::read_only(EvidenceLevel::SourceVerified)
         };
+    }
+    #[cfg(feature = "restricted-control-surface")]
+    if options.restricted_controls_enabled && options.control_socket.is_some() {
+        manifest.hid.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
     }
     manifest
         .validate()
@@ -2056,5 +2066,49 @@ mod tests {
         assert_eq!(power_body["data"]["applied"], false);
         assert_eq!(power_body["data"]["rejection"], "cooldown_active");
         broker.await.unwrap();
+    }
+
+    #[cfg(not(feature = "restricted-control-surface"))]
+    #[tokio::test]
+    async fn restricted_controls_stay_unexposed_in_default_builds() {
+        let app = app_with_options(ServerOptions {
+            control_socket: Some(PathBuf::from("/run/hardened-blikvm-test/control.sock")),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let response = app
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let text = serde_json::to_string(&json_body(response).await).unwrap();
+        assert!(text.contains(r#""availability":"unavailable""#));
+        assert!(!text.contains("read_write"));
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn restricted_controls_are_advertised_only_when_opted_in() {
+        let app = app_with_options(ServerOptions {
+            control_socket: Some(PathBuf::from("/run/hardened-blikvm-test/control.sock")),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let response = app
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let text = serde_json::to_string(&json_body(response).await).unwrap();
+        assert!(text.contains("read_write"));
+
+        let disabled = app_with_options(ServerOptions {
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let response = disabled
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let text = serde_json::to_string(&json_body(response).await).unwrap();
+        assert!(!text.contains("read_write"));
     }
 }

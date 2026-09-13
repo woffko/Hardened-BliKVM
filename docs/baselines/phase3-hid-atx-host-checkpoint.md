@@ -69,6 +69,10 @@ disabled and the denial broker is unchanged in shipped builds.
   representable routes are the
   three fixed `wait=1` KVMD clicks; no native GPIO or device path exists in the
   ATX path, pinned by `tools/test_phase3_control_boundaries.py`.
+- Capability advertisement is compile-time gated: only a
+  `restricted-control-surface` server build with an explicit opt-in and a
+  configured control socket advertises HID and power `read_write`; default and
+  shipped builds keep them unavailable, pinned by server tests.
 - Fail-closed invariants are pinned by
   `tools/test_phase3_control_boundaries.py`.
 
