@@ -570,6 +570,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-media-isolated-gate"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "bli-kvm-kvmd-client",
+ "bli-kvm-kvmd-media-client",
+ "bli-kvm-media-catalog",
+ "bli-kvm-media-policy",
+ "bli-kvm-media-transition",
+ "tokio",
+]
+
+[[package]]
 name = "bli-kvm-media-policy"
 version = "0.1.0"
 dependencies = [

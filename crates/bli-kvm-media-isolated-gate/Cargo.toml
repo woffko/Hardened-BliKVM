@@ -1,0 +1,17 @@
+[package]
+name = "bli-kvm-media-isolated-gate"
+description = "Isolated virtual-media transition gate for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bli-kvm-kvmd-media-client = { path = "../bli-kvm-kvmd-media-client" }
+bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog" }
+bli-kvm-media-policy = { path = "../bli-kvm-media-policy", features = ["media-test-profile"] }
+bli-kvm-media-transition = { path = "../bli-kvm-media-transition" }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }

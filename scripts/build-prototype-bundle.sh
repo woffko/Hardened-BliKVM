@@ -30,9 +30,10 @@ control_broker_binary="$release_dir/bli-kvm-control-broker"
 hid_credential_gate_binary="$release_dir/bli-kvm-hid-credential-gate"
 hid_isolated_gate_binary="$release_dir/bli-kvm-hid-isolated-gate"
 atx_live_gate_binary="$release_dir/bli-kvm-atx-live-gate"
+media_isolated_gate_binary="$release_dir/bli-kvm-media-isolated-gate"
 update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
-scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
+scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 temp_root=$(mktemp -d /tmp/hardened-blikvm-bundle.XXXXXX)
 cleanup() {
@@ -60,6 +61,7 @@ install -m 0755 "$control_broker_binary" "$stage/libexec/bli-kvm-control-broker"
 install -m 0755 "$hid_credential_gate_binary" "$stage/libexec/bli-kvm-hid-credential-gate"
 install -m 0755 "$hid_isolated_gate_binary" "$stage/libexec/bli-kvm-hid-isolated-gate"
 install -m 0755 "$atx_live_gate_binary" "$stage/libexec/bli-kvm-atx-live-gate"
+install -m 0755 "$media_isolated_gate_binary" "$stage/libexec/bli-kvm-media-isolated-gate"
 install -m 0755 "$update_supervisor_binary" "$stage/libexec/bli-kvm-update-supervisor"
 install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-health-reporter"
 cp -a web/dist/. "$stage/share/web/"
@@ -140,6 +142,7 @@ control_broker_sha=$(sha256sum "$stage/libexec/bli-kvm-control-broker" | cut -d 
 hid_credential_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-hid-credential-gate" | cut -d ' ' -f 1)
 hid_isolated_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-hid-isolated-gate" | cut -d ' ' -f 1)
 atx_live_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-atx-live-gate" | cut -d ' ' -f 1)
+media_isolated_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-media-isolated-gate" | cut -d ' ' -f 1)
 update_supervisor_sha=$(sha256sum "$stage/libexec/bli-kvm-update-supervisor" | cut -d ' ' -f 1)
 update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-reporter" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
@@ -155,6 +158,7 @@ control_broker_size=$(wc -c < "$stage/libexec/bli-kvm-control-broker" | tr -d ' 
 hid_credential_gate_size=$(wc -c < "$stage/libexec/bli-kvm-hid-credential-gate" | tr -d ' ')
 hid_isolated_gate_size=$(wc -c < "$stage/libexec/bli-kvm-hid-isolated-gate" | tr -d ' ')
 atx_live_gate_size=$(wc -c < "$stage/libexec/bli-kvm-atx-live-gate" | tr -d ' ')
+media_isolated_gate_size=$(wc -c < "$stage/libexec/bli-kvm-media-isolated-gate" | tr -d ' ')
 update_supervisor_size=$(wc -c < "$stage/libexec/bli-kvm-update-supervisor" | tr -d ' ')
 update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-reporter" | tr -d ' ')
 
@@ -175,6 +179,7 @@ jq -n \
   --arg hid_credential_gate_sha "$hid_credential_gate_sha" \
   --arg hid_isolated_gate_sha "$hid_isolated_gate_sha" \
   --arg atx_live_gate_sha "$atx_live_gate_sha" \
+  --arg media_isolated_gate_sha "$media_isolated_gate_sha" \
   --arg update_supervisor_sha "$update_supervisor_sha" \
   --arg update_health_reporter_sha "$update_health_reporter_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
@@ -189,6 +194,7 @@ jq -n \
   --argjson hid_credential_gate_size "$hid_credential_gate_size" \
   --argjson hid_isolated_gate_size "$hid_isolated_gate_size" \
   --argjson atx_live_gate_size "$atx_live_gate_size" \
+  --argjson media_isolated_gate_size "$media_isolated_gate_size" \
   --argjson update_supervisor_size "$update_supervisor_size" \
   --argjson update_health_reporter_size "$update_health_reporter_size" \
   '{
@@ -208,6 +214,7 @@ jq -n \
       hidCredentialGate: {path: "libexec/bli-kvm-hid-credential-gate", sha256: $hid_credential_gate_sha, size: $hid_credential_gate_size},
       hidIsolatedGate: {path: "libexec/bli-kvm-hid-isolated-gate", sha256: $hid_isolated_gate_sha, size: $hid_isolated_gate_size},
       atxLiveGate: {path: "libexec/bli-kvm-atx-live-gate", sha256: $atx_live_gate_sha, size: $atx_live_gate_size},
+      mediaIsolatedGate: {path: "libexec/bli-kvm-media-isolated-gate", sha256: $media_isolated_gate_sha, size: $media_isolated_gate_size},
       updateSupervisor: {path: "libexec/bli-kvm-update-supervisor", sha256: $update_supervisor_sha, size: $update_supervisor_size},
       updateHealthReporter: {path: "libexec/bli-kvm-update-health-reporter", sha256: $update_health_reporter_sha, size: $update_health_reporter_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
@@ -231,6 +238,7 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-control-broker")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-hid-credential-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-hid-isolated-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-atx-live-gate")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-media-isolated-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-supervisor")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
