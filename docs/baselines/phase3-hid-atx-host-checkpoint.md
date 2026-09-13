@@ -141,7 +141,8 @@ inventory stays `janus_enabled: false`, and no WebRTC/Janus transport is
 enabled in the server or web dependencies. WebRTC, hotplug, resolution,
 two-client, latency and 24-hour soak gates remain ahead. A host soak test also
 streams 2,000 MJPEG frames through the loopback proxy without truncation or
-reordering, and a capability-selected transport helper chooses only advertised
-transports with MJPEG as the sole default.
+reordering, a capability-selected transport helper chooses only advertised
+transports with MJPEG as the sole default, and two concurrent clients receive
+independent streams without cross-contamination.
 
 All device-mutating steps require explicit confirmation before execution.
