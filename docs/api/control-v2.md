@@ -157,7 +157,9 @@ backends from fixed environment keys:
 
 - application server: `BLI_KVM_CONTROL_SOCKET` (absolute control socket) and
   `BLI_KVM_RESTRICTED_CONTROLS=1` (explicit opt-in). Without both, HID and
-  power stay `not_exposed` even in a feature build.
+  power stay `not_exposed` even in a feature build. Virtual-media writes need
+  the separate `BLI_KVM_MEDIA_CONTROLS=1` opt-in; the read-only catalog uses
+  the absolute `BLI_KVM_MEDIA_CATALOG` path.
 - control broker HID backend: `BLI_KVM_HID_PROFILE=1`, `BLI_KVM_HID_LEDGER`
   and `BLI_KVM_HID_KVMD_SOCKET`, all absolute.
 - control broker ATX backend: `BLI_KVM_ATX_PROFILE=1`, `BLI_KVM_ATX_JOURNAL`

@@ -84,6 +84,10 @@ pub struct ServerOptions {
     /// Read-only virtual-media catalog path. No value keeps the catalog
     /// endpoint unavailable.
     pub media_catalog: Option<PathBuf>,
+    /// Explicit opt-in for advertising and accepting virtual-media writes in a
+    /// `restricted-control-surface` build. Requires the restricted surface and
+    /// a configured control socket.
+    pub media_controls_enabled: bool,
 }
 
 impl Default for ServerOptions {
@@ -105,6 +109,7 @@ impl Default for ServerOptions {
             control_socket: None,
             restricted_controls_enabled: false,
             media_catalog: None,
+            media_controls_enabled: false,
         }
     }
 }
@@ -175,7 +180,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     if options.restricted_controls_enabled && options.control_socket.is_some() {
         manifest.hid.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
-        manifest.virtual_media.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        if options.media_controls_enabled {
+            manifest.virtual_media.status =
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
     }
     manifest
         .validate()
@@ -2248,6 +2256,7 @@ mod tests {
         let app = app_with_options(ServerOptions {
             control_socket: Some(PathBuf::from("/run/hardened-blikvm-test/control.sock")),
             restricted_controls_enabled: true,
+            media_controls_enabled: true,
             ..ServerOptions::default()
         });
         let response = app
@@ -2258,6 +2267,21 @@ mod tests {
         assert_eq!(
             body["data"]["virtualMedia"]["status"]["availability"],
             "read_write"
+        );
+
+        let without_media = app_with_options(ServerOptions {
+            control_socket: Some(PathBuf::from("/run/hardened-blikvm-test/control.sock")),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let response = without_media
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let body = json_body(response).await;
+        assert_eq!(
+            body["data"]["virtualMedia"]["status"]["availability"],
+            "read_only"
         );
     }
 }

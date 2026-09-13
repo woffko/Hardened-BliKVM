@@ -91,5 +91,7 @@ the KVMD credential arrives only through `LoadCredential`. The server exposes
 `GET /api/virtual-media/catalog` (sanitized opaque IDs, names, sizes and allowed modes) and
 `POST /api/virtual-media` (opaque image ID and a typed command) and advertises
 `virtualMedia` `read_write` only when a `restricted-control-surface` build is
-explicitly enabled with a configured control socket. The storage/image GUI
+explicitly enabled with a configured control socket and the separate
+`BLI_KVM_MEDIA_CONTROLS=1` media opt-in; the read-only catalog needs only the
+`BLI_KVM_MEDIA_CATALOG` path. The storage/image GUI
 using opaque IDs and real-target attach/eject gates remain the next slices.

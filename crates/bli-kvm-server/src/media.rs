@@ -86,7 +86,7 @@ pub(crate) async fn virtual_media(
                 "virtual media control is not configured".into(),
             ));
         };
-        if !state.options.restricted_controls_enabled {
+        if !state.options.restricted_controls_enabled || !state.options.media_controls_enabled {
             return Err(AppError::ServiceUnavailable(
                 "virtual media control is not enabled".into(),
             ));
