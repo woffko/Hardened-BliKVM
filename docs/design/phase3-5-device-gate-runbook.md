@@ -60,6 +60,11 @@ implicitly.
 - After boot, poll the read-only verified snapshot until the boot identity
   changes and the retained state is still confirmed.
 - Record a private receipt; do not repeat the reboot to "make it pass".
+- If the device does not return, a manual power cycle is the recovery; then run
+  `tools/stage_device_hid_reboot_gate.py --verify-only` to record the
+  post-reboot state without another reboot. The journal is now persistent on
+  the `/mnt` partition, so the next boot can be post-mortemed with
+  `journalctl -b -1`.
 
 ## 4. Virtual media (safe target only)
 

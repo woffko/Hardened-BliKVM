@@ -174,4 +174,25 @@ license. It is an input to the later SPDX 3.0.1 release SBOM, not the SBOM
 itself; the accepted A/B layout, writer/readback, boot-control and power-cut
 gates remain device/recovery-card bound.
 
+## Device maintenance and reboot gate
+
+- The BliKVM reboot gate (`tools/stage_device_hid_reboot_gate.py`) was
+  authorized and executed once. It requested a single software reboot; the
+  device stayed unreachable longer than the gate window and recovered only
+  after manual intervention, so the receipt records the failure
+  (`hid-reboot-gate-20260913-a.json`). A later `--verify-only` run confirmed
+  the post-reboot state: `kvmd` active, retained slots and guard/evidence
+  intact, no staging or test account, and a changed boot identity.
+- The field image had a volatile journal and corrupted log configuration:
+  `/etc/logrotate.conf` and three `/etc/logrotate.d/` files were filled with
+  NUL bytes, and `logrotate.service` failed. They were restored from standard
+  content with on-device backups, `journald` was set to `Storage=persistent`,
+  and `/var/log/journal` is now bind-mounted onto the empty `/mnt` partition
+  (`/mnt/hardened-blikvm-logs/journal`) ordered after `mnt.mount`. Result:
+  `failedUnits=0`, `logrotate` succeeds, and shutdown logs will survive future
+  reboots (private receipt `device-log-fix-20260913-a.json`).
+- Pre-existing and untouched: a `findmnt --verify` warning on the MSD fstab
+  line, a broken `rsyslog` rotation example, and kernel noise for HDMI audio,
+  `spi-nor`, and `axp2101`.
+
 All device-mutating steps require explicit confirmation before execution.
