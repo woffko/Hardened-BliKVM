@@ -49,7 +49,10 @@ disabled and the denial broker is unchanged in shipped builds.
 - Safe-target/focus bindings: domain-separated SHA-256 derivation in
   `bli-kvm-control-focus` (`90aa7f5`) and the session-bound, one-time
   `GET/POST /api/hid/focus` server endpoint that submits only a v2
-  `target_attest` (`4bfb337`, `ea0f6ec`).
+  `target_attest` (`4bfb337`, `ea0f6ec`). `POST /api/hid/lease` now carries
+  acquire/renew/report/release using only the bindings remembered from a
+  successful confirmation; without a current confirmation it is rejected
+  before any broker call.
 - GUI key set aligned to the pinned adapter table (`f66ee7a`): only usages
   4..=102 and 135..=139 remain, enforced by
   `tools/test_hid_keymap_alignment.py`.

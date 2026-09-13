@@ -38,6 +38,10 @@ HID and ATX requests require a bounded, expiring target attestation:
   challenge, target identity, operation ID and explicit confirmation. The
   endpoint requires the authenticated session and CSRF token, and reports the
   broker's fixed rejection unchanged; the capability stays unavailable.
+  `POST /api/hid/lease` then carries `acquire`, `renew`, `report` and `release`
+  using only the bindings remembered from a successful confirmation; a lease
+  request without a current confirmation is rejected before any broker call,
+  and an acquire returns the broker-minted lease ID.
 - One attestation per session: a new `target_attest` replaces the previous one,
   `target_release` drops it, and both expire at `ttl_seconds`. An expired or
   replaced attestation fails closed.

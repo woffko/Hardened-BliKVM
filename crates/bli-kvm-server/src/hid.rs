@@ -9,9 +9,9 @@
 use std::time::{Duration, Instant};
 
 use axum::{Extension, Json, extract::State};
-use bli_kvm_control_focus::{FocusConfirmation, derive_focus_bindings};
+use bli_kvm_control_focus::{FocusBindings, FocusConfirmation, derive_focus_bindings};
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
-use bli_kvm_core::PlatformControlRequestV2;
+use bli_kvm_core::{HidLeaseRequest, HidReport, PlatformControlRequestV2};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,13 +37,37 @@ struct Challenge {
 #[derive(Debug, Default)]
 pub(crate) struct FocusChallengeStore {
     entries: Vec<(String, Challenge)>,
+    bindings: Vec<(String, FocusBindings, Instant)>,
 }
 
 impl FocusChallengeStore {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            bindings: Vec::new(),
         }
+    }
+
+    fn remember_bindings(&mut self, session_token: &str, bindings: FocusBindings, now: Instant) {
+        self.sweep_bindings(now);
+        self.bindings.retain(|(token, _, _)| token != session_token);
+        if self.bindings.len() >= MAX_CHALLENGES {
+            self.bindings.remove(0);
+        }
+        self.bindings
+            .push((session_token.to_owned(), bindings, now + CHALLENGE_TTL));
+    }
+
+    fn bindings(&mut self, session_token: &str, now: Instant) -> Option<FocusBindings> {
+        self.sweep_bindings(now);
+        self.bindings
+            .iter()
+            .find(|(token, _, _)| token == session_token)
+            .map(|(_, bindings, _)| *bindings)
+    }
+
+    fn sweep_bindings(&mut self, now: Instant) {
+        self.bindings.retain(|(_, _, expires_at)| now < *expires_at);
     }
 
     fn issue(&mut self, session_token: &str, now: Instant) -> [u8; CHALLENGE_BYTES] {
@@ -199,12 +223,19 @@ pub(crate) async fn confirm_focus(
         )
         .await
         .map_err(|_| AppError::ServiceUnavailable("HID control channel is unavailable".into()))?;
+    let attested = match &response {
+        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => true,
+        ControlResponse::Rejected { .. } => false,
+    };
+    if attested {
+        state
+            .focus
+            .lock()
+            .await
+            .remember_bindings(&session.token, bindings, now);
+    }
     Ok(Json(ApiResponse::ok(match response {
-        ControlResponse::Applied => FocusConfirmResponse {
-            attested: true,
-            rejection: None,
-        },
-        ControlResponse::LeaseGranted { .. } => FocusConfirmResponse {
+        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => FocusConfirmResponse {
             attested: true,
             rejection: None,
         },
@@ -213,6 +244,139 @@ pub(crate) async fn confirm_focus(
             rejection: Some(rejection_name(code)),
         },
     })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(
+    tag = "action",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum HidLeaseBody {
+    Acquire {
+        operation_id: String,
+        ttl_seconds: u16,
+    },
+    Renew {
+        operation_id: String,
+        lease_id: String,
+        ttl_seconds: u16,
+    },
+    Report {
+        operation_id: String,
+        lease_id: String,
+        report: HidReport,
+    },
+    Release {
+        operation_id: String,
+        lease_id: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HidLeaseResponse {
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<&'static str>,
+}
+
+pub(crate) async fn hid_lease(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(request): Json<HidLeaseBody>,
+) -> AppResult<Json<ApiResponse<HidLeaseResponse>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "HID control channel is not configured".into(),
+        ));
+    };
+    let operation_id = lease_operation_id(&request);
+    if !valid_operation_id(operation_id) {
+        return Err(AppError::BadRequest("lease operation ID is invalid".into()));
+    }
+    let now = Instant::now();
+    let bindings = state
+        .focus
+        .lock()
+        .await
+        .bindings(&session.token, now)
+        .ok_or_else(|| AppError::BadRequest("a current focus confirmation is required".into()))?;
+    let lease = build_lease_request(&request, &bindings)?;
+    let response = control
+        .execute_v2(operation_id, PlatformControlRequestV2::HidLease { lease })
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("HID control channel is unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(match response {
+        ControlResponse::Applied => HidLeaseResponse {
+            applied: true,
+            lease_id: None,
+            rejection: None,
+        },
+        ControlResponse::LeaseGranted { lease_id } => HidLeaseResponse {
+            applied: true,
+            lease_id: Some(to_hex(&lease_id)),
+            rejection: None,
+        },
+        ControlResponse::Rejected { code } => HidLeaseResponse {
+            applied: false,
+            lease_id: None,
+            rejection: Some(rejection_name(code)),
+        },
+    })))
+}
+
+fn lease_operation_id(request: &HidLeaseBody) -> &str {
+    match request {
+        HidLeaseBody::Acquire { operation_id, .. }
+        | HidLeaseBody::Renew { operation_id, .. }
+        | HidLeaseBody::Report { operation_id, .. }
+        | HidLeaseBody::Release { operation_id, .. } => operation_id,
+    }
+}
+
+fn build_lease_request(
+    request: &HidLeaseBody,
+    bindings: &FocusBindings,
+) -> AppResult<HidLeaseRequest> {
+    let lease_id = |value: &str| {
+        parse_hex::<16>(value).ok_or_else(|| AppError::BadRequest("lease ID is invalid".into()))
+    };
+    Ok(match request {
+        HidLeaseBody::Acquire { ttl_seconds, .. } => HidLeaseRequest::Acquire {
+            session_binding: bindings.session_binding,
+            target_binding: bindings.target_binding,
+            ttl_seconds: *ttl_seconds,
+        },
+        HidLeaseBody::Renew {
+            lease_id: id,
+            ttl_seconds,
+            ..
+        } => HidLeaseRequest::Renew {
+            lease_id: lease_id(id)?,
+            session_binding: bindings.session_binding,
+            target_binding: bindings.target_binding,
+            ttl_seconds: *ttl_seconds,
+        },
+        HidLeaseBody::Report {
+            lease_id: id,
+            report,
+            ..
+        } => HidLeaseRequest::Report {
+            lease_id: lease_id(id)?,
+            session_binding: bindings.session_binding,
+            target_binding: bindings.target_binding,
+            report: report.clone(),
+        },
+        HidLeaseBody::Release { lease_id: id, .. } => HidLeaseRequest::Release {
+            lease_id: lease_id(id)?,
+            session_binding: bindings.session_binding,
+            target_binding: bindings.target_binding,
+        },
+    })
 }
 
 fn session_identity(token: &str) -> u64 {

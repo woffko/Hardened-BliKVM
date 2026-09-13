@@ -37,9 +37,10 @@ class Phase3ControlBoundaryTests(unittest.TestCase):
         self.assertIn("pub control_socket: Option<PathBuf>", server)
         self.assertIn("control_socket: None,", server)
         self.assertIn('"/hid/focus"', server)
+        self.assertIn('"/hid/lease"', server)
         hid = (ROOT / "crates/bli-kvm-server/src/hid.rs").read_text()
         self.assertIn("TargetAttest", hid)
-        self.assertNotIn("HidLeaseRequest", hid)
+        self.assertIn("a current focus confirmation is required", hid)
         self.assertNotIn("/dev/", hid)
         self.assertNotIn("Command", hid)
 
