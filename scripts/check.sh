@@ -48,7 +48,8 @@ python3 -B -m unittest \
   tools.test_persistent_write_recovery_receipt tools.test_persistent_write_retained_snapshot tools.test_persistent_write_commit \
   tools.test_persistent_write_evidence_store tools.test_stage_persistent_write_evidence \
   tools.test_persistent_write_evidence_pins tools.test_persistent_write_evidence_provider \
-  tools.test_persistent_write_gui_failure_receipt
+  tools.test_persistent_write_gui_failure_receipt tools.test_persistent_write_host_receipt \
+  tools.test_capture_persistent_write_host_gate
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --check tools/playwright/device_application_write.mjs
@@ -329,6 +330,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/generate_persistent_write_evidence_pins.py \
     tools/persistent_write_evidence_provider.py tools/test_persistent_write_evidence_provider.py \
     tools/persistent_write_gui_failure_receipt.py tools/test_persistent_write_gui_failure_receipt.py \
+    tools/persistent_write_host_receipt.py tools/test_persistent_write_host_receipt.py \
+    tools/capture_persistent_write_host_gate.py tools/test_capture_persistent_write_host_gate.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
     tools/installed_persistent_write.py tools/test_installed_persistent_write.py \

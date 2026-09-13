@@ -76,8 +76,9 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "receipt semantics differ"):
             self.read(validators=validators)
 
-    def test_default_registry_covers_negative_browser_gates(self) -> None:
-        self.assertEqual(set(provider.VALIDATORS), {"gui_failure_retry", "gui_cancel", "gui_logout"})
+    def test_default_registry_covers_fresh_gates(self) -> None:
+        self.assertEqual(set(provider.VALIDATORS),
+                         {"host", "gui_failure_retry", "gui_cancel", "gui_logout"})
 
     def test_default_gui_validators_accept_a_pinned_receipt(self) -> None:
         value = gui_fixture.document()
@@ -94,9 +95,9 @@ class ProviderTests(unittest.TestCase):
         store = storage.Store.create(binding)
         gates = {gate: store.put(receipts[gate]) for gate in sorted(receipts)}
         seal = store.seal(gates)
-        validators = dict(provider.VALIDATORS)
-        for gate in contract.REQUIRED_GATES - set(validators):
-            validators[gate] = accept
+        validators: dict[str, provider.Validator] = {gate: accept for gate in contract.REQUIRED_GATES}
+        for gate in ("gui_failure_retry", "gui_cancel", "gui_logout"):
+            validators[gate] = provider.VALIDATORS[gate]
         evidence = provider.read_verified_evidence(Path("/var/lib/unused"), binding, expected_seal=seal,
                                                    pins=pins.CURRENT_PINS, validators=validators)
         self.assertEqual(frozenset(item.gate for item in evidence), contract.REQUIRED_GATES)

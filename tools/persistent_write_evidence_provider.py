@@ -10,17 +10,20 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import re
+from typing import cast
 
 if not __package__:
     import persistent_write_contract as contract
     import persistent_write_evidence_pins as pins_module
     import persistent_write_evidence_store as storage
     import persistent_write_gui_failure_receipt as gui_failure
+    import persistent_write_host_receipt as host_receipt
 else:
     from tools import persistent_write_contract as contract
     from tools import persistent_write_evidence_pins as pins_module
     from tools import persistent_write_evidence_store as storage
     from tools import persistent_write_gui_failure_receipt as gui_failure
+    from tools import persistent_write_host_receipt as host_receipt
 
 require = contract.temporary.require
 Validator = Callable[[contract.EvidenceBinding, bytes, Mapping[str, object]], None]
@@ -35,8 +38,19 @@ def _gui_failure_validator(gate: str) -> Validator:
     return validate
 
 
+def _host_validator(binding: contract.EvidenceBinding, raw: bytes, pins: Mapping[str, object]) -> None:
+    sources = pins.get("host_sources")
+    tool = pins.get("host_tool")
+    require(isinstance(sources, dict) and isinstance(tool, str), "host gate pins missing")
+    assert isinstance(tool, str)
+    contents = host_receipt.parse(raw, expected_python_sources=cast(Mapping[str, str], sources),
+                                  expected_tool=tool)
+    require(contents.binding == binding, "host gate receipt belongs to another transaction")
+
+
 VALIDATORS: dict[str, Validator] = {gate: _gui_failure_validator(gate)
                                     for gate in ("gui_failure_retry", "gui_cancel", "gui_logout")}
+VALIDATORS["host"] = _host_validator
 
 
 def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

@@ -129,7 +129,7 @@ Recovery prerequisites and the commit transaction are deliberately separate:
 | boot_restore, disable_drain | existing recovery-receipt parser with historical probe pins |
 | gui_failure_retry, gui_cancel, gui_logout | one negative-browser-receipt parser with three assertion sets, current producers and binding |
 | native_upload | upload-worker receipt bound to the current guard root |
-| host | bounded host-gate receipt from a new reviewed host producer |
+| host | bounded host-gate receipt from the reviewed `capture_persistent_write_host_gate.py` producer; v1 scope is the persistent-write controller suite, with server authorization/length/quota/cancellation families documented as a later extension |
 
 ## Failure rules
 
