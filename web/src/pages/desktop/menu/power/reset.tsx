@@ -3,6 +3,7 @@ import { RotateCcwIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { setGpio } from '@/api/vm.ts';
+import { useRestrictedPower } from '@/hooks/useRestrictedPower.ts';
 
 type ResetProps = {
   showConfirm: boolean;
@@ -12,14 +13,18 @@ type ResetProps = {
 
 export const Reset = ({ showConfirm, isLoading, setIsLoading }: ResetProps) => {
   const { t } = useTranslation();
+  const { restricted, run } = useRestrictedPower();
 
   function reset() {
     if (isLoading) return;
     setIsLoading(true);
 
-    setGpio('reset', 800).finally(() => {
-      setIsLoading(false);
-    });
+    const finished = () => setIsLoading(false);
+    if (restricted) {
+      void run('reset').finally(finished);
+    } else {
+      setGpio('reset', 800).finally(finished);
+    }
   }
 
   return (

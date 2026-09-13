@@ -45,6 +45,26 @@ class RestrictedControlGuiTests(unittest.TestCase):
             for forbidden in ("password", "10.0.", "/home/", "token"):
                 self.assertNotIn(forbidden, text.lower())
 
+    def test_power_components_use_the_restricted_path_when_advertised(self) -> None:
+        power = ROOT / "web/src/pages/desktop/menu/power"
+        expectations = {
+            "power-short.tsx": "'power_short'",
+            "power-long.tsx": "'power_long'",
+            "reset.tsx": "'reset'",
+        }
+        for name, action in expectations.items():
+            text = (power / name).read_text()
+            self.assertIn("useRestrictedPower", text)
+            self.assertIn(action, text)
+            self.assertIn("setGpio", text)
+        hook = (ROOT / "web/src/hooks/useRestrictedPower.ts").read_text()
+        self.assertIn("supportsPowerControl", hook)
+        self.assertIn("performPowerAction", hook)
+        helper = (ROOT / "web/src/lib/restricted-power.ts").read_text()
+        self.assertIn("crypto.subtle.digest('SHA-256'", helper)
+        self.assertIn("ensureFocus", helper)
+        self.assertIn("submitPowerAction", helper)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,10 @@ export function supportsRestrictedControls(manifest: CapabilityManifest | null) 
   return Boolean(manifest && isWritable(manifest.hid.status) && isWritable(manifest.power.status));
 }
 
+export function supportsPowerControl(manifest: CapabilityManifest | null) {
+  return Boolean(manifest && isWritable(manifest.power.status));
+}
+
 export function usesBliApplicationUpdates(manifest: CapabilityManifest | null) {
   return manifest?.platform.id === 'bli-h616-pikvm';
 }

@@ -4,6 +4,7 @@ import { CirclePowerIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/vm.ts';
+import { useRestrictedPower } from '@/hooks/useRestrictedPower.ts';
 
 const DEFAULT_POWER_LONG_DURATION_SECONDS = 12;
 
@@ -15,6 +16,7 @@ type PowerLongProps = {
 
 export const PowerLong = ({ showConfirm, isLoading, setIsLoading }: PowerLongProps) => {
   const { t } = useTranslation();
+  const { restricted, run } = useRestrictedPower();
 
   const [duration, setDuration] = useState(DEFAULT_POWER_LONG_DURATION_SECONDS);
 
@@ -22,9 +24,12 @@ export const PowerLong = ({ showConfirm, isLoading, setIsLoading }: PowerLongPro
     if (isLoading) return;
     setIsLoading(true);
 
-    api.setGpio('power', duration * 1000).finally(() => {
-      setIsLoading(false);
-    });
+    const finished = () => setIsLoading(false);
+    if (restricted) {
+      void run('power_long').finally(finished);
+    } else {
+      api.setGpio('power', duration * 1000).finally(finished);
+    }
   }
 
   return (

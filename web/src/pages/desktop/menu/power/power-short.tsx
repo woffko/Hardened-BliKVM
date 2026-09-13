@@ -3,6 +3,7 @@ import { PowerIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/vm.ts';
+import { useRestrictedPower } from '@/hooks/useRestrictedPower.ts';
 
 type PowerShortProps = {
   showConfirm: boolean;
@@ -12,14 +13,18 @@ type PowerShortProps = {
 
 export const PowerShort = ({ showConfirm, isLoading, setIsLoading }: PowerShortProps) => {
   const { t } = useTranslation();
+  const { restricted, run } = useRestrictedPower();
 
   function power() {
     if (isLoading) return;
     setIsLoading(true);
 
-    api.setGpio('power', 800).finally(() => {
-      setIsLoading(false);
-    });
+    const finished = () => setIsLoading(false);
+    if (restricted) {
+      void run('power_short').finally(finished);
+    } else {
+      api.setGpio('power', 800).finally(finished);
+    }
   }
 
   return (
