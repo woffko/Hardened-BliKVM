@@ -4,7 +4,7 @@ use std::{
     fs::{self, Permissions},
     io,
     os::unix::fs::{FileTypeExt, PermissionsExt},
-    sync::{Arc, Mutex as StdMutex},
+    sync::Arc,
     time::Instant,
 };
 
@@ -20,7 +20,7 @@ use bli_kvm_diagnostic_protocol::{DiagnosticEvent, RejectReason};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::UnixListener,
-    sync::Semaphore,
+    sync::{Mutex as TokioMutex, Semaphore},
     time::timeout,
 };
 
@@ -94,7 +94,7 @@ where
     let _cleanup = SocketCleanup(config.socket_path.clone());
     fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
-    let v2 = Arc::new(StdMutex::new(ControlV2State::disabled()));
+    let v2 = Arc::new(TokioMutex::new(ControlV2State::disabled()));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -133,7 +133,7 @@ async fn handle_connection<S, D>(
     mut stream: S,
     request_timeout: std::time::Duration,
     diagnostics: D,
-    v2: Arc<StdMutex<ControlV2State>>,
+    v2: Arc<TokioMutex<ControlV2State>>,
 ) -> Result<(), io::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -142,7 +142,7 @@ where
     let request = timeout(request_timeout, read_payload(&mut stream))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "control request timed out"))??;
-    let response = respond(&request, &v2)?;
+    let response = respond(&request, &v2).await?;
     let payload = if response.schema_version == CONTROL_SCHEMA_VERSION_V2 {
         encode_response_v2(&response)
     } else {
@@ -151,7 +151,7 @@ where
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "control response invalid"))?;
     let rejection = match &response.response {
         ControlResponse::Rejected { code } => Some(reason_for(*code)),
-        ControlResponse::Applied => None,
+        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => None,
     };
     timeout(
         request_timeout,
@@ -185,9 +185,9 @@ where
     Ok(payload)
 }
 
-fn respond(
+async fn respond(
     payload: &[u8],
-    v2: &Arc<StdMutex<ControlV2State>>,
+    v2: &Arc<TokioMutex<ControlV2State>>,
 ) -> Result<ControlResponseEnvelope, io::Error> {
     match decode_request(payload) {
         Ok(request) => Ok(deny_request(request)),
@@ -197,8 +197,9 @@ fn respond(
             let request = decode_request_v2(payload).map_err(|_| invalid_request())?;
             let response = v2
                 .lock()
-                .map_err(|_| invalid_request())?
-                .handle(&request.request, Instant::now());
+                .await
+                .handle(&request.request, Instant::now())
+                .await;
             Ok(ControlResponseEnvelope {
                 schema_version: CONTROL_SCHEMA_VERSION_V2,
                 request_id: request.request_id,
@@ -367,7 +368,7 @@ mod tests {
             server,
             TEST_WAIT,
             diagnostics,
-            Arc::new(StdMutex::new(ControlV2State::disabled())),
+            Arc::new(TokioMutex::new(ControlV2State::disabled())),
         ));
         write_request(&mut client, &request).await;
         let response = timeout(TEST_WAIT, read_response(&mut client))
@@ -433,7 +434,7 @@ mod tests {
             server,
             TEST_WAIT,
             diagnostics.clone(),
-            Arc::new(StdMutex::new(ControlV2State::disabled())),
+            Arc::new(TokioMutex::new(ControlV2State::disabled())),
         ));
         let payload = encode_request_v2(&request).unwrap();
         client
@@ -605,7 +606,7 @@ mod tests {
             server,
             TEST_WAIT,
             diagnostics.clone(),
-            Arc::new(StdMutex::new(ControlV2State::disabled())),
+            Arc::new(TokioMutex::new(ControlV2State::disabled())),
         ));
         write_request(&mut client, &request).await;
 

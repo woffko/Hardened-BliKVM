@@ -44,9 +44,10 @@ HID and ATX requests require a bounded, expiring target attestation:
 
 ## HID leases
 
-- `hid_lease_acquire { session_binding, target_binding, ttl_seconds }`
-  returns one opaque non-zero 128-bit `lease_id`; `ttl_seconds` is at most 30.
-  Acquisition requires a current attestation matching the exact bindings.
+- `hid_lease_acquire { session_binding, target_binding, ttl_seconds }` is
+  answered with `lease_granted { lease_id }`, one opaque non-zero 128-bit
+  identifier minted by the broker; `ttl_seconds` is at most 30. Acquisition
+  requires a current attestation matching the exact bindings.
 - `hid_lease_renew { lease_id, session_binding, target_binding, ttl_seconds }`
   requires the exact same identity; the lease is never transferable.
 - `hid_report { lease_id, session_binding, target_binding, report }` uses the
@@ -80,7 +81,8 @@ evidence before recording a Pending outcome and never retries automatically.
 
 ## Responses
 
-A response is `applied` or one of the fixed codes: `capability_disabled`,
+A response is `applied`, `lease_granted { lease_id }` with a non-zero
+128-bit identifier, or one of the fixed codes: `capability_disabled`,
 `not_armed`, `not_attested`, `lease_conflict`, `lease_expired`,
 `cooldown_active`, `confirmation_stale`, `duplicate`, `pending_unreconciled`,
 `invalid_state`, `backend_unavailable`, `backend_rejected`, `internal`.
@@ -92,6 +94,10 @@ response write, and diagnostics can never change a control response.
 
 - Shipped builds keep HID, ATX and virtual media compile-time disabled. A
   separate test profile may enable one capability at a time for device gates.
+  The broker can attach a HID control policy only under the
+  `hid-transition-profile` feature; even there each acquire, renew and report
+  requires a current target attestation, a release stays unconditional for
+  safety, and an acquire mints the returned lease identifier.
 - Before HID can be advertised: dedicated transition credential and systemd
   sandbox separate from the network server; server-mediated safe-target/focus
   flow and capability advertisement; GUI key/button set aligned to the

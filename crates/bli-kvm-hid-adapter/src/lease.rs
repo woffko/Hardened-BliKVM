@@ -35,6 +35,10 @@ impl HidLeaseIdentity {
     pub const fn session_binding(self) -> u64 {
         self.session_binding
     }
+
+    pub const fn lease_id(self) -> [u8; 16] {
+        self.lease_id
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

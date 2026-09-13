@@ -43,6 +43,7 @@ pub enum ControlRejectionCode {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
     Applied,
+    LeaseGranted { lease_id: [u8; 16] },
     Rejected { code: ControlRejectionCode },
 }
 
@@ -78,6 +79,8 @@ pub enum ControlProtocolError {
     InvalidOperationId,
     #[error("control request is invalid")]
     InvalidControlRequest,
+    #[error("control response is invalid")]
+    InvalidControlResponse,
     #[error("control frame is invalid")]
     InvalidFrame,
 }
@@ -184,6 +187,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<ControlResponseEnvelope, ControlP
         response.request_id,
         &response.operation_id,
     )?;
+    validate_response(&response.response)?;
     Ok(response)
 }
 
@@ -196,6 +200,7 @@ pub fn encode_response(
         response.request_id,
         &response.operation_id,
     )?;
+    validate_response(&response.response)?;
     encode_json(response)
 }
 
@@ -210,6 +215,7 @@ pub fn decode_response_v2(bytes: &[u8]) -> Result<ControlResponseEnvelope, Contr
         response.request_id,
         &response.operation_id,
     )?;
+    validate_response(&response.response)?;
     Ok(response)
 }
 
@@ -222,7 +228,17 @@ pub fn encode_response_v2(
         response.request_id,
         &response.operation_id,
     )?;
+    validate_response(&response.response)?;
     encode_json(response)
+}
+
+fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolError> {
+    if let ControlResponse::LeaseGranted { lease_id } = response
+        && lease_id.iter().all(|byte| *byte == 0)
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    Ok(())
 }
 
 fn encode_json(value: &impl Serialize) -> Result<Vec<u8>, ControlProtocolError> {
@@ -489,6 +505,30 @@ mod tests {
         assert_eq!(
             encode_request_v2(&long_lease),
             Err(ControlProtocolError::InvalidControlRequest)
+        );
+    }
+
+    #[test]
+    fn v2_lease_grant_carries_a_nonzero_lease_id() {
+        let response = ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 30,
+            operation_id: OPERATION_ID.into(),
+            response: ControlResponse::LeaseGranted {
+                lease_id: [0x55; 16],
+            },
+        };
+        let json = encode_response_v2(&response).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), response);
+        assert!(!String::from_utf8_lossy(&json).contains("message"));
+
+        let zero = ControlResponseEnvelope {
+            response: ControlResponse::LeaseGranted { lease_id: [0; 16] },
+            ..response
+        };
+        assert_eq!(
+            encode_response_v2(&zero),
+            Err(ControlProtocolError::InvalidControlResponse)
         );
     }
 
