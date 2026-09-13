@@ -51,7 +51,8 @@ python3 -B -m unittest \
   tools.test_persistent_write_gui_failure_receipt tools.test_persistent_write_host_receipt \
   tools.test_capture_persistent_write_host_gate tools.test_persistent_write_upload_receipt \
   tools.test_capture_persistent_write_upload_gate tools.test_persistent_write_component_view \
-  tools.test_run_persistent_write_retained_reboot tools.test_persistent_write_gui_gate_receipt \
+  tools.test_run_persistent_write_retained_reboot tools.test_observe_retained_application_status \
+  tools.test_persistent_write_gui_gate_receipt \
   tools.test_capture_persistent_write_gui_gate tools.test_run_persistent_write_commit_cycle
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
@@ -341,6 +342,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/capture_persistent_write_upload_gate.py tools/test_capture_persistent_write_upload_gate.py \
     tools/persistent_write_component_view.py tools/test_persistent_write_component_view.py \
     tools/run_persistent_write_retained_reboot.py tools/test_run_persistent_write_retained_reboot.py \
+    tools/observe_retained_application_status.py tools/test_observe_retained_application_status.py \
     tools/run_persistent_write_commit_cycle.py tools/test_run_persistent_write_commit_cycle.py \
     tools/persistent_write_systemd.py tools/test_persistent_write_systemd.py \
     tools/persistent_write_snapshot.py tools/test_persistent_write_snapshot.py \
