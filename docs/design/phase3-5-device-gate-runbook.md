@@ -16,6 +16,23 @@ receipts, endpoints, accounts and credentials stay outside Git.
 - For HID/mouse gates: a safe, visible, authorized target on the other side of
   the KVM; the operator watches the video while issuing events.
 
+## 0. Read-only log health (no mutation)
+
+Before any reboot gate, confirm log health without touching the device:
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/check_device_log_health.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --output evidence/private/<receipt>.json
+```
+
+Expected: `logrotateValid=true`, `logrotateServiceOk=true`,
+`journaldStorage=persistent`, `journalMountOnDedicatedPartition=true` on the
+dedicated partition, `failedUnits=0`, and optionally
+`previousBootJournalPresent=true` once a reboot has been observed.
+
 ## 1. HID transition service
 
 Isolated gates already passed (see the checkpoint). The deployable profile is

@@ -38,8 +38,12 @@ never committed. Nothing below is a release acceptance.
 - Isolated-backend H616 gates passed for startup replay, apply/release, expiry,
   mismatch, failure release-all, mouse modes, rollover, 10,000-event soak,
   backend reconnect and stuck-input recovery (`hid-isolated-gate-20260913-a..d`).
-- OUTSTANDING: BliKVM reboot gate (needs safe visible target and explicit
-  reboot confirmation) per `docs/design/phase3-5-device-gate-runbook.md`.
+- OUTSTANDING: the BliKVM reboot gate is built, hardened and has a
+  `--verify-only` mode; the first software reboot left the device unreachable
+  until manual intervention, and the log configuration was repaired so the
+  next boot is diagnosable. One explicitly confirmed reboot remains to observe
+  a changed boot identity together with a preserved previous-boot journal, per
+  `docs/design/phase3-5-device-gate-runbook.md`.
 - Checkpoint `docs/baselines/phase3-hid-atx-host-checkpoint.md`; plan checkpoint
   `docs/implementation-plan.md` (`93ced66`).
 
