@@ -28,6 +28,7 @@ CARGO_TARGET_DIR="$target_dir" cargo build \
   --workspace \
   --release \
   --locked \
+  ${BLI_KVM_CARGO_FEATURES:+--features "$BLI_KVM_CARGO_FEATURES"} \
   --target aarch64-unknown-linux-musl
 
 release_dir="$target_dir/aarch64-unknown-linux-musl/release"

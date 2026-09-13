@@ -24,6 +24,7 @@ cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagno
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features hid-transition-profile,atx-transition-profile -- -D warnings
 
 sh -n scripts/build-aarch64.sh
+sh -n scripts/build-hid-transition-profile.sh
 sh -n scripts/build-prototype-bundle.sh
 sh -n scripts/check-source-boundary.sh
 sh -n scripts/check.sh
@@ -68,6 +69,7 @@ python3 -m unittest \
   tools/test_packaging_boundaries.py \
   tools/test_hid_credential_service.py \
   tools/test_hid_transition_service.py \
+  tools/test_build_hid_transition_profile.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_rust_lld_static_pie.py \
@@ -265,6 +267,7 @@ python3 -m py_compile \
   tools/test_packaging_boundaries.py \
   tools/test_hid_credential_service.py \
   tools/test_hid_transition_service.py \
+  tools/test_build_hid_transition_profile.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_rust_lld_static_pie.py \
@@ -501,6 +504,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_packaging_boundaries.py \
     tools/test_hid_credential_service.py \
     tools/test_hid_transition_service.py \
+    tools/test_build_hid_transition_profile.py \
     tools/test_hid_keymap_alignment.py \
     tools/test_phase3_control_boundaries.py \
     tools/test_rust_lld_static_pie.py \
