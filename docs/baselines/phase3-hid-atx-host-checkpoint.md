@@ -17,9 +17,13 @@ disabled and the denial broker is unchanged in shipped builds.
 - Broker-side target attestation: bounded, expiring, replace-on-session and
   idempotent release registry (`crates/bli-kvm-control-broker/src/attestation.rs`,
   `cf2814b`) plus the denial-by-default v2 router
-  (`crates/bli-kvm-control-broker/src/v2.rs`, `b4dd14c`). The production broker
-  constructs exactly `ControlV2State::disabled()`; the enabled path exists only
-  under `#[cfg(test)]` and never attaches a backend.
+  (`crates/bli-kvm-control-broker/src/v2.rs`, `b4dd14c`). An acquire is
+  answered with `lease_granted` carrying a broker-minted non-zero lease ID
+  (`5ad96b0`). The production broker constructs exactly
+  `ControlV2State::disabled()`; the `hid-transition-profile` feature can attach
+  a `HidControlPolicy`, and even then acquire/renew/report require a current
+  target attestation while release stays unconditional. Without the feature the
+  HID path still fails closed with `backend_unavailable`.
 - Eligibility-gated HID control policy (`bli-kvm-hid-policy`, `6fe1a01`):
   acquire/renew/report gated by capability, backend and attestation; release,
   session revocation, expiry and disconnect always allowed; fixed rejection to
@@ -59,7 +63,9 @@ HID:
 
 - device gates on H616: startup-ledger replay with an isolated backend,
   disconnect/expiry/mismatch, then keyboard and mouse modes, rollover,
-  10,000 events, reconnect, BliKVM reboot and stuck-input recovery;
+  10,000 events, reconnect, BliKVM reboot and stuck-input recovery. The broker
+  policy backend exists behind the test feature; a deployable transition
+  daemon/unit with an isolated KVMD socket is still required to run them;
 - reversible credential-delivery gate passed on the test H616 on 2026-09-13
   (private receipt `hid-credential-delivery-gate-20260913-a.json`):
   `deliveryToken=ok`, `sourceReadDenied=true`, `cleanupConfirmed=true`,
