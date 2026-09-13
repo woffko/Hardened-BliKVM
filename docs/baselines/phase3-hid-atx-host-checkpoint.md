@@ -33,7 +33,10 @@ disabled and the denial broker is unchanged in shipped builds.
   `hardened-blikvm-hid-credential.service` oneshot unit with `LoadCredential`
   from `/etc/hardened-blikvm/hid/`, a dedicated `hardened-blikvm-hid` account,
   and the reversible H616 delivery gate `tools/stage_device_hid_credential_gate.py`
-  (`9c97967`). The device gate has not been executed.
+  (`9c97967`). The device gate passed. The broker can additionally select the
+  HID transition backend from fixed environment keys and systemd's
+  `CREDENTIALS_DIRECTORY` (`bb4db0b`), but only when built with the
+  `hid-transition-profile` feature.
 - Safe-target/focus bindings: domain-separated SHA-256 derivation in
   `bli-kvm-control-focus` (`90aa7f5`) and the session-bound, one-time
   `GET/POST /api/hid/focus` server endpoint that submits only a v2
