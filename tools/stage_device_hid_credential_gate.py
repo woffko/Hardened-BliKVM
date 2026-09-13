@@ -130,7 +130,7 @@ def build_preflight_script(paths: GatePaths) -> str:
     )
     return f"""set -eu
 {values}
-emit() {{ printf '%s %s\\n' "$1" "$2"; }}
+emit() {{ printf '%s=%s\\n' "$1" "$2"; }}
 case "$(uname -m)" in aarch64) arch=ok ;; *) arch=no ;; esac
 emit architecture "$arch"
 if id -u hardened-blikvm-hid >/dev/null 2>&1; then
@@ -140,11 +140,8 @@ else
 fi
 if command -v systemd-run >/dev/null 2>&1; then emit systemd_run yes; else emit systemd_run no; fi
 if [ ! -e "$root" ]; then emit test_root_absent yes; else emit test_root_absent no; fi
-if systemctl show -p LoadState --value "$unit" 2>/dev/null | grep -q .; then
-  emit unit_free no
-else
-  emit unit_free yes
-fi
+unit_state=$(systemctl show -p LoadState --value "$unit" 2>/dev/null || true)
+case "$unit_state" in not-found|"") emit unit_free yes ;; *) emit unit_free no ;; esac
 """
 
 
@@ -162,7 +159,7 @@ def build_apply_script(paths: GatePaths) -> str:
     )
     return f"""set -eu
 {values}
-emit() {{ printf '%s %s\\n' "$1" "$2"; }}
+emit() {{ printf '%s=%s\\n' "$1" "$2"; }}
 umask 077
 install -d -m 0700 "$root"
 install -d -m 0700 "$payload"
@@ -226,7 +223,7 @@ def build_rollback_script(paths: GatePaths) -> str:
     )
     return f"""set -eu
 {values}
-emit() {{ printf '%s %s\\n' "$1" "$2"; }}
+emit() {{ printf '%s=%s\\n' "$1" "$2"; }}
 systemctl stop "$unit" 2>/dev/null || true
 systemctl reset-failed "$unit" 2>/dev/null || true
 account_created=$(cat "$root/account_created" 2>/dev/null || echo no)
@@ -243,11 +240,8 @@ rm -rf -- "$root"
 rm -rf -- "$stage_root"
 if [ ! -e "$root" ]; then emit credentials_removed yes; else emit credentials_removed no; fi
 if [ ! -e "$stage_root" ]; then emit stage_absent yes; else emit stage_absent no; fi
-if systemctl show -p LoadState --value "$unit" 2>/dev/null | grep -q .; then
-  emit unit_absent no
-else
-  emit unit_absent yes
-fi
+unit_state=$(systemctl show -p LoadState --value "$unit" 2>/dev/null || true)
+case "$unit_state" in not-found|"") emit unit_absent yes ;; *) emit unit_absent no ;; esac
 """
 
 
@@ -258,11 +252,11 @@ def build_final_script(paths: GatePaths) -> str:
     return f"""set -eu
 {values}
 if [ ! -e "$root" ] && [ ! -e "$stage_root" ]; then
-  printf '%s\\n' 'cleanup_confirmed yes'
+  printf 'cleanup_confirmed=%s\\n' yes
 else
-  printf '%s\\n' 'cleanup_confirmed no'
+  printf 'cleanup_confirmed=%s\\n' no
 fi
-printf '%s\\n' "stage_absent $([ ! -e "$stage_root" ] && echo yes || echo no)"
+printf 'stage_absent=%s\\n' "$([ ! -e "$stage_root" ] && echo yes || echo no)"
 """
 
 
