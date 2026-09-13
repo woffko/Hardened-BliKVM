@@ -147,8 +147,6 @@ independent streams without cross-contamination, an upstream mid-stream
 disconnect ends downstream cleanly, and the first frame is forwarded without
 buffering the whole response.
 
-All device-mutating steps require explicit confirmation before execution.
-
 ## Phase 5 host baseline
 
 Virtual media gains a persisted transition engine
@@ -166,3 +164,14 @@ media gate also passed on the test H616 (private receipt
 duplicate replay, backend failure with reconnect recovery and restart with a
 Pending journal plus reconciliation all passed against local mock media
 sockets, with `physical_actions_invoked=no` and `persistentChangeScope=none`.
+
+## Phase 6 groundwork
+
+`tools/license_inventory.py` builds a deterministic Rust license inventory from
+`cargo metadata --locked` (package, version, declared license or license file,
+workspace membership) and fails closed when any package has no declared
+license. It is an input to the later SPDX 3.0.1 release SBOM, not the SBOM
+itself; the accepted A/B layout, writer/readback, boot-control and power-cut
+gates remain device/recovery-card bound.
+
+All device-mutating steps require explicit confirmation before execution.
