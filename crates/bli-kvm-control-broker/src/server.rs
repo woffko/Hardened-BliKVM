@@ -4,13 +4,14 @@ use std::{
     fs::{self, Permissions},
     io,
     os::unix::fs::{FileTypeExt, PermissionsExt},
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
+    time::Instant,
 };
 
 use bli_kvm_control_protocol::{
-    CONTROL_SCHEMA_VERSION, ControlRejectionCode, ControlRequestEnvelope, ControlResponse,
-    ControlResponseEnvelope, MAX_CONTROL_MESSAGE_BYTES, decode_request, encode_frame,
-    encode_response,
+    CONTROL_SCHEMA_VERSION, CONTROL_SCHEMA_VERSION_V2, ControlProtocolError, ControlRejectionCode,
+    ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, MAX_CONTROL_MESSAGE_BYTES,
+    decode_request, decode_request_v2, encode_frame, encode_response, encode_response_v2,
 };
 use bli_kvm_diagnostic_producer_client::{
     DiagnosticReportReceipt, DiagnosticReporter, DiagnosticReporterHandle,
@@ -23,7 +24,7 @@ use tokio::{
     time::timeout,
 };
 
-use crate::{ControlBrokerConfig, ControlBrokerConfigError};
+use crate::{ControlBrokerConfig, ControlBrokerConfigError, ControlV2State};
 
 #[derive(Debug)]
 pub enum ControlBrokerError {
@@ -93,6 +94,7 @@ where
     let _cleanup = SocketCleanup(config.socket_path.clone());
     fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
+    let v2 = Arc::new(StdMutex::new(ControlV2State::disabled()));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -103,9 +105,10 @@ where
             .map_err(|_| io::Error::other("control broker semaphore closed"))?;
         let request_timeout = config.request_timeout;
         let diagnostics = diagnostics.clone();
+        let v2 = v2.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let _ = handle_connection(stream, request_timeout, diagnostics).await;
+            let _ = handle_connection(stream, request_timeout, diagnostics, v2).await;
         });
     }
 }
@@ -130,17 +133,26 @@ async fn handle_connection<S, D>(
     mut stream: S,
     request_timeout: std::time::Duration,
     diagnostics: D,
+    v2: Arc<StdMutex<ControlV2State>>,
 ) -> Result<(), io::Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     D: DiagnosticSubmitter,
 {
-    let request = timeout(request_timeout, read_request(&mut stream))
+    let request = timeout(request_timeout, read_payload(&mut stream))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "control request timed out"))??;
-    let response = deny_request(request);
-    let payload = encode_response(&response)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "control response invalid"))?;
+    let response = respond(&request, &v2)?;
+    let payload = if response.schema_version == CONTROL_SCHEMA_VERSION_V2 {
+        encode_response_v2(&response)
+    } else {
+        encode_response(&response)
+    }
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "control response invalid"))?;
+    let rejection = match &response.response {
+        ControlResponse::Rejected { code } => Some(reason_for(*code)),
+        ControlResponse::Applied => None,
+    };
     timeout(
         request_timeout,
         stream.write_all(&encode_frame(&payload).map_err(|_| {
@@ -149,13 +161,13 @@ where
     )
     .await
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "control response timed out"))??;
-    let _ = diagnostics.try_report(DiagnosticEvent::RequestRejected {
-        reason: RejectReason::CapabilityDisabled,
-    });
+    if let Some(reason) = rejection {
+        let _ = diagnostics.try_report(DiagnosticEvent::RequestRejected { reason });
+    }
     Ok(())
 }
 
-async fn read_request<S>(stream: &mut S) -> Result<ControlRequestEnvelope, io::Error>
+async fn read_payload<S>(stream: &mut S) -> Result<Vec<u8>, io::Error>
 where
     S: AsyncRead + Unpin,
 {
@@ -170,8 +182,55 @@ where
     }
     let mut payload = vec![0_u8; length];
     stream.read_exact(&mut payload).await?;
-    decode_request(&payload)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "control request invalid"))
+    Ok(payload)
+}
+
+fn respond(
+    payload: &[u8],
+    v2: &Arc<StdMutex<ControlV2State>>,
+) -> Result<ControlResponseEnvelope, io::Error> {
+    match decode_request(payload) {
+        Ok(request) => Ok(deny_request(request)),
+        Err(ControlProtocolError::UnsupportedSchemaVersion(version))
+            if version == CONTROL_SCHEMA_VERSION_V2 =>
+        {
+            let request = decode_request_v2(payload).map_err(|_| invalid_request())?;
+            let response = v2
+                .lock()
+                .map_err(|_| invalid_request())?
+                .handle(&request.request, Instant::now());
+            Ok(ControlResponseEnvelope {
+                schema_version: CONTROL_SCHEMA_VERSION_V2,
+                request_id: request.request_id,
+                operation_id: request.operation_id,
+                response,
+            })
+        }
+        Err(_) => Err(invalid_request()),
+    }
+}
+
+fn invalid_request() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "control request invalid")
+}
+
+fn reason_for(code: ControlRejectionCode) -> RejectReason {
+    match code {
+        ControlRejectionCode::CapabilityDisabled => RejectReason::CapabilityDisabled,
+        ControlRejectionCode::BackendUnavailable
+        | ControlRejectionCode::BackendRejected
+        | ControlRejectionCode::Internal => RejectReason::BackendUnavailable,
+        ControlRejectionCode::LeaseConflict | ControlRejectionCode::Duplicate => {
+            RejectReason::Conflict
+        }
+        ControlRejectionCode::LeaseExpired
+        | ControlRejectionCode::CooldownActive
+        | ControlRejectionCode::PendingUnreconciled => RejectReason::Busy,
+        ControlRejectionCode::NotArmed
+        | ControlRejectionCode::NotAttested
+        | ControlRejectionCode::ConfirmationStale
+        | ControlRejectionCode::InvalidState => RejectReason::InvalidInput,
+    }
 }
 
 fn deny_request(request: ControlRequestEnvelope) -> ControlResponseEnvelope {
@@ -224,8 +283,14 @@ mod tests {
     };
 
     use bli_kvm_control_client::ControlClient;
-    use bli_kvm_control_protocol::{decode_response, encode_request};
-    use bli_kvm_core::{AtxControlAction, HidReport, PlatformControlRequest, VirtualMediaCommand};
+    use bli_kvm_control_protocol::{
+        ControlRequestEnvelopeV2, decode_response, decode_response_v2, encode_request,
+        encode_request_v2,
+    };
+    use bli_kvm_core::{
+        AtxControlAction, HidLeaseRequest, HidReport, PlatformControlRequest,
+        PlatformControlRequestV2, VirtualMediaCommand,
+    };
     use tokio::{io::DuplexStream, time::sleep};
 
     use super::*;
@@ -298,7 +363,12 @@ mod tests {
         D: DiagnosticSubmitter,
     {
         let (server, mut client) = tokio::io::duplex(2 * MAX_CONTROL_MESSAGE_BYTES);
-        let handler = tokio::spawn(handle_connection(server, TEST_WAIT, diagnostics));
+        let handler = tokio::spawn(handle_connection(
+            server,
+            TEST_WAIT,
+            diagnostics,
+            Arc::new(StdMutex::new(ControlV2State::disabled())),
+        ));
         write_request(&mut client, &request).await;
         let response = timeout(TEST_WAIT, read_response(&mut client))
             .await
@@ -341,6 +411,61 @@ mod tests {
             );
         }
         stop_broker(broker).await;
+    }
+
+    #[tokio::test]
+    async fn v2_requests_are_denied_with_a_v2_response_and_a_fixed_report() {
+        let request = ControlRequestEnvelopeV2 {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 5,
+            operation_id: format!("{value:032x}", value = 5),
+            request: PlatformControlRequestV2::HidLease {
+                lease: HidLeaseRequest::Acquire {
+                    session_binding: 9,
+                    target_binding: [0x11; 32],
+                    ttl_seconds: 30,
+                },
+            },
+        };
+        let diagnostics = ScriptedDiagnostics::new([DiagnosticReportReceipt::Queued]);
+        let (server, mut client) = tokio::io::duplex(2 * MAX_CONTROL_MESSAGE_BYTES);
+        let handler = tokio::spawn(handle_connection(
+            server,
+            TEST_WAIT,
+            diagnostics.clone(),
+            Arc::new(StdMutex::new(ControlV2State::disabled())),
+        ));
+        let payload = encode_request_v2(&request).unwrap();
+        client
+            .write_all(&encode_frame(&payload).unwrap())
+            .await
+            .unwrap();
+        let mut prefix = [0_u8; 4];
+        client.read_exact(&mut prefix).await.unwrap();
+        let length = u32::from_be_bytes(prefix) as usize;
+        let mut body = vec![0_u8; length];
+        client.read_exact(&mut body).await.unwrap();
+        let response = decode_response_v2(&body).unwrap();
+        assert_eq!(response.schema_version, CONTROL_SCHEMA_VERSION_V2);
+        assert_eq!(response.request_id, request.request_id);
+        assert_eq!(
+            response.response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled
+            }
+        );
+        timeout(TEST_WAIT, handler)
+            .await
+            .expect("control handler did not finish")
+            .unwrap()
+            .unwrap();
+        let state = diagnostics.state.lock().unwrap();
+        assert_eq!(
+            state.events,
+            vec![DiagnosticEvent::RequestRejected {
+                reason: RejectReason::CapabilityDisabled
+            }]
+        );
     }
 
     #[derive(Clone)]
@@ -476,7 +601,12 @@ mod tests {
             },
         );
         let (server, mut client) = tokio::io::duplex(2 * MAX_CONTROL_MESSAGE_BYTES);
-        let handler = tokio::spawn(handle_connection(server, TEST_WAIT, diagnostics.clone()));
+        let handler = tokio::spawn(handle_connection(
+            server,
+            TEST_WAIT,
+            diagnostics.clone(),
+            Arc::new(StdMutex::new(ControlV2State::disabled())),
+        ));
         write_request(&mut client, &request).await;
 
         for _ in 0..100 {
