@@ -42,10 +42,12 @@ disabled and the denial broker is unchanged in shipped builds.
   from the network server and from the credential-gate unit.
   `scripts/build-hid-transition-profile.sh` builds that test bundle (feature
   opt-in through `scripts/build-aarch64.sh`) with `releaseAccepted: false`.
-  A test-profile bundle was produced from commit `d8caa54`
-  (`hardened-blikvm-hid-transition-profile-aarch64.tar.gz`, sha256
-  `8b6ee32f…`), containing the feature-built broker and the transition unit;
-  it is not a release artifact and has not been installed on a device.
+  A test-profile bundle was produced (`7b3b6658…`) and its device gate passed
+  on the test H616 (`hid-profile-gate-20260913-a.json`): the feature-built
+  broker refuses to start without a systemd `CREDENTIALS_DIRECTORY`, starts and
+  binds its control socket with a temporary credential directory, and leaves no
+  process, account, unit or staging path behind (`persistentChangeScope: none`);
+  it is not a release artifact and only temporary files were used.
 - Safe-target/focus bindings: domain-separated SHA-256 derivation in
   `bli-kvm-control-focus` (`90aa7f5`) and the session-bound, one-time
   `GET/POST /api/hid/focus` server endpoint that submits only a v2
