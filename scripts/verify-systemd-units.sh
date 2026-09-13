@@ -24,6 +24,7 @@ install -d -m 0755 \
 install -m 0755 /bin/true "$test_root/bin/true"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-platform-broker"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-control-broker"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-hid-credential-gate"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-proxy"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-server"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor"
@@ -77,6 +78,7 @@ install -m 0755 /bin/true \
 systemd-analyze verify --root="$test_root" \
   hardened-blikvm-platform-broker.service \
   hardened-blikvm-control-broker.service \
+  hardened-blikvm-hid-credential.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service \
   hardened-blikvm-nginx.service \
@@ -105,6 +107,7 @@ systemd-analyze verify --root="$test_root" \
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-hid-credential.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-watchdog.service" \

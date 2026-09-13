@@ -27,9 +27,10 @@ server_binary="$release_dir/bli-kvm-server"
 broker_binary="$release_dir/bli-kvm-platform-broker"
 video_proxy_binary="$release_dir/bli-kvm-video-proxy"
 control_broker_binary="$release_dir/bli-kvm-control-broker"
+hid_credential_gate_binary="$release_dir/bli-kvm-hid-credential-gate"
 update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
-scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
+scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$hid_credential_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 temp_root=$(mktemp -d /tmp/hardened-blikvm-bundle.XXXXXX)
 cleanup() {
@@ -54,6 +55,7 @@ install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
 install -m 0755 "$video_proxy_binary" "$stage/libexec/bli-kvm-video-proxy"
 install -m 0755 "$control_broker_binary" "$stage/libexec/bli-kvm-control-broker"
+install -m 0755 "$hid_credential_gate_binary" "$stage/libexec/bli-kvm-hid-credential-gate"
 install -m 0755 "$update_supervisor_binary" "$stage/libexec/bli-kvm-update-supervisor"
 install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-health-reporter"
 cp -a web/dist/. "$stage/share/web/"
@@ -66,6 +68,7 @@ install -m 0644 \
 install -m 0644 \
   packaging/systemd/hardened-blikvm-platform-broker.service \
   packaging/systemd/hardened-blikvm-control-broker.service \
+  packaging/systemd/hardened-blikvm-hid-credential.service \
   packaging/systemd/hardened-blikvm-video-proxy.service \
   packaging/systemd/hardened-blikvm-server.service \
   packaging/systemd/hardened-blikvm-nginx.service \
@@ -130,6 +133,7 @@ server_sha=$(sha256sum "$stage/bin/bli-kvm-server" | cut -d ' ' -f 1)
 broker_sha=$(sha256sum "$stage/libexec/bli-kvm-platform-broker" | cut -d ' ' -f 1)
 video_proxy_sha=$(sha256sum "$stage/libexec/bli-kvm-video-proxy" | cut -d ' ' -f 1)
 control_broker_sha=$(sha256sum "$stage/libexec/bli-kvm-control-broker" | cut -d ' ' -f 1)
+hid_credential_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-hid-credential-gate" | cut -d ' ' -f 1)
 update_supervisor_sha=$(sha256sum "$stage/libexec/bli-kvm-update-supervisor" | cut -d ' ' -f 1)
 update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-reporter" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
@@ -142,6 +146,7 @@ server_size=$(wc -c < "$stage/bin/bli-kvm-server" | tr -d ' ')
 broker_size=$(wc -c < "$stage/libexec/bli-kvm-platform-broker" | tr -d ' ')
 video_proxy_size=$(wc -c < "$stage/libexec/bli-kvm-video-proxy" | tr -d ' ')
 control_broker_size=$(wc -c < "$stage/libexec/bli-kvm-control-broker" | tr -d ' ')
+hid_credential_gate_size=$(wc -c < "$stage/libexec/bli-kvm-hid-credential-gate" | tr -d ' ')
 update_supervisor_size=$(wc -c < "$stage/libexec/bli-kvm-update-supervisor" | tr -d ' ')
 update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-reporter" | tr -d ' ')
 
@@ -159,6 +164,7 @@ jq -n \
   --arg broker_sha "$broker_sha" \
   --arg video_proxy_sha "$video_proxy_sha" \
   --arg control_broker_sha "$control_broker_sha" \
+  --arg hid_credential_gate_sha "$hid_credential_gate_sha" \
   --arg update_supervisor_sha "$update_supervisor_sha" \
   --arg update_health_reporter_sha "$update_health_reporter_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
@@ -170,6 +176,7 @@ jq -n \
   --argjson broker_size "$broker_size" \
   --argjson video_proxy_size "$video_proxy_size" \
   --argjson control_broker_size "$control_broker_size" \
+  --argjson hid_credential_gate_size "$hid_credential_gate_size" \
   --argjson update_supervisor_size "$update_supervisor_size" \
   --argjson update_health_reporter_size "$update_health_reporter_size" \
   '{
@@ -186,6 +193,7 @@ jq -n \
       broker: {path: "libexec/bli-kvm-platform-broker", sha256: $broker_sha, size: $broker_size},
       videoProxy: {path: "libexec/bli-kvm-video-proxy", sha256: $video_proxy_sha, size: $video_proxy_size},
       controlBroker: {path: "libexec/bli-kvm-control-broker", sha256: $control_broker_sha, size: $control_broker_size},
+      hidCredentialGate: {path: "libexec/bli-kvm-hid-credential-gate", sha256: $hid_credential_gate_sha, size: $hid_credential_gate_size},
       updateSupervisor: {path: "libexec/bli-kvm-update-supervisor", sha256: $update_supervisor_sha, size: $update_supervisor_size},
       updateHealthReporter: {path: "libexec/bli-kvm-update-health-reporter", sha256: $update_health_reporter_sha, size: $update_health_reporter_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
@@ -206,6 +214,7 @@ test "$(stat -c '%a' "$stage/bin/bli-kvm-server")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-platform-broker")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-video-proxy")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-control-broker")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-hid-credential-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-supervisor")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644

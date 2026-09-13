@@ -1,0 +1,15 @@
+[package]
+name = "bli-kvm-hid-credential"
+description = "Fixed-path systemd credential loader for the HID transition channel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

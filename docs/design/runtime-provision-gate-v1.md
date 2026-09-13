@@ -19,6 +19,7 @@ subset:
 - `hardened-blikvm-broker`;
 - `hardened-blikvm-video`;
 - `hardened-blikvm-control`;
+- `hardened-blikvm-hid`;
 - `hardened-blikvm-server`; and
 - `hardened-blikvm-update`.
 

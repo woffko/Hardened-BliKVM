@@ -62,6 +62,7 @@ node --check tools/playwright/device_application_upload_failures.mjs
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
+  tools/test_hid_credential_service.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_rustc_remap_wrapper.py \
   tools/test_capture_ssh_preflight.py \
@@ -249,6 +250,7 @@ python3 -m py_compile \
   scripts/rust_lld_static_pie.py \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
+  tools/test_hid_credential_service.py \
   tools/test_rust_lld_static_pie.py \
   tools/test_rustc_remap_wrapper.py \
   tools/test_capture_ssh_preflight.py \
@@ -475,6 +477,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     scripts/rust_lld_static_pie.py \
     tools/test_capture_pikvm_baseline.py \
     tools/test_packaging_boundaries.py \
+    tools/test_hid_credential_service.py \
     tools/test_rust_lld_static_pie.py \
     tools/test_rustc_remap_wrapper.py \
     tools/test_capture_ssh_preflight.py \

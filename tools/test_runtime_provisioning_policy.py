@@ -24,7 +24,7 @@ class RuntimeProvisioningPolicyTests(unittest.TestCase):
         digest, size = policy.validate_sysusers_payload(payload)
         self.assertEqual(
             digest,
-            "8685ad67a137da51a1640db06ef630a4ddaf3d09663640dd081d8a90c1997620",
+            "629bfaa0e3653acd59271c135d3322910c275ecb6533221b6b689639ff9ea070",
         )
         self.assertEqual(size, len(payload))
         info = policy.load_sysusers_source(self.package(digest))
@@ -32,9 +32,10 @@ class RuntimeProvisioningPolicyTests(unittest.TestCase):
         self.assertEqual(info.sha256, digest)
 
     def test_complete_identity_set_includes_inert_update_identity(self) -> None:
-        self.assertEqual(len(policy.ACCOUNT_NAMES), 5)
-        self.assertEqual(len(policy.GROUP_NAMES), 6)
+        self.assertEqual(len(policy.ACCOUNT_NAMES), 6)
+        self.assertEqual(len(policy.GROUP_NAMES), 7)
         self.assertIn("hardened-blikvm-update", policy.ACCOUNT_NAMES)
+        self.assertIn("hardened-blikvm-hid", policy.ACCOUNT_NAMES)
         self.assertEqual(policy.KVMD_ACCOUNT, "hardened-blikvm-broker")
         self.assertEqual(policy.USERNAME_BYTES, 23)
         self.assertEqual(policy.SHARED_GROUP, "hardened-blikvm")

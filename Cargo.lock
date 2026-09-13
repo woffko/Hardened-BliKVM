@@ -406,6 +406,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-hid-credential"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-kvmd-client",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-hid-policy"
 version = "0.1.0"
 dependencies = [

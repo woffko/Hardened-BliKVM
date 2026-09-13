@@ -78,7 +78,7 @@ class StageDeviceRuntimeProvisionTests(unittest.TestCase):
         paths = self.paths()
         self.assertTrue(
             paths.root.startswith(
-                "/var/lib/hardened-blikvm-provision-rollback-8685ad67a137-"
+                "/var/lib/hardened-blikvm-provision-rollback-629bfaa0e365-"
             )
         )
         self.assertEqual(paths.config_stage, "/etc/.hardened-blikvm-0000000000000000")

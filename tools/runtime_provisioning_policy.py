@@ -17,7 +17,7 @@ INSTALLED_SYSUSERS_PATH = (
 )
 MAX_SYSUSERS_BYTES = 4096
 EXPECTED_SYSUSERS_SHA256 = (
-    "8685ad67a137da51a1640db06ef630a4ddaf3d09663640dd081d8a90c1997620"
+    "629bfaa0e3653acd59271c135d3322910c275ecb6533221b6b689639ff9ea070"
 )
 SHARED_GROUP = "hardened-blikvm"
 KVMD_ACCOUNT = "hardened-blikvm-broker"
@@ -26,6 +26,7 @@ ACCOUNT_NAMES = (
     "hardened-blikvm-broker",
     "hardened-blikvm-video",
     "hardened-blikvm-control",
+    "hardened-blikvm-hid",
     "hardened-blikvm-server",
     "hardened-blikvm-update",
 )
@@ -43,6 +44,8 @@ EXPECTED_SYSUSERS_LINES = (
     "m hardened-blikvm-video hardened-blikvm",
     'u hardened-blikvm-control - "Hardened BliKVM control policy broker" /nonexistent /usr/sbin/nologin',
     "m hardened-blikvm-control hardened-blikvm",
+    'u hardened-blikvm-hid - "Hardened BliKVM HID transition credential" /nonexistent /usr/sbin/nologin',
+    "m hardened-blikvm-hid hardened-blikvm",
     'u hardened-blikvm-server - "Hardened BliKVM network server" /nonexistent /usr/sbin/nologin',
     "m hardened-blikvm-server hardened-blikvm",
     'u hardened-blikvm-update - "Hardened BliKVM application update supervisor" /nonexistent /usr/sbin/nologin',

@@ -2372,11 +2372,12 @@ class PackagingBoundaryTests(unittest.TestCase):
             '"hardened-blikvm-broker"',
             '"hardened-blikvm-video"',
             '"hardened-blikvm-control"',
+            '"hardened-blikvm-hid"',
             '"hardened-blikvm-update"',
             'CONFIG_ROOT = "/etc/hardened-blikvm"',
             "validate_sysusers_payload",
             "retained package sysusers documentation does not match source",
-            "8685ad67a137da51a1640db06ef630a4ddaf3d09663640dd081d8a90c1997620",
+            "629bfaa0e3653acd59271c135d3322910c275ecb6533221b6b689639ff9ea070",
         ):
             self.assertIn(required, policy + design)
         for forbidden in (
