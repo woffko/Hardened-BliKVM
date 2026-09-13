@@ -122,6 +122,18 @@ physically disconnected. The capabilities remain unavailable. Remaining
 before either can be enabled: the BliKVM reboot gate, an explicit safe visible
 target, and a release decision.
 
+Checkpoint: the Phase 3 device acceptance is complete for the initial code. The
+BliKVM reboot gate passed with a real reboot and a preserved previous-boot
+journal. A combined restricted-control test profile was deployed reversibly and
+the operator confirmed keyboard input, mouse input and ATX power/reset control
+against a real target; the API and headless GUI probes prove login, focus
+attestation, lease acquire/renew/report/release, the real KVMD HID routes and
+the ATX pinout provenance. The mobile and on-screen keyboards, the power-LED
+indicator and the Paste dialog now use the restricted path instead of absent
+legacy endpoints. LED presentation details and the release decision remain
+open; the restricted control surface stays compile-time disabled in shipped
+builds.
+
 ## Phase 4: Video
 
 - Proxy loopback-only MJPEG first.
