@@ -56,15 +56,23 @@ The client has no upload, remote download, readback, remove, reset, generic
 URI, raw path, or request body. Catalog resolution occurs before socket
 connection, and the response must be bounded JSON with `ok=true`.
 
+`bli-kvm-media-transition` combines the persisted policy with this client and
+the catalog: a permit persists Pending, exactly one fixed route is called, and
+the completion is persisted before the outcome; duplicates and conflicts replay
+without another call, a no-op never touches the journal, and a busy or failed
+backend response is persisted as rejected. The engine is still not connected to
+the broker or server.
+
 ## Remaining gates
 
 Before media mutation can be wired or advertised:
 
 1. provide atomic, verified catalog provisioning and image storage quotas;
-2. combine policy Pending, fixed backend execution, and completion persistence
-   in one broker state machine;
-3. add startup reconciliation and visible indeterminate/cooldown feedback;
-4. run an H616 disconnected-state no-op gate, then a separately approved
-   attach/eject test against a safe external target;
-5. verify upload interruption, read-only/writable modes, BIOS boot, reconnect,
+2. run an H616 disconnected-state no-op gate and a separately approved
+   attach/eject test against a safe external target. The engine itself now
+   passes an isolated H616 gate (mock media sockets and a temp catalog) for
+   attach, eject, catalog selection, duplicate replay, backend failure with
+   reconnect and restart with a Pending journal plus reconciliation;
+3. add visible indeterminate/cooldown feedback;
+4. verify upload interruption, read-only/writable modes, BIOS boot, reconnect,
    reboot, storage exhaustion, and recovery.
