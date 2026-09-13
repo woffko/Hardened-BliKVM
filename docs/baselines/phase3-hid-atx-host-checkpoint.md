@@ -117,4 +117,13 @@ ATX:
   a packaged ATX service and GUI feedback remain;
 - GUI indeterminate/cooldown feedback.
 
+## Phase 4 baseline
+
+Video starts from a fail-closed state pinned by
+`tools/test_phase4_video_boundary.py`: the manifest advertises only the
+loopback Unix-socket MJPEG transport with audio unavailable, the KVMD Janus
+inventory stays `janus_enabled: false`, and no WebRTC/Janus transport is
+enabled in the server or web dependencies. WebRTC, hotplug, resolution,
+two-client, latency and 24-hour soak gates remain ahead.
+
 All device-mutating steps require explicit confirmation before execution.
