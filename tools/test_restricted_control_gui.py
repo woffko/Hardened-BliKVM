@@ -87,6 +87,16 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("let consumers = 0;", hook)
         self.assertIn("consumers === 0", hook)
 
+    def test_mouse_movement_is_coalesced_to_the_latest_report(self) -> None:
+        hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
+        # A burst of pointer events must not build an HTTP backlog; only the
+        # latest pointer position is flushed, while keyboard reports stay ordered.
+        self.assertIn("let latestMouse: HidReport | null = null;", hook)
+        self.assertIn("function scheduleMouseFlush()", hook)
+        self.assertIn("MOUSE_FLUSH_MS", hook)
+        self.assertIn("if (report.mode === 'keyboard') {", hook)
+        self.assertIn("latestMouse = report;", hook)
+
     def test_mouse_uses_the_lease_path_when_advertised(self) -> None:
         mouse = ROOT / "web/src/pages/desktop/mouse"
         for name in ("absolute.tsx", "relative.tsx", "mobile-trackpad.tsx"):
@@ -96,6 +106,27 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("mode: 'absolute_mouse'", (mouse / "absolute.tsx").read_text())
         self.assertIn("mode: 'relative_mouse'", (mouse / "relative.tsx").read_text())
         self.assertIn("mode: 'relative_mouse'", (mouse / "mobile-trackpad.tsx").read_text())
+
+    def test_mobile_and_virtual_keyboards_use_the_restricted_path(self) -> None:
+        mobile = (
+            ROOT / "web/src/pages/desktop/mobile-local-keyboard/index.tsx"
+        ).read_text()
+        self.assertIn("useHidLease", mobile)
+        self.assertIn("reportHid", mobile)
+        self.assertIn("textToKeyReports", mobile)
+        self.assertIn("if (restricted) {", mobile)
+        virtual = (ROOT / "web/src/pages/desktop/virtual-keyboard/index.tsx").read_text()
+        self.assertIn("useHidLease", virtual)
+        self.assertIn("reportHid", virtual)
+        self.assertIn("data: [modifier, 0, code, 0, 0, 0, 0, 0]", virtual)
+        helper = (ROOT / "web/src/lib/hid-text.ts").read_text()
+        self.assertIn("export function textToKeyReports", helper)
+        self.assertIn("getModifierBit('ShiftLeft')", helper)
+
+    def test_power_led_reads_the_hardened_inventory(self) -> None:
+        power = (ROOT / "web/src/pages/desktop/menu/power/index.tsx").read_text()
+        self.assertIn("getRuntimeInventory", power)
+        self.assertIn("inventory.data.powerLed", power)
 
     def test_explicit_operator_confirmation_is_required(self) -> None:
         atom = (ROOT / "web/src/jotai/restricted-control.ts").read_text()

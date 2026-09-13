@@ -2,10 +2,12 @@ import { ClipboardEvent, FormEvent, KeyboardEvent, useEffect, useRef } from 'rea
 import { useAtom, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
+import { textToKeyReports } from '@/lib/hid-text.ts';
 import { KeyboardReport } from '@/lib/keyboard.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import { MOBILE_LOCAL_KEYBOARD_INPUT_ID } from './controls.ts';
 
@@ -23,6 +25,7 @@ export const MobileLocalKeyboard = () => {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keyboardRef = useRef(new KeyboardReport());
   const queueRef = useRef(Promise.resolve());
+  const { restricted, reportHid } = useHidLease();
 
   useEffect(() => {
     const input = inputRef.current;
@@ -41,6 +44,10 @@ export const MobileLocalKeyboard = () => {
   }
 
   function sendReport(report: Uint8Array) {
+    if (restricted) {
+      reportHid({ mode: 'keyboard', data: Array.from(report) });
+      return;
+    }
     const data = new Uint8Array([MessageEvent.Keyboard, ...report]);
     client.send(data);
   }
@@ -56,6 +63,18 @@ export const MobileLocalKeyboard = () => {
 
   function sendText(text: string) {
     if (!text) return;
+    if (restricted) {
+      enqueue(() => {
+        for (const step of textToKeyReports(text)) {
+          reportHid({
+            mode: 'keyboard',
+            data: [step.modifier, 0, step.usage, 0, 0, 0, 0, 0]
+          });
+          reportHid({ mode: 'keyboard', data: [0, 0, 0, 0, 0, 0, 0, 0] });
+        }
+      });
+      return;
+    }
     enqueue(async () => {
       await paste(text, getPasteLanguage());
     });

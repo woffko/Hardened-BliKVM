@@ -9,15 +9,37 @@ import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
 const LEASE_TTL_SECONDS = 30;
+const MOUSE_FLUSH_MS = 10;
 
 /**
  * The broker admits a single active HID lease, so the keyboard, the mouse and
  * the mobile trackpad must share one lease and one ordered queue. A lease per
  * surface would make them mutually exclusive with `lease_conflict`.
+ *
+ * Keyboard reports keep their order. Mouse movement is coalesced to the latest
+ * report per flush so a burst of pointer events cannot build an HTTP backlog
+ * and make the cursor trail far behind.
  */
 let sharedSession: HidLeaseSession | null = null;
 let sharedQueue: Promise<void> = Promise.resolve();
+let latestMouse: HidReport | null = null;
+let mouseFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let enqueueRef: ((report: HidReport) => void) | null = null;
 let consumers = 0;
+
+function scheduleMouseFlush() {
+  if (mouseFlushTimer !== null) {
+    return;
+  }
+  mouseFlushTimer = setTimeout(() => {
+    mouseFlushTimer = null;
+    const report = latestMouse;
+    latestMouse = null;
+    if (report && enqueueRef) {
+      enqueueRef(report);
+    }
+  }, MOUSE_FLUSH_MS);
+}
 
 export function useHidLease() {
   const manifest = useAtomValue(capabilitiesAtom);
@@ -31,6 +53,11 @@ export function useHidLease() {
     return () => {
       consumers -= 1;
       if (consumers === 0) {
+        if (mouseFlushTimer !== null) {
+          clearTimeout(mouseFlushTimer);
+          mouseFlushTimer = null;
+        }
+        latestMouse = null;
         const session = sharedSession;
         sharedSession = null;
         if (session) {
@@ -40,28 +67,30 @@ export function useHidLease() {
     };
   }, []);
 
-  const reportHid = useCallback(
-    (report: HidReport) => {
-      if (!manifestRef.current) {
+  const send = useCallback(
+    async (report: HidReport) => {
+      if (!(await ensureConfirmed())) {
         return;
       }
+      const current = manifestRef.current;
+      if (!current) {
+        return;
+      }
+      await ensureFocus(current.platform.id);
+      if (!sharedSession) {
+        const session = new HidLeaseSession();
+        await session.start(LEASE_TTL_SECONDS);
+        sharedSession = session;
+      }
+      await sharedSession.report(report);
+    },
+    [ensureConfirmed]
+  );
+
+  const enqueue = useCallback(
+    (report: HidReport) => {
       sharedQueue = sharedQueue
-        .then(async () => {
-          if (!(await ensureConfirmed())) {
-            return;
-          }
-          const current = manifestRef.current;
-          if (!current) {
-            return;
-          }
-          await ensureFocus(current.platform.id);
-          if (!sharedSession) {
-            const session = new HidLeaseSession();
-            await session.start(LEASE_TTL_SECONDS);
-            sharedSession = session;
-          }
-          await sharedSession.report(report);
-        })
+        .then(() => send(report))
         .catch(() => {
           const session = sharedSession;
           sharedSession = null;
@@ -70,10 +99,31 @@ export function useHidLease() {
           }
         });
     },
-    [ensureConfirmed]
+    [send]
+  );
+  enqueueRef = enqueue;
+
+  const reportHid = useCallback(
+    (report: HidReport) => {
+      if (!manifestRef.current) {
+        return;
+      }
+      if (report.mode === 'keyboard') {
+        enqueue(report);
+        return;
+      }
+      latestMouse = report;
+      scheduleMouseFlush();
+    },
+    [enqueue]
   );
 
   const release = useCallback(() => {
+    if (mouseFlushTimer !== null) {
+      clearTimeout(mouseFlushTimer);
+      mouseFlushTimer = null;
+    }
+    latestMouse = null;
     const session = sharedSession;
     sharedSession = null;
     if (session) {

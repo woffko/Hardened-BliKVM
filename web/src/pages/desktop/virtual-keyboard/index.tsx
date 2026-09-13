@@ -17,6 +17,7 @@ import { getKeycode, getModifierBit } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardOpenAtom } from '@/jotai/keyboard.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
 import {
@@ -58,6 +59,7 @@ export const VirtualKeyboard = () => {
   const [keyboardSystem, setKeyboardSystem] = useState('win');
   const [keyboardLanguage, setKeyboardLanguage] = useState('en');
   const [activeModifierKeys, setActiveModifierKeys] = useState<string[]>([]);
+  const { restricted, reportHid } = useHidLease();
 
   const keyboardRef = useRef<any>(null);
 
@@ -211,6 +213,10 @@ export const VirtualKeyboard = () => {
   }
 
   function send(modifier: number, code: number) {
+    if (restricted) {
+      reportHid({ mode: 'keyboard', data: [modifier, 0, code, 0, 0, 0, 0, 0] });
+      return;
+    }
     const data = new Uint8Array([MessageEvent.Keyboard, modifier, 0, code, 0, 0, 0, 0, 0]);
     client.send(data);
   }

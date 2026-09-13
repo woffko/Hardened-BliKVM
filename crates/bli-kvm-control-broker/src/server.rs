@@ -801,6 +801,90 @@ mod tests {
         stop_broker(broker).await;
     }
 
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
+    async fn hid_profile_applies_mouse_reports_to_the_kvmd_backend() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let kvmd = directory.path().join("kvmd.sock");
+        let backend = serve_kvmd(&kvmd, 1).await;
+        let credentials =
+            bli_kvm_kvmd_client::KvmdCredentials::new("test-user", "not-a-real-password").unwrap();
+        let mut broker = tokio::spawn(run_with_hid_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("ledger.json"),
+            kvmd,
+            credentials,
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let lease_id = match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => lease_id,
+            other => panic!("expected a lease grant, got {other:?}"),
+        };
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Report {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            report: HidReport::RelativeMouse {
+                                data: [0, 10, 246, 0],
+                            },
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let requests = timeout(TEST_WAIT, backend)
+            .await
+            .expect("mock KVMD did not finish")
+            .unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0].contains("send_mouse_relative?delta_x=10&delta_y=-10"),
+            "unexpected KVMD request: {}",
+            requests[0]
+        );
+        stop_broker(broker).await;
+    }
+
     #[cfg(feature = "atx-transition-profile")]
     #[tokio::test]
     async fn atx_profile_reconciles_pending_before_serving() {

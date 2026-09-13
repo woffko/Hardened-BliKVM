@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { LoaderCircleIcon, PowerIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { getRuntimeInventory } from '@/api/inventory.ts';
 import * as api from '@/api/vm';
 import * as localstorage from '@/lib/localstorage.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
@@ -32,6 +33,15 @@ export const Power = () => {
   }, []);
 
   async function getLed() {
+    try {
+      const inventory = await getRuntimeInventory();
+      if (inventory.code === 0 && inventory.data.powerLed != null) {
+        setIsPowerOn(inventory.data.powerLed);
+        return;
+      }
+    } catch (err) {
+      console.log(err);
+    }
     try {
       const rsp = await api.getGpio();
       if (rsp.code === 0) {
