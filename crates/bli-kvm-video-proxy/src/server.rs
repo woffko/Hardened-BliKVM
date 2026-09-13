@@ -416,6 +416,49 @@ mod tests {
         let _ = proxy.await;
     }
 
+    #[tokio::test]
+    async fn upstream_disconnect_ends_downstream_cleanly() {
+        let directory = tempfile::tempdir().unwrap();
+        let upstream_path = directory.path().join("upstream.sock");
+        let proxy_path = directory.path().join("proxy.sock");
+        let upstream = UnixListener::bind(&upstream_path).unwrap();
+        let proxy = tokio::spawn(run(
+            VideoProxyConfig::new(&proxy_path, &upstream_path).unwrap()
+        ));
+        for _ in 0..50 {
+            if proxy_path.exists() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+
+        let upstream_task = tokio::spawn(async move {
+            let (mut stream, _) = upstream.accept().await.unwrap();
+            let mut request = vec![0_u8; UPSTREAM_REQUEST.len()];
+            stream.read_exact(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nContent-Length: 4\r\n\r\nJPEG",
+                )
+                .await
+                .unwrap();
+            // Mid-stream upstream disconnect.
+            drop(stream);
+        });
+
+        let mut client = UnixStream::connect(&proxy_path).await.unwrap();
+        client
+            .write_all(b"GET /mjpeg HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        upstream_task.await.unwrap();
+        assert!(response.ends_with(b"JPEG"));
+        proxy.abort();
+        let _ = proxy.await;
+    }
+
     #[test]
     fn rejects_a_group_or_world_writable_runtime_directory() {
         let directory = tempfile::tempdir().unwrap();
