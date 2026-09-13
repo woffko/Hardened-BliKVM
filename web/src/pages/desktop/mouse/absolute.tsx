@@ -6,6 +6,7 @@ import { MouseReportAbsolute } from '@/lib/mouse.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 import { useIsTouchLayout } from '@/hooks/useResponsiveLayout.ts';
 
 import { emitMobileCursorAbsolute, emitMobileCursorHide } from './mobile-cursor-events.ts';
@@ -30,6 +31,7 @@ export const Absolute = () => {
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const scrollDirection = useAtomValue(scrollDirectionAtom);
   const scrollInterval = useAtomValue(scrollIntervalAtom);
+  const { restricted, reportHid } = useHidLease();
 
   const mouseRef = useRef(new MouseReportAbsolute());
   const lastPosRef = useRef({ x: HID_ABSOLUTE_CENTER, y: HID_ABSOLUTE_CENTER });
@@ -566,6 +568,10 @@ export const Absolute = () => {
   }
 
   function sendReport(report: Uint8Array) {
+    if (restricted) {
+      reportHid({ mode: 'absolute_mouse', data: Array.from(report) });
+      return;
+    }
     const data = new Uint8Array([MessageEvent.Mouse, ...report]);
     client.send(data);
   }

@@ -77,6 +77,16 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("supportsRestrictedControls", hook)
         self.assertIn("session.stop()", hook)
 
+    def test_mouse_uses_the_lease_path_when_advertised(self) -> None:
+        mouse = ROOT / "web/src/pages/desktop/mouse"
+        for name in ("absolute.tsx", "relative.tsx", "mobile-trackpad.tsx"):
+            text = (mouse / name).read_text()
+            self.assertIn("useHidLease", text)
+            self.assertIn("client.send", text)
+        self.assertIn("mode: 'absolute_mouse'", (mouse / "absolute.tsx").read_text())
+        self.assertIn("mode: 'relative_mouse'", (mouse / "relative.tsx").read_text())
+        self.assertIn("mode: 'relative_mouse'", (mouse / "mobile-trackpad.tsx").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

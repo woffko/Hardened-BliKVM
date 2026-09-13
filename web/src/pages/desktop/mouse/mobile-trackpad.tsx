@@ -5,6 +5,7 @@ import { MouseReportRelative } from '@/lib/mouse.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { pointerSensitivityAtom, scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom } from '@/jotai/screen.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import {
   emitMobileCursorHide,
@@ -39,6 +40,7 @@ export const MobileTrackpad = () => {
   const scrollInterval = useAtomValue(scrollIntervalAtom);
   const pointerSensitivity = useAtomValue(pointerSensitivityAtom);
   const resolution = useAtomValue(resolutionAtom);
+  const { restricted, reportHid } = useHidLease();
 
   const mouseRef = useRef(new MouseReportRelative());
   const activePointersRef = useRef(new Map<number, Point>());
@@ -313,6 +315,10 @@ export const MobileTrackpad = () => {
     }
 
     function sendReport(report: Uint8Array) {
+      if (restricted) {
+        reportHid({ mode: 'relative_mouse', data: Array.from(report) });
+        return;
+      }
       const data = new Uint8Array([MessageEvent.Mouse, ...report]);
       client.send(data);
     }
@@ -360,7 +366,7 @@ export const MobileTrackpad = () => {
       sendReport(mouse.reset());
       emitMobileCursorHide(0);
     };
-  }, [scrollDirection, scrollInterval, pointerSensitivity, resolution]);
+  }, [scrollDirection, scrollInterval, pointerSensitivity, resolution, restricted, reportHid]);
 
   return null;
 };

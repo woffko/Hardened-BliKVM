@@ -7,6 +7,7 @@ import { MouseReportRelative } from '@/lib/mouse.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { pointerSensitivityAtom, scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom } from '@/jotai/screen.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import {
   getResolutionMovementScale,
@@ -19,6 +20,7 @@ import { MouseRelativeEvent } from './types.ts';
 export const Relative = () => {
   const { t } = useTranslation();
   const [messageApi, contextHolder] = message.useMessage();
+  const { restricted, reportHid } = useHidLease();
 
   const resolution = useAtomValue(resolutionAtom);
   const scrollDirection = useAtomValue(scrollDirectionAtom);
@@ -177,6 +179,10 @@ export const Relative = () => {
   }
 
   function sendReport(report: Uint8Array) {
+    if (restricted) {
+      reportHid({ mode: 'relative_mouse', data: Array.from(report) });
+      return;
+    }
     const data = new Uint8Array([MessageEvent.Mouse, ...report]);
     client.send(data);
   }
