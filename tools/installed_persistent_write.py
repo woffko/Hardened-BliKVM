@@ -584,9 +584,14 @@ def verify_retained(root: Path) -> dict[str, object]:
             import persistent_write_retained_snapshot as retained
         else:
             from tools import persistent_write_retained_snapshot as retained
-        value = object_value(plan["terminal"])
-        terminal = contract.temporary.TerminalState(cast(str, value["slot"]), cast(int, value["floor"]),
-            cast(int, value["generation"]))
+        bound = binding(plan)
+        if plan["terminal"] is None:
+            terminal = contract.temporary.TerminalState(bound.baseline_slot, bound.baseline_floor,
+                                                        bound.baseline_generation)
+        else:
+            value = object_value(plan["terminal"])
+            terminal = contract.temporary.TerminalState(cast(str, value["slot"]), cast(int, value["floor"]),
+                cast(int, value["generation"]))
         after = retained.capture(root, object_value(plan["backup"]), terminal)
         snapshot.preserve(object_value(plan["before"]), after,
                           new_boot=plan["boot"] != boot_identity(), allow_transition=False)

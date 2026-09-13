@@ -326,6 +326,20 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "committed retained policy"):
                 native.verify_retained(self.root)
 
+    def test_verify_retained_derives_terminal_when_absent(self) -> None:
+        plan = self.committed_retained_plan()
+        plan["terminal"] = None
+        with patch.object(native, "load", return_value=plan), \
+                patch.object(native.temporary.guard, "locked", return_value=nullcontext()), \
+                patch.object(native, "boot_identity", return_value="e" * 64), \
+                patch.object(native.snapshot, "preserve"), \
+                patch.object(retained, "capture") as capture:
+            result = native.verify_retained(self.root)
+        self.assertEqual(result["result"], "retained")
+        terminal = capture.call_args.args[2]
+        self.assertEqual((terminal.slot, terminal.floor, terminal.generation),
+                         (self.bound.baseline_slot, 8, 40))
+
     def test_verify_retained_returns_preserved_snapshot(self) -> None:
         plan = self.committed_retained_plan()
         with patch.object(native, "load", return_value=plan), \

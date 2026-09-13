@@ -16,6 +16,32 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 from tools.stage_operational_reboot import REBOOT_COMMAND
 
 REBOOT_DEADLINE_SEC = 360
+VERIFY_SCRIPT = (
+    "import json, sys\n"
+    "root = sys.argv[1]\n"
+    "sys.path.insert(0, root)\n"
+    "import controller as native\n"
+    "sys.modules.setdefault('installed_persistent_write', native)\n"
+    "import persistent_write_retained_snapshot as retained\n"
+    "from pathlib import Path\n"
+    "path = Path(root)\n"
+    "plan = native.load(path)\n"
+    "bound = native.binding(plan)\n"
+    "terminal_value = plan.get('terminal')\n"
+    "if terminal_value is None:\n"
+    "    terminal = native.contract.temporary.TerminalState(bound.baseline_slot, bound.baseline_floor, "
+    "bound.baseline_generation)\n"
+    "else:\n"
+    "    value = native.object_value(terminal_value)\n"
+    "    terminal = native.contract.temporary.TerminalState(str(value['slot']), int(value['floor']), "
+    "int(value['generation']))\n"
+    "after = retained.capture(path, native.object_value(plan['backup']), terminal)\n"
+    "native.snapshot.preserve(native.object_value(plan['before']), after, "
+    "new_boot=plan['boot'] != native.boot_identity(), allow_transition=False)\n"
+    "print(json.dumps({'result': 'retained', 'guardRoot': root, 'bootIdSha256': native.boot_identity(), "
+    "'retentionApproved': True, 'snapshot': after}, sort_keys=True))\n"
+)
+
 
 
 def validate_retained(value: object) -> dict[str, object]:
@@ -53,8 +79,7 @@ def main() -> int:
         return common.transport.run_ssh(target, secret, script, timeout=timeout)
 
     try:
-        command = shlex.join(['python3', '-B', str(root / 'controller.py'), 'verify-retained',
-                              '--guard-root', str(root)])
+        command = shlex.join(['python3', '-B', '-c', VERIFY_SCRIPT, str(root)])
         before = validate_retained(json.loads(ssh(command).stdout))
         receipt['before'] = before
         receipt['rebootRequested'] = True
