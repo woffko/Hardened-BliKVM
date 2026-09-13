@@ -157,5 +157,7 @@ single fixed KVMD route, the completion is persisted after, duplicates and
 conflicts replay without another call, `Noop` never touches the journal, and
 busy/`must_disconnect` fail without backend I/O. The catalog stays the only
 image-ID authority and no upload, download or device path exists. Host tests
-drive a mock media socket; interruption, reconnect, reboot and BIOS-boot gates
-remain device-bound.
+drive a mock media socket and cover duplicate replay, backend-failure
+persistence without retry, restart with a Pending journal plus explicit
+reconciliation, and operation-ID conflict and cooldown rejection.
+Interruption, reconnect, reboot and BIOS-boot gates remain device-bound.

@@ -317,4 +317,147 @@ mod tests {
         assert_eq!(engine.pending_count(), 0);
         assert!(!socket.exists());
     }
+
+    #[tokio::test]
+    async fn backend_failure_is_persisted_without_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("media.sock");
+        let server = serve(&socket, &["500 Error"]).await;
+        let mut engine = engine(directory.path(), &socket);
+        let request = operation(6, VirtualMediaCommand::SetConnected { connected: true });
+
+        assert_eq!(
+            engine
+                .execute(
+                    request,
+                    MediaEligibility::verified_for_test_profile(),
+                    observed(false, false),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::BackendFailed
+        );
+        assert_eq!(
+            engine
+                .execute(
+                    request,
+                    MediaEligibility::verified_for_test_profile(),
+                    observed(false, false),
+                    1_600
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::ReplayedRejected
+        );
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_survives_restart_and_requires_reconciliation() {
+        use bli_kvm_media_policy::{MediaDecision, MediaPolicyEngine};
+
+        let directory = tempfile::tempdir().unwrap();
+        let journal = directory.path().join("journal.json");
+        {
+            let mut policy = MediaPolicyEngine::open(&journal).unwrap();
+            assert_eq!(
+                policy
+                    .prepare(
+                        operation(7, VirtualMediaCommand::SetConnected { connected: true }),
+                        MediaEligibility::verified_for_test_profile(),
+                        observed(false, false),
+                        1_500
+                    )
+                    .unwrap(),
+                MediaDecision::Permit
+            );
+        }
+        let socket = directory.path().join("absent.sock");
+        let mut engine = MediaTransitionEngine::open(
+            &journal,
+            KvmdMediaClient::new(&socket).unwrap(),
+            catalog(directory.path()),
+            credentials(),
+        )
+        .unwrap();
+        assert_eq!(engine.pending_count(), 1);
+        assert_eq!(
+            engine
+                .execute(
+                    operation(8, VirtualMediaCommand::SetConnected { connected: false }),
+                    MediaEligibility::verified_for_test_profile(),
+                    observed(false, true),
+                    1_600
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::Rejected(MediaRejection::IndeterminatePending)
+        );
+        engine
+            .resolve_pending([7; 16], MediaCompletion::Applied, 1_700)
+            .unwrap();
+        assert_eq!(engine.pending_count(), 0);
+        assert_eq!(
+            engine
+                .execute(
+                    operation(7, VirtualMediaCommand::SetConnected { connected: true }),
+                    MediaEligibility::verified_for_test_profile(),
+                    observed(false, true),
+                    1_800
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::ReplayedApplied
+        );
+        assert!(!socket.exists());
+    }
+
+    #[tokio::test]
+    async fn conflict_and_cooldown_fail_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("media.sock");
+        let server = serve(&socket, &["200 OK"]).await;
+        let mut engine = engine(directory.path(), &socket);
+        let eligibility = MediaEligibility::verified_for_test_profile();
+
+        assert_eq!(
+            engine
+                .execute(
+                    operation(9, VirtualMediaCommand::SetConnected { connected: true }),
+                    eligibility,
+                    observed(false, false),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::Applied
+        );
+        assert_eq!(
+            engine
+                .execute(
+                    operation(9, VirtualMediaCommand::SetConnected { connected: false }),
+                    eligibility,
+                    observed(false, true),
+                    1_600
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::Rejected(MediaRejection::OperationIdConflict)
+        );
+        assert_eq!(
+            engine
+                .execute(
+                    operation(10, VirtualMediaCommand::SetConnected { connected: false }),
+                    eligibility,
+                    observed(false, true),
+                    1_600
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::Rejected(MediaRejection::CooldownActive)
+        );
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
 }
