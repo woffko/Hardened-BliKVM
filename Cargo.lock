@@ -885,6 +885,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-usb-gadget"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-video-client"
 version = "0.1.0"
 dependencies = [
