@@ -49,6 +49,7 @@ install -m 0644 \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-hid.conf" \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-media.conf" \
+  "$project_root/packaging/tmpfiles.d/hardened-blikvm-gadget.conf" \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-system-actions.conf" \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-diagnostics.conf" \
   "$test_root/usr/lib/tmpfiles.d/"
@@ -82,6 +83,7 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-control-broker.service \
   hardened-blikvm-hid-transition.service \
   hardened-blikvm-media-transition.service \
+  hardened-blikvm-gadget-owner.service \
   hardened-blikvm-hid-credential.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service \
@@ -113,6 +115,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-hid-transition.service" \
   "$project_root/packaging/systemd/hardened-blikvm-media-transition.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-gadget-owner.service" \
   "$project_root/packaging/systemd/hardened-blikvm-hid-credential.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \

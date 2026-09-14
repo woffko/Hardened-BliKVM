@@ -1,0 +1,60 @@
+[Unit]
+Description=Hardened BliKVM USB gadget owner (test build only)
+Documentation=https://github.com/woffko/Hardened-BliKVM
+Before=hardened-blikvm-server.service hardened-blikvm-server-current.service
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+RuntimeDirectory=hardened-blikvm-gadget
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=no
+Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
+Environment=BLI_KVM_GADGET_MEDIA_PROFILE=1
+Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json
+Environment=BLI_KVM_GADGET_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+Environment=BLI_KVM_GADGET_CONFIGFS=/sys/kernel/config/usb_gadget
+Environment=BLI_KVM_GADGET_IMAGES=/var/lib/hardened-blikvm-gadget/images
+Environment=BLI_KVM_GADGET_UDC=musb-hdrc.2.auto
+Environment=BLI_KVM_GADGET_SERIAL_FILE=/etc/hardened-blikvm-gadget/serial
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-control-broker
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=15s
+TimeoutStopSec=10s
+
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=no
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+DeviceAllow=/dev/hidg0 rw
+DeviceAllow=/dev/hidg1 rw
+DeviceAllow=/dev/hidg2 rw
+IPAddressDeny=any
+ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -55,6 +55,15 @@ The media transition engine has a feature-gated `MediaExecutor::Gadget`
 (`gadget-media-profile`) that selects the LUN file, binds the UDC on connect and
 unbinds it on disconnect, and reports drive state from `observe`.
 
+## Owner unit
+
+`packaging/systemd/hardened-blikvm-gadget-owner.service` runs the control
+broker in the gadget media profile as the privileged configfs owner (root), with
+`ProtectKernelTunables=no` and `ReadWritePaths=/sys/kernel/config/usb_gadget`
+so configfs stays writable while every other hardening flag stays on. It is
+non-installable scaffolding until the physical gate; the sandbox-analysis score
+is 1.3. The tmpfiles entry creates `/var/lib/hardened-blikvm-gadget`.
+
 ## Next gates
 
 - a feature-gated `HidExecutor::Gadget` writing report batches to the HID
