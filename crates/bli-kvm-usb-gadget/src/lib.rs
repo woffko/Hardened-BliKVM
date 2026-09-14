@@ -150,23 +150,36 @@ fn validate_string(value: &str, field: &'static str) -> Result<(), GadgetError> 
     Ok(())
 }
 
+fn validate_udc(udc: &str) -> Result<(), GadgetError> {
+    if udc.is_empty()
+        || udc.len() > MAX_UDC_LEN
+        || !udc
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':'))
+    {
+        return Err(GadgetError::InvalidUdc);
+    }
+    Ok(())
+}
+
+fn validate_image_path(file: &Path) -> Result<(), GadgetError> {
+    if !file.is_absolute()
+        || file
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(GadgetError::InvalidImagePath);
+    }
+    let metadata = std::fs::metadata(file).map_err(|_| GadgetError::ImageMissing)?;
+    if !metadata.is_file() {
+        return Err(GadgetError::ImageMissing);
+    }
+    Ok(())
+}
+
 fn validate_function(function: &Function) -> Result<(), GadgetError> {
     match function {
-        Function::MassStorage(config) => {
-            let file = &config.file;
-            if !file.is_absolute()
-                || file
-                    .components()
-                    .any(|component| matches!(component, std::path::Component::ParentDir))
-            {
-                return Err(GadgetError::InvalidImagePath);
-            }
-            let metadata = std::fs::metadata(file).map_err(|_| GadgetError::ImageMissing)?;
-            if !metadata.is_file() {
-                return Err(GadgetError::ImageMissing);
-            }
-            Ok(())
-        }
+        Function::MassStorage(config) => validate_image_path(&config.file),
         Function::Hid(config) => {
             if !HID_FUNCTIONS.contains(&config.name.as_str()) {
                 return Err(GadgetError::InvalidFunction);
@@ -192,15 +205,7 @@ fn validate_spec(spec: &GadgetSpec) -> Result<(), GadgetError> {
     if spec.strings.serial.eq_ignore_ascii_case(LEGACY_SERIAL) {
         return Err(GadgetError::InvalidString("serial"));
     }
-    if spec.udc.is_empty()
-        || spec.udc.len() > MAX_UDC_LEN
-        || !spec
-            .udc
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':'))
-    {
-        return Err(GadgetError::InvalidUdc);
-    }
+    validate_udc(&spec.udc)?;
     if spec.functions.is_empty() {
         return Err(GadgetError::NoFunctions);
     }
@@ -399,6 +404,42 @@ pub fn apply(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
 /// Unbind and remove the gadget. Idempotent.
 pub fn remove(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
     execute(root, &remove_steps(spec))
+}
+
+/// Write the selected image to the mass-storage LUN. Requires the function to
+/// exist; it does not bind the gadget.
+pub fn set_lun_file(root: &Path, file: &Path) -> Result<(), GadgetError> {
+    validate_image_path(file)?;
+    execute(
+        root,
+        &[Step::WriteFile {
+            path: function_path(MSD_FUNCTION).join("lun.0").join("file"),
+            value: file.to_string_lossy().into_owned(),
+        }],
+    )
+}
+
+/// Bind the gadget to a UDC controller.
+pub fn bind(root: &Path, udc: &str) -> Result<(), GadgetError> {
+    validate_udc(udc)?;
+    execute(
+        root,
+        &[Step::WriteFile {
+            path: gadget_path().join("UDC"),
+            value: udc.to_string(),
+        }],
+    )
+}
+
+/// Unbind the gadget from its UDC controller. Idempotent.
+pub fn unbind(root: &Path) -> Result<(), GadgetError> {
+    execute(
+        root,
+        &[Step::WriteFile {
+            path: gadget_path().join("UDC"),
+            value: String::new(),
+        }],
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -698,6 +739,46 @@ mod tests {
                 "hid.usb1".to_string(),
                 MSD_FUNCTION.to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn bind_unbind_and_lun_selection_are_independent_and_validated() {
+        let directory = root_with_image();
+        let spec = spec(&directory.path().join(IMAGE_NAME));
+        assert_eq!(apply(directory.path(), &spec), Ok(()));
+
+        assert_eq!(unbind(directory.path()), Ok(()));
+        assert!(observe(directory.path()).unwrap().udc.is_none());
+        assert_eq!(bind(directory.path(), "musb-hdrc.2.auto"), Ok(()));
+        assert_eq!(
+            observe(directory.path()).unwrap().udc.as_deref(),
+            Some("musb-hdrc.2.auto")
+        );
+
+        let other = directory.path().join("other.img");
+        std::fs::write(&other, b"x").unwrap();
+        assert_eq!(set_lun_file(directory.path(), &other), Ok(()));
+        assert_eq!(
+            observe(directory.path())
+                .unwrap()
+                .mass_storage
+                .unwrap()
+                .file,
+            other
+        );
+
+        assert_eq!(
+            bind(directory.path(), "bad udc"),
+            Err(GadgetError::InvalidUdc)
+        );
+        assert_eq!(
+            set_lun_file(directory.path(), Path::new("relative.img")),
+            Err(GadgetError::InvalidImagePath)
+        );
+        assert_eq!(
+            set_lun_file(directory.path(), &directory.path().join("missing.img")),
+            Err(GadgetError::ImageMissing)
         );
     }
 

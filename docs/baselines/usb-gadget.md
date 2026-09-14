@@ -34,6 +34,13 @@ the mass-storage LUN state. This is the read path that media eligibility and
 ownership-handoff verification will use, and it is covered by tests over a
 temporary root.
 
+## Runtime primitives
+
+`set_lun_file`, `bind` and `unbind` provide the incremental operations a media
+or HID executor needs after the gadget exists (select an image, attach, detach)
+without rebuilding the whole gadget. Inputs are validated the same way as the
+full spec, and the operations are covered by tests over a temporary root.
+
 ## Next gates
 
 - capture the HID report descriptors and function parameters read-only from the
