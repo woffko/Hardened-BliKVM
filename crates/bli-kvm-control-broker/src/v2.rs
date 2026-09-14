@@ -24,9 +24,9 @@ use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome};
 use bli_kvm_hid_adapter::HidLeaseIdentity;
 #[cfg(feature = "hid-transition-profile")]
 use bli_kvm_hid_policy::{HidControlPolicy, HidDecision, HidEligibility};
-#[cfg(feature = "media-transition-profile")]
+#[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 use bli_kvm_media_policy::{MediaEligibility, MediaOperation, MediaRejection};
-#[cfg(feature = "media-transition-profile")]
+#[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 use bli_kvm_media_transition::{MediaTransitionEngine, MediaTransitionOutcome};
 #[cfg(feature = "hid-transition-profile")]
 use rand_core::{OsRng, RngCore};
@@ -36,7 +36,7 @@ pub struct ControlV2State {
     attestations: TargetAttestationRegistry,
     #[cfg(feature = "atx-transition-profile")]
     atx: Option<AtxTransitionEngine>,
-    #[cfg(feature = "media-transition-profile")]
+    #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
     media: Option<MediaTransitionEngine>,
     #[cfg(feature = "hid-transition-profile")]
     hid: Option<HidControlPolicy>,
@@ -49,7 +49,7 @@ impl ControlV2State {
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             #[cfg(feature = "atx-transition-profile")]
             atx: None,
-            #[cfg(feature = "media-transition-profile")]
+            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
@@ -63,7 +63,7 @@ impl ControlV2State {
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             #[cfg(feature = "atx-transition-profile")]
             atx: None,
-            #[cfg(feature = "media-transition-profile")]
+            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             hid: Some(policy),
         }
@@ -75,7 +75,7 @@ impl ControlV2State {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(engine),
-            #[cfg(feature = "media-transition-profile")]
+            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
@@ -83,7 +83,7 @@ impl ControlV2State {
     }
 
     /// Attaches the persisted media engine to an already enabled state.
-    #[cfg(feature = "media-transition-profile")]
+    #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
     pub fn with_media_engine(mut self, engine: MediaTransitionEngine) -> Self {
         self.enabled = true;
         self.media = Some(engine);
@@ -100,7 +100,7 @@ impl ControlV2State {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(atx),
-            #[cfg(feature = "media-transition-profile")]
+            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             hid: Some(hid),
         }
@@ -113,7 +113,7 @@ impl ControlV2State {
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             #[cfg(feature = "atx-transition-profile")]
             atx: None,
-            #[cfg(feature = "media-transition-profile")]
+            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             #[cfg(feature = "hid-transition-profile")]
             hid: None,
@@ -354,7 +354,7 @@ impl ControlV2State {
     }
 }
 
-#[cfg(not(feature = "media-transition-profile"))]
+#[cfg(not(any(feature = "media-transition-profile", feature = "gadget-media-profile")))]
 impl ControlV2State {
     async fn handle_media(
         &mut self,
@@ -366,7 +366,7 @@ impl ControlV2State {
     }
 }
 
-#[cfg(feature = "media-transition-profile")]
+#[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 impl ControlV2State {
     async fn handle_media(
         &mut self,
@@ -416,7 +416,7 @@ impl ControlV2State {
     }
 }
 
-#[cfg(feature = "media-transition-profile")]
+#[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 fn media_code(rejection: MediaRejection) -> ControlRejectionCode {
     match rejection {
         MediaRejection::CapabilityDisabled => ControlRejectionCode::CapabilityDisabled,
@@ -432,7 +432,7 @@ fn media_code(rejection: MediaRejection) -> ControlRejectionCode {
 
 #[cfg(any(
     feature = "atx-transition-profile",
-    feature = "media-transition-profile"
+    any(feature = "media-transition-profile", feature = "gadget-media-profile")
 ))]
 fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
     if value.len() != 32 {
@@ -448,7 +448,7 @@ fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
 
 #[cfg(any(
     feature = "atx-transition-profile",
-    feature = "media-transition-profile"
+    any(feature = "media-transition-profile", feature = "gadget-media-profile")
 ))]
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()

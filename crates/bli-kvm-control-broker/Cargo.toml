@@ -32,6 +32,14 @@ media-transition-profile = [
   "dep:bli-kvm-kvmd-media-client",
   "bli-kvm-media-policy/media-test-profile",
 ]
+gadget-media-profile = [
+  "dep:bli-kvm-media-catalog",
+  "dep:bli-kvm-media-policy",
+  "dep:bli-kvm-media-transition",
+  "dep:bli-kvm-usb-gadget",
+  "bli-kvm-media-transition/gadget-media-profile",
+  "bli-kvm-media-policy/media-test-profile",
+]
 
 [dependencies]
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
@@ -50,6 +58,7 @@ bli-kvm-kvmd-media-client = { path = "../bli-kvm-kvmd-media-client", optional = 
 bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog", optional = true }
 bli-kvm-media-policy = { path = "../bli-kvm-media-policy", optional = true }
 bli-kvm-media-transition = { path = "../bli-kvm-media-transition", optional = true }
+bli-kvm-usb-gadget = { path = "../bli-kvm-usb-gadget", optional = true }
 rand_core = { workspace = true, optional = true }
 tokio.workspace = true
 

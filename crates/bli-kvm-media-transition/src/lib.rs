@@ -17,7 +17,9 @@ use bli_kvm_media_policy::{
 use thiserror::Error;
 
 #[cfg(feature = "gadget-media-profile")]
-use bli_kvm_usb_gadget::{Function, GadgetSpec, GadgetStrings, MassStorageConfig};
+pub use bli_kvm_usb_gadget::GadgetStrings;
+#[cfg(feature = "gadget-media-profile")]
+use bli_kvm_usb_gadget::{Function, GadgetSpec, MassStorageConfig};
 #[cfg(feature = "gadget-media-profile")]
 use std::path::PathBuf;
 
@@ -147,7 +149,7 @@ impl GadgetMediaExecutor {
             .map_err(|_| MediaTransitionError::Backend)?;
         Ok(MediaObservedState {
             enabled: true,
-            online: state.present,
+            online: self.config.configfs_root.is_dir(),
             busy: false,
             connected: state.udc.is_some(),
         })
@@ -463,7 +465,7 @@ mod tests {
             executor.observe().unwrap(),
             MediaObservedState {
                 enabled: true,
-                online: false,
+                online: true,
                 busy: false,
                 connected: false,
             }

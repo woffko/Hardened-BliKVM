@@ -112,3 +112,9 @@ that resolves the opaque image ID through the catalog, selects the LUN file,
 binds the UDC on connect and unbinds it on disconnect, and reports drive state
 from `bli-kvm-usb-gadget::observe`. It is compiled out of shipped builds and
 covered by host tests over a temporary configfs root.
+
+The privileged broker exposes a feature-gated `run_with_gadget_media_profile`
+that serves the media backend from the Rust configfs gadget (no KVMD): select
+writes the LUN file, connect binds the UDC and disconnect unbinds it. A host
+test drives it end-to-end through the control socket and asserts the gadget
+state.

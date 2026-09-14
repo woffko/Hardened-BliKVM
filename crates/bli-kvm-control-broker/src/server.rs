@@ -335,6 +335,37 @@ pub async fn run_with_media_profile(
     result
 }
 
+/// Serves the media transition backend from the Rust configfs gadget instead
+/// of KVMD, for the reviewed gadget test profile.
+#[cfg(feature = "gadget-media-profile")]
+pub async fn run_with_gadget_media_profile(
+    config: ControlBrokerConfig,
+    journal_path: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    gadget: bli_kvm_media_transition::GadgetMediaConfig,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let executor = bli_kvm_media_transition::MediaExecutor::Gadget(
+        bli_kvm_media_transition::GadgetMediaExecutor::new(gadget),
+    );
+    let engine = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
+        journal_path,
+        catalog,
+        executor,
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state = ControlV2State::disabled().with_media_engine(engine);
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 #[cfg(feature = "atx-transition-profile")]
 fn now_unix_millis() -> u64 {
     std::time::SystemTime::now()
@@ -931,6 +962,103 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert!(requests[0].starts_with("GET /msd "));
         assert!(requests[1].starts_with("POST /msd/set_connected?connected=1 "));
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn gadget_media_profile_applies_commands_to_the_configfs_gadget() {
+        use bli_kvm_core::{MediaRequest, VirtualMediaCommand, VirtualMediaControlMode};
+        use bli_kvm_media_transition::{GadgetMediaConfig, GadgetStrings};
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let image_dir = directory.path().join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        std::fs::write(image_dir.join("rescue.iso"), b"image").unwrap();
+        let catalog = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"rescue.iso","size":4096,"sha256":"{}","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}}]}}"#,
+                "1".repeat(64)
+            ),
+        )
+        .unwrap();
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+
+        let mut broker = tokio::spawn(run_with_gadget_media_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("journal.json"),
+            catalog,
+            GadgetMediaConfig {
+                configfs_root: configfs.clone(),
+                udc: "musb-hdrc.2.auto".into(),
+                image_directory: image_dir,
+                strings: GadgetStrings {
+                    manufacturer: "Hardened BLi-KVM".into(),
+                    product: "BLi-KVM Composite Device".into(),
+                    serial: "BLK-broker-test".into(),
+                    configuration: "BLi-KVM configuration".into(),
+                },
+                id_vendor: 0x1d6b,
+                id_product: 0x0104,
+                bcd_usb: 0x0200,
+                bcd_device: 0x0100,
+            },
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let issued_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        assert_eq!(
+            client
+                .execute_v2(
+                    "0123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::Select {
+                                image_id: 7,
+                                mode: VirtualMediaControlMode::CdRom,
+                                writable: false,
+                            },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(2_200)).await;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "1123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::SetConnected { connected: true },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+
+        let state = bli_kvm_usb_gadget::observe(&configfs).unwrap();
+        assert!(state.present);
+        assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
+        assert!(state.mass_storage.unwrap().file.ends_with("rescue.iso"));
         stop_broker(broker).await;
     }
 

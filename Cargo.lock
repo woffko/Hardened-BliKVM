@@ -194,6 +194,7 @@ dependencies = [
  "bli-kvm-media-catalog",
  "bli-kvm-media-policy",
  "bli-kvm-media-transition",
+ "bli-kvm-usb-gadget",
  "rand_core",
  "tempfile",
  "tokio",
