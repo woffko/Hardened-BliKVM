@@ -33,6 +33,7 @@ mod auth;
 mod error;
 mod hid;
 mod media;
+mod system_time;
 mod update;
 mod video;
 
@@ -263,6 +264,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route("/inventory", get(runtime_inventory))
         .route("/hostname", get(hostname))
+        .route("/system/time", get(system_time::get_config))
         .route("/diagnostics", get(diagnostics_view))
         .route("/application-update/status", get(update::status))
         .route("/application-update/upload", post(update::upload))
@@ -1369,6 +1371,20 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/hostname")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn system_time_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/system/time")
                     .body(Body::empty())
                     .unwrap(),
             )
