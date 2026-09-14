@@ -19,6 +19,7 @@ systemd through `LoadCredential` and is never written by this tool.
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import dataclass
 import hashlib
 import json
@@ -108,6 +109,7 @@ class Options:
     expected_sha256: str
     output: str
     teardown: bool
+    media_catalog: str | None
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,7 @@ def parse_args() -> Options:
     _ = parser.add_argument("--expected-sha256", required=True)
     _ = parser.add_argument("--output", required=True)
     _ = parser.add_argument("--teardown", action="store_true")
+    _ = parser.add_argument("--media-catalog")
     namespace = parser.parse_args()
     return Options(
         endpoint=cast(str, namespace.endpoint),
@@ -141,6 +144,7 @@ def parse_args() -> Options:
         expected_sha256=cast(str, namespace.expected_sha256),
         output=cast(str, namespace.output),
         teardown=cast(bool, namespace.teardown),
+        media_catalog=cast(str | None, namespace.media_catalog),
     )
 
 
@@ -431,7 +435,31 @@ http {
 """
 
 
-def build_apply_script(bundle: ProfileBundle) -> str:
+
+def _load_media_catalog(path_value: str | None) -> str:
+    if path_value is None:
+        return ""
+    path = Path(path_value)
+    try:
+        metadata = path.stat()
+    except OSError as error:
+        raise ValueError("media catalog file is invalid") from error
+    if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= 64 * 1024:
+        raise ValueError("media catalog file is invalid")
+    payload = path.read_bytes()
+    decoded = json.loads(payload)
+    if (
+        not isinstance(decoded, dict)
+        or decoded.get("schemaVersion") != 1
+        or not isinstance(decoded.get("entries"), list)
+        or not decoded["entries"]
+        or len(decoded["entries"]) > 64
+    ):
+        raise ValueError("media catalog content is invalid")
+    return base64.b64encode(payload).decode("ascii")
+
+
+def build_apply_script(bundle: ProfileBundle, media_catalog_b64: str = "") -> str:
     values = {
         "root": bundle.runtime_root,
         "archive": f"{bundle.runtime_root}/bundle.tar.gz",
@@ -439,6 +467,7 @@ def build_apply_script(bundle: ProfileBundle) -> str:
         "expected_broker_sha": bundle.broker_sha256,
         "port": str(HEALTH_PORT),
         "https_port": str(HTTPS_PORT),
+        "media_catalog_b64": media_catalog_b64,
     }
     header = "\n".join(f"{name}={shlex.quote(value)}" for name, value in values.items())
     broker_unit = BROKER_UNIT.replace("__ROOT__", bundle.runtime_root)
@@ -490,9 +519,13 @@ if [ "$extracted" = yes ]; then
   install -d -m 0755 -o www-data -g www-data "$root/nginx"
   install -d -m 0700 -o www-data -g www-data "$root/nginx/client" "$root/nginx/proxy"
   install -d -m 0755 "$root/media"
-  cat > "$root/media/catalog.json" <<'CATALOG'
+  if [ -n "$media_catalog_b64" ]; then
+    printf '%s' "$media_catalog_b64" | python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' > "$root/media/catalog.json"
+  else
+    cat > "$root/media/catalog.json" <<'CATALOG'
 {{"schemaVersion":1,"entries":[{{"imageId":1,"imageName":"rescue.iso","size":4096,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}},{{"imageId":2,"imageName":"tools.img","size":8192,"sha256":"2222222222222222222222222222222222222222222222222222222222222222","cdromAllowed":false,"removableAllowed":true,"writableAllowed":false}}]}}
 CATALOG
+  fi
   chmod 0644 "$root/media/catalog.json"
 
   cat > /run/systemd/system/hardened-blikvm-rc-broker.service <<'UNIT'
@@ -716,7 +749,13 @@ def execute(options: Options) -> int:
             ).check_returncode()
 
         stage = "apply"
-        apply_result = prototype.run_ssh(target, secret, build_apply_script(bundle), timeout=120)
+        media_catalog_b64 = _load_media_catalog(options.media_catalog)
+        apply_result = prototype.run_ssh(
+            target,
+            secret,
+            build_apply_script(bundle, media_catalog_b64),
+            timeout=120,
+        )
         facts = prototype.parse_facts(apply_result.stdout, APPLY_KEYS)
         apply_result.check_returncode()
         validate_apply(facts)

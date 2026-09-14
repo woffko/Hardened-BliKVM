@@ -161,5 +161,45 @@ class RestrictedControlProfileTests(unittest.TestCase):
         self.assertIn('"persistentChangeScope": "runtime-only"', source)
 
 
+    def test_media_catalog_override_is_validated(self) -> None:
+        import base64
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog.json"
+            doc = {
+                "schemaVersion": 1,
+                "entries": [
+                    {
+                        "imageId": 1,
+                        "imageName": "kubuntu.img",
+                        "size": 6841958400,
+                        "sha256": "a" * 64,
+                        "cdromAllowed": True,
+                        "removableAllowed": True,
+                        "writableAllowed": False,
+                    }
+                ],
+            }
+            path.write_text(json.dumps(doc))
+            encoded = gate._load_media_catalog(str(path))
+            self.assertEqual(json.loads(base64.b64decode(encoded)), doc)
+            with self.assertRaises(ValueError):
+                gate._load_media_catalog(str(Path(directory) / "missing.json"))
+            bad = Path(directory) / "bad.json"
+            bad.write_text("{}")
+            with self.assertRaises(ValueError):
+                gate._load_media_catalog(str(bad))
+
+    def test_apply_script_uses_the_catalog_override_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "profile.tar.gz"
+            digest = write_profile_bundle(bundle)
+            validated = gate.validate_profile_bundle(str(bundle), digest)
+        script = gate.build_apply_script(validated, "eyJzY2hlbWFWZXJzaW9uIjoxfQ==")
+        self.assertIn('if [ -n "$media_catalog_b64" ]', script)
+        self.assertIn("base64.b64decode", script)
+
 if __name__ == "__main__":
     unittest.main()
