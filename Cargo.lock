@@ -119,6 +119,7 @@ version = "0.1.0"
 dependencies = [
  "bli-kvm-atx-transition",
  "bli-kvm-core",
+ "bli-kvm-gpio-chardev",
  "bli-kvm-platform-bli",
  "thiserror",
 ]
@@ -441,6 +442,15 @@ name = "bli-kvm-fan-supervisor"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-fan-policy",
+ "thiserror",
+]
+
+[[package]]
+name = "bli-kvm-gpio-chardev"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-platform-bli",
+ "libc",
  "thiserror",
 ]
 

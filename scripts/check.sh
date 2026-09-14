@@ -29,6 +29,7 @@ cargo test -p bli-kvm-control-broker --all-targets --locked --features gadget-me
 cargo test -p bli-kvm-media-transition --all-targets --locked --features gadget-media-profile
 cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hid-profile
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
+cargo test -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
@@ -42,6 +43,7 @@ cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gadget-
 cargo clippy -p bli-kvm-media-transition --all-targets --locked --features gadget-media-profile -- -D warnings
 cargo clippy -p bli-kvm-hid-transition --all-targets --locked --features gadget-hid-profile -- -D warnings
 cargo clippy -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile -- -D warnings
+cargo clippy -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver -- -D warnings
 cargo clippy -p bli-kvm-server --all-targets --locked --features restricted-control-surface -- -D warnings
 
 sh -n scripts/build-aarch64.sh

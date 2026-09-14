@@ -1,0 +1,13 @@
+[package]
+name = "bli-kvm-gpio-chardev"
+description = "Linux GPIO character-device driver for the Hardened BliKVM board daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
+libc.workspace = true
+thiserror.workspace = true

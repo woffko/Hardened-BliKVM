@@ -118,6 +118,27 @@ impl<G: GpioDriver, S: Sleeper> AtxGpioExecutor<G, S> {
     }
 }
 
+/// Build a reviewed ATX executor over the Linux GPIO character device.
+///
+/// Only compiled with the `chardev-driver` feature. The caller must have
+/// completed the reviewed physical line handoff; the driver opens the chip and
+/// requests the ATX lines on first use.
+#[cfg(feature = "chardev-driver")]
+pub fn chardev_atx_executor(
+    chip_path: &std::path::Path,
+    timing: AtxTiming,
+) -> Result<AtxGpioExecutor<bli_kvm_gpio_chardev::ChardevGpioDriver, RealSleeper>, AtxGpioError> {
+    use bli_kvm_platform_bli::hardened_board_request;
+
+    let driver = bli_kvm_gpio_chardev::ChardevGpioDriver::open(chip_path)
+        .map_err(|error| AtxGpioError::Request(error.to_string()))?;
+    let power =
+        hardened_board_request(GpioRole::AtxPower).map_err(|_| AtxGpioError::InvalidLine)?;
+    let reset =
+        hardened_board_request(GpioRole::AtxReset).map_err(|_| AtxGpioError::InvalidLine)?;
+    AtxGpioExecutor::new(driver, RealSleeper, power, reset, timing)
+}
+
 impl<G: GpioDriver + Send, S: Sleeper + Send> AtxPulseRunner for AtxGpioExecutor<G, S> {
     fn execute(&mut self, action: AtxControlAction) -> Result<(), String> {
         self.pulse(action).map_err(|error| error.to_string())
@@ -316,5 +337,14 @@ mod tests {
         let mut runner: Box<dyn AtxPulseRunner> =
             Box::new(executor(MockDriver::default(), MockSleeper::default()));
         assert_eq!(runner.execute(AtxControlAction::Reset), Ok(()));
+    }
+
+    #[cfg(feature = "chardev-driver")]
+    #[test]
+    fn chardev_executor_rejects_a_missing_chip() {
+        assert!(matches!(
+            chardev_atx_executor(std::path::Path::new("/nonexistent/gpiochip0"), timing()),
+            Err(AtxGpioError::Request(_))
+        ));
     }
 }

@@ -14,6 +14,7 @@ members = [
   "crates/bli-kvm-atx-transition",
   "crates/bli-kvm-atx-live-gate",
   "crates/bli-kvm-atx-gpio-executor",
+  "crates/bli-kvm-gpio-chardev",
   "crates/bli-kvm-media-transition",
   "crates/bli-kvm-usb-gadget",
   "crates/bli-kvm-media-isolated-gate",
