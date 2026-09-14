@@ -112,6 +112,7 @@ class RestrictedControlProfileTests(unittest.TestCase):
         self.assertIn("BLI_KVM_RESTRICTED_CONTROLS=1", script)
         self.assertIn("BLI_KVM_MEDIA_PROFILE=1", script)
         self.assertIn("BLI_KVM_MEDIA_CONTROLS=1", script)
+        self.assertIn('cat > "$root/media/catalog.json"', script)
         self.assertIn(f"BLI_KVM_WEB_ROOT={validated.runtime_root}/share/web", script)
         self.assertIn(f"BLI_KVM_CONTROL_SOCKET={validated.runtime_root}/state/control.sock", script)
         self.assertIn("web_ready", script)

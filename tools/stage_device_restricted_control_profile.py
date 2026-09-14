@@ -489,6 +489,11 @@ if [ "$extracted" = yes ]; then
   fi
   install -d -m 0755 -o www-data -g www-data "$root/nginx"
   install -d -m 0700 -o www-data -g www-data "$root/nginx/client" "$root/nginx/proxy"
+  install -d -m 0755 "$root/media"
+  cat > "$root/media/catalog.json" <<'CATALOG'
+{{"schemaVersion":1,"entries":[{{"imageId":1,"imageName":"rescue.iso","size":4096,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}},{{"imageId":2,"imageName":"tools.img","size":8192,"sha256":"2222222222222222222222222222222222222222222222222222222222222222","cdromAllowed":false,"removableAllowed":true,"writableAllowed":false}}]}}
+CATALOG
+  chmod 0644 "$root/media/catalog.json"
 
   cat > /run/systemd/system/hardened-blikvm-rc-broker.service <<'UNIT'
 {broker_unit}UNIT
