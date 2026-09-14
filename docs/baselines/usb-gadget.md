@@ -49,6 +49,15 @@ functions, empty reports and reports over 64 bytes. It performs no semantic
 translation; turning lease events into raw reports is a separate, sourced
 slice. Covered by tests over a temporary device directory.
 
+## KVMD-free builds
+
+The KVMD clients in `bli-kvm-media-transition` and `bli-kvm-hid-transition` are
+optional behind `kvmd-media-profile` / `kvmd-hid-profile` (on by default), and
+`bli-kvm-hid-policy` only uses them from tests. A gadget-only build therefore
+has no `bli-kvm-kvmd-*` crate in its normal dependency tree;
+`tools/test_gadget_profile_boundary.py` enforces this and `check.sh` compiles
+the gadget profiles with `--no-default-features`.
+
 ## Consumers
 
 The media transition engine has a feature-gated `MediaExecutor::Gadget`
