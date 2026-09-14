@@ -174,3 +174,21 @@ gaps; the ATX pinout remains the original BliKVM v4 vendor configuration
 The capability decision for a shipped build is still open: the restricted
 control surface remains compile-time disabled in shipped builds and is enabled
 only in this test profile.
+
+## Combined HID + ATX + media test profile (2026-09-14)
+
+The restricted-control test profile now serves HID, ATX and virtual media from
+one broker state through `run_with_restricted_profiles` (three independent
+credential instances). The bundle enables `media-transition-profile`; the
+harness creates a sample opaque-ID catalog and sets the media env on the broker
+and server units. On the deployed device:
+
+- `capabilities.virtualMedia` = `read_write`;
+- `GET /api/virtual-media/catalog` returns the sample entries
+  (`rescue.iso` CD-ROM, `tools.img` removable disk);
+- connect/disconnect (`set_connected`) routes to KVMD; a `select` for a sample
+  name that is not present in KVMD's MSD is expected to be rejected, so real
+  attach still needs a catalog built from the board's actual images.
+
+Receipt `restricted-control-profile-gate-20260913-i.json`; bundle
+`7e749916acafa06a9b5868b39a5fe39b8e8b467f0682b3de6c7f5eae643d2de6`.
