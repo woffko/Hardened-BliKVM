@@ -27,6 +27,37 @@ implemented, verified, and committed in English with a green `scripts/check.sh`.
 7. KVMD (PiKVM Python) and the C `kvmd-main` are removed completely by the end;
    they remain a fallback until each subsystem is proven.
 
+## Progress (2026-09-14)
+
+Phases 0-1 are done and the KVMD-free host stack for Phases 2-3 is complete.
+Everything below is committed with a green `scripts/check.sh`.
+
+- Phase 0: plan, corrected provenance and the read-only topology probe.
+- Phase 1 (read-only): `/api/system/time`, `/api/system-log/*`,
+  `/api/application/{version,preview}` and a capability-gated read-only
+  settings System tab; auth already matched the reference shapes.
+- Phase 2-3 (host, no KVMD in the gadget/board builds): backend seams for the
+  ATX, media and HID transition engines; the idempotent configfs USB gadget
+  state machine; feature-gated gadget media/HID executors; a feature-gated
+  native ATX GPIO executor plus the Linux GPIO character-device driver; and the
+  single board owner that serves media, HID and ATX from one control socket and
+  owns the composite gadget and the reviewed ATX lines. Owner units and
+  packaging are verified by `systemd-analyze` and are non-installable until the
+  physical gate. `tools/test_gadget_profile_boundary.py` pins that the
+  gadget/gpio profiles link no `bli-kvm-kvmd-*` crate.
+
+### Device-gated remainder (needs the H616 stand)
+
+The test endpoint `10.0.77.118` is currently a plain Ubuntu host with no
+`/etc/kvmd`, no vendor stack and no UDC, so these cannot proceed until the
+board returns:
+
+- capture and pin the real HID report descriptors and function parameters;
+- the reviewed physical line handoff that transfers ATX ownership from KVMD,
+  then the pulse-timing line/polarity/soak gates;
+- media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
+- Phase 4 video gates, Phase 6 image/recovery and Phase 7 acceptance.
+
 ## Provenance
 
 - PiKVM KVMD: `github.com/pikvm/kvmd` v3.291 (upstream daemon), installed on the
