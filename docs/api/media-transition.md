@@ -105,3 +105,10 @@ The media transition engine now executes through a backend seam
 replaced by the Rust configfs MSD worker without changing policy or broker
 wiring. The KVMD constructor and all existing behavior are preserved, and a
 test exercises the engine through an injected backend.
+
+The backend seam now has a real Rust implementation: the feature-gated
+`gadget-media-profile` adds `MediaExecutor::Gadget`, a configfs MSD executor
+that resolves the opaque image ID through the catalog, selects the LUN file,
+binds the UDC on connect and unbinds it on disconnect, and reports drive state
+from `bli-kvm-usb-gadget::observe`. It is compiled out of shipped builds and
+covered by host tests over a temporary configfs root.

@@ -41,10 +41,17 @@ or HID executor needs after the gadget exists (select an image, attach, detach)
 without rebuilding the whole gadget. Inputs are validated the same way as the
 full spec, and the operations are covered by tests over a temporary root.
 
+## Consumers
+
+The media transition engine has a feature-gated `MediaExecutor::Gadget`
+(`gadget-media-profile`) that selects the LUN file, binds the UDC on connect and
+unbinds it on disconnect, and reports drive state from `observe`.
+
 ## Next gates
 
+- a feature-gated `HidExecutor::Gadget` writing report batches to the HID
+  character devices;
 - capture the HID report descriptors and function parameters read-only from the
   device and pin them with provenance;
 - a privileged service and systemd unit that own the configfs root;
-- bind/unbind compatibility on the H616 UDC and host re-enumeration;
-- switching media/HID transition engines to this gadget executor.
+- bind/unbind compatibility on the H616 UDC and host re-enumeration.

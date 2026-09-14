@@ -13,7 +13,11 @@ bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
 bli-kvm-kvmd-media-client = { path = "../bli-kvm-kvmd-media-client" }
 bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog" }
 bli-kvm-media-policy = { path = "../bli-kvm-media-policy" }
+bli-kvm-usb-gadget = { path = "../bli-kvm-usb-gadget", optional = true }
 thiserror.workspace = true
+
+[features]
+gadget-media-profile = ["dep:bli-kvm-usb-gadget"]
 
 [dev-dependencies]
 bli-kvm-media-policy = { path = "../bli-kvm-media-policy", features = ["media-test-profile"] }

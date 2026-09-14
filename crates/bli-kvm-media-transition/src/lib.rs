@@ -16,6 +16,11 @@ use bli_kvm_media_policy::{
 };
 use thiserror::Error;
 
+#[cfg(feature = "gadget-media-profile")]
+use bli_kvm_usb_gadget::{Function, GadgetSpec, GadgetStrings, MassStorageConfig};
+#[cfg(feature = "gadget-media-profile")]
+use std::path::PathBuf;
+
 #[derive(Debug, Error)]
 pub enum MediaTransitionError {
     #[error("media policy journal failed")]
@@ -67,6 +72,8 @@ impl KvmdMediaExecutor {
 /// touching policy or broker wiring.
 pub enum MediaExecutor {
     Kvmd(KvmdMediaExecutor),
+    #[cfg(feature = "gadget-media-profile")]
+    Gadget(GadgetMediaExecutor),
     #[cfg(test)]
     Test {
         observed: MediaObservedState,
@@ -74,10 +81,141 @@ pub enum MediaExecutor {
     },
 }
 
+/// Configuration for the Rust configfs gadget media executor.
+#[cfg(feature = "gadget-media-profile")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GadgetMediaConfig {
+    pub configfs_root: PathBuf,
+    pub udc: String,
+    pub image_directory: PathBuf,
+    pub strings: GadgetStrings,
+    pub id_vendor: u16,
+    pub id_product: u16,
+    pub bcd_usb: u16,
+    pub bcd_device: u16,
+}
+
+#[cfg(feature = "gadget-media-profile")]
+struct SelectedImage {
+    path: PathBuf,
+    read_only: bool,
+    cdrom: bool,
+}
+
+/// Rust configfs MSD executor: select writes the LUN file, connect binds the
+/// UDC, disconnect unbinds it.
+#[cfg(feature = "gadget-media-profile")]
+pub struct GadgetMediaExecutor {
+    config: GadgetMediaConfig,
+    selected: std::sync::Mutex<Option<SelectedImage>>,
+}
+
+#[cfg(feature = "gadget-media-profile")]
+impl GadgetMediaExecutor {
+    pub fn new(config: GadgetMediaConfig) -> Self {
+        Self {
+            config,
+            selected: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn spec(&self, selected: &SelectedImage) -> GadgetSpec {
+        GadgetSpec {
+            id_vendor: self.config.id_vendor,
+            id_product: self.config.id_product,
+            bcd_usb: self.config.bcd_usb,
+            bcd_device: self.config.bcd_device,
+            strings: self.config.strings.clone(),
+            udc: self.config.udc.clone(),
+            functions: vec![Function::MassStorage(MassStorageConfig {
+                file: selected.path.clone(),
+                read_only: selected.read_only,
+                cdrom: selected.cdrom,
+                removable: true,
+            })],
+        }
+    }
+
+    fn state_present(&self) -> bool {
+        bli_kvm_usb_gadget::observe(&self.config.configfs_root)
+            .map(|state| state.present)
+            .unwrap_or(false)
+    }
+
+    fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
+        let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root)
+            .map_err(|_| MediaTransitionError::Backend)?;
+        Ok(MediaObservedState {
+            enabled: true,
+            online: state.present,
+            busy: false,
+            connected: state.udc.is_some(),
+        })
+    }
+
+    fn select(
+        &self,
+        catalog: &MediaCatalog,
+        image_id: u64,
+        mode: bli_kvm_core::VirtualMediaControlMode,
+        writable: bool,
+    ) -> bool {
+        let Ok(selection) = catalog.resolve(image_id, mode, writable) else {
+            return false;
+        };
+        let selected = SelectedImage {
+            path: self.config.image_directory.join(selection.image_name()),
+            read_only: !selection.writable(),
+            cdrom: selection.mode() == bli_kvm_core::VirtualMediaControlMode::CdRom,
+        };
+        if self.state_present()
+            && bli_kvm_usb_gadget::set_lun_file(&self.config.configfs_root, &selected.path).is_err()
+        {
+            return false;
+        }
+        match self.selected.lock() {
+            Ok(mut guard) => *guard = Some(selected),
+            Err(_) => return false,
+        }
+        true
+    }
+
+    fn set_connected(&self, connected: bool) -> bool {
+        if !connected {
+            if !self.state_present() {
+                return true;
+            }
+            return bli_kvm_usb_gadget::unbind(&self.config.configfs_root).is_ok();
+        }
+        let selected = match self.selected.lock() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
+        let Some(selected) = selected.as_ref() else {
+            return false;
+        };
+        let spec = self.spec(selected);
+        bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec).is_ok()
+    }
+
+    fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
+        match command {
+            VirtualMediaCommand::Select {
+                image_id,
+                mode,
+                writable,
+            } => self.select(catalog, *image_id, *mode, *writable),
+            VirtualMediaCommand::SetConnected { connected } => self.set_connected(*connected),
+        }
+    }
+}
+
 impl MediaExecutor {
     async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
         match self {
             MediaExecutor::Kvmd(executor) => executor.observe().await,
+            #[cfg(feature = "gadget-media-profile")]
+            MediaExecutor::Gadget(executor) => executor.observe(),
             #[cfg(test)]
             MediaExecutor::Test { observed, .. } => Ok(*observed),
         }
@@ -86,6 +224,8 @@ impl MediaExecutor {
     async fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
         match self {
             MediaExecutor::Kvmd(executor) => executor.execute(command, catalog).await,
+            #[cfg(feature = "gadget-media-profile")]
+            MediaExecutor::Gadget(executor) => executor.execute(command, catalog),
             #[cfg(test)]
             MediaExecutor::Test { applied, .. } => *applied,
         }
@@ -281,6 +421,85 @@ mod tests {
 
     fn operation(seed: u8, command: VirtualMediaCommand) -> MediaOperation {
         MediaOperation::new([seed; 16], 9, [0x44; 32], 1_000, command).unwrap()
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn gadget_executor_selects_attaches_and_detaches() {
+        let directory = tempfile::tempdir().unwrap();
+        let image_dir = directory.path().join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        std::fs::write(image_dir.join("kubuntu.img"), b"image").unwrap();
+        let catalog_path = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog_path,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"kubuntu.img","size":1,"sha256":"{}","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        let catalog = MediaCatalog::open(&catalog_path).unwrap();
+
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+        let executor = GadgetMediaExecutor::new(GadgetMediaConfig {
+            configfs_root: configfs.clone(),
+            udc: "musb-hdrc.2.auto".into(),
+            image_directory: image_dir,
+            strings: GadgetStrings {
+                manufacturer: "Hardened BLi-KVM".into(),
+                product: "BLi-KVM Composite Device".into(),
+                serial: "BLK-test".into(),
+                configuration: "BLi-KVM configuration".into(),
+            },
+            id_vendor: 0x1d6b,
+            id_product: 0x0104,
+            bcd_usb: 0x0200,
+            bcd_device: 0x0100,
+        });
+
+        assert_eq!(
+            executor.observe().unwrap(),
+            MediaObservedState {
+                enabled: true,
+                online: false,
+                busy: false,
+                connected: false,
+            }
+        );
+        assert!(!executor.execute(
+            &VirtualMediaCommand::SetConnected { connected: true },
+            &catalog
+        ));
+        assert!(executor.execute(
+            &VirtualMediaCommand::Select {
+                image_id: 7,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: false,
+            },
+            &catalog
+        ));
+        assert!(executor.execute(
+            &VirtualMediaCommand::SetConnected { connected: true },
+            &catalog
+        ));
+        let state = executor.observe().unwrap();
+        assert!(state.online);
+        assert!(state.connected);
+        assert!(executor.execute(
+            &VirtualMediaCommand::SetConnected { connected: false },
+            &catalog
+        ));
+        assert!(!executor.observe().unwrap().connected);
+        assert!(!executor.execute(
+            &VirtualMediaCommand::Select {
+                image_id: 99,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: false,
+            },
+            &catalog
+        ));
     }
 
     #[tokio::test]

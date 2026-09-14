@@ -606,6 +606,7 @@ dependencies = [
  "bli-kvm-kvmd-media-client",
  "bli-kvm-media-catalog",
  "bli-kvm-media-policy",
+ "bli-kvm-usb-gadget",
  "tempfile",
  "thiserror",
  "tokio",
