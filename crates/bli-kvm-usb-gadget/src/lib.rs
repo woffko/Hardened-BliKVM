@@ -13,6 +13,7 @@
 //! must be captured read-only from the device, never guessed here.
 
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -30,6 +31,7 @@ const MAX_STRING_LEN: usize = 126;
 const MAX_UDC_LEN: usize = 64;
 const MAX_REPORT_LENGTH: u16 = 1024;
 const MAX_REPORT_DESCRIPTOR: usize = 4096;
+const MAX_HID_REPORT_BYTES: usize = 64;
 /// The vendor default serial; never shipped by the hardened gadget.
 const LEGACY_SERIAL: &str = "CAFEBABE";
 
@@ -53,6 +55,8 @@ pub enum GadgetError {
     InvalidReportLength,
     #[error("invalid HID report descriptor")]
     InvalidReportDescriptor,
+    #[error("invalid HID report")]
+    InvalidReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -442,6 +446,30 @@ pub fn unbind(root: &Path) -> Result<(), GadgetError> {
     )
 }
 
+/// Map a reviewed HID function name to its character device.
+pub fn hid_device_name(function: &str) -> Option<&'static str> {
+    match function {
+        "hid.usb0" => Some("hidg0"),
+        "hid.usb1" => Some("hidg1"),
+        "hid.usb2" => Some("hidg2"),
+        _ => None,
+    }
+}
+
+/// Write one bounded HID report to the function's character device.
+pub fn write_report(hidg_dir: &Path, function: &str, report: &[u8]) -> Result<(), GadgetError> {
+    let name = hid_device_name(function).ok_or(GadgetError::InvalidFunction)?;
+    if report.is_empty() || report.len() > MAX_HID_REPORT_BYTES {
+        return Err(GadgetError::InvalidReport);
+    }
+    let path = hidg_dir.join(name);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .map_err(io_error)?;
+    file.write_all(report).map_err(io_error)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MassStorageState {
     pub file: PathBuf,
@@ -780,6 +808,43 @@ mod tests {
             set_lun_file(directory.path(), &directory.path().join("missing.img")),
             Err(GadgetError::ImageMissing)
         );
+    }
+
+    #[test]
+    fn write_report_targets_the_function_device_and_bounds_the_report() {
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["hidg0", "hidg1", "hidg2"] {
+            std::fs::write(directory.path().join(name), b"").unwrap();
+        }
+        let report = [0_u8, 0, 4, 0, 0, 0, 0, 0];
+        assert_eq!(write_report(directory.path(), "hid.usb0", &report), Ok(()));
+        assert_eq!(
+            std::fs::read(directory.path().join("hidg0")).unwrap(),
+            report
+        );
+        assert_eq!(
+            write_report(directory.path(), "hid.usb2", &[1, 2, 3]),
+            Ok(())
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("hidg2")).unwrap(),
+            vec![1, 2, 3]
+        );
+
+        assert_eq!(
+            write_report(directory.path(), "hid.usb9", &report),
+            Err(GadgetError::InvalidFunction)
+        );
+        assert_eq!(
+            write_report(directory.path(), "hid.usb0", &[]),
+            Err(GadgetError::InvalidReport)
+        );
+        assert_eq!(
+            write_report(directory.path(), "hid.usb0", &[0_u8; 65]),
+            Err(GadgetError::InvalidReport)
+        );
+        assert_eq!(hid_device_name("hid.usb1"), Some("hidg1"));
+        assert_eq!(hid_device_name("hid.usb3"), None);
     }
 
     #[test]

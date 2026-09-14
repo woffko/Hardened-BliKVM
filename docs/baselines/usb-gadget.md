@@ -41,6 +41,14 @@ or HID executor needs after the gadget exists (select an image, attach, detach)
 without rebuilding the whole gadget. Inputs are validated the same way as the
 full spec, and the operations are covered by tests over a temporary root.
 
+## HID report primitive
+
+`write_report(hidg_dir, function, report)` writes one bounded report to the
+function's character device (`hid.usb0/1/2` -> `hidg0/1/2`), rejecting unknown
+functions, empty reports and reports over 64 bytes. It performs no semantic
+translation; turning lease events into raw reports is a separate, sourced
+slice. Covered by tests over a temporary device directory.
+
 ## Consumers
 
 The media transition engine has a feature-gated `MediaExecutor::Gadget`
