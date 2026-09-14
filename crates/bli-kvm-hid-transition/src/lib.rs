@@ -24,10 +24,57 @@ pub enum HidTransitionError {
 
 pub struct HidTransitionEngine {
     manager: HidLeaseManager,
-    client: KvmdHidClient,
-    credentials: KvmdCredentials,
+    executor: HidExecutor,
     ledger: HidReleaseLedger,
     pending_releases: Vec<KvmdHidEvent>,
+}
+
+/// KVMD-backed HID executor. Holds its own credential instance.
+pub struct KvmdHidExecutor {
+    client: KvmdHidClient,
+    credentials: KvmdCredentials,
+}
+
+impl KvmdHidExecutor {
+    pub fn new(client: KvmdHidClient, credentials: KvmdCredentials) -> Self {
+        Self {
+            client,
+            credentials,
+        }
+    }
+
+    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
+        self.client.execute_batch(events, &self.credentials).await
+    }
+}
+
+/// Backend that writes HID report batches.
+///
+/// The transition engine is backend-agnostic so the KVMD executor used during
+/// migration can later be replaced by the Rust USB gadget writer without
+/// touching lease policy or broker wiring.
+pub enum HidExecutor {
+    Kvmd(KvmdHidExecutor),
+    #[cfg(test)]
+    Test {
+        fail: bool,
+    },
+}
+
+impl HidExecutor {
+    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
+        match self {
+            HidExecutor::Kvmd(executor) => executor.execute_batch(events).await,
+            #[cfg(test)]
+            HidExecutor::Test { fail } => {
+                if *fail {
+                    Err(KvmdHidClientError::BatchTooLarge)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
 }
 
 impl HidTransitionEngine {
@@ -36,11 +83,21 @@ impl HidTransitionEngine {
         credentials: KvmdCredentials,
         ledger: HidReleaseLedger,
     ) -> Result<Self, HidTransitionError> {
+        Self::new_with_executor(
+            HidExecutor::Kvmd(KvmdHidExecutor::new(client, credentials)),
+            ledger,
+        )
+    }
+
+    /// Build an engine over any reviewed executor backend.
+    pub fn new_with_executor(
+        executor: HidExecutor,
+        ledger: HidReleaseLedger,
+    ) -> Result<Self, HidTransitionError> {
         let pending_releases = ledger.load()?;
         Ok(Self {
             manager: HidLeaseManager::new(),
-            client,
-            credentials,
+            executor,
             ledger,
             pending_releases,
         })
@@ -148,7 +205,7 @@ impl HidTransitionEngine {
             }
         }
         if !events.is_empty()
-            && let Err(error) = self.client.execute_batch(events, &self.credentials).await
+            && let Err(error) = self.executor.execute_batch(events).await
         {
             self.remember_releases(events);
             let _ = self.ledger.store(&self.pending_releases);
@@ -171,8 +228,8 @@ impl HidTransitionEngine {
         if self.pending_releases.is_empty() {
             return Ok(());
         }
-        self.client
-            .execute_batch(&self.pending_releases, &self.credentials)
+        self.executor
+            .execute_batch(&self.pending_releases)
             .await
             .map_err(HidTransitionError::Backend)?;
         self.ledger.store(&[])?;
@@ -276,6 +333,41 @@ mod tests {
             }
             requests
         })
+    }
+
+    #[tokio::test]
+    async fn engine_executes_through_any_reviewed_backend() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        let mut engine =
+            HidTransitionEngine::new_with_executor(HidExecutor::Test { fail: false }, ledger)
+                .unwrap();
+        let owner = identity(1);
+        let now = Instant::now();
+        let key = HidReport::Keyboard {
+            data: [0, 0, 4, 0, 0, 0, 0, 0],
+        };
+        engine
+            .acquire(owner, now, Duration::from_secs(10))
+            .await
+            .unwrap();
+        engine.report(owner, now, &key).await.unwrap();
+        engine.release(owner).await.unwrap();
+        assert_eq!(engine.pending_release_count(), 0);
+
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger-fail.json")).unwrap();
+        let mut failing =
+            HidTransitionEngine::new_with_executor(HidExecutor::Test { fail: true }, ledger)
+                .unwrap();
+        failing
+            .acquire(owner, now, Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(matches!(
+            failing.report(owner, now, &key).await,
+            Err(HidTransitionError::Backend(_))
+        ));
+        assert!(failing.pending_release_count() > 0);
     }
 
     #[tokio::test]

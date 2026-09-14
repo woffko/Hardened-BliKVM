@@ -72,3 +72,11 @@ Before HID can be wired or advertised:
    rollover, 10,000-event, reconnect, reboot, and stuck-input recovery gates;
 5. align the GUI key/button set to the adapter's accepted table before changing
    the HID capability.
+
+## Backend seam
+
+The HID transition engine now writes report batches through a backend seam
+(`HidExecutor`) so the KVMD executor used during migration can later be
+replaced by the Rust USB gadget writer without changing lease policy or broker
+wiring. The KVMD constructor and the fixed key routes are preserved, and a test
+exercises the engine through an injected backend.
