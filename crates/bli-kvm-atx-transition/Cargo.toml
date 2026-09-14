@@ -10,9 +10,14 @@ repository.workspace = true
 [dependencies]
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy" }
 bli-kvm-core = { path = "../bli-kvm-core" }
-bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client" }
-bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bli-kvm-kvmd-atx-client = { path = "../bli-kvm-kvmd-atx-client", optional = true }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client", optional = true }
 thiserror.workspace = true
+
+[features]
+default = ["kvmd-atx-profile"]
+kvmd-atx-profile = ["dep:bli-kvm-kvmd-atx-client", "dep:bli-kvm-kvmd-client"]
+gpio-atx-profile = []
 
 [dev-dependencies]
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", features = ["atx-reviewed-profile"] }

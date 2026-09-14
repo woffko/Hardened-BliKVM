@@ -15,7 +15,9 @@ use bli_kvm_atx_policy::{
     AtxRejection,
 };
 use bli_kvm_core::AtxControlAction;
+#[cfg(feature = "kvmd-atx-profile")]
 use bli_kvm_kvmd_atx_client::KvmdAtxClient;
+#[cfg(feature = "kvmd-atx-profile")]
 use bli_kvm_kvmd_client::KvmdCredentials;
 use thiserror::Error;
 
@@ -28,11 +30,13 @@ pub enum AtxTransitionError {
 }
 
 /// KVMD-backed ATX executor. Holds its own credential instance.
+#[cfg(feature = "kvmd-atx-profile")]
 pub struct KvmdAtxExecutor {
     client: KvmdAtxClient,
     credentials: KvmdCredentials,
 }
 
+#[cfg(feature = "kvmd-atx-profile")]
 impl KvmdAtxExecutor {
     pub fn new(client: KvmdAtxClient, credentials: KvmdCredentials) -> Self {
         Self {
@@ -46,21 +50,43 @@ impl KvmdAtxExecutor {
     }
 }
 
+/// Reviewed actuator capable of one bounded ATX pulse. Implemented by the
+/// GPIO executor; kept as a trait so the transition engine needs no GPIO
+/// dependency.
+pub trait AtxPulseRunner: Send {
+    fn execute(&mut self, action: AtxControlAction) -> Result<(), String>;
+}
+
 /// Backend that actually pulses the ATX lines.
 ///
 /// The transition engine is backend-agnostic so the KVMD executor used during
 /// migration can later be replaced by the Rust board executor without touching
 /// the policy or the broker wiring.
 pub enum AtxExecutor {
+    #[cfg(feature = "kvmd-atx-profile")]
     Kvmd(KvmdAtxExecutor),
+    #[cfg(feature = "gpio-atx-profile")]
+    Gpio(std::sync::Mutex<Box<dyn AtxPulseRunner>>),
     #[cfg(test)]
     Test(bool),
 }
 
 impl AtxExecutor {
+    #[cfg(not(any(feature = "kvmd-atx-profile", feature = "gpio-atx-profile")))]
+    async fn execute(&self, _action: AtxControlAction) -> bool {
+        false
+    }
+
+    #[cfg(any(feature = "kvmd-atx-profile", feature = "gpio-atx-profile"))]
     async fn execute(&self, action: AtxControlAction) -> bool {
         match self {
+            #[cfg(feature = "kvmd-atx-profile")]
             AtxExecutor::Kvmd(executor) => executor.execute(action).await,
+            #[cfg(feature = "gpio-atx-profile")]
+            AtxExecutor::Gpio(runner) => runner
+                .lock()
+                .map(|mut runner| runner.execute(action).is_ok())
+                .unwrap_or(false),
             #[cfg(test)]
             AtxExecutor::Test(applied) => *applied,
         }
@@ -93,6 +119,7 @@ pub struct AtxTransitionEngine {
 }
 
 impl AtxTransitionEngine {
+    #[cfg(feature = "kvmd-atx-profile")]
     pub fn open(
         journal_path: impl Into<std::path::PathBuf>,
         client: KvmdAtxClient,
@@ -485,5 +512,43 @@ mod tests {
         let requests = server.await.unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].contains("/atx/click?button=power&wait=1"));
+    }
+
+    #[cfg(feature = "gpio-atx-profile")]
+    #[tokio::test]
+    async fn engine_executes_through_the_gpio_backend() {
+        struct RecordingRunner(std::sync::Arc<std::sync::Mutex<Vec<AtxControlAction>>>);
+        impl AtxPulseRunner for RecordingRunner {
+            fn execute(&mut self, action: AtxControlAction) -> Result<(), String> {
+                self.0.lock().unwrap().push(action);
+                Ok(())
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let executor = AtxExecutor::Gpio(std::sync::Mutex::new(Box::new(RecordingRunner(
+            recorded.clone(),
+        ))));
+        let mut engine = AtxTransitionEngine::open_with_executor(
+            directory.path().join("journal.json"),
+            executor,
+        )
+        .unwrap();
+        assert_eq!(
+            engine
+                .execute(
+                    operation(1, AtxControlAction::PowerShort),
+                    reviewed(),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            AtxTransitionOutcome::Applied
+        );
+        assert_eq!(
+            *recorded.lock().unwrap(),
+            vec![AtxControlAction::PowerShort]
+        );
     }
 }

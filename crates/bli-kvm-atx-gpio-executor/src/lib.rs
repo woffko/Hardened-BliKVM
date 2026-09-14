@@ -7,6 +7,7 @@
 //! sleeper and this crate performs no I/O on its own. The concrete owner runs
 //! only after the reviewed physical line handoff.
 
+use bli_kvm_atx_transition::AtxPulseRunner;
 use bli_kvm_core::AtxControlAction;
 use bli_kvm_platform_bli::{GpioDriver, GpioRole, LineDirection, LineRequest};
 use thiserror::Error;
@@ -92,7 +93,7 @@ impl<G: GpioDriver, S: Sleeper> AtxGpioExecutor<G, S> {
     }
 
     /// Apply one reviewed action as a single bounded pulse.
-    pub fn execute(&mut self, action: AtxControlAction) -> Result<(), AtxGpioError> {
+    pub fn pulse(&mut self, action: AtxControlAction) -> Result<(), AtxGpioError> {
         let (line, hold) = match action {
             AtxControlAction::PowerShort => (self.power, self.timing.power_short_ms),
             AtxControlAction::PowerLong => (self.power, self.timing.power_long_ms),
@@ -114,6 +115,12 @@ impl<G: GpioDriver, S: Sleeper> AtxGpioExecutor<G, S> {
         inactive.map_err(|error| AtxGpioError::Driver(format!("{error:?}")))?;
         released.map_err(|error| AtxGpioError::Driver(format!("{error:?}")))?;
         Ok(())
+    }
+}
+
+impl<G: GpioDriver + Send, S: Sleeper + Send> AtxPulseRunner for AtxGpioExecutor<G, S> {
+    fn execute(&mut self, action: AtxControlAction) -> Result<(), String> {
+        self.pulse(action).map_err(|error| error.to_string())
     }
 }
 
@@ -193,7 +200,7 @@ mod tests {
     #[test]
     fn power_short_pulses_the_power_line_and_releases_it() {
         let mut executor = executor(MockDriver::default(), MockSleeper::default());
-        assert_eq!(executor.execute(AtxControlAction::PowerShort), Ok(()));
+        assert_eq!(executor.pulse(AtxControlAction::PowerShort), Ok(()));
         let driver = executor.driver;
         let sleeper = executor.sleeper;
         assert_eq!(
@@ -211,11 +218,11 @@ mod tests {
     #[test]
     fn power_long_and_reset_use_their_own_timings_and_lines() {
         let mut long = executor(MockDriver::default(), MockSleeper::default());
-        assert_eq!(long.execute(AtxControlAction::PowerLong), Ok(()));
+        assert_eq!(long.pulse(AtxControlAction::PowerLong), Ok(()));
         assert_eq!(long.sleeper.sleeps, vec![4_000]);
 
         let mut reset = executor(MockDriver::default(), MockSleeper::default());
-        assert_eq!(reset.execute(AtxControlAction::Reset), Ok(()));
+        assert_eq!(reset.pulse(AtxControlAction::Reset), Ok(()));
         assert_eq!(reset.sleeper.sleeps, vec![200]);
         assert!(reset.driver.events[0].eq("request:272"));
     }
@@ -230,7 +237,7 @@ mod tests {
             MockSleeper::default(),
         );
         assert!(matches!(
-            executor.execute(AtxControlAction::PowerShort),
+            executor.pulse(AtxControlAction::PowerShort),
             Err(AtxGpioError::Driver(_))
         ));
         assert!(executor.sleeper.sleeps.is_empty());
@@ -254,7 +261,7 @@ mod tests {
             MockSleeper::default(),
         );
         assert!(matches!(
-            executor.execute(AtxControlAction::Reset),
+            executor.pulse(AtxControlAction::Reset),
             Err(AtxGpioError::Request(_))
         ));
         assert!(executor.driver.events.is_empty());
@@ -302,5 +309,12 @@ mod tests {
             ),
             Err(AtxGpioError::InvalidTiming)
         ));
+    }
+
+    #[test]
+    fn executor_satisfies_the_pulse_runner_trait() {
+        let mut runner: Box<dyn AtxPulseRunner> =
+            Box::new(executor(MockDriver::default(), MockSleeper::default()));
+        assert_eq!(runner.execute(AtxControlAction::Reset), Ok(()));
     }
 }

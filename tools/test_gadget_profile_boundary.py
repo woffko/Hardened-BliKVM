@@ -38,6 +38,10 @@ class GadgetProfileBoundaryTests(unittest.TestCase):
                 "bli-kvm-hid-transition",
                 ["--no-default-features", "--features", "gadget-hid-profile"],
             ),
+            (
+                "bli-kvm-atx-transition",
+                ["--no-default-features", "--features", "gpio-atx-profile"],
+            ),
         )
         for package, args in cases:
             with self.subTest(package=package):

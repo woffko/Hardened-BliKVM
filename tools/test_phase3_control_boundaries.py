@@ -62,10 +62,26 @@ class Phase3ControlBoundaryTests(unittest.TestCase):
         self.assertEqual(routes, {"power", "power_long", "reset"})
         for forbidden in ("/dev/", "gpio", "libc::", "std::process", "Command"):
             self.assertNotIn(forbidden, client)
+
+        # The default profile still pulses through the KVMD fixed routes. A
+        # native GPIO executor exists for the reviewed board handoff, but it is
+        # compile-time gated, off by default and holds no device path here.
         transition = (ROOT / "crates/bli-kvm-atx-transition/src/lib.rs").read_text()
         self.assertIn("KvmdAtxClient", transition)
-        for forbidden in ("/dev/", "gpio", "libc::", "Command"):
+        self.assertIn('#[cfg(feature = "gpio-atx-profile")]', transition)
+        self.assertIn("AtxPulseRunner", transition)
+        for forbidden in ("/dev/", "libc::", "Command"):
             self.assertNotIn(forbidden, transition)
+
+        cargo = (ROOT / "crates/bli-kvm-atx-transition/Cargo.toml").read_text()
+        default_line = next(
+            line for line in cargo.splitlines() if line.startswith("default = ")
+        )
+        self.assertNotIn("gpio-atx-profile", default_line)
+
+        executor = (ROOT / "crates/bli-kvm-atx-gpio-executor/src/lib.rs").read_text()
+        for forbidden in ("/dev/", "libc::", "Command", "std::process"):
+            self.assertNotIn(forbidden, executor)
 
 
 if __name__ == "__main__":

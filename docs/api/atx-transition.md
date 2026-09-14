@@ -107,3 +107,14 @@ reviewed physical handoff; they perform no I/O.
 
 Physical Power and Reset actions are excluded from the current session, so no
 live ATX mutation test is performed.
+
+## Board executor boundary
+
+The default profile still pulses through the KVMD fixed waiting routes. Native
+GPIO is a separate, compile-time-gated path: `bli-kvm-atx-transition` exposes
+`AtxExecutor::Gpio` behind the non-default `gpio-atx-profile` feature, and
+`bli-kvm-atx-gpio-executor` drives the reviewed ATX lines through the platform
+GPIO seam with bounded pulses. Neither path reads or writes a device path
+directly in the transition crate, and the GPIO executor is enabled only after
+the reviewed physical line handoff. `tools/test_phase3_control_boundaries.py`
+pins that the GPIO executor stays feature-gated and off by default.
