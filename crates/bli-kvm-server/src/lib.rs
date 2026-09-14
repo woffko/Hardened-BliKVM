@@ -28,6 +28,7 @@ use crate::{
     error::{ApiResponse, AppError, AppResult},
 };
 
+mod application;
 mod atx;
 mod auth;
 mod error;
@@ -263,6 +264,8 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/auth/password",
             get(auth::routes::password_state).post(auth::routes::change_password),
         )
+        .route("/application/version", get(application::version))
+        .route("/application/preview", get(application::preview))
         .route("/inventory", get(runtime_inventory))
         .route("/hostname", get(hostname))
         .route("/system/time", get(system_time::get_config))
@@ -1388,6 +1391,20 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/system/time")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn application_version_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/application/version")
                     .body(Body::empty())
                     .unwrap(),
             )
