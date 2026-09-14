@@ -15,7 +15,7 @@ mod thermal;
 
 pub use gpio::{
     BOARD_CONSUMER, LineDirection, LineOwner, LinePlanningError, LineRequest, MAX_PLANNED_LINES,
-    current_owner, plan_requests, role_direction,
+    current_owner, hardened_board_request, plan_requests, role_direction,
 };
 pub use gpio_driver::{ApplyError, GpioDriver, apply_plan, release_plan};
 pub use hardware::{

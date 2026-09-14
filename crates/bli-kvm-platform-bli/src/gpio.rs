@@ -116,6 +116,25 @@ pub fn plan_requests(
     Ok(planned)
 }
 
+/// Build a request for an actuator line owned by the hardened board after the
+/// reviewed physical handoff. Only the ATX actuator roles are allowed; every
+/// other line stays behind the ownership planner.
+pub fn hardened_board_request(role: GpioRole) -> Result<LineRequest, LinePlanningError> {
+    match role {
+        GpioRole::AtxPower | GpioRole::AtxReset => {}
+        _ => return Err(LinePlanningError::OwnershipDenied),
+    }
+    let line = profile_line(role).ok_or(LinePlanningError::UnknownRole)?;
+    Ok(LineRequest {
+        chip: H616_VENDOR_PROFILE.gpio_chip,
+        offset: line.chip_offset,
+        consumer: BOARD_CONSUMER,
+        role,
+        direction: LineDirection::Output,
+        active_low: !line.active_high,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +148,24 @@ mod tests {
         assert_eq!(current_owner(GpioRole::DisplayButton), LineOwner::Unused);
         assert_eq!(current_owner(GpioRole::ActivityLed), LineOwner::LegacySysfs);
         assert_eq!(current_owner(GpioRole::FanPwm), LineOwner::LegacySysfs);
+    }
+
+    #[test]
+    fn hardened_board_request_allows_only_atx_actuators() {
+        let power = hardened_board_request(GpioRole::AtxPower).unwrap();
+        assert_eq!(power.offset, 228);
+        assert_eq!(power.direction, LineDirection::Output);
+        assert_eq!(power.consumer, BOARD_CONSUMER);
+        let reset = hardened_board_request(GpioRole::AtxReset).unwrap();
+        assert_eq!(reset.offset, 272);
+        assert_eq!(
+            hardened_board_request(GpioRole::ActivityLed),
+            Err(LinePlanningError::OwnershipDenied)
+        );
+        assert_eq!(
+            hardened_board_request(GpioRole::AtxPowerLed),
+            Err(LinePlanningError::OwnershipDenied)
+        );
     }
 
     #[test]

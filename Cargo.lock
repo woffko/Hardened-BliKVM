@@ -114,6 +114,15 @@ name = "bli-kvm-activity-led-policy"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-atx-gpio-executor"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "bli-kvm-platform-bli",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-atx-live-gate"
 version = "0.1.0"
 dependencies = [

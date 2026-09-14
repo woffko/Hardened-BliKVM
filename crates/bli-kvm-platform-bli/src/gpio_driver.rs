@@ -12,9 +12,13 @@ use crate::gpio::LineRequest;
 /// Minimal line driver seam. The libgpiod adapter implements this; tests use a
 /// deterministic mock.
 pub trait GpioDriver {
-    type Error;
+    type Error: std::fmt::Debug;
 
     fn request_line(&mut self, request: &LineRequest) -> Result<(), Self::Error>;
+
+    /// Drive the requested line. `active` is the logical level; the driver is
+    /// responsible for the polarity recorded in the request.
+    fn write_line(&mut self, request: &LineRequest, active: bool) -> Result<(), Self::Error>;
 
     fn release_line(&mut self, request: &LineRequest) -> Result<(), Self::Error>;
 }
@@ -68,7 +72,9 @@ mod tests {
     struct MockDriver {
         fail_request_at: Option<usize>,
         fail_release_at: Option<usize>,
+        fail_write_at: Option<usize>,
         requests: Vec<u16>,
+        writes: Vec<(u16, bool)>,
         releases: Vec<u16>,
     }
 
@@ -96,6 +102,14 @@ mod tests {
                 return Err(request.offset);
             }
             self.requests.push(request.offset);
+            Ok(())
+        }
+
+        fn write_line(&mut self, request: &LineRequest, active: bool) -> Result<(), Self::Error> {
+            if self.fail_write_at == Some(self.writes.len()) {
+                return Err(request.offset);
+            }
+            self.writes.push((request.offset, active));
             Ok(())
         }
 
