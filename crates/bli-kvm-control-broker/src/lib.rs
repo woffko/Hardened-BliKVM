@@ -27,6 +27,8 @@ pub use profile::{MediaProfile, media_profile_from_values};
 pub use profile::{ProfileError, kvmd_credentials_from_directory};
 #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
 pub use server::run_with_control_profile;
+#[cfg(feature = "gadget-hid-profile")]
+pub use server::run_with_gadget_hid_profile;
 #[cfg(feature = "gadget-media-profile")]
 pub use server::run_with_gadget_media_profile;
 #[cfg(feature = "hid-transition-profile")]

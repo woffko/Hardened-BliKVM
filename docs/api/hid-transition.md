@@ -94,3 +94,9 @@ The feature-gated `gadget-hid-profile` adds `HidExecutor::Gadget`: it composes
 boot keyboard reports from lease events and writes them to `hidg0`. Pointer
 events fail closed until the device report descriptors are captured. It is
 compiled out of shipped builds and covered by host tests.
+
+The privileged broker exposes a feature-gated `run_with_gadget_hid_profile`
+that serves HID from the Rust gadget (no KVMD): it composes boot keyboard
+reports and writes them to the function device. A host test drives target
+attestation, lease acquisition and a key report through the control socket and
+asserts the report reaches `hidg0`; pointer events fail closed.

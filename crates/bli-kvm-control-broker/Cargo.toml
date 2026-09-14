@@ -32,6 +32,14 @@ media-transition-profile = [
   "dep:bli-kvm-kvmd-media-client",
   "bli-kvm-media-policy/media-test-profile",
 ]
+gadget-hid-profile = [
+  "dep:bli-kvm-hid-adapter",
+  "dep:bli-kvm-hid-policy",
+  "dep:bli-kvm-hid-transition",
+  "dep:rand_core",
+  "bli-kvm-hid-policy/hid-test-profile",
+  "bli-kvm-hid-transition/gadget-hid-profile",
+]
 gadget-media-profile = [
   "dep:bli-kvm-media-catalog",
   "dep:bli-kvm-media-policy",

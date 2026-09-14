@@ -109,6 +109,40 @@ pub async fn run_with_hid_profile(
     result
 }
 
+/// Serves the broker with a HID backend attached from the Rust gadget
+/// instead of KVMD, for the reviewed gadget test profile. Only the
+/// `gadget-hid-profile` feature builds this entry point.
+#[cfg(feature = "gadget-hid-profile")]
+pub async fn run_with_gadget_hid_profile(
+    config: ControlBrokerConfig,
+    ledger_path: impl Into<std::path::PathBuf>,
+    hidg_dir: impl Into<std::path::PathBuf>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(ledger_path)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let engine = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
+        bli_kvm_hid_transition::HidExecutor::Gadget(
+            bli_kvm_hid_transition::GadgetHidExecutor::new(
+                bli_kvm_hid_transition::GadgetHidConfig {
+                    hidg_dir: hidg_dir.into(),
+                    keyboard_function: "hid.usb0".into(),
+                },
+            ),
+        ),
+        ledger,
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state = ControlV2State::with_hid_policy(bli_kvm_hid_policy::HidControlPolicy::new(engine));
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 /// One reviewed reconciliation decision applied before the daemon serves.
 ///
 /// The observation is mandatory read-only evidence and never infers the
@@ -1059,6 +1093,82 @@ mod tests {
         assert!(state.present);
         assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
         assert!(state.mass_storage.unwrap().file.ends_with("rescue.iso"));
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn gadget_hid_profile_writes_keyboard_reports_to_the_device() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let hidg = directory.path().join("hidg");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::write(hidg.join("hidg0"), b"").unwrap();
+        let mut broker = tokio::spawn(run_with_gadget_hid_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("ledger.json"),
+            hidg.clone(),
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let lease_id = match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => lease_id,
+            other => panic!("expected a lease grant, got {other:?}"),
+        };
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Report {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            report: HidReport::Keyboard {
+                                data: [0, 0, 4, 0, 0, 0, 0, 0],
+                            },
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            std::fs::read(hidg.join("hidg0")).unwrap(),
+            vec![0, 0, 4, 0, 0, 0, 0, 0]
+        );
         stop_broker(broker).await;
     }
 

@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 
-#[cfg(feature = "hid-transition-profile")]
+#[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use std::time::Duration;
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
@@ -20,15 +20,15 @@ use crate::{DEFAULT_MAX_ATTESTATIONS, TargetAttestationRegistry};
 use bli_kvm_atx_policy::{AtxEligibility, AtxOperation, AtxRejection};
 #[cfg(feature = "atx-transition-profile")]
 use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome};
-#[cfg(feature = "hid-transition-profile")]
+#[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use bli_kvm_hid_adapter::HidLeaseIdentity;
-#[cfg(feature = "hid-transition-profile")]
+#[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use bli_kvm_hid_policy::{HidControlPolicy, HidDecision, HidEligibility};
 #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 use bli_kvm_media_policy::{MediaEligibility, MediaOperation, MediaRejection};
 #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 use bli_kvm_media_transition::{MediaTransitionEngine, MediaTransitionOutcome};
-#[cfg(feature = "hid-transition-profile")]
+#[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use rand_core::{OsRng, RngCore};
 
 pub struct ControlV2State {
@@ -38,7 +38,7 @@ pub struct ControlV2State {
     atx: Option<AtxTransitionEngine>,
     #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
     media: Option<MediaTransitionEngine>,
-    #[cfg(feature = "hid-transition-profile")]
+    #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
     hid: Option<HidControlPolicy>,
 }
 
@@ -51,12 +51,12 @@ impl ControlV2State {
             atx: None,
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
-            #[cfg(feature = "hid-transition-profile")]
+            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
             hid: None,
         }
     }
 
-    #[cfg(feature = "hid-transition-profile")]
+    #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
     pub fn with_hid_policy(policy: HidControlPolicy) -> Self {
         Self {
             enabled: true,
@@ -77,7 +77,7 @@ impl ControlV2State {
             atx: Some(engine),
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
-            #[cfg(feature = "hid-transition-profile")]
+            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
             hid: None,
         }
     }
@@ -94,7 +94,10 @@ impl ControlV2State {
     /// control test profile. Only a build with both profile features compiles
     /// this constructor; HID requests still require a current attestation and
     /// ATX requests still require a reviewed confirmation.
-    #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
+    #[cfg(all(
+        any(feature = "hid-transition-profile", feature = "gadget-hid-profile"),
+        feature = "atx-transition-profile"
+    ))]
     pub fn with_hid_and_atx(hid: HidControlPolicy, atx: AtxTransitionEngine) -> Self {
         Self {
             enabled: true,
@@ -115,7 +118,7 @@ impl ControlV2State {
             atx: None,
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
-            #[cfg(feature = "hid-transition-profile")]
+            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
             hid: None,
         }
     }
@@ -173,7 +176,7 @@ impl ControlV2State {
         }
     }
 
-    #[cfg(not(feature = "hid-transition-profile"))]
+    #[cfg(not(any(feature = "hid-transition-profile", feature = "gadget-hid-profile")))]
     async fn handle_hid_lease(
         &mut self,
         _lease: &HidLeaseRequest,
@@ -182,7 +185,7 @@ impl ControlV2State {
         reject(ControlRejectionCode::BackendUnavailable)
     }
 
-    #[cfg(feature = "hid-transition-profile")]
+    #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
     async fn handle_hid_lease(&mut self, lease: &HidLeaseRequest, now: Instant) -> ControlResponse {
         let Some(policy) = self.hid.as_mut() else {
             return reject(ControlRejectionCode::BackendUnavailable);
