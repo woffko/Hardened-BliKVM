@@ -133,3 +133,42 @@ Each executed step records a private receipt and updates the checkpoint in
 `docs/baselines/phase3-hid-atx-host-checkpoint.md`; anything not executed stays
 listed as remaining. Device gates are never marked passed from host tests
 alone.
+
+## 6. Board owner (KVMD-free) handoff
+
+The Rust board owner replaces KVMD for the composite gadget and the ATX lines.
+This section is the physical gate; every step needs explicit operator
+confirmation and produces a private receipt.
+
+### 6a. Read-only capture (no mutation)
+
+- Confirm the stock gadget is up and capture its exact HID function parameters
+  and report descriptors (`hid.usb0/1/2`: `protocol`, `subclass`,
+  `report_length`, `report_desc`) into a private receipt. Those values pin the
+  gadget spec; they are protocol facts and must not be guessed.
+- Capture the reviewed ATX pulse timings (power short, power long, reset) and
+  the line identity/polarity from the stock behaviour on the bench, with the
+  target's Power and Reset physically disconnected.
+- Re-run `tools/capture_device_kvm_topology.py` and store the receipt.
+
+### 6b. Ownership handoff
+
+- Stop the KVMD-owned gadget and confirm the configfs tree is free with
+  `bli-kvm-usb-gadget::observe`.
+- Bring up the board owner unit with the operator `EnvironmentFile` holding the
+  confirmed timings; verify each backend independently before enabling the
+  capability in the shipped build:
+  - media: select, attach, eject and host re-enumeration;
+  - HID: keyboard report, rollback on write failure, ledger replay after
+    restart;
+  - ATX: `power_short`, `power_long`, `reset` timing and cooldown, with a
+    rollback to the KVMD route ready.
+- Record the before/after topology and gadget-state receipts.
+
+### 6c. Acceptance
+
+- Target boots and responds through the Rust gadget; media mounts and boots;
+  keyboard and mouse work on the real target; a reboot and a stuck-input
+  recovery pass.
+- Only after these pass, enable the capability flags in the shipped build and
+  remove `kvmd.service` from the board profile.
