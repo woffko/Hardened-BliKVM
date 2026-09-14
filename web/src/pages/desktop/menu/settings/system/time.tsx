@@ -17,11 +17,12 @@ const defaultConfig: TimeConfig = {
 
 type TimeSettingsProps = {
   showFooter?: boolean;
+  readOnly?: boolean;
   onActionStateChange?: (state: SystemActionState) => void;
 };
 
 export const TimeSettings = forwardRef<SystemActionHandle, TimeSettingsProps>(
-  ({ showFooter = true, onActionStateChange }, ref) => {
+  ({ showFooter = true, readOnly = false, onActionStateChange }, ref) => {
     const { t } = useTranslation();
 
     const [data, setData] = useState<TimeConfigResponse | null>(null);
@@ -202,6 +203,7 @@ export const TimeSettings = forwardRef<SystemActionHandle, TimeSettingsProps>(
             className="shrink-0"
             checked={config.ntpEnabled}
             loading={isLoading}
+            disabled={readOnly}
             onChange={changeNtpEnabled}
           />
         </div>
@@ -228,6 +230,7 @@ export const TimeSettings = forwardRef<SystemActionHandle, TimeSettingsProps>(
               showSearch
               value={config.timezone}
               options={timezoneOptions}
+              disabled={readOnly}
               onChange={(timezone) => patchConfig({ timezone })}
               filterOption={(input, option) =>
                 String(option?.label || '')
@@ -257,33 +260,36 @@ export const TimeSettings = forwardRef<SystemActionHandle, TimeSettingsProps>(
                     className="min-w-0"
                     value={server}
                     placeholder="0.pool.ntp.org"
+                    disabled={readOnly}
                     onChange={(event) => updateServer(index, event.target.value)}
                   />
                   <Button
                     icon={<Trash2Icon size={15} />}
-                    disabled={config.servers.length <= 1}
+                    disabled={readOnly || config.servers.length <= 1}
                     onClick={() => removeServer(index)}
                   />
                 </div>
               ))}
             </div>
 
-            <div className="flex min-w-0 flex-wrap justify-end gap-2">
-              <Button className="min-w-0" icon={<PlusIcon size={15} />} onClick={addServer}>
-                {t('settings.system.time.servers.add')}
-              </Button>
-              <Button
-                className="min-w-0"
-                disabled={!data?.gateway}
-                icon={<RouterIcon size={15} />}
-                onClick={useRouter}
-              >
-                {t('settings.system.time.servers.useRouter')}
-              </Button>
-              <Button className="min-w-0" onClick={useDefaults}>
-                {t('settings.system.time.servers.useDefaults')}
-              </Button>
-            </div>
+            {!readOnly && (
+              <div className="flex min-w-0 flex-wrap justify-end gap-2">
+                <Button className="min-w-0" icon={<PlusIcon size={15} />} onClick={addServer}>
+                  {t('settings.system.time.servers.add')}
+                </Button>
+                <Button
+                  className="min-w-0"
+                  disabled={!data?.gateway}
+                  icon={<RouterIcon size={15} />}
+                  onClick={useRouter}
+                >
+                  {t('settings.system.time.servers.useRouter')}
+                </Button>
+                <Button className="min-w-0" onClick={useDefaults}>
+                  {t('settings.system.time.servers.useDefaults')}
+                </Button>
+              </div>
+            )}
 
             {data?.gateway && (
               <Alert
@@ -308,16 +314,18 @@ export const TimeSettings = forwardRef<SystemActionHandle, TimeSettingsProps>(
           >
             {t('settings.system.time.refresh')}
           </Button>
-          <Button
-            className="min-w-0"
-            icon={<ClockIcon size={16} />}
-            disabled={!config.ntpEnabled}
-            loading={isSyncing}
-            onClick={syncNow}
-          >
-            {t('settings.system.time.syncNow')}
-          </Button>
-          {showFooter && (
+          {!readOnly && (
+            <Button
+              className="min-w-0"
+              icon={<ClockIcon size={16} />}
+              disabled={!config.ntpEnabled}
+              loading={isSyncing}
+              onClick={syncNow}
+            >
+              {t('settings.system.time.syncNow')}
+            </Button>
+          )}
+          {showFooter && !readOnly && (
             <Button
               type="primary"
               loading={isSaving}

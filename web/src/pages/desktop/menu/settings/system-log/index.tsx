@@ -25,11 +25,12 @@ const defaultConfig: SystemLogConfig = {
 type SystemLogProps = {
   showTitle?: boolean;
   showFooter?: boolean;
+  readOnly?: boolean;
   onActionStateChange?: (state: SystemActionState) => void;
 };
 
 export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
-  ({ showTitle = true, showFooter = true, onActionStateChange }, ref) => {
+  ({ showTitle = true, showFooter = true, readOnly = false, onActionStateChange }, ref) => {
     const { t } = useTranslation();
 
     const [config, setConfig] = useState<SystemLogConfig>(defaultConfig);
@@ -205,6 +206,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
               className="shrink-0"
               checked={config.remoteEnabled}
               loading={isLoading}
+              disabled={readOnly}
               onChange={(remoteEnabled) => patchConfig({ remoteEnabled })}
             />
           </div>
@@ -215,6 +217,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                 <Input
                   value={config.remoteHost}
                   placeholder="192.0.2.1"
+                  disabled={readOnly}
                   onChange={(event) => patchConfig({ remoteHost: event.target.value })}
                 />
               </SettingRow>
@@ -223,6 +226,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                   min={1}
                   max={65535}
                   value={config.remotePort}
+                  disabled={readOnly}
                   onChange={(value) => patchConfig({ remotePort: value || 514 })}
                   className="w-full"
                 />
@@ -246,6 +250,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
               <Select
                 value={config.priority}
                 options={priorityOptions}
+                disabled={readOnly}
                 onChange={(priority) => patchConfig({ priority })}
                 className="w-full"
               />
@@ -256,6 +261,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                 max={1024}
                 value={config.bufferKb}
                 addonAfter="KiB"
+                disabled={readOnly}
                 onChange={(value) => patchConfig({ bufferKb: value || 200 })}
                 className="w-full"
               />
@@ -265,6 +271,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
                 min={0}
                 max={4}
                 value={config.rotations}
+                disabled={readOnly}
                 onChange={(value) => patchConfig({ rotations: value || 0 })}
                 className="w-full"
               />
@@ -272,12 +279,14 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
             <SettingRow label={t('settings.systemLog.local.compact')}>
               <Switch
                 checked={config.smallOutput}
+                disabled={readOnly}
                 onChange={(smallOutput) => patchConfig({ smallOutput })}
               />
             </SettingRow>
             <SettingRow label={t('settings.systemLog.local.stripTimestamps')} isLast>
               <Switch
                 checked={config.stripTimestamps}
+                disabled={readOnly}
                 onChange={(stripTimestamps) => patchConfig({ stripTimestamps })}
               />
             </SettingRow>
@@ -295,6 +304,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
             <SettingRow label={t('settings.systemLog.kernel.enabled')}>
               <Switch
                 checked={config.kernelEnabled}
+                disabled={readOnly}
                 onChange={(kernelEnabled) => patchConfig({ kernelEnabled })}
               />
             </SettingRow>
@@ -302,6 +312,7 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
               <Select
                 value={config.kernelConsoleLevel}
                 options={priorityOptions}
+                disabled={readOnly}
                 onChange={(kernelConsoleLevel) => patchConfig({ kernelConsoleLevel })}
                 className="w-full"
               />
@@ -309,15 +320,17 @@ export const SystemLog = forwardRef<SystemActionHandle, SystemLogProps>(
           </div>
 
           <div className="flex min-w-0 flex-wrap justify-end gap-2">
-            <Button
-              className="min-w-0"
-              icon={<SendIcon size={16} />}
-              loading={isTesting}
-              onClick={sendTestMessage}
-            >
-              {t('settings.systemLog.test')}
-            </Button>
-            {showFooter && (
+            {!readOnly && (
+              <Button
+                className="min-w-0"
+                icon={<SendIcon size={16} />}
+                loading={isTesting}
+                onClick={sendTestMessage}
+              >
+                {t('settings.systemLog.test')}
+              </Button>
+            )}
+            {showFooter && !readOnly && (
               <Button
                 type="primary"
                 loading={isSaving}

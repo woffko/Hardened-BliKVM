@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Segmented } from 'antd';
+import { useAtomValue } from 'jotai';
 import { SaveIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+import { supportsSystemSection, systemSectionWritable } from '@/lib/capabilities.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import { Network } from '../network';
 import { SystemLog } from '../system-log';
@@ -14,11 +18,36 @@ type SystemSection = 'network' | 'time' | 'firewall' | 'systemLog';
 
 export const System = () => {
   const { t } = useTranslation();
-  const [section, setSection] = useState<SystemSection>('network');
+  const capabilities = useAtomValue(capabilitiesAtom);
+  const [section, setSection] = useState<SystemSection>('time');
   const [actionState, setActionState] = useState<SystemActionState>(idleSystemActionState);
   const networkRef = useRef<SystemActionHandle>(null);
   const timeRef = useRef<SystemActionHandle>(null);
   const systemLogRef = useRef<SystemActionHandle>(null);
+
+  const allSections = useMemo(
+    () => [
+      { value: 'network' as const, label: t('settings.network.title') },
+      { value: 'time' as const, label: t('settings.system.sections.time') },
+      { value: 'firewall' as const, label: t('settings.system.sections.firewall') },
+      { value: 'systemLog' as const, label: t('settings.system.sections.systemLog') }
+    ],
+    [t]
+  );
+
+  const supportedSections = useMemo(
+    () => allSections.filter((item) => supportsSystemSection(capabilities, item.value)),
+    [allSections, capabilities]
+  );
+
+  const sectionSupported = supportedSections.some((item) => item.value === section);
+  const sectionWritable = systemSectionWritable(capabilities, section);
+
+  useEffect(() => {
+    if (supportedSections.length > 0 && !supportedSections.some((item) => item.value === section)) {
+      setSection(supportedSections[0].value);
+    }
+  }, [supportedSections, section]);
 
   const updateActionState = useCallback((state: SystemActionState) => {
     setActionState(state);
@@ -29,6 +58,9 @@ export const System = () => {
   }, [section]);
 
   function saveActiveSection() {
+    if (!sectionWritable) {
+      return;
+    }
     if (section === 'network') {
       void networkRef.current?.save();
       return;
@@ -42,9 +74,7 @@ export const System = () => {
     }
   }
 
-  const showSaveAction =
-    (section === 'network' || section === 'time' || section === 'systemLog') &&
-    actionState.hasPending;
+  const showSaveAction = sectionWritable && actionState.hasPending;
   const actionStatusColor =
     actionState.statusKind === 'error'
       ? 'text-red-400'
@@ -79,13 +109,8 @@ export const System = () => {
               <Segmented
                 size="small"
                 className="min-w-max"
-                value={section}
-                options={[
-                  { value: 'network', label: t('settings.network.title') },
-                  { value: 'time', label: t('settings.system.sections.time') },
-                  { value: 'firewall', label: t('settings.system.sections.firewall') },
-                  { value: 'systemLog', label: t('settings.system.sections.systemLog') }
-                ]}
+                value={sectionSupported ? section : undefined}
+                options={supportedSections}
                 onChange={(value) => setSection(value as SystemSection)}
               />
             </div>
@@ -94,18 +119,24 @@ export const System = () => {
       </div>
 
       <div className="min-w-0 overflow-x-hidden">
-        {section === 'network' && (
+        {sectionSupported && section === 'network' && (
           <Network ref={networkRef} showTitle={false} onActionStateChange={updateActionState} />
         )}
-        {section === 'time' && (
-          <TimeSettings ref={timeRef} showFooter={false} onActionStateChange={updateActionState} />
+        {sectionSupported && section === 'time' && (
+          <TimeSettings
+            ref={timeRef}
+            showFooter={false}
+            readOnly={!sectionWritable}
+            onActionStateChange={updateActionState}
+          />
         )}
-        {section === 'firewall' && <FirewallSettings />}
-        {section === 'systemLog' && (
+        {sectionSupported && section === 'firewall' && <FirewallSettings />}
+        {sectionSupported && section === 'systemLog' && (
           <SystemLog
             ref={systemLogRef}
             showTitle={false}
             showFooter={false}
+            readOnly={!sectionWritable}
             onActionStateChange={updateActionState}
           />
         )}

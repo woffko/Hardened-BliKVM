@@ -27,7 +27,8 @@ capability-gated through `supportsSettingsTab`:
 | diagnostics | shown | already backed by `/api/diagnostics` |
 | appearance | shown | client-only plus unsupported menu-icon probes to remove |
 | account | shown | already backed by auth endpoints |
-| device / system / network / tailscale / update | hidden on the pinned platform | keep hidden until a reviewed capability exists |
+| device / network / tailscale / update | hidden on the pinned platform | keep hidden until a reviewed capability exists |
+| system (time, system log) | shown read-only | backed by read-only `/api/system/time` and `/api/system-log/*`; network/firewall sections stay hidden by capability |
 | desktop toolbar (keyboard, power, media, terminal, script) | partly ported | continue gating absent legacy calls |
 
 ## Categories

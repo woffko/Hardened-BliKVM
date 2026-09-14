@@ -47,6 +47,26 @@ impl CapabilityProvider for BliH616PikvmPlatform {
         }
         board_features.insert("thermal".into(), FeatureStatus::read_only(runtime_verified));
         board_features.insert("rtc".into(), FeatureStatus::read_only(runtime_verified));
+        board_features.insert(
+            "system_settings".into(),
+            FeatureStatus::read_only(runtime_verified),
+        );
+        board_features.insert(
+            "system_time".into(),
+            FeatureStatus::read_only(runtime_verified),
+        );
+        board_features.insert(
+            "system_log".into(),
+            FeatureStatus::read_only(runtime_verified),
+        );
+        board_features.insert(
+            "system_network".into(),
+            FeatureStatus::not_exposed(source_verified),
+        );
+        board_features.insert(
+            "system_firewall".into(),
+            FeatureStatus::not_exposed(source_verified),
+        );
 
         CapabilityManifest {
             schema_version: CAPABILITY_SCHEMA_VERSION,
@@ -160,6 +180,26 @@ mod tests {
         assert_eq!(
             manifest.board.features["rtc"],
             FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
+        );
+        assert_eq!(
+            manifest.board.features["system_settings"],
+            FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
+        );
+        assert_eq!(
+            manifest.board.features["system_time"],
+            FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
+        );
+        assert_eq!(
+            manifest.board.features["system_log"],
+            FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
+        );
+        assert_eq!(
+            manifest.board.features["system_network"],
+            FeatureStatus::not_exposed(EvidenceLevel::SourceVerified)
+        );
+        assert_eq!(
+            manifest.board.features["system_firewall"],
+            FeatureStatus::not_exposed(EvidenceLevel::SourceVerified)
         );
     }
 

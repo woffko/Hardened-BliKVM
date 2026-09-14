@@ -20,6 +20,7 @@ export type CapabilitySettingsTab =
   | 'tailscale'
   | 'update'
   | 'account';
+export type CapabilitySystemSection = 'network' | 'time' | 'firewall' | 'systemLog';
 
 export function isAvailable(status: FeatureStatus) {
   return status.availability !== 'unavailable';
@@ -62,6 +63,32 @@ function boardFeatureWritable(manifest: CapabilityManifest | null, name: string)
   return feature ? isWritable(feature) : false;
 }
 
+function boardFeatureAvailable(manifest: CapabilityManifest | null, name: string) {
+  const feature = manifest?.board.features[name];
+  return feature ? isAvailable(feature) : false;
+}
+
+const SYSTEM_SECTION_FEATURE: Record<CapabilitySystemSection, string> = {
+  network: 'system_network',
+  time: 'system_time',
+  firewall: 'system_firewall',
+  systemLog: 'system_log'
+};
+
+export function supportsSystemSection(
+  manifest: CapabilityManifest | null,
+  section: CapabilitySystemSection
+): boolean {
+  return boardFeatureAvailable(manifest, SYSTEM_SECTION_FEATURE[section]);
+}
+
+export function systemSectionWritable(
+  manifest: CapabilityManifest | null,
+  section: CapabilitySystemSection
+): boolean {
+  return boardFeatureWritable(manifest, SYSTEM_SECTION_FEATURE[section]);
+}
+
 export function supportsMenuItem(
   manifest: CapabilityManifest | null,
   item: CapabilityMenuItem
@@ -102,7 +129,7 @@ export function supportsSettingsTab(
     case 'device':
       return boardFeatureWritable(manifest, 'device_settings');
     case 'system':
-      return boardFeatureWritable(manifest, 'system_settings');
+      return boardFeatureAvailable(manifest, 'system_settings');
     case 'tailscale':
       return boardFeatureWritable(manifest, 'tailscale');
     case 'update':
