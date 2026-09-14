@@ -89,3 +89,8 @@ composes the standard 8-byte boot report (modifier byte, reserved byte, six
 keycodes) from lease events, tracking held keys and modifiers, and refuses a
 seventh simultaneous key. The layout is the USB HID boot protocol; mouse
 composition waits on the device report descriptors.
+
+The feature-gated `gadget-hid-profile` adds `HidExecutor::Gadget`: it composes
+boot keyboard reports from lease events and writes them to `hidg0`. Pointer
+events fail closed until the device report descriptors are captured. It is
+compiled out of shipped builds and covered by host tests.

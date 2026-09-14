@@ -5,11 +5,15 @@ mod ledger;
 pub use ledger::{HidReleaseLedger, HidReleaseLedgerError};
 
 use bli_kvm_core::HidReport;
+#[cfg(feature = "gadget-hid-profile")]
+use bli_kvm_hid_adapter::KeyboardReportComposer;
 use bli_kvm_hid_adapter::{
     HidLeaseAcquisition, HidLeaseError, HidLeaseIdentity, HidLeaseManager, KvmdHidEvent,
 };
 use bli_kvm_kvmd_client::KvmdCredentials;
 use bli_kvm_kvmd_hid_client::{KvmdHidClient, KvmdHidClientError};
+#[cfg(feature = "gadget-hid-profile")]
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -53,8 +57,68 @@ impl KvmdHidExecutor {
 /// The transition engine is backend-agnostic so the KVMD executor used during
 /// migration can later be replaced by the Rust USB gadget writer without
 /// touching lease policy or broker wiring.
+/// Configuration for the Rust gadget HID executor.
+#[cfg(feature = "gadget-hid-profile")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GadgetHidConfig {
+    pub hidg_dir: PathBuf,
+    pub keyboard_function: String,
+}
+
+/// Rust gadget HID executor: composes boot keyboard reports and writes them to
+/// the function character device.
+///
+/// Only the boot keyboard interface is implemented; a mouse event fails closed
+/// until the device report descriptors are captured.
+#[cfg(feature = "gadget-hid-profile")]
+pub struct GadgetHidExecutor {
+    config: GadgetHidConfig,
+    keyboard: std::sync::Mutex<KeyboardReportComposer>,
+}
+
+#[cfg(feature = "gadget-hid-profile")]
+impl GadgetHidExecutor {
+    pub fn new(config: GadgetHidConfig) -> Self {
+        Self {
+            config,
+            keyboard: std::sync::Mutex::new(KeyboardReportComposer::new()),
+        }
+    }
+
+    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
+        let mut keyboard = self
+            .keyboard
+            .lock()
+            .map_err(|_| gadget_error("gadget HID keyboard state is unavailable"))?;
+        for event in events {
+            match keyboard.apply(event) {
+                Ok(Some(report)) => bli_kvm_usb_gadget::write_report(
+                    &self.config.hidg_dir,
+                    &self.config.keyboard_function,
+                    &report,
+                )
+                .map_err(|_| gadget_error("gadget HID report write failed"))?,
+                Ok(None) => {
+                    return Err(gadget_error(
+                        "gadget HID pointer interface is not implemented yet",
+                    ));
+                }
+                Err(_) => return Err(gadget_error("gadget HID keyboard report is invalid")),
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "gadget-hid-profile")]
+fn gadget_error(message: &str) -> KvmdHidClientError {
+    KvmdHidClientError::Io(std::io::Error::other(message))
+}
+
 pub enum HidExecutor {
     Kvmd(KvmdHidExecutor),
+    #[cfg(feature = "gadget-hid-profile")]
+    Gadget(GadgetHidExecutor),
     #[cfg(test)]
     Test {
         fail: bool,
@@ -65,6 +129,8 @@ impl HidExecutor {
     async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
         match self {
             HidExecutor::Kvmd(executor) => executor.execute_batch(events).await,
+            #[cfg(feature = "gadget-hid-profile")]
+            HidExecutor::Gadget(executor) => executor.execute_batch(events).await,
             #[cfg(test)]
             HidExecutor::Test { fail } => {
                 if *fail {
@@ -540,5 +606,74 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn gadget_executor_writes_boot_keyboard_reports() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("hidg0"), b"").unwrap();
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: directory.path().to_path_buf(),
+                keyboard_function: "hid.usb0".into(),
+            })),
+            ledger,
+        )
+        .unwrap();
+        let owner = identity(1);
+        let now = Instant::now();
+        engine
+            .acquire(owner, now, Duration::from_secs(10))
+            .await
+            .unwrap();
+        engine
+            .report(
+                owner,
+                now,
+                &HidReport::Keyboard {
+                    data: [0, 0, 4, 0, 0, 0, 0, 0],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(directory.path().join("hidg0")).unwrap(),
+            vec![0, 0, 4, 0, 0, 0, 0, 0]
+        );
+        engine.release(owner).await.unwrap();
+        assert_eq!(
+            std::fs::read(directory.path().join("hidg0")).unwrap(),
+            vec![0, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn gadget_executor_fails_closed_on_pointer_events() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("hidg0"), b"").unwrap();
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: directory.path().to_path_buf(),
+                keyboard_function: "hid.usb0".into(),
+            })),
+            ledger,
+        )
+        .unwrap();
+        let owner = identity(1);
+        let now = Instant::now();
+        engine
+            .acquire(owner, now, Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(matches!(
+            engine
+                .report(owner, now, &HidReport::RelativeMouse { data: [1, 0, 0, 0] })
+                .await,
+            Err(HidTransitionError::Backend(_))
+        ));
     }
 }

@@ -484,6 +484,7 @@ dependencies = [
  "bli-kvm-hid-adapter",
  "bli-kvm-kvmd-client",
  "bli-kvm-kvmd-hid-client",
+ "bli-kvm-usb-gadget",
  "serde",
  "serde_json",
  "tempfile",

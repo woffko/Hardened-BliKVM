@@ -12,10 +12,14 @@ bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-hid-adapter = { path = "../bli-kvm-hid-adapter" }
 bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
 bli-kvm-kvmd-hid-client = { path = "../bli-kvm-kvmd-hid-client" }
+bli-kvm-usb-gadget = { path = "../bli-kvm-usb-gadget", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+
+[features]
+gadget-hid-profile = ["dep:bli-kvm-usb-gadget"]
 
 [dev-dependencies]
 tokio.workspace = true
