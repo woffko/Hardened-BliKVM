@@ -10,7 +10,9 @@ use bli_kvm_hid_adapter::KeyboardReportComposer;
 use bli_kvm_hid_adapter::{
     HidLeaseAcquisition, HidLeaseError, HidLeaseIdentity, HidLeaseManager, KvmdHidEvent,
 };
+#[cfg(feature = "kvmd-hid-profile")]
 use bli_kvm_kvmd_client::KvmdCredentials;
+#[cfg(feature = "kvmd-hid-profile")]
 use bli_kvm_kvmd_hid_client::{KvmdHidClient, KvmdHidClientError};
 #[cfg(feature = "gadget-hid-profile")]
 use std::path::PathBuf;
@@ -21,9 +23,20 @@ pub enum HidTransitionError {
     #[error("HID lease rejected: {0:?}")]
     Lease(HidLeaseError),
     #[error("HID transition backend failed")]
-    Backend(#[source] KvmdHidClientError),
+    Backend(#[source] HidExecutorError),
     #[error("HID release ledger failed")]
     Ledger(#[from] HidReleaseLedgerError),
+}
+
+/// Backend write failure, decoupled from the KVMD client so gadget builds do
+/// not link KVMD.
+#[derive(Debug, Error)]
+pub enum HidExecutorError {
+    #[cfg(feature = "kvmd-hid-profile")]
+    #[error("KVMD HID backend failed")]
+    Kvmd(#[from] KvmdHidClientError),
+    #[error("HID backend failed: {0}")]
+    Backend(String),
 }
 
 pub struct HidTransitionEngine {
@@ -34,11 +47,13 @@ pub struct HidTransitionEngine {
 }
 
 /// KVMD-backed HID executor. Holds its own credential instance.
+#[cfg(feature = "kvmd-hid-profile")]
 pub struct KvmdHidExecutor {
     client: KvmdHidClient,
     credentials: KvmdCredentials,
 }
 
+#[cfg(feature = "kvmd-hid-profile")]
 impl KvmdHidExecutor {
     pub fn new(client: KvmdHidClient, credentials: KvmdCredentials) -> Self {
         Self {
@@ -47,8 +62,11 @@ impl KvmdHidExecutor {
         }
     }
 
-    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
-        self.client.execute_batch(events, &self.credentials).await
+    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
+        self.client
+            .execute_batch(events, &self.credentials)
+            .await
+            .map_err(HidExecutorError::Kvmd)
     }
 }
 
@@ -85,7 +103,7 @@ impl GadgetHidExecutor {
         }
     }
 
-    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
+    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
         let mut keyboard = self
             .keyboard
             .lock()
@@ -111,30 +129,32 @@ impl GadgetHidExecutor {
 }
 
 #[cfg(feature = "gadget-hid-profile")]
-fn gadget_error(message: &str) -> KvmdHidClientError {
-    KvmdHidClientError::Io(std::io::Error::other(message))
+fn gadget_error(message: &str) -> HidExecutorError {
+    HidExecutorError::Backend(message.to_string())
 }
 
 pub enum HidExecutor {
+    #[cfg(feature = "kvmd-hid-profile")]
     Kvmd(KvmdHidExecutor),
     #[cfg(feature = "gadget-hid-profile")]
     Gadget(GadgetHidExecutor),
     #[cfg(test)]
-    Test {
-        fail: bool,
-    },
+    Test { fail: bool },
 }
 
 impl HidExecutor {
-    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), KvmdHidClientError> {
+    async fn execute_batch(&self, events: &[KvmdHidEvent]) -> Result<(), HidExecutorError> {
         match self {
+            #[cfg(feature = "kvmd-hid-profile")]
             HidExecutor::Kvmd(executor) => executor.execute_batch(events).await,
             #[cfg(feature = "gadget-hid-profile")]
             HidExecutor::Gadget(executor) => executor.execute_batch(events).await,
             #[cfg(test)]
             HidExecutor::Test { fail } => {
                 if *fail {
-                    Err(KvmdHidClientError::BatchTooLarge)
+                    Err(HidExecutorError::Backend(
+                        "test backend failure".to_string(),
+                    ))
                 } else {
                     Ok(())
                 }
@@ -144,6 +164,7 @@ impl HidExecutor {
 }
 
 impl HidTransitionEngine {
+    #[cfg(feature = "kvmd-hid-profile")]
     pub fn new(
         client: KvmdHidClient,
         credentials: KvmdCredentials,

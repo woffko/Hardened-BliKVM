@@ -10,6 +10,9 @@ pnpm_web() {
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
 cargo check --workspace --all-targets --all-features --locked
+cargo check -p bli-kvm-media-transition --lib --locked --no-default-features --features gadget-media-profile
+cargo check -p bli-kvm-hid-transition --lib --locked --no-default-features --features gadget-hid-profile
+cargo check -p bli-kvm-control-broker --lib --locked --features gadget-media-profile,gadget-hid-profile
 cargo test --workspace --all-targets --locked
 cargo test -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export
 cargo test -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export
@@ -168,6 +171,7 @@ python3 -m unittest \
   tools/test_stage_device_media_isolated_gate.py \
   tools/test_stage_device_hid_reboot_gate.py \
   tools/test_check_device_log_health.py \
+  tools/test_gadget_profile_boundary.py \
   tools/test_license_inventory.py \
   tools/test_crate_licenses.py \
   tools/test_stage_device_system_action_store.py \

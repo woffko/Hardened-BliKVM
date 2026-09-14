@@ -7,7 +7,9 @@
 //! the persisted result without another backend call.
 
 use bli_kvm_core::VirtualMediaCommand;
+#[cfg(feature = "kvmd-media-profile")]
 use bli_kvm_kvmd_client::KvmdCredentials;
+#[cfg(feature = "kvmd-media-profile")]
 use bli_kvm_kvmd_media_client::KvmdMediaClient;
 use bli_kvm_media_catalog::MediaCatalog;
 use bli_kvm_media_policy::{
@@ -32,11 +34,13 @@ pub enum MediaTransitionError {
 }
 
 /// KVMD-backed media executor. Holds its own credential instance.
+#[cfg(feature = "kvmd-media-profile")]
 pub struct KvmdMediaExecutor {
     client: KvmdMediaClient,
     credentials: KvmdCredentials,
 }
 
+#[cfg(feature = "kvmd-media-profile")]
 impl KvmdMediaExecutor {
     pub fn new(client: KvmdMediaClient, credentials: KvmdCredentials) -> Self {
         Self {
@@ -73,6 +77,7 @@ impl KvmdMediaExecutor {
 /// migration can later be replaced by the Rust configfs MSD worker without
 /// touching policy or broker wiring.
 pub enum MediaExecutor {
+    #[cfg(feature = "kvmd-media-profile")]
     Kvmd(KvmdMediaExecutor),
     #[cfg(feature = "gadget-media-profile")]
     Gadget(GadgetMediaExecutor),
@@ -215,6 +220,7 @@ impl GadgetMediaExecutor {
 impl MediaExecutor {
     async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
         match self {
+            #[cfg(feature = "kvmd-media-profile")]
             MediaExecutor::Kvmd(executor) => executor.observe().await,
             #[cfg(feature = "gadget-media-profile")]
             MediaExecutor::Gadget(executor) => executor.observe(),
@@ -225,6 +231,7 @@ impl MediaExecutor {
 
     async fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
         match self {
+            #[cfg(feature = "kvmd-media-profile")]
             MediaExecutor::Kvmd(executor) => executor.execute(command, catalog).await,
             #[cfg(feature = "gadget-media-profile")]
             MediaExecutor::Gadget(executor) => executor.execute(command, catalog),
@@ -251,6 +258,7 @@ pub struct MediaTransitionEngine {
 }
 
 impl MediaTransitionEngine {
+    #[cfg(feature = "kvmd-media-profile")]
     pub fn open(
         journal_path: impl Into<std::path::PathBuf>,
         client: KvmdMediaClient,
