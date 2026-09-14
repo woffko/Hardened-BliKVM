@@ -243,7 +243,117 @@ pub async fn run_with_chardev_atx_profile(
     run_with_gpio_atx_profile(config, journal_path, Box::new(runner), reconciliations).await
 }
 
-/// One reviewed reconciliation decision applied before the daemon serves.
+/// Serves the media, HID and ATX backends from one process: the single owner
+/// of the composite gadget and the reviewed ATX lines. Only a build with all
+/// three gadget/ATX profiles compiles this entry point; it links no KVMD crate.
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "gpio-atx-profile"
+))]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_board_profile(
+    config: ControlBrokerConfig,
+    media_journal: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    gadget: bli_kvm_media_transition::GadgetMediaConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hidg_dir: impl Into<std::path::PathBuf>,
+    atx_journal: impl Into<std::path::PathBuf>,
+    runner: Box<dyn bli_kvm_atx_transition::AtxPulseRunner>,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
+        media_journal,
+        catalog,
+        bli_kvm_media_transition::MediaExecutor::Gadget(
+            bli_kvm_media_transition::GadgetMediaExecutor::new(gadget),
+        ),
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
+        bli_kvm_hid_transition::HidExecutor::Gadget(
+            bli_kvm_hid_transition::GadgetHidExecutor::new(
+                bli_kvm_hid_transition::GadgetHidConfig {
+                    hidg_dir: hidg_dir.into(),
+                    keyboard_function: "hid.usb0".into(),
+                },
+            ),
+        ),
+        ledger,
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let mut atx = bli_kvm_atx_transition::AtxTransitionEngine::open_with_executor(
+        atx_journal,
+        bli_kvm_atx_transition::AtxExecutor::Gpio(std::sync::Mutex::new(runner)),
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let reconciled_at_ms = now_unix_millis();
+    for reconciliation in reconciliations {
+        atx.resolve_pending(
+            reconciliation.operation_id,
+            reconciliation.completion,
+            reconciliation.observation,
+            reconciled_at_ms,
+        )
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    }
+    let state = ControlV2State::with_board_backends(
+        media,
+        bli_kvm_hid_policy::HidControlPolicy::new(hid),
+        atx,
+    );
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
+/// Serves the board profile with the ATX runner built from the Linux GPIO
+/// character device. Only the `chardev-atx-profile` feature builds this.
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "chardev-atx-profile"
+))]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_chardev_board_profile(
+    config: ControlBrokerConfig,
+    media_journal: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    gadget: bli_kvm_media_transition::GadgetMediaConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hidg_dir: impl Into<std::path::PathBuf>,
+    atx_journal: impl Into<std::path::PathBuf>,
+    chip_path: impl AsRef<std::path::Path>,
+    timing: bli_kvm_atx_gpio_executor::AtxTiming,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let runner = bli_kvm_atx_gpio_executor::chardev_atx_executor(chip_path.as_ref(), timing)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    run_with_board_profile(
+        config,
+        media_journal,
+        catalog_path,
+        gadget,
+        hid_ledger,
+        hidg_dir,
+        atx_journal,
+        Box::new(runner),
+        reconciliations,
+    )
+    .await
+}
+
+/// One reviewed reconciliation decision applied before the daemon serves./// One reviewed reconciliation decision applied before the daemon serves.
 ///
 /// The observation is mandatory read-only evidence and never infers the
 /// completion; the operator still classifies the outcome.
@@ -1805,6 +1915,207 @@ mod tests {
                             session_binding: 9,
                             target_binding: [0x11; 32],
                             issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let state = bli_kvm_usb_gadget::observe(&configfs).unwrap();
+        assert!(state.present);
+        assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
+        stop_broker(broker).await;
+    }
+
+    #[cfg(all(
+        feature = "gadget-media-profile",
+        feature = "gadget-hid-profile",
+        feature = "gpio-atx-profile"
+    ))]
+    #[tokio::test]
+    async fn board_profile_serves_media_hid_and_atx_from_one_owner() {
+        use bli_kvm_atx_transition::AtxPulseRunner;
+        use bli_kvm_core::{
+            AtxConfirmation, MediaRequest, VirtualMediaCommand, VirtualMediaControlMode,
+        };
+        use bli_kvm_media_transition::{GadgetMediaConfig, GadgetStrings};
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingRunner(Arc<Mutex<Vec<AtxControlAction>>>);
+        impl AtxPulseRunner for RecordingRunner {
+            fn execute(&mut self, action: AtxControlAction) -> Result<(), String> {
+                self.0.lock().unwrap().push(action);
+                Ok(())
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let image_dir = directory.path().join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        std::fs::write(image_dir.join("rescue.iso"), b"image").unwrap();
+        let catalog = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"rescue.iso","size":4096,"sha256":"{}","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}}]}}"#,
+                "1".repeat(64)
+            ),
+        )
+        .unwrap();
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+        let hidg = directory.path().join("hidg");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::write(hidg.join("hidg0"), b"").unwrap();
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+
+        let mut broker = tokio::spawn(run_with_board_profile(
+            ControlBrokerConfig::new(socket.clone()).unwrap(),
+            directory.path().join("media-journal.json"),
+            catalog,
+            GadgetMediaConfig {
+                configfs_root: configfs.clone(),
+                udc: "musb-hdrc.2.auto".into(),
+                image_directory: image_dir,
+                strings: GadgetStrings {
+                    manufacturer: "Hardened BLi-KVM".into(),
+                    product: "BLi-KVM Composite Device".into(),
+                    serial: "BLK-owner-test".into(),
+                    configuration: "BLi-KVM configuration".into(),
+                },
+                id_vendor: 0x1d6b,
+                id_product: 0x0104,
+                bcd_usb: 0x0200,
+                bcd_device: 0x0100,
+            },
+            directory.path().join("ledger.json"),
+            hidg.clone(),
+            directory.path().join("atx-journal.json"),
+            Box::new(RecordingRunner(recorded.clone())),
+            Vec::new(),
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let lease_id = match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => lease_id,
+            other => panic!("expected a lease grant, got {other:?}"),
+        };
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Report {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            report: HidReport::Keyboard {
+                                data: [0, 0, 4, 0, 0, 0, 0, 0],
+                            },
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            std::fs::read(hidg.join("hidg0")).unwrap(),
+            vec![0, 0, 4, 0, 0, 0, 0, 0]
+        );
+
+        let confirmed_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "05".repeat(16),
+                    PlatformControlRequestV2::Atx {
+                        action: AtxControlAction::PowerShort,
+                        confirmation: AtxConfirmation {
+                            session_binding: 9,
+                            confirmation_binding: [0x44; 32],
+                            confirmed_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            *recorded.lock().unwrap(),
+            vec![AtxControlAction::PowerShort]
+        );
+
+        assert_eq!(
+            client
+                .execute_v2(
+                    "1123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::Select {
+                                image_id: 7,
+                                mode: VirtualMediaControlMode::CdRom,
+                                writable: false,
+                            },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms: confirmed_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(2_200)).await;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "2123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::SetConnected { connected: true },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms: confirmed_at_unix_ms,
                         },
                     },
                 )

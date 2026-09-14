@@ -74,6 +74,70 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    #[cfg(all(
+        feature = "gadget-media-profile",
+        feature = "gadget-hid-profile",
+        feature = "chardev-atx-profile"
+    ))]
+    {
+        if std::env::var("BLI_KVM_BOARD_PROFILE").as_deref() == Ok("1") {
+            let media = bli_kvm_control_broker::gadget_media_profile_from_values(
+                true,
+                std::env::var("BLI_KVM_GADGET_MEDIA_JOURNAL")
+                    .ok()
+                    .as_deref(),
+                std::env::var("BLI_KVM_GADGET_MEDIA_CATALOG")
+                    .ok()
+                    .as_deref(),
+                std::env::var("BLI_KVM_GADGET_CONFIGFS").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_IMAGES").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_UDC").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_SERIAL_FILE").ok().as_deref(),
+            )?
+            .ok_or("board profile is enabled but the media configuration is incomplete")?;
+            let hid = bli_kvm_control_broker::gadget_hid_profile_from_values(
+                true,
+                std::env::var("BLI_KVM_GADGET_HID_LEDGER").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_HIDG_DIR").ok().as_deref(),
+            )?
+            .ok_or("board profile is enabled but the HID configuration is incomplete")?;
+            let chip = std::env::var("BLI_KVM_ATX_CHIP").map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing BLI_KVM_ATX_CHIP")
+            })?;
+            let atx_journal = std::env::var("BLI_KVM_ATX_JOURNAL").map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "missing BLI_KVM_ATX_JOURNAL",
+                )
+            })?;
+            let timing = bli_kvm_atx_gpio_executor::AtxTiming {
+                power_short_ms: env_u64("BLI_KVM_ATX_POWER_SHORT_MS")?,
+                power_long_ms: env_u64("BLI_KVM_ATX_POWER_LONG_MS")?,
+                reset_ms: env_u64("BLI_KVM_ATX_RESET_MS")?,
+            };
+            let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
+                true,
+                std::env::var("BLI_KVM_ATX_RECONCILIATIONS").ok().as_deref(),
+            )?;
+            let serial = bli_kvm_control_broker::gadget_serial_from_file(&media.serial_file)?;
+            let gadget = bli_kvm_control_broker::gadget_media_config(&media, serial);
+            bli_kvm_control_broker::run_with_chardev_board_profile(
+                ControlBrokerConfig::from_environment()?,
+                media.journal,
+                media.catalog,
+                gadget,
+                hid.ledger,
+                hid.hidg_dir,
+                atx_journal,
+                chip,
+                timing,
+                reconciliations,
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
     #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
     {
         if std::env::var("BLI_KVM_GADGET_PROFILE").as_deref() == Ok("1") {

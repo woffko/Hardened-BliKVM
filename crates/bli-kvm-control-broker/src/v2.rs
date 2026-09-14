@@ -124,6 +124,27 @@ impl ControlV2State {
         }
     }
 
+    /// Serves media, HID and ATX from one state: the single gadget and board
+    /// owner. Each backend keeps its own eligibility gate.
+    #[cfg(all(
+        feature = "gadget-media-profile",
+        feature = "gadget-hid-profile",
+        any(feature = "gpio-atx-profile", feature = "chardev-atx-profile")
+    ))]
+    pub fn with_board_backends(
+        media: MediaTransitionEngine,
+        hid: HidControlPolicy,
+        atx: AtxTransitionEngine,
+    ) -> Self {
+        Self {
+            enabled: true,
+            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            atx: Some(atx),
+            media: Some(media),
+            hid: Some(hid),
+        }
+    }
+
     #[cfg(test)]
     fn enabled_for_test() -> Self {
         Self {

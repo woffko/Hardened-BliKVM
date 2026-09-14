@@ -57,8 +57,20 @@ pub use profile::{MediaProfile, media_profile_from_values};
 pub use server::AtxReconciliation;
 #[cfg(feature = "atx-transition-profile")]
 pub use server::run_with_atx_profile;
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "gpio-atx-profile"
+))]
+pub use server::run_with_board_profile;
 #[cfg(feature = "chardev-atx-profile")]
 pub use server::run_with_chardev_atx_profile;
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "chardev-atx-profile"
+))]
+pub use server::run_with_chardev_board_profile;
 #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
 pub use server::run_with_control_profile;
 #[cfg(feature = "gadget-hid-profile")]
