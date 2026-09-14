@@ -97,3 +97,11 @@ explicitly enabled with a configured control socket and the separate
 uses opaque IDs. `tools/build_device_media_catalog.py` builds a catalog from
 the board's real MSD images read-only; real-target attach/eject, upload,
 interruption and BIOS boot remain the next gates.
+
+## Backend seam
+
+The media transition engine now executes through a backend seam
+(`MediaExecutor`) so the KVMD executor used during migration can later be
+replaced by the Rust configfs MSD worker without changing policy or broker
+wiring. The KVMD constructor and all existing behavior are preserved, and a
+test exercises the engine through an injected backend.

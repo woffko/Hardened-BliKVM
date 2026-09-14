@@ -6,6 +6,7 @@
 //! is persisted before the outcome is returned. Duplicates and conflicts return
 //! the persisted result without another backend call.
 
+use bli_kvm_core::VirtualMediaCommand;
 use bli_kvm_kvmd_client::KvmdCredentials;
 use bli_kvm_kvmd_media_client::KvmdMediaClient;
 use bli_kvm_media_catalog::MediaCatalog;
@@ -23,6 +24,74 @@ pub enum MediaTransitionError {
     Backend,
 }
 
+/// KVMD-backed media executor. Holds its own credential instance.
+pub struct KvmdMediaExecutor {
+    client: KvmdMediaClient,
+    credentials: KvmdCredentials,
+}
+
+impl KvmdMediaExecutor {
+    pub fn new(client: KvmdMediaClient, credentials: KvmdCredentials) -> Self {
+        Self {
+            client,
+            credentials,
+        }
+    }
+
+    async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
+        let state = self
+            .client
+            .state(&self.credentials)
+            .await
+            .map_err(|_| MediaTransitionError::Backend)?;
+        Ok(MediaObservedState {
+            enabled: state.enabled,
+            online: state.online,
+            busy: state.busy,
+            connected: state.connected,
+        })
+    }
+
+    async fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
+        self.client
+            .execute(command, catalog, &self.credentials)
+            .await
+            .is_ok()
+    }
+}
+
+/// Backend that reads the drive state and applies media commands.
+///
+/// The transition engine is backend-agnostic so the KVMD executor used during
+/// migration can later be replaced by the Rust configfs MSD worker without
+/// touching policy or broker wiring.
+pub enum MediaExecutor {
+    Kvmd(KvmdMediaExecutor),
+    #[cfg(test)]
+    Test {
+        observed: MediaObservedState,
+        applied: bool,
+    },
+}
+
+impl MediaExecutor {
+    async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
+        match self {
+            MediaExecutor::Kvmd(executor) => executor.observe().await,
+            #[cfg(test)]
+            MediaExecutor::Test { observed, .. } => Ok(*observed),
+        }
+    }
+
+    async fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
+        match self {
+            MediaExecutor::Kvmd(executor) => executor.execute(command, catalog).await,
+            #[cfg(test)]
+            MediaExecutor::Test { applied, .. } => *applied,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaTransitionOutcome {
     Applied,
@@ -35,9 +104,8 @@ pub enum MediaTransitionOutcome {
 
 pub struct MediaTransitionEngine {
     policy: MediaPolicyEngine,
-    client: KvmdMediaClient,
+    executor: MediaExecutor,
     catalog: MediaCatalog,
-    credentials: KvmdCredentials,
 }
 
 impl MediaTransitionEngine {
@@ -47,11 +115,23 @@ impl MediaTransitionEngine {
         catalog: MediaCatalog,
         credentials: KvmdCredentials,
     ) -> Result<Self, MediaTransitionError> {
+        Self::open_with_executor(
+            journal_path,
+            catalog,
+            MediaExecutor::Kvmd(KvmdMediaExecutor::new(client, credentials)),
+        )
+    }
+
+    /// Build an engine over any reviewed executor backend.
+    pub fn open_with_executor(
+        journal_path: impl Into<std::path::PathBuf>,
+        catalog: MediaCatalog,
+        executor: MediaExecutor,
+    ) -> Result<Self, MediaTransitionError> {
         Ok(Self {
             policy: MediaPolicyEngine::open(journal_path)?,
-            client,
+            executor,
             catalog,
-            credentials,
         })
     }
 
@@ -61,17 +141,7 @@ impl MediaTransitionEngine {
 
     /// Reads the fixed read-only `/msd` state used for media eligibility.
     pub async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
-        let state = self
-            .client
-            .state(&self.credentials)
-            .await
-            .map_err(|_| MediaTransitionError::Backend)?;
-        Ok(MediaObservedState {
-            enabled: state.enabled,
-            online: state.online,
-            busy: state.busy,
-            connected: state.connected,
-        })
+        self.executor.observe().await
     }
 
     pub async fn execute(
@@ -92,11 +162,7 @@ impl MediaTransitionEngine {
             MediaDecision::Permit => {
                 let operation_id = operation.operation_id();
                 let command = operation.command();
-                let applied = self
-                    .client
-                    .execute(&command, &self.catalog, &self.credentials)
-                    .await
-                    .is_ok();
+                let applied = self.executor.execute(&command, &self.catalog).await;
                 let completion = if applied {
                     MediaCompletion::Applied
                 } else {
@@ -215,6 +281,56 @@ mod tests {
 
     fn operation(seed: u8, command: VirtualMediaCommand) -> MediaOperation {
         MediaOperation::new([seed; 16], 9, [0x44; 32], 1_000, command).unwrap()
+    }
+
+    #[tokio::test]
+    async fn engine_executes_through_any_reviewed_backend() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = MediaTransitionEngine::open_with_executor(
+            directory.path().join("journal.json"),
+            catalog(directory.path()),
+            MediaExecutor::Test {
+                observed: observed(false, false),
+                applied: true,
+            },
+        )
+        .unwrap();
+        let eligibility = MediaEligibility::verified_for_test_profile();
+        assert_eq!(engine.observe().await.unwrap(), observed(false, false));
+        assert_eq!(
+            engine
+                .execute(
+                    operation(11, VirtualMediaCommand::SetConnected { connected: true }),
+                    eligibility,
+                    observed(false, false),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::Applied
+        );
+
+        let mut failing = MediaTransitionEngine::open_with_executor(
+            directory.path().join("failing.json"),
+            catalog(directory.path()),
+            MediaExecutor::Test {
+                observed: observed(false, false),
+                applied: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            failing
+                .execute(
+                    operation(12, VirtualMediaCommand::SetConnected { connected: true }),
+                    eligibility,
+                    observed(false, false),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            MediaTransitionOutcome::BackendFailed
+        );
     }
 
     #[tokio::test]
