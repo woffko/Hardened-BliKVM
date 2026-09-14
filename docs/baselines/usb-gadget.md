@@ -26,6 +26,14 @@ when re-applied, remove clears the UDC first and removes the tree last, and a
 failed apply rolls back. Tests run against a temporary directory; the real
 configfs root is only used by the future, physically gated device slice.
 
+## Read-only state
+
+`observe(root)` returns a mutation-free snapshot of the current gadget:
+presence, the bound UDC (or `None` when unbound), the sorted function list, and
+the mass-storage LUN state. This is the read path that media eligibility and
+ownership-handoff verification will use, and it is covered by tests over a
+temporary root.
+
 ## Next gates
 
 - capture the HID report descriptors and function parameters read-only from the

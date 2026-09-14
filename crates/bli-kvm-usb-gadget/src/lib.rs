@@ -401,6 +401,103 @@ pub fn remove(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
     execute(root, &remove_steps(spec))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MassStorageState {
+    pub file: PathBuf,
+    pub read_only: bool,
+    pub cdrom: bool,
+    pub removable: bool,
+}
+
+/// Read-only snapshot of an existing gadget, used for media eligibility and
+/// ownership-handoff verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GadgetState {
+    pub present: bool,
+    /// Controller name while bound, `None` when unbound (empty or missing).
+    pub udc: Option<String>,
+    pub functions: Vec<String>,
+    pub mass_storage: Option<MassStorageState>,
+}
+
+/// Read the current gadget state from a configfs root without mutating it.
+pub fn observe(root: &Path) -> Result<GadgetState, GadgetError> {
+    let gadget = root.join(GADGET_NAME);
+    if !gadget.is_dir() {
+        return Ok(GadgetState {
+            present: false,
+            udc: None,
+            functions: Vec::new(),
+            mass_storage: None,
+        });
+    }
+
+    let udc = read_optional_string(root, &gadget.join("UDC"))?;
+    let mut functions = Vec::new();
+    let functions_dir = gadget.join("functions");
+    if functions_dir.is_dir() {
+        let entries = std::fs::read_dir(&functions_dir).map_err(io_error)?;
+        for entry in entries {
+            let entry = entry.map_err(io_error)?;
+            if entry.path().is_dir() {
+                functions.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        functions.sort();
+    }
+
+    let mass_storage = if functions.iter().any(|name| name == MSD_FUNCTION) {
+        let lun = function_path(MSD_FUNCTION).join("lun.0");
+        Some(MassStorageState {
+            file: PathBuf::from(read_required_string(root, &lun.join("file"))?),
+            read_only: read_bool(root, &lun.join("ro"))?,
+            cdrom: read_bool(root, &lun.join("cdrom"))?,
+            removable: read_bool(root, &lun.join("removable"))?,
+        })
+    } else {
+        None
+    };
+
+    Ok(GadgetState {
+        present: true,
+        udc,
+        functions,
+        mass_storage,
+    })
+}
+
+fn read_optional_string(root: &Path, path: &Path) -> Result<Option<String>, GadgetError> {
+    let full = root.join(path);
+    match std::fs::read_to_string(full) {
+        Ok(value) => {
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(value))
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+fn read_required_string(root: &Path, path: &Path) -> Result<String, GadgetError> {
+    let full = root.join(path);
+    std::fs::read_to_string(full)
+        .map(|value| value.trim().to_string())
+        .map_err(io_error)
+}
+
+fn read_bool(root: &Path, path: &Path) -> Result<bool, GadgetError> {
+    let value = read_required_string(root, path)?;
+    match value.as_str() {
+        "1" | "y" | "Y" => Ok(true),
+        "0" | "n" | "N" => Ok(false),
+        _ => Err(GadgetError::Io("unexpected boolean gadget value".into())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +659,45 @@ mod tests {
         );
         assert!(
             matches!(steps.last(), Some(Step::RemoveDir { path }) if path.as_path() == Path::new(GADGET_NAME))
+        );
+    }
+
+    #[test]
+    fn observe_reports_presence_binding_and_functions() {
+        let directory = root_with_image();
+        let spec = spec(&directory.path().join(IMAGE_NAME));
+        assert!(!observe(directory.path()).unwrap().present);
+
+        assert_eq!(apply(directory.path(), &spec), Ok(()));
+        let state = observe(directory.path()).unwrap();
+        assert!(state.present);
+        assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
+        assert_eq!(state.functions, vec![MSD_FUNCTION.to_string()]);
+        let msd = state.mass_storage.expect("mass storage is present");
+        assert_eq!(msd.file, directory.path().join(IMAGE_NAME));
+        assert!(msd.read_only);
+        assert!(msd.removable);
+        assert!(!msd.cdrom);
+
+        assert_eq!(remove(directory.path(), &spec), Ok(()));
+        assert!(!observe(directory.path()).unwrap().present);
+    }
+
+    #[test]
+    fn observe_lists_hid_functions_sorted() {
+        let directory = root_with_image();
+        let mut spec = spec(&directory.path().join(IMAGE_NAME));
+        spec.functions.push(hid("hid.usb1", 7));
+        spec.functions.push(hid("hid.usb0", 8));
+        assert_eq!(apply(directory.path(), &spec), Ok(()));
+        let state = observe(directory.path()).unwrap();
+        assert_eq!(
+            state.functions,
+            vec![
+                "hid.usb0".to_string(),
+                "hid.usb1".to_string(),
+                MSD_FUNCTION.to_string()
+            ]
         );
     }
 
