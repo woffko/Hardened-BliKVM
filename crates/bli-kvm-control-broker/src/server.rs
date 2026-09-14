@@ -143,11 +143,48 @@ pub async fn run_with_gadget_hid_profile(
     result
 }
 
+/// Serves the broker with the ATX state machine over the reviewed GPIO
+/// executor supplied by the owner. Only the `gpio-atx-profile` feature builds
+/// this entry point; it links no KVMD crate.
+#[cfg(feature = "gpio-atx-profile")]
+pub async fn run_with_gpio_atx_profile(
+    config: ControlBrokerConfig,
+    journal_path: impl Into<std::path::PathBuf>,
+    runner: Box<dyn bli_kvm_atx_transition::AtxPulseRunner>,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let mut engine = bli_kvm_atx_transition::AtxTransitionEngine::open_with_executor(
+        journal_path,
+        bli_kvm_atx_transition::AtxExecutor::Gpio(std::sync::Mutex::new(runner)),
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let reconciled_at_ms = now_unix_millis();
+    for reconciliation in reconciliations {
+        engine
+            .resolve_pending(
+                reconciliation.operation_id,
+                reconciliation.completion,
+                reconciliation.observation,
+                reconciled_at_ms,
+            )
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    }
+    let state = ControlV2State::with_atx_engine(engine);
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 /// One reviewed reconciliation decision applied before the daemon serves.
 ///
 /// The observation is mandatory read-only evidence and never infers the
 /// completion; the operator still classifies the outcome.
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtxReconciliation {
     pub operation_id: [u8; 16],
@@ -400,7 +437,7 @@ pub async fn run_with_gadget_media_profile(
     result
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
 fn now_unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1556,6 +1593,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response, ControlResponse::Applied);
+        stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "gpio-atx-profile")]
+    #[tokio::test]
+    async fn gpio_atx_profile_pulses_through_the_supplied_runner() {
+        use bli_kvm_atx_transition::AtxPulseRunner;
+        use bli_kvm_core::AtxConfirmation;
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingRunner(Arc<Mutex<Vec<AtxControlAction>>>);
+        impl AtxPulseRunner for RecordingRunner {
+            fn execute(&mut self, action: AtxControlAction) -> Result<(), String> {
+                self.0.lock().unwrap().push(action);
+                Ok(())
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let mut broker = tokio::spawn(run_with_gpio_atx_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("journal.json"),
+            Box::new(RecordingRunner(recorded.clone())),
+            Vec::new(),
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let confirmed_at_unix_ms = now_unix_millis();
+        assert_eq!(
+            client
+                .execute_v2(
+                    "05".repeat(16),
+                    PlatformControlRequestV2::Atx {
+                        action: AtxControlAction::PowerShort,
+                        confirmation: AtxConfirmation {
+                            session_binding: 9,
+                            confirmation_binding: [0x44; 32],
+                            confirmed_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            *recorded.lock().unwrap(),
+            vec![AtxControlAction::PowerShort]
+        );
         stop_broker(broker).await;
     }
 

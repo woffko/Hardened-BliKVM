@@ -43,12 +43,18 @@ pub use profile::{GadgetHidProfile, gadget_hid_config, gadget_hid_profile_from_v
 pub use profile::{HidProfile, hid_profile_from_values};
 #[cfg(feature = "media-transition-profile")]
 pub use profile::{MediaProfile, media_profile_from_values};
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+pub use server::AtxReconciliation;
+#[cfg(feature = "atx-transition-profile")]
+pub use server::run_with_atx_profile;
 #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
 pub use server::run_with_control_profile;
 #[cfg(feature = "gadget-hid-profile")]
 pub use server::run_with_gadget_hid_profile;
 #[cfg(feature = "gadget-media-profile")]
 pub use server::run_with_gadget_media_profile;
+#[cfg(feature = "gpio-atx-profile")]
+pub use server::run_with_gpio_atx_profile;
 #[cfg(feature = "hid-transition-profile")]
 pub use server::run_with_hid_profile;
 #[cfg(feature = "media-transition-profile")]
@@ -59,7 +65,5 @@ pub use server::run_with_media_profile;
     feature = "media-transition-profile"
 ))]
 pub use server::run_with_restricted_profiles;
-#[cfg(feature = "atx-transition-profile")]
-pub use server::{AtxReconciliation, run_with_atx_profile};
 pub use server::{ControlBrokerError, run};
 pub use v2::ControlV2State;

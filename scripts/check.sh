@@ -13,6 +13,7 @@ cargo check --workspace --all-targets --all-features --locked
 cargo check -p bli-kvm-media-transition --lib --locked --no-default-features --features gadget-media-profile
 cargo check -p bli-kvm-hid-transition --lib --locked --no-default-features --features gadget-hid-profile
 cargo check -p bli-kvm-control-broker --lib --locked --features gadget-media-profile,gadget-hid-profile
+cargo check -p bli-kvm-control-broker --lib --locked --features gpio-atx-profile
 cargo check -p bli-kvm-atx-transition --lib --locked --no-default-features --features gpio-atx-profile
 cargo test --workspace --all-targets --locked
 cargo test -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export
@@ -23,6 +24,7 @@ cargo test -p bli-kvm-control-broker --all-targets --locked --features atx-trans
 cargo test -p bli-kvm-control-broker --all-targets --locked --all-features
 cargo test -p bli-kvm-control-broker --all-targets --locked --features gadget-media-profile
 cargo test -p bli-kvm-control-broker --all-targets --locked --features gadget-hid-profile
+cargo test -p bli-kvm-control-broker --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-media-transition --all-targets --locked --features gadget-media-profile
 cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hid-profile
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
@@ -34,6 +36,7 @@ cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagno
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features hid-transition-profile,atx-transition-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gadget-media-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gadget-hid-profile -- -D warnings
+cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gpio-atx-profile -- -D warnings
 cargo clippy -p bli-kvm-media-transition --all-targets --locked --features gadget-media-profile -- -D warnings
 cargo clippy -p bli-kvm-hid-transition --all-targets --locked --features gadget-hid-profile -- -D warnings
 cargo clippy -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile -- -D warnings

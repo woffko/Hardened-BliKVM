@@ -16,9 +16,9 @@ use bli_kvm_core::{AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformC
 
 use crate::{DEFAULT_MAX_ATTESTATIONS, TargetAttestationRegistry};
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
 use bli_kvm_atx_policy::{AtxEligibility, AtxOperation, AtxRejection};
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
 use bli_kvm_atx_transition::{AtxTransitionEngine, AtxTransitionOutcome};
 #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use bli_kvm_hid_adapter::HidLeaseIdentity;
@@ -34,7 +34,7 @@ use rand_core::{OsRng, RngCore};
 pub struct ControlV2State {
     enabled: bool,
     attestations: TargetAttestationRegistry,
-    #[cfg(feature = "atx-transition-profile")]
+    #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
     atx: Option<AtxTransitionEngine>,
     #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
     media: Option<MediaTransitionEngine>,
@@ -47,7 +47,7 @@ impl ControlV2State {
         Self {
             enabled: false,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(feature = "atx-transition-profile")]
+            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
             atx: None,
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
@@ -61,7 +61,7 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(feature = "atx-transition-profile")]
+            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
             atx: None,
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
@@ -69,7 +69,7 @@ impl ControlV2State {
         }
     }
 
-    #[cfg(feature = "atx-transition-profile")]
+    #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
     pub fn with_atx_engine(engine: AtxTransitionEngine) -> Self {
         Self {
             enabled: true,
@@ -96,7 +96,7 @@ impl ControlV2State {
     /// ATX requests still require a reviewed confirmation.
     #[cfg(all(
         any(feature = "hid-transition-profile", feature = "gadget-hid-profile"),
-        feature = "atx-transition-profile"
+        any(feature = "atx-transition-profile", feature = "gpio-atx-profile")
     ))]
     pub fn with_hid_and_atx(hid: HidControlPolicy, atx: AtxTransitionEngine) -> Self {
         Self {
@@ -114,7 +114,7 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(feature = "atx-transition-profile")]
+            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
             atx: None,
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
@@ -296,7 +296,7 @@ fn reject(code: ControlRejectionCode) -> ControlResponse {
     ControlResponse::Rejected { code }
 }
 
-#[cfg(not(feature = "atx-transition-profile"))]
+#[cfg(not(any(feature = "atx-transition-profile", feature = "gpio-atx-profile")))]
 impl ControlV2State {
     async fn handle_atx(
         &mut self,
@@ -309,7 +309,7 @@ impl ControlV2State {
     }
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
 impl ControlV2State {
     async fn handle_atx(
         &mut self,
@@ -434,7 +434,7 @@ fn media_code(rejection: MediaRejection) -> ControlRejectionCode {
 }
 
 #[cfg(any(
-    feature = "atx-transition-profile",
+    any(feature = "atx-transition-profile", feature = "gpio-atx-profile"),
     any(feature = "media-transition-profile", feature = "gadget-media-profile")
 ))]
 fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
@@ -450,7 +450,7 @@ fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
 }
 
 #[cfg(any(
-    feature = "atx-transition-profile",
+    any(feature = "atx-transition-profile", feature = "gpio-atx-profile"),
     any(feature = "media-transition-profile", feature = "gadget-media-profile")
 ))]
 fn unix_millis() -> u64 {
@@ -460,7 +460,7 @@ fn unix_millis() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
 fn atx_code(rejection: AtxRejection) -> ControlRejectionCode {
     match rejection {
         AtxRejection::CapabilityDisabled => ControlRejectionCode::CapabilityDisabled,
@@ -709,6 +709,7 @@ mod tests {
         assert!(!socket.exists());
     }
 
+    #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
     #[cfg(feature = "atx-transition-profile")]
     async fn serve_atx(socket: &std::path::Path) -> tokio::task::JoinHandle<Vec<String>> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
