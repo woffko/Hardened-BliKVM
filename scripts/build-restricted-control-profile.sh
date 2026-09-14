@@ -14,7 +14,7 @@ target_dir=${1:-/mnt/d/debug/blikvm/hardened-blikvm/target-aarch64-restricted-co
 output_dir=${2:-/mnt/d/debug/blikvm/hardened-blikvm/bundles}
 pnpm_store=${BLI_KVM_PNPM_STORE:-/mnt/d/debug/blikvm/hardened-blikvm/pnpm-store}
 bundle_name=hardened-blikvm-restricted-control-profile-aarch64
-cargo_features=restricted-control-surface,hid-transition-profile,atx-transition-profile
+cargo_features=restricted-control-surface,hid-transition-profile,atx-transition-profile,media-transition-profile
 
 for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
   case "$directory" in

@@ -49,6 +49,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     atx_profile_enabled(),
                     std::env::var("BLI_KVM_ATX_RECONCILIATIONS").ok().as_deref(),
                 )?;
+                #[cfg(feature = "media-transition-profile")]
+                if let Some(media) = bli_kvm_control_broker::media_profile_from_values(
+                    media_profile_enabled(),
+                    std::env::var("BLI_KVM_MEDIA_JOURNAL").ok().as_deref(),
+                    std::env::var("BLI_KVM_MEDIA_CATALOG").ok().as_deref(),
+                    std::env::var("BLI_KVM_MEDIA_KVMD_SOCKET").ok().as_deref(),
+                )? {
+                    bli_kvm_control_broker::run_with_restricted_profiles(
+                        ControlBrokerConfig::from_environment()?,
+                        hid.ledger,
+                        hid.kvmd_socket,
+                        atx.journal,
+                        atx.kvmd_socket,
+                        media.journal,
+                        media.catalog,
+                        media.kvmd_socket,
+                        directory,
+                        reconciliations,
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 bli_kvm_control_broker::run_with_control_profile(
                     ControlBrokerConfig::from_environment()?,
                     hid.ledger,

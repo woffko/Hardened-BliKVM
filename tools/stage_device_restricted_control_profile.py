@@ -44,6 +44,7 @@ EXPECTED_FEATURES = [
     "restricted-control-surface",
     "hid-transition-profile",
     "atx-transition-profile",
+    "media-transition-profile",
 ]
 REQUIRED_MEMBERS = {
     f"{EXPECTED_ROOT}/MANIFEST.json",
@@ -235,6 +236,10 @@ Environment=BLI_KVM_HID_KVMD_SOCKET=/run/kvmd/kvmd.sock
 Environment=BLI_KVM_ATX_PROFILE=1
 Environment=BLI_KVM_ATX_JOURNAL=__ROOT__/state/atx-journal.json
 Environment=BLI_KVM_ATX_KVMD_SOCKET=/run/kvmd/kvmd.sock
+Environment=BLI_KVM_MEDIA_PROFILE=1
+Environment=BLI_KVM_MEDIA_JOURNAL=__ROOT__/state/media-journal.json
+Environment=BLI_KVM_MEDIA_CATALOG=__ROOT__/media/catalog.json
+Environment=BLI_KVM_MEDIA_KVMD_SOCKET=/run/kvmd/kvmd.sock
 LoadCredential=kvmd-user:/etc/hardened-blikvm/kvmd-user
 LoadCredential=kvmd-password:/etc/hardened-blikvm/kvmd-password
 ExecStart=__ROOT__/libexec/bli-kvm-control-broker
@@ -290,6 +295,8 @@ Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
 Environment=BLI_KVM_CONTROL_SOCKET=__ROOT__/state/control.sock
 Environment=BLI_KVM_RESTRICTED_CONTROLS=1
+Environment=BLI_KVM_MEDIA_CATALOG=__ROOT__/media/catalog.json
+Environment=BLI_KVM_MEDIA_CONTROLS=1
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
 ExecStart=__ROOT__/libexec/bli-kvm-server

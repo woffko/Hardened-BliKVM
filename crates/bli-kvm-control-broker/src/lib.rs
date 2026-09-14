@@ -31,6 +31,12 @@ pub use server::run_with_control_profile;
 pub use server::run_with_hid_profile;
 #[cfg(feature = "media-transition-profile")]
 pub use server::run_with_media_profile;
+#[cfg(all(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
+pub use server::run_with_restricted_profiles;
 #[cfg(feature = "atx-transition-profile")]
 pub use server::{AtxReconciliation, run_with_atx_profile};
 pub use server::{ControlBrokerError, run};

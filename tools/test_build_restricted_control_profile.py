@@ -17,7 +17,7 @@ class RestrictedControlProfileBuildTests(unittest.TestCase):
     def test_profile_bundle_builds_both_feature_binaries(self) -> None:
         script = SCRIPT.read_text()
         self.assertIn(
-            "cargo_features=restricted-control-surface,hid-transition-profile,atx-transition-profile",
+            "cargo_features=restricted-control-surface,hid-transition-profile,atx-transition-profile,media-transition-profile",
             script,
         )
         self.assertIn(

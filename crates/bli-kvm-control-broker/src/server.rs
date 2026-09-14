@@ -220,6 +220,86 @@ pub async fn run_with_control_profile(
     result
 }
 
+/// Serves the broker with the HID, ATX and media backends from one state.
+///
+/// This is the combined restricted-control test profile entry point. The KVMD
+/// credential is read three times from the systemd credential directory so each
+/// backend owns an independent, non-shareable credential instance. Only a build
+/// with all three profile features compiles this entry point.
+#[cfg(all(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_restricted_profiles(
+    config: ControlBrokerConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hid_kvmd_socket: impl Into<std::path::PathBuf>,
+    atx_journal: impl Into<std::path::PathBuf>,
+    atx_kvmd_socket: impl Into<std::path::PathBuf>,
+    media_journal: impl Into<std::path::PathBuf>,
+    media_catalog: impl Into<std::path::PathBuf>,
+    media_kvmd_socket: impl Into<std::path::PathBuf>,
+    credentials_directory: impl Into<std::path::PathBuf>,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let credentials_directory = credentials_directory.into();
+    let hid_credentials = crate::profile::kvmd_credentials_from_directory(&credentials_directory)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let atx_credentials = crate::profile::kvmd_credentials_from_directory(&credentials_directory)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let media_credentials = crate::profile::kvmd_credentials_from_directory(&credentials_directory)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let hid_client = bli_kvm_kvmd_hid_client::KvmdHidClient::new(hid_kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let hid_engine =
+        bli_kvm_hid_transition::HidTransitionEngine::new(hid_client, hid_credentials, ledger)
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let atx_client = bli_kvm_kvmd_atx_client::KvmdAtxClient::new(atx_kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let mut atx_engine =
+        bli_kvm_atx_transition::AtxTransitionEngine::open(atx_journal, atx_client, atx_credentials)
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let reconciled_at_ms = now_unix_millis();
+    for reconciliation in reconciliations {
+        atx_engine
+            .resolve_pending(
+                reconciliation.operation_id,
+                reconciliation.completion,
+                reconciliation.observation,
+                reconciled_at_ms,
+            )
+            .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    }
+    let media_client = bli_kvm_kvmd_media_client::KvmdMediaClient::new(media_kvmd_socket)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(media_catalog)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let media_engine = bli_kvm_media_transition::MediaTransitionEngine::open(
+        media_journal,
+        media_client,
+        catalog,
+        media_credentials,
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state = ControlV2State::with_hid_and_atx(
+        bli_kvm_hid_policy::HidControlPolicy::new(hid_engine),
+        atx_engine,
+    )
+    .with_media_engine(media_engine);
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 /// Serves the broker with the persisted media engine attached.
 ///
 /// The read-only `/msd` state is observed through the fixed KVMD client before
@@ -1110,6 +1190,74 @@ mod tests {
             "unexpected KVMD request: {}",
             requests[0]
         );
+        stop_broker(broker).await;
+    }
+
+    #[cfg(all(
+        feature = "hid-transition-profile",
+        feature = "atx-transition-profile",
+        feature = "media-transition-profile"
+    ))]
+    #[tokio::test]
+    async fn restricted_profiles_attach_media_alongside_hid_and_atx() {
+        use bli_kvm_core::{MediaRequest, VirtualMediaCommand};
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let kvmd = directory.path().join("kvmd.sock");
+        let credentials = directory.path().join("credentials");
+        std::fs::create_dir(&credentials).unwrap();
+        std::fs::write(credentials.join("kvmd-user"), b"test-user\n").unwrap();
+        std::fs::write(credentials.join("kvmd-password"), b"not-a-real-password\n").unwrap();
+        let catalog = directory.path().join("catalog.json");
+        std::fs::write(
+            &catalog,
+            r#"{"schemaVersion":1,"entries":[{"imageId":7,"imageName":"rescue.iso","size":4096,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}]}"#,
+        )
+        .unwrap();
+        let backend = serve_media_kvmd(&kvmd, 2).await;
+        let mut broker = tokio::spawn(run_with_restricted_profiles(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("hid-ledger.json"),
+            directory.path().join("absent-hid.sock"),
+            directory.path().join("atx-journal.json"),
+            directory.path().join("absent-atx.sock"),
+            directory.path().join("media-journal.json"),
+            catalog,
+            kvmd,
+            credentials,
+            Vec::new(),
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let issued_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "0123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::SetConnected { connected: true },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let requests = timeout(TEST_WAIT, backend)
+            .await
+            .expect("mock KVMD did not finish")
+            .unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /msd "));
+        assert!(requests[1].starts_with("POST /msd/set_connected?connected=1 "));
         stop_broker(broker).await;
     }
 
