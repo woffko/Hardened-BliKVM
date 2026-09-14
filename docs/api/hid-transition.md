@@ -80,3 +80,12 @@ The HID transition engine now writes report batches through a backend seam
 replaced by the Rust USB gadget writer without changing lease policy or broker
 wiring. The KVMD constructor and the fixed key routes are preserved, and a test
 exercises the engine through an injected backend.
+
+## Gadget path
+
+`HidReportTranslator` maps fixed USB reports to typed events for KVMD.
+`KeyboardReportComposer` is its inverse for the USB boot keyboard interface: it
+composes the standard 8-byte boot report (modifier byte, reserved byte, six
+keycodes) from lease events, tracking held keys and modifiers, and refuses a
+seventh simultaneous key. The layout is the USB HID boot protocol; mouse
+composition waits on the device report descriptors.

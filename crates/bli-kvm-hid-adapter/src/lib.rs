@@ -82,6 +82,7 @@ pub enum HidTranslationError {
     InvalidReport,
     UnsupportedKeycode,
     UnsupportedMouseButton,
+    TooManyKeys,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,6 +392,73 @@ const NUMPAD_DIGITS: [&str; 9] = [
     "Numpad9",
 ];
 
+/// Inverse translation for the USB boot keyboard interface.
+///
+/// Composes the standard 8-byte boot report (modifier byte, reserved byte, six
+/// keycodes) from lease events, tracking held keys and modifiers. The report
+/// layout is the USB HID boot protocol; no device-specific descriptor guess is
+/// involved for the keyboard. Mouse composition waits on the captured device
+/// descriptors.
+#[derive(Debug, Default)]
+pub struct KeyboardReportComposer {
+    modifiers: u8,
+    keys: Vec<u8>,
+}
+
+const BOOT_KEYBOARD_MAX_KEYS: usize = 6;
+
+impl KeyboardReportComposer {
+    pub const fn new() -> Self {
+        Self {
+            modifiers: 0,
+            keys: Vec::new(),
+        }
+    }
+
+    /// Apply one event. Returns `Some(report)` when the keyboard changed and
+    /// `None` for events that do not affect the keyboard.
+    pub fn apply(&mut self, event: &KvmdHidEvent) -> Result<Option<[u8; 8]>, HidTranslationError> {
+        let KvmdHidEvent::Key { key, pressed } = event else {
+            return Ok(None);
+        };
+        let usage = key.usb_usage();
+        if (0xe0..=0xe7).contains(&usage) {
+            let bit = 1_u8 << (usage - 0xe0);
+            if *pressed {
+                self.modifiers |= bit;
+            } else {
+                self.modifiers &= !bit;
+            }
+        } else if *pressed {
+            if !self.keys.contains(&usage) {
+                if self.keys.len() >= BOOT_KEYBOARD_MAX_KEYS {
+                    return Err(HidTranslationError::TooManyKeys);
+                }
+                self.keys.push(usage);
+            }
+        } else {
+            self.keys.retain(|held| *held != usage);
+        }
+        Ok(Some(self.report()))
+    }
+
+    /// Release every held key and modifier, returning the empty report.
+    pub fn release_all(&mut self) -> [u8; 8] {
+        self.modifiers = 0;
+        self.keys.clear();
+        self.report()
+    }
+
+    fn report(&self) -> [u8; 8] {
+        let mut report = [0_u8; 8];
+        report[0] = self.modifiers;
+        for (slot, key) in self.keys.iter().enumerate() {
+            report[2 + slot] = *key;
+        }
+        report
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,6 +605,59 @@ mod tests {
                     pressed: false,
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn keyboard_composer_builds_boot_reports() {
+        let mut composer = KeyboardReportComposer::new();
+        let key = |usage: u8, pressed: bool| KvmdHidEvent::Key {
+            key: KvmdKeyCode::from_usb_usage(usage).unwrap(),
+            pressed,
+        };
+
+        assert_eq!(
+            composer.apply(&key(0x04, true)).unwrap(),
+            Some([0, 0, 4, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&key(0x05, true)).unwrap(),
+            Some([0, 0, 4, 5, 0, 0, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&key(0xe1, true)).unwrap(),
+            Some([0x02, 0, 4, 5, 0, 0, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&key(0x04, false)).unwrap(),
+            Some([0x02, 0, 5, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&key(0x05, false)).unwrap(),
+            Some([0x02, 0, 0, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(composer.release_all(), [0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn keyboard_composer_rejects_a_seventh_key_and_ignores_mouse() {
+        let mut composer = KeyboardReportComposer::new();
+        for usage in 0x04..=0x09 {
+            let _ = composer.apply(&KvmdHidEvent::Key {
+                key: KvmdKeyCode::from_usb_usage(usage).unwrap(),
+                pressed: true,
+            });
+        }
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::Key {
+                key: KvmdKeyCode::from_usb_usage(0x0a).unwrap(),
+                pressed: true,
+            }),
+            Err(HidTranslationError::TooManyKeys)
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseRelative { x: 1, y: 2 }),
+            Ok(None)
         );
     }
 }
