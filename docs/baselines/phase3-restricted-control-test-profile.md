@@ -196,3 +196,19 @@ Receipts `restricted-control-profile-gate-20260913-i.json` (sample catalog) and
 `7e749916acafa06a9b5868b39a5fe39b8e8b467f0682b3de6c7f5eae643d2de6`. Real
 `select`/mount for `kubuntu.img` is the next mutation gate and is not performed
 without explicit confirmation.
+
+## Real virtual-media attach/eject gate (2026-09-14)
+
+Root cause of the earlier `backend_rejected`/`Virtual media command failed`:
+`VirtualMediaCommand` serialized `Select` as `image_id` while the GUI sends
+`imageId`, so the server rejected `select` with HTTP 422 before the broker.
+Fix `8037129` sets `rename_all_fields = "camelCase"` and the protocol round-trip
+test asserts `imageId` on the wire.
+
+After rebuilding the profile (`543bc9fa...`) and redeploying with the real
+catalog, the real gate passed: `select` CD-ROM (`/msd/set_params?image=kubuntu.img&cdrom=1&rw=0`
+HTTP 200), `set_connected true` (HTTP 200, KVMD drive `connected=true`,
+`image=kubuntu.img`), then `set_connected false` (HTTP 200, `connected=false`).
+An attach issued immediately after select is deterministically deferred with
+`cooldown_active`; a later attach applies. Receipt
+`restricted-control-media-gate-20260914-a.json`; runtime-only scope.
