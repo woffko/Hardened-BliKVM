@@ -184,3 +184,11 @@ profile is empty by design; a pending operation is reported as
 - No device state is polled by the protocol; ATX reconciliation uses the
   existing read-only LED/state evidence outside the control messages.
 - Virtual media is unchanged in v2; its mutation path remains a separate slice.
+
+## Read-only VM info
+
+`GET /api/vm/info` and `GET /api/vm/hardware` are read-only. `info` reports the
+mDNS name, image version, application version and uptime; `ips` and `deviceKey`
+are intentionally empty because the unprivileged network process does not
+enumerate link addresses and the hardened build does not expose a unique device
+identifier. Operators read addresses from the authenticated inventory.

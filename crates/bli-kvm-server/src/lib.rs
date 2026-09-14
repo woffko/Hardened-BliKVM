@@ -38,6 +38,7 @@ mod system_log;
 mod system_time;
 mod update;
 mod video;
+mod vm_info;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -269,6 +270,8 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/inventory", get(runtime_inventory))
         .route("/hostname", get(hostname))
         .route("/system/time", get(system_time::get_config))
+        .route("/vm/info", get(vm_info::vm_info))
+        .route("/vm/hardware", get(vm_info::vm_hardware))
         .route("/system-log/config", get(system_log::get_config))
         .route("/system-log/messages", get(system_log::get_messages))
         .route("/diagnostics", get(diagnostics_view))
@@ -353,7 +356,7 @@ async fn hostname() -> AppResult<Json<ApiResponse<Hostname>>> {
     })))
 }
 
-fn system_hostname() -> AppResult<String> {
+pub(crate) fn system_hostname() -> AppResult<String> {
     let raw = std::fs::read_to_string("/etc/hostname")
         .map_err(|_| AppError::ServiceUnavailable("hostname is unavailable".into()))?;
     validate_hostname(raw.trim())
@@ -1391,6 +1394,20 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/system/time")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn vm_info_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/vm/info")
                     .body(Body::empty())
                     .unwrap(),
             )
