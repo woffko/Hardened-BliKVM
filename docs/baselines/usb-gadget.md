@@ -73,6 +73,15 @@ so configfs stays writable while every other hardening flag stays on. It is
 non-installable scaffolding until the physical gate; the sandbox-analysis score
 is 1.3. The tmpfiles entry creates `/var/lib/hardened-blikvm-gadget`.
 
+## Single owner
+
+`run_with_gadget_profile` serves media and HID from one process and one control
+socket, the single privileged owner of the composite gadget
+(`ControlV2State::with_media_and_hid`). The owner unit selects it with
+`BLI_KVM_GADGET_PROFILE=1`. A host test drives attestation, lease, a key report,
+media select and connect through the same socket and asserts both the `hidg0`
+report and the bound gadget.
+
 ## Next gates
 
 - a feature-gated `HidExecutor::Gadget` writing report batches to the HID

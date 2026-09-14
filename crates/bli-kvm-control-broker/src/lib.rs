@@ -53,6 +53,8 @@ pub use server::run_with_control_profile;
 pub use server::run_with_gadget_hid_profile;
 #[cfg(feature = "gadget-media-profile")]
 pub use server::run_with_gadget_media_profile;
+#[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+pub use server::run_with_gadget_profile;
 #[cfg(feature = "gpio-atx-profile")]
 pub use server::run_with_gpio_atx_profile;
 #[cfg(feature = "hid-transition-profile")]

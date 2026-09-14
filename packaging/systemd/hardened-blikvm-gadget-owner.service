@@ -11,13 +11,15 @@ RuntimeDirectory=hardened-blikvm-gadget
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=no
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
-Environment=BLI_KVM_GADGET_MEDIA_PROFILE=1
+Environment=BLI_KVM_GADGET_PROFILE=1
 Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json
 Environment=BLI_KVM_GADGET_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
 Environment=BLI_KVM_GADGET_CONFIGFS=/sys/kernel/config/usb_gadget
 Environment=BLI_KVM_GADGET_IMAGES=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_GADGET_UDC=musb-hdrc.2.auto
 Environment=BLI_KVM_GADGET_SERIAL_FILE=/etc/hardened-blikvm-gadget/serial
+Environment=BLI_KVM_GADGET_HID_LEDGER=/var/lib/hardened-blikvm-gadget/hid-ledger.json
+Environment=BLI_KVM_GADGET_HIDG_DIR=/dev
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-control-broker
 Restart=on-failure
 RestartSec=2s

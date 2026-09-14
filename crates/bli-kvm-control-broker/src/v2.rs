@@ -109,6 +109,21 @@ impl ControlV2State {
         }
     }
 
+    /// Serves the media and HID backends from one state, for the gadget owner.
+    /// Media requests still require a reviewed eligibility and HID requests
+    /// still require a current attestation.
+    #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+    pub fn with_media_and_hid(media: MediaTransitionEngine, hid: HidControlPolicy) -> Self {
+        Self {
+            enabled: true,
+            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+            atx: None,
+            media: Some(media),
+            hid: Some(hid),
+        }
+    }
+
     #[cfg(test)]
     fn enabled_for_test() -> Self {
         Self {

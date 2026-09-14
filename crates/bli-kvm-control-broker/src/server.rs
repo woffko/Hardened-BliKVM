@@ -180,6 +180,54 @@ pub async fn run_with_gpio_atx_profile(
     result
 }
 
+/// Serves the media and HID backends from the Rust gadget in one process, the
+/// single privileged owner of the composite gadget. Only a build with both
+/// gadget features compiles this entry point; it links no KVMD crate.
+#[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+pub async fn run_with_gadget_profile(
+    config: ControlBrokerConfig,
+    media_journal: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    gadget: bli_kvm_media_transition::GadgetMediaConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hidg_dir: impl Into<std::path::PathBuf>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
+        media_journal,
+        catalog,
+        bli_kvm_media_transition::MediaExecutor::Gadget(
+            bli_kvm_media_transition::GadgetMediaExecutor::new(gadget),
+        ),
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
+        bli_kvm_hid_transition::HidExecutor::Gadget(
+            bli_kvm_hid_transition::GadgetHidExecutor::new(
+                bli_kvm_hid_transition::GadgetHidConfig {
+                    hidg_dir: hidg_dir.into(),
+                    keyboard_function: "hid.usb0".into(),
+                },
+            ),
+        ),
+        ledger,
+    )
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let state =
+        ControlV2State::with_media_and_hid(media, bli_kvm_hid_policy::HidControlPolicy::new(hid));
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
 /// One reviewed reconciliation decision applied before the daemon serves.
 ///
 /// The observation is mandatory read-only evidence and never infers the
@@ -1593,6 +1641,165 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response, ControlResponse::Applied);
+        stop_broker(broker).await;
+    }
+
+    #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+    #[tokio::test]
+    async fn gadget_profile_serves_media_and_hid_from_one_owner() {
+        use bli_kvm_core::{MediaRequest, VirtualMediaCommand, VirtualMediaControlMode};
+        use bli_kvm_media_transition::{GadgetMediaConfig, GadgetStrings};
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let image_dir = directory.path().join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        std::fs::write(image_dir.join("rescue.iso"), b"image").unwrap();
+        let catalog = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"rescue.iso","size":4096,"sha256":"{}","cdromAllowed":true,"removableAllowed":false,"writableAllowed":false}}]}}"#,
+                "1".repeat(64)
+            ),
+        )
+        .unwrap();
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+        let hidg = directory.path().join("hidg");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::write(hidg.join("hidg0"), b"").unwrap();
+
+        let mut broker = tokio::spawn(run_with_gadget_profile(
+            ControlBrokerConfig::new(&socket).unwrap(),
+            directory.path().join("media-journal.json"),
+            catalog,
+            GadgetMediaConfig {
+                configfs_root: configfs.clone(),
+                udc: "musb-hdrc.2.auto".into(),
+                image_directory: image_dir,
+                strings: GadgetStrings {
+                    manufacturer: "Hardened BLi-KVM".into(),
+                    product: "BLi-KVM Composite Device".into(),
+                    serial: "BLK-owner-test".into(),
+                    configuration: "BLi-KVM configuration".into(),
+                },
+                id_vendor: 0x1d6b,
+                id_product: 0x0104,
+                bcd_usb: 0x0200,
+                bcd_device: 0x0100,
+            },
+            directory.path().join("ledger.json"),
+            hidg.clone(),
+        ));
+        wait_for_socket(&socket, &mut broker).await;
+        let client = ControlClient::new(&socket).unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::TargetAttest {
+                        attestation: bli_kvm_core::TargetAttestation {
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            focus_binding: [0x22; 16],
+                            ttl_seconds: 30,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let lease_id = match client
+            .execute_v2(
+                operation_id,
+                PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        ttl_seconds: 30,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::LeaseGranted { lease_id } => lease_id,
+            other => panic!("expected a lease grant, got {other:?}"),
+        };
+        assert_eq!(
+            client
+                .execute_v2(
+                    operation_id,
+                    PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Report {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            report: HidReport::Keyboard {
+                                data: [0, 0, 4, 0, 0, 0, 0, 0],
+                            },
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            std::fs::read(hidg.join("hidg0")).unwrap(),
+            vec![0, 0, 4, 0, 0, 0, 0, 0]
+        );
+
+        let issued_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "1123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::Select {
+                                image_id: 7,
+                                mode: VirtualMediaControlMode::CdRom,
+                                writable: false,
+                            },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(2_200)).await;
+        assert_eq!(
+            client
+                .execute_v2(
+                    "2123456789abcdef0123456789abcdef",
+                    PlatformControlRequestV2::VirtualMedia {
+                        request: MediaRequest {
+                            command: VirtualMediaCommand::SetConnected { connected: true },
+                            session_binding: 9,
+                            target_binding: [0x11; 32],
+                            issued_at_unix_ms,
+                        },
+                    },
+                )
+                .await
+                .unwrap(),
+            ControlResponse::Applied
+        );
+        let state = bli_kvm_usb_gadget::observe(&configfs).unwrap();
+        assert!(state.present);
+        assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
         stop_broker(broker).await;
     }
 
