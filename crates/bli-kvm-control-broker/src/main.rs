@@ -30,6 +30,56 @@ fn credentials_directory() -> Result<std::path::PathBuf, Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(feature = "gadget-media-profile")]
+    {
+        if std::env::var("BLI_KVM_GADGET_MEDIA_PROFILE").as_deref() == Ok("1") {
+            let profile = bli_kvm_control_broker::gadget_media_profile_from_values(
+                true,
+                std::env::var("BLI_KVM_GADGET_MEDIA_JOURNAL")
+                    .ok()
+                    .as_deref(),
+                std::env::var("BLI_KVM_GADGET_MEDIA_CATALOG")
+                    .ok()
+                    .as_deref(),
+                std::env::var("BLI_KVM_GADGET_CONFIGFS").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_IMAGES").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_UDC").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_SERIAL_FILE").ok().as_deref(),
+            )?
+            .ok_or("gadget media profile is enabled but incomplete")?;
+            let serial = bli_kvm_control_broker::gadget_serial_from_file(&profile.serial_file)?;
+            let config = bli_kvm_control_broker::gadget_media_config(&profile, serial);
+            bli_kvm_control_broker::run_with_gadget_media_profile(
+                ControlBrokerConfig::from_environment()?,
+                profile.journal,
+                profile.catalog,
+                config,
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    {
+        if std::env::var("BLI_KVM_GADGET_HID_PROFILE").as_deref() == Ok("1") {
+            let profile = bli_kvm_control_broker::gadget_hid_profile_from_values(
+                true,
+                std::env::var("BLI_KVM_GADGET_HID_LEDGER").ok().as_deref(),
+                std::env::var("BLI_KVM_GADGET_HIDG_DIR").ok().as_deref(),
+            )?
+            .ok_or("gadget HID profile is enabled but incomplete")?;
+            let config = bli_kvm_control_broker::gadget_hid_config(&profile);
+            bli_kvm_control_broker::run_with_gadget_hid_profile(
+                ControlBrokerConfig::from_environment()?,
+                profile.ledger,
+                config.hidg_dir,
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
     #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
     {
         let hid = bli_kvm_control_broker::hid_profile_from_values(

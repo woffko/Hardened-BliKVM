@@ -8,7 +8,8 @@
 #[cfg(any(
     feature = "hid-transition-profile",
     feature = "atx-transition-profile",
-    feature = "media-transition-profile"
+    feature = "media-transition-profile",
+    feature = "gadget-media-profile"
 ))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -240,6 +241,24 @@ pub fn media_profile_from_values(
         catalog,
         kvmd_socket,
     }))
+}
+
+/// Reads the per-device serial from a bounded, non-symlink file.
+#[cfg(feature = "gadget-media-profile")]
+pub fn gadget_serial_from_file(path: &Path) -> Result<String, ProfileError> {
+    const MAX_SERIAL_BYTES: u64 = 128;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|_| ProfileError::InvalidGadgetSerial)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_SERIAL_BYTES
+    {
+        return Err(ProfileError::InvalidGadgetSerial);
+    }
+    let content = std::fs::read_to_string(path).map_err(|_| ProfileError::InvalidGadgetSerial)?;
+    let serial = content.trim();
+    if serial.is_empty() || !serial.chars().all(|ch| (' '..='~').contains(&ch)) {
+        return Err(ProfileError::InvalidGadgetSerial);
+    }
+    Ok(serial.to_string())
 }
 
 #[cfg(feature = "gadget-media-profile")]
@@ -750,5 +769,34 @@ mod tests {
         let config = gadget_hid_config(&profile);
         assert_eq!(config.hidg_dir, PathBuf::from("/tmp/hidg"));
         assert_eq!(config.keyboard_function, "hid.usb0");
+    }
+
+    #[test]
+    #[cfg(feature = "gadget-media-profile")]
+    fn gadget_serial_reader_is_bounded_and_rejects_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("serial");
+        std::fs::write(&path, b"BLK-0123456789abcdef\n").unwrap();
+        assert_eq!(
+            gadget_serial_from_file(&path).unwrap(),
+            "BLK-0123456789abcdef"
+        );
+
+        std::fs::write(&path, b"\n").unwrap();
+        assert!(matches!(
+            gadget_serial_from_file(&path),
+            Err(ProfileError::InvalidGadgetSerial)
+        ));
+
+        std::fs::write(&path, vec![b'x'; 129]).unwrap();
+        assert!(matches!(
+            gadget_serial_from_file(&path),
+            Err(ProfileError::InvalidGadgetSerial)
+        ));
+
+        assert!(matches!(
+            gadget_serial_from_file(&directory.path().join("missing")),
+            Err(ProfileError::InvalidGadgetSerial)
+        ));
     }
 }

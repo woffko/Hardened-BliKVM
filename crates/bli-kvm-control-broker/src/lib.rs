@@ -35,7 +35,7 @@ pub use profile::{AtxProfile, atx_profile_from_values, atx_reconciliations_from_
 pub use profile::{
     GADGET_BCD_DEVICE, GADGET_BCD_USB, GADGET_CONFIGURATION, GADGET_ID_PRODUCT, GADGET_ID_VENDOR,
     GADGET_MANUFACTURER, GADGET_PRODUCT, GadgetMediaProfile, gadget_media_config,
-    gadget_media_profile_from_values,
+    gadget_media_profile_from_values, gadget_serial_from_file,
 };
 #[cfg(feature = "gadget-hid-profile")]
 pub use profile::{GadgetHidProfile, gadget_hid_config, gadget_hid_profile_from_values};
