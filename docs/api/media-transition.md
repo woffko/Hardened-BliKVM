@@ -94,4 +94,6 @@ the KVMD credential arrives only through `LoadCredential`. The server exposes
 explicitly enabled with a configured control socket and the separate
 `BLI_KVM_MEDIA_CONTROLS=1` media opt-in; the read-only catalog needs only the
 `BLI_KVM_MEDIA_CATALOG` path. The storage/image GUI
-using opaque IDs and real-target attach/eject gates remain the next slices.
+uses opaque IDs. `tools/build_device_media_catalog.py` builds a catalog from
+the board's real MSD images read-only; real-target attach/eject, upload,
+interruption and BIOS boot remain the next gates.

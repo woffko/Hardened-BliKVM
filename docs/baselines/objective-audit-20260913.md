@@ -110,7 +110,9 @@ never committed. Nothing below is a release acceptance.
   observation (`a479424`), the restricted `POST /api/virtual-media` and
   read-only `GET /api/virtual-media/catalog` (`7837ef7`, `e9ee15f`), the
   hardened opaque-ID Image panel (`1713142`) and the media transition systemd
-  unit (`acdbe89`).
+  unit (`acdbe89`). A combined HID+ATX+media test profile is deployed and the
+  read-only `tools/build_device_media_catalog.py` builds an opaque-ID catalog
+  from the board's real MSD images (`kubuntu.img`).
 - OUTSTANDING (device/release): real-target attach/eject, upload interruption,
   read-only/writable modes, BIOS boot, reconnect, reboot and storage exhaustion;
   visible indeterminate/cooldown feedback.
