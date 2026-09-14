@@ -184,11 +184,15 @@ harness creates a sample opaque-ID catalog and sets the media env on the broker
 and server units. On the deployed device:
 
 - `capabilities.virtualMedia` = `read_write`;
-- `GET /api/virtual-media/catalog` returns the sample entries
-  (`rescue.iso` CD-ROM, `tools.img` removable disk);
+- `GET /api/virtual-media/catalog` returned the sample entries, and the harness
+  can now deploy a real catalog with `--media-catalog`; the stand currently
+  lists the board's `kubuntu.img` (CD-ROM and removable);
 - connect/disconnect (`set_connected`) routes to KVMD; a `select` for a sample
   name that is not present in KVMD's MSD is expected to be rejected, so real
   attach still needs a catalog built from the board's actual images.
 
-Receipt `restricted-control-profile-gate-20260913-i.json`; bundle
-`7e749916acafa06a9b5868b39a5fe39b8e8b467f0682b3de6c7f5eae643d2de6`.
+Receipts `restricted-control-profile-gate-20260913-i.json` (sample catalog) and
+`restricted-control-profile-gate-20260914-j.json` (real catalog); bundle
+`7e749916acafa06a9b5868b39a5fe39b8e8b467f0682b3de6c7f5eae643d2de6`. Real
+`select`/mount for `kubuntu.img` is the next mutation gate and is not performed
+without explicit confirmation.
