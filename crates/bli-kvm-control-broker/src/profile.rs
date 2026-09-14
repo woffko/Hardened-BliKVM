@@ -5,10 +5,26 @@
 //! fixed environment keys; every value must be an absolute path and the KVMD
 //! credential is read only from systemd's `CREDENTIALS_DIRECTORY`.
 
-use std::path::{Path, PathBuf};
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
+use std::path::Path;
+use std::path::PathBuf;
 
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 use bli_kvm_kvmd_client::KvmdCredentials;
 
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 const MAX_CREDENTIAL_BYTES: u64 = 1024;
 
 #[cfg(feature = "hid-transition-profile")]
@@ -33,6 +49,41 @@ pub struct MediaProfile {
     pub kvmd_socket: PathBuf,
 }
 
+/// Fixed gadget identity. `serial` is supplied per device and must be unique;
+/// the legacy vendor serial is rejected by the gadget crate.
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_MANUFACTURER: &str = "Hardened BLi-KVM";
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_PRODUCT: &str = "BLi-KVM Composite Device";
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_CONFIGURATION: &str = "BLi-KVM configuration";
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_ID_VENDOR: u16 = 0x1d6b;
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_ID_PRODUCT: u16 = 0x0104;
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_BCD_USB: u16 = 0x0200;
+#[cfg(feature = "gadget-media-profile")]
+pub const GADGET_BCD_DEVICE: u16 = 0x0100;
+
+#[cfg(feature = "gadget-media-profile")]
+#[derive(Debug)]
+pub struct GadgetMediaProfile {
+    pub journal: PathBuf,
+    pub catalog: PathBuf,
+    pub configfs_root: PathBuf,
+    pub image_directory: PathBuf,
+    pub udc: String,
+    pub serial_file: PathBuf,
+}
+
+#[cfg(feature = "gadget-hid-profile")]
+#[derive(Debug)]
+pub struct GadgetHidProfile {
+    pub ledger: PathBuf,
+    pub hidg_dir: PathBuf,
+}
+
 #[derive(Debug)]
 pub enum ProfileError {
     MissingLedger,
@@ -52,6 +103,22 @@ pub enum ProfileError {
     MissingCredentials,
     InvalidCredentials,
     InvalidReconciliation,
+    MissingGadgetJournal,
+    InvalidGadgetJournal,
+    MissingGadgetCatalog,
+    InvalidGadgetCatalog,
+    MissingGadgetConfigfs,
+    InvalidGadgetConfigfs,
+    MissingGadgetImages,
+    InvalidGadgetImages,
+    MissingGadgetUdc,
+    InvalidGadgetUdc,
+    MissingGadgetSerial,
+    InvalidGadgetSerial,
+    MissingGadgetLedger,
+    InvalidGadgetLedger,
+    MissingGadgetHidg,
+    InvalidGadgetHidg,
 }
 
 impl std::fmt::Display for ProfileError {
@@ -80,6 +147,28 @@ impl std::fmt::Display for ProfileError {
                 "transition profile credential is invalid"
             }
             Self::InvalidReconciliation => "ATX reconciliation file is invalid",
+            Self::MissingGadgetJournal | Self::InvalidGadgetJournal => {
+                "gadget media journal path is invalid"
+            }
+            Self::MissingGadgetCatalog | Self::InvalidGadgetCatalog => {
+                "gadget media catalog path is invalid"
+            }
+            Self::MissingGadgetConfigfs | Self::InvalidGadgetConfigfs => {
+                "gadget configfs root path is invalid"
+            }
+            Self::MissingGadgetImages | Self::InvalidGadgetImages => {
+                "gadget image directory path is invalid"
+            }
+            Self::MissingGadgetUdc | Self::InvalidGadgetUdc => "gadget UDC name is invalid",
+            Self::MissingGadgetSerial | Self::InvalidGadgetSerial => {
+                "gadget serial file path is invalid"
+            }
+            Self::MissingGadgetLedger | Self::InvalidGadgetLedger => {
+                "gadget HID ledger path is invalid"
+            }
+            Self::MissingGadgetHidg | Self::InvalidGadgetHidg => {
+                "gadget HID character device directory is invalid"
+            }
         })
     }
 }
@@ -151,6 +240,104 @@ pub fn media_profile_from_values(
         catalog,
         kvmd_socket,
     }))
+}
+
+#[cfg(feature = "gadget-media-profile")]
+fn valid_udc(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':'))
+}
+
+/// Parses the gadget media test-profile selection. A disabled profile returns
+/// `None` even when the path values are absent.
+#[cfg(feature = "gadget-media-profile")]
+pub fn gadget_media_profile_from_values(
+    enabled: bool,
+    journal: Option<&str>,
+    catalog: Option<&str>,
+    configfs_root: Option<&str>,
+    image_directory: Option<&str>,
+    udc: Option<&str>,
+    serial_file: Option<&str>,
+) -> Result<Option<GadgetMediaProfile>, ProfileError> {
+    if !enabled {
+        return Ok(None);
+    }
+    let journal = absolute_path(journal.ok_or(ProfileError::MissingGadgetJournal)?)
+        .ok_or(ProfileError::InvalidGadgetJournal)?;
+    let catalog = absolute_path(catalog.ok_or(ProfileError::MissingGadgetCatalog)?)
+        .ok_or(ProfileError::InvalidGadgetCatalog)?;
+    let configfs_root = absolute_path(configfs_root.ok_or(ProfileError::MissingGadgetConfigfs)?)
+        .ok_or(ProfileError::InvalidGadgetConfigfs)?;
+    let image_directory = absolute_path(image_directory.ok_or(ProfileError::MissingGadgetImages)?)
+        .ok_or(ProfileError::InvalidGadgetImages)?;
+    let serial_file = absolute_path(serial_file.ok_or(ProfileError::MissingGadgetSerial)?)
+        .ok_or(ProfileError::InvalidGadgetSerial)?;
+    let udc = udc.ok_or(ProfileError::MissingGadgetUdc)?;
+    if !valid_udc(udc) {
+        return Err(ProfileError::InvalidGadgetUdc);
+    }
+    Ok(Some(GadgetMediaProfile {
+        journal,
+        catalog,
+        configfs_root,
+        image_directory,
+        udc: udc.to_string(),
+        serial_file,
+    }))
+}
+
+/// Parses the gadget HID test-profile selection.
+#[cfg(feature = "gadget-hid-profile")]
+pub fn gadget_hid_profile_from_values(
+    enabled: bool,
+    ledger: Option<&str>,
+    hidg_dir: Option<&str>,
+) -> Result<Option<GadgetHidProfile>, ProfileError> {
+    if !enabled {
+        return Ok(None);
+    }
+    let ledger = absolute_path(ledger.ok_or(ProfileError::MissingGadgetLedger)?)
+        .ok_or(ProfileError::InvalidGadgetLedger)?;
+    let hidg_dir = absolute_path(hidg_dir.ok_or(ProfileError::MissingGadgetHidg)?)
+        .ok_or(ProfileError::InvalidGadgetHidg)?;
+    Ok(Some(GadgetHidProfile { ledger, hidg_dir }))
+}
+
+/// Builds the gadget media executor configuration from a parsed profile and a
+/// per-device serial.
+#[cfg(feature = "gadget-media-profile")]
+pub fn gadget_media_config(
+    profile: &GadgetMediaProfile,
+    serial: String,
+) -> bli_kvm_media_transition::GadgetMediaConfig {
+    bli_kvm_media_transition::GadgetMediaConfig {
+        configfs_root: profile.configfs_root.clone(),
+        udc: profile.udc.clone(),
+        image_directory: profile.image_directory.clone(),
+        strings: bli_kvm_media_transition::GadgetStrings {
+            manufacturer: GADGET_MANUFACTURER.to_string(),
+            product: GADGET_PRODUCT.to_string(),
+            serial,
+            configuration: GADGET_CONFIGURATION.to_string(),
+        },
+        id_vendor: GADGET_ID_VENDOR,
+        id_product: GADGET_ID_PRODUCT,
+        bcd_usb: GADGET_BCD_USB,
+        bcd_device: GADGET_BCD_DEVICE,
+    }
+}
+
+/// Builds the gadget HID executor configuration from a parsed profile.
+#[cfg(feature = "gadget-hid-profile")]
+pub fn gadget_hid_config(profile: &GadgetHidProfile) -> bli_kvm_hid_transition::GadgetHidConfig {
+    bli_kvm_hid_transition::GadgetHidConfig {
+        hidg_dir: profile.hidg_dir.clone(),
+        keyboard_function: "hid.usb0".to_string(),
+    }
 }
 
 fn absolute_path(value: &str) -> Option<PathBuf> {
@@ -272,6 +459,11 @@ fn parse_operation_id(value: &str) -> Result<[u8; 16], ProfileError> {
 }
 
 /// Loads the KVMD credential that systemd delivered to the profile unit.
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 pub fn kvmd_credentials_from_directory(directory: &Path) -> Result<KvmdCredentials, ProfileError> {
     let username =
         read_credential(directory, "kvmd-user").ok_or(ProfileError::MissingCredentials)?;
@@ -280,6 +472,11 @@ pub fn kvmd_credentials_from_directory(directory: &Path) -> Result<KvmdCredentia
     KvmdCredentials::new(username, password).map_err(|_| ProfileError::InvalidCredentials)
 }
 
+#[cfg(any(
+    feature = "hid-transition-profile",
+    feature = "atx-transition-profile",
+    feature = "media-transition-profile"
+))]
 fn read_credential(directory: &Path, name: &str) -> Option<Vec<u8>> {
     let metadata = std::fs::symlink_metadata(directory.join(name)).ok()?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
@@ -426,6 +623,11 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        feature = "hid-transition-profile",
+        feature = "atx-transition-profile",
+        feature = "media-transition-profile"
+    ))]
     #[test]
     fn credential_loading_is_fixed_and_rejects_empty_or_symlinked_files() {
         let directory = tempfile::tempdir().unwrap();
@@ -448,5 +650,105 @@ mod tests {
         .unwrap();
         let credentials = kvmd_credentials_from_directory(directory.path()).unwrap();
         drop(credentials);
+    }
+
+    #[test]
+    #[cfg(feature = "gadget-media-profile")]
+    fn gadget_media_profile_requires_absolute_paths_and_a_valid_udc() {
+        assert!(matches!(
+            gadget_media_profile_from_values(false, None, None, None, None, None, None),
+            Ok(None)
+        ));
+        assert!(matches!(
+            gadget_media_profile_from_values(
+                true,
+                Some("/tmp/j.json"),
+                Some("/tmp/c.json"),
+                Some("/tmp/configfs"),
+                Some("/tmp/images"),
+                Some("musb-hdrc.2.auto"),
+                Some("/etc/serial"),
+            ),
+            Ok(Some(_))
+        ));
+        assert!(matches!(
+            gadget_media_profile_from_values(
+                true,
+                Some("relative"),
+                Some("/tmp/c.json"),
+                Some("/tmp/configfs"),
+                Some("/tmp/images"),
+                Some("udc"),
+                Some("/etc/serial"),
+            ),
+            Err(ProfileError::InvalidGadgetJournal)
+        ));
+        assert!(matches!(
+            gadget_media_profile_from_values(
+                true,
+                Some("/tmp/j.json"),
+                Some("/tmp/c.json"),
+                Some("/tmp/configfs"),
+                Some("/tmp/images"),
+                Some("bad/udc"),
+                Some("/etc/serial"),
+            ),
+            Err(ProfileError::InvalidGadgetUdc)
+        ));
+        assert!(matches!(
+            gadget_media_profile_from_values(
+                true,
+                Some("/tmp/j.json"),
+                Some("/tmp/c.json"),
+                Some("/tmp/configfs"),
+                Some("/tmp/images"),
+                None,
+                Some("/etc/serial"),
+            ),
+            Err(ProfileError::MissingGadgetUdc)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "gadget-media-profile")]
+    fn gadget_media_config_uses_fixed_identity_and_supplied_serial() {
+        let profile = gadget_media_profile_from_values(
+            true,
+            Some("/tmp/j.json"),
+            Some("/tmp/c.json"),
+            Some("/tmp/configfs"),
+            Some("/tmp/images"),
+            Some("musb-hdrc.2.auto"),
+            Some("/etc/serial"),
+        )
+        .unwrap()
+        .unwrap();
+        let config = gadget_media_config(&profile, "BLK-abc".to_string());
+        assert_eq!(config.configfs_root, PathBuf::from("/tmp/configfs"));
+        assert_eq!(config.udc, "musb-hdrc.2.auto");
+        assert_eq!(config.id_vendor, 0x1d6b);
+        assert_eq!(config.id_product, 0x0104);
+        assert_eq!(config.strings.manufacturer, "Hardened BLi-KVM");
+        assert_eq!(config.strings.serial, "BLK-abc");
+    }
+
+    #[test]
+    #[cfg(feature = "gadget-hid-profile")]
+    fn gadget_hid_profile_and_config() {
+        assert!(matches!(
+            gadget_hid_profile_from_values(false, None, None),
+            Ok(None)
+        ));
+        assert!(matches!(
+            gadget_hid_profile_from_values(true, Some("relative"), Some("/tmp/hidg")),
+            Err(ProfileError::InvalidGadgetLedger)
+        ));
+        let profile =
+            gadget_hid_profile_from_values(true, Some("/tmp/ledger.json"), Some("/tmp/hidg"))
+                .unwrap()
+                .unwrap();
+        let config = gadget_hid_config(&profile);
+        assert_eq!(config.hidg_dir, PathBuf::from("/tmp/hidg"));
+        assert_eq!(config.keyboard_function, "hid.usb0");
     }
 }
