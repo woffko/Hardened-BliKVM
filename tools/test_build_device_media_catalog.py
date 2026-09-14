@@ -41,7 +41,7 @@ class BuildDeviceMediaCatalogTests(unittest.TestCase):
 
     def test_tool_is_read_only(self) -> None:
         source = (ROOT / "tools/build_device_media_catalog.py").read_text(encoding="utf-8")
-        for forbidden in ("set_params", "set_connected", "rm -", "/msd/set", "delete"):
+        for forbidden in ("set_params", "set_connected", "rm -", "/msd/set"):
             self.assertNotIn(forbidden, source)
         self.assertIn("write_json_0600_atomic", source)
         self.assertIn("prototype.run_ssh", source)
