@@ -5,7 +5,9 @@ mod config;
     feature = "atx-transition-profile",
     feature = "media-transition-profile",
     feature = "gadget-media-profile",
-    feature = "gadget-hid-profile"
+    feature = "gadget-hid-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
 ))]
 mod profile;
 mod server;
@@ -20,9 +22,17 @@ pub use config::{ControlBrokerConfig, ControlBrokerConfigError};
     feature = "atx-transition-profile",
     feature = "media-transition-profile",
     feature = "gadget-media-profile",
-    feature = "gadget-hid-profile"
+    feature = "gadget-hid-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
 ))]
 pub use profile::ProfileError;
+#[cfg(any(
+    feature = "atx-transition-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
+))]
+pub use profile::atx_reconciliations_from_values;
 #[cfg(any(
     feature = "hid-transition-profile",
     feature = "atx-transition-profile",
@@ -30,7 +40,7 @@ pub use profile::ProfileError;
 ))]
 pub use profile::kvmd_credentials_from_directory;
 #[cfg(feature = "atx-transition-profile")]
-pub use profile::{AtxProfile, atx_profile_from_values, atx_reconciliations_from_values};
+pub use profile::{AtxProfile, atx_profile_from_values};
 #[cfg(feature = "gadget-media-profile")]
 pub use profile::{
     GADGET_BCD_DEVICE, GADGET_BCD_USB, GADGET_CONFIGURATION, GADGET_ID_PRODUCT, GADGET_ID_VENDOR,
@@ -47,6 +57,8 @@ pub use profile::{MediaProfile, media_profile_from_values};
 pub use server::AtxReconciliation;
 #[cfg(feature = "atx-transition-profile")]
 pub use server::run_with_atx_profile;
+#[cfg(feature = "chardev-atx-profile")]
+pub use server::run_with_chardev_atx_profile;
 #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
 pub use server::run_with_control_profile;
 #[cfg(feature = "gadget-hid-profile")]

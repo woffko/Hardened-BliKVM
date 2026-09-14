@@ -28,8 +28,52 @@ fn credentials_directory() -> Result<std::path::PathBuf, Box<dyn Error>> {
         .ok_or_else(|| "transition profile requires CREDENTIALS_DIRECTORY".into())
 }
 
+#[cfg(feature = "chardev-atx-profile")]
+fn env_u64(key: &str) -> Result<u64, Box<dyn Error>> {
+    let value = std::env::var(key).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("missing {key}"))
+    })?;
+    let parsed = value.parse::<u64>().map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("invalid {key}"))
+    })?;
+    Ok(parsed)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(feature = "chardev-atx-profile")]
+    {
+        if std::env::var("BLI_KVM_GPIO_ATX_PROFILE").as_deref() == Ok("1") {
+            let chip = std::env::var("BLI_KVM_ATX_CHIP").map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing BLI_KVM_ATX_CHIP")
+            })?;
+            let journal = std::env::var("BLI_KVM_ATX_JOURNAL").map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "missing BLI_KVM_ATX_JOURNAL",
+                )
+            })?;
+            let timing = bli_kvm_atx_gpio_executor::AtxTiming {
+                power_short_ms: env_u64("BLI_KVM_ATX_POWER_SHORT_MS")?,
+                power_long_ms: env_u64("BLI_KVM_ATX_POWER_LONG_MS")?,
+                reset_ms: env_u64("BLI_KVM_ATX_RESET_MS")?,
+            };
+            let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
+                true,
+                std::env::var("BLI_KVM_ATX_RECONCILIATIONS").ok().as_deref(),
+            )?;
+            bli_kvm_control_broker::run_with_chardev_atx_profile(
+                ControlBrokerConfig::from_environment()?,
+                journal,
+                chip,
+                timing,
+                reconciliations,
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
     #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
     {
         if std::env::var("BLI_KVM_GADGET_PROFILE").as_deref() == Ok("1") {

@@ -22,9 +22,9 @@ pub use hardware::{
     GpioLineEvidence, GpioRole, H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence,
     VENDOR_SOURCE_REVISION,
 };
-pub use inventory::{
-    BliPlatformObservations, sanitize_kvmd_inventory, sanitize_kvmd_inventory_with_observations,
-};
+pub use inventory::BliPlatformObservations;
+#[cfg(feature = "kvmd-inventory")]
+pub use inventory::{sanitize_kvmd_inventory, sanitize_kvmd_inventory_with_observations};
 pub use rtc::{RtcReadError, RtcReadout, read_h616_external_rtc};
 pub use thermal::{ThermalReadError, read_h616_temperature_millidegrees};
 

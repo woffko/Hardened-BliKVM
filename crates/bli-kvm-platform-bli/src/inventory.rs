@@ -1,11 +1,14 @@
+#[cfg(feature = "kvmd-inventory")]
 use bli_kvm_core::{
     ComponentObservation, InventoryBackend, RUNTIME_INVENTORY_SCHEMA_VERSION, RtcObservation,
     RuntimeInventory, RuntimeVersions, ThermalObservation,
 };
+#[cfg(feature = "kvmd-inventory")]
 use bli_kvm_kvmd_client::KvmdInventory;
 
 use crate::RtcReadout;
 
+#[cfg(feature = "kvmd-inventory")]
 const PLATFORM_ID: &str = "bli-h616-pikvm";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -15,10 +18,12 @@ pub struct BliPlatformObservations {
 }
 
 /// Remove KVMD-specific structure and retain only the public runtime facts.
+#[cfg(feature = "kvmd-inventory")]
 pub fn sanitize_kvmd_inventory(source: KvmdInventory) -> RuntimeInventory {
     sanitize_kvmd_inventory_with_observations(source, BliPlatformObservations::default())
 }
 
+#[cfg(feature = "kvmd-inventory")]
 pub fn sanitize_kvmd_inventory_with_observations(
     source: KvmdInventory,
     observations: BliPlatformObservations,

@@ -9,7 +9,9 @@
     feature = "hid-transition-profile",
     feature = "atx-transition-profile",
     feature = "media-transition-profile",
-    feature = "gadget-media-profile"
+    feature = "gadget-media-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
 ))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -375,7 +377,11 @@ fn absolute_path(value: &str) -> Option<PathBuf> {
 /// `observation=on|off`. The observation is mandatory read-only evidence and
 /// never infers the completion; the operator supplies both. A disabled profile
 /// returns an empty list even when a path is present.
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(
+    feature = "atx-transition-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
+))]
 pub fn atx_reconciliations_from_values(
     enabled: bool,
     path: Option<&str>,
@@ -390,7 +396,11 @@ pub fn atx_reconciliations_from_values(
     atx_reconciliations_from_file(&path)
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(
+    feature = "atx-transition-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
+))]
 fn atx_reconciliations_from_file(
     path: &Path,
 ) -> Result<Vec<crate::AtxReconciliation>, ProfileError> {
@@ -463,7 +473,11 @@ fn atx_reconciliations_from_file(
     Ok(reconciliations)
 }
 
-#[cfg(feature = "atx-transition-profile")]
+#[cfg(any(
+    feature = "atx-transition-profile",
+    feature = "gpio-atx-profile",
+    feature = "chardev-atx-profile"
+))]
 fn parse_operation_id(value: &str) -> Result<[u8; 16], ProfileError> {
     if value.len() != 32 {
         return Err(ProfileError::InvalidReconciliation);
@@ -587,7 +601,11 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "atx-transition-profile")]
+    #[cfg(any(
+        feature = "atx-transition-profile",
+        feature = "gpio-atx-profile",
+        feature = "chardev-atx-profile"
+    ))]
     fn atx_reconciliations_are_reviewed_and_bounded() {
         use crate::AtxReconciliation;
         use bli_kvm_atx_policy::AtxCompletion;

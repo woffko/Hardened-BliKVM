@@ -35,6 +35,11 @@ media-transition-profile = [
   "bli-kvm-media-policy/media-test-profile",
   "bli-kvm-media-transition/kvmd-media-profile",
 ]
+chardev-atx-profile = [
+  "gpio-atx-profile",
+  "dep:bli-kvm-atx-gpio-executor",
+  "bli-kvm-atx-gpio-executor/chardev-driver",
+]
 gpio-atx-profile = [
   "dep:bli-kvm-atx-policy",
   "dep:bli-kvm-atx-transition",
@@ -59,6 +64,7 @@ gadget-media-profile = [
 ]
 
 [dependencies]
+bli-kvm-atx-gpio-executor = { path = "../bli-kvm-atx-gpio-executor", optional = true }
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
 bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition", optional = true, default-features = false }
 bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }

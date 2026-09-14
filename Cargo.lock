@@ -188,6 +188,7 @@ dependencies = [
 name = "bli-kvm-control-broker"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-atx-gpio-executor",
  "bli-kvm-atx-policy",
  "bli-kvm-atx-transition",
  "bli-kvm-control-client",

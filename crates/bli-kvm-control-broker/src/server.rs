@@ -228,6 +228,21 @@ pub async fn run_with_gadget_profile(
     result
 }
 
+/// Serves the ATX backend from the Linux GPIO character device supplied by the
+/// owner. Only the `chardev-atx-profile` feature builds this entry point.
+#[cfg(feature = "chardev-atx-profile")]
+pub async fn run_with_chardev_atx_profile(
+    config: ControlBrokerConfig,
+    journal_path: impl Into<std::path::PathBuf>,
+    chip_path: impl AsRef<std::path::Path>,
+    timing: bli_kvm_atx_gpio_executor::AtxTiming,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let runner = bli_kvm_atx_gpio_executor::chardev_atx_executor(chip_path.as_ref(), timing)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    run_with_gpio_atx_profile(config, journal_path, Box::new(runner), reconciliations).await
+}
+
 /// One reviewed reconciliation decision applied before the daemon serves.
 ///
 /// The observation is mandatory read-only evidence and never infers the
@@ -1801,6 +1816,25 @@ mod tests {
         assert!(state.present);
         assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
         stop_broker(broker).await;
+    }
+
+    #[cfg(feature = "chardev-atx-profile")]
+    #[tokio::test]
+    async fn chardev_atx_profile_rejects_a_missing_chip() {
+        let directory = tempfile::tempdir().unwrap();
+        let result = run_with_chardev_atx_profile(
+            ControlBrokerConfig::new(directory.path().join("control.sock")).unwrap(),
+            directory.path().join("journal.json"),
+            "/nonexistent/gpiochip0",
+            bli_kvm_atx_gpio_executor::AtxTiming {
+                power_short_ms: 500,
+                power_long_ms: 4_000,
+                reset_ms: 200,
+            },
+            Vec::new(),
+        )
+        .await;
+        assert!(result.is_err());
     }
 
     #[cfg(feature = "gpio-atx-profile")]

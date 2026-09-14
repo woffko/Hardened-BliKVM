@@ -8,6 +8,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
+bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli", default-features = false }
 libc.workspace = true
 thiserror.workspace = true

@@ -9,9 +9,13 @@ repository.workspace = true
 
 [dependencies]
 bli-kvm-core = { path = "../bli-kvm-core" }
-bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client" }
+bli-kvm-kvmd-client = { path = "../bli-kvm-kvmd-client", optional = true }
 libc.workspace = true
 thiserror.workspace = true
+
+[features]
+default = ["kvmd-inventory"]
+kvmd-inventory = ["dep:bli-kvm-kvmd-client"]
 
 [dev-dependencies]
 serde_json.workspace = true
