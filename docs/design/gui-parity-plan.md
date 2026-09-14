@@ -97,6 +97,11 @@ hardened BLi-KVM server today (20 routes).
 
 ## Verification
 
+- `tools/capture_device_kvm_topology.py` records a sanitized, read-only snapshot
+  of the gadget functions, a descriptor-block hash, the KVMD hid/msd mode, the
+  vendor daemon presence, the ATX socket, the MSD mount mode and active
+  services (receipt `evidence/private/device-kvm-topology-20260914-a.json`).
+  Run it before and after every gadget/board ownership handoff.
 - `tools/playwright/gui_parity_probe.mjs` captures screenshots and DOM structure
   of every visible menu on our build and the reference `.133`, writing receipts
   under `evidence/private` (never committed).
