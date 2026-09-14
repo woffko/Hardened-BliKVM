@@ -25,10 +25,20 @@ no GPIO chip.
 - Unknown roles, duplicate roles and plans larger than the seven reviewed
   lines.
 
+## Transactional driver seam
+
+`crates/bli-kvm-platform-bli/src/gpio_driver.rs` defines the `GpioDriver`
+interface the board daemon will use and the ownership transaction:
+`apply_plan` requests every planned line or releases the already-requested
+lines in reverse order before reporting the failure, and `release_plan`
+releases in reverse request order. A failed rollback is reported distinctly so
+a half-acquired line set is never silently accepted. The seam is exercised with
+a deterministic mock; the concrete libgpiod adapter is a later, physically
+gated slice.
+
 ## Not in this slice
 
-- The libgpiod driver, chip open, line request ioctls and pulse timing.
-- ATX execution: KVMD remains the executor over its fixed waiting routes until
+- The libgpiod driver, chip open, line request ioctls and pulse timing.- ATX execution: KVMD remains the executor over its fixed waiting routes until
   a later, physically gated handoff.
 - Fan, LED, button, OLED/ST7789, RTC, and serial-switch drivers.
 

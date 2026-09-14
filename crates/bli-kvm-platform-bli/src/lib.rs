@@ -6,6 +6,7 @@
 //! verification merely because an endpoint is reachable.
 
 mod gpio;
+mod gpio_driver;
 mod hardware;
 mod inventory;
 mod rtc;
@@ -16,6 +17,7 @@ pub use gpio::{
     BOARD_CONSUMER, LineDirection, LineOwner, LinePlanningError, LineRequest, MAX_PLANNED_LINES,
     current_owner, plan_requests, role_direction,
 };
+pub use gpio_driver::{ApplyError, GpioDriver, apply_plan, release_plan};
 pub use hardware::{
     GpioLineEvidence, GpioRole, H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence,
     VENDOR_SOURCE_REVISION,
