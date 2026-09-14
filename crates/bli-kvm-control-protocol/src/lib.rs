@@ -582,6 +582,9 @@ mod tests {
         };
         let json = encode_request_v2(&request).unwrap();
         assert_eq!(decode_request_v2(&json).unwrap(), request);
-        assert!(!String::from_utf8_lossy(&json).contains("path"));
+        let text = String::from_utf8_lossy(&json);
+        assert!(text.contains("\"imageId\""));
+        assert!(!text.contains("image_id"));
+        assert!(!text.contains("path"));
     }
 }

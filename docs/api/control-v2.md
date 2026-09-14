@@ -101,7 +101,7 @@ The v2 protocol now carries a typed virtual-media request:
 ```
 VirtualMedia { request: MediaRequest }
 MediaRequest {
-  command: VirtualMediaCommand,   // select { image_id, mode, writable } | set_connected { connected }
+  command: VirtualMediaCommand,   // select { imageId, mode, writable } | set_connected { connected }
   sessionBinding: u64,
   targetBinding: [u8; 32],
   issuedAtUnixMs: u64,
