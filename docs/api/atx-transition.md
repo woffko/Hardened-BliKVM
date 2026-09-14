@@ -98,5 +98,12 @@ Before any ATX action can be wired or advertised:
 4. establish GPIO ownership/polarity and a separate physical test procedure;
 5. run pulse timing, busy, duplicate, restart, and recovery tests.
 
+The transition engine now executes through a backend seam (`AtxExecutor`) so the
+KVMD executor used during migration can be replaced by the Rust board executor
+without changing policy or broker wiring. The pure H616 GPIO line-request plan
+and its transactional driver seam (`crates/bli-kvm-platform-bli/src/gpio.rs`,
+`gpio_driver.rs`) encode current ownership and refuse a takeover before the
+reviewed physical handoff; they perform no I/O.
+
 Physical Power and Reset actions are excluded from the current session, so no
 live ATX mutation test is performed.

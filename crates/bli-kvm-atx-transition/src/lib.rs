@@ -14,6 +14,7 @@ use bli_kvm_atx_policy::{
     AtxCompletion, AtxDecision, AtxEligibility, AtxOperation, AtxPolicyEngine, AtxPolicyError,
     AtxRejection,
 };
+use bli_kvm_core::AtxControlAction;
 use bli_kvm_kvmd_atx_client::KvmdAtxClient;
 use bli_kvm_kvmd_client::KvmdCredentials;
 use thiserror::Error;
@@ -24,6 +25,46 @@ pub enum AtxTransitionError {
     Policy(#[from] AtxPolicyError),
     #[error("ATX reconciliation requires read-only power-LED evidence")]
     EvidenceRequired,
+}
+
+/// KVMD-backed ATX executor. Holds its own credential instance.
+pub struct KvmdAtxExecutor {
+    client: KvmdAtxClient,
+    credentials: KvmdCredentials,
+}
+
+impl KvmdAtxExecutor {
+    pub fn new(client: KvmdAtxClient, credentials: KvmdCredentials) -> Self {
+        Self {
+            client,
+            credentials,
+        }
+    }
+
+    async fn execute(&self, action: AtxControlAction) -> bool {
+        self.client.execute(action, &self.credentials).await.is_ok()
+    }
+}
+
+/// Backend that actually pulses the ATX lines.
+///
+/// The transition engine is backend-agnostic so the KVMD executor used during
+/// migration can later be replaced by the Rust board executor without touching
+/// the policy or the broker wiring.
+pub enum AtxExecutor {
+    Kvmd(KvmdAtxExecutor),
+    #[cfg(test)]
+    Test(bool),
+}
+
+impl AtxExecutor {
+    async fn execute(&self, action: AtxControlAction) -> bool {
+        match self {
+            AtxExecutor::Kvmd(executor) => executor.execute(action).await,
+            #[cfg(test)]
+            AtxExecutor::Test(applied) => *applied,
+        }
+    }
 }
 
 /// Read-only power-LED observation used when reconciling a Pending operation.
@@ -48,8 +89,7 @@ pub enum AtxTransitionOutcome {
 
 pub struct AtxTransitionEngine {
     policy: AtxPolicyEngine,
-    client: KvmdAtxClient,
-    credentials: KvmdCredentials,
+    executor: AtxExecutor,
 }
 
 impl AtxTransitionEngine {
@@ -58,10 +98,20 @@ impl AtxTransitionEngine {
         client: KvmdAtxClient,
         credentials: KvmdCredentials,
     ) -> Result<Self, AtxTransitionError> {
+        Self::open_with_executor(
+            journal_path,
+            AtxExecutor::Kvmd(KvmdAtxExecutor::new(client, credentials)),
+        )
+    }
+
+    /// Build an engine over any reviewed executor backend.
+    pub fn open_with_executor(
+        journal_path: impl Into<std::path::PathBuf>,
+        executor: AtxExecutor,
+    ) -> Result<Self, AtxTransitionError> {
         Ok(Self {
             policy: AtxPolicyEngine::open(journal_path)?,
-            client,
-            credentials,
+            executor,
         })
     }
 
@@ -86,11 +136,7 @@ impl AtxTransitionEngine {
             AtxDecision::ReplayRejected => Ok(AtxTransitionOutcome::ReplayedRejected),
             AtxDecision::Permit => {
                 let operation_id = operation.operation_id();
-                let applied = self
-                    .client
-                    .execute(operation.action(), &self.credentials)
-                    .await
-                    .is_ok();
+                let applied = self.executor.execute(operation.action()).await;
                 let completion = if applied {
                     AtxCompletion::Applied
                 } else {
@@ -184,6 +230,51 @@ mod tests {
 
     fn operation(seed: u8, action: AtxControlAction) -> AtxOperation {
         AtxOperation::new([seed; 16], u64::from(seed), [seed; 32], 1_000, action).unwrap()
+    }
+
+    #[tokio::test]
+    async fn engine_executes_through_any_reviewed_backend() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = AtxTransitionEngine::open_with_executor(
+            directory.path().join("journal.json"),
+            AtxExecutor::Test(true),
+        )
+        .unwrap();
+        assert_eq!(
+            engine
+                .execute(
+                    operation(1, AtxControlAction::PowerShort),
+                    reviewed(),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            AtxTransitionOutcome::Applied
+        );
+        assert_eq!(
+            engine
+                .execute(
+                    operation(1, AtxControlAction::PowerShort),
+                    reviewed(),
+                    1_500
+                )
+                .await
+                .unwrap(),
+            AtxTransitionOutcome::ReplayedApplied
+        );
+
+        let mut failing = AtxTransitionEngine::open_with_executor(
+            directory.path().join("failing.json"),
+            AtxExecutor::Test(false),
+        )
+        .unwrap();
+        assert_eq!(
+            failing
+                .execute(operation(2, AtxControlAction::Reset), reviewed(), 1_800)
+                .await
+                .unwrap(),
+            AtxTransitionOutcome::BackendFailed
+        );
     }
 
     #[tokio::test]
