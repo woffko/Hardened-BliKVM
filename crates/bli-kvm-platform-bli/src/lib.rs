@@ -5,12 +5,17 @@
 //! exposes an adapter. User reports are never promoted to runtime or physical
 //! verification merely because an endpoint is reachable.
 
+mod gpio;
 mod hardware;
 mod inventory;
 mod rtc;
 mod sysfs;
 mod thermal;
 
+pub use gpio::{
+    BOARD_CONSUMER, LineDirection, LineOwner, LinePlanningError, LineRequest, MAX_PLANNED_LINES,
+    current_owner, plan_requests, role_direction,
+};
 pub use hardware::{
     GpioLineEvidence, GpioRole, H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence,
     VENDOR_SOURCE_REVISION,
