@@ -82,6 +82,17 @@ socket, the single privileged owner of the composite gadget
 media select and connect through the same socket and asserts both the `hidg0`
 report and the bound gadget.
 
+## Board owner unit
+
+`packaging/systemd/hardened-blikvm-board-owner.service` runs the broker in the
+board profile (`BLI_KVM_BOARD_PROFILE=1`): one process owns the composite
+gadget and the reviewed ATX lines. ATX pulse timings and the optional
+reconciliation path come from the operator `EnvironmentFile`, so the unit
+contains no hardware timing facts. The sandbox keeps `ProtectKernelTunables=no`
+with `ReadWritePaths` on the gadget tree, allows `/dev/gpiochip0` and the HID
+character devices, and scores 1.3. It is non-installable scaffolding until the
+physical gate.
+
 ## Next gates
 
 - a feature-gated `HidExecutor::Gadget` writing report batches to the HID
