@@ -7,22 +7,29 @@
 //!
 //! The steps are produced by a pure planner (`bind_steps`/`remove_steps`) so
 //! ordering and idempotency can be asserted without touching real configfs;
-//! `apply`/`remove` execute the same steps against a configfs root. HID
-//! functions and their report descriptors are a later slice.
+//! `apply`/`remove` execute the same steps against a configfs root.
+//!
+//! HID report descriptors are caller-provided: they are protocol facts that
+//! must be captured read-only from the device, never guessed here.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
 /// Gadget directory name under the configfs root.
 pub const GADGET_NAME: &str = "hardened";
-/// Function name used in the gadget configuration.
+/// Function name of the mass-storage function.
 pub const MSD_FUNCTION: &str = "mass_storage.usb0";
+/// Reviewed HID function names.
+pub const HID_FUNCTIONS: [&str; 3] = ["hid.usb0", "hid.usb1", "hid.usb2"];
 /// Device string language id.
 pub const LANG: &str = "0x409";
 
 const MAX_STRING_LEN: usize = 126;
 const MAX_UDC_LEN: usize = 64;
+const MAX_REPORT_LENGTH: u16 = 1024;
+const MAX_REPORT_DESCRIPTOR: usize = 4096;
 /// The vendor default serial; never shipped by the hardened gadget.
 const LEGACY_SERIAL: &str = "CAFEBABE";
 
@@ -38,6 +45,14 @@ pub enum GadgetError {
     InvalidImagePath,
     #[error("mass-storage image is not a regular file")]
     ImageMissing,
+    #[error("gadget declares no functions")]
+    NoFunctions,
+    #[error("duplicate or unknown function name")]
+    InvalidFunction,
+    #[error("invalid HID report length")]
+    InvalidReportLength,
+    #[error("invalid HID report descriptor")]
+    InvalidReportDescriptor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +72,31 @@ pub struct MassStorageConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HidConfig {
+    /// One of [`HID_FUNCTIONS`].
+    pub name: String,
+    pub subclass: u8,
+    pub protocol: u8,
+    pub report_length: u16,
+    pub report_descriptor: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Function {
+    MassStorage(MassStorageConfig),
+    Hid(HidConfig),
+}
+
+impl Function {
+    fn name(&self) -> &str {
+        match self {
+            Function::MassStorage(_) => MSD_FUNCTION,
+            Function::Hid(hid) => &hid.name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GadgetSpec {
     pub id_vendor: u16,
     pub id_product: u16,
@@ -64,7 +104,7 @@ pub struct GadgetSpec {
     pub bcd_device: u16,
     pub strings: GadgetStrings,
     pub udc: String,
-    pub mass_storage: MassStorageConfig,
+    pub functions: Vec<Function>,
 }
 
 /// One configfs operation, in order.
@@ -80,16 +120,24 @@ fn gadget_path() -> PathBuf {
     PathBuf::from(GADGET_NAME)
 }
 
+fn config_path() -> PathBuf {
+    gadget_path().join("configs").join("c.1")
+}
+
+fn function_path(name: &str) -> PathBuf {
+    gadget_path().join("functions").join(name)
+}
+
 fn hex16(value: u16) -> String {
     format!("{value:04x}")
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn bool_value(value: bool) -> String {
-    if value {
-        "1".to_string()
-    } else {
-        "0".to_string()
-    }
+    if value { "1".into() } else { "0".into() }
 }
 
 fn validate_string(value: &str, field: &'static str) -> Result<(), GadgetError> {
@@ -100,6 +148,40 @@ fn validate_string(value: &str, field: &'static str) -> Result<(), GadgetError> 
         return Err(GadgetError::InvalidString(field));
     }
     Ok(())
+}
+
+fn validate_function(function: &Function) -> Result<(), GadgetError> {
+    match function {
+        Function::MassStorage(config) => {
+            let file = &config.file;
+            if !file.is_absolute()
+                || file
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(GadgetError::InvalidImagePath);
+            }
+            let metadata = std::fs::metadata(file).map_err(|_| GadgetError::ImageMissing)?;
+            if !metadata.is_file() {
+                return Err(GadgetError::ImageMissing);
+            }
+            Ok(())
+        }
+        Function::Hid(config) => {
+            if !HID_FUNCTIONS.contains(&config.name.as_str()) {
+                return Err(GadgetError::InvalidFunction);
+            }
+            if config.report_length == 0 || config.report_length > MAX_REPORT_LENGTH {
+                return Err(GadgetError::InvalidReportLength);
+            }
+            if config.report_descriptor.is_empty()
+                || config.report_descriptor.len() > MAX_REPORT_DESCRIPTOR
+            {
+                return Err(GadgetError::InvalidReportDescriptor);
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_spec(spec: &GadgetSpec) -> Result<(), GadgetError> {
@@ -119,30 +201,79 @@ fn validate_spec(spec: &GadgetSpec) -> Result<(), GadgetError> {
     {
         return Err(GadgetError::InvalidUdc);
     }
-    let file = &spec.mass_storage.file;
-    if !file.is_absolute()
-        || file
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        return Err(GadgetError::InvalidImagePath);
+    if spec.functions.is_empty() {
+        return Err(GadgetError::NoFunctions);
     }
-    let metadata = std::fs::metadata(file).map_err(|_| GadgetError::ImageMissing)?;
-    if !metadata.is_file() {
-        return Err(GadgetError::ImageMissing);
+    let mut names = BTreeSet::new();
+    for function in &spec.functions {
+        validate_function(function)?;
+        if !names.insert(function.name().to_string()) {
+            return Err(GadgetError::InvalidFunction);
+        }
     }
     Ok(())
+}
+
+fn function_steps(function: &Function) -> Vec<Step> {
+    let config = config_path();
+    let name = function.name().to_string();
+    let base = function_path(&name);
+    let mut steps = Vec::new();
+
+    match function {
+        Function::MassStorage(storage) => {
+            let lun = base.join("lun.0");
+            steps.push(Step::WriteFile {
+                path: lun.join("file"),
+                value: storage.file.to_string_lossy().into_owned(),
+            });
+            steps.push(Step::WriteFile {
+                path: lun.join("ro"),
+                value: bool_value(storage.read_only),
+            });
+            steps.push(Step::WriteFile {
+                path: lun.join("cdrom"),
+                value: bool_value(storage.cdrom),
+            });
+            steps.push(Step::WriteFile {
+                path: lun.join("removable"),
+                value: bool_value(storage.removable),
+            });
+        }
+        Function::Hid(hid) => {
+            steps.push(Step::WriteFile {
+                path: base.join("protocol"),
+                value: hid.protocol.to_string(),
+            });
+            steps.push(Step::WriteFile {
+                path: base.join("subclass"),
+                value: hid.subclass.to_string(),
+            });
+            steps.push(Step::WriteFile {
+                path: base.join("report_length"),
+                value: hid.report_length.to_string(),
+            });
+            steps.push(Step::WriteFile {
+                path: base.join("report_desc"),
+                value: hex_bytes(&hid.report_descriptor),
+            });
+        }
+    }
+
+    steps.push(Step::Symlink {
+        link: config.join(&name),
+        target: PathBuf::from("../../functions").join(&name),
+    });
+    steps
 }
 
 /// Ordered plan that materializes the gadget and binds the UDC last.
 pub fn bind_steps(spec: &GadgetSpec) -> Vec<Step> {
     let gadget = gadget_path();
     let strings = gadget.join("strings").join(LANG);
-    let config = gadget.join("configs").join("c.1");
-    let function = gadget.join("functions").join(MSD_FUNCTION);
-    let lun = function.join("lun.0");
+    let config = config_path();
 
-    vec![
+    let mut steps = vec![
         Step::WriteFile {
             path: gadget.join("idVendor"),
             value: hex16(spec.id_vendor),
@@ -175,57 +306,44 @@ pub fn bind_steps(spec: &GadgetSpec) -> Vec<Step> {
             path: config.join("strings").join(LANG).join("configuration"),
             value: spec.strings.configuration.clone(),
         },
-        Step::WriteFile {
-            path: lun.join("file"),
-            value: spec.mass_storage.file.to_string_lossy().into_owned(),
-        },
-        Step::WriteFile {
-            path: lun.join("ro"),
-            value: bool_value(spec.mass_storage.read_only),
-        },
-        Step::WriteFile {
-            path: lun.join("cdrom"),
-            value: bool_value(spec.mass_storage.cdrom),
-        },
-        Step::WriteFile {
-            path: lun.join("removable"),
-            value: bool_value(spec.mass_storage.removable),
-        },
-        Step::Symlink {
-            link: config.join(MSD_FUNCTION),
-            target: PathBuf::from("../../functions").join(MSD_FUNCTION),
-        },
-        Step::WriteFile {
-            path: gadget.join("UDC"),
-            value: spec.udc.clone(),
-        },
-    ]
+    ];
+
+    for function in &spec.functions {
+        steps.extend(function_steps(function));
+    }
+
+    steps.push(Step::WriteFile {
+        path: gadget.join("UDC"),
+        value: spec.udc.clone(),
+    });
+    steps
 }
 
 /// Ordered plan that unbinds first and removes the tree last.
-pub fn remove_steps() -> Vec<Step> {
+pub fn remove_steps(spec: &GadgetSpec) -> Vec<Step> {
     let gadget = gadget_path();
-    let config = gadget.join("configs").join("c.1");
-    vec![
-        Step::WriteFile {
-            path: gadget.join("UDC"),
-            value: String::new(),
-        },
-        Step::RemoveFile {
-            path: config.join(MSD_FUNCTION),
-        },
-        Step::RemoveDir {
-            path: gadget.join("functions").join(MSD_FUNCTION),
-        },
-        Step::RemoveDir {
-            path: config.join("strings").join(LANG),
-        },
-        Step::RemoveDir { path: config },
-        Step::RemoveDir {
-            path: gadget.join("strings").join(LANG),
-        },
-        Step::RemoveDir { path: gadget },
-    ]
+    let config = config_path();
+    let mut steps = vec![Step::WriteFile {
+        path: gadget.join("UDC"),
+        value: String::new(),
+    }];
+    for function in &spec.functions {
+        steps.push(Step::RemoveFile {
+            path: config.join(function.name()),
+        });
+        steps.push(Step::RemoveDir {
+            path: function_path(function.name()),
+        });
+    }
+    steps.push(Step::RemoveDir {
+        path: config.join("strings").join(LANG),
+    });
+    steps.push(Step::RemoveDir { path: config });
+    steps.push(Step::RemoveDir {
+        path: gadget.join("strings").join(LANG),
+    });
+    steps.push(Step::RemoveDir { path: gadget });
+    steps
 }
 
 fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
@@ -272,15 +390,15 @@ fn io_error(error: std::io::Error) -> GadgetError {
 pub fn apply(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
     validate_spec(spec)?;
     if let Err(error) = execute(root, &bind_steps(spec)) {
-        let _ = execute(root, &remove_steps());
+        let _ = execute(root, &remove_steps(spec));
         return Err(error);
     }
     Ok(())
 }
 
 /// Unbind and remove the gadget. Idempotent.
-pub fn remove(root: &Path) -> Result<(), GadgetError> {
-    execute(root, &remove_steps())
+pub fn remove(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
+    execute(root, &remove_steps(spec))
 }
 
 #[cfg(test)]
@@ -288,6 +406,25 @@ mod tests {
     use super::*;
 
     const IMAGE_NAME: &str = "kubuntu.img";
+
+    fn msd(image: &Path) -> Function {
+        Function::MassStorage(MassStorageConfig {
+            file: image.to_path_buf(),
+            read_only: true,
+            cdrom: false,
+            removable: true,
+        })
+    }
+
+    fn hid(name: &str, report_length: u16) -> Function {
+        Function::Hid(HidConfig {
+            name: name.into(),
+            subclass: 1,
+            protocol: 1,
+            report_length,
+            report_descriptor: vec![0x05, 0x01, 0x09, 0x06],
+        })
+    }
 
     fn spec(image: &Path) -> GadgetSpec {
         GadgetSpec {
@@ -302,12 +439,7 @@ mod tests {
                 configuration: "BLi-KVM configuration".into(),
             },
             udc: "musb-hdrc.2.auto".into(),
-            mass_storage: MassStorageConfig {
-                file: image.to_path_buf(),
-                read_only: true,
-                cdrom: false,
-                removable: true,
-            },
+            functions: vec![msd(image)],
         }
     }
 
@@ -367,6 +499,39 @@ mod tests {
     }
 
     #[test]
+    fn hid_functions_write_their_descriptors_and_link_into_the_config() {
+        let directory = root_with_image();
+        let mut spec = spec(&directory.path().join(IMAGE_NAME));
+        spec.functions.push(hid("hid.usb0", 8));
+        assert_eq!(apply(directory.path(), &spec), Ok(()));
+        assert_eq!(
+            read(directory.path(), "hardened/functions/hid.usb0/protocol"),
+            "1"
+        );
+        assert_eq!(
+            read(directory.path(), "hardened/functions/hid.usb0/subclass"),
+            "1"
+        );
+        assert_eq!(
+            read(
+                directory.path(),
+                "hardened/functions/hid.usb0/report_length"
+            ),
+            "8"
+        );
+        assert_eq!(
+            read(directory.path(), "hardened/functions/hid.usb0/report_desc"),
+            "05010906"
+        );
+        assert!(
+            directory
+                .path()
+                .join("hardened/configs/c.1/hid.usb0")
+                .is_symlink()
+        );
+    }
+
+    #[test]
     fn apply_is_idempotent() {
         let directory = root_with_image();
         let spec = spec(&directory.path().join(IMAGE_NAME));
@@ -381,17 +546,22 @@ mod tests {
         let directory = root_with_image();
         let spec = spec(&directory.path().join(IMAGE_NAME));
         assert_eq!(apply(directory.path(), &spec), Ok(()));
-        assert_eq!(remove(directory.path()), Ok(()));
+        assert_eq!(remove(directory.path(), &spec), Ok(()));
         assert!(!directory.path().join(GADGET_NAME).exists());
-        assert_eq!(remove(directory.path()), Ok(()));
+        assert_eq!(remove(directory.path(), &spec), Ok(()));
     }
 
     #[test]
     fn remove_unbinds_before_removing() {
-        let steps = remove_steps();
+        let directory = root_with_image();
+        let spec = spec(&directory.path().join(IMAGE_NAME));
+        let steps = remove_steps(&spec);
         assert!(
             matches!(steps.first(), Some(Step::WriteFile { value, .. }) if value.is_empty()),
             "removal must clear UDC first"
+        );
+        assert!(
+            matches!(steps.last(), Some(Step::RemoveDir { path }) if path.as_path() == Path::new(GADGET_NAME))
         );
     }
 
@@ -422,24 +592,62 @@ mod tests {
         );
 
         let mut invalid = spec(&image);
-        invalid.mass_storage.file = PathBuf::from("relative.img");
-        assert_eq!(
-            apply(directory.path(), &invalid),
-            Err(GadgetError::InvalidImagePath)
-        );
-
-        let mut invalid = spec(&image);
-        invalid.mass_storage.file = directory.path().join("../escape.img");
-        assert_eq!(
-            apply(directory.path(), &invalid),
-            Err(GadgetError::InvalidImagePath)
-        );
-
-        let mut invalid = spec(&image);
-        invalid.mass_storage.file = directory.path().join("missing.img");
+        invalid.functions = vec![msd(&directory.path().join("missing.img"))];
         assert_eq!(
             apply(directory.path(), &invalid),
             Err(GadgetError::ImageMissing)
+        );
+
+        let mut invalid = spec(&image);
+        invalid.functions = vec![Function::MassStorage(MassStorageConfig {
+            file: PathBuf::from("relative.img"),
+            read_only: true,
+            cdrom: false,
+            removable: true,
+        })];
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::InvalidImagePath)
+        );
+
+        let mut invalid = spec(&image);
+        invalid.functions.clear();
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::NoFunctions)
+        );
+
+        let mut invalid = spec(&image);
+        invalid.functions.push(hid("hid.usb9", 8));
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::InvalidFunction)
+        );
+
+        let mut invalid = spec(&image);
+        invalid.functions.push(hid("hid.usb0", 8));
+        invalid.functions.push(hid("hid.usb0", 7));
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::InvalidFunction)
+        );
+
+        let mut invalid = spec(&image);
+        invalid.functions.push(hid("hid.usb0", 0));
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::InvalidReportLength)
+        );
+
+        let mut invalid = spec(&image);
+        let mut empty = hid("hid.usb0", 8);
+        if let Function::Hid(config) = &mut empty {
+            config.report_descriptor.clear();
+        }
+        invalid.functions.push(empty);
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::InvalidReportDescriptor)
         );
 
         assert!(!directory.path().join(GADGET_NAME).exists());
