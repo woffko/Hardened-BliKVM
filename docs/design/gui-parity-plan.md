@@ -170,6 +170,10 @@ hardened BLi-KVM server as of 2026-09-14: 27 routes.
   vendor daemon presence, the ATX socket, the MSD mount mode and active
   services (receipt `evidence/private/device-kvm-topology-20260914-a.json`).
   Run it before and after every gadget/board ownership handoff.
+- `tools/capture_device_hid_descriptors.py` captures the gadget HID function
+  parameters and report descriptors read-only into a sanitized private receipt,
+  with a host-tested bounded parser (name, range, hex and hash checks). Running
+  it against the board is part of the device-gated handoff.
 - `tools/playwright/gui_parity_probe.mjs` captures the title, route, bounded
   visible menu labels, tag counts and console-error count for one page and
   writes a sanitized receipt under `evidence/private` (never committed). It is
