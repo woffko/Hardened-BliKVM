@@ -152,6 +152,12 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "require": ("streamCount", "streams"),
             },
             {
+                "name": "frame timing",
+                "glob": "video-frame-timing-*.json",
+                "probe": "hardened-blikvm-video-frame-timing",
+                "marker": "result=passed",
+            },
+            {
                 "name": "video soak",
                 "glob": "video-soak-probe-*.json",
                 "marker": "result=passed",

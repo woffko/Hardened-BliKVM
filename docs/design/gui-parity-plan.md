@@ -132,6 +132,14 @@ confirmation, each producing a private receipt:
 - media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
 - Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
 
+Phase 4 video host harness: `tools/playwright/video_frame_timing_probe.mjs`
+consumes the MJPEG stream and records complete-frame count, mean/p95/max frame
+interval, FPS and average frame bytes (host-tested against a local MJPEG
+fixture). A device receipt requires the main profile to serve video: the
+restricted-control stand answers `503` for `/api/stream/mjpeg` (its video proxy
+is inactive) and the main proxy answers `502` while its server unit is down, so
+the timing/hotplug/resolution gates stay with the operator.
+
 Phase 8 acceptance report (host-only, read-only): `tools/phase8_acceptance_report.py`
 walks an explicit manifest of host artifacts and device receipts and writes a
 private report; a device item without a matching receipt stays `unrun` and the

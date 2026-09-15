@@ -38,11 +38,17 @@ try {
     const status = response.status();
     if (status < 400) return;
     const request = response.request();
-    if (request.resourceType() === "image" || request.resourceType() === "font")
-      return;
+    const route = new URL(response.url()).pathname;
+    if (!route.startsWith("/api/")) {
+      if (
+        request.resourceType() === "image" ||
+        request.resourceType() === "font"
+      )
+        return;
+    }
     failedRequests.push({
       method: request.method(),
-      route: new URL(response.url()).pathname,
+      route,
       status,
     });
   });
