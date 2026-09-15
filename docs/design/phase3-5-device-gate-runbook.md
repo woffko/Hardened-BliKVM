@@ -144,8 +144,9 @@ confirmation and produces a private receipt.
 
 - Confirm the stock gadget is up and capture its exact HID function parameters
   and report descriptors (`hid.usb0/1/2`: `protocol`, `subclass`,
-  `report_length`, `report_desc`) into a private receipt. Those values pin the
-  gadget spec; they are protocol facts and must not be guessed.
+  `report_length`, `report_desc`) into a private receipt with
+  `tools/capture_device_hid_descriptors.py`. Those values pin the gadget spec;
+  they are protocol facts and must not be guessed.
 - Capture the reviewed ATX pulse timings (power short, power long, reset) and
   the line identity/polarity from the stock behaviour on the bench, with the
   target's Power and Reset physically disconnected.
