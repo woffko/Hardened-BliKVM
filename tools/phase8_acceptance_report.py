@@ -124,6 +124,12 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "marker": "applyFacts.socket_present=yes",
             },
             {
+                "name": "restricted power GUI",
+                "glob": "restricted-power-*.json",
+                "probe": "hardened-blikvm-restricted-power",
+                "marker": "result=passed",
+            },
+            {
                 "name": "media attach/eject gate",
                 "glob": "restricted-control-media-gate-*.json",
                 "probe": "restricted-control-media-attach-eject",

@@ -220,6 +220,10 @@ configfs mounted) and not a substitute host.
   attaches the catalog image and ejects it again, and records every
   `/api/virtual-media` response, so the attach/eject half of the acceptance is
   reproducible instead of hand-clicked. `restricted_control_virtual_keyboard_probe.mjs`
-  covers the HID half the same way.
+  covers the HID half the same way, and `restricted_power_probe.mjs` covers the
+  power half (menu entry, explicit confirmation, focus challenge, ATX request).
+  All three read the wrapped `{code,data}` response the server returns and were
+  validated against the built GUI with `tools/playwright/app_harness.mjs`; the
+  power probe needs Power and Reset unplugged like the bench.
 - Only after these pass, enable the capability flags in the shipped build and
   remove `kvmd.service` from the board profile.

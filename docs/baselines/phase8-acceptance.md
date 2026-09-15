@@ -8,8 +8,8 @@ overall status stays `incomplete` while any gate is open. Nothing here is
 inferred from code, commits or intent, and this document is not a release
 acceptance.
 
-Latest generated report: `evidence/private/phase8-acceptance-20260915-d.json`
-(`overall=incomplete`, `hostMissing=0`, `deviceUnrun=5`).
+Latest generated report: `evidence/private/phase8-acceptance-20260915-e.json`
+(`overall=incomplete`, `hostMissing=0`, `deviceUnrun=6`).
 
 ## Complete phases
 
@@ -33,6 +33,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-d.json`
 | Composite gadget acceptance | `board-handoff-gate-*.json` with `acceptanceFacts.gadget_present=yes` | `tools/stage_device_board_profile_gate.py --confirm-handoff --accept-media-hid …` plus the two GUI probes, then `--teardown` |
 | Native ATX GPIO bench | same gate receipt with `atxBenchFacts.power_short=ok` | add `--accept-atx-bench --confirm-physical-disconnect` (Power/Reset unplugged) |
 | Virtual-media acceptance | `virtual-media-acceptance-*.json` with `result=passed` | `tools/playwright/virtual_media_acceptance.mjs` during the media/HID window |
+| Restricted power GUI | `restricted-power-*.json` with `result=passed` | `tools/playwright/restricted_power_probe.mjs` (Power/Reset unplugged) |
 | Frame timing | `video-frame-timing-*.json` with `result=passed` | `tools/playwright/video_frame_timing_probe.mjs` against a stand that serves `/api/stream/mjpeg` |
 | KVMD removal | `kvmd-removal-*.json` with `removal.kvmd_stopped=yes` | `tools/stage_device_kvmd_removal.py --confirm-removal`, which refuses until the three receipts above exist |
 
