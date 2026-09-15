@@ -97,8 +97,12 @@ Phases 2-3 is complete. Everything below is committed with a green
   `evidence/private/device-kvmd-control-source-20260915-a.json`) confirmed the
   report layouts and the remap formula, and recorded the board's real ATX lines
   from `/etc/kvmd/override.yaml`: gpiochip0 with power switch 228 and reset
-  switch 272 (LEDs 234/233). The pulse durations still live inside the vendor
-  `/usr/bin/atx` binary and remain to be confirmed on the bench.
+  switch 272 (LEDs 234/233). Read-only disassembly of the vendor `/usr/bin/atx`
+  (`evidence/private/device-vendor-atx-timings-20260915-a.json`) then pinned the
+  intended pulse durations: `power_on` 500 ms, `power_off` (force off) 5000 ms
+  and `power_reset` 500 ms. They are now the board defaults in
+  `crates/bli-kvm-platform-bli` and in the handoff tools, still overridable and
+  still awaiting a bench confirmation.
 
 ## Device-bound remainder (board available)
 
