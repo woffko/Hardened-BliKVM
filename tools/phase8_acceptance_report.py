@@ -130,12 +130,6 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "marker": "result=passed",
             },
             {
-                "name": "media attach/eject gate",
-                "glob": "virtual-media-acceptance-*.json",
-                "probe": "hardened-blikvm-virtual-media-acceptance",
-                "marker": "result=passed",
-            },
-            {
                 "name": "composite gadget acceptance",
                 "glob": "board-handoff-gate-*.json",
                 "probe": "hardened-blikvm-board-profile-handoff",

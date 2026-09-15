@@ -8,7 +8,7 @@ overall status stays `incomplete` while any gate is open. Nothing here is
 inferred from code, commits or intent, and this document is not a release
 acceptance.
 
-Latest generated report: `evidence/private/phase8-acceptance-20260915-e.json`
+Latest generated report: `evidence/private/phase8-acceptance-20260915-g.json`
 (`overall=incomplete`, `hostMissing=0`, `deviceUnrun=6`).
 
 ## Complete phases
