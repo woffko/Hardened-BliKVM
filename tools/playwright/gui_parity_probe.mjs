@@ -33,9 +33,16 @@ try {
   });
   const page = await context.newPage();
   let consoleErrors = 0;
+  const consoleErrorSamples = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
       consoleErrors += 1;
+      if (consoleErrorSamples.length < 5) {
+        const text = message.text().replace(/\s+/g, " ").trim().slice(0, 80);
+        if (text) {
+          consoleErrorSamples.push(text);
+        }
+      }
     }
   });
 
@@ -147,6 +154,55 @@ try {
     }
   }
 
+  let capabilitiesAvailable = false;
+  const capabilities = {};
+  try {
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      const capabilityResponse = await context.request.get(
+        new URL("/api/capabilities", url).href,
+      );
+      if (capabilityResponse.ok()) {
+        capabilitiesAvailable = true;
+        const body = await capabilityResponse.json();
+        const data = body?.data ?? body;
+        const walk = (node, prefix) => {
+          if (
+            !node ||
+            typeof node !== "object" ||
+            Object.keys(capabilities).length >= 60
+          ) {
+            return;
+          }
+          for (const [key, value] of Object.entries(node)) {
+            const keyPath = prefix ? `${prefix}.${key}` : key;
+            if (keyPath.length > 80) continue;
+            if (typeof value === "string") {
+              if (value.length <= 24) capabilities[keyPath] = value;
+            } else if (
+              typeof value === "boolean" ||
+              typeof value === "number"
+            ) {
+              capabilities[keyPath] = String(value);
+            } else if (value && typeof value === "object") {
+              walk(value, keyPath);
+            }
+          }
+        };
+        walk(data, "");
+      }
+    }
+  } catch {
+    capabilitiesAvailable = false;
+  }
+
+  const markers = await page.evaluate(() => ({
+    mobileKeyboardInput: document.querySelectorAll(
+      'textarea[aria-label="Mobile local keyboard input"]',
+    ).length,
+    onScreenKeyboardKeys: document.querySelectorAll(".hg-button").length,
+    videoElements: document.querySelectorAll("img, canvas").length,
+  }));
+
   const receipt = {
     schemaVersion: 1,
     probe: "hardened-blikvm-gui-parity",
@@ -154,7 +210,11 @@ try {
     title: dom.title,
     menuLabels: mergedLabels.slice(0, 100),
     tagCounts: dom.tagCounts,
+    capabilitiesAvailable,
+    capabilities,
+    markers,
     consoleErrors,
+    consoleErrorSamples,
     cookiesRead: false,
     storageRead: false,
     mutationsPerformed: false,

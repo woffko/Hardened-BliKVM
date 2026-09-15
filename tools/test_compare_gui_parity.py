@@ -8,7 +8,13 @@ from pathlib import Path
 import tools.compare_gui_parity as comparator
 
 
-def receipt(labels: list[str], tags: dict[str, int], errors: int = 0) -> dict:
+def receipt(
+    labels: list[str],
+    tags: dict[str, int],
+    errors: int = 0,
+    capabilities: dict[str, str] | None = None,
+    markers: dict[str, int] | None = None,
+) -> dict:
     return {
         "schemaVersion": 1,
         "probe": comparator.PROBE,
@@ -17,6 +23,8 @@ def receipt(labels: list[str], tags: dict[str, int], errors: int = 0) -> dict:
         "menuLabels": labels,
         "tagCounts": tags,
         "consoleErrors": errors,
+        "capabilities": capabilities or {},
+        "markers": markers or {},
     }
 
 
@@ -44,6 +52,76 @@ class CompareGuiParityTests(unittest.TestCase):
         self.assertEqual(result["labelsOnlyInReference"], [])
         self.assertEqual(result["tagCountDeltas"], {"div": 2, "main": -1})
         self.assertEqual(result["consoleErrorDelta"], 2)
+
+    def test_capability_differences_explain_hidden_labels(self) -> None:
+        ours = receipt(
+            ["Images"],
+            {"div": 1},
+            capabilities={"hid.status.availability": "unavailable"},
+            markers={"mobileKeyboardInput": 0},
+        )
+        reference = receipt(
+            ["Images", "Mobile local keyboard input", "Terminal"],
+            {"div": 1},
+            capabilities={"hid.status.availability": "read_write"},
+            markers={"mobileKeyboardInput": 1},
+        )
+        result = comparator.compare(ours, reference)
+        self.assertEqual(
+            result["capabilityDiffs"],
+            {"hid.status.availability": {"ours": "unavailable", "reference": "read_write"}},
+        )
+        self.assertEqual(
+            result["explainedLabelsOnlyInReference"],
+            {"Mobile local keyboard input": "hid.status.availability"},
+        )
+        self.assertEqual(result["unexplainedLabelsOnlyInReference"], ["Terminal"])
+        self.assertEqual(
+            result["markerDiffs"],
+            {"mobileKeyboardInput": {"ours": 0, "reference": 1}},
+        )
+
+    def test_unexplained_labels_are_reported_when_no_capability_differs(self) -> None:
+        ours = receipt(["Images"], {"div": 1})
+        reference = receipt(["Images", "Power", "Diagnostics"], {"div": 1})
+        result = comparator.compare(ours, reference)
+        self.assertEqual(result["capabilityDiffs"], {})
+        self.assertEqual(
+            result["unexplainedLabelsOnlyInReference"], ["Diagnostics", "Power"]
+        )
+
+    def test_branding_labels_are_expected_not_gaps(self) -> None:
+        ours = receipt(["Hardened BliKVM", "Mobile local keyboard input"], {"div": 1})
+        reference = receipt(["Hardened NanoKVM", "Mobile local keyboard input"], {"div": 1})
+        result = comparator.compare(ours, reference)
+        self.assertEqual(result["expectedLabelsOnlyInOurs"], ["Hardened BliKVM"])
+        self.assertEqual(result["expectedLabelsOnlyInReference"], ["Hardened NanoKVM"])
+        self.assertEqual(result["unexplainedLabelsOnlyInOurs"], [])
+        self.assertEqual(result["unexplainedLabelsOnlyInReference"], [])
+
+    def test_markers_are_compared_only_when_both_receipts_carry_them(self) -> None:
+        ours = receipt(["Images"], {"div": 1}, markers={"mobileKeyboardInput": 1})
+        reference = receipt(["Images"], {"div": 1})
+        result = comparator.compare(ours, reference)
+        self.assertIs(result["markersCompared"], False)
+        self.assertEqual(result["markerDiffs"], {})
+
+        reference = receipt(["Images"], {"div": 1}, markers={"mobileKeyboardInput": 0})
+        result = comparator.compare(ours, reference)
+        self.assertIs(result["markersCompared"], True)
+        self.assertEqual(
+            result["markerDiffs"],
+            {"mobileKeyboardInput": {"ours": 1, "reference": 0}},
+        )
+
+    def test_capabilities_are_compared_only_when_both_receipts_carry_them(self) -> None:
+        ours = receipt(
+            ["Images"], {"div": 1}, capabilities={"hid.status.availability": "read_write"}
+        )
+        reference = receipt(["Images"], {"div": 1})
+        result = comparator.compare(ours, reference)
+        self.assertIs(result["capabilitiesCompared"], False)
+        self.assertEqual(result["capabilityDiffs"], {})
 
     def test_invalid_receipts_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

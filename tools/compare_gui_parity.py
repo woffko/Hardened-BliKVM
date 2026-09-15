@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Compare two GUI parity receipts produced by gui_parity_probe.mjs.
 
-Reads our build receipt and the reference receipt, and reports the menu-label
-and tag-count differences into a sanitized private receipt. It reads no cookies,
-storage or credentials and performs no mutation.
+Reads our build receipt and the reference receipt, and reports the menu-label,
+tag-count and capability differences into a sanitized private receipt. Label
+differences that a differing capability explains (for example a HID label that
+matches a capability our build hides by design) are separated from unexplained
+differences, which are the real parity gaps. It reads no cookies, storage or
+credentials and performs no mutation.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +26,24 @@ from tools import stage_device_prototype as prototype
 
 PROBE = "hardened-blikvm-gui-parity"
 MAX_LABELS = 200
+MAX_CAPABILITIES = 200
+MAX_CAPABILITY_VALUE = 32
+
+# Label differences that are intentional product branding, not parity gaps.
+EXPECTED_LABEL_DIFFERENCES = (
+    re.compile(r"^Hardened (Nano|Bli)KVM$"),
+)
+
+# Label topics mapped to the capability path fragment that owns them.
+EXPLAINERS = (
+    (re.compile(r"keyboard|key ?map|hotkey|shortcut|combination|on-screen", re.I), "hid"),
+    (re.compile(r"mouse|pointer|cursor|trackpad", re.I), "hid"),
+    (re.compile(r"image|media|mount|iso|mass storage|cd.?rom|storage|upload|download", re.I), "virtualmedia"),
+    (re.compile(r"power|reset|atx|reboot|shutdown", re.I), "power"),
+    (re.compile(r"video|stream|h\.?264|mjpeg|direct|resolution|quality|fps|capture", re.I), "stream"),
+    (re.compile(r"terminal|shell|console|command", re.I), "terminal"),
+    (re.compile(r"picoclaw|agent|chat", re.I), "picoclaw"),
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +69,46 @@ def load_receipt(path: Path) -> dict:
     return receipt
 
 
+def _capabilities(receipt: dict) -> dict[str, str]:
+    values = receipt.get("capabilities") or {}
+    if not isinstance(values, dict) or len(values) > MAX_CAPABILITIES:
+        raise ValueError("invalid capabilities")
+    result: dict[str, str] = {}
+    for key, value in values.items():
+        if not isinstance(key, str) or len(key) > 80:
+            raise ValueError("invalid capability path")
+        if not isinstance(value, str) or len(value) > MAX_CAPABILITY_VALUE:
+            raise ValueError("invalid capability value")
+        result[key] = value
+    return result
+
+
+def _markers(receipt: dict) -> dict[str, int]:
+    values = receipt.get("markers") or {}
+    if not isinstance(values, dict) or len(values) > 16:
+        raise ValueError("invalid markers")
+    result: dict[str, int] = {}
+    for key, value in values.items():
+        if not isinstance(key, str) or not isinstance(value, int) or value < 0:
+            raise ValueError("invalid marker entry")
+        result[key] = value
+    return result
+
+
+def _is_expected(label: str) -> bool:
+    return any(pattern.fullmatch(label) for pattern in EXPECTED_LABEL_DIFFERENCES)
+
+
+def _explain(label: str, changed_paths: set[str]) -> str | None:
+    for pattern, topic in EXPLAINERS:
+        if pattern.search(label):
+            for path in sorted(changed_paths):
+                if topic in path.lower():
+                    return path
+            return None
+    return None
+
+
 def _tag_counts(receipt: dict) -> dict[str, int]:
     counts = receipt.get("tagCounts")
     if not isinstance(counts, dict):
@@ -70,6 +132,45 @@ def compare(ours: dict, reference: dict) -> dict:
         for tag in tags
         if our_tags.get(tag, 0) != reference_tags.get(tag, 0)
     }
+    our_capabilities = _capabilities(ours)
+    reference_capabilities = _capabilities(reference)
+    capabilities_compared = bool(our_capabilities) and bool(reference_capabilities)
+    capability_diffs = {}
+    if capabilities_compared:
+        for path in sorted(set(our_capabilities) | set(reference_capabilities)):
+            ours_value = our_capabilities.get(path)
+            reference_value = reference_capabilities.get(path)
+            if ours_value != reference_value:
+                capability_diffs[path] = {
+                    "ours": ours_value,
+                    "reference": reference_value,
+                }
+    changed_paths = set(capability_diffs)
+
+    labels_only_in_ours = sorted(our_labels - reference_labels)
+    labels_only_in_reference = sorted(reference_labels - our_labels)
+    explained_ours: dict[str, str] = {}
+    explained_reference: dict[str, str] = {}
+    for label in labels_only_in_ours:
+        path = _explain(label, changed_paths)
+        if path:
+            explained_ours[label] = path
+    for label in labels_only_in_reference:
+        path = _explain(label, changed_paths)
+        if path:
+            explained_reference[label] = path
+
+    our_markers = _markers(ours)
+    reference_markers = _markers(reference)
+    markers_compared = bool(our_markers) and bool(reference_markers)
+    marker_diffs = {}
+    if markers_compared:
+        marker_diffs = {
+            name: {"ours": our_markers.get(name), "reference": reference_markers.get(name)}
+            for name in sorted(set(our_markers) | set(reference_markers))
+            if our_markers.get(name) != reference_markers.get(name)
+        }
+
     return {
         "schemaVersion": 1,
         "probe": "hardened-blikvm-gui-parity-compare",
@@ -77,10 +178,36 @@ def compare(ours: dict, reference: dict) -> dict:
         "referenceRoute": reference.get("route", ""),
         "oursTitle": ours.get("title", ""),
         "referenceTitle": reference.get("title", ""),
-        "labelsOnlyInOurs": sorted(our_labels - reference_labels),
-        "labelsOnlyInReference": sorted(reference_labels - our_labels),
+        "labelsOnlyInOurs": labels_only_in_ours,
+        "labelsOnlyInReference": labels_only_in_reference,
         "sharedLabelCount": len(our_labels & reference_labels),
         "tagCountDeltas": tag_deltas,
+        "capabilitiesCompared": capabilities_compared,
+        "capabilityDiffs": capability_diffs,
+        "explainedLabelsOnlyInOurs": explained_ours,
+        "explainedLabelsOnlyInReference": explained_reference,
+        "expectedLabelsOnlyInOurs": [
+            label
+            for label in labels_only_in_ours
+            if label not in explained_ours and _is_expected(label)
+        ],
+        "expectedLabelsOnlyInReference": [
+            label
+            for label in labels_only_in_reference
+            if label not in explained_reference and _is_expected(label)
+        ],
+        "unexplainedLabelsOnlyInOurs": [
+            label
+            for label in labels_only_in_ours
+            if label not in explained_ours and not _is_expected(label)
+        ],
+        "unexplainedLabelsOnlyInReference": [
+            label
+            for label in labels_only_in_reference
+            if label not in explained_reference and not _is_expected(label)
+        ],
+        "markersCompared": markers_compared,
+        "markerDiffs": marker_diffs,
         "consoleErrorDelta": int(ours.get("consoleErrors", 0))
         - int(reference.get("consoleErrors", 0)),
         "mutationsPerformed": False,
@@ -97,7 +224,10 @@ def execute(args: argparse.Namespace) -> int:
     write_json_0600_atomic(output, receipt)
     print(
         f"parity_compare={output} onlyOurs={len(receipt['labelsOnlyInOurs'])} "
-        f"onlyReference={len(receipt['labelsOnlyInReference'])} receiptSha256={digest}"
+        f"onlyReference={len(receipt['labelsOnlyInReference'])} "
+        f"explainedReference={len(receipt['explainedLabelsOnlyInReference'])} "
+        f"unexplainedReference={len(receipt['unexplainedLabelsOnlyInReference'])} "
+        f"capabilityDiffs={len(receipt['capabilityDiffs'])} receiptSha256={digest}"
     )
     return 0
 

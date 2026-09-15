@@ -23,14 +23,19 @@ implemented, verified and committed in English with a green `scripts/check.sh`.
 
 ## Status and stop rule
 
-The H616 test stand is currently unavailable (see "Device-gated remainder"), so
-the device-bound phases cannot proceed. Mode B applies:
+The H616 board is available (corrected 2026-09-15): `https://10.0.77.118/`
+(SSH root) with KVMD, the vendor stack and the `kvmd` gadget bound. An earlier
+"stand unavailable / plain Ubuntu" note came from a check that ran in a local
+shell instead of over SSH and is retracted.
 
-- the goal stays active and host-only slices continue;
-- every device-bound phase is explicitly marked blocked until the board
-  returns;
-- when only device-bound work remains, stop and report "waiting for the H616
-  stand" instead of inventing work; do not close the goal prematurely.
+- Host-only slices continue without confirmation and keep the plan moving.
+- Device mutations (stopping KVMD, binding our gadget, ATX pulses, gadget
+  takeover) run only with explicit operator confirmation in the session and
+  produce a private receipt.
+- The restricted-control test profile is currently the active stand: its own
+  HTTPS proxy answers on `8443` with HID and virtual media enabled, while the
+  main proxy on `443` answers `502` because the main server unit is inactive.
+- The goal is not closed while a required device gate is unrun or unverified.
 
 ## Locked decisions
 
@@ -111,7 +116,9 @@ The H616 board is present and ready (`https://10.0.77.118/`, SSH root;
 preflight `handoffReady=true`: KVMD and the vendor daemon present, the `kvmd`
 gadget bound, configfs mounted). An earlier note wrongly reported the endpoint
 as a plain Ubuntu host; that check ran in a local shell instead of over SSH and
-is retracted.
+is retracted. The active stand is the restricted-control profile on
+`https://10.0.77.118:8443/`; the main proxy on `443` returns `502` while
+`hardened-blikvm-server.service` is inactive.
 
 The following now run on the board, mutation steps only with explicit operator
 confirmation, each producing a private receipt:
@@ -124,6 +131,19 @@ confirmation, each producing a private receipt:
   then `--teardown` restores KVMD;
 - media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
 - Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
+
+Phase 8 parity harness (host-only, no mutation): `gui_parity_probe.mjs` now
+captures menu labels, tag counts, the capability manifest, surface markers
+(mobile keyboard input, on-screen keys, video elements) and bounded console
+error samples; `compare_gui_parity.py` separates label differences that a
+differing capability explains or that are intentional branding from
+`unexplainedLabelsOnlyInReference/InOurs`, the real gaps, and only compares
+capabilities and markers when both receipts carry them. Latest read-only
+capture (ours-f, compare-b) has no unexplained differences in labels. The
+observed console errors on the rc stand name one real gap to track: the GUI
+opens `wss://…/api/ws`, which our server does not implement yet (parity matrix
+target 3/7); the two `503`s come from the inactive platform broker in that
+profile and the `401`/`404` are pre-login and asset requests.
 
 ## Provenance
 
