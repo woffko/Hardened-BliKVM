@@ -16,6 +16,8 @@ use crate::error::{ApiResponse, AppResult};
 
 pub(crate) const RESOLV_CONF_FILE: &str = "/etc/resolv.conf";
 pub(crate) const IPV6_CONF_ROOT: &str = "/proc/sys/net/ipv6/conf";
+pub(crate) const NET_CLASS_ROOT: &str = "/sys/class/net";
+pub(crate) const ROUTE_FILE: &str = "/proc/net/route";
 const MAX_IPV6_INTERFACES: usize = 16;
 const MAX_INTERFACE_BYTES: usize = 32;
 const MAX_SERVERS: usize = 8;
@@ -175,6 +177,90 @@ pub(crate) fn read_ipv6_states(root: &Path) -> Ipv6State {
     }
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InterfaceState {
+    pub name: String,
+    pub state: String,
+    pub mtu: u32,
+    pub wireless: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInterfacesResponse {
+    pub interfaces: Vec<InterfaceState>,
+    pub default_route: String,
+}
+
+fn read_trimmed(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= 64)
+}
+
+/// The interface owning the default IPv4 route, from the fixed route file.
+pub(crate) fn parse_default_route(content: &str) -> String {
+    for line in content.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 4 {
+            continue;
+        }
+        let destination = fields[1];
+        let mask = fields[7.min(fields.len() - 1)];
+        if destination == "00000000" && mask == "00000000" && interface_name_valid(fields[0]) {
+            return fields[0].to_string();
+        }
+    }
+    String::new()
+}
+
+/// Read the interface list from the fixed sysfs tree.
+pub(crate) fn read_interfaces(root: &Path, route_file: &Path) -> NetworkInterfacesResponse {
+    let mut interfaces = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        let mut names: Vec<String> = entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| interface_name_valid(name))
+            .collect();
+        names.sort();
+        for name in names {
+            let path = root.join(&name);
+            let state = read_trimmed(&path.join("operstate")).unwrap_or_else(|| "unknown".into());
+            let mtu = read_trimmed(&path.join("mtu"))
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0);
+            let wireless = path.join("wireless").exists();
+            interfaces.push(InterfaceState {
+                name,
+                state,
+                mtu,
+                wireless,
+            });
+            if interfaces.len() >= MAX_IPV6_INTERFACES {
+                break;
+            }
+        }
+    }
+    let default_route = std::fs::read_to_string(route_file)
+        .map(|content| parse_default_route(&content))
+        .unwrap_or_default();
+    NetworkInterfacesResponse {
+        interfaces,
+        default_route,
+    }
+}
+
+pub(crate) async fn network_interfaces() -> AppResult<Json<ApiResponse<NetworkInterfacesResponse>>>
+{
+    Ok(Json(ApiResponse::ok(read_interfaces(
+        Path::new(NET_CLASS_ROOT),
+        Path::new(ROUTE_FILE),
+    ))))
+}
+
 pub(crate) async fn network_ipv6() -> AppResult<Json<ApiResponse<NetworkIpv6Response>>> {
     Ok(Json(ApiResponse::ok(NetworkIpv6Response {
         ipv6: read_ipv6_states(Path::new(IPV6_CONF_ROOT)),
@@ -259,6 +345,55 @@ domain ignored.example
         assert!(!state.interfaces.contains_key("odd name"));
         assert!(!state.interfaces.contains_key("broken"));
         assert!(state.source.contains("disable_ipv6"));
+    }
+
+    #[test]
+    fn interfaces_are_listed_with_their_state_and_default_route() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, state, mtu, wireless) in [
+            ("eth0", "up", "1500", false),
+            ("wlan0", "down", "1500", true),
+            ("bad name", "up", "1500", false),
+        ] {
+            let path = directory.path().join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("operstate"), state).unwrap();
+            std::fs::write(path.join("mtu"), mtu).unwrap();
+            if wireless {
+                std::fs::create_dir_all(path.join("wireless")).unwrap();
+            }
+        }
+        let routes = tempfile::tempdir().unwrap();
+        let route_file = routes.path().join("route");
+        std::fs::write(
+            &route_file,
+            "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n\
+             eth0\t00000000\t0100A8C0\t0003\t0\t0\t0\t00000000\n",
+        )
+        .unwrap();
+        let response = read_interfaces(directory.path(), &route_file);
+        let names: Vec<&str> = response
+            .interfaces
+            .iter()
+            .map(|interface| interface.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["eth0", "wlan0"]);
+        assert_eq!(response.interfaces[0].state, "up");
+        assert_eq!(response.interfaces[0].mtu, 1500);
+        assert!(!response.interfaces[0].wireless);
+        assert!(response.interfaces[1].wireless);
+        assert_eq!(response.default_route, "eth0");
+    }
+
+    #[test]
+    fn a_missing_interface_tree_yields_an_empty_view() {
+        let response = read_interfaces(
+            Path::new("/nonexistent/net"),
+            Path::new("/nonexistent/route"),
+        );
+        assert!(response.interfaces.is_empty());
+        assert_eq!(response.default_route, "");
+        assert_eq!(parse_default_route(""), "");
     }
 
     #[test]
