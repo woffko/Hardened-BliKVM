@@ -88,8 +88,10 @@ python3 -B -m unittest \
   tools.test_capture_persistent_write_gui_gate tools.test_run_persistent_write_commit_cycle
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
+node --test tools/test_gui_parity_probe.mjs
 node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
+node --check tools/playwright/gui_parity_probe.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
@@ -639,5 +641,6 @@ pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
+pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'
 
 git diff --check

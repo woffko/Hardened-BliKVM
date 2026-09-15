@@ -169,10 +169,13 @@ hardened BLi-KVM server as of 2026-09-14: 27 routes.
   vendor daemon presence, the ATX socket, the MSD mount mode and active
   services (receipt `evidence/private/device-kvm-topology-20260914-a.json`).
   Run it before and after every gadget/board ownership handoff.
-- `tools/playwright/gui_parity_probe.mjs` is a **planned Phase 8 deliverable
-  and does not exist yet**; it will capture screenshots and DOM structure of
-  every visible menu on our build and the reference `.133`, writing receipts
-  under `evidence/private` (never committed).
+- `tools/playwright/gui_parity_probe.mjs` captures the title, route, bounded
+  visible menu labels, tag counts and console-error count for one page and
+  writes a sanitized receipt under `evidence/private` (never committed). It is
+  self-tested against a local `file://` fixture
+  (`tools/test_gui_parity_probe.mjs`), so the harness itself is verified
+  host-side; running it against our deployed build and the reference `.133` is
+  device-gated.
 - Each slice keeps `scripts/check.sh` green and adds focused host tests.
 
 ## Invariants
