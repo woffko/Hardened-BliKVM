@@ -137,6 +137,12 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("useHidLease", paste)
         self.assertIn("textToKeyReports", paste)
         self.assertIn("if (restricted) {", paste)
+        mouse = (ROOT / "web/src/pages/desktop/menu/mouse/index.tsx").read_text()
+        # HID-only mode and the legacy HID reset call endpoints the hardened
+        # server does not expose, so they must be hidden on this surface.
+        self.assertIn("{!restricted && <HidMode />}", mouse)
+        self.assertIn("{!restricted && <ResetHid />}", mouse)
+        self.assertIn("supportsRestrictedControls(manifest)", mouse)
         menu = (ROOT / "web/src/pages/desktop/menu/keyboard/index.tsx").read_text()
         # Shortcuts and the leader key rely on legacy endpoints that the
         # hardened server does not expose, so they must be hidden.

@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { Divider } from 'antd';
-import { useSetAtom } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { MouseIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { supportsRestrictedControls } from '@/lib/capabilities.ts';
 import * as ls from '@/lib/localstorage';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import {
   mouseModeAtom,
   mouseStyleAtom,
@@ -27,6 +29,10 @@ import { Speed } from './speed.tsx';
 export const Mouse = () => {
   const { t } = useTranslation();
   const isTouchLayout = useIsTouchLayout();
+  const manifest = useAtomValue(capabilitiesAtom);
+  // HID-only mode and the legacy HID reset are not part of the hardened
+  // restricted surface; the legacy endpoints do not exist there.
+  const restricted = supportsRestrictedControls(manifest);
 
   const setMouseStyle = useSetAtom(mouseStyleAtom);
   const setMouseMode = useSetAtom(mouseModeAtom);
@@ -70,8 +76,8 @@ export const Mouse = () => {
       <Speed />
       <Divider style={{ margin: '10px 0' }} />
 
-      <HidMode />
-      <ResetHid />
+      {!restricted && <HidMode />}
+      {!restricted && <ResetHid />}
     </div>
   );
 
@@ -81,7 +87,7 @@ export const Mouse = () => {
       <Direction />
       <Speed />
       <Divider style={{ margin: '10px 0' }} />
-      <ResetHid />
+      {!restricted && <ResetHid />}
     </div>
   );
 
