@@ -72,6 +72,31 @@ try {
     }
   }
 
+  const tooltipLabels = [];
+  try {
+    const buttons = (
+      await page.$$('button, [role="button"], header svg')
+    ).slice(0, 30);
+    for (const button of buttons) {
+      await button.hover({ timeout: 1_000 }).catch(() => {});
+      await page.waitForTimeout(120);
+      const texts = await page.$$eval(
+        '.ant-tooltip-inner, [role="tooltip"], .tooltip',
+        (nodes) =>
+          nodes
+            .filter((node) => {
+              const style = window.getComputedStyle(node);
+              return style.visibility !== "hidden" && style.display !== "none";
+            })
+            .map((node) => (node.textContent || "").trim())
+            .filter((text) => text && text.length <= 80),
+      );
+      tooltipLabels.push(...texts);
+    }
+  } catch {
+    /* tooltip sweep is best effort */
+  }
+
   const dom = await page.evaluate(() => {
     const labels = [];
     const seen = new Set();
@@ -113,12 +138,21 @@ try {
     };
   });
 
+  const mergedLabels = [];
+  const seenLabels = new Set();
+  for (const label of [...dom.menuLabels, ...tooltipLabels]) {
+    if (!seenLabels.has(label)) {
+      seenLabels.add(label);
+      mergedLabels.push(label);
+    }
+  }
+
   const receipt = {
     schemaVersion: 1,
     probe: "hardened-blikvm-gui-parity",
     target: { scheme: url.protocol.replace(":", ""), route: dom.route },
     title: dom.title,
-    menuLabels: dom.menuLabels,
+    menuLabels: mergedLabels.slice(0, 100),
     tagCounts: dom.tagCounts,
     consoleErrors,
     cookiesRead: false,
