@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         restricted_controls_enabled: env::var("BLI_KVM_RESTRICTED_CONTROLS").as_deref() == Ok("1"),
         media_catalog: env::var_os("BLI_KVM_MEDIA_CATALOG").map(PathBuf::from),
         media_controls_enabled: env::var("BLI_KVM_MEDIA_CONTROLS").as_deref() == Ok("1"),
+        media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),
         ..ServerOptions::default()
     };
 

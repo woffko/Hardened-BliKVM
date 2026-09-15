@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeSet,
     fs,
+    io::Write,
     os::unix::fs::{FileTypeExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -79,14 +80,25 @@ pub struct MediaCatalog {
     entries: Vec<CatalogEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+/// One image to insert or replace in the catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogImage {
+    pub image_name: String,
+    pub size: u64,
+    pub sha256: String,
+    pub cdrom_allowed: bool,
+    pub removable_allowed: bool,
+    pub writable_allowed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CatalogDocument {
     schema_version: u16,
     entries: Vec<CatalogEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CatalogEntry {
     image_id: u64,
@@ -137,6 +149,74 @@ impl MediaCatalog {
             .collect()
     }
 
+    /// Insert or replace one entry by image name and persist the catalog
+    /// atomically. An existing entry keeps its image ID; a new one gets the
+    /// next free ID. The catalog directory and file must already be safe.
+    pub fn upsert_image(
+        path: &Path,
+        image: &CatalogImage,
+    ) -> Result<MediaSummary, MediaCatalogError> {
+        if image.size == 0
+            || !valid_image_name(&image.image_name)
+            || !valid_sha256(&image.sha256)
+            || (!image.cdrom_allowed && !image.removable_allowed)
+            || (image.cdrom_allowed && image.writable_allowed)
+        {
+            return Err(MediaCatalogError::InvalidEntry);
+        }
+        let catalog = Self::open(path)?;
+        let mut entries = catalog.entries;
+        let summary = if let Some(existing) = entries
+            .iter_mut()
+            .find(|entry| entry.image_name == image.image_name)
+        {
+            existing.size = image.size;
+            existing.sha256.clone_from(&image.sha256);
+            existing.cdrom_allowed = image.cdrom_allowed;
+            existing.removable_allowed = image.removable_allowed;
+            existing.writable_allowed = image.writable_allowed;
+            MediaSummary {
+                image_id: existing.image_id,
+                image_name: existing.image_name.clone(),
+                size: existing.size,
+                cdrom_allowed: existing.cdrom_allowed,
+                removable_allowed: existing.removable_allowed,
+                writable_allowed: existing.writable_allowed,
+            }
+        } else {
+            let image_id = entries
+                .iter()
+                .map(|entry| entry.image_id)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            entries.push(CatalogEntry {
+                image_id,
+                image_name: image.image_name.clone(),
+                size: image.size,
+                sha256: image.sha256.clone(),
+                cdrom_allowed: image.cdrom_allowed,
+                removable_allowed: image.removable_allowed,
+                writable_allowed: image.writable_allowed,
+            });
+            MediaSummary {
+                image_id,
+                image_name: image.image_name.clone(),
+                size: image.size,
+                cdrom_allowed: image.cdrom_allowed,
+                removable_allowed: image.removable_allowed,
+                writable_allowed: image.writable_allowed,
+            }
+        };
+        let document = CatalogDocument {
+            schema_version: CATALOG_SCHEMA_VERSION,
+            entries,
+        };
+        validate_document(&document)?;
+        write_document(path, &document)?;
+        Ok(summary)
+    }
+
     pub fn resolve(
         &self,
         image_id: u64,
@@ -165,6 +245,39 @@ impl MediaCatalog {
             writable,
         })
     }
+}
+
+fn write_document(path: &Path, document: &CatalogDocument) -> Result<(), MediaCatalogError> {
+    let directory = path.parent().ok_or(MediaCatalogError::InvalidPath)?;
+    let file_name = path
+        .file_name()
+        .ok_or(MediaCatalogError::InvalidPath)?
+        .to_string_lossy()
+        .into_owned();
+    validate_directory(directory)?;
+    let bytes = serde_json::to_vec_pretty(document).map_err(|_| MediaCatalogError::InvalidJson)?;
+    if bytes.len() as u64 > MAX_CATALOG_BYTES {
+        return Err(MediaCatalogError::TooLarge);
+    }
+    let temporary = directory.join(format!(".{file_name}.tmp"));
+    let result = (|| -> Result<(), MediaCatalogError> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temporary)
+            .map_err(|_| MediaCatalogError::Io)?;
+        file.write_all(&bytes).map_err(|_| MediaCatalogError::Io)?;
+        file.sync_all().map_err(|_| MediaCatalogError::Io)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+        return result;
+    }
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644))
+        .map_err(|_| MediaCatalogError::Io)?;
+    fs::rename(&temporary, path).map_err(|_| MediaCatalogError::Io)
 }
 
 fn validate_document(document: &CatalogDocument) -> Result<(), MediaCatalogError> {
@@ -321,5 +434,83 @@ mod tests {
             MediaCatalog::open(dangling),
             Err(MediaCatalogError::UnsafeFile)
         ));
+    }
+
+    fn image(name: &str, size: u64, sha: char, cdrom: bool) -> CatalogImage {
+        CatalogImage {
+            image_name: name.to_string(),
+            size,
+            sha256: sha.to_string().repeat(64),
+            cdrom_allowed: cdrom,
+            removable_allowed: true,
+            writable_allowed: false,
+        }
+    }
+
+    #[test]
+    fn upsert_appends_with_the_next_id_and_persists_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("catalog.json");
+        write_catalog(
+            &path,
+            r#"{"imageId":4,"imageName":"old.img","size":10,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cdromAllowed":false,"removableAllowed":true,"writableAllowed":false}"#,
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let summary =
+            MediaCatalog::upsert_image(&path, &image("new.img", 2048, 'b', false)).unwrap();
+        assert_eq!(summary.image_id, 5);
+        assert_eq!(summary.image_name, "new.img");
+        let reloaded = MediaCatalog::open(&path).unwrap().summaries();
+        assert_eq!(reloaded.len(), 2);
+        assert_eq!(reloaded[1].image_id, 5);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert!(!path.with_file_name(".catalog.json.tmp").exists());
+    }
+
+    #[test]
+    fn upsert_replaces_by_name_and_keeps_the_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("catalog.json");
+        write_catalog(
+            &path,
+            r#"{"imageId":7,"imageName":"same.iso","size":10,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}"#,
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let summary = MediaCatalog::upsert_image(&path, &image("same.iso", 99, 'c', true)).unwrap();
+        assert_eq!(summary.image_id, 7);
+        assert_eq!(summary.size, 99);
+        assert_eq!(MediaCatalog::open(&path).unwrap().summaries().len(), 1);
+    }
+
+    #[test]
+    fn upsert_rejects_invalid_images_and_unsafe_targets() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("catalog.json");
+        write_catalog(&path, "");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            MediaCatalog::upsert_image(&path, &image("bad..img", 1, 'd', false)),
+            Err(MediaCatalogError::InvalidEntry)
+        );
+        assert_eq!(
+            MediaCatalog::upsert_image(&path, &image("ok.img", 0, 'd', false)),
+            Err(MediaCatalogError::InvalidEntry)
+        );
+        let mut writable_cdrom = image("ok.iso", 1, 'd', true);
+        writable_cdrom.writable_allowed = true;
+        assert_eq!(
+            MediaCatalog::upsert_image(&path, &writable_cdrom),
+            Err(MediaCatalogError::InvalidEntry)
+        );
+        let mut nothing_allowed = image("ok.img", 1, 'd', false);
+        nothing_allowed.removable_allowed = false;
+        assert_eq!(
+            MediaCatalog::upsert_image(&path, &nothing_allowed),
+            Err(MediaCatalogError::InvalidEntry)
+        );
     }
 }

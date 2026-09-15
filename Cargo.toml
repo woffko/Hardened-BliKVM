@@ -92,7 +92,7 @@ strip = "symbols"
 
 [workspace.dependencies]
 argon2 = "0.5"
-axum = { version = "0.8", features = ["json", "http1", "tokio", "ws"] }
+axum = { version = "0.8", features = ["json", "http1", "tokio", "ws", "multipart"] }
 base64 = "0.22"
 bytes = "1"
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["zeroize"] }

@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{HeaderName, HeaderValue, StatusCode},
     middleware::{Next, from_fn, from_fn_with_state},
     response::Response,
@@ -97,6 +97,9 @@ pub struct ServerOptions {
     /// `restricted-control-surface` build. Requires the restricted surface and
     /// a configured control socket.
     pub media_controls_enabled: bool,
+    /// Image directory an operator upload writes into. Must be the same
+    /// directory the board owner serves, and is required for uploads.
+    pub media_directory: Option<PathBuf>,
 }
 
 impl Default for ServerOptions {
@@ -119,6 +122,7 @@ impl Default for ServerOptions {
             restricted_controls_enabled: false,
             media_catalog: None,
             media_controls_enabled: false,
+            media_directory: None,
         }
     }
 }
@@ -306,6 +310,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
+    let upload = Router::new()
+        .route("/download/image", post(download::upload_image))
+        .layer(DefaultBodyLimit::max(
+            usize::try_from(download::MAX_MEDIA_UPLOAD_BYTES + 1024 * 1024)
+                .expect("upload cap fits usize"),
+        ));
+    let protected_routes = protected_routes.merge(upload);
     let api = public.merge(protected_routes).fallback(api_not_found);
     let router = Router::new().nest("/api", api).with_state(state.clone());
     let router = if let Some(root) = options.web_root {
@@ -1418,6 +1429,83 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authenticated_image_upload_writes_the_file_and_the_catalog() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir().unwrap();
+        let images = directory.path().join("images");
+        fs::create_dir_all(&images).unwrap();
+        fs::set_permissions(&images, fs::Permissions::from_mode(0o755)).unwrap();
+        let catalog = directory.path().join("catalog.json");
+        fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        fs::set_permissions(&catalog, fs::Permissions::from_mode(0o644)).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            restricted_controls_enabled: true,
+            media_controls_enabled: true,
+            media_catalog: Some(catalog.clone()),
+            media_directory: Some(images.clone()),
+            control_socket: Some(directory.path().join("control.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let boundary = "----blikvm-upload";
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"kubuntu.img\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(b"disk-image-bytes");
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/download/image")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .header(header::CONTENT_LENGTH, body.len())
+                    .header(header::COOKIE, cookie)
+                    .header("x-csrf-token", csrf)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = json_body(response).await;
+        assert_eq!(json["data"]["imageName"], "kubuntu.img");
+        assert_eq!(json["data"]["size"], 16);
+        assert_eq!(
+            fs::read(images.join("kubuntu.img")).unwrap(),
+            b"disk-image-bytes"
+        );
+        assert_eq!(
+            fs::metadata(images.join("kubuntu.img"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+        let summaries = bli_kvm_media_catalog::MediaCatalog::open(&catalog)
+            .unwrap()
+            .summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].image_name, "kubuntu.img");
+        assert!(summaries[0].removable_allowed);
+        assert!(!summaries[0].cdrom_allowed);
     }
 
     #[tokio::test]
