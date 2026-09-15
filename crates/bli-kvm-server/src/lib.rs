@@ -37,6 +37,7 @@ mod error;
 mod hid;
 mod leader_key;
 mod media;
+mod network;
 mod system_log;
 mod system_time;
 mod update;
@@ -280,6 +281,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/inventory", get(runtime_inventory))
         .route("/hostname", get(hostname))
         .route("/system/time", get(system_time::get_config))
+        .route("/network/dns", get(network::network_dns))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
         .route("/vm/autostart/{name}", get(autostart::content))
