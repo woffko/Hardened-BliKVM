@@ -83,7 +83,10 @@ Phases 2-3 is complete. Everything below is committed with a green
   topology and HID descriptor captures, and the **reversible board-owner
   handoff gate passed** (KVMD stopped, the Rust owner served its control socket,
   teardown restored KVMD and removed only our state) - see
-  `docs/baselines/board-handoff-gate.md`. Media/HID and ATX pulse gates remain.
+  `docs/baselines/board-handoff-gate.md`. The captured HID report
+  descriptors are pinned in `crates/bli-kvm-usb-gadget` (verified against the
+  recorded SHA-256), and the board gadget is now a composite device: MSD plus
+  the three pinned HID functions. Media/HID and ATX pulse gates remain.
 
 ## Device-bound remainder (board available)
 
