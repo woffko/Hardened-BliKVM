@@ -95,7 +95,7 @@ class KvmdRemovalTests(unittest.TestCase):
             self.assertEqual(len(missing), 3)
 
             write_json(
-                evidence / "board-handoff-acceptance-20260915-a.json",
+                evidence / "board-handoff-gate-20260915-f.json",
                 {
                     "gate": "hardened-blikvm-board-profile-handoff",
                     "acceptanceFacts": {"gadget_present": "yes", "udc_bound": "yes"},
@@ -108,9 +108,10 @@ class KvmdRemovalTests(unittest.TestCase):
                 {"probe": "restricted-control-media-attach-eject"},
             )
             write_json(
-                evidence / "board-handoff-gate-20260915-a.json",
+                evidence / "board-handoff-gate-20260915-f.json",
                 {
                     "gate": "hardened-blikvm-board-profile-handoff",
+                    "acceptanceFacts": {"gadget_present": "yes", "udc_bound": "yes"},
                     "atxBenchFacts": {"power_short": "ok", "reset": "ok"},
                 },
             )
@@ -120,18 +121,16 @@ class KvmdRemovalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory)
             write_json(
-                evidence / "board-handoff-acceptance-20260915-a.json",
+                evidence / "board-handoff-gate-20260915-f.json",
                 {
+                    "gate": "hardened-blikvm-board-profile-handoff",
                     "acceptanceFacts": {"gadget_present": "yes", "udc_bound": "no"},
+                    "atxBenchFacts": {"power_short": "ok", "reset": "ok"},
                 },
             )
             write_json(
                 evidence / "restricted-control-media-gate-20260915-a.json",
                 {"probe": "restricted-control-media-attach-eject"},
-            )
-            write_json(
-                evidence / "board-handoff-gate-20260915-a.json",
-                {"atxBenchFacts": {"power_short": "ok", "reset": "ok"}},
             )
             self.assertEqual(
                 removal.evidence_gate(evidence),

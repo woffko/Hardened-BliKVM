@@ -136,9 +136,10 @@ PHASES: tuple[dict[str, Any], ...] = (
             },
             {
                 "name": "composite gadget acceptance",
-                "glob": "board-handoff-acceptance-*.json",
+                "glob": "board-handoff-gate-*.json",
                 "probe": "hardened-blikvm-board-profile-handoff",
                 "marker": "acceptanceFacts.gadget_present=yes",
+                "require": ("acceptanceFacts.udc_bound",),
             },
         ),
     },

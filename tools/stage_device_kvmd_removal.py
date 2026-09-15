@@ -211,9 +211,9 @@ def evidence_gate(evidence: Path) -> list[str]:
                 return document
         return None
 
-    acceptance = latest("board-handoff-acceptance-*.json")
-    if not acceptance:
-        missing.append("board-handoff-acceptance-*.json (composite gadget acceptance)")
+    acceptance = latest("board-handoff-gate-*.json")
+    if not acceptance or acceptance.get("gate") != "hardened-blikvm-board-profile-handoff":
+        missing.append("board-handoff-gate-*.json (composite gadget acceptance)")
     else:
         facts = acceptance.get("acceptanceFacts") or {}
         if facts.get("gadget_present") != "yes" or facts.get("udc_bound") != "yes":
