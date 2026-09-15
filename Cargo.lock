@@ -912,6 +912,7 @@ dependencies = [
 name = "bli-kvm-usb-gadget"
 version = "0.1.0"
 dependencies = [
+ "sha2",
  "tempfile",
  "thiserror",
 ]

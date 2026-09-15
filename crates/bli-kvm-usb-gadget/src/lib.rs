@@ -12,6 +12,12 @@
 //! HID report descriptors are caller-provided: they are protocol facts that
 //! must be captured read-only from the device, never guessed here.
 
+mod hid_descriptors;
+
+pub use hid_descriptors::{
+    HID_ABSOLUTE_MOUSE_NAME, HID_KEYBOARD_NAME, HID_RELATIVE_MOUSE_NAME, pinned_hid_functions,
+};
+
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
