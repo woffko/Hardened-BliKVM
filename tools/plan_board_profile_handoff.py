@@ -52,7 +52,8 @@ STEPS = [
     "run tools/capture_device_hid_descriptors.py and pin the report descriptors",
     "copy the verified bundle to /var/lib/hardened-blikvm-gadget/gate/bundle.tar.gz and write the operator ATX environment",
     "start the board owner with the environment below and wait for the control socket",
-    "verify media select/attach/eject, a keyboard report and an ATX pulse",
+    "verify media select/attach/eject and a keyboard report (the gate can wait for the composite gadget with --accept-media-hid)",
+    "run the bundled native ATX bench with --accept-atx-bench --confirm-physical-disconnect while Power and Reset are unplugged",
     "tear down the runtime directory and restore the KVMD route on any failure",
 ]
 

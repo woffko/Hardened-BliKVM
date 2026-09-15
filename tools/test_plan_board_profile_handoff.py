@@ -61,6 +61,13 @@ class PlanBoardProfileHandoffTests(unittest.TestCase):
         self.assertEqual(parsed.power_long_ms, 5_000)
         self.assertEqual(parsed.reset_ms, 500)
 
+    def test_plan_steps_include_the_media_and_atx_bench_gates(self) -> None:
+        plan = planner.build_plan(options(), "a" * 64)
+        steps = " ".join(plan["steps"])
+        self.assertIn("--accept-media-hid", steps)
+        self.assertIn("--accept-atx-bench", steps)
+        self.assertIn("--confirm-physical-disconnect", steps)
+
     def test_timings_are_bounded(self) -> None:
         for field, value in (
             ("power_short_ms", 0),
