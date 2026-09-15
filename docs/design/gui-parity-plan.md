@@ -189,6 +189,10 @@ hardened BLi-KVM server as of 2026-09-14: 31 routes.
   (`tools/test_gui_parity_probe.mjs`), so the harness itself is verified
   host-side; running it against our deployed build and the reference `.133` is
   device-gated.
+- `tools/compare_gui_parity.py` compares our build receipt with the reference
+  receipt (menu-label and tag-count differences, console-error delta) into a
+  sanitized private receipt, so the Phase 8 acceptance report can be produced
+  from two probe runs once both endpoints are reachable.
 - Each slice keeps `scripts/check.sh` green and adds focused host tests.
 
 ## Invariants
