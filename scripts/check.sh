@@ -90,9 +90,11 @@ python3 -B -m unittest \
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --test tools/test_gui_parity_probe.mjs
+node --test tools/test_virtual_media_acceptance.mjs
 node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
 node --check tools/playwright/gui_parity_probe.mjs
+node --check tools/playwright/virtual_media_acceptance.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
@@ -660,5 +662,6 @@ pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
 pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 
 git diff --check

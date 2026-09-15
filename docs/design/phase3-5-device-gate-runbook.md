@@ -197,5 +197,13 @@ configfs mounted) and not a substitute host.
 - Target boots and responds through the Rust gadget; media mounts and boots;
   keyboard and mouse work on the real target; a reboot and a stuck-input
   recovery pass.
+- Automated media actions during the `--accept-media-hid` window: run
+  `tools/playwright/virtual_media_acceptance.mjs` (module path, Chromium path,
+  stand URL, username file, output under `evidence/private`, image name; the
+  password arrives on stdin). It logs in through the GUI, opens the image menu,
+  attaches the catalog image and ejects it again, and records every
+  `/api/virtual-media` response, so the attach/eject half of the acceptance is
+  reproducible instead of hand-clicked. `restricted_control_virtual_keyboard_probe.mjs`
+  covers the HID half the same way.
 - Only after these pass, enable the capability flags in the shipped build and
   remove `kvmd.service` from the board profile.
