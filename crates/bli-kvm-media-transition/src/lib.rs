@@ -590,6 +590,63 @@ mod tests {
 
     #[cfg(feature = "gadget-media-profile")]
     #[tokio::test]
+    async fn a_catalog_entry_without_its_file_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let image_dir = directory.path().join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        let image = image_dir.join("kubuntu.img");
+        std::fs::write(&image, b"image").unwrap();
+        let catalog_path = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog_path,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"kubuntu.img","size":1,"sha256":"{}","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        let catalog = MediaCatalog::open(&catalog_path).unwrap();
+        // The image disappears after the catalog was reviewed.
+        std::fs::remove_file(&image).unwrap();
+
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+        let executor = GadgetMediaExecutor::new(GadgetMediaConfig {
+            configfs_root: configfs.clone(),
+            udc: "musb-hdrc.2.auto".into(),
+            image_directory: image_dir,
+            strings: GadgetStrings {
+                manufacturer: "Hardened BLi-KVM".into(),
+                product: "BLi-KVM Composite Device".into(),
+                serial: "BLK-test".into(),
+                configuration: "BLi-KVM configuration".into(),
+            },
+            id_vendor: 0x1d6b,
+            id_product: 0x0104,
+            bcd_usb: 0x0200,
+            bcd_device: 0x0100,
+        });
+
+        // Selection is catalog-only; the missing file must fail the attach and
+        // must not leave a half-created gadget behind.
+        assert!(executor.execute(
+            &VirtualMediaCommand::Select {
+                image_id: 7,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: false,
+            },
+            &catalog
+        ));
+        assert!(!executor.execute(
+            &VirtualMediaCommand::SetConnected { connected: true },
+            &catalog
+        ));
+        assert!(!executor.observe().unwrap().connected);
+        assert!(!configfs.join("hardened").exists());
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
     async fn gadget_executor_creates_a_composite_device_with_pinned_hid() {
         let directory = tempfile::tempdir().unwrap();
         let image_dir = directory.path().join("images");
