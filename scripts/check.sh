@@ -202,6 +202,7 @@ python3 -m unittest \
   tools/test_capture_device_hid_descriptors.py \
   tools/test_capture_device_handoff_preflight.py \
   tools/test_capture_device_kvmd_control_source.py \
+  tools/test_phase8_acceptance_report.py \
   tools/test_plan_route_drift.py \
   tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_system_action_maintenance.py \

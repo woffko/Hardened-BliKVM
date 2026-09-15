@@ -132,6 +132,14 @@ confirmation, each producing a private receipt:
 - media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
 - Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
 
+Phase 8 acceptance report (host-only, read-only): `tools/phase8_acceptance_report.py`
+walks an explicit manifest of host artifacts and device receipts and writes a
+private report; a device item without a matching receipt stays `unrun` and the
+overall status stays `incomplete`. Current report
+(`evidence/private/phase8-acceptance-20260915-a.json`): phases 0, 1, 4 and 6
+complete; phase 2 awaits the native ATX GPIO bench confirmation, phase 3 the
+composite-gadget acceptance and phase 8 the virtual-media acceptance receipt.
+
 Phase 8 parity harness (host-only, no mutation): `gui_parity_probe.mjs` now
 captures menu labels, tag counts, the capability manifest, surface markers
 (mobile keyboard input, on-screen keys, video elements) and bounded console
