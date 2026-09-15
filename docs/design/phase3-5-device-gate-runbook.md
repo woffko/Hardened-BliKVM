@@ -169,7 +169,7 @@ configfs mounted) and not a substitute host.
   operator `atx.env.example` with the confirmed timings and install it under
   `/run` for the reversible gate; the retained slots and permanent write policy
   stay untouched.
-- Copy the verified bundle to `/run/hardened-blikvm-board-gate/bundle.tar.gz`,
+- Copy the verified bundle to `/var/lib/hardened-blikvm-gadget/gate/bundle.tar.gz`,
   then run the reversible gate with
   `tools/stage_device_board_profile_gate.py --confirm-handoff` (stops KVMD,
   starts the Rust board owner, verifies the owner socket and the `hardened`

@@ -28,7 +28,7 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 from tools import stage_device_prototype as prototype
 from tools import plan_board_profile_handoff as planner
 
-RUNTIME_ROOT = "/run/hardened-blikvm-board-gate"
+RUNTIME_ROOT = "/var/lib/hardened-blikvm-gadget/gate"
 MARKER = f"{RUNTIME_ROOT}/.hardened-blikvm-gate"
 APPLY_FACTS = {
     "kvmd_was_active",
@@ -104,9 +104,8 @@ done
 if [ -S "$socket" ]; then printf 'socket_present=yes\\n'; else printf 'socket_present=no\\n'; fi
 if kill -0 "$owner_pid" 2>/dev/null; then printf 'owner_started=yes\\n'; else printf 'owner_started=no\\n'; fi
 gdir=/sys/kernel/config/usb_gadget
-name=$(ls "$gdir" 2>/dev/null | head -1 || true)
-if [ -n "$name" ]; then printf 'gadget_present=yes\\n'; printf 'gadget_name=%s\\n' "$name"; else printf 'gadget_present=no\\n'; printf 'gadget_name=none\\n'; fi
-if [ "$name" = hardened ] && [ -n "$(cat "$gdir/hardened/UDC" 2>/dev/null | tr -d '\\n')" ]; then printf 'udc_bound=yes\\n'; else printf 'udc_bound=no\\n'; fi
+if [ -d "$gdir/hardened" ]; then printf 'gadget_present=yes\\n'; printf 'gadget_name=hardened\\n'; else printf 'gadget_present=no\\n'; printf 'gadget_name=none\\n'; fi
+if [ -n "$(cat "$gdir/hardened/UDC" 2>/dev/null | tr -d '\\n')" ]; then printf 'udc_bound=yes\\n'; else printf 'udc_bound=no\\n'; fi
 """
 
 
@@ -220,10 +219,22 @@ def execute(args: argparse.Namespace) -> int:
         validate_teardown(facts)
         receipt["teardownFacts"] = facts
     else:
-        apply = prototype.run_ssh(target, secret, build_apply_script(plan, ""), timeout=120)
-        apply.check_returncode()
-        facts = prototype.parse_facts(apply.stdout, set(APPLY_FACTS))
-        validate_apply(facts)
+        try:
+            apply = prototype.run_ssh(
+                target,
+                secret,
+                build_apply_script(plan, str(plan["bundle"]["sha256"])),
+                timeout=120,
+            )
+            apply.check_returncode()
+            facts = prototype.parse_facts(apply.stdout, set(APPLY_FACTS))
+            validate_apply(facts)
+        except Exception:
+            try:
+                prototype.run_ssh(target, secret, build_teardown_script(), timeout=60)
+            except Exception:
+                pass
+            raise
         receipt["applyFacts"] = facts
 
     receipt["mutationsPerformed"] = True
