@@ -131,7 +131,8 @@ pub async fn run_with_gadget_hid_profile(
                 bli_kvm_hid_transition::GadgetHidConfig {
                     hidg_dir: hidg_dir.into(),
                     keyboard_function: "hid.usb0".into(),
-                    mouse_function: "hid.usb1".into(),
+                    absolute_mouse_function: "hid.usb1".into(),
+                    relative_mouse_function: "hid.usb2".into(),
                 },
             ),
         ),
@@ -216,7 +217,8 @@ pub async fn run_with_gadget_profile(
                 bli_kvm_hid_transition::GadgetHidConfig {
                     hidg_dir: hidg_dir.into(),
                     keyboard_function: "hid.usb0".into(),
-                    mouse_function: "hid.usb1".into(),
+                    absolute_mouse_function: "hid.usb1".into(),
+                    relative_mouse_function: "hid.usb2".into(),
                 },
             ),
         ),
@@ -288,7 +290,8 @@ pub async fn run_with_board_profile(
                 bli_kvm_hid_transition::GadgetHidConfig {
                     hidg_dir: hidg_dir.into(),
                     keyboard_function: "hid.usb0".into(),
-                    mouse_function: "hid.usb1".into(),
+                    absolute_mouse_function: "hid.usb1".into(),
+                    relative_mouse_function: "hid.usb2".into(),
                 },
             ),
         ),

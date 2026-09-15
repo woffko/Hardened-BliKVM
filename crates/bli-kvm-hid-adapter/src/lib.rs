@@ -459,35 +459,114 @@ impl KeyboardReportComposer {
     }
 }
 
-/// Inverse translation for the pinned relative-mouse interface (`hid.usb1`).
+/// Inverse translation for the pinned pointer interfaces (`hid.usb1` absolute,
+/// `hid.usb2` relative).
 ///
-/// The 7-byte report layout matches the descriptor captured read-only from the
-/// board: one buttons byte, signed 16-bit little-endian X and Y, then signed
-/// 8-bit wheel and pan. It tracks the held buttons; deltas and wheel are per
-/// report. `MouseMove` (absolute) is not this interface and returns `None`.
+/// Both layouts and the absolute remapping follow KVMD
+/// (`kvmd.plugins.hid.otg.events.make_mouse_report` and
+/// `kdmd.plugins.hid.otg.events.MouseMoveEvent`): the absolute interface packs
+/// `<BHHbb` (buttons, 16-bit X/Y in `0..=32767`, then wheel Y, wheel X) and the
+/// relative interface packs `<Bbbbb` (buttons, signed 8-bit X, Y, wheel Y,
+/// wheel X). The KVMD absolute range is remapped with integer floor division:
+/// `remap(v, -32768, 32767, 0, 32767)`.
+pub const ABSOLUTE_MOUSE_REPORT_LENGTH: usize = 7;
+pub const RELATIVE_MOUSE_REPORT_LENGTH: usize = 5;
+
+/// KVMD integer remapping from the mouse-move range to the report range.
+pub fn kvmd_absolute_remap(value: i16) -> u16 {
+    let in_min = i32::from(i16::MIN);
+    let in_max = i32::from(i16::MAX);
+    let out_min = 0;
+    let out_max = i32::from(i16::MAX);
+    let scaled = (i32::from(value) - in_min) * (out_max - out_min);
+    let remapped = scaled.div_euclid(in_max - in_min) + out_min;
+    remapped.clamp(out_min, out_max) as u16
+}
+
+/// Composes reports for the pinned absolute-mouse interface (`hid.usb1`).
 #[derive(Debug, Default)]
-pub struct PointerReportComposer {
+pub struct AbsolutePointerReportComposer {
+    buttons: u8,
+    position: (u16, u16),
+    wheel: (i8, i8),
+}
+
+impl AbsolutePointerReportComposer {
+    pub const fn new() -> Self {
+        Self {
+            buttons: 0,
+            position: (0, 0),
+            wheel: (0, 0),
+        }
+    }
+
+    /// Apply one event; `Some(report)` for absolute-mouse events, `None` for
+    /// relative-mouse and keyboard events.
+    pub fn apply(&mut self, event: &KvmdHidEvent) -> Option<[u8; ABSOLUTE_MOUSE_REPORT_LENGTH]> {
+        match event {
+            KvmdHidEvent::MouseButton { button, pressed } => {
+                self.set_button(button, *pressed);
+            }
+            KvmdHidEvent::MouseMove { x, y } => {
+                self.position = (kvmd_absolute_remap(*x), kvmd_absolute_remap(*y));
+            }
+            KvmdHidEvent::MouseWheel { x, y } => {
+                self.wheel = (*y, *x);
+            }
+            KvmdHidEvent::MouseRelative { .. } | KvmdHidEvent::Key { .. } => return None,
+        }
+        Some(self.report())
+    }
+
+    fn set_button(&mut self, button: &KvmdMouseButton, pressed: bool) {
+        let bit = mouse_button_bit(button);
+        if pressed {
+            self.buttons |= bit;
+        } else {
+            self.buttons &= !bit;
+        }
+    }
+
+    fn report(&self) -> [u8; ABSOLUTE_MOUSE_REPORT_LENGTH] {
+        let mut report = [0_u8; ABSOLUTE_MOUSE_REPORT_LENGTH];
+        report[0] = self.buttons;
+        report[1..3].copy_from_slice(&self.position.0.to_le_bytes());
+        report[3..5].copy_from_slice(&self.position.1.to_le_bytes());
+        report[5] = self.wheel.0 as u8;
+        report[6] = self.wheel.1 as u8;
+        report
+    }
+
+    /// Release every held button at the current position.
+    pub fn release_all(&mut self) -> [u8; ABSOLUTE_MOUSE_REPORT_LENGTH] {
+        self.buttons = 0;
+        let mut report = self.report();
+        self.wheel = (0, 0);
+        report[5] = 0;
+        report[6] = 0;
+        report
+    }
+}
+
+/// Composes reports for the pinned relative-mouse interface (`hid.usb2`).
+#[derive(Debug, Default)]
+pub struct RelativePointerReportComposer {
     buttons: u8,
 }
 
-pub const RELATIVE_MOUSE_REPORT_LENGTH: usize = 7;
-
-impl PointerReportComposer {
+impl RelativePointerReportComposer {
     pub const fn new() -> Self {
         Self { buttons: 0 }
     }
 
-    /// Apply one event; `Some(report)` for mouse events, `None` otherwise.
+    /// Apply one event; `Some(report)` for relative-mouse events, `None` for
+    /// absolute-mouse and keyboard events.
     pub fn apply(&mut self, event: &KvmdHidEvent) -> Option<[u8; RELATIVE_MOUSE_REPORT_LENGTH]> {
         let mut report = [0_u8; RELATIVE_MOUSE_REPORT_LENGTH];
         report[0] = self.buttons;
         match event {
             KvmdHidEvent::MouseButton { button, pressed } => {
-                let bit = match button {
-                    KvmdMouseButton::Left => 0x01,
-                    KvmdMouseButton::Right => 0x02,
-                    KvmdMouseButton::Middle => 0x04,
-                };
+                let bit = mouse_button_bit(button);
                 if *pressed {
                     self.buttons |= bit;
                 } else {
@@ -496,25 +575,37 @@ impl PointerReportComposer {
                 report[0] = self.buttons;
             }
             KvmdHidEvent::MouseRelative { x, y } => {
-                report[1..3].copy_from_slice(&i16::from(*x).to_le_bytes());
-                report[3..5].copy_from_slice(&i16::from(*y).to_le_bytes());
+                report[1] = clamp_delta(*x);
+                report[2] = clamp_delta(*y);
             }
             KvmdHidEvent::MouseWheel { x, y } => {
-                report[5] = *x as u8;
-                report[6] = *y as u8;
+                // KVMD writes the vertical wheel before the horizontal one.
+                report[3] = clamp_delta(*y);
+                report[4] = clamp_delta(*x);
             }
-            KvmdHidEvent::Key { .. } | KvmdHidEvent::MouseMove { .. } => return None,
+            KvmdHidEvent::MouseMove { .. } | KvmdHidEvent::Key { .. } => return None,
         }
         Some(report)
     }
 
-    /// Release every held button, returning the empty report.
+    /// Release every held button.
     pub fn release_all(&mut self) -> [u8; RELATIVE_MOUSE_REPORT_LENGTH] {
         self.buttons = 0;
-        let mut report = [0_u8; RELATIVE_MOUSE_REPORT_LENGTH];
-        report[0] = self.buttons;
-        report
+        [0_u8; RELATIVE_MOUSE_REPORT_LENGTH]
     }
+}
+
+fn mouse_button_bit(button: &KvmdMouseButton) -> u8 {
+    match button {
+        KvmdMouseButton::Left => 0x01,
+        KvmdMouseButton::Right => 0x02,
+        KvmdMouseButton::Middle => 0x04,
+    }
+}
+
+/// KVMD requires pointer deltas in `-127..=127`; `-128` is not representable.
+fn clamp_delta(value: i8) -> u8 {
+    value.clamp(-127, 127) as u8
 }
 
 #[cfg(test)]
@@ -720,46 +811,94 @@ mod tests {
     }
 
     #[test]
-    fn pointer_composer_builds_relative_mouse_reports() {
-        let mut composer = PointerReportComposer::new();
+    fn relative_composer_builds_hid_usb2_reports() {
+        let mut composer = RelativePointerReportComposer::new();
         assert_eq!(
             composer.apply(&KvmdHidEvent::MouseRelative { x: -2, y: 3 }),
-            Some([0, 0xfe, 0xff, 0x03, 0x00, 0, 0])
+            Some([0, 0xfe, 0x03, 0, 0])
         );
         assert_eq!(
             composer.apply(&KvmdHidEvent::MouseButton {
                 button: KvmdMouseButton::Left,
                 pressed: true,
             }),
-            Some([0x01, 0, 0, 0, 0, 0, 0])
+            Some([0x01, 0, 0, 0, 0])
         );
+        // Vertical wheel precedes the horizontal one in the KVMD layout.
         assert_eq!(
             composer.apply(&KvmdHidEvent::MouseWheel { x: 1, y: -1 }),
-            Some([0x01, 0, 0, 0, 0, 1, 0xff])
+            Some([0x01, 0, 0, 0xff, 0x01])
         );
         assert_eq!(
             composer.apply(&KvmdHidEvent::MouseButton {
                 button: KvmdMouseButton::Left,
                 pressed: false,
             }),
-            Some([0x00, 0, 0, 0, 0, 0, 0])
+            Some([0x00, 0, 0, 0, 0])
         );
         assert_eq!(composer.release_all(), [0; RELATIVE_MOUSE_REPORT_LENGTH]);
     }
 
     #[test]
-    fn pointer_composer_ignores_keyboard_and_absolute_events() {
-        let mut composer = PointerReportComposer::new();
+    fn absolute_composer_builds_hid_usb1_reports() {
+        let mut composer = AbsolutePointerReportComposer::new();
         assert_eq!(
-            composer.apply(&KvmdHidEvent::Key {
-                key: KvmdKeyCode::from_usb_usage(4).unwrap(),
+            composer.apply(&KvmdHidEvent::MouseMove {
+                x: i16::MIN,
+                y: i16::MAX,
+            }),
+            Some([0, 0x00, 0x00, 0xff, 0x7f, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseMove { x: 0, y: 0 }),
+            Some([0, 0xff, 0x3f, 0xff, 0x3f, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseWheel { x: 1, y: -1 }),
+            Some([0, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x01])
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseButton {
+                button: KvmdMouseButton::Middle,
                 pressed: true,
             }),
-            None
+            Some([0x04, 0xff, 0x3f, 0xff, 0x3f, 0xff, 0x01])
         );
         assert_eq!(
-            composer.apply(&KvmdHidEvent::MouseMove { x: 100, y: 200 }),
-            None
+            composer.release_all(),
+            [0x00, 0xff, 0x3f, 0xff, 0x3f, 0x00, 0x00]
         );
+    }
+
+    #[test]
+    fn pointer_composers_ignore_events_of_the_other_interface() {
+        let mut absolute = AbsolutePointerReportComposer::new();
+        let mut relative = RelativePointerReportComposer::new();
+        assert!(
+            absolute
+                .apply(&KvmdHidEvent::MouseRelative { x: 1, y: 1 })
+                .is_none()
+        );
+        assert!(
+            relative
+                .apply(&KvmdHidEvent::MouseMove { x: 1, y: 1 })
+                .is_none()
+        );
+        let key = KvmdHidEvent::Key {
+            key: KvmdKeyCode::from_usb_usage(4).unwrap(),
+            pressed: true,
+        };
+        assert!(absolute.apply(&key).is_none());
+        assert!(relative.apply(&key).is_none());
+    }
+
+    #[test]
+    fn kvmd_absolute_remap_matches_kvmd_integer_flooring() {
+        assert_eq!(kvmd_absolute_remap(i16::MIN), 0);
+        assert_eq!(kvmd_absolute_remap(i16::MAX), 32767);
+        // Python: int((0 + 32768) * 32767 // 65535) == 16383
+        assert_eq!(kvmd_absolute_remap(0), 16383);
+        assert_eq!(kvmd_absolute_remap(-1), 16383);
+        assert_eq!(kvmd_absolute_remap(1), 16384);
     }
 }

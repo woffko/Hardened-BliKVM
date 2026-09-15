@@ -5,11 +5,13 @@ mod ledger;
 pub use ledger::{HidReleaseLedger, HidReleaseLedgerError};
 
 use bli_kvm_core::HidReport;
+#[cfg(feature = "gadget-hid-profile")]
+use bli_kvm_hid_adapter::{
+    AbsolutePointerReportComposer, KeyboardReportComposer, RelativePointerReportComposer,
+};
 use bli_kvm_hid_adapter::{
     HidLeaseAcquisition, HidLeaseError, HidLeaseIdentity, HidLeaseManager, KvmdHidEvent,
 };
-#[cfg(feature = "gadget-hid-profile")]
-use bli_kvm_hid_adapter::{KeyboardReportComposer, PointerReportComposer};
 #[cfg(feature = "kvmd-hid-profile")]
 use bli_kvm_kvmd_client::KvmdCredentials;
 #[cfg(feature = "kvmd-hid-profile")]
@@ -81,19 +83,34 @@ impl KvmdHidExecutor {
 pub struct GadgetHidConfig {
     pub hidg_dir: PathBuf,
     pub keyboard_function: String,
-    pub mouse_function: String,
+    pub absolute_mouse_function: String,
+    pub relative_mouse_function: String,
 }
 
-/// Rust gadget HID executor: composes boot keyboard reports and writes them to
-/// the function character device.
+/// Which pinned pointer interface currently owns the pointer reports.
+#[cfg(feature = "gadget-hid-profile")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PointerMode {
+    /// KVMD's default mouse interface (`usb`, absolute).
+    #[default]
+    Absolute,
+    /// The relative interface (`usb_rel`, enabled by `mouse_alt`).
+    Relative,
+}
+
+/// Rust gadget HID executor: composes reports for the pinned boot keyboard and
+/// both pointer interfaces and writes them to the function character devices.
 ///
-/// Only the boot keyboard interface is implemented; a mouse event fails closed
-/// until the device report descriptors are captured.
+/// Pointer reports follow KVMD semantics: a move selects the absolute
+/// (`hid.usb1`) or relative (`hid.usb2`) interface, buttons and wheel follow the
+/// last selected interface, and switching clears the interface left behind.
 #[cfg(feature = "gadget-hid-profile")]
 pub struct GadgetHidExecutor {
     config: GadgetHidConfig,
     keyboard: std::sync::Mutex<KeyboardReportComposer>,
-    pointer: std::sync::Mutex<PointerReportComposer>,
+    absolute: std::sync::Mutex<AbsolutePointerReportComposer>,
+    relative: std::sync::Mutex<RelativePointerReportComposer>,
+    mode: std::sync::Mutex<PointerMode>,
 }
 
 #[cfg(feature = "gadget-hid-profile")]
@@ -102,7 +119,9 @@ impl GadgetHidExecutor {
         Self {
             config,
             keyboard: std::sync::Mutex::new(KeyboardReportComposer::new()),
-            pointer: std::sync::Mutex::new(PointerReportComposer::new()),
+            absolute: std::sync::Mutex::new(AbsolutePointerReportComposer::new()),
+            relative: std::sync::Mutex::new(RelativePointerReportComposer::new()),
+            mode: std::sync::Mutex::new(PointerMode::default()),
         }
     }
 
@@ -111,35 +130,96 @@ impl GadgetHidExecutor {
             .keyboard
             .lock()
             .map_err(|_| gadget_error("gadget HID keyboard state is unavailable"))?;
-        let mut pointer = self
-            .pointer
+        let mut absolute = self
+            .absolute
             .lock()
-            .map_err(|_| gadget_error("gadget HID pointer state is unavailable"))?;
+            .map_err(|_| gadget_error("gadget HID absolute pointer state is unavailable"))?;
+        let mut relative = self
+            .relative
+            .lock()
+            .map_err(|_| gadget_error("gadget HID relative pointer state is unavailable"))?;
+        let mut mode = self
+            .mode
+            .lock()
+            .map_err(|_| gadget_error("gadget HID pointer mode is unavailable"))?;
         for event in events {
             match keyboard.apply(event) {
-                Ok(Some(report)) => bli_kvm_usb_gadget::write_report(
-                    &self.config.hidg_dir,
-                    &self.config.keyboard_function,
-                    &report,
-                )
-                .map_err(|_| gadget_error("gadget HID keyboard write failed"))?,
-                Ok(None) => match pointer.apply(event) {
-                    Some(report) => bli_kvm_usb_gadget::write_report(
-                        &self.config.hidg_dir,
-                        &self.config.mouse_function,
-                        &report,
-                    )
-                    .map_err(|_| gadget_error("gadget HID pointer write failed"))?,
-                    None => {
-                        return Err(gadget_error(
-                            "gadget HID event is not supported by the pinned interfaces",
-                        ));
+                Ok(Some(report)) => self.write_keyboard(&report)?,
+                Ok(None) => {
+                    let selected = match event {
+                        KvmdHidEvent::MouseMove { .. } => Some(PointerMode::Absolute),
+                        KvmdHidEvent::MouseRelative { .. } => Some(PointerMode::Relative),
+                        _ => None,
+                    };
+                    if let Some(next) = selected {
+                        if next != *mode {
+                            self.clear_pointer(*mode, &mut absolute, &mut relative)?;
+                            *mode = next;
+                        }
                     }
-                },
+                    let unsupported = |_| {
+                        gadget_error("gadget HID event is not supported by the pinned interfaces")
+                    };
+                    match *mode {
+                        PointerMode::Absolute => match absolute.apply(event) {
+                            Some(report) => self.write_absolute(&report)?,
+                            None => return Err(unsupported(())),
+                        },
+                        PointerMode::Relative => match relative.apply(event) {
+                            Some(report) => self.write_relative(&report)?,
+                            None => return Err(unsupported(())),
+                        },
+                    }
+                }
                 Err(_) => return Err(gadget_error("gadget HID keyboard report is invalid")),
             }
         }
         Ok(())
+    }
+
+    fn write_keyboard(&self, report: &[u8; 8]) -> Result<(), HidExecutorError> {
+        bli_kvm_usb_gadget::write_report(
+            &self.config.hidg_dir,
+            &self.config.keyboard_function,
+            report,
+        )
+        .map_err(|_| gadget_error("gadget HID keyboard write failed"))
+    }
+
+    fn write_absolute(&self, report: &[u8; 7]) -> Result<(), HidExecutorError> {
+        bli_kvm_usb_gadget::write_report(
+            &self.config.hidg_dir,
+            &self.config.absolute_mouse_function,
+            report,
+        )
+        .map_err(|_| gadget_error("gadget HID absolute pointer write failed"))
+    }
+
+    fn write_relative(&self, report: &[u8; 5]) -> Result<(), HidExecutorError> {
+        bli_kvm_usb_gadget::write_report(
+            &self.config.hidg_dir,
+            &self.config.relative_mouse_function,
+            report,
+        )
+        .map_err(|_| gadget_error("gadget HID relative pointer write failed"))
+    }
+
+    fn clear_pointer(
+        &self,
+        mode: PointerMode,
+        absolute: &mut AbsolutePointerReportComposer,
+        relative: &mut RelativePointerReportComposer,
+    ) -> Result<(), HidExecutorError> {
+        match mode {
+            PointerMode::Absolute => {
+                let report = absolute.release_all();
+                self.write_absolute(&report)
+            }
+            PointerMode::Relative => {
+                let report = relative.release_all();
+                self.write_relative(&report)
+            }
+        }
     }
 }
 
@@ -645,17 +725,26 @@ mod tests {
     }
 
     #[cfg(feature = "gadget-hid-profile")]
+    fn last_report(directory: &std::path::Path, name: &str, length: usize) -> Vec<u8> {
+        let bytes = std::fs::read(directory.join(name)).unwrap();
+        assert!(bytes.len() >= length, "{name} has no report yet");
+        bytes[bytes.len() - length..].to_vec()
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
     #[tokio::test]
     async fn gadget_executor_writes_boot_keyboard_reports() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("hidg0"), b"").unwrap();
         std::fs::write(directory.path().join("hidg1"), b"").unwrap();
+        std::fs::write(directory.path().join("hidg2"), b"").unwrap();
         let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
         let mut engine = HidTransitionEngine::new_with_executor(
             HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
                 hidg_dir: directory.path().to_path_buf(),
                 keyboard_function: "hid.usb0".into(),
-                mouse_function: "hid.usb1".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
             })),
             ledger,
         )
@@ -677,28 +766,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            std::fs::read(directory.path().join("hidg0")).unwrap(),
+            last_report(directory.path(), "hidg0", 8),
             vec![0, 0, 4, 0, 0, 0, 0, 0]
         );
         engine.release(owner).await.unwrap();
-        assert_eq!(
-            std::fs::read(directory.path().join("hidg0")).unwrap(),
-            vec![0, 0, 0, 0, 0, 0, 0, 0]
-        );
+        assert_eq!(last_report(directory.path(), "hidg0", 8), vec![0; 8]);
     }
 
     #[cfg(feature = "gadget-hid-profile")]
     #[tokio::test]
-    async fn gadget_executor_writes_relative_mouse_reports() {
+    async fn gadget_executor_writes_pinned_pointer_reports() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("hidg0"), b"").unwrap();
         std::fs::write(directory.path().join("hidg1"), b"").unwrap();
+        std::fs::write(directory.path().join("hidg2"), b"").unwrap();
         let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
         let mut engine = HidTransitionEngine::new_with_executor(
             HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
                 hidg_dir: directory.path().to_path_buf(),
                 keyboard_function: "hid.usb0".into(),
-                mouse_function: "hid.usb1".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
             })),
             ledger,
         )
@@ -709,29 +797,35 @@ mod tests {
             .acquire(owner, now, Duration::from_secs(10))
             .await
             .unwrap();
+        // KVMD absolute mouse: 16-bit X/Y remapped from the move range.
+        engine
+            .report(
+                owner,
+                now,
+                &HidReport::AbsoluteMouse {
+                    data: [0, 0x00, 0x00, 0xff, 0x7f, 0],
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(
-            engine
-                .report(owner, now, &HidReport::RelativeMouse { data: [1, 0, 0, 0] })
-                .await
-                .unwrap(),
-            ()
+            last_report(directory.path(), "hidg1", 7),
+            vec![0, 0x00, 0x00, 0xff, 0x7f, 0, 0]
+        );
+        // A relative move selects hid.usb2 and clears the absolute interface.
+        engine
+            .report(owner, now, &HidReport::RelativeMouse { data: [0, 5, 0, 0] })
+            .await
+            .unwrap();
+        // Switching releases the buttons but keeps the absolute position,
+        // matching KVMD's clear event.
+        assert_eq!(
+            last_report(directory.path(), "hidg1", 7),
+            vec![0, 0x00, 0x00, 0xff, 0x7f, 0, 0]
         );
         assert_eq!(
-            std::fs::read(directory.path().join("hidg1")).unwrap(),
-            vec![1, 0, 0, 0, 0, 0, 0]
+            last_report(directory.path(), "hidg2", 5),
+            vec![0, 5, 0, 0, 0]
         );
-        // Absolute pointer moves are not a pinned interface yet: fail closed.
-        assert!(matches!(
-            engine
-                .report(
-                    owner,
-                    now,
-                    &HidReport::AbsoluteMouse {
-                        data: [0, 1, 0, 1, 0, 0]
-                    }
-                )
-                .await,
-            Err(HidTransitionError::Backend(_))
-        ));
     }
 }

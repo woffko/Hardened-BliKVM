@@ -86,11 +86,19 @@ Phases 2-3 is complete. Everything below is committed with a green
   `docs/baselines/board-handoff-gate.md`. The captured HID report
   descriptors are pinned in `crates/bli-kvm-usb-gadget` (verified against the
   recorded SHA-256), and the board gadget is now a composite device: MSD plus
-  the three pinned HID functions. The gadget HID executor composes keyboard
-  reports for `hid.usb0` and relative-mouse reports (buttons plus signed 16-bit
-  X/Y, wheel/pan) for `hid.usb1`; absolute pointer moves stay fail-closed until
-  the board scaling semantics are confirmed. Media/HID and ATX pulse gates
-  remain.
+  the three pinned HID functions. The pointer interfaces are pinned exactly as
+  captured: `hid.usb1` is the absolute mouse (`<BHHbb`, 16-bit X/Y in
+  `0..=32767`) and `hid.usb2` is the relative mouse (`<Bbbbb`, signed 8-bit
+  deltas); the executor composes both, follows KVMD's move-range remap for
+  absolute moves, and clears the interface left behind when the pointer mode
+  switches. Media/HID and ATX pulse gates remain.
+
+  Read-only KVMD sourcing (receipt
+  `evidence/private/device-kvmd-control-source-20260915-a.json`) confirmed the
+  report layouts and the remap formula, and recorded the board's real ATX lines
+  from `/etc/kvmd/override.yaml`: gpiochip0 with power switch 228 and reset
+  switch 272 (LEDs 234/233). The pulse durations still live inside the vendor
+  `/usr/bin/atx` binary and remain to be confirmed on the bench.
 
 ## Device-bound remainder (board available)
 
