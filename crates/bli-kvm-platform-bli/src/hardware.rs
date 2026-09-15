@@ -86,6 +86,19 @@ const GPIO_LINES: &[GpioLineEvidence] = &[
     },
 ];
 
+/// ATX pulse durations used by the vendor ATX helper on this board.
+///
+/// Read-only evidence: disassembly of `/usr/bin/atx`
+/// (sha256 `a7f0b80fce3387b903537f62c3acdd7bd10bcb6a6159cd22eb90430abf168d21`,
+/// receipt `evidence/private/device-kvmd-control-source-20260915-a.json`).
+/// `power_on` drives the power line high and sleeps `0x7a120` us (500 ms) at
+/// `0x17cc`; `power_off` sleeps `0x4c4b40` us (5000 ms) at `0x1810`;
+/// `power_reset` sleeps `0x7a120` us (500 ms) at `0x1854`. These are the
+/// intended durations, still to be confirmed on the bench.
+pub const H616_ATX_POWER_SHORT_MS: u64 = 500;
+pub const H616_ATX_POWER_LONG_MS: u64 = 5_000;
+pub const H616_ATX_RESET_MS: u64 = 500;
+
 pub const H616_VENDOR_PROFILE: H616VendorProfile = H616VendorProfile {
     gpio_chip: "/dev/gpiochip0",
     thermal_zone: "/sys/class/thermal/thermal_zone0/temp",
@@ -127,5 +140,14 @@ mod tests {
         assert!(H616_VENDOR_PROFILE.gpio_lines.iter().any(|line| {
             line.role == GpioRole::AtxPower && line.header_pin == 18 && line.chip_offset == 228
         }));
+    }
+
+    #[test]
+    fn atx_pulse_timings_match_the_vendor_helper() {
+        assert_eq!(H616_ATX_POWER_SHORT_MS, 500);
+        assert_eq!(H616_ATX_POWER_LONG_MS, 5_000);
+        assert_eq!(H616_ATX_RESET_MS, 500);
+        let long_vs_short = [H616_ATX_POWER_SHORT_MS, H616_ATX_POWER_LONG_MS];
+        assert!(long_vs_short[1] > long_vs_short[0]);
     }
 }

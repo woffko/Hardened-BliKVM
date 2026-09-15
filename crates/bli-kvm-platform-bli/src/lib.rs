@@ -19,8 +19,8 @@ pub use gpio::{
 };
 pub use gpio_driver::{ApplyError, GpioDriver, apply_plan, release_plan};
 pub use hardware::{
-    GpioLineEvidence, GpioRole, H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence,
-    VENDOR_SOURCE_REVISION,
+    GpioLineEvidence, GpioRole, H616_ATX_POWER_LONG_MS, H616_ATX_POWER_SHORT_MS, H616_ATX_RESET_MS,
+    H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence, VENDOR_SOURCE_REVISION,
 };
 pub use inventory::BliPlatformObservations;
 #[cfg(feature = "kvmd-inventory")]

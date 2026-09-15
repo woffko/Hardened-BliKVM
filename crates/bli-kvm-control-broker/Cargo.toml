@@ -38,6 +38,7 @@ media-transition-profile = [
 chardev-atx-profile = [
   "gpio-atx-profile",
   "dep:bli-kvm-atx-gpio-executor",
+  "dep:bli-kvm-platform-bli",
   "bli-kvm-atx-gpio-executor/chardev-driver",
 ]
 gpio-atx-profile = [
@@ -81,6 +82,7 @@ bli-kvm-kvmd-media-client = { path = "../bli-kvm-kvmd-media-client", optional = 
 bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog", optional = true }
 bli-kvm-media-policy = { path = "../bli-kvm-media-policy", optional = true }
 bli-kvm-media-transition = { path = "../bli-kvm-media-transition", optional = true, default-features = false }
+bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli", optional = true }
 bli-kvm-usb-gadget = { path = "../bli-kvm-usb-gadget", optional = true }
 rand_core = { workspace = true, optional = true }
 tokio.workspace = true

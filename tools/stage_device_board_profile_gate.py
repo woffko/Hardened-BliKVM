@@ -55,9 +55,17 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument("--bundle", required=True)
     _ = parser.add_argument("--output", required=True)
     _ = parser.add_argument("--udc", required=True)
-    _ = parser.add_argument("--power-short-ms", required=True, type=int)
-    _ = parser.add_argument("--power-long-ms", required=True, type=int)
-    _ = parser.add_argument("--reset-ms", required=True, type=int)
+    _ = parser.add_argument(
+        "--power-short-ms",
+        default=planner.VENDOR_ATX_POWER_SHORT_MS,
+        type=int,
+    )
+    _ = parser.add_argument(
+        "--power-long-ms",
+        default=planner.VENDOR_ATX_POWER_LONG_MS,
+        type=int,
+    )
+    _ = parser.add_argument("--reset-ms", default=planner.VENDOR_ATX_RESET_MS, type=int)
     _ = parser.add_argument("--confirm-handoff", action="store_true")
     _ = parser.add_argument("--teardown", action="store_true")
     return parser.parse_args()

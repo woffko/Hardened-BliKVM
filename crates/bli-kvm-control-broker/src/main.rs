@@ -29,6 +29,18 @@ fn credentials_directory() -> Result<std::path::PathBuf, Box<dyn Error>> {
 }
 
 #[cfg(feature = "chardev-atx-profile")]
+/// Read an optional integer with a board-sourced default.
+#[cfg(feature = "chardev-atx-profile")]
+fn env_u64_or(key: &str, default: u64) -> Result<u64, Box<dyn Error>> {
+    match std::env::var(key) {
+        Ok(value) => value.parse::<u64>().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("invalid {key}")).into()
+        }),
+        Err(_) => Ok(default),
+    }
+}
+
+#[allow(dead_code)]
 fn env_u64(key: &str) -> Result<u64, Box<dyn Error>> {
     let value = std::env::var(key).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("missing {key}"))
@@ -53,10 +65,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "missing BLI_KVM_ATX_JOURNAL",
                 )
             })?;
+            // Board-sourced defaults from the vendor ATX helper; still
+            // overridable through the environment for a reviewed bench check.
             let timing = bli_kvm_atx_gpio_executor::AtxTiming {
-                power_short_ms: env_u64("BLI_KVM_ATX_POWER_SHORT_MS")?,
-                power_long_ms: env_u64("BLI_KVM_ATX_POWER_LONG_MS")?,
-                reset_ms: env_u64("BLI_KVM_ATX_RESET_MS")?,
+                power_short_ms: env_u64_or(
+                    "BLI_KVM_ATX_POWER_SHORT_MS",
+                    bli_kvm_platform_bli::H616_ATX_POWER_SHORT_MS,
+                )?,
+                power_long_ms: env_u64_or(
+                    "BLI_KVM_ATX_POWER_LONG_MS",
+                    bli_kvm_platform_bli::H616_ATX_POWER_LONG_MS,
+                )?,
+                reset_ms: env_u64_or(
+                    "BLI_KVM_ATX_RESET_MS",
+                    bli_kvm_platform_bli::H616_ATX_RESET_MS,
+                )?,
             };
             let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
                 true,
@@ -110,10 +133,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "missing BLI_KVM_ATX_JOURNAL",
                 )
             })?;
+            // Board-sourced defaults from the vendor ATX helper; still
+            // overridable through the environment for a reviewed bench check.
             let timing = bli_kvm_atx_gpio_executor::AtxTiming {
-                power_short_ms: env_u64("BLI_KVM_ATX_POWER_SHORT_MS")?,
-                power_long_ms: env_u64("BLI_KVM_ATX_POWER_LONG_MS")?,
-                reset_ms: env_u64("BLI_KVM_ATX_RESET_MS")?,
+                power_short_ms: env_u64_or(
+                    "BLI_KVM_ATX_POWER_SHORT_MS",
+                    bli_kvm_platform_bli::H616_ATX_POWER_SHORT_MS,
+                )?,
+                power_long_ms: env_u64_or(
+                    "BLI_KVM_ATX_POWER_LONG_MS",
+                    bli_kvm_platform_bli::H616_ATX_POWER_LONG_MS,
+                )?,
+                reset_ms: env_u64_or(
+                    "BLI_KVM_ATX_RESET_MS",
+                    bli_kvm_platform_bli::H616_ATX_RESET_MS,
+                )?,
             };
             let reconciliations = bli_kvm_control_broker::atx_reconciliations_from_values(
                 true,

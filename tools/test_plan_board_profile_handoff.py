@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from typing import Any
+from unittest import mock
 from pathlib import Path
 
 import tools.plan_board_profile_handoff as planner
@@ -48,6 +49,17 @@ class PlanBoardProfileHandoffTests(unittest.TestCase):
         device = plan["device"]
         self.assertEqual(device["configfsRoot"], planner.CONFIGFS_ROOT)
         self.assertEqual(device["udc"], "musb-hdrc.2.auto")
+
+    def test_parser_defaults_use_the_vendor_pinned_timings(self) -> None:
+        argv = ["plan_board_profile_handoff", "--bundle", "b", "--output", "o", "--udc", "u"]
+        with mock.patch.object(sys, "argv", argv):
+            parsed = planner.parse_args()
+        self.assertEqual(parsed.power_short_ms, planner.VENDOR_ATX_POWER_SHORT_MS)
+        self.assertEqual(parsed.power_long_ms, planner.VENDOR_ATX_POWER_LONG_MS)
+        self.assertEqual(parsed.reset_ms, planner.VENDOR_ATX_RESET_MS)
+        self.assertEqual(parsed.power_short_ms, 500)
+        self.assertEqual(parsed.power_long_ms, 5_000)
+        self.assertEqual(parsed.reset_ms, 500)
 
     def test_timings_are_bounded(self) -> None:
         for field, value in (

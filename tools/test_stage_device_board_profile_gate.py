@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools import plan_board_profile_handoff as planner
 from tools import stage_device_board_profile_gate as gate
@@ -56,6 +57,28 @@ def teardown_facts() -> dict[str, str]:
 
 
 class StageBoardProfileGateTests(unittest.TestCase):
+    def test_parser_defaults_use_the_vendor_pinned_timings(self) -> None:
+        argv = [
+            "gate",
+            "--endpoint",
+            "ssh://10.0.77.118:22/",
+            "--username",
+            "root",
+            "--known-hosts",
+            "/tmp/known-hosts",
+            "--bundle",
+            "b",
+            "--output",
+            "o",
+            "--udc",
+            "u",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            parsed = gate.parse_args()
+        self.assertEqual(parsed.power_short_ms, planner.VENDOR_ATX_POWER_SHORT_MS)
+        self.assertEqual(parsed.power_long_ms, planner.VENDOR_ATX_POWER_LONG_MS)
+        self.assertEqual(parsed.reset_ms, planner.VENDOR_ATX_RESET_MS)
+
     def test_generated_scripts_are_valid_shell(self) -> None:
         apply, teardown = render()
         for script in (apply, teardown):

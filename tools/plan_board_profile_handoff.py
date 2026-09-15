@@ -26,6 +26,17 @@ from tools import verify_board_profile_bundle as bundle_verifier
 
 
 MAX_TIMING_MS = 10_000
+# ATX pulse durations sourced read-only from the vendor helper on this board:
+# /usr/bin/atx (sha256
+# a7f0b80fce3387b903537f62c3acdd7bd10bcb6a6159cd22eb90430abf168d21) sleeps
+# 0x7a120 us (500 ms) for power_on, 0x4c4b40 us (5000 ms) for power_off and
+# 0x7a120 us (500 ms) for power_reset. Receipt:
+# evidence/private/device-vendor-atx-timings-20260915-a.json. Override on the
+# command line after a reviewed bench measurement.
+VENDOR_ATX_POWER_SHORT_MS = 500
+VENDOR_ATX_POWER_LONG_MS = 5_000
+VENDOR_ATX_RESET_MS = 500
+
 UDC = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 GPIOCHIP = re.compile(r"^/dev/gpiochip[0-9]{1,3}$")
 CONFIGFS_ROOT = "/sys/kernel/config/usb_gadget"
@@ -51,9 +62,9 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument("--bundle", required=True)
     _ = parser.add_argument("--output", required=True)
     _ = parser.add_argument("--udc", required=True)
-    _ = parser.add_argument("--power-short-ms", required=True, type=int)
-    _ = parser.add_argument("--power-long-ms", required=True, type=int)
-    _ = parser.add_argument("--reset-ms", required=True, type=int)
+    _ = parser.add_argument("--power-short-ms", default=VENDOR_ATX_POWER_SHORT_MS, type=int)
+    _ = parser.add_argument("--power-long-ms", default=VENDOR_ATX_POWER_LONG_MS, type=int)
+    _ = parser.add_argument("--reset-ms", default=VENDOR_ATX_RESET_MS, type=int)
     _ = parser.add_argument("--configfs-root", default=CONFIGFS_ROOT)
     _ = parser.add_argument("--images-dir", default=f"{GADGET_STATE}/images")
     _ = parser.add_argument("--catalog", default=f"{GADGET_ETC}/catalog.json")
