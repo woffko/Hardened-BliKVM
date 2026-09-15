@@ -127,6 +127,10 @@ class RestrictedControlGuiTests(unittest.TestCase):
         power = (ROOT / "web/src/pages/desktop/menu/power/index.tsx").read_text()
         self.assertIn("getRuntimeInventory", power)
         self.assertIn("inventory.data.powerLed", power)
+        # The hardened platform has no legacy GPIO endpoint, so the fallback
+        # must never be reached for it.
+        self.assertIn("usesBliApplicationUpdates(manifest)", power)
+        self.assertIn("if (hardened) {", power)
 
     def test_paste_and_shortcuts_follow_the_restricted_capability(self) -> None:
         paste = (ROOT / "web/src/pages/desktop/menu/keyboard/paste.tsx").read_text()

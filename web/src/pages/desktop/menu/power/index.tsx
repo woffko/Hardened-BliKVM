@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Divider, Switch, Tooltip } from 'antd';
 import clsx from 'clsx';
+import { useAtomValue } from 'jotai';
 import { LoaderCircleIcon, PowerIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { getRuntimeInventory } from '@/api/inventory.ts';
 import * as api from '@/api/vm';
+import { usesBliApplicationUpdates } from '@/lib/capabilities.ts';
 import * as localstorage from '@/lib/localstorage.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
 import { PowerLong } from './power-long.tsx';
@@ -15,10 +18,36 @@ import { Reset } from './reset.tsx';
 
 export const Power = () => {
   const { t } = useTranslation();
+  const manifest = useAtomValue(capabilitiesAtom);
 
   const [isPowerOn, setIsPowerOn] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  const getLed = useCallback(async () => {
+    const hardened = usesBliApplicationUpdates(manifest);
+    try {
+      const inventory = await getRuntimeInventory();
+      if (inventory.code === 0 && inventory.data.powerLed != null) {
+        setIsPowerOn(inventory.data.powerLed);
+        return;
+      }
+    } catch (err) {
+      console.log(err);
+    }
+    // The hardened server has no legacy GPIO endpoint; never fall back to it.
+    if (hardened) {
+      return;
+    }
+    try {
+      const rsp = await api.getGpio();
+      if (rsp.code === 0) {
+        setIsPowerOn(rsp.data.pwr);
+      }
+    } catch (err) {
+      console.log(err);
+    }
+  }, [manifest]);
 
   useEffect(() => {
     getLed();
@@ -30,27 +59,7 @@ export const Power = () => {
     return () => {
       clearInterval(interval);
     };
-  }, []);
-
-  async function getLed() {
-    try {
-      const inventory = await getRuntimeInventory();
-      if (inventory.code === 0 && inventory.data.powerLed != null) {
-        setIsPowerOn(inventory.data.powerLed);
-        return;
-      }
-    } catch (err) {
-      console.log(err);
-    }
-    try {
-      const rsp = await api.getGpio();
-      if (rsp.code === 0) {
-        setIsPowerOn(rsp.data.pwr);
-      }
-    } catch (err) {
-      console.log(err);
-    }
-  }
+  }, [getLed]);
 
   function updateShowConfirm(value: boolean) {
     setShowConfirm(value);
