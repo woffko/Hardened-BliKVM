@@ -183,12 +183,14 @@ hardened BLi-KVM server as of 2026-09-14: 31 routes.
   with a host-tested bounded parser (name, range, hex and hash checks). Running
   it against the board is part of the device-gated handoff.
 - `tools/playwright/gui_parity_probe.mjs` captures the title, route, bounded
-  visible menu labels, tag counts and console-error count for one page and
-  writes a sanitized receipt under `evidence/private` (never committed). It is
+  visible menu labels (text, `aria-label` or `title`), tag counts and
+  console-error count for one page and writes a sanitized receipt under
+  `evidence/private` (never committed). It optionally logs in (username file
+  plus password on stdin) so authenticated desktop menus can be captured, and is
   self-tested against a local `file://` fixture
-  (`tools/test_gui_parity_probe.mjs`), so the harness itself is verified
-  host-side; running it against our deployed build and the reference `.133` is
-  device-gated.
+  (`tools/test_gui_parity_probe.mjs`). The live stand is reachable at
+  `https://10.0.77.118/` and the reference at `https://10.0.87.133/`, so Phase 8
+  runs over HTTP and is not hardware-gated; only the gadget/board phases are.
 - `tools/compare_gui_parity.py` compares our build receipt with the reference
   receipt (menu-label and tag-count differences, console-error delta) into a
   sanitized private receipt, so the Phase 8 acceptance report can be produced

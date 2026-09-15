@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, executablePath, targetUrl, outputValue] =
+const [modulePath, executablePath, targetUrl, outputValue, usernameFile] =
   process.argv.slice(2);
 assert.ok(
   modulePath && executablePath && targetUrl && outputValue,
@@ -42,14 +42,52 @@ try {
   await page.goto(targetUrl, { waitUntil: "load", timeout: 20_000 });
   await page.waitForTimeout(500);
 
+  if (usernameFile) {
+    const username = fs.readFileSync(usernameFile, "utf8").trim();
+    let password = "";
+    for await (const chunk of process.stdin) {
+      password += chunk.toString("utf8");
+      if (password.length > 4096) {
+        throw new Error("password input exceeded the limit");
+      }
+    }
+    password = password.replace(/[\r\n]+$/, "");
+    const userInput = await page.$(
+      'input[type="text"], input[type="email"], input[name*="user" i]',
+    );
+    const passInput = await page.$('input[type="password"]');
+    if (userInput && passInput && password) {
+      await userInput.fill(username);
+      await passInput.fill(password);
+      const submit = await page.$('button[type="submit"], button');
+      if (submit) {
+        await submit.click();
+      } else {
+        await passInput.press("Enter");
+      }
+      await page
+        .waitForLoadState("networkidle", { timeout: 20_000 })
+        .catch(() => {});
+      await page.waitForTimeout(800);
+    }
+  }
+
   const dom = await page.evaluate(() => {
     const labels = [];
     const seen = new Set();
     const nodes = document.querySelectorAll(
-      '[role="menuitem"], nav a, nav button, header button, .ant-menu-item',
+      '[role="menuitem"], [role="button"], nav a, nav button, header button, ' +
+        ".ant-menu-item, .ant-dropdown-menu-item, [aria-label], [title]",
     );
     for (const node of nodes) {
-      const text = (node.textContent || "").trim().replace(/\s+/g, " ");
+      const text = (
+        node.textContent ||
+        node.getAttribute("aria-label") ||
+        node.getAttribute("title") ||
+        ""
+      )
+        .trim()
+        .replace(/\s+/g, " ");
       if (text && text.length <= 80 && !seen.has(text)) {
         seen.add(text);
         labels.push(text);
