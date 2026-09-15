@@ -75,7 +75,9 @@ Phases 2-3 is complete. Everything below is committed with a green
   single board owner that serves media, HID and ATX from one control socket and
   owns the composite gadget and the reviewed ATX lines. Owner units and
   packaging are verified by `systemd-analyze` and are non-installable until the
-  physical gate. `tools/test_gadget_profile_boundary.py` pins that the
+  physical gate. `scripts/build-board-profile.sh` builds the board-owner test
+  bundle (Rust gadget media+HID and native ATX GPIO); the real aarch64 build
+  also fixed the GPIO ioctl request cast for aarch64-musl. `tools/test_gadget_profile_boundary.py` pins that the
   gadget/gpio profiles link no `bli-kvm-kvmd-*` crate.
 
 ## Device-gated remainder (blocked until the H616 stand returns)
