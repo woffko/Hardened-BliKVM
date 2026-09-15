@@ -14,6 +14,7 @@ def receipt(
     errors: int = 0,
     capabilities: dict[str, str] | None = None,
     markers: dict[str, int] | None = None,
+    failed_requests: list[dict[str, object]] | None = None,
 ) -> dict:
     return {
         "schemaVersion": 1,
@@ -25,6 +26,7 @@ def receipt(
         "consoleErrors": errors,
         "capabilities": capabilities or {},
         "markers": markers or {},
+        "failedRequests": failed_requests or [],
     }
 
 
@@ -122,6 +124,53 @@ class CompareGuiParityTests(unittest.TestCase):
         result = comparator.compare(ours, reference)
         self.assertIs(result["capabilitiesCompared"], False)
         self.assertEqual(result["capabilityDiffs"], {})
+
+    def test_failed_requests_are_reported_per_side(self) -> None:
+        ours = receipt(
+            ["Images"],
+            {"div": 1},
+            failed_requests=[
+                {"method": "GET", "route": "/api/download/image/status", "status": 404},
+                {"method": "GET", "route": "/api/inventory", "status": 503},
+            ],
+        )
+        reference = receipt(
+            ["Images"],
+            {"div": 1},
+            failed_requests=[
+                {"method": "GET", "route": "/api/inventory", "status": 503},
+            ],
+        )
+        result = comparator.compare(ours, reference)
+        self.assertIs(result["failedRequestsCompared"], True)
+        self.assertEqual(
+            result["failedRequestsOnlyInOurs"],
+            ["GET /api/download/image/status:404"],
+        )
+        self.assertEqual(result["failedRequestsOnlyInReference"], [])
+
+    def test_failed_requests_are_not_compared_when_one_side_lacks_them(self) -> None:
+        ours = receipt(
+            ["Images"],
+            {"div": 1},
+            failed_requests=[
+                {"method": "GET", "route": "/api/download/image/status", "status": 404}
+            ],
+        )
+        reference = receipt(["Images"], {"div": 1})
+        result = comparator.compare(ours, reference)
+        self.assertIs(result["failedRequestsCompared"], False)
+        self.assertEqual(result["failedRequestsOnlyInOurs"], [])
+        self.assertEqual(result["failedRequestsOnlyInReference"], [])
+
+    def test_invalid_failed_requests_are_rejected(self) -> None:
+        ours = receipt(
+            ["Images"],
+            {"div": 1},
+            failed_requests=[{"method": "GET", "route": "no-slash", "status": 404}],
+        )
+        with self.assertRaises(ValueError):
+            comparator.compare(ours, ours)
 
     def test_invalid_receipts_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

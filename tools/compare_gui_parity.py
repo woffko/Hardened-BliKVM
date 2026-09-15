@@ -28,6 +28,7 @@ PROBE = "hardened-blikvm-gui-parity"
 MAX_LABELS = 200
 MAX_CAPABILITIES = 200
 MAX_CAPABILITY_VALUE = 32
+MAX_FAILED_REQUESTS = 20
 
 # Label differences that are intentional product branding, not parity gaps.
 EXPECTED_LABEL_DIFFERENCES = (
@@ -99,6 +100,27 @@ def _is_expected(label: str) -> bool:
     return any(pattern.fullmatch(label) for pattern in EXPECTED_LABEL_DIFFERENCES)
 
 
+def _failed_requests(receipt: dict) -> list[dict[str, str]]:
+    values = receipt.get("failedRequests") or []
+    if not isinstance(values, list) or len(values) > MAX_FAILED_REQUESTS:
+        raise ValueError("invalid failed requests")
+    result: list[dict[str, str]] = []
+    for value in values:
+        if not isinstance(value, dict):
+            raise ValueError("invalid failed request entry")
+        method = value.get("method")
+        route = value.get("route")
+        status = value.get("status")
+        if not isinstance(method, str) or len(method) > 8:
+            raise ValueError("invalid failed request method")
+        if not isinstance(route, str) or not route.startswith("/") or len(route) > 120:
+            raise ValueError("invalid failed request route")
+        if not isinstance(status, int) or not 400 <= status <= 599:
+            raise ValueError("invalid failed request status")
+        result.append({"method": method, "route": route, "status": str(status)})
+    return result
+
+
 def _explain(label: str, changed_paths: set[str]) -> str | None:
     for pattern, topic in EXPLAINERS:
         if pattern.search(label):
@@ -160,6 +182,26 @@ def compare(ours: dict, reference: dict) -> dict:
         if path:
             explained_reference[label] = path
 
+    our_failure_list = _failed_requests(ours)
+    reference_failure_list = _failed_requests(reference)
+    failed_requests_compared = bool(our_failure_list) and bool(reference_failure_list)
+    our_failures = (
+        {
+            f"{entry['method']} {entry['route']}:{entry['status']}"
+            for entry in our_failure_list
+        }
+        if failed_requests_compared
+        else set()
+    )
+    reference_failures = (
+        {
+            f"{entry['method']} {entry['route']}:{entry['status']}"
+            for entry in reference_failure_list
+        }
+        if failed_requests_compared
+        else set()
+    )
+
     our_markers = _markers(ours)
     reference_markers = _markers(reference)
     markers_compared = bool(our_markers) and bool(reference_markers)
@@ -206,6 +248,9 @@ def compare(ours: dict, reference: dict) -> dict:
             for label in labels_only_in_reference
             if label not in explained_reference and not _is_expected(label)
         ],
+        "failedRequestsCompared": failed_requests_compared,
+        "failedRequestsOnlyInOurs": sorted(our_failures - reference_failures),
+        "failedRequestsOnlyInReference": sorted(reference_failures - our_failures),
         "markersCompared": markers_compared,
         "markerDiffs": marker_diffs,
         "consoleErrorDelta": int(ours.get("consoleErrors", 0))
@@ -227,7 +272,8 @@ def execute(args: argparse.Namespace) -> int:
         f"onlyReference={len(receipt['labelsOnlyInReference'])} "
         f"explainedReference={len(receipt['explainedLabelsOnlyInReference'])} "
         f"unexplainedReference={len(receipt['unexplainedLabelsOnlyInReference'])} "
-        f"capabilityDiffs={len(receipt['capabilityDiffs'])} receiptSha256={digest}"
+        f"capabilityDiffs={len(receipt['capabilityDiffs'])} "
+        f"failedOnlyInOurs={len(receipt['failedRequestsOnlyInOurs'])} receiptSha256={digest}"
     )
     return 0
 

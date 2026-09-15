@@ -178,7 +178,8 @@ captures menu labels, tag counts, the capability manifest, surface markers
 error samples; `compare_gui_parity.py` separates label differences that a
 differing capability explains or that are intentional branding from
 `unexplainedLabelsOnlyInReference/InOurs`, the real gaps, and only compares
-capabilities and markers when both receipts carry them. Latest read-only
+capabilities, markers and the recorded failed GUI requests when both receipts
+carry them, so a one-sided capture never reads as a gap. Latest read-only
 capture (ours-f, compare-b) has no unexplained differences in labels. The
 observed console errors on the rc stand name one real gap to track: the GUI
 opens `wss://…/api/ws`, which our server does not implement yet (parity matrix
