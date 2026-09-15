@@ -161,10 +161,11 @@ configfs mounted) and not a substitute host.
 
 - Build the board-owner test bundle with `scripts/build-board-profile.sh`
   (features: restricted-control-surface, gadget-media-profile,
-  gadget-hid-profile, chardev-atx-profile), fill in the operator
-  `atx.env.example` with the confirmed timings, and install it under `/run` for
-  the reversible gate; the retained slots and permanent write policy stay
-  untouched.
+  gadget-hid-profile, chardev-atx-profile) and verify it with
+  `tools/verify_board_profile_bundle.py` (members, MANIFEST profile/features,
+  SHA256SUMS). Fill in the operator `atx.env.example` with the confirmed
+  timings and install it under `/run` for the reversible gate; the retained
+  slots and permanent write policy stay untouched.
 - Stop the KVMD-owned gadget and confirm the configfs tree is free with
   `bli-kvm-usb-gadget::observe`.
 - Bring up the board owner unit with the operator `EnvironmentFile` holding the

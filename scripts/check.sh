@@ -101,6 +101,7 @@ python3 -m unittest \
   tools/test_hid_transition_service.py \
   tools/test_build_hid_transition_profile.py \
   tools/test_build_board_profile.py \
+  tools/test_verify_board_profile_bundle.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_phase4_video_boundary.py \
@@ -305,6 +306,7 @@ python3 -m py_compile \
   tools/stage_device_hid_reboot_gate.py \
   tools/capture_device_hid_descriptors.py \
   tools/capture_device_handoff_preflight.py \
+  tools/verify_board_profile_bundle.py \
   tools/capture_device_kvm_topology.py \
   tools/check_device_log_health.py \
   tools/license_inventory.py \
