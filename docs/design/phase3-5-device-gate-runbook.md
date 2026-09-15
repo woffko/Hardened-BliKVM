@@ -176,7 +176,25 @@ configfs mounted) and not a substitute host.
   `/run` for the reversible gate; the retained slots and permanent write policy
   stay untouched.
 - Copy the verified bundle to `/var/lib/hardened-blikvm-gadget/gate/bundle.tar.gz`,
-  then run the reversible gate with
+  then run the reversible gate. The reviewed copy-paste form for the full
+  acceptance window (media/HID plus the native ATX bench) is:
+
+  ```
+  project-memory-exec --project BLi-KVM --secret ssh=<record>:ssh_password -- \
+  python3 -B tools/stage_device_board_profile_gate.py \
+    --endpoint ssh://<host>:22/ --username <user> \
+    --known-hosts evidence/private/ssh-known-hosts \
+    --bundle /mnt/d/debug/blikvm/hardened-blikvm/bundles/hardened-blikvm-board-profile-aarch64.tar.gz \
+    --output evidence/private/board-handoff-gate-<date>.json \
+    --udc musb-hdrc.2.auto --confirm-handoff \
+    --accept-media-hid --accept-timeout-seconds 300 --accept-image kubuntu.img \
+    --accept-atx-bench --confirm-physical-disconnect
+  ```
+
+  Run the GUI probes from section 6c while it waits, then run the same command
+  with `--teardown` and a fresh output path.
+
+- The gate itself is then:`
   `tools/stage_device_board_profile_gate.py --confirm-handoff` (stops KVMD,
   starts the Rust board owner, verifies the owner socket and the `hardened`
   gadget, and never touches the `kvmd` gadget). Without `--confirm-handoff` it
