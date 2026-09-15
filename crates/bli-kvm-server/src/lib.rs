@@ -35,6 +35,7 @@ mod autostart;
 mod download;
 mod error;
 mod hid;
+mod leader_key;
 mod media;
 mod system_log;
 mod system_time;
@@ -295,6 +296,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
         )
         .route("/hid/lease", post(hid::hid_lease))
+        .route(
+            "/hid/shortcut/leader-key",
+            get(leader_key::get_leader_key).post(leader_key::set_leader_key),
+        )
         .route("/ws", get(ws::hid_socket))
         .route("/virtual-media", post(media::virtual_media))
         .route("/virtual-media/catalog", get(media::media_catalog))

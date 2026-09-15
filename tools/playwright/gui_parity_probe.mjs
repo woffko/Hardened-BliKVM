@@ -32,6 +32,21 @@ try {
     locale: "en-US",
   });
   const page = await context.newPage();
+  const failedRequests = [];
+  page.on("response", (response) => {
+    if (failedRequests.length >= 20) return;
+    const status = response.status();
+    if (status < 400) return;
+    const request = response.request();
+    if (request.resourceType() === "image" || request.resourceType() === "font")
+      return;
+    failedRequests.push({
+      method: request.method(),
+      route: new URL(response.url()).pathname,
+      status,
+    });
+  });
+
   let consoleErrors = 0;
   const consoleErrorSamples = [];
   page.on("console", (message) => {
@@ -215,6 +230,7 @@ try {
     markers,
     consoleErrors,
     consoleErrorSamples,
+    failedRequests,
     cookiesRead: false,
     storageRead: false,
     mutationsPerformed: false,
