@@ -93,8 +93,9 @@ Phases 2-3 is complete. Everything below is committed with a green
   absolute moves, and clears the interface left behind when the pointer mode
   switches. Media/HID and ATX pulse gates remain.
 
-  Read-only KVMD sourcing (receipt
-  `evidence/private/device-kvmd-control-source-20260915-a.json`) confirmed the
+  Read-only KVMD sourcing (`tools/capture_device_kvmd_control_source.py`,
+  receipts `evidence/private/device-kvmd-control-source-20260915-{a,b}.json`)
+  confirmed the
   report layouts and the remap formula, and recorded the board's real ATX lines
   from `/etc/kvmd/override.yaml`: gpiochip0 with power switch 228 and reset
   switch 272 (LEDs 234/233). Read-only disassembly of the vendor `/usr/bin/atx`
