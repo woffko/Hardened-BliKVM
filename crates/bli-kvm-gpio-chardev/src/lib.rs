@@ -151,7 +151,7 @@ impl ChardevGpioDriver {
         let result = unsafe {
             libc::ioctl(
                 self.chip.as_raw_fd(),
-                GET_LINEHANDLE_IOCTL as libc::c_ulong,
+                GET_LINEHANDLE_IOCTL as _,
                 &mut payload,
             )
         };
@@ -185,7 +185,7 @@ impl GpioDriver for ChardevGpioDriver {
         let fd = self.handle(request.offset)?;
         let mut data = GpiohandleData::default();
         data.values[0] = u8::from(active);
-        let result = unsafe { libc::ioctl(fd, SET_LINE_VALUES_IOCTL as libc::c_ulong, &data) };
+        let result = unsafe { libc::ioctl(fd, SET_LINE_VALUES_IOCTL as _, &data) };
         if result < 0 {
             return Err(GpioChardevError::Io(std::io::Error::last_os_error()));
         }
