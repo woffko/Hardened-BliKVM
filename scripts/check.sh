@@ -192,6 +192,7 @@ python3 -m unittest \
   tools/test_crate_licenses.py \
   tools/test_capture_device_kvm_topology.py \
   tools/test_capture_device_hid_descriptors.py \
+  tools/test_capture_device_handoff_preflight.py \
   tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_system_action_maintenance.py \
   tools/test_stage_device_diagnostic_maintenance.py \
@@ -300,6 +301,7 @@ python3 -m py_compile \
   tools/stage_device_media_isolated_gate.py \
   tools/stage_device_hid_reboot_gate.py \
   tools/capture_device_hid_descriptors.py \
+  tools/capture_device_handoff_preflight.py \
   tools/capture_device_kvm_topology.py \
   tools/check_device_log_health.py \
   tools/license_inventory.py \

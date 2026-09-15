@@ -140,6 +140,11 @@ The Rust board owner replaces KVMD for the composite gadget and the ATX lines.
 This section is the physical gate; every step needs explicit operator
 confirmation and produces a private receipt.
 
+First run `tools/capture_device_handoff_preflight.py` and require
+`handoffReady=true`: it is the read-only check that the target really is the
+BliKVM H616 stack (KVMD and the vendor daemon present, a gadget and UDC bound,
+configfs mounted) and not a substitute host.
+
 ### 6a. Read-only capture (no mutation)
 
 - Confirm the stock gadget is up and capture its exact HID function parameters
