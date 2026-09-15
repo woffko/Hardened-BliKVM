@@ -72,16 +72,18 @@ Phases 2-3 is complete. Everything below is committed with a green
   ATX, media and HID transition engines; the idempotent configfs USB gadget
   state machine; feature-gated gadget media/HID executors; a feature-gated
   native ATX GPIO executor plus the Linux GPIO character-device driver; and the
-  single board owner that serves media, HID and ATX from one control socket and
-  owns the composite gadget and the reviewed ATX lines. Owner units and
-  packaging are verified by `systemd-analyze` and are non-installable until the
-  physical gate. The host toolchain builds, verifies and stages the board owner
-  reversibly (`scripts/build-board-profile.sh`, `tools/verify_board_profile_bundle.py`,
+  single board owner that serves media, HID and ATX from one control socket.
+  The host toolchain builds, verifies and stages the board owner reversibly
+  (`scripts/build-board-profile.sh`, `tools/verify_board_profile_bundle.py`,
   `tools/plan_board_profile_handoff.py`, `tools/stage_device_board_profile_gate.py`);
-  only the device execution remains. `scripts/build-board-profile.sh` builds the board-owner test
-  bundle (Rust gadget media+HID and native ATX GPIO); the real aarch64 build
-  also fixed the GPIO ioctl request cast for aarch64-musl. `tools/test_gadget_profile_boundary.py` pins that the
+  the real aarch64 build also fixed the GPIO ioctl request cast for
+  aarch64-musl, and `tools/test_gadget_profile_boundary.py` pins that the
   gadget/gpio profiles link no `bli-kvm-kvmd-*` crate.
+- Device (2026-09-15): preflight `handoffReady=true` on the board, read-only
+  topology and HID descriptor captures, and the **reversible board-owner
+  handoff gate passed** (KVMD stopped, the Rust owner served its control socket,
+  teardown restored KVMD and removed only our state) - see
+  `docs/baselines/board-handoff-gate.md`. Media/HID and ATX pulse gates remain.
 
 ## Device-bound remainder (board available)
 
