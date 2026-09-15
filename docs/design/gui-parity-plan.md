@@ -86,7 +86,11 @@ Phases 2-3 is complete. Everything below is committed with a green
   `docs/baselines/board-handoff-gate.md`. The captured HID report
   descriptors are pinned in `crates/bli-kvm-usb-gadget` (verified against the
   recorded SHA-256), and the board gadget is now a composite device: MSD plus
-  the three pinned HID functions. Media/HID and ATX pulse gates remain.
+  the three pinned HID functions. The gadget HID executor composes keyboard
+  reports for `hid.usb0` and relative-mouse reports (buttons plus signed 16-bit
+  X/Y, wheel/pan) for `hid.usb1`; absolute pointer moves stay fail-closed until
+  the board scaling semantics are confirmed. Media/HID and ATX pulse gates
+  remain.
 
 ## Device-bound remainder (board available)
 

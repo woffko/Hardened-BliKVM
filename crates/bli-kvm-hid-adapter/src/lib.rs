@@ -459,6 +459,64 @@ impl KeyboardReportComposer {
     }
 }
 
+/// Inverse translation for the pinned relative-mouse interface (`hid.usb1`).
+///
+/// The 7-byte report layout matches the descriptor captured read-only from the
+/// board: one buttons byte, signed 16-bit little-endian X and Y, then signed
+/// 8-bit wheel and pan. It tracks the held buttons; deltas and wheel are per
+/// report. `MouseMove` (absolute) is not this interface and returns `None`.
+#[derive(Debug, Default)]
+pub struct PointerReportComposer {
+    buttons: u8,
+}
+
+pub const RELATIVE_MOUSE_REPORT_LENGTH: usize = 7;
+
+impl PointerReportComposer {
+    pub const fn new() -> Self {
+        Self { buttons: 0 }
+    }
+
+    /// Apply one event; `Some(report)` for mouse events, `None` otherwise.
+    pub fn apply(&mut self, event: &KvmdHidEvent) -> Option<[u8; RELATIVE_MOUSE_REPORT_LENGTH]> {
+        let mut report = [0_u8; RELATIVE_MOUSE_REPORT_LENGTH];
+        report[0] = self.buttons;
+        match event {
+            KvmdHidEvent::MouseButton { button, pressed } => {
+                let bit = match button {
+                    KvmdMouseButton::Left => 0x01,
+                    KvmdMouseButton::Right => 0x02,
+                    KvmdMouseButton::Middle => 0x04,
+                };
+                if *pressed {
+                    self.buttons |= bit;
+                } else {
+                    self.buttons &= !bit;
+                }
+                report[0] = self.buttons;
+            }
+            KvmdHidEvent::MouseRelative { x, y } => {
+                report[1..3].copy_from_slice(&i16::from(*x).to_le_bytes());
+                report[3..5].copy_from_slice(&i16::from(*y).to_le_bytes());
+            }
+            KvmdHidEvent::MouseWheel { x, y } => {
+                report[5] = *x as u8;
+                report[6] = *y as u8;
+            }
+            KvmdHidEvent::Key { .. } | KvmdHidEvent::MouseMove { .. } => return None,
+        }
+        Some(report)
+    }
+
+    /// Release every held button, returning the empty report.
+    pub fn release_all(&mut self) -> [u8; RELATIVE_MOUSE_REPORT_LENGTH] {
+        self.buttons = 0;
+        let mut report = [0_u8; RELATIVE_MOUSE_REPORT_LENGTH];
+        report[0] = self.buttons;
+        report
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,6 +716,50 @@ mod tests {
         assert_eq!(
             composer.apply(&KvmdHidEvent::MouseRelative { x: 1, y: 2 }),
             Ok(None)
+        );
+    }
+
+    #[test]
+    fn pointer_composer_builds_relative_mouse_reports() {
+        let mut composer = PointerReportComposer::new();
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseRelative { x: -2, y: 3 }),
+            Some([0, 0xfe, 0xff, 0x03, 0x00, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseButton {
+                button: KvmdMouseButton::Left,
+                pressed: true,
+            }),
+            Some([0x01, 0, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseWheel { x: 1, y: -1 }),
+            Some([0x01, 0, 0, 0, 0, 1, 0xff])
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseButton {
+                button: KvmdMouseButton::Left,
+                pressed: false,
+            }),
+            Some([0x00, 0, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(composer.release_all(), [0; RELATIVE_MOUSE_REPORT_LENGTH]);
+    }
+
+    #[test]
+    fn pointer_composer_ignores_keyboard_and_absolute_events() {
+        let mut composer = PointerReportComposer::new();
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::Key {
+                key: KvmdKeyCode::from_usb_usage(4).unwrap(),
+                pressed: true,
+            }),
+            None
+        );
+        assert_eq!(
+            composer.apply(&KvmdHidEvent::MouseMove { x: 100, y: 200 }),
+            None
         );
     }
 }

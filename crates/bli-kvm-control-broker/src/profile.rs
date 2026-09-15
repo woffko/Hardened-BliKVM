@@ -358,6 +358,7 @@ pub fn gadget_hid_config(profile: &GadgetHidProfile) -> bli_kvm_hid_transition::
     bli_kvm_hid_transition::GadgetHidConfig {
         hidg_dir: profile.hidg_dir.clone(),
         keyboard_function: "hid.usb0".to_string(),
+        mouse_function: "hid.usb1".to_string(),
     }
 }
 
