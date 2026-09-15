@@ -152,6 +152,12 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "require": ("streamCount", "streams"),
             },
             {
+                "name": "KVMD removal",
+                "glob": "kvmd-removal-*.json",
+                "probe": "hardened-blikvm-kvmd-removal",
+                "marker": "removal.kvmd_stopped=yes",
+            },
+            {
                 "name": "frame timing",
                 "glob": "video-frame-timing-*.json",
                 "probe": "hardened-blikvm-video-frame-timing",

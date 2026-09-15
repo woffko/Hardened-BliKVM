@@ -138,6 +138,15 @@ confirmation, each producing a private receipt:
 - media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
 - Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
 
+KVMD retirement is prepared but not executed: `tools/stage_device_kvmd_removal.py`
+records a read-only inventory (receipt
+`evidence/private/kvmd-inventory-20260915-a.json`) and refuses to stop anything
+until the private receipts prove the replacement (composite-gadget acceptance,
+media attach/eject, native ATX bench). The refusal is a real receipt
+(`kvmd-removal-refusal-20260915-a.json`) and the accepted path copies the unit
+files into a timestamped backup before disabling the four KVMD units and
+verifying our owner still serves.
+
 Phase 4 video host harness: `tools/playwright/video_frame_timing_probe.mjs`
 consumes the MJPEG stream and records complete-frame count, mean/p95/max frame
 interval, FPS and average frame bytes (host-tested against a local MJPEG
