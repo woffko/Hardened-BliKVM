@@ -75,6 +75,7 @@ class StageBoardProfileGateTests(unittest.TestCase):
         self.assertIn("bundle sha mismatch", apply)
         self.assertIn("gadget_name", apply)
         self.assertIn(gate.MARKER, apply)
+        self.assertIn('rm -f -- "$socket"', apply)
         self.assertNotIn("$gdir/kvmd", apply)
         self.assertEqual(apply.count("printf 'kvmd_stopped=yes"), 1)
         self.assertEqual(apply.count("printf 'kvmd_stopped=no"), 1)
@@ -86,6 +87,7 @@ class StageBoardProfileGateTests(unittest.TestCase):
         self.assertIn("$gdir/hardened", teardown)
         self.assertNotIn("$gdir/kvmd", teardown)
         self.assertIn(gate.MARKER, teardown)
+        self.assertIn("rm -f -- /run/hardened-blikvm-gadget/control.sock", teardown)
 
     def test_fact_validation_fails_closed(self) -> None:
         gate.validate_apply(apply_facts())

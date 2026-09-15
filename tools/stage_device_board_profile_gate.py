@@ -96,6 +96,7 @@ env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root {_env_args(owner_env)} sets
 owner_pid=$!
 printf '%s' "$owner_pid" > "$root/owner.pid"
 socket=$(printf '%s' "{owner_env['BLI_KVM_CONTROL_SOCKET']}")
+rm -f -- "$socket"
 i=0
 while [ "$i" -lt 40 ]; do
   if [ -S "$socket" ]; then break; fi
@@ -141,6 +142,7 @@ if [ -d "$gdir/hardened" ] && [ -f "$marker" ]; then
 fi
 if [ ! -d "$gdir/hardened" ]; then printf 'hardened_gadget_removed=yes\\n'; else printf 'hardened_gadget_removed=no\\n'; fi
 rm -rf -- "$root"
+rm -f -- /run/hardened-blikvm-gadget/control.sock
 if [ ! -e "$root" ]; then printf 'runtime_removed=yes\\n'; else printf 'runtime_removed=no\\n'; fi
 systemctl start kvmd.service >/dev/null 2>&1 || true
 if systemctl is-active kvmd.service >/dev/null 2>&1; then printf 'kvmd_restarted=yes\\n'; else printf 'kvmd_restarted=no\\n'; fi
