@@ -79,9 +79,62 @@ class StageBoardProfileGateTests(unittest.TestCase):
         self.assertEqual(parsed.power_long_ms, planner.VENDOR_ATX_POWER_LONG_MS)
         self.assertEqual(parsed.reset_ms, planner.VENDOR_ATX_RESET_MS)
 
+    def acceptance_facts(self, **overrides: str) -> dict[str, str]:
+        base = {
+            "gadget_present": "yes",
+            "gadget_name": "hardened",
+            "udc_bound": "yes",
+            "functions": "hid.usb0,hid.usb1,hid.usb2,mass_storage.usb0",
+            "msd_file": "kubuntu.img",
+            "hidg_devices": "/dev/hidg0,/dev/hidg1,/dev/hidg2",
+            "hid_write": "ok",
+        }
+        base.update(overrides)
+        return base
+
+    def test_acceptance_script_pins_the_timeout_and_image(self) -> None:
+        script = gate.build_acceptance_script(120, "kubuntu.img")
+        self.assertIn("while [ \"$waited\" -lt 120 ]", script)
+        self.assertIn("expected=kubuntu.img", script)
+        self.assertIn("/dev/hidg0", script)
+        with self.assertRaises(ValueError):
+            gate.build_acceptance_script(0, "kubuntu.img")
+        with self.assertRaises(ValueError):
+            gate.build_acceptance_script(601, "kubuntu.img")
+        with self.assertRaises(ValueError):
+            gate.build_acceptance_script(60, "bad name.img")
+
+    def test_acceptance_validation_accepts_the_composite_gadget(self) -> None:
+        gate.validate_acceptance(self.acceptance_facts(), "kubuntu.img")
+        gate.validate_acceptance(
+            self.acceptance_facts(hid_write="skipped"), "kubuntu.img"
+        )
+
+    def test_acceptance_validation_fails_closed(self) -> None:
+        cases = (
+            {"gadget_present": "no"},
+            {"gadget_name": "kvmd"},
+            {"udc_bound": "no"},
+            {"functions": "mass_storage.usb0"},
+            {"functions": "hid.usb0,hid.usb1,hid.usb2,mass_storage.usb0,hid.usb9"},
+            {"msd_file": "other.img"},
+            {"hidg_devices": "none"},
+            {"hidg_devices": "/dev/ttyGS0"},
+            {"hid_write": "failed"},
+        )
+        for override in cases:
+            with self.subTest(override=override):
+                with self.assertRaises(ValueError):
+                    gate.validate_acceptance(
+                        self.acceptance_facts(**override), "kubuntu.img"
+                    )
+
     def test_generated_scripts_are_valid_shell(self) -> None:
         apply, teardown = render()
-        for script in (apply, teardown):
+        acceptance = gate.build_acceptance_script(
+            gate.DEFAULT_ACCEPT_TIMEOUT_SECONDS, "kubuntu.img"
+        )
+        for script in (apply, teardown, acceptance):
             syntax = subprocess.run(
                 ["sh", "-n"],
                 input=script.encode(),

@@ -174,7 +174,14 @@ configfs mounted) and not a substitute host.
   `tools/stage_device_board_profile_gate.py --confirm-handoff` (stops KVMD,
   starts the Rust board owner, verifies the owner socket and the `hardened`
   gadget, and never touches the `kvmd` gadget). Without `--confirm-handoff` it
-  only validates and prints the plan; `--teardown` restores KVMD.
+  only validates and prints the plan; `--teardown` restores KVMD. Add
+  `--accept-media-hid --accept-timeout-seconds 300 --accept-image kubuntu.img`
+  to make the same run wait for the composite gadget the owner creates on the
+  first media attach, then record its functions, the attached catalog image and
+  the hidg devices, and write one neutral (release-all) keyboard report. While
+  the gate waits, drive the reviewed GUI actions (attach `kubuntu.img`, press a
+  key, move the pointer) and confirm the target sees them; the gate fails closed
+  if any recorded fact is missing or unexpected.
 - Bring up the board owner unit with the operator `EnvironmentFile` holding the
   confirmed timings; verify each backend independently before enabling the
   capability in the shipped build:
