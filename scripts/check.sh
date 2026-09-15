@@ -103,6 +103,7 @@ python3 -m unittest \
   tools/test_build_board_profile.py \
   tools/test_verify_board_profile_bundle.py \
   tools/test_plan_board_profile_handoff.py \
+  tools/test_stage_device_board_profile_gate.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_phase4_video_boundary.py \
@@ -309,6 +310,7 @@ python3 -m py_compile \
   tools/capture_device_handoff_preflight.py \
   tools/verify_board_profile_bundle.py \
   tools/plan_board_profile_handoff.py \
+  tools/stage_device_board_profile_gate.py \
   tools/capture_device_kvm_topology.py \
   tools/check_device_log_health.py \
   tools/license_inventory.py \

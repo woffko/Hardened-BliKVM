@@ -169,8 +169,12 @@ configfs mounted) and not a substitute host.
   operator `atx.env.example` with the confirmed timings and install it under
   `/run` for the reversible gate; the retained slots and permanent write policy
   stay untouched.
-- Stop the KVMD-owned gadget and confirm the configfs tree is free with
-  `bli-kvm-usb-gadget::observe`.
+- Copy the verified bundle to `/run/hardened-blikvm-board-gate/bundle.tar.gz`,
+  then run the reversible gate with
+  `tools/stage_device_board_profile_gate.py --confirm-handoff` (stops KVMD,
+  starts the Rust board owner, verifies the owner socket and the `hardened`
+  gadget, and never touches the `kvmd` gadget). Without `--confirm-handoff` it
+  only validates and prints the plan; `--teardown` restores KVMD.
 - Bring up the board owner unit with the operator `EnvironmentFile` holding the
   confirmed timings; verify each backend independently before enabling the
   capability in the shipped build:

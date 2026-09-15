@@ -33,11 +33,13 @@ HIDG_DIR = "/dev"
 GADGET_STATE = "/var/lib/hardened-blikvm-gadget"
 GADGET_ETC = "/etc/hardened-blikvm-gadget"
 GADGET_RUN = "/run/hardened-blikvm-gadget"
+BUNDLE_ROOT = "hardened-blikvm-board-profile-aarch64"
+GATE_ROOT = "/run/hardened-blikvm-board-gate"
 
 STEPS = [
     "run tools/capture_device_handoff_preflight.py and require handoffReady=true",
     "run tools/capture_device_hid_descriptors.py and pin the report descriptors",
-    "stage the verified bundle under /run and write the operator ATX environment",
+    "copy the verified bundle to /run/hardened-blikvm-board-gate/bundle.tar.gz and write the operator ATX environment",
     "start the board owner with the environment below and wait for the control socket",
     "verify media select/attach/eject, a keyboard report and an ATX pulse",
     "tear down the runtime directory and restore the KVMD route on any failure",
