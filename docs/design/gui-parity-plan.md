@@ -164,6 +164,10 @@ restricted-control stand answers `503` for `/api/stream/mjpeg` (its video proxy
 is inactive) and the main proxy answers `502` while its server unit is down, so
 the timing/hotplug/resolution gates stay with the operator.
 
+The human-readable audit lives in `docs/baselines/phase8-acceptance.md`: it
+repeats the generated report, names every open gate and the exact tool that
+produces its receipt, and states that KVMD stays the fallback.
+
 Phase 8 acceptance report (host-only, read-only): `tools/phase8_acceptance_report.py`
 walks an explicit manifest of host artifacts and device receipts and writes a
 private report; a device item without a matching receipt stays `unrun` and the
