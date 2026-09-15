@@ -216,7 +216,7 @@ test("the real app renders the desktop without calling the removed endpoints", a
     // capture path instead.
     if (receipt.settingsTabs.length === 0) {
       t.diagnostic(
-        `settings tabs not captured: ${JSON.stringify(receipt.settingsDebug)}`,
+        `settings tabs not captured (error=${receipt.settingsCaptureError || "none"})`,
       );
     } else {
       assert.ok(
