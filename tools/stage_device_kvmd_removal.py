@@ -219,9 +219,13 @@ def evidence_gate(evidence: Path) -> list[str]:
         if facts.get("gadget_present") != "yes" or facts.get("udc_bound") != "yes":
             missing.append("a passing composite-gadget acceptance receipt")
 
-    media = latest("restricted-control-media-gate-*.json")
-    if not media or media.get("probe") != "restricted-control-media-attach-eject":
-        missing.append("restricted-control-media-gate-*.json (media attach/eject)")
+    media = latest("virtual-media-acceptance-*.json")
+    if (
+        not media
+        or media.get("probe") != "hardened-blikvm-virtual-media-acceptance"
+        or media.get("result") != "passed"
+    ):
+        missing.append("virtual-media-acceptance-*.json (media attach/eject)")
 
     atx_gate = latest("board-handoff-gate-*.json")
     atx_bench_ok = bool(

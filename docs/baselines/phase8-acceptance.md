@@ -56,6 +56,10 @@ comparison needs the reference operator credential.
   `device-vendor-atx-timings-20260915-a.json`.
 - KVMD retirement inventory and refusal:
   `kvmd-inventory-20260915-a.json`, `kvmd-removal-refusal-20260915-a.json`.
+- Signed application-update commit cycle and runtime-package install:
+  `persistent-write-*-commit-*.json`, `device-update-runtime-package.json`.
+- Pre-migration ATX fixed-route live gate: `atx-live-gate-20260913-a.json`
+  (the canonical Phase 2 proof is the native GPIO bench below).
 - Board bundle verification: `board-bundle-verify-20260915-b.json`
   (`sha256 39991edf…`, 36 members, includes the ATX GPIO bench gate).
 - GUI parity capture and comparison:

@@ -213,6 +213,7 @@ python3 -m unittest \
   tools/test_phase8_acceptance_report.py \
   tools/test_stage_device_kvmd_removal.py \
   tools/test_upload_media_image.py \
+  tools/test_phase8_acceptance_manifest.py \
   tools/test_plan_route_drift.py \
   tools/test_stage_device_system_action_store.py \
   tools/test_stage_device_system_action_maintenance.py \

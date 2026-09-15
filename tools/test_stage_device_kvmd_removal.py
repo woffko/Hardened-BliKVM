@@ -104,8 +104,11 @@ class KvmdRemovalTests(unittest.TestCase):
             self.assertEqual(len(removal.evidence_gate(evidence)), 2)
 
             write_json(
-                evidence / "restricted-control-media-gate-20260915-a.json",
-                {"probe": "restricted-control-media-attach-eject"},
+                evidence / "virtual-media-acceptance-20260915-a.json",
+                {
+                    "probe": "hardened-blikvm-virtual-media-acceptance",
+                    "result": "passed",
+                },
             )
             write_json(
                 evidence / "board-handoff-gate-20260915-f.json",
@@ -129,8 +132,11 @@ class KvmdRemovalTests(unittest.TestCase):
                 },
             )
             write_json(
-                evidence / "restricted-control-media-gate-20260915-a.json",
-                {"probe": "restricted-control-media-attach-eject"},
+                evidence / "virtual-media-acceptance-20260915-a.json",
+                {
+                    "probe": "hardened-blikvm-virtual-media-acceptance",
+                    "result": "passed",
+                },
             )
             self.assertEqual(
                 removal.evidence_gate(evidence),

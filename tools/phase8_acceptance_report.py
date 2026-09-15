@@ -131,8 +131,9 @@ PHASES: tuple[dict[str, Any], ...] = (
             },
             {
                 "name": "media attach/eject gate",
-                "glob": "restricted-control-media-gate-*.json",
-                "probe": "restricted-control-media-attach-eject",
+                "glob": "virtual-media-acceptance-*.json",
+                "probe": "hardened-blikvm-virtual-media-acceptance",
+                "marker": "result=passed",
             },
             {
                 "name": "composite gadget acceptance",
