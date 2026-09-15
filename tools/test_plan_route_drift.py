@@ -25,7 +25,7 @@ def server_routes() -> set[str]:
 class PlanRouteDriftTests(unittest.TestCase):
     def test_plan_route_count_matches_the_server(self) -> None:
         plan = PLAN.read_text(encoding="utf-8")
-        match = re.search(r"as of 2026-09-14: (\d+) routes", plan)
+        match = re.search(r"as of 2026-09-\d{2}: (\d+) routes", plan)
         assert match is not None, "plan route count sentence is missing"
         stated = int(match.group(1))
         self.assertEqual(

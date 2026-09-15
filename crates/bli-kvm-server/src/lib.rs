@@ -41,6 +41,7 @@ mod system_time;
 mod update;
 mod video;
 mod vm_info;
+mod ws;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -57,6 +58,7 @@ pub(crate) struct AppState {
     pub setup_lock: Arc<Mutex<()>>,
     pub control: Option<Arc<bli_kvm_control_client::ControlClient>>,
     pub focus: Arc<Mutex<hid::FocusChallengeStore>>,
+    pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
     pub options: Arc<ServerOptions>,
 }
 
@@ -245,6 +247,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             )
         }),
         focus: Arc::new(Mutex::new(hid::FocusChallengeStore::new())),
+        hid_ws_leases: Arc::new(Mutex::new(hid::WsLeaseStore::new())),
         options: Arc::new(options.clone()),
     };
 
@@ -292,6 +295,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
         )
         .route("/hid/lease", post(hid::hid_lease))
+        .route("/ws", get(ws::hid_socket))
         .route("/virtual-media", post(media::virtual_media))
         .route("/virtual-media/catalog", get(media::media_catalog))
         .route("/application-power", post(atx::application_power))

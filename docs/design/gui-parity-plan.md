@@ -191,7 +191,7 @@ enable-gadget.sh,kvmd-msd.sh,kvmd-video.sh,ustreamer.bin}`, ATX socket
 ## Parity matrix
 
 Reference routes are from `server-rust/src/http/routes.rs`. "Our status" is the
-hardened BLi-KVM server as of 2026-09-14: 31 routes.
+hardened BLi-KVM server as of 2026-09-15: 32 routes.
 
 | Subsystem                                 | Reference endpoints                                                                                 | Our status                                                                                  | Target phase            |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------- |
@@ -199,7 +199,7 @@ hardened BLi-KVM server as of 2026-09-14: 31 routes.
 | capabilities/health/inventory/diagnostics | `compatibility_routes`, `/api/health`                                                               | implemented (`capabilities`,`health`,`inventory`,`diagnostics`)                             | 1                       |
 | HID live                                  | `/api/hid/{focus,lease}`                                                                            | implemented (restricted profile); gadget executor exists host-side behind a feature         | 3                       |
 | HID control                               | `/api/hid/{mode,usb-wakeup,reset,paste,shortcuts,shortcut,shortcut/leader-key}`                     | hidden                                                                                      | 3                       |
-| websocket                                 | `/api/ws`                                                                                           | not implemented                                                                             | 3 (HID) / 7 (terminal)  |
+| websocket                                 | `/api/ws`                                                                                           | restricted HID live over `/api/ws` (session lease, same-origin); terminal target 7         | 3 (HID) / 7 (terminal)  |
 | storage/media                             | `/api/storage/image`, `/image/mounted`, `/image/mount`, `/image/delete`, `/cdrom`, `/usb/reconnect` | partial (`/api/virtual-media`,`/api/virtual-media/catalog`)                                 | 3                       |
 | stream                                    | `/api/stream/mjpeg`, `/h264`, `/h264/direct`, `/mjpeg/detect`, `/mjpeg/detect/stop`                 | `mjpeg` implemented; h264/detect hidden                                                     | 4 / 8                   |
 | vm read-only                              | `/api/vm/{info,hardware,hostname,gpio,web-title,device/virtual}`                                    | `hostname`,`info`,`hardware` read-only (`ips`/`deviceKey` intentionally empty)              | 1 (done) / 2            |

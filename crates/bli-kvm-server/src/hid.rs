@@ -274,6 +274,71 @@ pub(crate) enum HidLeaseBody {
     },
 }
 
+/// A restricted HID lease that a websocket connection may report through.
+///
+/// The websocket binary frame carries no lease identity (the reference GUI
+/// protocol is a bare report), so the lease is bound to the authenticated
+/// session that acquired it over REST and expires on its own TTL.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WsLease {
+    lease_id: [u8; 16],
+    bindings: FocusBindings,
+    expires_at: Instant,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct WsLeaseStore {
+    entries: Vec<(String, WsLease)>,
+}
+
+impl WsLeaseStore {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn remember(
+        &mut self,
+        session_token: &str,
+        lease_id: [u8; 16],
+        bindings: FocusBindings,
+        expires_at: Instant,
+    ) {
+        self.entries.retain(|(token, _)| token != session_token);
+        self.entries.push((
+            session_token.to_owned(),
+            WsLease {
+                lease_id,
+                bindings,
+                expires_at,
+            },
+        ));
+    }
+
+    pub fn extend(&mut self, session_token: &str, expires_at: Instant) {
+        if let Some((_, lease)) = self
+            .entries
+            .iter_mut()
+            .find(|(token, _)| token == session_token)
+        {
+            lease.expires_at = expires_at;
+        }
+    }
+
+    pub fn clear(&mut self, session_token: &str) {
+        self.entries.retain(|(token, _)| token != session_token);
+    }
+
+    pub fn live(&mut self, session_token: &str, now: Instant) -> Option<([u8; 16], FocusBindings)> {
+        self.entries.retain(|(_, lease)| now < lease.expires_at);
+        self.entries
+            .iter()
+            .find(|(token, _)| token == session_token)
+            .map(|(_, lease)| (lease.lease_id, lease.bindings))
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HidLeaseResponse {
@@ -313,6 +378,31 @@ pub(crate) async fn hid_lease(
         .execute_v2(operation_id, PlatformControlRequestV2::HidLease { lease })
         .await
         .map_err(|_| AppError::ServiceUnavailable("HID control channel is unavailable".into()))?;
+    let now = Instant::now();
+    match &response {
+        ControlResponse::LeaseGranted { lease_id } => {
+            if let Some(ttl) = requested_ttl {
+                state.hid_ws_leases.lock().await.remember(
+                    &session.token,
+                    *lease_id,
+                    bindings,
+                    now + Duration::from_secs(u64::from(ttl)),
+                );
+            }
+        }
+        ControlResponse::Applied => {
+            if matches!(request, HidLeaseBody::Release { .. }) {
+                state.hid_ws_leases.lock().await.clear(&session.token);
+            } else if let Some(ttl) = requested_ttl {
+                state
+                    .hid_ws_leases
+                    .lock()
+                    .await
+                    .extend(&session.token, now + Duration::from_secs(u64::from(ttl)));
+            }
+        }
+        ControlResponse::Rejected { .. } => {}
+    }
     Ok(Json(ApiResponse::ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
             applied: true,
@@ -510,5 +600,34 @@ mod tests {
         assert!(valid_operation_id("0123456789abcdef0123456789abcdef"));
         assert!(!valid_operation_id("0123456789ABCDEF0123456789ABCDEF"));
         assert!(!valid_operation_id("short"));
+    }
+
+    #[test]
+    fn websocket_leases_expire_are_session_scoped_and_clearable() {
+        let now = Instant::now();
+        let bindings = FocusBindings {
+            session_binding: 7,
+            target_binding: [3; 32],
+            focus_binding: [4; 16],
+        };
+        let mut store = WsLeaseStore::new();
+        store.remember("token-a", [1; 16], bindings, now + Duration::from_secs(5));
+        store.remember("token-b", [2; 16], bindings, now + Duration::from_secs(5));
+        assert_eq!(store.live("token-a", now), Some(([1; 16], bindings)));
+        assert_eq!(store.live("missing", now), None);
+        store.extend("token-b", now + Duration::from_secs(30));
+        assert_eq!(
+            store.live("token-b", now + Duration::from_secs(10)),
+            Some(([2; 16], bindings))
+        );
+        assert_eq!(
+            store.live("token-a", now + Duration::from_secs(6)),
+            None,
+            "an expired lease must not be usable"
+        );
+        store.remember("token-a", [9; 16], bindings, now + Duration::from_secs(5));
+        assert_eq!(store.live("token-a", now), Some(([9; 16], bindings)));
+        store.clear("token-a");
+        assert_eq!(store.live("token-a", now), None);
     }
 }
