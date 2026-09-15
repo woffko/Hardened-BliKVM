@@ -32,6 +32,7 @@ mod application;
 mod atx;
 mod auth;
 mod autostart;
+mod download;
 mod error;
 mod hid;
 mod media;
@@ -274,6 +275,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
         .route("/vm/autostart/{name}", get(autostart::content))
+        .route("/download/image/enabled", get(download::image_enabled))
+        .route(
+            "/download/image/remote/enabled",
+            get(download::remote_enabled),
+        )
         .route("/vm/hardware", get(vm_info::vm_hardware))
         .route("/system-log/config", get(system_log::get_config))
         .route("/system-log/messages", get(system_log::get_messages))
@@ -1397,6 +1403,20 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/system/time")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn download_flags_require_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/download/image/enabled")
                     .body(Body::empty())
                     .unwrap(),
             )

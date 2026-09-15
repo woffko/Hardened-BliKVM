@@ -65,8 +65,9 @@ Phases 2-3 is complete. Everything below is committed with a green
 - Phase 1 (read-only only): `/api/system/time`, `/api/system-log/*`,
   `/api/application/{version,preview}`, `/api/vm/{info,hardware,autostart}`
   and a capability-gated read-only settings System tab; auth already matched
-  the reference shapes. The remaining Phase 1 modules (download, network,
-  firewall) are not implemented and stay capability-hidden.
+  the reference shapes. Download exposes read-only capability flags; the
+  remaining Phase 1 modules (network, firewall) are not implemented and stay
+  capability-hidden.
 - Phases 2-3 (host, no KVMD in the gadget/board builds): backend seams for the
   ATX, media and HID transition engines; the idempotent configfs USB gadget
   state machine; feature-gated gadget media/HID executors; a feature-gated
@@ -158,7 +159,7 @@ hardened BLi-KVM server as of 2026-09-14: 27 routes.
 | system time                               | `/api/system/time`, `/sync`                                                                         | `time` read-only                                                                            | 1 (done) / 3            |
 | firewall                                  | `/api/system/firewall`, `/confirm`                                                                  | hidden                                                                                      | 5                       |
 | network                                   | `/api/network/{wol,wol/mac,wol/mac/name,dns,ipv6,wifi,wifi/connect,wifi/disconnect}`                | hidden                                                                                      | 5                       |
-| download                                  | `/api/download/{image,image/status,image/enabled,image/remote/enabled,file}`                        | hidden                                                                                      | 6                       |
+| download                                  | `/api/download/{image,image/status,image/enabled,image/remote/enabled,file}`                        | `image/enabled`,`image/remote/enabled` read-only (remote disabled); upload hidden           | 1 (read) / 6            |
 | tailscale                                 | `/api/extensions/tailscale/*`                                                                       | hidden                                                                                      | 6                       |
 | power/ATX                                 | `/api/application-power` (ours)                                                                     | implemented (restricted profile); KVMD routes default, native GPIO behind a feature         | 2 (board owner)         |
 
