@@ -63,10 +63,10 @@ Phases 2-3 is complete. Everything below is committed with a green
 
 - Phase 0: plan, corrected provenance and the read-only topology probe.
 - Phase 1 (read-only only): `/api/system/time`, `/api/system-log/*`,
-  `/api/application/{version,preview}`, `/api/vm/{info,hardware}` and a
-  capability-gated read-only settings System tab; auth already matched the
-  reference shapes. The remaining Phase 1 modules (autostart, download,
-  network, firewall) are not implemented and stay capability-hidden.
+  `/api/application/{version,preview}`, `/api/vm/{info,hardware,autostart}`
+  and a capability-gated read-only settings System tab; auth already matched
+  the reference shapes. The remaining Phase 1 modules (download, network,
+  firewall) are not implemented and stay capability-hidden.
 - Phases 2-3 (host, no KVMD in the gadget/board builds): backend seams for the
   ATX, media and HID transition engines; the idempotent configfs USB gadget
   state machine; feature-gated gadget media/HID executors; a feature-gated
@@ -150,7 +150,7 @@ hardened BLi-KVM server as of 2026-09-14: 27 routes.
 | vm board                                  | `/api/vm/{oled,hdmi,hdmi/reset,hdmi/enable,hdmi/disable,gpio}`                                      | hidden                                                                                      | 2                       |
 | vm system                                 | `/api/vm/{system/reboot,session-lock,memory/limit,swap,mouse-jiggler,tls}`                          | hidden                                                                                      | 2 / 6                   |
 | vm ssh/mdns                               | `/api/vm/{ssh,ssh/enable,ssh/disable,mdns,mdns/enable,mdns/disable}`                                | hidden                                                                                      | 5                       |
-| vm autostart/script                       | `/api/vm/autostart{,/{name}}`, `/api/vm/script{,/upload,/run}`                                      | hidden                                                                                      | 6 (autostart) / 7       |
+| vm autostart/script                       | `/api/vm/autostart{,/{name}}`, `/api/vm/script{,/upload,/run}`                                      | `autostart` list/content read-only; script hidden                                           | 1 (read) / 7            |
 | terminal                                  | `/api/vm/terminal{,/unlock,/enabled}`                                                               | hidden                                                                                      | 7 (off by default)      |
 | application                               | `/api/application/{version,update,update/offline,preview}`                                          | `version`,`preview` read-only; `current-version`; app-update (`status`,`upload`,`activate`) | 1 (read) / 6            |
 | system update                             | `/api/system-update/{version,raw-enabled,check,status,download,install,rollback,confirm}`           | hidden                                                                                      | 6 (adapt; raw off)      |

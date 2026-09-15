@@ -31,6 +31,7 @@ use crate::{
 mod application;
 mod atx;
 mod auth;
+mod autostart;
 mod error;
 mod hid;
 mod media;
@@ -271,6 +272,8 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/hostname", get(hostname))
         .route("/system/time", get(system_time::get_config))
         .route("/vm/info", get(vm_info::vm_info))
+        .route("/vm/autostart", get(autostart::list))
+        .route("/vm/autostart/{name}", get(autostart::content))
         .route("/vm/hardware", get(vm_info::vm_hardware))
         .route("/system-log/config", get(system_log::get_config))
         .route("/system-log/messages", get(system_log::get_messages))
@@ -1394,6 +1397,20 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/system/time")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn autostart_requires_an_authenticated_session() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/vm/autostart")
                     .body(Body::empty())
                     .unwrap(),
             )
