@@ -452,6 +452,17 @@ pub fn unbind(root: &Path) -> Result<(), GadgetError> {
     )
 }
 
+/// Reconnect the gadget to its controller: unbind, then bind the same UDC.
+///
+/// The brief USB interruption is intentional and is expected to be driven only
+/// from a reviewed gate or the board owner; this primitive performs no policy
+/// decision of its own and is idempotent when the gadget is already unbound.
+pub fn reconnect(root: &Path, udc: &str) -> Result<(), GadgetError> {
+    validate_udc(udc)?;
+    unbind(root)?;
+    bind(root, udc)
+}
+
 /// Map a reviewed HID function name to its character device.
 pub fn hid_device_name(function: &str) -> Option<&'static str> {
     match function {
@@ -939,5 +950,25 @@ mod tests {
         );
 
         assert!(!directory.path().join(GADGET_NAME).exists());
+    }
+
+    #[test]
+    fn reconnect_rebinds_the_same_controller() {
+        let directory = root_with_image();
+        let spec = spec(&directory.path().join(IMAGE_NAME));
+        assert_eq!(apply(directory.path(), &spec), Ok(()));
+        assert_eq!(reconnect(directory.path(), &spec.udc), Ok(()));
+        assert_eq!(read(directory.path(), "hardened/UDC"), spec.udc);
+        assert_eq!(reconnect(directory.path(), &spec.udc), Ok(()));
+        assert_eq!(read(directory.path(), "hardened/UDC"), spec.udc);
+        assert_eq!(unbind(directory.path()), Ok(()));
+        assert_eq!(read(directory.path(), "hardened/UDC"), "");
+    }
+
+    #[test]
+    fn reconnect_rejects_an_invalid_controller() {
+        let directory = root_with_image();
+        assert!(reconnect(directory.path(), "bad controller").is_err());
+        assert!(reconnect(directory.path(), "").is_err());
     }
 }
