@@ -112,8 +112,9 @@ Phases 2-3 is complete. Everything below is committed with a green
 
   The restricted surface also accepts one bounded image upload
   (`POST /api/download/image`, `.img`/`.iso`, 4 GiB) and records it in the media
-  catalog atomically. The board owner opens the catalog at startup, so a newly
-  uploaded image becomes selectable after the owner reloads it.
+  catalog atomically. The board owner re-reads the catalog from disk before
+  every applied operation (keeping the last good copy if the file is briefly
+  unreadable), so a newly uploaded image is selectable without a restart.
 
 ## Device-bound remainder (board available)
 

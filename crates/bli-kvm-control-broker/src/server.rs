@@ -199,7 +199,8 @@ pub async fn run_with_gadget_profile(
         .as_ref()
         .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
         .unwrap_or(ControlDiagnostics::Disabled);
-    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+    let catalog_path = catalog_path.into();
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
         media_journal,
@@ -208,7 +209,8 @@ pub async fn run_with_gadget_profile(
             bli_kvm_media_transition::GadgetMediaExecutor::new(gadget),
         ),
     )
-    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?
+    .with_catalog_path(catalog_path);
     let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
@@ -272,7 +274,8 @@ pub async fn run_with_board_profile(
         .as_ref()
         .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
         .unwrap_or(ControlDiagnostics::Disabled);
-    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+    let catalog_path = catalog_path.into();
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
         media_journal,
@@ -281,7 +284,8 @@ pub async fn run_with_board_profile(
             bli_kvm_media_transition::GadgetMediaExecutor::new(gadget),
         ),
     )
-    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?
+    .with_catalog_path(catalog_path);
     let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
@@ -531,7 +535,8 @@ pub async fn run_with_restricted_profiles(
     }
     let media_client = bli_kvm_kvmd_media_client::KvmdMediaClient::new(media_kvmd_socket)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
-    let catalog = bli_kvm_media_catalog::MediaCatalog::open(media_catalog)
+    let media_catalog = media_catalog.into();
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(&media_catalog)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let media_engine = bli_kvm_media_transition::MediaTransitionEngine::open(
         media_journal,
@@ -539,7 +544,8 @@ pub async fn run_with_restricted_profiles(
         catalog,
         media_credentials,
     )
-    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?
+    .with_catalog_path(media_catalog);
     let state = ControlV2State::with_hid_and_atx(
         bli_kvm_hid_policy::HidControlPolicy::new(hid_engine),
         atx_engine,
@@ -599,7 +605,8 @@ pub async fn run_with_gadget_media_profile(
         .as_ref()
         .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
         .unwrap_or(ControlDiagnostics::Disabled);
-    let catalog = bli_kvm_media_catalog::MediaCatalog::open(catalog_path)
+    let catalog_path = catalog_path.into();
+    let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let executor = bli_kvm_media_transition::MediaExecutor::Gadget(
         bli_kvm_media_transition::GadgetMediaExecutor::new(gadget),
@@ -609,7 +616,8 @@ pub async fn run_with_gadget_media_profile(
         catalog,
         executor,
     )
-    .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    .map_err(|_| ControlBrokerError::TransitionUnavailable)?
+    .with_catalog_path(catalog_path);
     let state = ControlV2State::disabled().with_media_engine(engine);
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);

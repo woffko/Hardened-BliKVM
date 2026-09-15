@@ -259,6 +259,11 @@ pub struct MediaTransitionEngine {
     policy: MediaPolicyEngine,
     executor: MediaExecutor,
     catalog: MediaCatalog,
+    /// When set, the catalog is re-read from this file before every permit so
+    /// an operator upload becomes selectable without restarting the owner. An
+    /// unreadable file keeps the last good catalog instead of failing closed
+    /// on the whole engine.
+    catalog_path: Option<std::path::PathBuf>,
 }
 
 impl MediaTransitionEngine {
@@ -286,7 +291,23 @@ impl MediaTransitionEngine {
             policy: MediaPolicyEngine::open(journal_path)?,
             executor,
             catalog,
+            catalog_path: None,
         })
+    }
+
+    /// Reload the catalog from this path before each applied operation.
+    pub fn with_catalog_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.catalog_path = Some(path.into());
+        self
+    }
+
+    fn refresh_catalog(&mut self) {
+        let Some(path) = self.catalog_path.as_deref() else {
+            return;
+        };
+        if let Ok(catalog) = MediaCatalog::open(path) {
+            self.catalog = catalog;
+        }
     }
 
     pub fn pending_count(&self) -> usize {
@@ -314,6 +335,7 @@ impl MediaTransitionEngine {
             MediaDecision::ReplayApplied => Ok(MediaTransitionOutcome::ReplayedApplied),
             MediaDecision::ReplayRejected => Ok(MediaTransitionOutcome::ReplayedRejected),
             MediaDecision::Permit => {
+                self.refresh_catalog();
                 let operation_id = operation.operation_id();
                 let command = operation.command();
                 let applied = self.executor.execute(&command, &self.catalog).await;
@@ -435,6 +457,56 @@ mod tests {
 
     fn operation(seed: u8, command: VirtualMediaCommand) -> MediaOperation {
         MediaOperation::new([seed; 16], 9, [0x44; 32], 1_000, command).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_catalog_change_is_picked_up_without_rebuilding_the_engine() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("media.sock");
+        let catalog_path = directory.path().join("catalog.json");
+        std::fs::write(&catalog_path, CATALOG).unwrap();
+        let server = serve(&socket, &["200", "200"]).await;
+
+        let catalog = MediaCatalog::open(&catalog_path).unwrap();
+        let mut engine = MediaTransitionEngine::open(
+            directory.path().join("journal.json"),
+            KvmdMediaClient::new(&socket).unwrap(),
+            catalog,
+            credentials(),
+        )
+        .unwrap()
+        .with_catalog_path(&catalog_path);
+
+        // An operator upload appends a new image to the catalog file.
+        let catalog_image = bli_kvm_media_catalog::CatalogImage {
+            image_name: "uploaded.img".to_string(),
+            size: 4096,
+            sha256: "b".repeat(64),
+            cdrom_allowed: false,
+            removable_allowed: true,
+            writable_allowed: false,
+        };
+        let summary = MediaCatalog::upsert_image(&catalog_path, &catalog_image).unwrap();
+        assert_eq!(summary.image_id, 8);
+
+        let outcome = engine
+            .execute(
+                operation(
+                    9,
+                    VirtualMediaCommand::Select {
+                        image_id: summary.image_id,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                ),
+                MediaEligibility::verified_for_test_profile(),
+                observed(false, false),
+                2_000,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, MediaTransitionOutcome::Applied);
+        drop(server);
     }
 
     #[cfg(feature = "gadget-media-profile")]

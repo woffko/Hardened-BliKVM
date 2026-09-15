@@ -187,8 +187,9 @@ configfs mounted) and not a substitute host.
   capability in the shipped build:
   - media: select, attach, eject and host re-enumeration; the server may also
     accept an operator upload (`POST /api/download/image`) when
-    `BLI_KVM_MEDIA_DIRECTORY` points at the owner's image directory, and the
-    owner must be reloaded before the new image is selectable;
+    `BLI_KVM_MEDIA_DIRECTORY` points at the owner's image directory — the owner
+    re-reads the catalog before each applied operation, so the upload is
+    selectable immediately;
   - HID: keyboard report, rollback on write failure, ledger replay after
     restart;
   - ATX: `power_short`, `power_long`, `reset` timing and cooldown, with a
