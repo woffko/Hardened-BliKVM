@@ -91,12 +91,15 @@ node --test tools/test_application_write_acceptance.mjs tools/test_application_r
 node --test tools/test_upload_termination.mjs
 node --test tools/test_gui_parity_probe.mjs
 node --test tools/test_gui_parity_app.mjs
+node --test tools/test_restricted_power_probe.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs
 node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
 node --check tools/playwright/gui_parity_probe.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
+node --check tools/playwright/restricted_power_probe.mjs
+node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
 python3 -m unittest \
@@ -669,5 +672,8 @@ pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
 pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
+pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
+pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'
 
 git diff --check

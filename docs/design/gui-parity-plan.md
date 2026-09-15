@@ -176,6 +176,10 @@ overall status stays `incomplete`. Current report
 complete; phase 2 awaits the native ATX GPIO bench confirmation, phase 3 the
 composite-gadget acceptance and phase 8 the virtual-media acceptance receipt.
 
+`tools/playwright/app_harness.mjs` serves the built `web/dist` with a mock
+restricted API. `tools/test_restricted_power_probe.mjs` runs the new
+`restricted_power_probe.mjs` against it and proves the GUI power path: the menu
+entry, the explicit confirmation, the focus challenge and the ATX request.
 `tools/test_gui_parity_app.mjs` serves the built `web/dist` with a mock API and
 runs the probe against the real application: it proves the desktop still
 renders, that the leader-key load now hits the implemented endpoint, and that
