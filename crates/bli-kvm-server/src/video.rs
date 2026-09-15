@@ -88,10 +88,40 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::task::Waker;
+
+    use http_body::Body as _;
     use http_body_util::Full;
 
     use super::*;
     use crate::auth::session::SessionStore;
+
+    /// Records whether the upstream stream is dropped when the response ends.
+    struct DropFlaggedBody {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for DropFlaggedBody {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl HttpBody for DropFlaggedBody {
+        type Data = Bytes;
+        type Error = std::io::Error;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Pending
+        }
+    }
 
     #[tokio::test]
     async fn bound_body_ends_after_session_revocation() {
@@ -104,5 +134,35 @@ mod tests {
 
         assert!(body.is_end_stream());
         assert_eq!(body.size_hint().exact(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn revoking_the_session_drops_the_upstream_stream() {
+        let sessions = SessionStore::new();
+        let session = sessions.issue("operator", 60).await;
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut body = SessionBoundBody::new(
+            DropFlaggedBody {
+                dropped: Arc::clone(&dropped),
+            },
+            session.clone(),
+        );
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            Pin::new(&mut body).poll_frame(&mut context),
+            Poll::Pending
+        ));
+
+        sessions.revoke(&session.token).await;
+        assert!(matches!(
+            Pin::new(&mut body).poll_frame(&mut context),
+            Poll::Ready(None)
+        ));
+        drop(body);
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "the upstream MJPEG stream must be dropped once the session ends"
+        );
     }
 }
