@@ -2384,6 +2384,58 @@ mod tests {
         assert!(!text.contains("read_write"));
     }
 
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn new_restricted_endpoints_stay_unavailable_without_opt_in() {
+        let directory = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let leader = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/hid/shortcut/leader-key")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(leader.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let upload = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/download/file")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(header::COOKIE, &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .header(
+                        header::CONTENT_TYPE,
+                        "multipart/form-data; boundary=----blikvm",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(upload.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        // The websocket gate cannot be exercised here: axum needs the hyper
+        // upgrade extension, so the extractor rejects a router-level request
+        // before the handler runs.
+    }
+
     #[tokio::test]
     async fn virtual_media_requires_an_authenticated_session() {
         let response = app()
