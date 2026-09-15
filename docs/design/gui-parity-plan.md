@@ -170,6 +170,9 @@ hardened BLi-KVM server as of 2026-09-14: 27 routes.
   vendor daemon presence, the ATX socket, the MSD mount mode and active
   services (receipt `evidence/private/device-kvm-topology-20260914-a.json`).
   Run it before and after every gadget/board ownership handoff.
+- `tools/capture_device_handoff_preflight.py` is the read-only gate check that
+  the target really is the BliKVM H616 stack (KVMD, vendor daemon, gadget, UDC,
+  configfs) and returns `handoffReady`; it must pass before any handoff step.
 - `tools/capture_device_hid_descriptors.py` captures the gadget HID function
   parameters and report descriptors read-only into a sanitized private receipt,
   with a host-tested bounded parser (name, range, hex and hash checks). Running
