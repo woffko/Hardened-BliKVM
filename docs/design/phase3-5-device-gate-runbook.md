@@ -185,7 +185,10 @@ configfs mounted) and not a substitute host.
 - Bring up the board owner unit with the operator `EnvironmentFile` holding the
   confirmed timings; verify each backend independently before enabling the
   capability in the shipped build:
-  - media: select, attach, eject and host re-enumeration;
+  - media: select, attach, eject and host re-enumeration; the server may also
+    accept an operator upload (`POST /api/download/image`) when
+    `BLI_KVM_MEDIA_DIRECTORY` points at the owner's image directory, and the
+    owner must be reloaded before the new image is selectable;
   - HID: keyboard report, rollback on write failure, ledger replay after
     restart;
   - ATX: `power_short`, `power_long`, `reset` timing and cooldown, with a

@@ -110,6 +110,11 @@ Phases 2-3 is complete. Everything below is committed with a green
   `crates/bli-kvm-platform-bli` and in the handoff tools, still overridable and
   still awaiting a bench confirmation.
 
+  The restricted surface also accepts one bounded image upload
+  (`POST /api/download/image`, `.img`/`.iso`, 4 GiB) and records it in the media
+  catalog atomically. The board owner opens the catalog at startup, so a newly
+  uploaded image becomes selectable after the owner reloads it.
+
 ## Device-bound remainder (board available)
 
 The H616 board is present and ready (`https://10.0.77.118/`, SSH root;
