@@ -1,5 +1,11 @@
 # BLi-KVM implementation plan
 
+> Superseded in part by `docs/design/gui-parity-plan.md` (canonical, approved
+> 2026-09-14). That plan replaces the previous objective, its phase numbering
+> and the Phase 3 restriction "ATX only through KVMD fixed waiting routes,
+> without native GPIO interception". The hardware and physical-gate content here
+> remains a reference; where it conflicts, the canonical plan wins.
+
 The plan is intentionally gate-driven. Later phases do not erase an earlier
 physical or security failure.
 

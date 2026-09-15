@@ -2,6 +2,11 @@
 
 Verified on 2026-08-30.
 
+> Stand status (2026-09-14): the H616 test endpoint is currently unavailable
+> (`10.0.77.118` is a plain Ubuntu 24.04 host with no KVMD, vendor stack or
+> UDC). The topology in `docs/design/gui-parity-plan.md` is a historical
+> capture; device-bound work is blocked until the board returns.
+
 | Source                    | Revision                                                       | Role                                                         |
 | ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------ |
 | `blikvm/blikvm`           | `3e34c04a1dfa84636050585d12d5e585098258ea`, tag `v2.2.3-alpha` | Current BliKVM hardware and application reference            |
