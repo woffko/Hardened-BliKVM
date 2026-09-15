@@ -198,10 +198,14 @@ configfs mounted) and not a substitute host.
   confirmed timings; verify each backend independently before enabling the
   capability in the shipped build:
   - media: select, attach, eject and host re-enumeration; the server may also
-    accept an operator upload (`POST /api/download/file`) when
-    `BLI_KVM_MEDIA_DIRECTORY` points at the owner's image directory — the owner
-    re-reads the catalog before each applied operation, so the upload is
-    selectable immediately;
+    accept an operator upload when `BLI_KVM_MEDIA_DIRECTORY` points at the
+    owner's image directory — the owner re-reads the catalog before each applied
+    operation, so the upload is selectable immediately. The GUI keeps its upload
+    control behind the hidden remote-download capability, so use
+    `tools/upload_media_image.py --base-url <stand> --username <operator>
+    --file <image.img> --output evidence/private/…` with the password on stdin;
+    it posts `POST /api/download/file`, streams one bounded `.img`/`.iso`, and
+    records the file name, size, SHA-256 and the returned catalog ID;
   - HID: keyboard report, rollback on write failure, ledger replay after
     restart;
   - ATX: `power_short`, `power_long`, `reset` timing and cooldown, with a
