@@ -2,10 +2,10 @@
 
 Verified on 2026-08-30.
 
-> Stand status (2026-09-14): the H616 test endpoint is currently unavailable
-> (`10.0.77.118` is a plain Ubuntu 24.04 host with no KVMD, vendor stack or
-> UDC). The topology in `docs/design/gui-parity-plan.md` is a historical
-> capture; device-bound work is blocked until the board returns.
+> Stand status (2026-09-15): the H616 board is present and ready
+> (`10.0.77.118`, Armbian Jammy, KVMD and the vendor stack installed, `kvmd`
+> gadget bound, `handoffReady=true`). An earlier "plain Ubuntu" note was a
+> local-shell mistake and is retracted.
 
 | Source                    | Revision                                                       | Role                                                         |
 | ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------ |

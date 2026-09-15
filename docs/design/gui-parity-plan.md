@@ -83,15 +83,23 @@ Phases 2-3 is complete. Everything below is committed with a green
   also fixed the GPIO ioctl request cast for aarch64-musl. `tools/test_gadget_profile_boundary.py` pins that the
   gadget/gpio profiles link no `bli-kvm-kvmd-*` crate.
 
-## Device-gated remainder (blocked until the H616 stand returns)
+## Device-bound remainder (board available)
 
-The test endpoint `10.0.77.118` is currently a plain Ubuntu 24.04 host with no
-`/etc/kvmd`, no `/usr/bin/blikvm` vendor stack and no `/sys/class/udc`, so these
-cannot proceed until the board returns:
+The H616 board is present and ready (`https://10.0.77.118/`, SSH root;
+preflight `handoffReady=true`: KVMD and the vendor daemon present, the `kvmd`
+gadget bound, configfs mounted). An earlier note wrongly reported the endpoint
+as a plain Ubuntu host; that check ran in a local shell instead of over SSH and
+is retracted.
 
-- capture and pin the real HID report descriptors and function parameters;
-- the reviewed physical line handoff that transfers ATX ownership from KVMD,
-  then the pulse-timing line/polarity/soak gates;
+The following now run on the board, mutation steps only with explicit operator
+confirmation, each producing a private receipt:
+
+- HID report descriptors and function parameters (captured read-only:
+  `evidence/private/device-hid-descriptors-20260915-a.json`);
+- the reversible board-owner handoff gate
+  (`tools/stage_device_board_profile_gate.py --confirm-handoff`): stop KVMD,
+  start the Rust owner, verify the owner socket and the `hardened` gadget,
+  then `--teardown` restores KVMD;
 - media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
 - Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
 
