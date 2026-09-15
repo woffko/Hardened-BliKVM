@@ -223,9 +223,16 @@ def evidence_gate(evidence: Path) -> list[str]:
     if not media or media.get("probe") != "restricted-control-media-attach-eject":
         missing.append("restricted-control-media-gate-*.json (media attach/eject)")
 
-    atx = latest("atx-gpio-bench-*.json")
-    if not atx or atx.get("result") != "passed":
-        missing.append("atx-gpio-bench-*.json (native ATX pulse bench)")
+    atx_gate = latest("board-handoff-gate-*.json")
+    atx_bench_ok = bool(
+        atx_gate
+        and (atx_gate.get("atxBenchFacts") or {}).get("power_short") == "ok"
+        and (atx_gate.get("atxBenchFacts") or {}).get("reset") == "ok"
+    )
+    if not atx_bench_ok:
+        missing.append(
+            "a board-handoff gate receipt with atxBenchFacts (native ATX pulse bench)"
+        )
 
     return missing
 

@@ -94,9 +94,9 @@ PHASES: tuple[dict[str, Any], ...] = (
             },
             {
                 "name": "native ATX GPIO bench confirmation",
-                "glob": "atx-gpio-bench-*.json",
-                "probe": "hardened-blikvm-atx-gpio-bench",
-                "marker": "result=passed",
+                "glob": "board-handoff-gate-*.json",
+                "probe": "hardened-blikvm-board-profile-handoff",
+                "marker": "atxBenchFacts.power_short=ok",
             },
         ),
     },

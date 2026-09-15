@@ -182,6 +182,12 @@ configfs mounted) and not a substitute host.
   the gate waits, drive the reviewed GUI actions (attach `kubuntu.img`, press a
   key, move the pointer) and confirm the target sees them; the gate fails closed
   if any recorded fact is missing or unexpected.
+- For the native ATX bench add `--accept-atx-bench --confirm-physical-disconnect`
+  to the same gate run: it executes the bundled
+  `bli-kvm-atx-gpio-bench-gate` (argument-free, `BLI_KVM_ATX_BENCH_CONFIRM=1`)
+  against the real GPIO character device with the reviewed timings and records
+  the measured hold per action plus a within-tolerance verdict; any drift fails
+  the gate and rolls back. Power and Reset must be unplugged for this step.
 - Bring up the board owner unit with the operator `EnvironmentFile` holding the
   confirmed timings; verify each backend independently before enabling the
   capability in the shipped build:

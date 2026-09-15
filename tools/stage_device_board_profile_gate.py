@@ -53,6 +53,12 @@ TEARDOWN_FACTS = {
     "runtime_removed",
     "kvmd_restarted",
 }
+ATX_BENCH_ACTIONS = ("power_short", "power_long", "reset")
+ATX_BENCH_FACTS = {"run_rc"} | {
+    f"{action}_{suffix}"
+    for action in ATX_BENCH_ACTIONS
+    for suffix in ("elapsed_ms", "expected_ms", "within_tolerance", "")
+}
 ACCEPTANCE_FACTS = {
     "gadget_present",
     "gadget_name",
@@ -97,6 +103,9 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_ACCEPT_TIMEOUT_SECONDS,
     )
     _ = parser.add_argument("--accept-image", default="kubuntu.img")
+    _ = parser.add_argument("--accept-atx-bench", action="store_true")
+    _ = parser.add_argument("--confirm-physical-disconnect", action="store_true")
+    _ = parser.add_argument("--atx-chip", default="/dev/gpiochip0")
     return parser.parse_args()
 
 
@@ -145,6 +154,38 @@ gdir=/sys/kernel/config/usb_gadget
 if [ -d "$gdir/hardened" ]; then printf 'gadget_present=yes\\n'; printf 'gadget_name=hardened\\n'; else printf 'gadget_present=no\\n'; printf 'gadget_name=none\\n'; fi
 if [ -n "$(cat "$gdir/hardened/UDC" 2>/dev/null | tr -d '\\n')" ]; then printf 'udc_bound=yes\\n'; else printf 'udc_bound=no\\n'; fi
 """
+
+
+def build_atx_bench_script(chip: str, timing: tuple[int, int, int]) -> str:
+    """Run the native GPIO bench from the extracted bundle, mutation-gated."""
+    if not re.fullmatch(r"/dev/gpiochip[0-9]{1,3}", chip):
+        raise ValueError("ATX bench chip is invalid")
+    short, long_hold, reset = timing
+    for value in timing:
+        if not 1 <= value <= 10_000:
+            raise ValueError("ATX bench timing is out of range")
+    binary = f"{RUNTIME_ROOT}/{planner.BUNDLE_ROOT}/libexec/bli-kvm-atx-gpio-bench-gate"
+    return f"""set -eu
+if [ ! -x "{binary}" ]; then echo "atx bench binary is missing" >&2; exit 1; fi
+env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+  BLI_KVM_ATX_BENCH_CONFIRM=1 \
+  BLI_KVM_ATX_CHIP={chip} \
+  BLI_KVM_ATX_POWER_SHORT_MS={short} \
+  BLI_KVM_ATX_POWER_LONG_MS={long_hold} \
+  BLI_KVM_ATX_RESET_MS={reset} \
+  "{binary}"
+"""
+
+
+def validate_atx_bench(facts: dict[str, str]) -> None:
+    if facts["run_rc"] != "0":
+        raise ValueError("ATX bench reported a failure")
+    for action in ATX_BENCH_ACTIONS:
+        if facts[f"{action}"] != "ok" or facts[f"{action}_within_tolerance"] != "yes":
+            raise ValueError(
+                f"ATX bench {action} drifted: {facts[f'{action}_elapsed_ms']} ms "
+                f"against {facts[f'{action}_expected_ms']} ms"
+            )
 
 
 def build_acceptance_script(timeout_seconds: int, expected_image: str) -> str:
@@ -279,7 +320,7 @@ def parse_args_into_plan(options: argparse.Namespace, bundle_path: Path) -> dict
         atx_journal=f"{planner.GADGET_STATE}/atx-journal.json",
         hid_ledger=f"{planner.GADGET_STATE}/hid-ledger.json",
         control_socket=f"{planner.GADGET_RUN}/control.sock",
-        atx_chip="/dev/gpiochip0",
+        atx_chip=options.atx_chip,
         hidg_dir=planner.HIDG_DIR,
         reconciliations="",
     )
@@ -306,6 +347,8 @@ def execute(args: argparse.Namespace) -> int:
             "timeoutSeconds": args.accept_timeout_seconds,
             "expectedImage": args.accept_image,
             "operatorDrivesGui": True,
+            "atxBench": bool(args.accept_atx_bench),
+            "physicalDisconnectConfirmed": bool(args.confirm_physical_disconnect),
         },
     }
     if not args.confirm_handoff:
@@ -351,6 +394,29 @@ def execute(args: argparse.Namespace) -> int:
                 )
                 validate_acceptance(acceptance_facts, args.accept_image)
                 receipt["acceptanceFacts"] = acceptance_facts
+            if args.accept_atx_bench:
+                if not args.confirm_physical_disconnect:
+                    raise ValueError(
+                        "the ATX bench needs --confirm-physical-disconnect "
+                        "(Power and Reset unplugged)"
+                    )
+                bench = prototype.run_ssh(
+                    target,
+                    secret,
+                    build_atx_bench_script(
+                        args.atx_chip,
+                        (
+                            args.power_short_ms,
+                            args.power_long_ms,
+                            args.reset_ms,
+                        ),
+                    ),
+                    timeout=120,
+                )
+                bench.check_returncode()
+                bench_facts = prototype.parse_facts(bench.stdout, set(ATX_BENCH_FACTS))
+                validate_atx_bench(bench_facts)
+                receipt["atxBenchFacts"] = bench_facts
         except Exception:
             try:
                 prototype.run_ssh(target, secret, build_teardown_script(), timeout=60)

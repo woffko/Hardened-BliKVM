@@ -108,8 +108,11 @@ class KvmdRemovalTests(unittest.TestCase):
                 {"probe": "restricted-control-media-attach-eject"},
             )
             write_json(
-                evidence / "atx-gpio-bench-20260915-a.json",
-                {"probe": "hardened-blikvm-atx-gpio-bench", "result": "passed"},
+                evidence / "board-handoff-gate-20260915-a.json",
+                {
+                    "gate": "hardened-blikvm-board-profile-handoff",
+                    "atxBenchFacts": {"power_short": "ok", "reset": "ok"},
+                },
             )
             self.assertEqual(removal.evidence_gate(evidence), [])
 
@@ -127,8 +130,8 @@ class KvmdRemovalTests(unittest.TestCase):
                 {"probe": "restricted-control-media-attach-eject"},
             )
             write_json(
-                evidence / "atx-gpio-bench-20260915-a.json",
-                {"result": "passed"},
+                evidence / "board-handoff-gate-20260915-a.json",
+                {"atxBenchFacts": {"power_short": "ok", "reset": "ok"}},
             )
             self.assertEqual(
                 removal.evidence_gate(evidence),

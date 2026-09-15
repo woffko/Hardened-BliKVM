@@ -1,0 +1,14 @@
+[package]
+name = "bli-kvm-atx-gpio-bench-gate"
+description = "Native ATX GPIO pulse bench gate for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-atx-gpio-executor = { path = "../bli-kvm-atx-gpio-executor", features = ["chardev-driver"] }
+bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition", default-features = false }
+bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli", default-features = false }

@@ -38,6 +38,7 @@ REQUIRED_MEMBERS = {
     "SHA256SUMS",
     "libexec/bli-kvm-server",
     "libexec/bli-kvm-control-broker",
+    "libexec/bli-kvm-atx-gpio-bench-gate",
     "share/systemd/hardened-blikvm-board-owner.service",
     "share/tmpfiles.d/hardened-blikvm-gadget.conf",
     "share/atx.env.example",

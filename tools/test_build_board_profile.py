@@ -22,6 +22,11 @@ class BoardProfileBuildTests(unittest.TestCase):
             'install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-control-broker"',
             script,
         )
+        self.assertIn(
+            'install -m 0755 "$bench_gate_binary" '
+            '"$stage/libexec/bli-kvm-atx-gpio-bench-gate"',
+            script,
+        )
         self.assertIn("packaging/systemd/hardened-blikvm-board-owner.service", script)
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-gadget.conf", script)
         self.assertIn('profile: "board-owner-test"', script)

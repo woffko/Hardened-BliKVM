@@ -118,6 +118,16 @@ name = "bli-kvm-activity-led-policy"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-atx-gpio-bench-gate"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-atx-gpio-executor",
+ "bli-kvm-atx-transition",
+ "bli-kvm-core",
+ "bli-kvm-platform-bli",
+]
+
+[[package]]
 name = "bli-kvm-atx-gpio-executor"
 version = "0.1.0"
 dependencies = [

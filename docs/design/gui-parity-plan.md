@@ -108,7 +108,12 @@ Phases 2-3 is complete. Everything below is committed with a green
   intended pulse durations: `power_on` 500 ms, `power_off` (force off) 5000 ms
   and `power_reset` 500 ms. They are now the board defaults in
   `crates/bli-kvm-platform-bli` and in the handoff tools, still overridable and
-  still awaiting a bench confirmation.
+  still awaiting a bench confirmation. The bench itself is now a bundled,
+  argument-free gate binary (`bli-kvm-atx-gpio-bench-gate`) that the handoff gate
+  can run with `--accept-atx-bench --confirm-physical-disconnect`; it records the
+  measured hold per action and fails closed on drift. The rebuilt board bundle
+  (`sha256 39991edf…`, 36 members, receipt
+  `evidence/private/board-bundle-verify-20260915-b.json`) carries it.
 
   The restricted surface also accepts one bounded image upload
   (`POST /api/download/file`, `.img`/`.iso`, 4 GiB) and records it in the media

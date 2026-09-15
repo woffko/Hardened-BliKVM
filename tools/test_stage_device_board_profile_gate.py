@@ -129,12 +129,47 @@ class StageBoardProfileGateTests(unittest.TestCase):
                         self.acceptance_facts(**override), "kubuntu.img"
                     )
 
+    def atx_bench_facts(self, **overrides: str) -> dict[str, str]:
+        base = {"run_rc": "0"}
+        for action, expected in (
+            ("power_short", "500"),
+            ("power_long", "5000"),
+            ("reset", "500"),
+        ):
+            base[f"{action}_expected_ms"] = expected
+            base[f"{action}_elapsed_ms"] = expected
+            base[f"{action}_within_tolerance"] = "yes"
+            base[action] = "ok"
+        base.update(overrides)
+        return base
+
+    def test_atx_bench_script_pins_the_binary_and_timing(self) -> None:
+        script = gate.build_atx_bench_script("/dev/gpiochip0", (500, 5000, 500))
+        self.assertIn("BLI_KVM_ATX_BENCH_CONFIRM=1", script)
+        self.assertIn("BLI_KVM_ATX_POWER_SHORT_MS=500", script)
+        self.assertIn("BLI_KVM_ATX_POWER_LONG_MS=5000", script)
+        self.assertIn("bli-kvm-atx-gpio-bench-gate", script)
+        with self.assertRaises(ValueError):
+            gate.build_atx_bench_script("/dev/gpiochip7; rm -rf /", (500, 5000, 500))
+        with self.assertRaises(ValueError):
+            gate.build_atx_bench_script("/dev/gpiochip0", (0, 5000, 500))
+
+    def test_atx_bench_validation_accepts_matching_pulses_and_rejects_drift(self) -> None:
+        gate.validate_atx_bench(self.atx_bench_facts())
+        with self.assertRaises(ValueError):
+            gate.validate_atx_bench(
+                self.atx_bench_facts(power_long="drift", power_long_within_tolerance="no")
+            )
+        with self.assertRaises(ValueError):
+            gate.validate_atx_bench(self.atx_bench_facts(run_rc="1"))
+
     def test_generated_scripts_are_valid_shell(self) -> None:
         apply, teardown = render()
         acceptance = gate.build_acceptance_script(
             gate.DEFAULT_ACCEPT_TIMEOUT_SECONDS, "kubuntu.img"
         )
-        for script in (apply, teardown, acceptance):
+        bench = gate.build_atx_bench_script("/dev/gpiochip0", (500, 5000, 500))
+        for script in (apply, teardown, acceptance, bench):
             syntax = subprocess.run(
                 ["sh", "-n"],
                 input=script.encode(),
