@@ -51,6 +51,7 @@ cargo clippy -p bli-kvm-atx-gpio-executor --all-targets --locked --features char
 cargo clippy -p bli-kvm-server --all-targets --locked --features restricted-control-surface -- -D warnings
 
 sh -n scripts/build-aarch64.sh
+sh -n scripts/build-board-profile.sh
 sh -n scripts/build-hid-transition-profile.sh
 sh -n scripts/build-prototype-bundle.sh
 sh -n scripts/check-source-boundary.sh
@@ -99,6 +100,7 @@ python3 -m unittest \
   tools/test_hid_credential_service.py \
   tools/test_hid_transition_service.py \
   tools/test_build_hid_transition_profile.py \
+  tools/test_build_board_profile.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \
   tools/test_phase4_video_boundary.py \
