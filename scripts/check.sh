@@ -90,6 +90,7 @@ python3 -B -m unittest \
 node --test tools/test_application_write_acceptance.mjs tools/test_application_response_capture.mjs
 node --test tools/test_upload_termination.mjs
 node --test tools/test_gui_parity_probe.mjs
+node --test tools/test_gui_parity_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs
 node --check tools/playwright/device_application_write.mjs

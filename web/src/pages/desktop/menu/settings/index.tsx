@@ -206,6 +206,7 @@ export const Settings = () => {
               {tabs.map((tab) => (
                 <div
                   key={tab.id}
+                  data-settings-tab={tab.id}
                   className={clsx(
                     'cursor-pointer select-none rounded-lg',
                     isTouchLayout

@@ -217,16 +217,41 @@ try {
   }
 
   const settingsTabs = [];
+  let settingsCaptureError = "";
+  let settingsDebug = null;
   try {
+    // A safe-target confirmation can be open after the tooltip sweep; the
+    // settings surface is behind it.
+    const confirm = page.getByRole("button", { name: "Confirm and control" });
+    if ((await confirm.count()) > 0) {
+      await confirm
+        .first()
+        .click({ force: true, timeout: 3000 })
+        .catch(() => {});
+      await page.waitForTimeout(500);
+    }
     // The menu auto-hides, so hover the top-centre strip to expand it first.
     const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
     await page.mouse.move(Math.round(viewport.width / 2), 30);
     await page.waitForTimeout(500);
     const settingsIcon = page.locator("svg.lucide-settings").first();
     await settingsIcon.click({ force: true, timeout: 5000 });
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1500);
+    settingsDebug = await page.evaluate(() => {
+      const modal = document.querySelector(".ant-modal-wrap");
+      return {
+        icons: document.querySelectorAll("svg.lucide-settings").length,
+        tabs: document.querySelectorAll("[data-settings-tab]").length,
+        modals: document.querySelectorAll(".ant-modal-wrap").length,
+        route: location.hash,
+        modalText: (modal?.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 80),
+      };
+    });
     const texts = await page.$$eval(
-      '[role="tab"], .ant-tabs-tab, .ant-tabs-tab-btn',
+      '[data-settings-tab], [role="tab"], .ant-tabs-tab, .ant-tabs-tab-btn',
       (nodes) =>
         nodes
           .map((node) => (node.textContent || "").trim())
@@ -236,8 +261,8 @@ try {
     for (const text of texts) {
       if (!settingsTabs.includes(text)) settingsTabs.push(text);
     }
-  } catch {
-    /* the settings surface is best effort */
+  } catch (error) {
+    settingsCaptureError = String(error?.name ?? error).slice(0, 60);
   }
 
   const markers = await page.evaluate(() => ({
@@ -258,6 +283,8 @@ try {
     capabilitiesAvailable,
     capabilities,
     settingsTabs,
+    settingsCaptureError,
+    settingsDebug,
     markers,
     consoleErrors,
     consoleErrorSamples,

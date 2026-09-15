@@ -176,6 +176,12 @@ overall status stays `incomplete`. Current report
 complete; phase 2 awaits the native ATX GPIO bench confirmation, phase 3 the
 composite-gadget acceptance and phase 8 the virtual-media acceptance receipt.
 
+`tools/test_gui_parity_app.mjs` serves the built `web/dist` with a mock API and
+runs the probe against the real application: it proves the desktop still
+renders, that the leader-key load now hits the implemented endpoint, and that
+the removed legacy calls (`/api/vm/gpio`, `/api/hid/mode`, `/api/hid/reset`)
+are no longer requested.
+
 Phase 8 parity harness (host-only, no mutation): `gui_parity_probe.mjs` now
 captures menu labels, tag counts, the capability manifest, surface markers
 (mobile keyboard input, on-screen keys, video elements), the settings tab labels
