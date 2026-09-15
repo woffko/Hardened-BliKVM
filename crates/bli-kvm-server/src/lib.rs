@@ -282,6 +282,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/hostname", get(hostname))
         .route("/system/time", get(system_time::get_config))
         .route("/network/dns", get(network::network_dns))
+        .route("/network/ipv6", get(network::network_ipv6))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
         .route("/vm/autostart/{name}", get(autostart::content))

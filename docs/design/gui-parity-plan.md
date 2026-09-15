@@ -248,7 +248,7 @@ enable-gadget.sh,kvmd-msd.sh,kvmd-video.sh,ustreamer.bin}`, ATX socket
 ## Parity matrix
 
 Reference routes are from `server-rust/src/http/routes.rs`. "Our status" is the
-hardened BLi-KVM server as of 2026-09-15: 35 routes.
+hardened BLi-KVM server as of 2026-09-15: 36 routes.
 
 | Subsystem                                 | Reference endpoints                                                                                 | Our status                                                                                  | Target phase            |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------- |
@@ -266,7 +266,7 @@ hardened BLi-KVM server as of 2026-09-15: 35 routes.
 | vm autostart/script                       | `/api/vm/autostart{,/{name}}`, `/api/vm/script{,/upload,/run}`                                      | `autostart` list/content read-only; script hidden                                           | 1 (read) / 7            |
 | terminal                                  | `/api/vm/terminal{,/unlock,/enabled}`                                                               | hidden                                                                                      | 7 (off by default)      |
 | application                               | `/api/application/{version,update,update/offline,preview}`                                          | `version`,`preview` read-only; `current-version`; app-update (`status`,`upload`,`activate`) | 1 (read) / 6            |
-| system update, firewall, network, download, tailscale: hidden/read-only flags; `/api/network/dns` read-only (resolver view) | targets 5/6
+| system update, firewall, network, download, tailscale: hidden/read-only flags; `/api/network/dns` and `/api/network/ipv6` read-only (resolver and sysctl views) | targets 5/6
 | system log                                | `/api/system-log/{config,messages,test}`                                                            | `config`,`messages` read-only                                                               | 1 (done) / 6            |
 | system time                               | `/api/system/time`, `/sync`                                                                         | `time` read-only                                                                            | 1 (done) / 3            |
 | firewall                                  | `/api/system/firewall`, `/confirm`                                                                  | hidden                                                                                      | 5                       |
