@@ -1513,6 +1513,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exec_and_extension_features_stay_unavailable_by_default() {
+        let response = app()
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let value = json_body(response).await;
+        let features = value["data"]["board"]["features"]
+            .as_object()
+            .expect("board features");
+        for name in [
+            "terminal",
+            "scripts",
+            "picoclaw",
+            "wake_on_lan",
+            "fan",
+            "oled",
+            "physical_buttons",
+            "serial_switch",
+            "system_network",
+            "system_firewall",
+        ] {
+            if let Some(status) = features.get(name) {
+                assert_ne!(
+                    status["availability"], "read_write",
+                    "{name} must stay unavailable or read-only by default"
+                );
+            }
+        }
+        assert_ne!(
+            value["data"]["virtualMedia"]["remoteDownload"]["availability"],
+            "read_write"
+        );
+        assert_ne!(
+            value["data"]["system"]["signedSystemUpdates"]["availability"],
+            "read_write"
+        );
+    }
+
+    #[tokio::test]
     async fn download_flags_require_an_authenticated_session() {
         let response = app()
             .oneshot(
