@@ -111,10 +111,14 @@ Phases 2-3 is complete. Everything below is committed with a green
   still awaiting a bench confirmation.
 
   The restricted surface also accepts one bounded image upload
-  (`POST /api/download/image`, `.img`/`.iso`, 4 GiB) and records it in the media
+  (`POST /api/download/file`, `.img`/`.iso`, 4 GiB) and records it in the media
   catalog atomically. The board owner re-reads the catalog from disk before
   every applied operation (keeping the last good copy if the file is briefly
-  unreadable), so a newly uploaded image is selectable without a restart.
+  unreadable), so a newly uploaded image is selectable without a restart. The
+  GUI places its upload control in the download menu, which is gated by the
+  remote-download capability and therefore stays hidden today: the upload is an
+  operator/API capability until the menu gating is revisited in Phase 6 (the
+  remote `POST /api/download/image` stays unimplemented).
 
 ## Device-bound remainder (board available)
 
@@ -231,7 +235,7 @@ hardened BLi-KVM server as of 2026-09-15: 34 routes.
 | HID live                                  | `/api/hid/{focus,lease}`                                                                            | implemented (restricted profile); gadget executor exists host-side behind a feature         | 3                       |
 | HID control                               | `/api/hid/{mode,usb-wakeup,reset,paste,shortcuts,shortcut,shortcut/leader-key}`                     | hidden; `shortcut/leader-key` implemented on the restricted surface (state-dir preference)  | 3                       |
 | websocket                                 | `/api/ws`                                                                                           | restricted HID live over `/api/ws` (session lease, same-origin); terminal target 7          | 3 (HID) / 7 (terminal)  |
-| storage/media                             | `/api/storage/image`, `/image/mounted`, `/image/mount`, `/image/delete`, `/cdrom`, `/usb/reconnect` | partial: catalog, select/attach/eject and bounded upload (`/api/download/image`)            | 3                       |
+| storage/media                             | `/api/storage/image`, `/image/mounted`, `/image/mount`, `/image/delete`, `/cdrom`, `/usb/reconnect` | partial: catalog, select/attach/eject and bounded upload (`/api/download/file`)             | 3                       |
 | stream                                    | `/api/stream/mjpeg`, `/h264`, `/h264/direct`, `/mjpeg/detect`, `/mjpeg/detect/stop`                 | `mjpeg` implemented; h264/detect hidden                                                     | 4 / 8                   |
 | vm read-only                              | `/api/vm/{info,hardware,hostname,gpio,web-title,device/virtual}`                                    | `hostname`,`info`,`hardware` read-only (`ips`/`deviceKey` intentionally empty)              | 1 (done) / 2            |
 | vm board                                  | `/api/vm/{oled,hdmi,hdmi/reset,hdmi/enable,hdmi/disable,gpio}`                                      | hidden; the GUI no longer falls back to `/api/vm/gpio` on this platform                     | 2                       |

@@ -186,7 +186,7 @@ configfs mounted) and not a substitute host.
   confirmed timings; verify each backend independently before enabling the
   capability in the shipped build:
   - media: select, attach, eject and host re-enumeration; the server may also
-    accept an operator upload (`POST /api/download/image`) when
+    accept an operator upload (`POST /api/download/file`) when
     `BLI_KVM_MEDIA_DIRECTORY` points at the owner's image directory — the owner
     re-reads the catalog before each applied operation, so the upload is
     selectable immediately;

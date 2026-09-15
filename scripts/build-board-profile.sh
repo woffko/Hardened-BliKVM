@@ -76,7 +76,8 @@ cat > "$stage/share/atx.env.example" <<'EOF'
 # BLI_KVM_ATX_RESET_MS=
 # BLI_KVM_ATX_RECONCILIATIONS=/etc/hardened-blikvm-gadget/atx-reconciliations.txt
 
-# Server-side image upload (restricted surface only): point the server at the
+# Server-side image upload (restricted surface only, POST /api/download/file):
+# point the server at the
 # same directory and catalog the board owner serves. Without this the upload
 # endpoint answers 503.
 # BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images

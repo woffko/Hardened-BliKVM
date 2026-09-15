@@ -311,7 +311,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     let upload = Router::new()
-        .route("/download/image", post(download::upload_image))
+        .route("/download/file", post(download::upload_image))
         .layer(DefaultBodyLimit::max(
             usize::try_from(download::MAX_MEDIA_UPLOAD_BYTES + 1024 * 1024)
                 .expect("upload cap fits usize"),
@@ -1468,7 +1468,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri("/api/download/image")
+                    .uri("/api/download/file")
                     .header(header::HOST, "kvm.test")
                     .header(header::ORIGIN, "https://kvm.test")
                     .header(

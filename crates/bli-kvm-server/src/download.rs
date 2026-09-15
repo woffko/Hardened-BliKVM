@@ -1,9 +1,10 @@
 //! Image-download capability flags and the operator image upload.
 //!
 //! The flags keep the Hardened NanoKVM `ImageEnabledRsp` shape. Remote image
-//! download is not a shipped capability and stays disabled. The upload accepts
-//! one bounded multipart file, writes it atomically into the configured image
-//! directory, hashes it while streaming, and records it in the media catalog.
+//! download (`POST /api/download/image`) is not a shipped capability and stays
+//! disabled. The local upload (`POST /api/download/file`) accepts one bounded
+//! multipart file, writes it atomically into the configured image directory,
+//! hashes it while streaming and records it in the media catalog.
 
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
