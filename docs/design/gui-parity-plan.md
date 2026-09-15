@@ -136,7 +136,7 @@ enable-gadget.sh,kvmd-msd.sh,kvmd-video.sh,ustreamer.bin}`, ATX socket
 ## Parity matrix
 
 Reference routes are from `server-rust/src/http/routes.rs`. "Our status" is the
-hardened BLi-KVM server as of 2026-09-14: 27 routes.
+hardened BLi-KVM server as of 2026-09-14: 31 routes.
 
 | Subsystem                                 | Reference endpoints                                                                                 | Our status                                                                                  | Target phase            |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------- |
