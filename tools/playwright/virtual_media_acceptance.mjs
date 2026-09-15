@@ -86,9 +86,12 @@ try {
     response
       .json()
       .then((body) => {
-        event.applied = Boolean(body?.applied);
-        event.action = body?.command?.action;
-        event.connected = body?.command?.connected;
+        // The server wraps the result as { code, data: { applied, rejection } };
+        // the fixture uses the flat shape.
+        const result = body?.data ?? body;
+        event.applied = Boolean(result?.applied);
+        event.action = result?.command?.action;
+        event.connected = result?.command?.connected;
         if (request.method() === "POST" && route === "/api/virtual-media") {
           try {
             const posted = request.postDataJSON();

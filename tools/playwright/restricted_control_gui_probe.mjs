@@ -20,7 +20,13 @@ assert.ok(
     (/^[0-9]{1,3}$/.test(renewWaitValue) && Number(renewWaitValue) <= 60),
   "invalid renew wait",
 );
-assert.equal(new URL(baseUrl).protocol, "https:");
+const base = new URL(baseUrl);
+assert.ok(
+  base.protocol === "https:" ||
+    ((base.hostname === "127.0.0.1" || base.hostname === "localhost") &&
+      base.protocol === "http:"),
+  "the stand must be reached over https (http is allowed only for a local mock)",
+);
 
 const username = fs.readFileSync(usernameFile, "utf8").trim();
 let password = "";

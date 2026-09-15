@@ -9,7 +9,13 @@ assert.ok(
   modulePath && executablePath && baseUrl && usernameFile && outputValue,
   "missing arguments",
 );
-assert.equal(new URL(baseUrl).protocol, "https:");
+const base = new URL(baseUrl);
+assert.ok(
+  base.protocol === "https:" ||
+    ((base.hostname === "127.0.0.1" || base.hostname === "localhost") &&
+      base.protocol === "http:"),
+  "the stand must be reached over https (http is allowed only for a local mock)",
+);
 
 const username = fs.readFileSync(usernameFile, "utf8").trim();
 let password = "";

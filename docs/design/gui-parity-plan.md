@@ -177,9 +177,11 @@ complete; phase 2 awaits the native ATX GPIO bench confirmation, phase 3 the
 composite-gadget acceptance and phase 8 the virtual-media acceptance receipt.
 
 `tools/playwright/app_harness.mjs` serves the built `web/dist` with a mock
-restricted API. `tools/test_restricted_power_probe.mjs` runs the new
-`restricted_power_probe.mjs` against it and proves the GUI power path: the menu
-entry, the explicit confirmation, the focus challenge and the ATX request.
+restricted API. `tools/test_restricted_power_probe.mjs`, `tools/test_restricted_keyboard_probe.mjs`
+and `tools/test_virtual_media_probe_app.mjs` run the power, on-screen-keyboard and
+virtual-media probes against it, so the three GUI control paths are verified
+locally before any device run. The media probe reads the wrapped
+`{code,data}` response, the shape the real server returns.
 `tools/test_gui_parity_app.mjs` serves the built `web/dist` with a mock API and
 runs the probe against the real application: it proves the desktop still
 renders, that the leader-key load now hits the implemented endpoint, and that
