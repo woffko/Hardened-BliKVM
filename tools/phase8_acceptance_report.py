@@ -174,6 +174,15 @@ PHASES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "phase": "5",
+        "title": "network management (read-only part)",
+        "host": (
+            "crates/bli-kvm-server/src/network.rs",
+            "crates/bli-kvm-server/src/lib.rs",
+        ),
+        "device": (),
+    },
+    {
         "phase": "6",
         "title": "system update and extensions",
         "host": (
@@ -225,7 +234,6 @@ PHASES: tuple[dict[str, Any], ...] = (
 )
 
 NOT_AUDITED = {
-    "5": "network management: command/device bound, no reviewed host artifact set yet",
     "7": "exec/agent features: hidden by capability; verified through the manifest and probes",
 }
 

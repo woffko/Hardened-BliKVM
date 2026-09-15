@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SERVER = ROOT / "crates/bli-kvm-server/src/lib.rs"
 PLAN = ROOT / "docs/design/gui-parity-plan.md"
+AUDIT = ROOT / "docs/baselines/phase8-acceptance.md"
 
 
 def server_routes() -> set[str]:
@@ -32,6 +33,16 @@ class PlanRouteDriftTests(unittest.TestCase):
             stated,
             len(server_routes()),
             "the canonical plan route count drifted from lib.rs",
+        )
+
+    def test_audit_route_count_matches_the_server(self) -> None:
+        audit = AUDIT.read_text(encoding="utf-8")
+        match = re.search(r"(\d+) routes as of \d{4}-\d{2}-\d{2}", audit)
+        assert match is not None, "audit route count sentence is missing"
+        self.assertEqual(
+            int(match.group(1)),
+            len(server_routes()),
+            "the audit route count drifted from lib.rs",
         )
 
     def test_read_only_endpoints_are_described_in_the_plan(self) -> None:

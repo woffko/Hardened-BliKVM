@@ -8,7 +8,7 @@ overall status stays `incomplete` while any gate is open. Nothing here is
 inferred from code, commits or intent, and this document is not a release
 acceptance.
 
-Latest generated report: `evidence/private/phase8-acceptance-20260915-g.json`
+Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 (`overall=incomplete`, `hostMissing=0`, `deviceUnrun=6`).
 
 ## Complete phases
@@ -18,11 +18,14 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-g.json`
   test; topology capture recorded
   (`evidence/private/device-kvm-topology-20260915-a.json`).
 - **Phase 1 — read-only platform API.** Server routes plus the route-drift guard
-  `tools/test_plan_route_drift.py`; 34 routes as of 2026-09-15.
+  `tools/test_plan_route_drift.py`; 37 routes as of 2026-09-15.
 - **Phase 4 — video gates (partly).** Two-client probe and soak receipts
   recorded (`video-two-client-probe-20260913-a.json`,
   `video-soak-probe-20260913-a.json`); the frame-timing probe is added and
   host-tested but has no device receipt yet (see below).
+- **Phase 5 — network management (read-only part).** Resolver, IPv6 and
+  interface views from `/etc/resolv.conf`, the kernel sysctl tree and sysfs;
+  the network write paths stay hidden.
 - **Phase 6 — update and extensions.** Signed application-update commit-cycle
   and runtime-package receipts recorded; production bundle tools present.
 
