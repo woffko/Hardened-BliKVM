@@ -140,6 +140,12 @@ The Rust board owner replaces KVMD for the composite gadget and the ATX lines.
 This section is the physical gate; every step needs explicit operator
 confirmation and produces a private receipt.
 
+A plan-only pre-flight (no `--confirm-handoff`) against the current bundle
+records the exact owner environment, steps and acceptance flags without touching
+the device; the latest is
+`evidence/private/board-handoff-plan-20260915-c.json` (bundle `39991edf…`, media
+and ATX-bench acceptance enabled).
+
 First run `tools/capture_device_handoff_preflight.py` and require
 `handoffReady=true`: it is the read-only check that the target really is the
 BliKVM H616 stack (KVMD and the vendor daemon present, a gadget and UDC bound,
