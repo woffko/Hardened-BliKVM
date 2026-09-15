@@ -150,11 +150,12 @@ if systemctl is-active kvmd.service >/dev/null 2>&1; then printf 'kvmd_restarted
 
 
 def validate_apply(facts: dict[str, str]) -> None:
-    for key, expected in (("socket_present", "yes"), ("owner_started", "yes"), ("udc_bound", "yes")):
-        if facts[key] != expected:
+    # The owner serves the control socket on start; the composite gadget is
+    # created on demand by the first attach, so gadget facts are informational
+    # here and are asserted by the media/HID gates.
+    for key in ("socket_present", "owner_started"):
+        if facts[key] != "yes":
             raise ValueError(f"apply gate failed: {key}={facts[key]}")
-    if facts["gadget_name"] != "hardened":
-        raise ValueError("apply gate did not own the hardened gadget")
 
 
 def validate_teardown(facts: dict[str, str]) -> None:

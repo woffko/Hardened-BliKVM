@@ -95,8 +95,6 @@ class StageBoardProfileGateTests(unittest.TestCase):
         for key, value in (
             ("socket_present", "no"),
             ("owner_started", "no"),
-            ("udc_bound", "no"),
-            ("gadget_name", "kvmd"),
         ):
             facts = apply_facts()
             facts[key] = value
