@@ -29,6 +29,7 @@ MAX_LABELS = 200
 MAX_CAPABILITIES = 200
 MAX_CAPABILITY_VALUE = 32
 MAX_FAILED_REQUESTS = 20
+MAX_SETTINGS_TABS = 20
 
 # Label differences that are intentional product branding, not parity gaps.
 EXPECTED_LABEL_DIFFERENCES = (
@@ -98,6 +99,15 @@ def _markers(receipt: dict) -> dict[str, int]:
 
 def _is_expected(label: str) -> bool:
     return any(pattern.fullmatch(label) for pattern in EXPECTED_LABEL_DIFFERENCES)
+
+
+def _settings_tabs(receipt: dict) -> list[str]:
+    values = receipt.get("settingsTabs") or []
+    if not isinstance(values, list) or len(values) > MAX_SETTINGS_TABS:
+        raise ValueError("invalid settings tabs")
+    if not all(isinstance(value, str) and 0 < len(value) <= 40 for value in values):
+        raise ValueError("invalid settings tab entry")
+    return values
 
 
 def _failed_requests(receipt: dict) -> list[dict[str, str]]:
@@ -202,6 +212,10 @@ def compare(ours: dict, reference: dict) -> dict:
         else set()
     )
 
+    our_tabs = set(_settings_tabs(ours))
+    reference_tabs = set(_settings_tabs(reference))
+    settings_tabs_compared = bool(our_tabs) and bool(reference_tabs)
+
     our_markers = _markers(ours)
     reference_markers = _markers(reference)
     markers_compared = bool(our_markers) and bool(reference_markers)
@@ -248,6 +262,13 @@ def compare(ours: dict, reference: dict) -> dict:
             for label in labels_only_in_reference
             if label not in explained_reference and not _is_expected(label)
         ],
+        "settingsTabsCompared": settings_tabs_compared,
+        "settingsTabsOnlyInOurs": sorted(our_tabs - reference_tabs)
+        if settings_tabs_compared
+        else [],
+        "settingsTabsOnlyInReference": sorted(reference_tabs - our_tabs)
+        if settings_tabs_compared
+        else [],
         "failedRequestsCompared": failed_requests_compared,
         "failedRequestsOnlyInOurs": sorted(our_failures - reference_failures),
         "failedRequestsOnlyInReference": sorted(reference_failures - our_failures),

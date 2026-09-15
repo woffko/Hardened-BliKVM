@@ -15,6 +15,7 @@ def receipt(
     capabilities: dict[str, str] | None = None,
     markers: dict[str, int] | None = None,
     failed_requests: list[dict[str, object]] | None = None,
+    settings_tabs: list[str] | None = None,
 ) -> dict:
     return {
         "schemaVersion": 1,
@@ -27,6 +28,7 @@ def receipt(
         "capabilities": capabilities or {},
         "markers": markers or {},
         "failedRequests": failed_requests or [],
+        "settingsTabs": settings_tabs or [],
     }
 
 
@@ -171,6 +173,20 @@ class CompareGuiParityTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             comparator.compare(ours, ours)
+
+    def test_settings_tabs_are_compared_only_when_both_receipts_have_them(self) -> None:
+        ours = receipt(
+            ["Images"], {"div": 1}, settings_tabs=["About", "Device", "System"]
+        )
+        reference = receipt(["Images"], {"div": 1}, settings_tabs=["About", "System"])
+        result = comparator.compare(ours, reference)
+        self.assertIs(result["settingsTabsCompared"], True)
+        self.assertEqual(result["settingsTabsOnlyInOurs"], ["Device"])
+        self.assertEqual(result["settingsTabsOnlyInReference"], [])
+
+        result = comparator.compare(ours, receipt(["Images"], {"div": 1}))
+        self.assertIs(result["settingsTabsCompared"], False)
+        self.assertEqual(result["settingsTabsOnlyInOurs"], [])
 
     def test_invalid_receipts_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

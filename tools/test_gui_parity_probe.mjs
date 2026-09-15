@@ -33,6 +33,17 @@ test("gui_parity_probe extracts bounded menu labels from a local page", (t) => {
     `<!doctype html><html><head><title>Fixture</title></head><body>
       <nav><a href="#/image">Images</a><button>Power</button></nav>
       <main><h1>Fixture page</h1></main>
+      <svg class="lucide lucide-settings" width="18" height="18"></svg>
+      <div id="tabs" hidden role="tablist">
+        <button role="tab">About</button><button role="tab">Device</button>
+      </div>
+      <script>
+        document
+          .querySelector("svg.lucide-settings")
+          .addEventListener("click", () => {
+            document.getElementById("tabs").hidden = false;
+          });
+      </script>
     </body></html>\n`,
   );
 
@@ -66,6 +77,11 @@ test("gui_parity_probe extracts bounded menu labels from a local page", (t) => {
     assert.ok(
       receipt.menuLabels.includes("Power"),
       `labels: ${receipt.menuLabels}`,
+    );
+    assert.ok(
+      receipt.settingsTabs.includes("About") &&
+        receipt.settingsTabs.includes("Device"),
+      `settings tabs: ${JSON.stringify(receipt.settingsTabs)}`,
     );
     assert.equal(receipt.consoleErrors, 0);
     assert.equal(receipt.cookiesRead, false);

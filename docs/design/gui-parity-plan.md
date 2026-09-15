@@ -178,8 +178,8 @@ composite-gadget acceptance and phase 8 the virtual-media acceptance receipt.
 
 Phase 8 parity harness (host-only, no mutation): `gui_parity_probe.mjs` now
 captures menu labels, tag counts, the capability manifest, surface markers
-(mobile keyboard input, on-screen keys, video elements) and bounded console
-error samples; `compare_gui_parity.py` separates label differences that a
+(mobile keyboard input, on-screen keys, video elements), the settings tab labels
+(best effort: it needs the menu to expand) and bounded console error samples; `compare_gui_parity.py` separates label differences that a
 differing capability explains or that are intentional branding from
 `unexplainedLabelsOnlyInReference/InOurs`, the real gaps, and only compares
 capabilities, markers and the recorded failed GUI requests when both receipts

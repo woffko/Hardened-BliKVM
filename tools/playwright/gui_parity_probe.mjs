@@ -216,6 +216,30 @@ try {
     capabilitiesAvailable = false;
   }
 
+  const settingsTabs = [];
+  try {
+    // The menu auto-hides, so hover the top-centre strip to expand it first.
+    const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+    await page.mouse.move(Math.round(viewport.width / 2), 30);
+    await page.waitForTimeout(500);
+    const settingsIcon = page.locator("svg.lucide-settings").first();
+    await settingsIcon.click({ force: true, timeout: 5000 });
+    await page.waitForTimeout(600);
+    const texts = await page.$$eval(
+      '[role="tab"], .ant-tabs-tab, .ant-tabs-tab-btn',
+      (nodes) =>
+        nodes
+          .map((node) => (node.textContent || "").trim())
+          .filter((text) => text && text.length <= 40)
+          .slice(0, 20),
+    );
+    for (const text of texts) {
+      if (!settingsTabs.includes(text)) settingsTabs.push(text);
+    }
+  } catch {
+    /* the settings surface is best effort */
+  }
+
   const markers = await page.evaluate(() => ({
     mobileKeyboardInput: document.querySelectorAll(
       'textarea[aria-label="Mobile local keyboard input"]',
@@ -233,6 +257,7 @@ try {
     tagCounts: dom.tagCounts,
     capabilitiesAvailable,
     capabilities,
+    settingsTabs,
     markers,
     consoleErrors,
     consoleErrorSamples,
