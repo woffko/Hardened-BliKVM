@@ -22,7 +22,30 @@ DOCUMENTS = (
 PATH = re.compile(r"(tools/[A-Za-z0-9_./-]+\.(?:py|mjs)|scripts/[A-Za-z0-9_./-]+\.sh)")
 
 
+GATE_TOOL = "tools/stage_device_board_profile_gate.py"
+FLAG = re.compile(r"(?<![A-Za-z0-9_-])(--[a-z][a-z-]+)")
+
+
 class DocToolPathsTests(unittest.TestCase):
+    def test_the_copy_paste_gate_command_uses_real_flags(self) -> None:
+        runbook = (ROOT / "docs/design/phase3-5-device-gate-runbook.md").read_text(
+            encoding="utf-8"
+        )
+        source = (ROOT / GATE_TOOL).read_text(encoding="utf-8")
+        blocks = re.findall(r"```(.*?)```", runbook, re.DOTALL)
+        reviewed = [block for block in blocks if GATE_TOOL in block]
+        self.assertTrue(reviewed, "the runbook has no copy-paste gate command")
+        for block in reviewed:
+            # Only the flags after the tool name belong to the gate; the block
+            # also wraps the call in project-memory-exec.
+            invocation = block.split(GATE_TOOL, 1)[1]
+            for flag in sorted(set(FLAG.findall(invocation))):
+                self.assertIn(
+                    f'"{flag}"',
+                    source,
+                    f"the runbook uses {flag}, which {GATE_TOOL} does not accept",
+                )
+
     def test_referenced_tools_and_scripts_exist(self) -> None:
         missing: list[str] = []
         for document in DOCUMENTS:
