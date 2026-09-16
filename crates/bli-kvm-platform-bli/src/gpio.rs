@@ -61,6 +61,9 @@ pub fn current_owner(role: GpioRole) -> LineOwner {
         GpioRole::AtxPowerLed | GpioRole::AtxHddLed => LineOwner::Kvmd,
         GpioRole::DisplayButton => LineOwner::Unused,
         GpioRole::ActivityLed | GpioRole::FanPwm => LineOwner::LegacySysfs,
+        GpioRole::DisplayDataCommand | GpioRole::DisplayReset | GpioRole::DisplayBacklight => {
+            LineOwner::LegacySysfs
+        }
     }
 }
 
@@ -70,9 +73,13 @@ pub fn role_direction(role: GpioRole) -> LineDirection {
         GpioRole::AtxPowerLed | GpioRole::AtxHddLed | GpioRole::DisplayButton => {
             LineDirection::Input
         }
-        GpioRole::AtxPower | GpioRole::AtxReset | GpioRole::ActivityLed | GpioRole::FanPwm => {
-            LineDirection::Output
-        }
+        GpioRole::AtxPower
+        | GpioRole::AtxReset
+        | GpioRole::ActivityLed
+        | GpioRole::FanPwm
+        | GpioRole::DisplayDataCommand
+        | GpioRole::DisplayReset
+        | GpioRole::DisplayBacklight => LineDirection::Output,
     }
 }
 

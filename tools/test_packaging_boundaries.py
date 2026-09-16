@@ -69,16 +69,25 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_st7789_model_is_pure_no_std_and_unlinked(self) -> None:
+    def test_st7789_model_is_pure_no_std_and_used_only_by_the_board_daemon(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-st7789-model"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         self.assertIn('"crates/bli-kvm-st7789-model"', workspace)
         self.assertNotIn("[dependencies]", manifest)
-        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
-                self.assertNotIn("bli-kvm-st7789-model", other_manifest.read_text())
+        # The model stays pure: exactly one reviewed consumer, the board daemon
+        # that owns the panel runtime, links it.
+        consumers = [
+            other_manifest
+            for other_manifest in (ROOT / "crates").glob("*/Cargo.toml")
+            if other_manifest != crate / "Cargo.toml"
+            and "bli-kvm-st7789-model" in other_manifest.read_text()
+        ]
+        self.assertEqual(
+            [consumer.parent.name for consumer in consumers],
+            ["bli-kvm-boardd"],
+        )
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("pub const DISPLAY_WIDTH: u16 = 240", source)

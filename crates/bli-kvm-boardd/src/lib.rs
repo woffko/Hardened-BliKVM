@@ -7,8 +7,10 @@
 //! nothing about the board is guessed.
 
 pub mod config;
+pub mod display;
 pub mod fan;
 pub mod server;
+pub mod spi;
 
 use std::{
     error::Error,

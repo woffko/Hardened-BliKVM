@@ -42,6 +42,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 DevicePolicy=closed
 DeviceAllow=/dev/gpiochip0 rw
+DeviceAllow=/dev/spidev1.0 rw
 IPAddressDeny=any
 ReadWritePaths=/run/hardened-blikvm-boardd
 SystemCallArchitectures=native

@@ -52,6 +52,75 @@ pub struct CurvePoint {
     pub duty_percent: u8,
 }
 
+/// One reviewed GPIO line: offset and polarity from the gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineSpec {
+    pub offset: u16,
+    pub active_low: bool,
+}
+
+/// One controller initialization step: command, payload and optional settle
+/// delay. The sequence is a board fact and comes from the operator, not from a
+/// guessed datasheet default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InitStep {
+    pub command: u8,
+    #[serde(default)]
+    pub data: Vec<u8>,
+    #[serde(default)]
+    pub delay_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplayConfig {
+    pub spidev: PathBuf,
+    pub clock_hz: u32,
+    pub data_command: LineSpec,
+    pub reset: LineSpec,
+    pub backlight: LineSpec,
+    pub reset_assert_ms: u64,
+    pub reset_settle_ms: u64,
+    pub backlight_settle_ms: u64,
+    pub init: Vec<InitStep>,
+}
+
+impl DisplayConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if !self.spidev.is_absolute() {
+            return Err(ConfigError::Invalid);
+        }
+        if self.clock_hz < 1_000 || self.clock_hz > 50_000_000 {
+            return Err(ConfigError::Invalid);
+        }
+        let offsets = [
+            self.data_command.offset,
+            self.reset.offset,
+            self.backlight.offset,
+        ];
+        if offsets[0] == offsets[1] || offsets[1] == offsets[2] || offsets[0] == offsets[2] {
+            return Err(ConfigError::Invalid);
+        }
+        if !(1..=100).contains(&self.reset_assert_ms)
+            || !(1..=1_000).contains(&self.reset_settle_ms)
+            || !(1..=1_000).contains(&self.backlight_settle_ms)
+        {
+            return Err(ConfigError::Invalid);
+        }
+        if self.init.is_empty() || self.init.len() > 64 {
+            return Err(ConfigError::Invalid);
+        }
+        for step in &self.init {
+            if step.data.len() > 128 || step.delay_ms > 1_000 {
+                return Err(ConfigError::Invalid);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BoarddConfig {
@@ -62,6 +131,7 @@ pub struct BoarddConfig {
     /// Milliseconds between automatic temperature evaluations.
     pub sample_interval_ms: u64,
     pub fan: FanConfig,
+    pub display: DisplayConfig,
 }
 
 impl FanConfig {
@@ -155,7 +225,8 @@ impl BoarddConfig {
         if self.sample_interval_ms < 250 || self.sample_interval_ms > 60_000 {
             return Err(ConfigError::Invalid);
         }
-        self.fan.validate()
+        self.fan.validate()?;
+        self.display.validate()
     }
 }
 
@@ -191,6 +262,47 @@ mod tests {
                     },
                 ],
             },
+            display: DisplayConfig {
+                spidev: PathBuf::from("/dev/spidev1.0"),
+                clock_hz: 40_000_000,
+                data_command: LineSpec {
+                    offset: 259,
+                    active_low: false,
+                },
+                reset: LineSpec {
+                    offset: 262,
+                    active_low: false,
+                },
+                backlight: LineSpec {
+                    offset: 260,
+                    active_low: false,
+                },
+                reset_assert_ms: 10,
+                reset_settle_ms: 120,
+                backlight_settle_ms: 50,
+                init: vec![
+                    InitStep {
+                        command: 0x01,
+                        data: Vec::new(),
+                        delay_ms: 150,
+                    },
+                    InitStep {
+                        command: 0x11,
+                        data: Vec::new(),
+                        delay_ms: 120,
+                    },
+                    InitStep {
+                        command: 0x3a,
+                        data: vec![0x55],
+                        delay_ms: 0,
+                    },
+                    InitStep {
+                        command: 0x29,
+                        data: Vec::new(),
+                        delay_ms: 0,
+                    },
+                ],
+            },
         }
     }
 
@@ -220,6 +332,18 @@ mod tests {
         let mut invalid = config();
         invalid.fan.minimum_duty_percent = 90;
         invalid.fan.maximum_duty_percent = 50;
+        assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
+
+        let mut invalid = config();
+        invalid.display.reset.offset = 259;
+        assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
+
+        let mut invalid = config();
+        invalid.display.init.clear();
+        assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
+
+        let mut invalid = config();
+        invalid.display.clock_hz = 0;
         assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
     }
 

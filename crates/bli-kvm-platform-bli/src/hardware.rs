@@ -14,6 +14,12 @@ pub enum GpioRole {
     DisplayButton,
     ActivityLed,
     FanPwm,
+    /// ST7789 data/command select, reset and backlight. The offsets and
+    /// polarity come from the operator configuration; the recon baseline only
+    /// records that the vendor claims them through the sysfs export.
+    DisplayDataCommand,
+    DisplayReset,
+    DisplayBacklight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -67,6 +67,21 @@ supervisor gained `actuator_mut` for the manual duty path. Host tests cover the
 config bounds, the duty split, level and PWM actuation, the protocol state
 machine and one socket round-trip.
 
+## Implemented slice 2 (2026-09-16): ST7789 panel
+
+`display` and `spi` modules: the ioctl numbers for `/dev/spidev1.0` are computed
+from the Linux ABI at compile time and pinned by a test, the controller
+initialization sequence (commands, payloads, settle delays), the line offsets
+and polarity, and the reset/backlight timing all come from the operator
+configuration. The driver requests the three panel lines, pulses reset, runs the
+initialization with the data/command line driven per transfer, and only then
+enables the backlight; it draws a colour-bar test pattern across the full panel
+in bounded chunks through the pinned `bli-kvm-st7789-model` encoder, which now
+has exactly one reviewed consumer. The panel lines gained reviewed roles
+(`DisplayDataCommand`, `DisplayReset`, `DisplayBacklight`) and the unit allows
+`/dev/spidev1.0`. Still open before the panel gate: the two control-surface
+requests (`display_test`, `display_backlight_set`) and the panel lines handoff.
+
 ## Ownership handoff and rollback
 
 The vendor C daemon and our daemon must never own a line at the same time:
