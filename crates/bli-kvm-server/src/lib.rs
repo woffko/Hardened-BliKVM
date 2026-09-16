@@ -38,6 +38,7 @@ mod hid;
 mod leader_key;
 mod media;
 mod network;
+mod session_lock;
 mod system_log;
 mod system_time;
 mod update;
@@ -317,6 +318,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/storage/image/delete", post(media::storage_delete))
         .route("/storage/cdrom", get(media::storage_cdrom))
         .route("/storage/usb/reconnect", post(media::storage_reconnect))
+        .route(
+            "/vm/session-lock",
+            get(session_lock::get_session_lock).post(session_lock::set_session_lock),
+        )
         .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
@@ -890,6 +895,178 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    async fn session_lock_state(
+        app: &Router,
+        cookie: &str,
+        csrf: Option<&str>,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/vm/session-lock")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, cookie);
+        if let Some(csrf) = csrf {
+            request = request.header("x-csrf-token", csrf);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, json_body(response).await)
+    }
+
+    async fn set_session_lock(
+        app: &Router,
+        cookie: &str,
+        csrf: Option<&str>,
+        duration: u64,
+        lock_now: bool,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/vm/session-lock")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, cookie);
+        if let Some(csrf) = csrf {
+            request = request.header("x-csrf-token", csrf);
+        }
+        let body = serde_json::json!({"duration": duration, "lockNow": lock_now});
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, json_body(response).await)
+    }
+
+    fn isolated_app() -> Router {
+        let root = tempdir().unwrap();
+        app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            ..ServerOptions::default()
+        })
+    }
+
+    async fn login_again(app: &Router) -> String {
+        let login = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({
+                    "username": "operator",
+                    "password": "initial password"
+                }),
+            ))
+            .await
+            .unwrap();
+        login.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn session_lock_round_trips_and_requires_csrf() {
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (status, body) = session_lock_state(&app, &cookie, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["duration"], 0);
+
+        let (status, body) = set_session_lock(&app, &cookie, Some(&csrf), 300, false).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["duration"], 300);
+
+        let (status, _) = set_session_lock(&app, &cookie, None, 60, false).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, body) = session_lock_state(&app, &cookie, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["data"]["duration"], 300,
+            "a rejected write must not change the policy"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_lock_expires_an_idle_session() {
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (status, _) = set_session_lock(&app, &cookie, Some(&csrf), 1, false).await;
+        assert_eq!(status, StatusCode::OK);
+
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/vm/info")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Turning the policy off restores normal sessions.
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (status, _) = set_session_lock(&app, &cookie, Some(&csrf), 0, false).await;
+        assert_eq!(status, StatusCode::OK);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/vm/info")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn session_lock_now_revokes_the_other_session() {
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let other = login_again(&app).await;
+        let (status, _) = set_session_lock(&app, &cookie, Some(&csrf), 0, true).await;
+        assert_eq!(status, StatusCode::OK);
+
+        for (cookie, expected) in [
+            (&other, StatusCode::UNAUTHORIZED),
+            (&cookie, StatusCode::OK),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/vm/info")
+                        .header(header::HOST, "kvm.test")
+                        .header(header::COOKIE, cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
     }
 
     #[tokio::test]

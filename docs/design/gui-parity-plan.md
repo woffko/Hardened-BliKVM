@@ -64,7 +64,7 @@ verified and committed in English with a green `scripts/check.sh`.
 | 5 | KVMD streamer supervision                                  | vendor `ustreamer` + `bli-kvm-video-proxy`            | deployed by E0; MJPEG gates passed on the live surface       |
 | 6 | KVMD ATX routes + C `kvmd-main` ATX                        | `bli-kvm-atx-gpio-executor` in the board owner        | deployed and accepted (500/5000/500 ms)                      |
 | 7 | C `kvmd-main`: fan, OLED ST7789, display buttons, activity LED, serial switch, RTC, boot config, recovery inputs | Rust board daemon                                    | policy crates and recon snapshots exist; no daemon or units (E2) |
-| 8 | KVMD system actions (reboot/session-lock/memory/swap)      | `system-action-*` crates                              | host-side only (E3)                                          |
+| 8 | KVMD system actions (reboot/session-lock/memory/swap)      | `system-action-*` crates                              | session lock implemented and gated by the session itself; reboot, memory and swap stay hidden until the privileged executor lands (E3) |
 | 9 | KVMD network/wifi/wol/firewall/ssh/mdns                    | `bli-kvm-server` network module                       | read-only views live; writes and wifi/firewall missing (E3)  |
 | 10 | Vendor update watchdog + signed slots serving our build    | retained signed-slot pipeline                         | slots and trust intact, serving/watchdog idled by the cutover (E4) |
 | 11 | Extras: janus (WebRTC), webterm, vnc, ipmi                  | reference behaviour: hidden/off by default            | not ported; `janus.service` disabled (E5)                    |
@@ -72,7 +72,7 @@ verified and committed in English with a green `scripts/check.sh`.
 
 ## API parity status
 
-Our hardened server exposes, as of 2026-09-16: 43 routes. The read-only
+Our hardened server exposes, as of 2026-09-16: 44 routes. The read-only
 management surface is implemented and capability-visible: `/api/system/time`
 (`time` read-only), `/api/system-log/{config,messages}`
 (`config`,`messages` read-only), `/api/application/{version,preview}`
@@ -80,7 +80,10 @@ management surface is implemented and capability-visible: `/api/system/time`
 (`hostname`,`info`,`hardware` read-only), `/api/vm/autostart`
 (`autostart` list/content read-only) and
 `/api/download/image/{enabled,remote/enabled}`
-(`image/enabled`,`image/remote/enabled` read-only). Media select/attach/eject,
+(`image/enabled`,`image/remote/enabled` read-only). The device-wide session
+auto-lock (`/api/vm/session-lock`) is implemented: the settings duration and the
+forced lock are enforced by the server's own session store. Media
+select/attach/eject,
 the restricted HID lease, `/api/ws` and `/api/hid/shortcut/leader-key` are
 implemented on the restricted surface. The remaining reference routes stay
 capability-hidden until their phase lands: HID control modes, storage

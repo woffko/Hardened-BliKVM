@@ -18,7 +18,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
   test; topology capture recorded
   (`evidence/private/device-kvm-topology-20260915-a.json`).
 - **Phase 1 — read-only platform API.** Server routes plus the route-drift guard
-  `tools/test_plan_route_drift.py`; 43 routes as of 2026-09-16.
+  `tools/test_plan_route_drift.py`; 44 routes as of 2026-09-16.
 - **Phase 4 — video gates (partly).** Two-client probe and soak receipts
   recorded (`video-two-client-probe-20260913-a.json`,
   `video-soak-probe-20260913-a.json`); the frame-timing probe is added and
@@ -36,7 +36,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 | E0 video | `video-frame-timing-*.json`, `video-two-client-probe-*.json`, `video-soak-probe-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E1 storage and media | `storage-acceptance-*.json`, `storage-upload-*.json`, `virtual-media-acceptance-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the four actuation gates are open until the operator confirms the handoff |
-| E3 network and system actions | `network-write-gate-*.json`, `system-action-gate-*.json` | open |
+| E3 network and system actions | `network-write-gate-*.json`, `system-action-gate-*.json` | open; the unprivileged session auto-lock (`/api/vm/session-lock`) is implemented and covered by server tests |
 | E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the slot serving cutover is open |
 | E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | recorded: both parity captures and the read-only vendor replacement summary (`tools/capture_vendor_replacement_state.py`, `result=passed`) |
 

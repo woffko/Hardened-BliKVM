@@ -34,6 +34,11 @@ impl Session {
 #[derive(Debug, Default)]
 pub struct SessionStore {
     sessions: RwLock<HashMap<String, Session>>,
+    /// Device-wide idle auto-lock: after this many seconds without a request
+    /// the session is revoked and the operator must log in again. `None` turns
+    /// the policy off.
+    lock_after_seconds: RwLock<Option<u64>>,
+    last_seen: RwLock<HashMap<String, Instant>>,
 }
 
 impl SessionStore {
@@ -57,8 +62,31 @@ impl SessionStore {
                 .as_secs(),
             revoked: Arc::new(AtomicBool::new(false)),
         };
-        self.sessions.write().await.insert(token, session.clone());
+        self.sessions
+            .write()
+            .await
+            .insert(token.clone(), session.clone());
+        self.last_seen
+            .write()
+            .await
+            .insert(token.clone(), Instant::now());
         session
+    }
+
+    /// The configured idle auto-lock in seconds; `0` means disabled.
+    pub async fn lock_after_seconds(&self) -> u64 {
+        self.lock_after_seconds.read().await.unwrap_or(0)
+    }
+
+    /// Set the idle auto-lock policy. Zero disables it and clears the activity
+    /// bookkeeping.
+    pub async fn set_lock_after_seconds(&self, seconds: u64) {
+        if seconds == 0 {
+            *self.lock_after_seconds.write().await = None;
+            self.last_seen.write().await.clear();
+        } else {
+            *self.lock_after_seconds.write().await = Some(seconds);
+        }
     }
 
     pub async fn validate(&self, token: &str) -> Option<Session> {
@@ -68,9 +96,38 @@ impl SessionStore {
             if let Some(expired) = sessions.remove(token) {
                 expired.revoke();
             }
+            self.forget_activity(token).await;
             return None;
         }
+        if let Some(seconds) = *self.lock_after_seconds.read().await {
+            let idle = Duration::from_secs(seconds);
+            let stale = {
+                let mut seen = self.last_seen.write().await;
+                match seen.get_mut(token) {
+                    Some(last) if last.elapsed() >= idle => true,
+                    Some(last) => {
+                        *last = Instant::now();
+                        false
+                    }
+                    None => {
+                        seen.insert(token.to_string(), Instant::now());
+                        false
+                    }
+                }
+            };
+            if stale {
+                if let Some(expired) = sessions.remove(token) {
+                    expired.revoke();
+                }
+                self.forget_activity(token).await;
+                return None;
+            }
+        }
         Some(session)
+    }
+
+    async fn forget_activity(&self, token: &str) {
+        self.last_seen.write().await.remove(token);
     }
 
     pub async fn revoke(&self, token: &str) {
@@ -88,6 +145,25 @@ impl SessionStore {
                 true
             }
         });
+    }
+
+    /// Revoke every session except the caller's, used by a forced lock.
+    pub async fn revoke_others(&self, token: &str) -> u64 {
+        let mut revoked = 0_u64;
+        self.sessions.write().await.retain(|other, session| {
+            if other == token {
+                true
+            } else {
+                session.revoke();
+                revoked = revoked.saturating_add(1);
+                false
+            }
+        });
+        self.last_seen
+            .write()
+            .await
+            .retain(|other, _| other == token);
+        revoked
     }
 }
 
