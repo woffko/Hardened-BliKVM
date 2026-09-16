@@ -40,8 +40,13 @@ journal or runs the action itself.
    confirmation) and from the environment guards (update, storage, recovery,
    post-boot observer) exactly as the policy expects; a rejection maps to a
    fixed protocol code. Dispatch records the intent first and then asks the
-   runner, which is the maintenance dispatcher in the device profile and a mock
-   in the host tests.
+   runner. Two runners exist: `RefusingRunner` (the default) and `ExecRunner`,
+   which executes one operator-supplied absolute command per action with **no
+   arguments**, so a request cannot inject one and nothing runs unless both
+   paths are configured. Remaining before the device gate: attach the armed
+   runner to the board profile's state (the gadget/media/ATX owner keeps
+   running) and provision the reviewed command paths from an operator file,
+   like the ATX timings.
 3. **Server endpoints** (`POST /api/vm/system/reboot`, `/shutdown`): the
    settings UI's confirm action, gated by the usual session, CSRF and origin
    checks plus the `system.actions` capability, which stays `unavailable` in

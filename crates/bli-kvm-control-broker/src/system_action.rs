@@ -6,6 +6,8 @@
 //! mock in the host tests. The capability is disabled unless the reviewed
 //! profile explicitly arms it.
 
+use std::path::PathBuf;
+
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 use bli_kvm_core::{SystemActionKind, SystemActionWireRequest};
 use bli_kvm_system_action_policy::{
@@ -24,6 +26,50 @@ pub trait ActionRunner: Send {
 impl ActionRunner for Box<dyn ActionRunner> {
     fn dispatch(&mut self, action: SystemAction) -> Result<(), String> {
         (**self).dispatch(action)
+    }
+}
+
+/// Runner that executes one reviewed, argument-free command per action.
+///
+/// The command is an operator-supplied absolute path (a reviewed wrapper, not
+/// a shell line); nothing is executed unless both paths are configured, and no
+/// argument is ever passed, so a request cannot inject one.
+#[derive(Debug, Default)]
+pub struct ExecRunner {
+    reboot: Option<PathBuf>,
+    shutdown: Option<PathBuf>,
+}
+
+impl ExecRunner {
+    pub fn new(reboot: Option<PathBuf>, shutdown: Option<PathBuf>) -> Self {
+        Self { reboot, shutdown }
+    }
+
+    pub fn is_configured(&self) -> bool {
+        self.reboot.is_some() && self.shutdown.is_some()
+    }
+}
+
+impl ActionRunner for ExecRunner {
+    fn dispatch(&mut self, action: SystemAction) -> Result<(), String> {
+        let path = match action {
+            SystemAction::Reboot => self.reboot.as_ref(),
+            SystemAction::Shutdown => self.shutdown.as_ref(),
+        };
+        let Some(path) = path else {
+            return Err("the system action command is not configured".into());
+        };
+        if !path.is_absolute() {
+            return Err("the system action command must be absolute".into());
+        }
+        let status = std::process::Command::new(path)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("the system action command exited with {status}"))
+        }
     }
 }
 
@@ -284,6 +330,31 @@ mod tests {
                 code: ControlRejectionCode::InvalidState
             }
         );
+    }
+
+    #[test]
+    fn exec_runner_runs_the_reviewed_command_only_when_configured() {
+        let mut unconfigured = ExecRunner::default();
+        assert!(!unconfigured.is_configured());
+        assert!(unconfigured.dispatch(SystemAction::Reboot).is_err());
+
+        let mut ok = ExecRunner::new(
+            Some(PathBuf::from("/bin/true")),
+            Some(PathBuf::from("/bin/true")),
+        );
+        assert!(ok.is_configured());
+        assert_eq!(ok.dispatch(SystemAction::Reboot), Ok(()));
+        assert_eq!(ok.dispatch(SystemAction::Shutdown), Ok(()));
+
+        let mut failing = ExecRunner::new(
+            Some(PathBuf::from("/bin/false")),
+            Some(PathBuf::from("/bin/false")),
+        );
+        assert!(failing.dispatch(SystemAction::Reboot).is_err());
+
+        let mut relative =
+            ExecRunner::new(Some(PathBuf::from("true")), Some(PathBuf::from("true")));
+        assert!(relative.dispatch(SystemAction::Shutdown).is_err());
     }
 
     #[test]
