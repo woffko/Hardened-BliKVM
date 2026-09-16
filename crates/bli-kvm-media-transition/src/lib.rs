@@ -206,7 +206,15 @@ impl GadgetMediaExecutor {
             return false;
         };
         let spec = self.spec(selected);
-        bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec).is_ok()
+        match bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec) {
+            Ok(()) => true,
+            Err(error) => {
+                // The board owner has no other channel to explain a failed
+                // attach; the operator log is the diagnostic surface.
+                eprintln!("media: gadget apply failed: {error}");
+                false
+            }
+        }
     }
 
     fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
