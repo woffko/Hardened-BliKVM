@@ -170,11 +170,14 @@ Goal: own the media path end to end.
 
 ### E2 - board daemon instead of C `kvmd-main`
 
-Goal: the vendor C daemon is replaced by one Rust daemon.
+Goal: the vendor C daemon is replaced by one Rust daemon. Design:
+`docs/design/board-daemon-v1.md` (hardware facts, transports, policy reuse,
+control surface, ownership handoff, per-subsystem gates).
 
 - Deliver a `bli-kvm-boardd` binary and unit covering fan/PWM and thermal,
-  OLED ST7789 and display buttons, activity LED, serial switch, RTC and boot
-  config, exposed over the owner control socket.
+  OLED ST7789 and display buttons, activity LED, RTC and boot config (the
+  serial switch has no transport on this revision and stays hidden), exposed
+  over its own control socket and mapped by the server.
 - Device gates: one per subsystem, starting from the existing recon receipts
   (`device-oled-topology`, `device-fan-gpio`, `device-serial-topology`,
   `device-rtc`).

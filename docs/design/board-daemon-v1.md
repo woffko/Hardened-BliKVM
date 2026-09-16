@@ -1,0 +1,86 @@
+# Board daemon v1 (replacing the vendor C `kvmd-main`)
+
+Status: design for plan phase E2 (`docs/design/gui-parity-plan.md`). It replaces
+the vendor C daemon's board peripherals with one Rust daemon. Read-only recon
+already exists; every mutating step below is a device gate with an explicit
+operator confirmation and a private receipt.
+
+## What the vendor daemon owns today
+
+`/usr/bin/blikvm/{kvmd-main.sh,kvmd-main}` drives the board peripherals and
+publishes them over `/var/blikvm/{atx,fan,switch}.sock` with state under
+`/dev/shm/blikvm/{atx,fan,switch}`. Our board owner already replaced the ATX
+part. The remaining subsystems, with the live facts our read-only captures
+recorded:
+
+| Subsystem          | Live fact                                                                                                                       | Recon receipt / baseline              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Fan                | `gpiochip0` line **269** (chip `300b000.pinctrl`, 288 lines); the line is still exported through the deprecated sysfs interface. | `docs/baselines/device-fan-gpio.md`   |
+| ST7789 240x240 LCD | `/dev/spidev1.0` (`5011000.spi`, `sun6i-spi`), mode 0, 8 bits/word, requested 40 MHz; data/command **259**, reset **262**, backlight **260** (active-high, sysfs, currently used). | `docs/baselines/device-oled-topology.md`, `docs/baselines/st7789-model.md` |
+| Activity LED       | `gpiochip0` line **261**; the vendor toggles it every 100 ms.                                                                     | `docs/baselines/activity-led-policy.md` |
+| Display button     | `gpiochip0` line **257**; sampled every 100 ms, high is active, five consecutive samples wake the display.                        | `docs/baselines/display-button-policy.md` |
+| Serial switch      | no USB serial device exists (`ttyusb_count=0`), so the vendor switch protocol has no transport on this revision.                   | `docs/baselines/device-serial-topology.md` |
+| RTC                | `rtc0` = `sun6i-rtc` (`hctosys=1`), `rtc1` = `pcf8563` on I2C `0-0051` (battery-backed).                                          | `docs/baselines/device-rtc.md`        |
+
+## Design
+
+One Rust daemon, `bli-kvm-boardd`, with the same ownership discipline the board
+owner already uses: a single process per line, a fixed control surface, no dead
+capabilities.
+
+- **Transports**:
+  - GPIO through the existing `bli-kvm-gpio-chardev` driver (line handles with a
+    fixed consumer label, idempotent requests, per-offset lifecycle). The fan,
+    the LED, the display button, the LCD reset and the LCD backlight are output
+    or input lines on `gpiochip0`.
+  - SPI through `/dev/spidev1.0` with mode 0, 8 bits/word and a bounded clock
+    (40 MHz requested by the vendor; the daemon pins the value and bounds every
+    transfer), driven by the pure `bli-kvm-st7789-model` command encoder.
+  - RTC read-only from `rtc1`/`rtc0` sysfs for the status view; time setting
+    stays with the system time path that already exists.
+- **Policy reuse** (all already host-tested): `bli-kvm-fan-policy` +
+  `bli-kvm-fan-supervisor` (duty in percent, failsafe duty, minimum/maximum
+  temperature, shutdown preparation), `bli-kvm-activity-led-policy`
+  (explicit asserted level, period, pulse, idle floor),
+  `bli-kvm-display-button-policy` (debounce, activation hold, wake event) and
+  `bli-kvm-serial-switch-codec` (host-side only until a transport exists).
+- **Control surface**: the daemon exposes its state and accepts reviewed
+  commands over its own Unix socket, mirroring the owner's protocol style
+  (versioned request/response, fixed rejection codes, no free-form payloads).
+  The server maps it to the reference-shaped endpoints and hides anything the
+  hardware cannot do (the serial switch stays `unavailable`).
+- **Unit**: `hardened-blikvm-boardd.service`, non-root where the hardware
+  allows it, `DevicePolicy=closed` with explicit `DeviceAllow` for
+  `/dev/spidev1.0` and `/dev/gpiochip0`, `ProtectSystem=strict`, and the LED /
+  button / fan lines released from the vendor sysfs export before start.
+
+## Ownership handoff and rollback
+
+The vendor C daemon and our daemon must never own a line at the same time:
+
+1. Stop and mask `kvmd-main` (already masked) and verify no process holds the
+   sysfs exports; unexport the vendor lines only inside the gate.
+2. Start the daemon with the lines unrequested; it requests them only when a
+   subsystem is enabled, and the gate checks `gpioinfo` ownership before and
+   after.
+3. Rollback: stop the daemon, unexport/return the lines, re-enable the vendor
+   unit from its backup if needed.
+
+## Gates (one per subsystem, in order)
+
+1. **Fan**: read-only temperature + line ownership capture, then a bounded duty
+   sweep with the physical fan observed by the operator (the fan is audible);
+   receipt records duty, temperature and the observed response. No timing or
+   minimum-duty value is baked into code: they come from the gate.
+2. **LCD**: SPI loopback-free bring-up with a fixed test pattern (colour bars
+   plus a status line), verifying mode/clock/bounded transfers and a clean
+   reset/backlight sequence; the operator confirms what the panel shows.
+3. **LED and button**: LED pulse patterns from the policy, button wake event,
+   both verified by the operator with the same receipts.
+4. **RTC and boot config**: RTC read view and the boot selector behaviour
+   already modelled by `bli-kvm-system-boot-control`.
+5. **Retirement**: after 1-4 pass, stop and mask the vendor `kvmd-main`,
+   `kvmd-fix` and their sockets, and record the baseline.
+
+The serial switch stays hidden with a capability note: no transport exists on
+this revision, and inventing one would be guessing.
