@@ -82,12 +82,21 @@ try {
   let checkpoint = observer.checkpoint();
   const startedAt = Date.now();
   while (Date.now() - startedAt < durationSeconds * 1000) {
+    const sampleStartedAt = Date.now();
+    // `progress` resolves as soon as new bytes arrive and fails when the
+    // stream stalls for the interval, so the explicit wait keeps one sample
+    // per interval instead of one per network chunk (a fast MJPEG stream
+    // would otherwise write tens of thousands of samples into the receipt).
     await observer.progress(checkpoint, intervalMs);
     checkpoint = observer.checkpoint();
     samples.push({
       elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
       bytes: checkpoint.bytes,
     });
+    const remainingMs = intervalMs - (Date.now() - sampleStartedAt);
+    if (remainingMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remainingMs));
+    }
   }
 
   write({

@@ -61,7 +61,7 @@ verified and committed in English with a green `scripts/check.sh`.
 | 2 | KVMD API/WebUI/auth                                        | `bli-kvm-server` + Nano-derived GUI (37 routes)       | deployed; some routes capability-hidden                      |
 | 3 | KVMD HID (`kvmd-otg`, `hid.usb0/1/2`)                      | our gadget HID in `hardened-blikvm-board-owner`       | deployed and accepted (composite gadget)                     |
 | 4 | KVMD MSD + `/var/lib/kvmd/msd` (`mmcblk0p4`)                | our gadget MSD, our own image layout                  | image still via a symlink into the KVMD directory (E1)       |
-| 5 | KVMD streamer supervision                                  | vendor `ustreamer` + `bli-kvm-video-proxy`            | **down since the cutover; E0 restores it**                   |
+| 5 | KVMD streamer supervision                                  | vendor `ustreamer` + `bli-kvm-video-proxy`            | deployed by E0; MJPEG gates passed on the live surface       |
 | 6 | KVMD ATX routes + C `kvmd-main` ATX                        | `bli-kvm-atx-gpio-executor` in the board owner        | deployed and accepted (500/5000/500 ms)                      |
 | 7 | C `kvmd-main`: fan, OLED ST7789, display buttons, activity LED, serial switch, RTC, boot config, recovery inputs | Rust board daemon                                    | policy crates and recon snapshots exist; no daemon or units (E2) |
 | 8 | KVMD system actions (reboot/session-lock/memory/swap)      | `system-action-*` crates                              | host-side only (E3)                                          |
@@ -102,17 +102,23 @@ KVMD units are stopped, disabled and masked; the KVMD-coupled
 `hardened-blikvm-platform-broker`, `hardened-blikvm-video-proxy`,
 `hardened-blikvm-server-current` and `hardened-blikvm-update-watchdog.timer`
 are stopped and disabled with unit backups under
-`/var/lib/hardened-blikvm/backup-20260916/serving/`. Video is the one live
-regression: the streamer went away with KVMD. Receipts:
+`/var/lib/hardened-blikvm/backup-20260916/serving/`.
+
+**E0 is done (2026-09-16).** The vendor `ustreamer` runs under
+`hardened-blikvm-ustreamer.service` and our `bli-kvm-video-proxy` under
+`hardened-blikvm-board-video-proxy.service`, with our own udev rule selecting
+the USB capture; the KVMD udev rule was backed up and removed. Frame timing,
+two-client and 60 s soak gates passed on the live authenticated surface.
+Receipts: `evidence/private/board-video-restore-20260916-a.json`,
+`video-frame-timing-20260916-b.json`,
+`video-two-client-probe-20260916-a.json`,
+`video-soak-probe-20260916-a.json`; baseline
+`docs/baselines/board-video-restore.md`. Other receipts:
 `evidence/private/board-serving-cutover-20260916-a.json`,
 `evidence/private/kvmd-removal-20260916-a.json`,
-`evidence/private/phase8-acceptance-20260916-c.json`; baselines
+`evidence/private/phase8-acceptance-20260916-d.json`; baselines
 `docs/baselines/board-serving-cutover.md`,
 `docs/baselines/board-owner-acceptance.md`.
-
-The acceptance report currently reads `overall=complete` because the Phase 4
-video receipts predate the cutover; E0 must re-produce them against the live
-surface before that phase counts again.
 
 ## Phases
 
