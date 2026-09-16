@@ -60,7 +60,7 @@ verified and committed in English with a green `scripts/check.sh`.
 | 1 | `kvmd-nginx` HTTPS front                                   | `hardened-blikvm-nginx`                               | deployed, serving 80/443                                     |
 | 2 | KVMD API/WebUI/auth                                        | `bli-kvm-server` + Nano-derived GUI (37 routes)       | deployed; some routes capability-hidden                      |
 | 3 | KVMD HID (`kvmd-otg`, `hid.usb0/1/2`)                      | our gadget HID in `hardened-blikvm-board-owner`       | deployed and accepted (composite gadget)                     |
-| 4 | KVMD MSD + `/var/lib/kvmd/msd` (`mmcblk0p4`)                | our gadget MSD, our own image layout                  | reference storage API live; image layout move is the E1 device step |
+| 4 | KVMD MSD + `/var/lib/kvmd/msd` (`mmcblk0p4`)                | our gadget MSD, our own image layout                  | E1: our fstab mount, reference storage API live; remount-after-eject and reconnect still open |
 | 5 | KVMD streamer supervision                                  | vendor `ustreamer` + `bli-kvm-video-proxy`            | deployed by E0; MJPEG gates passed on the live surface       |
 | 6 | KVMD ATX routes + C `kvmd-main` ATX                        | `bli-kvm-atx-gpio-executor` in the board owner        | deployed and accepted (500/5000/500 ms)                      |
 | 7 | C `kvmd-main`: fan, OLED ST7789, display buttons, activity LED, serial switch, RTC, boot config, recovery inputs | Rust board daemon                                    | policy crates and recon snapshots exist; no daemon or units (E2) |
@@ -113,7 +113,18 @@ Receipts: `evidence/private/board-video-restore-20260916-a.json`,
 `video-frame-timing-20260916-b.json`,
 `video-two-client-probe-20260916-a.json`,
 `video-soak-probe-20260916-a.json`; baseline
-`docs/baselines/board-video-restore.md`. Other receipts:
+`docs/baselines/board-video-restore.md`.
+
+**E1 is in progress (2026-09-16).** The reference storage surface is
+implemented and live (43 routes): list, mounted, cdrom, mount, delete and
+usb-reconnect over the control surface, with an atomic mount command, an observe
+request and a reconnect command. The MSD partition now mounts through our own
+fstab entry at our images directory, and the media paths are provisioned for the
+unprivileged server user in tmpfiles. List, observe, a fresh mount and eject
+pass; remount-after-eject and reconnect return `backend_rejected` and the upload
+and reboot halves of the gate still need to run. Receipt
+`evidence/private/board-storage-e1-20260916-a.json`; baseline
+`docs/baselines/board-storage-e1.md`. Other receipts:
 `evidence/private/board-serving-cutover-20260916-a.json`,
 `evidence/private/kvmd-removal-20260916-a.json`,
 `evidence/private/phase8-acceptance-20260916-d.json`; baselines
