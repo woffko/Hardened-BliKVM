@@ -133,6 +133,7 @@ def build_apply_script(
         # stopping kvmd.service alone is not enough: the OTG and main units must
         # stop first, then the UDC is released (or unbound explicitly).
         udc_block = (
+            "gdir0=/sys/kernel/config/usb_gadget\n"
             "systemctl stop kvmd-otg.service kvmd-main.service >/dev/null 2>&1 || true\n"
             "i=0\n"
             "while [ \"$i\" -lt 20 ]; do\n"

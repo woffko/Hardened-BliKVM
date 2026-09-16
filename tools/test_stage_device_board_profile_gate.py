@@ -151,6 +151,12 @@ class StageBoardProfileGateTests(unittest.TestCase):
         takeover = gate.build_apply_script(environment, "a" * 64, takeover_udc=True)
         self.assertNotIn("kvmd_udc_unbound=yes", plain)
         self.assertIn("kvmd_udc_unbound=absent", plain)
+        self.assertIn("gdir0=/sys/kernel/config/usb_gadget", takeover)
+        self.assertLess(
+            takeover.index("gdir0=/sys/kernel/config/usb_gadget"),
+            takeover.index('"$gdir0/kvmd/UDC"'),
+            "the takeover must define its configfs root before using it",
+        )
         self.assertIn('printf \'\' > "$gdir0/kvmd/UDC"', takeover)
         self.assertIn("kvmd_udc_unbound=yes", takeover)
 
