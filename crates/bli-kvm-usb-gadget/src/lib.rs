@@ -292,14 +292,10 @@ fn function_steps(function: &Function) -> Vec<Step> {
 
     steps.push(Step::Symlink {
         link: config.join(&name),
-        // configfs accepts the link target exactly in the form the stock
-        // gadget on this board uses, i.e. a path that climbs out of the
-        // configuration directory into the configfs mount and back down to the
-        // function.
-        target: PathBuf::from("../../../../usb_gadget")
-            .join(GADGET_NAME)
-            .join("functions")
-            .join(&name),
+        // The target is gadget-relative here; execute() passes the absolute
+        // configfs path, which is the only form this kernel accepts (every
+        // relative form is rejected with ENOENT).
+        target: PathBuf::from("functions").join(&name),
     });
     steps
 }
@@ -406,13 +402,16 @@ fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
             }
             Step::Symlink { link, target } => {
                 let full = root.join(link);
-                // Test the link itself: configfs resolves `functions/<name>`
-                // against the gadget root, so a plain exists() can misread it.
+                // Test the link itself: configfs stores its own relative form,
+                // so a plain exists() can misread it.
                 if std::fs::symlink_metadata(&full).is_err() {
                     if let Some(parent) = full.parent() {
                         std::fs::create_dir_all(parent).map_err(|error| step_error(link, error))?;
                     }
-                    std::os::unix::fs::symlink(target, &full)
+                    // Only the absolute configfs path is accepted as a target;
+                    // every relative form is rejected with ENOENT.
+                    let absolute = root.join(GADGET_NAME).join(target);
+                    std::os::unix::fs::symlink(&absolute, &full)
                         .map_err(|error| step_error(link, error))?;
                 }
             }
@@ -750,9 +749,10 @@ mod tests {
         );
         let link = directory.path().join("hardened/configs/c.1/hid.usb0");
         assert!(link.is_symlink());
+        // configfs only accepts the absolute configfs path as the target.
         assert_eq!(
             std::fs::read_link(&link).unwrap(),
-            PathBuf::from("../../../../usb_gadget/hardened/functions/hid.usb0")
+            directory.path().join("hardened/functions/hid.usb0")
         );
     }
 
