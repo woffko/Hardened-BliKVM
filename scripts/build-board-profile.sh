@@ -35,6 +35,7 @@ PNPM_CONFIG_STORE_DIR="$pnpm_store" corepack pnpm --dir web build
 release_dir="$target_dir/aarch64-unknown-linux-musl/release"
 server_binary="$release_dir/bli-kvm-server"
 broker_binary="$release_dir/bli-kvm-control-broker"
+video_proxy_binary="$release_dir/bli-kvm-video-proxy"
 bench_gate_binary="$release_dir/bli-kvm-atx-gpio-bench-gate"
 
 temp_root=$(mktemp -d /tmp/hardened-blikvm-board-profile.XXXXXX)
@@ -55,6 +56,7 @@ install -d -m 0755 \
   "$stage/share/web"
 install -m 0755 "$server_binary" "$stage/libexec/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-control-broker"
+install -m 0755 "$video_proxy_binary" "$stage/libexec/bli-kvm-video-proxy"
 install -m 0755 "$bench_gate_binary" "$stage/libexec/bli-kvm-atx-gpio-bench-gate"
 cp -a web/dist/. "$stage/share/web/"
 install -m 0644 \

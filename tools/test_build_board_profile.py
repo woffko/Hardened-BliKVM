@@ -27,6 +27,10 @@ class BoardProfileBuildTests(unittest.TestCase):
             '"$stage/libexec/bli-kvm-atx-gpio-bench-gate"',
             script,
         )
+        self.assertIn(
+            'install -m 0755 "$video_proxy_binary" "$stage/libexec/bli-kvm-video-proxy"',
+            script,
+        )
         self.assertIn("packaging/systemd/hardened-blikvm-board-owner.service", script)
         self.assertIn(
             "packaging/systemd/hardened-blikvm-board-server.service", script
