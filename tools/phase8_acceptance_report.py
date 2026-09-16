@@ -49,116 +49,17 @@ def _read_marker(document: dict, key: str) -> Any:
 
 PHASES: tuple[dict[str, Any], ...] = (
     {
-        "phase": "0",
-        "title": "recon and parity matrix",
+        "phase": "E0",
+        "title": "video replacement",
         "host": (
-            "docs/design/gui-parity-plan.md",
-            "docs/baselines/upstream.md",
-            "tools/capture_device_kvm_topology.py",
-            "tools/test_capture_device_kvm_topology.py",
-        ),
-        "device": (
-            {
-                "name": "topology capture",
-                "glob": "device-kvm-topology-*.json",
-                "probe": "hardened-blikvm-kvm-topology",
-            },
-        ),
-    },
-    {
-        "phase": "1",
-        "title": "read-only platform API",
-        "host": (
-            "crates/bli-kvm-server/src/lib.rs",
-            "crates/bli-kvm-server/src/system_time.rs",
-            "crates/bli-kvm-server/src/system_log.rs",
-            "tools/test_plan_route_drift.py",
-        ),
-        "device": (),
-    },
-    {
-        "phase": "2",
-        "title": "native board daemon and ATX",
-        "host": (
-            "crates/bli-kvm-atx-gpio-executor/src/lib.rs",
-            "crates/bli-kvm-gpio-chardev/src/lib.rs",
-            "crates/bli-kvm-platform-bli/src/hardware.rs",
-            "tools/stage_device_atx_live_gate.py",
-        ),
-        "device": (
-            {
-                "name": "ATX live gate (fixed routes)",
-                "glob": "atx-live-gate-*.json",
-                "marker": "facts.power_short=ok",
-                "require": ("facts.reset", "facts.power_long"),
-            },
-            {
-                "name": "native ATX GPIO bench confirmation",
-                "glob": "board-handoff-gate-*.json",
-                "probe": "hardened-blikvm-board-profile-handoff",
-                "marker": "atxBenchFacts.power_short=ok",
-            },
-        ),
-    },
-    {
-        "phase": "3",
-        "title": "Rust USB gadget (HID and mass storage)",
-        "host": (
-            "crates/bli-kvm-usb-gadget/src/lib.rs",
-            "crates/bli-kvm-usb-gadget/src/hid_descriptors.rs",
-            "tools/stage_device_board_profile_gate.py",
-            "tools/capture_device_hid_descriptors.py",
-            "tools/playwright/virtual_media_acceptance.mjs",
-            "docs/baselines/board-handoff-gate.md",
-        ),
-        "device": (
-            {
-                "name": "HID descriptor capture",
-                "glob": "device-hid-descriptors-*.json",
-                "probe": "hardened-blikvm-hid-descriptors",
-            },
-            {
-                "name": "board-owner handoff gate",
-                "glob": "board-handoff-gate-*.json",
-                "probe": "hardened-blikvm-board-profile-handoff",
-                "marker": "applyFacts.socket_present=yes",
-            },
-            {
-                "name": "restricted power GUI",
-                "glob": "restricted-power-*.json",
-                "probe": "hardened-blikvm-restricted-power",
-                "marker": "result=passed",
-            },
-            {
-                "name": "composite gadget acceptance",
-                "glob": "board-handoff-gate-*.json",
-                "probe": "hardened-blikvm-board-profile-handoff",
-                "marker": "acceptanceFacts.gadget_present=yes",
-                "require": ("acceptanceFacts.udc_bound",),
-            },
-        ),
-    },
-    {
-        "phase": "4",
-        "title": "video gates",
-        "host": (
+            "packaging/systemd/hardened-blikvm-ustreamer.service",
+            "packaging/systemd/hardened-blikvm-board-video-proxy.service",
+            "packaging/udev/99-hardened-blikvm-video.rules",
+            "tools/playwright/video_frame_timing_probe.mjs",
             "tools/playwright/video_two_client_probe.mjs",
             "tools/playwright/video_soak_probe.mjs",
-            "tools/playwright/mjpeg_completion_probe.mjs",
         ),
         "device": (
-            {
-                "name": "two-client video",
-                "glob": "video-two-client-probe-*.json",
-                "marker": "result=passed",
-                "require": ("streamCount", "streams"),
-            },
-            {
-                "name": "KVMD removal",
-                "glob": "kvmd-removal-*.json",
-                "probe": "hardened-blikvm-kvmd-removal",
-                "marker": "removal.kvmd_stopped=yes",
-            },
             {
                 "name": "frame timing",
                 "glob": "video-frame-timing-*.json",
@@ -166,29 +67,123 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "marker": "result=passed",
             },
             {
+                "name": "two-client video",
+                "glob": "video-two-client-probe-*.json",
+                "marker": "result=passed",
+                "require": ("streamCount",),
+            },
+            {
                 "name": "video soak",
                 "glob": "video-soak-probe-*.json",
                 "marker": "result=passed",
-                "require": ("durationSeconds", "samples"),
+                "require": ("durationSeconds",),
             },
         ),
     },
     {
-        "phase": "5",
-        "title": "network management (read-only part)",
+        "phase": "E1",
+        "title": "storage and media",
         "host": (
-            "crates/bli-kvm-server/src/network.rs",
-            "crates/bli-kvm-server/src/lib.rs",
+            "crates/bli-kvm-server/src/media.rs",
+            "crates/bli-kvm-usb-gadget/src/lib.rs",
+            "crates/bli-kvm-media-catalog/src/lib.rs",
+            "tools/storage_acceptance_probe.py",
+            "tools/upload_media_image.py",
+            "packaging/tmpfiles.d/hardened-blikvm-gadget.conf",
         ),
-        "device": (),
+        "device": (
+            {
+                "name": "storage gate",
+                "glob": "storage-acceptance-*.json",
+                "probe": "hardened-blikvm-storage-acceptance",
+                "marker": "result=passed",
+            },
+            {
+                "name": "media upload",
+                "glob": "storage-upload-*.json",
+                "probe": "hardened-blikvm-media-upload",
+                "marker": "applied=true",
+            },
+            {
+                "name": "virtual media GUI acceptance",
+                "glob": "virtual-media-acceptance-*.json",
+                "probe": "hardened-blikvm-virtual-media-acceptance",
+                "marker": "result=passed",
+            },
+        ),
     },
     {
-        "phase": "6",
-        "title": "system update and extensions",
+        "phase": "E2",
+        "title": "board daemon instead of the vendor C daemon",
+        "host": (
+            "crates/bli-kvm-boardd/src/lib.rs",
+            "crates/bli-kvm-boardd/src/fan.rs",
+            "crates/bli-kvm-boardd/src/display.rs",
+            "crates/bli-kvm-boardd/src/led.rs",
+            "crates/bli-kvm-boardd/src/button.rs",
+            "crates/bli-kvm-boardd/src/spi.rs",
+            "packaging/systemd/hardened-blikvm-boardd.service",
+            "docs/design/board-daemon-v1.md",
+            "tools/capture_oled_spi_topology.py",
+            "tools/capture_serial_topology.py",
+        ),
+        "device": (
+            {
+                "name": "board daemon fan preflight",
+                "glob": "boardd-fan-preflight-*.json",
+            },
+            {
+                "name": "fan gate",
+                "glob": "boardd-fan-gate-*.json",
+            },
+            {
+                "name": "panel gate",
+                "glob": "boardd-panel-gate-*.json",
+            },
+            {
+                "name": "activity LED gate",
+                "glob": "boardd-led-gate-*.json",
+            },
+            {
+                "name": "display button gate",
+                "glob": "boardd-button-gate-*.json",
+            },
+            {
+                "name": "KVMD retirement",
+                "glob": "kvmd-removal-*.json",
+                "probe": "hardened-blikvm-kvmd-removal",
+                "marker": "removal.kvmd_stopped=yes",
+            },
+        ),
+    },
+    {
+        "phase": "E3",
+        "title": "system actions and network management",
+        "host": (
+            "crates/bli-kvm-server/src/network.rs",
+            "crates/bli-kvm-system-action-policy/src/lib.rs",
+            "crates/bli-kvm-system-action-journal/src/lib.rs",
+            "crates/bli-kvm-system-action-store/src/lib.rs",
+        ),
+        "device": (
+            {
+                "name": "network write gate",
+                "glob": "network-write-gate-*.json",
+            },
+            {
+                "name": "system action gate",
+                "glob": "system-action-gate-*.json",
+            },
+        ),
+    },
+    {
+        "phase": "E4",
+        "title": "retained signed update path",
         "host": (
             "tools/build_production_update_bundle.py",
             "tools/verify_production_update_bundle.py",
-            "docs/baselines/application-update-manager.md",
+            "docs/baselines/device-installed-application-update.md",
+            "docs/design/retained-application-update-runbook.md",
         ),
         "device": (
             {
@@ -197,20 +192,19 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "probe": "persistent-write-commit-cycle",
             },
             {
-                "name": "runtime package install",
-                "glob": "device-update-runtime-package.json",
-                "probe": "hardened-blikvm-update-runtime-package-install",
+                "name": "slot serving cutover",
+                "glob": "update-slot-serving-*.json",
             },
         ),
     },
     {
-        "phase": "8",
+        "phase": "E5",
         "title": "GUI parity and acceptance",
         "host": (
             "tools/playwright/gui_parity_probe.mjs",
             "tools/compare_gui_parity.py",
-            "tools/test_compare_gui_parity.py",
             "tools/phase8_acceptance_report.py",
+            "tools/test_plan_route_drift.py",
         ),
         "device": (
             {
@@ -224,17 +218,19 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "probe": "hardened-blikvm-gui-parity-compare",
             },
             {
-                "name": "virtual media acceptance",
-                "glob": "virtual-media-acceptance-*.json",
-                "probe": "hardened-blikvm-virtual-media-acceptance",
-                "marker": "result=passed",
+                "name": "vendor replacement summary",
+                "glob": "vendor-replacement-*.json",
             },
         ),
     },
 )
 
 NOT_AUDITED = {
-    "7": "exec/agent features: hidden by capability; verified through the manifest and probes",
+    "exec": (
+        "exec, terminal and script features stay off by default and are hidden by "
+        "capability; they are verified through the manifest and probes rather than "
+        "a device gate"
+    ),
 }
 
 

@@ -29,33 +29,40 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 - **Phase 6 — update and extensions.** Signed application-update commit-cycle
   and runtime-package receipts recorded; production bundle tools present.
 
-## Recorded on the board (2026-09-16)
+## Phases and receipts (plan E0-E5)
 
-The board-owner acceptance window passed; see
-`docs/baselines/board-owner-acceptance.md` for the full record.
-
-- Composite gadget, native ATX bench and the three GUI probes:
-  `board-handoff-gate-20260916-k.json` (`functions=hid.usb0,hid.usb1,hid.usb2,
-  mass_storage.usb0`, `hid_write=ok`, every ATX action `within_tolerance=yes`),
-  `virtual-media-acceptance-20260916-a.json`,
-  `restricted-keyboard-20260916-a.json`,
-  `restricted-power-20260916-a.json`; teardown
-  `board-handoff-teardown-20260916-a.json` restored KVMD and its UDC.
-
-## Open device gates
-
-| Gate | Needed receipt | How it is produced |
+| Phase | Device receipts (glob) | Status |
 | --- | --- | --- |
-| KVMD removal | `kvmd-removal-*.json` with `removal.kvmd_stopped=yes` | `tools/stage_device_kvmd_removal.py --confirm-removal`, which refuses until the three receipts above exist |
+| E0 video | `video-frame-timing-*.json`, `video-two-client-probe-*.json`, `video-soak-probe-*.json` | recorded 2026-09-16 (`result=passed`) |
+| E1 storage and media | `storage-acceptance-*.json`, `storage-upload-*.json`, `virtual-media-acceptance-*.json` | recorded 2026-09-16 (`result=passed`) |
+| E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the four actuation gates are open until the operator confirms the handoff |
+| E3 network and system actions | `network-write-gate-*.json`, `system-action-gate-*.json` | open |
+| E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the slot serving cutover is open |
+| E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | both parity captures recorded; the vendor replacement summary is open |
 
-Frame timing is recorded: `video-frame-timing-20260916-a.json` measured 258
-frames in 10 s (26 fps, mean interval 38.5 ms, p95 52.8 ms) against the
-refreshed restricted-control stand `https://10.0.77.118:8443/`, whose video
-proxy is now active. The board bundle is deployed to that stand (sha256
-`1382c061…`, receipt `rc-profile-refresh-20260916-b.json`, `server_exe_matches=yes`);
-the main proxy on `443` still answers `502` while
-`hardened-blikvm-server.service` is inactive. A fresh reference GUI capture for
-capability and marker comparison needs the reference operator credential.
+Recorded detail:
+
+- E0: `video-frame-timing-20260916-b.json` (277 frames, 27.9 fps, p95 48.7 ms),
+  `video-two-client-probe-20260916-a.json` (two clients),
+  `video-soak-probe-20260916-a.json` (60 s, 12 samples, 330 MB).
+- E1: `storage-acceptance-20260916-b.json` (list, mounted, cdrom, mount,
+  reconnect, eject, re-attach), `storage-upload-20260916-b.json` and
+  `storage-upload-cycle-20260916-a.json` (upload, mount, eject, delete,
+  re-attach).
+- E2: `boardd-fan-preflight-20260916-a.json` (vendor sysfs lines 259, 260, 261,
+  262 and 269 still claimed, line 257 unused, thermal about 51.5 C) and
+  `kvmd-removal-20260916-a.json` (`removal.kvmd_stopped=yes`).
+- E4: the signed application update commit cycle
+  (`persistent-write-*-commit-*.json`).
+- E5: `gui-parity-ours-auth-20260916-a.json` and
+  `gui-parity-compare-20260916-a.json`.
+
+Open device gates need an operator confirmation and their own stage tool; the
+board daemon gates (fan, panel, LED, button) run through the daemon gate tool
+added with that handoff, the network and system action gates through theirs, the
+slot serving cutover through `tools/switch_signed_slot_server.py`, and the
+vendor replacement summary through the final acceptance run. KVMD retirement
+came from `tools/stage_device_kvmd_removal.py --confirm-removal`.
 
 ## Read-only evidence already in place
 
@@ -68,20 +75,13 @@ capability and marker comparison needs the reference operator credential.
 - KVMD control-source and vendor timings:
   `device-kvmd-control-source-20260915-b.json`,
   `device-vendor-atx-timings-20260915-a.json`.
-- KVMD retirement inventory and refusal:
-  `kvmd-inventory-20260915-a.json`, `kvmd-removal-refusal-20260915-a.json`.
 - Signed application-update commit cycle and runtime-package install:
   `persistent-write-*-commit-*.json`, `device-update-runtime-package.json`.
-- Pre-migration ATX fixed-route live gate: `atx-live-gate-20260913-a.json`
-  (the canonical Phase 2 proof is the native GPIO bench below).
-- Board bundle verification: `board-bundle-verify-20260915-b.json`
-  (`sha256 39991edf…`, 36 members, includes the ATX GPIO bench gate).
-- GUI parity capture and comparison:
-  `gui-parity-ours-auth-20260916-a.json` (console errors 3, settings tabs
-  captured live, no dead legacy calls) and `gui-parity-compare-20260915-c.json`.
-- Frame timing: `video-frame-timing-20260916-a.json` (`result=passed`).
-- Restricted-control stand refresh: `rc-profile-refresh-20260916-b.json`
-  (bundle `1382c061…`, `server_exe_matches=yes`).
+- Board bundle verification and stage:
+  `board-bundle-verify-20260916-q.json` (bundle `748bafc7`, 43 members).
+- Board serving cutover and video restore:
+  `board-serving-cutover-20260916-a.json`,
+  `board-video-restore-20260916-a.json`.
 
-KVMD and the vendor C daemon remain the fallback until every gate above is
-recorded and their receipts exist.
+KVMD and the vendor C daemon are retired (stopped, disabled and masked); the
+recorded unit backups are the only recovery path.
