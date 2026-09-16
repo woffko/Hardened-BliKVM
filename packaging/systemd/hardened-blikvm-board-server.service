@@ -43,6 +43,9 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
+# The server owns the media write path: uploaded images land in the images
+# directory and the catalog is rewritten in place.
+ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
 ProcSubset=pid
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes

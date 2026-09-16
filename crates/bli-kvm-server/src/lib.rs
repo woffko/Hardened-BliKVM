@@ -320,12 +320,16 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
+    // The media upload takes a large body, so it keeps its own bound, but it
+    // must still pass the session, CSRF and origin checks before the body is
+    // read; route_layer is the outer wrapper here.
     let upload = Router::new()
         .route("/download/file", post(download::upload_image))
         .layer(DefaultBodyLimit::max(
             usize::try_from(download::MAX_MEDIA_UPLOAD_BYTES + 1024 * 1024)
                 .expect("upload cap fits usize"),
-        ));
+        ))
+        .route_layer(from_fn_with_state(state.clone(), protected));
     let protected_routes = protected_routes.merge(upload);
     let api = public.merge(protected_routes).fallback(api_not_found);
     let router = Router::new().nest("/api", api).with_state(state.clone());
@@ -886,6 +890,66 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn media_upload_requires_session_csrf_and_same_origin_before_the_body() {
+        struct NeverBody;
+        impl http_body::Body for NeverBody {
+            type Data = bytes::Bytes;
+            type Error = std::io::Error;
+            fn poll_frame(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>>
+            {
+                panic!("rejected upload body was consumed")
+            }
+        }
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        for (mode, expected) in [
+            ("no-login", StatusCode::UNAUTHORIZED),
+            ("no-csrf", StatusCode::FORBIDDEN),
+            ("cross-origin", StatusCode::FORBIDDEN),
+            ("missing-origin", StatusCode::FORBIDDEN),
+        ] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/download/file")
+                .header(header::HOST, "localhost")
+                .header(
+                    header::CONTENT_TYPE,
+                    "multipart/form-data; boundary=hardened",
+                )
+                .header(header::CONTENT_LENGTH, "3");
+            if mode != "no-login" {
+                request = request.header(header::COOKIE, &cookie);
+            }
+            if mode != "no-csrf" {
+                request = request.header("x-csrf-token", &csrf);
+            }
+            if mode != "missing-origin" {
+                request = request.header(
+                    header::ORIGIN,
+                    if mode == "cross-origin" {
+                        "https://elsewhere.invalid"
+                    } else {
+                        "https://localhost"
+                    },
+                );
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::new(NeverBody)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{mode}");
+        }
     }
 
     #[tokio::test]

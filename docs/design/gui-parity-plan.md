@@ -121,11 +121,13 @@ usb-reconnect over the control surface, with an atomic mount command, an observe
 request and a reconnect command. The MSD partition now mounts through our own
 fstab entry at our images directory, and the media paths are provisioned for the
 unprivileged server user in tmpfiles. The storage gate now passes end to end (list, mounted, cdrom, mount,
-usb/reconnect, eject, re-attach); four device defects were fixed on the way
-(zero-byte configfs writes were silent no-ops, the media swap must unbind and
-rebuild the function, the board certificate had no subject alternative name and
-the nginx temp buffers needed the unit runtime directory). The media image
-upload still aborts the request and the reboot half of the gate still needs
+usb/reconnect, eject, re-attach) and so does the media image upload cycle
+(upload, mount, eject, delete, re-attach). Six device defects were fixed on the
+way: zero-byte configfs writes were silent no-ops, the media swap must unbind
+and rebuild the function, the board certificate had no subject alternative
+name, the nginx temp buffers needed the unit runtime directory, the server
+sandbox blocked the media writes and the upload route bypassed the session and
+CSRF middleware. Only the reboot half of the gate is left, and it needs explicit
 operator confirmation. Receipts
 `evidence/private/board-storage-e1-20260916-{a,b}.json`,
 `evidence/private/storage-acceptance-20260916-a.json`; baseline

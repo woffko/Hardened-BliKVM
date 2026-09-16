@@ -60,7 +60,22 @@ Four device defects the gate exposed, all fixed and committed:
    ownership changed; every temp buffer now lives in the unit runtime
    directory.
 
-Open: the media image upload (`POST /api/download/file`) aborts the request
-(nginx logs `writev() failed (32: Broken pipe) while sending request to
-upstream`; a direct POST answers 503) and writes neither a file nor a catalog
-entry. The reboot half of the gate needs explicit operator confirmation.
+The image upload passes too: uploading a 1 MiB image answers 200, the new image
+mounts, ejects and deletes cleanly (file and catalog) and the reviewed
+`kubuntu.img` re-attaches (`evidence/private/storage-upload-20260916-b.json`,
+`evidence/private/storage-upload-cycle-20260916-a.json`). Two more defects were
+fixed on the way:
+
+5. The board-server unit's `ProtectSystem=strict` left the media paths
+   read-only, so every upload failed with 503 and the client's remaining body
+   tore the connection (nginx logged `writev() failed (32: Broken pipe)`). The
+   unit now grants `ReadWritePaths` for the images directory and the catalog
+   directory.
+6. The media upload route was merged outside the session, CSRF and origin
+   middleware, so it accepted unauthenticated requests. It now sits behind the
+   same protected layer as the rest of the API, with a test that a rejected
+   upload body is never consumed.
+
+The reboot half of the gate still needs explicit operator confirmation: it
+verifies that the fstab mount of the MSD partition and the tmpfiles permissions
+survive a reboot.
