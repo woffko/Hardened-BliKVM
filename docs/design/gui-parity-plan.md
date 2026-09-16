@@ -190,12 +190,20 @@ control surface, ownership handoff, per-subsystem gates).
 
 ### E3 - system and network writes
 
-Goal: close the remaining KVMD management surfaces.
+Goal: close the remaining KVMD management surfaces. Design:
+`docs/design/system-actions-v1.md`.
 
-- System actions on the device: reboot, session lock, memory and swap.
-- Network writes: DNS and IPv6, firewall, SSH/mDNS, Wake-on-LAN and wifi where
-  the hardware supports it.
-- Device gates: capability-gated safe writes plus a reboot-persistence proof.
+- System actions: the session auto-lock is implemented; reboot and shutdown go
+  through the board owner's journaled policy path (the store and maintenance
+  dispatcher already passed on the device) and are advertised only by a new
+  `systemActions` capability; memory and swap writes are bounded owner actions
+  with read-back.
+- Network writes: DNS and IPv6 first, then firewall, SSH/mDNS, Wake-on-LAN and
+  wifi where the hardware supports it (the board has `wlan0` and
+  NetworkManager); interactive wifi stays out of scope until a reviewed helper
+  exists.
+- Device gates: capability-gated safe writes plus a reboot-persistence proof;
+  receipt `system-action-gate-*.json` and `network-write-gate-*.json`.
 
 ### E4 - update path
 
