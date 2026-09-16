@@ -77,6 +77,12 @@ pub struct StatusView {
     pub led_level: bool,
     pub button_present: bool,
     pub button_wakeups: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_rtc_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_rtc_offset_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_rtc_error: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,6 +135,9 @@ pub struct BoarddState<A: FanActuator> {
     fan_line: u16,
     last_thermal: Option<i32>,
     thermal_error: Option<&'static str>,
+    external_rtc: Option<i64>,
+    external_rtc_offset: Option<i64>,
+    external_rtc_error: Option<&'static str>,
     display: Option<Box<dyn DisplayControl>>,
     led: Option<Box<dyn LedControl>>,
     button: Option<Box<dyn ButtonControl>>,
@@ -167,6 +176,9 @@ where
             fan_line,
             last_thermal: None,
             thermal_error: None,
+            external_rtc: None,
+            external_rtc_offset: None,
+            external_rtc_error: None,
         }
     }
 
@@ -227,6 +239,25 @@ where
             led_level: self.led.as_ref().is_some_and(|led| led.level()),
             button_present: self.button.is_some(),
             button_wakeups: self.button.as_ref().map_or(0, |button| button.wakeups()),
+            external_rtc_seconds: self.external_rtc,
+            external_rtc_offset_seconds: self.external_rtc_offset,
+            external_rtc_error: self.external_rtc_error,
+        }
+    }
+
+    /// Record one external RTC observation for the status view.
+    pub fn note_external_rtc(&mut self, result: Result<(i64, i64), &'static str>) {
+        match result {
+            Ok((seconds, offset)) => {
+                self.external_rtc = Some(seconds);
+                self.external_rtc_offset = Some(offset);
+                self.external_rtc_error = None;
+            }
+            Err(error) => {
+                self.external_rtc = None;
+                self.external_rtc_offset = None;
+                self.external_rtc_error = Some(error);
+            }
         }
     }
 
@@ -716,6 +747,22 @@ mod tests {
             None,
             Some(Box::new(button)),
         )
+    }
+
+    #[test]
+    fn external_rtc_observation_reaches_the_status() {
+        let mut state = state();
+        assert_eq!(state.status().external_rtc_seconds, None);
+        state.note_external_rtc(Ok((1_760_000_000, -12)));
+        let data = state.status();
+        assert_eq!(data.external_rtc_seconds, Some(1_760_000_000));
+        assert_eq!(data.external_rtc_offset_seconds, Some(-12));
+        assert_eq!(data.external_rtc_error, None);
+
+        state.note_external_rtc(Err("unavailable"));
+        let data = state.status();
+        assert_eq!(data.external_rtc_seconds, None);
+        assert_eq!(data.external_rtc_error, Some("unavailable"));
     }
 
     #[test]

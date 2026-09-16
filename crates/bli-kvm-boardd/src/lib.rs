@@ -189,6 +189,11 @@ pub fn run_once(config_path: &Path) -> Result<(), Box<dyn Error>> {
     let mut state = build_state(&config, false)?;
     let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees();
     state.note_thermal(thermal.map_err(|error| error.class()));
+    let rtc = bli_kvm_platform_bli::read_h616_external_rtc();
+    state.note_external_rtc(
+        rtc.map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
+            .map_err(|error| error.class()),
+    );
     state.sample(unix_millis())?;
     let view = state.status();
     println!("{}", serde_json::to_string(&view)?);
@@ -204,8 +209,13 @@ pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
     std::thread::spawn(move || {
         loop {
             let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees();
+            let rtc = bli_kvm_platform_bli::read_h616_external_rtc();
             if let Ok(mut state) = sampler_state.lock() {
                 state.note_thermal(thermal.map_err(|error| error.class()));
+                state.note_external_rtc(
+                    rtc.map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
+                        .map_err(|error| error.class()),
+                );
                 let _ = state.sample(unix_millis());
                 state.tick_led();
                 state.tick_button();

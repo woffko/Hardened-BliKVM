@@ -106,8 +106,12 @@ wake cycle lights the panel again; the status view reports `buttonPresent` and
 `buttonWakeups`. A missing button or panel never stops the fan, and a wake
 without a panel is counted without failing.
 
-Still open in the daemon: the RTC and boot-config views, then the device gates
-for fan, panel, LED and button.
+The status view also carries the external RTC observation
+(`externalRtcSeconds`, `externalRtcOffsetSeconds` and a classified error when
+the observation is unavailable), read through the platform RTC reader.
+
+Still open in the daemon: the boot-config view, then the device gates for fan,
+panel, LED and button.
 
 ## Ownership handoff and rollback
 
