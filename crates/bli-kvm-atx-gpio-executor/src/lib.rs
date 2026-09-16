@@ -179,6 +179,10 @@ mod tests {
             Ok(())
         }
 
+        fn read_line(&mut self, _request: &LineRequest) -> Result<bool, Self::Error> {
+            Err("unsupported")
+        }
+
         fn release_line(&mut self, request: &LineRequest) -> Result<(), Self::Error> {
             self.events.push(format!("release:{}", request.offset));
             Ok(())

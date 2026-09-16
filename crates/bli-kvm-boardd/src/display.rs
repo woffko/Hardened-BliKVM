@@ -280,6 +280,10 @@ mod tests {
             Ok(())
         }
 
+        fn read_line(&mut self, _request: &LineRequest) -> Result<bool, Self::Error> {
+            Err(std::io::Error::other("read"))
+        }
+
         fn release_line(&mut self, _request: &LineRequest) -> Result<(), Self::Error> {
             Ok(())
         }

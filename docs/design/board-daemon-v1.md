@@ -96,8 +96,18 @@ fields. The sampling thread drives the pulse; a missing or failing LED never
 stops the fan. The LED policy keeps its purity guard, now expressed as exactly
 one reviewed consumer (the board daemon), the same rule the panel model follows.
 
-Still open in the daemon: the display button needs a line *read* path, which the
-GPIO driver trait does not expose yet, and the RTC and boot-config views.
+## Implemented slice 4 (2026-09-16): display button
+
+The GPIO driver seam gained a `read_line` method (line values ioctl in the
+character-device driver, with the ioctl number pinned by the existing ABI
+tests), and the daemon gained the button runtime: it samples the reviewed input
+line, debounces and holds it through `bli-kvm-display-button-policy`, and on a
+wake cycle lights the panel again; the status view reports `buttonPresent` and
+`buttonWakeups`. A missing button or panel never stops the fan, and a wake
+without a panel is counted without failing.
+
+Still open in the daemon: the RTC and boot-config views, then the device gates
+for fan, panel, LED and button.
 
 ## Ownership handoff and rollback
 

@@ -6,6 +6,7 @@
 //! typed control surface. Everything is configured from the operator file and
 //! nothing about the board is guessed.
 
+pub mod button;
 pub mod config;
 pub mod display;
 pub mod fan;
@@ -68,6 +69,7 @@ pub fn build_state(
     supervisor.initialize()?;
     let display = build_display(config, pwm_enabled);
     let led = build_led(config, pwm_enabled);
+    let button = build_button(config, pwm_enabled);
     Ok(BoarddState::new(
         supervisor,
         FanModeName::Auto,
@@ -79,7 +81,43 @@ pub fn build_state(
         config.fan.line,
         display,
         led,
+        button,
     ))
+}
+
+/// Build the display button runtime; a failure never stops the fan.
+fn build_button(
+    config: &config::BoarddConfig,
+    actuation_enabled: bool,
+) -> Option<Box<dyn server::ButtonControl>> {
+    if !actuation_enabled {
+        return None;
+    }
+    let driver = match bli_kvm_gpio_chardev::ChardevGpioDriver::open(&config.gpio_chip) {
+        Ok(driver) => driver,
+        Err(error) => {
+            eprintln!("boardd: display button line unavailable: {error:?}");
+            return None;
+        }
+    };
+    let initial = if config.button.active_high {
+        button::ButtonLevel::High
+    } else {
+        button::ButtonLevel::Low
+    };
+    match button::ButtonRuntime::new(
+        driver,
+        button::button_line(&config.button),
+        &config.button,
+        unix_millis(),
+        initial,
+    ) {
+        Ok(runtime) => Some(Box::new(runtime)),
+        Err(error) => {
+            eprintln!("boardd: display button unavailable: {error}");
+            None
+        }
+    }
 }
 
 /// Build the activity LED runtime; a failure never stops the fan.
@@ -170,6 +208,7 @@ pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
                 state.note_thermal(thermal.map_err(|error| error.class()));
                 let _ = state.sample(unix_millis());
                 state.tick_led();
+                state.tick_button();
             }
             std::thread::sleep(interval);
         }

@@ -180,6 +180,7 @@ name = "bli-kvm-boardd"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-activity-led-policy",
+ "bli-kvm-display-button-policy",
  "bli-kvm-fan-policy",
  "bli-kvm-fan-supervisor",
  "bli-kvm-gpio-chardev",

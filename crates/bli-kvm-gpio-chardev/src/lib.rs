@@ -50,6 +50,7 @@ const GPIO_IOC_TYPE: u32 = 0xB4;
 const GET_CHIPINFO_NR: u32 = 0x01;
 const GET_LINEHANDLE_NR: u32 = 0x03;
 const SET_LINE_VALUES_NR: u32 = 0x09;
+const GET_LINE_VALUES_NR: u32 = 0x08;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -101,6 +102,11 @@ const GET_LINEHANDLE_IOCTL: u64 = iowr(
 const SET_LINE_VALUES_IOCTL: u64 = iowr(
     GPIO_IOC_TYPE,
     SET_LINE_VALUES_NR,
+    std::mem::size_of::<GpiohandleData>(),
+);
+const GET_LINE_VALUES_IOCTL: u64 = iowr(
+    GPIO_IOC_TYPE,
+    GET_LINE_VALUES_NR,
     std::mem::size_of::<GpiohandleData>(),
 );
 
@@ -250,6 +256,16 @@ impl GpioDriver for ChardevGpioDriver {
             return Err(GpioChardevError::Io(std::io::Error::last_os_error()));
         }
         Ok(())
+    }
+
+    fn read_line(&mut self, request: &LineRequest) -> Result<bool, Self::Error> {
+        let fd = self.handle(request.offset)?;
+        let mut data = GpiohandleData::default();
+        let result = unsafe { libc::ioctl(fd, GET_LINE_VALUES_IOCTL as _, &mut data) };
+        if result < 0 {
+            return Err(GpioChardevError::Io(std::io::Error::last_os_error()));
+        }
+        Ok(data.values[0] != 0)
     }
 
     fn release_line(&mut self, request: &LineRequest) -> Result<(), Self::Error> {

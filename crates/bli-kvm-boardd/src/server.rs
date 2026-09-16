@@ -25,6 +25,13 @@ pub trait DisplayControl: Send {
     fn backlight_on(&self) -> bool;
 }
 
+/// Display button sampling the daemon drives from its sampling thread.
+pub trait ButtonControl: Send {
+    /// Sample the line once; `true` means a wake cycle was requested.
+    fn poll(&mut self, now_ms: u64) -> Result<bool, &'static str>;
+    fn wakeups(&self) -> u64;
+}
+
 /// Activity LED operations the control surface exposes.
 pub trait LedControl: Send {
     fn set_enabled(&mut self, enabled: bool, now_ms: u64) -> Result<(), &'static str>;
@@ -68,6 +75,8 @@ pub struct StatusView {
     pub led_present: bool,
     pub led_enabled: bool,
     pub led_level: bool,
+    pub button_present: bool,
+    pub button_wakeups: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +131,7 @@ pub struct BoarddState<A: FanActuator> {
     thermal_error: Option<&'static str>,
     display: Option<Box<dyn DisplayControl>>,
     led: Option<Box<dyn LedControl>>,
+    button: Option<Box<dyn ButtonControl>>,
 }
 
 impl<A> BoarddState<A>
@@ -141,10 +151,12 @@ where
         fan_line: u16,
         display: Option<Box<dyn DisplayControl>>,
         led: Option<Box<dyn LedControl>>,
+        button: Option<Box<dyn ButtonControl>>,
     ) -> Self {
         Self {
             display,
             led,
+            button,
             supervisor,
             mode,
             manual_duty,
@@ -213,6 +225,8 @@ where
             led_present: self.led.is_some(),
             led_enabled: self.led.as_ref().is_some_and(|led| led.enabled()),
             led_level: self.led.as_ref().is_some_and(|led| led.level()),
+            button_present: self.button.is_some(),
+            button_wakeups: self.button.as_ref().map_or(0, |button| button.wakeups()),
         }
     }
 
@@ -229,6 +243,21 @@ where
                 "invalid_state" => BoarddError::InvalidState,
                 _ => BoarddError::BackendUnavailable,
             })
+    }
+
+    /// Sample the display button; a wake cycle lights the panel again.
+    pub fn tick_button(&mut self) {
+        let Some(button) = self.button.as_mut() else {
+            return;
+        };
+        if !matches!(button.poll(unix_millis_now()), Ok(true)) {
+            return;
+        }
+        if let Some(display) = self.display.as_mut()
+            && !display.backlight_on()
+        {
+            let _ = display.set_backlight(true);
+        }
     }
 
     /// Drive the LED pulse forward; called by the sampling thread.
@@ -490,6 +519,7 @@ mod tests {
             269,
             None,
             None,
+            None,
         )
     }
 
@@ -546,6 +576,7 @@ mod tests {
             40,
             269,
             Some(Box::new(display)),
+            None,
             None,
         )
     }
@@ -605,6 +636,7 @@ mod tests {
             269,
             None,
             Some(Box::new(led)),
+            None,
         )
     }
 
@@ -638,6 +670,85 @@ mod tests {
             handle(&mut broken, Request::LedEnabledSet { enabled: true }).code,
             -4
         );
+    }
+
+    #[derive(Default)]
+    struct MockButton {
+        wakeups: u64,
+        wake_next: bool,
+        fail: bool,
+    }
+
+    impl ButtonControl for MockButton {
+        fn poll(&mut self, _now_ms: u64) -> Result<bool, &'static str> {
+            if self.fail {
+                return Err("backend_unavailable");
+            }
+            if self.wake_next {
+                self.wakeups += 1;
+                self.wake_next = false;
+                return Ok(true);
+            }
+            Ok(false)
+        }
+
+        fn wakeups(&self) -> u64 {
+            self.wakeups
+        }
+    }
+
+    fn state_with_button(
+        button: MockButton,
+        display: Option<MockDisplay>,
+    ) -> BoarddState<MockActuator> {
+        let mut supervisor = FanSupervisor::new(policy(), 0, MockActuator::default()).unwrap();
+        let _ = supervisor.initialize();
+        BoarddState::new(
+            supervisor,
+            FanModeName::Auto,
+            0,
+            20,
+            100,
+            true,
+            40,
+            269,
+            display.map(|display| Box::new(display) as Box<dyn DisplayControl>),
+            None,
+            Some(Box::new(button)),
+        )
+    }
+
+    #[test]
+    fn a_button_wake_lights_the_panel_again() {
+        let mut state = state_with_button(
+            MockButton {
+                wake_next: true,
+                ..MockButton::default()
+            },
+            Some(MockDisplay {
+                initialized: true,
+                backlight: false,
+                ..MockDisplay::default()
+            }),
+        );
+        assert!(state.status().button_present);
+        assert!(!state.status().display_backlight_on);
+        state.tick_button();
+        let data = state.status();
+        assert_eq!(data.button_wakeups, 1);
+        assert!(data.display_backlight_on, "wake must light the panel");
+
+        // A wake without a panel is counted and never panics.
+        let mut bare = state_with_button(
+            MockButton {
+                wake_next: true,
+                ..MockButton::default()
+            },
+            None,
+        );
+        bare.tick_button();
+        assert_eq!(bare.status().button_wakeups, 1);
+        assert!(!bare.status().display_present);
     }
 
     #[test]

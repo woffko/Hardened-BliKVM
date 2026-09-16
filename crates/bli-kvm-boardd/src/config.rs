@@ -10,6 +10,7 @@ use std::{
 };
 
 use bli_kvm_activity_led_policy::{ActivityLedConfig, OutputLevel};
+use bli_kvm_display_button_policy::{ButtonLevel, ButtonPolicyConfig};
 use bli_kvm_fan_policy::{FanCurvePoint, FanPolicyConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -153,6 +154,33 @@ impl LedConfig {
     }
 }
 
+/// Display button: reviewed input line and debounce windows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ButtonConfig {
+    pub line: LineSpec,
+    /// Whether the pressed state is a high level.
+    pub active_high: bool,
+    pub debounce_ms: u64,
+    pub activation_hold_ms: u64,
+}
+
+impl ButtonConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        ButtonPolicyConfig {
+            active_level: if self.active_high {
+                ButtonLevel::High
+            } else {
+                ButtonLevel::Low
+            },
+            debounce_ms: self.debounce_ms,
+            activation_hold_ms: self.activation_hold_ms,
+        }
+        .validate()
+        .map_err(|_| ConfigError::Invalid)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BoarddConfig {
@@ -165,6 +193,7 @@ pub struct BoarddConfig {
     pub fan: FanConfig,
     pub display: DisplayConfig,
     pub led: LedConfig,
+    pub button: ButtonConfig,
 }
 
 impl FanConfig {
@@ -260,7 +289,8 @@ impl BoarddConfig {
         }
         self.fan.validate()?;
         self.display.validate()?;
-        self.led.validate()
+        self.led.validate()?;
+        self.button.validate()
     }
 }
 
@@ -295,6 +325,15 @@ mod tests {
                         duty_percent: 80,
                     },
                 ],
+            },
+            button: ButtonConfig {
+                line: LineSpec {
+                    offset: 257,
+                    active_low: false,
+                },
+                active_high: true,
+                debounce_ms: 50,
+                activation_hold_ms: 1_000,
             },
             led: LedConfig {
                 line: LineSpec {
@@ -392,6 +431,10 @@ mod tests {
 
         let mut invalid = config();
         invalid.led.period_ms = 10;
+        assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
+
+        let mut invalid = config();
+        invalid.button.debounce_ms = 0;
         assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
     }
 

@@ -20,6 +20,10 @@ pub trait GpioDriver {
     /// responsible for the polarity recorded in the request.
     fn write_line(&mut self, request: &LineRequest, active: bool) -> Result<(), Self::Error>;
 
+    /// Read the requested input line. `true` means the line is logically
+    /// asserted, i.e. the driver applies the request's polarity.
+    fn read_line(&mut self, request: &LineRequest) -> Result<bool, Self::Error>;
+
     fn release_line(&mut self, request: &LineRequest) -> Result<(), Self::Error>;
 }
 
@@ -111,6 +115,13 @@ mod tests {
             }
             self.writes.push((request.offset, active));
             Ok(())
+        }
+
+        fn read_line(&mut self, request: &LineRequest) -> Result<bool, Self::Error> {
+            if request.offset == 0 {
+                return Err(request.offset);
+            }
+            Ok(true)
         }
 
         fn release_line(&mut self, request: &LineRequest) -> Result<(), Self::Error> {
