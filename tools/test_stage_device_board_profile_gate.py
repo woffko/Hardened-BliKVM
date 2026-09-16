@@ -190,6 +190,15 @@ class StageBoardProfileGateTests(unittest.TestCase):
             )
         self.assertIn("kvmd_udc_bound=yes", gate.build_teardown_script())
 
+    def test_atx_bench_fact_keys_match_what_the_binary_prints(self) -> None:
+        for action in gate.ATX_BENCH_ACTIONS:
+            self.assertIn(action, gate.ATX_BENCH_FACTS)
+            self.assertIn(f"{action}_elapsed_ms", gate.ATX_BENCH_FACTS)
+            self.assertIn(f"{action}_expected_ms", gate.ATX_BENCH_FACTS)
+            self.assertIn(f"{action}_within_tolerance", gate.ATX_BENCH_FACTS)
+            self.assertNotIn(f"{action}_", gate.ATX_BENCH_FACTS)
+        self.assertIn("run_rc", gate.ATX_BENCH_FACTS)
+
     def test_atx_bench_script_pins_the_binary_and_timing(self) -> None:
         script = gate.build_atx_bench_script("/dev/gpiochip0", (500, 5000, 500))
         self.assertIn("BLI_KVM_ATX_BENCH_CONFIRM=1", script)

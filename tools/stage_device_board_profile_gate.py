@@ -60,9 +60,14 @@ TEARDOWN_FACTS = {
 }
 ATX_BENCH_ACTIONS = ("power_short", "power_long", "reset")
 ATX_BENCH_FACTS = {"run_rc"} | {
-    f"{action}_{suffix}"
+    key
     for action in ATX_BENCH_ACTIONS
-    for suffix in ("elapsed_ms", "expected_ms", "within_tolerance", "")
+    for key in (
+        action,
+        f"{action}_elapsed_ms",
+        f"{action}_expected_ms",
+        f"{action}_within_tolerance",
+    )
 }
 ACCEPTANCE_FACTS = {
     "gadget_present",
