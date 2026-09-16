@@ -212,13 +212,21 @@ Goal: ship our build through the retained signed update model.
 - Build the production bundle from the current source, publish it as a
   candidate, run candidate health, confirm it into `current`, and re-enable the
   activation/watchdog units. Our units and binaries are delivered by the slot.
-- Host gap to close first: the update supervisor's activation installs
-  `bin/`, `libexec/` and `share/web` only, so a bundle that carries our unit
-  files under `share/systemd/` (board owner, board server, board daemon,
-  ustreamer, video proxy, nginx) and the tmpfiles/udev files would leave them
-  uninstalled. Extend the activation to install those paths, add the board
-  daemon to the production bundle's binary mapping, and pin both in the bundle
-  verifier and its tests.
+- Design decision required (recorded 2026-09-16 after reading the runtime):
+  the signed model **serves from the slot** - `server-current` runs
+  `/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server` with the web root
+  inside the slot - and never copies payload into `/usr/libexec`; the units
+  themselves come from the runtime package. Our board profile is currently
+  hand-installed units plus a hand-installed application, so the signed path
+  cannot yet serve it. The options are: (a) package our board-profile units
+  (board owner, board server, board daemon, ustreamer, video proxy, nginx) and
+  the board daemon binary into the runtime package and make the slot-serving
+  units start our arrangement; (b) extend the activation to install payload
+  units/tmpfiles/udev from the slot and point the serving units at the
+  installed application, which changes the update runtime's reviewed surface;
+  or (c) keep the board profile installed as today and use the signed path only
+  for the server and web payload. The plan needs the operator's choice before
+  the E4 device gate; the bundle verifier and tests then follow that choice.
 - Device gate: the signed update commit cycle and a reboot that keeps the new
   `current`. Receipts: `persistent-write-*-commit-*.json` and the update
   runtime/status receipts.
