@@ -49,7 +49,7 @@ MAX_REMOTE_OUTPUT_BYTES = 16 * 1024
 MAX_SECRET_BYTES = 4 * 1024
 MIN_TMP_HEADROOM_BYTES = 8 * 1024 * 1024
 HEALTH_REQUESTS = 20
-SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.:+/()=-]{1,240}$")
+SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/()=-]{1,240}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RUN_ID = re.compile(r"^[0-9a-f]{16}$")
 USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
