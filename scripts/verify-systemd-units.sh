@@ -85,6 +85,7 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-media-transition.service \
   hardened-blikvm-gadget-owner.service \
   hardened-blikvm-board-owner.service \
+  hardened-blikvm-board-server.service \
   hardened-blikvm-hid-credential.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service \
@@ -118,6 +119,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-media-transition.service" \
   "$project_root/packaging/systemd/hardened-blikvm-gadget-owner.service" \
   "$project_root/packaging/systemd/hardened-blikvm-board-owner.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-board-server.service" \
   "$project_root/packaging/systemd/hardened-blikvm-hid-credential.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \

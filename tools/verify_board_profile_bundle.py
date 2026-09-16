@@ -40,6 +40,7 @@ REQUIRED_MEMBERS = {
     "libexec/bli-kvm-control-broker",
     "libexec/bli-kvm-atx-gpio-bench-gate",
     "share/systemd/hardened-blikvm-board-owner.service",
+    "share/systemd/hardened-blikvm-board-server.service",
     "share/tmpfiles.d/hardened-blikvm-gadget.conf",
     "share/atx.env.example",
     "share/web/index.html",

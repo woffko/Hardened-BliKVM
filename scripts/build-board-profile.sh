@@ -58,6 +58,7 @@ install -m 0755 "$bench_gate_binary" "$stage/libexec/bli-kvm-atx-gpio-bench-gate
 cp -a web/dist/. "$stage/share/web/"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-board-owner.service \
+  packaging/systemd/hardened-blikvm-board-server.service \
   "$stage/share/systemd/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-gadget.conf \

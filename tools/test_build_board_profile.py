@@ -28,6 +28,9 @@ class BoardProfileBuildTests(unittest.TestCase):
             script,
         )
         self.assertIn("packaging/systemd/hardened-blikvm-board-owner.service", script)
+        self.assertIn(
+            "packaging/systemd/hardened-blikvm-board-server.service", script
+        )
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-gadget.conf", script)
         self.assertIn('profile: "board-owner-test"', script)
         self.assertIn("releaseAccepted: false", script)

@@ -134,9 +134,9 @@ The H616 board is present and ready (`https://10.0.77.118/`, SSH root;
 preflight `handoffReady=true`: KVMD and the vendor daemon present, the `kvmd`
 gadget bound, configfs mounted). An earlier note wrongly reported the endpoint
 as a plain Ubuntu host; that check ran in a local shell instead of over SSH and
-is retracted. The active stand is the restricted-control profile on
-`https://10.0.77.118:8443/`; the main proxy on `443` returns `502` while
-`hardened-blikvm-server.service` is inactive.
+is retracted. The earlier restricted-control stand on `https://10.0.77.118:8443/`
+is superseded by the 2026-09-16 cutover below; the main surface now serves the
+board profile.
 
 **2026-09-16: the board-owner acceptance window passed on the real board.** Our
 composite gadget was created by our own media attach and bound
@@ -154,6 +154,29 @@ raw `report_desc`, LUN attribute order, absolute symlink target, GPIO offset
 bound, chip-info ioctl number, bench fact keys). The acceptance report now shows
 only the KVMD removal gate open.
 
+**2026-09-16: KVMD retired and the board profile put on the main surface.** With
+the operator's explicit approval, `tools/stage_device_kvmd_removal.py
+--confirm-removal` copied the four KVMD unit files, stopped and disabled them,
+and verified our owner socket and gadget; the units are now also masked. The
+verified board bundle 76136df6 (37 members) was installed over the
+installed-application paths, and the KVMD-free
+`hardened-blikvm-board-server.service` serves `127.0.0.1:18080` behind nginx, so
+the main HTTPS surface is our GUI with HID, Power and virtual media
+`read_write`, and the `hardened` composite gadget is bound with the reviewed
+image attached. plain HTTP stays a `308` to HTTPS because session cookies are
+`Secure`. The signed-slot serving units and the update watchdog
+timer are idled reversibly (unit files and enablement states backed up) so the
+vendor arrangement cannot resurrect KVMD; the update supervisor, trust, sockets
+and slots stay in place. The cutover exposed a real dependency defect: the
+package-backed server requires the KVMD-coupled platform broker, which requires
+`kvmd.service`. Receipt and restore steps:
+`evidence/private/board-serving-cutover-20260916-a.json`; baseline
+`docs/baselines/board-serving-cutover.md`. The acceptance report is now
+`overall=complete`, `deviceUnrun=0`
+(`evidence/private/phase8-acceptance-20260916-c.json`). Follow-up: package the
+current board build as a signed application slot and re-enable the retained
+signed update path.
+
 The following now run on the board, mutation steps only with explicit operator
 confirmation, each producing a private receipt:
 
@@ -166,7 +189,7 @@ confirmation, each producing a private receipt:
 - media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
 - Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
 
-KVMD retirement is prepared but not executed: `tools/stage_device_kvmd_removal.py`
+KVMD retirement executed on 2026-09-16 (see above). `tools/stage_device_kvmd_removal.py`
 records a read-only inventory (receipt
 `evidence/private/kvmd-inventory-20260915-a.json`) and refuses to stop anything
 until the private receipts prove the replacement (composite-gadget acceptance,
