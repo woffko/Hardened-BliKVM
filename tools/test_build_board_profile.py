@@ -12,7 +12,7 @@ class BoardProfileBuildTests(unittest.TestCase):
         script = SCRIPT.read_text()
         self.assertIn(
             "cargo_features=restricted-control-surface,gadget-media-profile,"
-            "gadget-hid-profile,chardev-atx-profile",
+            "gadget-hid-profile,chardev-atx-profile,system-action-profile",
             script,
         )
         self.assertIn("BLI_KVM_CARGO_FEATURES=\"$cargo_features\"", script)
@@ -55,6 +55,8 @@ class BoardProfileBuildTests(unittest.TestCase):
         self.assertIn("BLI_KVM_ATX_POWER_SHORT_MS=", script)
         self.assertIn("BLI_KVM_ATX_POWER_LONG_MS=", script)
         self.assertIn("BLI_KVM_ATX_RESET_MS=", script)
+        self.assertIn("system-action.env.example", script)
+        self.assertIn("system-action-profile", script)
         # No numeric timing values are baked in.
         for forbidden in (
             "BLI_KVM_ATX_POWER_SHORT_MS=1",

@@ -249,17 +249,13 @@ pub async fn run_with_chardev_atx_profile(
     run_with_gpio_atx_profile(config, journal_path, Box::new(runner), reconciliations).await
 }
 
-/// Serves the media, HID and ATX backends from one process: the single owner
-/// of the composite gadget and the reviewed ATX lines. Only a build with all
-/// three gadget/ATX profiles compiles this entry point; it links no KVMD crate.
 #[cfg(all(
     feature = "gadget-media-profile",
     feature = "gadget-hid-profile",
     feature = "gpio-atx-profile"
 ))]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_with_board_profile(
-    config: ControlBrokerConfig,
+async fn board_state(
     media_journal: impl Into<std::path::PathBuf>,
     catalog_path: impl Into<std::path::PathBuf>,
     gadget: bli_kvm_media_transition::GadgetMediaConfig,
@@ -268,12 +264,7 @@ pub async fn run_with_board_profile(
     atx_journal: impl Into<std::path::PathBuf>,
     runner: Box<dyn bli_kvm_atx_transition::AtxPulseRunner>,
     reconciliations: Vec<AtxReconciliation>,
-) -> Result<(), ControlBrokerError> {
-    let diagnostic_reporter = DiagnosticReporter::start().ok();
-    let diagnostics = diagnostic_reporter
-        .as_ref()
-        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
-        .unwrap_or(ControlDiagnostics::Disabled);
+) -> Result<ControlV2State, ControlBrokerError> {
     let catalog_path = catalog_path.into();
     let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
@@ -317,11 +308,110 @@ pub async fn run_with_board_profile(
         )
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     }
-    let state = ControlV2State::with_board_backends(
+    Ok(ControlV2State::with_board_backends(
         media,
         bli_kvm_hid_policy::HidControlPolicy::new(hid),
         atx,
-    );
+    ))
+}
+
+/// Serves the media, HID and ATX backends from one process: the single owner
+/// of the composite gadget and the reviewed ATX lines. Only a build with all
+/// three gadget/ATX profiles compiles this entry point; it links no KVMD crate.
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "gpio-atx-profile"
+))]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_board_profile(
+    config: ControlBrokerConfig,
+    media_journal: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    gadget: bli_kvm_media_transition::GadgetMediaConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hidg_dir: impl Into<std::path::PathBuf>,
+    atx_journal: impl Into<std::path::PathBuf>,
+    runner: Box<dyn bli_kvm_atx_transition::AtxPulseRunner>,
+    reconciliations: Vec<AtxReconciliation>,
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let state = board_state(
+        media_journal,
+        catalog_path,
+        gadget,
+        hid_ledger,
+        hidg_dir,
+        atx_journal,
+        runner,
+        reconciliations,
+    )
+    .await?;
+    let result = serve(config, diagnostics, state).await;
+    drop(diagnostic_reporter);
+    result
+}
+
+/// Serves the board profile with the armed system-action surface attached.
+///
+/// The owner keeps the gadget, media and ATX lines while the privileged
+/// reboot/shutdown path is available; the runner executes the operator's
+/// reviewed commands, and nothing is executed unless both are configured.
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "chardev-atx-profile",
+    feature = "system-action-profile"
+))]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_chardev_board_profile_with_system_action(
+    config: ControlBrokerConfig,
+    media_journal: impl Into<std::path::PathBuf>,
+    catalog_path: impl Into<std::path::PathBuf>,
+    gadget: bli_kvm_media_transition::GadgetMediaConfig,
+    hid_ledger: impl Into<std::path::PathBuf>,
+    hidg_dir: impl Into<std::path::PathBuf>,
+    atx_journal: impl Into<std::path::PathBuf>,
+    chip_path: impl AsRef<std::path::Path>,
+    timing: bli_kvm_atx_gpio_executor::AtxTiming,
+    reconciliations: Vec<AtxReconciliation>,
+    system_action_reboot: Option<std::path::PathBuf>,
+    system_action_shutdown: Option<std::path::PathBuf>,
+    capability_enabled: bool,
+    backend_ready: bool,
+    boot_binding: [u8; 16],
+) -> Result<(), ControlBrokerError> {
+    let diagnostic_reporter = DiagnosticReporter::start().ok();
+    let diagnostics = diagnostic_reporter
+        .as_ref()
+        .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
+        .unwrap_or(ControlDiagnostics::Disabled);
+    let runner = bli_kvm_atx_gpio_executor::chardev_atx_executor(chip_path.as_ref(), timing)
+        .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let mut state = board_state(
+        media_journal,
+        catalog_path,
+        gadget,
+        hid_ledger,
+        hidg_dir,
+        atx_journal,
+        Box::new(runner),
+        reconciliations,
+    )
+    .await?;
+    state.attach_system_action(crate::system_action::SystemActionState::new(
+        Box::new(crate::system_action::ExecRunner::new(
+            system_action_reboot,
+            system_action_shutdown,
+        )),
+        capability_enabled,
+        backend_ready,
+        boot_binding,
+    ));
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
     result

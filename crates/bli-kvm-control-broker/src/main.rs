@@ -155,6 +155,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
             )?;
             let serial = bli_kvm_control_broker::gadget_serial_from_file(&media.serial_file)?;
             let gadget = bli_kvm_control_broker::gadget_media_config(&media, serial);
+            #[cfg(feature = "system-action-profile")]
+            if std::env::var("BLI_KVM_SYSTEM_ACTION_PROFILE").as_deref() == Ok("1") {
+                let armed = std::env::var("BLI_KVM_SYSTEM_ACTION_ARMED").as_deref() == Ok("1");
+                let boot_binding = bli_kvm_control_broker::boot_binding_from_system()?;
+                bli_kvm_control_broker::run_with_chardev_board_profile_with_system_action(
+                    ControlBrokerConfig::from_environment()?,
+                    media.journal,
+                    media.catalog,
+                    gadget,
+                    hid.ledger,
+                    hid.hidg_dir,
+                    atx_journal,
+                    chip,
+                    timing,
+                    reconciliations,
+                    std::env::var_os("BLI_KVM_SYSTEM_ACTION_REBOOT_COMMAND")
+                        .map(std::path::PathBuf::from),
+                    std::env::var_os("BLI_KVM_SYSTEM_ACTION_SHUTDOWN_COMMAND")
+                        .map(std::path::PathBuf::from),
+                    armed,
+                    armed,
+                    boot_binding,
+                )
+                .await?;
+                return Ok(());
+            }
             bli_kvm_control_broker::run_with_chardev_board_profile(
                 ControlBrokerConfig::from_environment()?,
                 media.journal,

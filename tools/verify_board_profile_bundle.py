@@ -32,6 +32,7 @@ EXPECTED_FEATURES = [
     "gadget-media-profile",
     "gadget-hid-profile",
     "chardev-atx-profile",
+    "system-action-profile",
 ]
 REQUIRED_MEMBERS = {
     "MANIFEST.json",

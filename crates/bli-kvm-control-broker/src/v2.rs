@@ -194,6 +194,17 @@ impl ControlV2State {
         }
     }
 
+    /// Attach the armed system-action surface to an already built state, so
+    /// the board owner keeps serving the gadget, media and ATX while the
+    /// privileged reboot/shutdown path is available.
+    #[cfg(feature = "system-action-profile")]
+    pub fn attach_system_action(
+        &mut self,
+        state: crate::system_action::SystemActionState<Box<dyn crate::system_action::ActionRunner>>,
+    ) {
+        self.system_action = Some(state);
+    }
+
     #[cfg(test)]
     fn enabled_for_test() -> Self {
         Self {

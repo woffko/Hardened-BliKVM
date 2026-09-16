@@ -43,10 +43,24 @@ journal or runs the action itself.
    runner. Two runners exist: `RefusingRunner` (the default) and `ExecRunner`,
    which executes one operator-supplied absolute command per action with **no
    arguments**, so a request cannot inject one and nothing runs unless both
-   paths are configured. Remaining before the device gate: attach the armed
-   runner to the board profile's state (the gadget/media/ATX owner keeps
-   running) and provision the reviewed command paths from an operator file,
-   like the ATX timings.
+   paths are configured.
+
+   The board build compiles the profile in and the owner attaches it to the
+   same state that serves the gadget, media and ATX: with
+   `BLI_KVM_SYSTEM_ACTION_PROFILE=1` the owner runs
+   `run_with_chardev_board_profile_with_system_action`, which is otherwise the
+   identical board profile; `BLI_KVM_SYSTEM_ACTION_ARMED=1` is the second,
+   separate switch the endpoint capability follows, and the two commands come
+   from the optional operator file
+   `/etc/hardened-blikvm-gadget/system-action.env` (sample shipped in the
+   bundle). Nothing executes while the file is absent, and the origin boot
+   binding comes from the running boot id, so a request prepared before a
+   reboot cannot be replayed after it.
+
+   A deploy check caught a real regression here: with the profile feature
+   compiled in, an initial wiring skipped the plain board run whenever the
+   profile environment flag was unset, so the owner exited immediately. The
+   entry point now always falls through to the plain board profile.
 3. **Server endpoints** (`POST /api/vm/system/reboot`, `/shutdown`): the
    settings UI's confirm action, gated by the usual session, CSRF and origin
    checks plus the `system.actions` capability, which stays `unavailable` in

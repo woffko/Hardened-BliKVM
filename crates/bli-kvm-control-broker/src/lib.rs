@@ -19,6 +19,25 @@ pub use attestation::{
     DEFAULT_MAX_ATTESTATIONS, TargetAttestationError, TargetAttestationRegistry,
 };
 pub use config::{ControlBrokerConfig, ControlBrokerConfigError};
+
+/// Origin boot binding for the system-action policy: the running boot's
+/// identity, so a request prepared before a reboot cannot be replayed after it.
+#[cfg(feature = "system-action-profile")]
+pub fn boot_binding_from_system() -> Result<[u8; 16], Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    let hex: String = raw
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .collect();
+    if hex.len() < 32 {
+        return Err("boot id is too short".into());
+    }
+    let mut binding = [0_u8; 16];
+    for (index, byte) in binding.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)?;
+    }
+    Ok(binding)
+}
 #[cfg(any(
     feature = "hid-transition-profile",
     feature = "atx-transition-profile",
@@ -73,6 +92,13 @@ pub use server::run_with_chardev_atx_profile;
     feature = "chardev-atx-profile"
 ))]
 pub use server::run_with_chardev_board_profile;
+#[cfg(all(
+    feature = "gadget-media-profile",
+    feature = "gadget-hid-profile",
+    feature = "chardev-atx-profile",
+    feature = "system-action-profile"
+))]
+pub use server::run_with_chardev_board_profile_with_system_action;
 #[cfg(all(feature = "hid-transition-profile", feature = "atx-transition-profile"))]
 pub use server::run_with_control_profile;
 #[cfg(feature = "gadget-hid-profile")]

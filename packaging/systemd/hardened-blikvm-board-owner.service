@@ -13,6 +13,11 @@ RuntimeDirectoryPreserve=no
 # Reviewed ATX pulse timings and optional reconciliation path are supplied by
 # the operator; the unit itself contains no hardware timing facts.
 EnvironmentFile=-/etc/hardened-blikvm-gadget/atx.env
+# Reviewed system-action commands and arming, supplied by the operator
+# (BLI_KVM_SYSTEM_ACTION_PROFILE, BLI_KVM_SYSTEM_ACTION_ARMED,
+# BLI_KVM_SYSTEM_ACTION_REBOOT_COMMAND, BLI_KVM_SYSTEM_ACTION_SHUTDOWN_COMMAND).
+# Nothing is executed while the file is absent.
+EnvironmentFile=-/etc/hardened-blikvm-gadget/system-action.env
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
 Environment=BLI_KVM_BOARD_PROFILE=1
 Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json

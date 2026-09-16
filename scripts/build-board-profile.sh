@@ -15,7 +15,7 @@ target_dir=${1:-/mnt/d/debug/blikvm/hardened-blikvm/target-aarch64-board}
 output_dir=${2:-/mnt/d/debug/blikvm/hardened-blikvm/bundles}
 pnpm_store=${BLI_KVM_PNPM_STORE:-/mnt/d/debug/blikvm/hardened-blikvm/pnpm-store}
 bundle_name=hardened-blikvm-board-profile-aarch64
-cargo_features=restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile
+cargo_features=restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile,system-action-profile
 
 for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
   case "$directory" in
@@ -80,6 +80,16 @@ install -m 0644 docs/api/atx-transition.md "$stage/share/atx-transition.md"
 install -m 0644 docs/design/gui-parity-plan.md "$stage/share/gui-parity-plan.md"
 install -m 0644 docs/design/phase3-5-device-gate-runbook.md \
   "$stage/share/device-gate-runbook.md"
+
+cat > "$stage/share/system-action.env.example" <<'EOF'
+# Reviewed system actions. The profile is compiled into the board build; it
+# stays refused unless these are set, and the two commands are executed with no
+# arguments, so use absolute paths to reviewed wrappers.
+# BLI_KVM_SYSTEM_ACTION_PROFILE=1
+# BLI_KVM_SYSTEM_ACTION_ARMED=1
+# BLI_KVM_SYSTEM_ACTION_REBOOT_COMMAND=/usr/local/sbin/hardened-blikvm-reboot
+# BLI_KVM_SYSTEM_ACTION_SHUTDOWN_COMMAND=/usr/local/sbin/hardened-blikvm-poweroff
+EOF
 
 cat > "$stage/share/atx.env.example" <<'EOF'
 # Reviewed ATX pulse timings (milliseconds) and optional reconciliation path.
