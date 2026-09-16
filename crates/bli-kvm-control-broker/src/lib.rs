@@ -11,6 +11,8 @@ mod config;
 ))]
 mod profile;
 mod server;
+#[cfg(feature = "system-action-profile")]
+pub mod system_action;
 mod v2;
 
 pub use attestation::{

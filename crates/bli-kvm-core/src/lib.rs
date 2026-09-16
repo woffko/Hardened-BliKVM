@@ -23,9 +23,9 @@ pub use control::{
 };
 pub use control_v2::{
     AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest,
-    MediaObserveRequest, MediaRequest, PlatformControlRequestV2,
-    TARGET_ATTESTATION_MAX_TTL_SECONDS, TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation,
-    TargetRelease,
+    MediaObserveRequest, MediaRequest, PlatformControlRequestV2, SystemActionKind,
+    SystemActionWireRequest, TARGET_ATTESTATION_MAX_TTL_SECONDS,
+    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,

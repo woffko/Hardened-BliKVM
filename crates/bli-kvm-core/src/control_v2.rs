@@ -75,6 +75,38 @@ pub struct MediaObserveRequest {
     pub issued_at_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemActionKind {
+    Reboot,
+    Shutdown,
+}
+
+/// Operator confirmation for a device-wide system action. The origin boot
+/// binding is device-derived, so a request prepared before a reboot cannot be
+/// replayed after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SystemActionWireRequest {
+    pub action: SystemActionKind,
+    pub session_binding: u64,
+    pub confirmation_binding: [u8; 32],
+    pub confirmed_at_unix_ms: u64,
+}
+
+impl SystemActionWireRequest {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        validate_session_binding(self.session_binding)?;
+        if self.confirmation_binding.iter().all(|byte| *byte == 0) {
+            return Err(ControlV2ValidationError::InvalidConfirmationBinding);
+        }
+        if self.confirmed_at_unix_ms == 0 {
+            return Err(ControlV2ValidationError::InvalidConfirmationTimestamp);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlatformControlRequestV2 {
@@ -96,6 +128,9 @@ pub enum PlatformControlRequestV2 {
     },
     VirtualMediaObserve {
         request: MediaObserveRequest,
+    },
+    SystemAction {
+        request: SystemActionWireRequest,
     },
 }
 
@@ -134,6 +169,7 @@ impl PlatformControlRequestV2 {
             Self::Atx { confirmation, .. } => confirmation.validate(),
             Self::VirtualMedia { request } => request.validate(),
             Self::VirtualMediaObserve { request } => request.validate(),
+            Self::SystemAction { request } => request.validate(),
         }
     }
 }

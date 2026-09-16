@@ -115,6 +115,13 @@ MediaObserveRequest {
   targetBinding: [u8; 32],
   issuedAtUnixMs: u64,
 }
+SystemAction { request: SystemActionWireRequest }
+SystemActionWireRequest {
+  action: SystemActionKind,        // reboot | shutdown
+  sessionBinding: u64,
+  confirmationBinding: [u8; 32],
+  confirmedAtUnixMs: u64,
+}
 ```
 
 Validation requires non-zero session and target bindings, a non-zero issued
@@ -128,6 +135,14 @@ the Rust gadget (the KVMD profile maps `mount` onto its two fixed routes and
 rejects `reconnect` as unsupported).
 
 ## Responses
+
+A `SystemAction` request is handled only by a system-action profile: the
+privileged broker prepares it against the journaled policy (capability, boot
+binding, confirmation age, startup guard, cooldown), records the dispatch
+intent and hands the action to its runner; a rejection maps to the fixed codes
+(`capability_disabled`, `not_armed`, `confirmation_stale`, `cooldown_active`,
+`pending_unreconciled`, `duplicate`, `backend_unavailable`, `backend_rejected`).
+Shipped builds reject it with `capability_disabled`.
 
 A response is `applied`, `lease_granted { lease_id }` with a non-zero
 128-bit identifier, `media_state { file, connected, cdrom, writable }` for a

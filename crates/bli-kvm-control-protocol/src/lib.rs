@@ -319,7 +319,8 @@ fn ensure_version(actual: u16, expected: u16) -> Result<(), ControlProtocolError
 mod tests {
     use bli_kvm_core::{
         AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, MediaObserveRequest,
-        MediaRequest, TargetAttestation, VirtualMediaCommand, VirtualMediaControlMode,
+        MediaRequest, SystemActionKind, SystemActionWireRequest, TargetAttestation,
+        VirtualMediaCommand, VirtualMediaControlMode,
     };
 
     use super::*;
@@ -607,6 +608,28 @@ mod tests {
             };
             assert!(encode_response_v2(&invalid).is_err(), "{file}");
         }
+    }
+
+    #[test]
+    fn v2_system_action_request_round_trips() {
+        let request = ControlRequestEnvelopeV2 {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 27,
+            operation_id: OPERATION_ID.into(),
+            request: PlatformControlRequestV2::SystemAction {
+                request: SystemActionWireRequest {
+                    action: SystemActionKind::Reboot,
+                    session_binding: 9,
+                    confirmation_binding: [0x11; 32],
+                    confirmed_at_unix_ms: 1_700_000_000_000,
+                },
+            },
+        };
+        let json = encode_request_v2(&request).unwrap();
+        assert_eq!(decode_request_v2(&json).unwrap(), request);
+        let text = String::from_utf8_lossy(&json);
+        assert!(text.contains("\"confirmedAtUnixMs\""));
+        assert!(!text.contains("path"));
     }
 
     #[test]

@@ -1796,7 +1796,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("bli-kvm-diagnostic-collector", verifier)
         self.assertIn("hardened-blikvm-diagnostics.conf", verifier)
 
-    def test_system_action_policy_is_pure_no_std_and_unlinked(self) -> None:
+    def test_system_action_policy_is_pure_and_has_reviewed_consumers(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-system-action-policy"
         journal = ROOT / "crates/bli-kvm-system-action-journal/Cargo.toml"
@@ -1804,9 +1804,15 @@ class PackagingBoundaryTests(unittest.TestCase):
         source = (crate / "src/lib.rs").read_text()
         self.assertIn('"crates/bli-kvm-system-action-policy"', workspace)
         self.assertNotIn("[dependencies]", manifest)
-        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest not in (crate / "Cargo.toml", journal):
-                self.assertNotIn("bli-kvm-system-action-policy", other_manifest.read_text())
+        # The policy stays pure and has exactly two reviewed consumers: the
+        # journal that persists it and the broker profile that arms it.
+        consumers = sorted(
+            manifest.parent.name
+            for manifest in (ROOT / "crates").glob("*/Cargo.toml")
+            if manifest not in (crate / "Cargo.toml", journal)
+            and "bli-kvm-system-action-policy" in manifest.read_text()
+        )
+        self.assertEqual(consumers, ["bli-kvm-control-broker"])
         self.assertIn("bli-kvm-system-action-policy", journal.read_text())
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)

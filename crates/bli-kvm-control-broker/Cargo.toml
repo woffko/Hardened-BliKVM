@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+system-action-profile = ["dep:bli-kvm-system-action-policy"]
 atx-transition-profile = [
   "dep:bli-kvm-atx-policy",
   "dep:bli-kvm-atx-transition",
@@ -65,6 +66,7 @@ gadget-media-profile = [
 ]
 
 [dependencies]
+bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy", optional = true }
 bli-kvm-atx-gpio-executor = { path = "../bli-kvm-atx-gpio-executor", optional = true }
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
 bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition", optional = true, default-features = false }

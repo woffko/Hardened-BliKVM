@@ -239,6 +239,7 @@ dependencies = [
  "bli-kvm-media-policy",
  "bli-kvm-media-transition",
  "bli-kvm-platform-bli",
+ "bli-kvm-system-action-policy",
  "bli-kvm-usb-gadget",
  "rand_core 0.6.4",
  "tempfile",

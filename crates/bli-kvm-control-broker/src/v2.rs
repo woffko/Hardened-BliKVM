@@ -40,6 +40,10 @@ pub struct ControlV2State {
     media: Option<MediaTransitionEngine>,
     #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
     hid: Option<HidControlPolicy>,
+    #[cfg(feature = "system-action-profile")]
+    system_action: Option<
+        crate::system_action::SystemActionState<Box<dyn crate::system_action::ActionRunner>>,
+    >,
 }
 
 impl ControlV2State {
@@ -53,6 +57,41 @@ impl ControlV2State {
             media: None,
             #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
             hid: None,
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
+        }
+    }
+
+    /// Arm the privileged system-action surface with a runner.
+    #[cfg(feature = "system-action-profile")]
+    pub fn with_system_action_runner(
+        runner: Box<dyn crate::system_action::ActionRunner>,
+        capability_enabled: bool,
+        backend_ready: bool,
+        boot_binding: [u8; 16],
+    ) -> Self {
+        let mut state = Self::enabled_base();
+        state.system_action = Some(crate::system_action::SystemActionState::new(
+            runner,
+            capability_enabled,
+            backend_ready,
+            boot_binding,
+        ));
+        state
+    }
+
+    #[cfg(feature = "system-action-profile")]
+    fn enabled_base() -> Self {
+        Self {
+            enabled: true,
+            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
+            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+            atx: None,
+            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+            media: None,
+            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
+            hid: None,
+            system_action: None,
         }
     }
 
@@ -66,6 +105,8 @@ impl ControlV2State {
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             hid: Some(policy),
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
         }
     }
 
@@ -79,6 +120,8 @@ impl ControlV2State {
             media: None,
             #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
             hid: None,
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
         }
     }
 
@@ -106,6 +149,8 @@ impl ControlV2State {
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             hid: Some(hid),
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
         }
     }
 
@@ -121,6 +166,8 @@ impl ControlV2State {
             atx: None,
             media: Some(media),
             hid: Some(hid),
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
         }
     }
 
@@ -142,6 +189,8 @@ impl ControlV2State {
             atx: Some(atx),
             media: Some(media),
             hid: Some(hid),
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
         }
     }
 
@@ -156,6 +205,8 @@ impl ControlV2State {
             media: None,
             #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
             hid: None,
+            #[cfg(feature = "system-action-profile")]
+            system_action: None,
         }
     }
 
@@ -212,7 +263,35 @@ impl ControlV2State {
             PlatformControlRequestV2::VirtualMediaObserve { request } => {
                 self.handle_media_observe(request).await
             }
+            PlatformControlRequestV2::SystemAction { request } => {
+                self.handle_system_action(operation_id, request, now)
+            }
         }
+    }
+
+    #[cfg(feature = "system-action-profile")]
+    fn handle_system_action(
+        &mut self,
+        operation_id: &str,
+        request: &bli_kvm_core::SystemActionWireRequest,
+        now: Instant,
+    ) -> ControlResponse {
+        let Some(state) = self.system_action.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let _ = now;
+        let now_ms = unix_millis();
+        state.handle(operation_id, request, now_ms)
+    }
+
+    #[cfg(not(feature = "system-action-profile"))]
+    fn handle_system_action(
+        &mut self,
+        _operation_id: &str,
+        _request: &bli_kvm_core::SystemActionWireRequest,
+        _now: Instant,
+    ) -> ControlResponse {
+        reject(ControlRejectionCode::CapabilityDisabled)
     }
 
     #[cfg(not(any(feature = "hid-transition-profile", feature = "gadget-hid-profile")))]
@@ -518,7 +597,8 @@ fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
 
 #[cfg(any(
     any(feature = "atx-transition-profile", feature = "gpio-atx-profile"),
-    any(feature = "media-transition-profile", feature = "gadget-media-profile")
+    any(feature = "media-transition-profile", feature = "gadget-media-profile"),
+    feature = "system-action-profile"
 ))]
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()

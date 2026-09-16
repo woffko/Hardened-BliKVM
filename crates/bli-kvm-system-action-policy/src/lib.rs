@@ -165,6 +165,24 @@ impl SystemActionEligibility {
         }
     }
 
+    /// Production constructor: every flag comes from a reviewed check, never
+    /// from a default. The profile that arms the capability supplies them.
+    pub const fn reviewed(
+        capability_enabled: bool,
+        backend_ready: bool,
+        local_admin_verified: bool,
+        reauthentication_verified: bool,
+        confirmation_verified: bool,
+    ) -> Self {
+        Self {
+            capability_enabled,
+            backend_ready,
+            local_admin_verified,
+            reauthentication_verified,
+            confirmation_verified,
+        }
+    }
+
     #[cfg(test)]
     const fn verified_for_test() -> Self {
         Self {

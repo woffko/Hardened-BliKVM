@@ -24,6 +24,7 @@ cargo test -p bli-kvm-control-broker --all-targets --locked --features atx-trans
 cargo test -p bli-kvm-control-broker --all-targets --locked --all-features
 cargo test -p bli-kvm-control-broker --all-targets --locked --features gadget-media-profile
 cargo test -p bli-kvm-control-broker --all-targets --locked --features gadget-hid-profile
+cargo test -p bli-kvm-control-broker --all-targets --locked --features system-action-profile
 cargo test -p bli-kvm-control-broker --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-control-broker --all-targets --locked --features gadget-media-profile,gadget-hid-profile
 cargo test -p bli-kvm-control-broker --all-targets --locked --features chardev-atx-profile
@@ -40,6 +41,7 @@ cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagno
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features hid-transition-profile,atx-transition-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gadget-media-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gadget-hid-profile -- -D warnings
+cargo clippy -p bli-kvm-control-broker --all-targets --locked --features system-action-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gpio-atx-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features gadget-media-profile,gadget-hid-profile -- -D warnings
 cargo clippy -p bli-kvm-control-broker --all-targets --locked --features chardev-atx-profile -- -D warnings

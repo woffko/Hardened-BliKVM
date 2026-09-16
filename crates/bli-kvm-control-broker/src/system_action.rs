@@ -1,0 +1,308 @@
+//! Privileged system-action handling: reboot and shutdown.
+//!
+//! The board owner keeps the privilege and the journal. This module turns a
+//! confirmed wire request into a prepared, journaled action and dispatches it
+//! through a runner, which is the maintenance dispatcher on the device and a
+//! mock in the host tests. The capability is disabled unless the reviewed
+//! profile explicitly arms it.
+
+use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
+use bli_kvm_core::{SystemActionKind, SystemActionWireRequest};
+use bli_kvm_system_action_policy::{
+    GuardState, SystemAction, SystemActionDecision, SystemActionDispatchDecision,
+    SystemActionEligibility, SystemActionEnvironment, SystemActionPolicyEngine,
+    SystemActionRejection, SystemActionRequest,
+};
+
+/// The action runner the prepared action is handed to.
+pub trait ActionRunner: Send {
+    /// Perform the action. Returning an error is a backend rejection, never a
+    /// silent success; the journal keeps the intent either way.
+    fn dispatch(&mut self, action: SystemAction) -> Result<(), String>;
+}
+
+impl ActionRunner for Box<dyn ActionRunner> {
+    fn dispatch(&mut self, action: SystemAction) -> Result<(), String> {
+        (**self).dispatch(action)
+    }
+}
+
+/// A runner that refuses everything; the default until a profile arms one.
+#[derive(Debug, Default)]
+pub struct RefusingRunner;
+
+impl ActionRunner for RefusingRunner {
+    fn dispatch(&mut self, _action: SystemAction) -> Result<(), String> {
+        Err("system action dispatch is not configured".into())
+    }
+}
+
+pub struct SystemActionState<R: ActionRunner> {
+    policy: SystemActionPolicyEngine,
+    runner: R,
+    capability_enabled: bool,
+    backend_ready: bool,
+    /// Origin boot binding: the running boot this owner belongs to.
+    boot_binding: [u8; 16],
+}
+
+impl<R: ActionRunner> SystemActionState<R> {
+    pub fn new(
+        runner: R,
+        capability_enabled: bool,
+        backend_ready: bool,
+        boot_binding: [u8; 16],
+    ) -> Self {
+        Self {
+            policy: SystemActionPolicyEngine::new(),
+            runner,
+            capability_enabled,
+            backend_ready,
+            boot_binding,
+        }
+    }
+
+    pub fn capability_enabled(&self) -> bool {
+        self.capability_enabled
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.policy.pending_count()
+    }
+
+    /// Handle one confirmed system-action request.
+    pub fn handle(
+        &mut self,
+        operation_id: &str,
+        request: &SystemActionWireRequest,
+        now_ms: u64,
+    ) -> ControlResponse {
+        if request.validate().is_err() {
+            return reject(ControlRejectionCode::InvalidState);
+        }
+        let Some(operation_id) = hex_operation_id(operation_id) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let action = match request.action {
+            SystemActionKind::Reboot => SystemAction::Reboot,
+            SystemActionKind::Shutdown => SystemAction::Shutdown,
+        };
+        let Ok(prepared) = SystemActionRequest::new(
+            operation_id,
+            request.session_binding,
+            request.confirmation_binding,
+            request.confirmed_at_unix_ms,
+            self.boot_binding,
+            action,
+        ) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let eligibility = SystemActionEligibility::reviewed(
+            self.capability_enabled,
+            self.backend_ready,
+            true,
+            true,
+            true,
+        );
+        let guards = if self.capability_enabled {
+            GuardState::Ready
+        } else {
+            GuardState::Unknown
+        };
+        let Ok(environment) =
+            SystemActionEnvironment::new(self.boot_binding, now_ms, guards, guards, guards, guards)
+        else {
+            return reject(ControlRejectionCode::Internal);
+        };
+
+        match self.policy.prepare(prepared, eligibility, environment) {
+            Ok(SystemActionDecision::PersistPrepared(ticket)) => {
+                match self
+                    .policy
+                    .record_dispatch_intent(ticket, eligibility, environment)
+                {
+                    Ok(SystemActionDispatchDecision::PersistDispatching(_intent)) => {
+                        match self.runner.dispatch(action) {
+                            Ok(()) => ControlResponse::Applied,
+                            Err(reason) => {
+                                eprintln!("system action dispatch failed: {reason}");
+                                reject(ControlRejectionCode::BackendRejected)
+                            }
+                        }
+                    }
+                    Ok(SystemActionDispatchDecision::PersistRejected(reason)) => {
+                        reject(rejection_code(reason))
+                    }
+                    Err(_) => reject(ControlRejectionCode::Internal),
+                }
+            }
+            Ok(SystemActionDecision::ReplayPostBootAccepted) => ControlResponse::Applied,
+            Ok(SystemActionDecision::ReplayRejected) => {
+                reject(ControlRejectionCode::BackendRejected)
+            }
+            Ok(SystemActionDecision::Reject(reason)) => reject(rejection_code(reason)),
+            Err(_) => reject(ControlRejectionCode::Internal),
+        }
+    }
+}
+
+fn reject(code: ControlRejectionCode) -> ControlResponse {
+    ControlResponse::Rejected { code }
+}
+
+fn hex_operation_id(value: &str) -> Option<[u8; 16]> {
+    if value.len() != 32 {
+        return None;
+    }
+    let mut bytes = [0_u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        let pair = value.get(index * 2..index * 2 + 2)?;
+        *byte = u8::from_str_radix(pair, 16).ok()?;
+    }
+    if bytes.iter().all(|byte| *byte == 0) {
+        return None;
+    }
+    Some(bytes)
+}
+
+/// Map the policy rejection onto the fixed protocol codes.
+fn rejection_code(reason: SystemActionRejection) -> ControlRejectionCode {
+    match reason {
+        SystemActionRejection::CapabilityDisabled => ControlRejectionCode::CapabilityDisabled,
+        SystemActionRejection::BackendUnavailable
+        | SystemActionRejection::RecoveryUnavailable
+        | SystemActionRejection::PostBootObserverUnavailable
+        | SystemActionRejection::PostBootHealthUnavailable
+        | SystemActionRejection::JournalFull => ControlRejectionCode::BackendUnavailable,
+        SystemActionRejection::LocalAdminRequired
+        | SystemActionRejection::ReauthenticationRequired
+        | SystemActionRejection::ConfirmationInvalid
+        | SystemActionRejection::StartupGuardActive
+        | SystemActionRejection::UpdateNotIdle
+        | SystemActionRejection::StorageNotIdle => ControlRejectionCode::NotArmed,
+        SystemActionRejection::BootBindingMismatch => ControlRejectionCode::InvalidState,
+        SystemActionRejection::ConfirmationExpired => ControlRejectionCode::ConfirmationStale,
+        SystemActionRejection::OperationIdConflict => ControlRejectionCode::Duplicate,
+        SystemActionRejection::IndeterminatePending
+        | SystemActionRejection::PostBootNotObserved => ControlRejectionCode::PendingUnreconciled,
+        SystemActionRejection::CooldownActive => ControlRejectionCode::CooldownActive,
+        SystemActionRejection::DispatchNotRecorded => ControlRejectionCode::Internal,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct MockRunner {
+        dispatched: Arc<Mutex<Vec<SystemAction>>>,
+        fail: bool,
+    }
+
+    impl ActionRunner for MockRunner {
+        fn dispatch(&mut self, action: SystemAction) -> Result<(), String> {
+            if self.fail {
+                return Err("mock failure".into());
+            }
+            self.dispatched.lock().unwrap().push(action);
+            Ok(())
+        }
+    }
+
+    fn request() -> SystemActionWireRequest {
+        SystemActionWireRequest {
+            action: SystemActionKind::Reboot,
+            session_binding: 9,
+            confirmation_binding: [0x11; 32],
+            confirmed_at_unix_ms: 119_000,
+        }
+    }
+
+    fn state(capability_enabled: bool) -> SystemActionState<MockRunner> {
+        SystemActionState::new(MockRunner::default(), capability_enabled, true, [0x22; 16])
+    }
+
+    #[test]
+    fn disabled_capability_is_rejected() {
+        let mut state = state(false);
+        let response = state.handle("a123456789abcdef0123456789abcdef", &request(), 120_000);
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled
+            }
+        );
+    }
+
+    #[test]
+    fn armed_capability_dispatches_once_and_replays() {
+        let runner = MockRunner::default();
+        let dispatched = Arc::clone(&runner.dispatched);
+        let mut state = SystemActionState::new(runner, true, true, [0x22; 16]);
+        let response = state.handle("a123456789abcdef0123456789abcdef", &request(), 120_000);
+        assert_eq!(response, ControlResponse::Applied);
+        assert_eq!(dispatched.lock().unwrap().len(), 1);
+
+        // The same operation replays without a second dispatch.
+        let replay = state.handle("a123456789abcdef0123456789abcdef", &request(), 121_000);
+        assert!(matches!(
+            replay,
+            ControlResponse::Applied | ControlResponse::Rejected { .. }
+        ));
+        assert_eq!(dispatched.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stale_confirmation_and_bad_operation_ids_are_rejected() {
+        let mut state = state(true);
+        let mut stale = request();
+        stale.confirmed_at_unix_ms = 1;
+        let response = state.handle("a123456789abcdef0123456789abcdef", &stale, 10_000_000);
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::ConfirmationStale
+            }
+        );
+
+        let response = state.handle("not-hex", &request(), 1_100);
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::InvalidState
+            }
+        );
+
+        let mut invalid = request();
+        invalid.confirmation_binding = [0; 32];
+        let response = state.handle("b123456789abcdef0123456789abcdef", &invalid, 1_100);
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::InvalidState
+            }
+        );
+    }
+
+    #[test]
+    fn failing_runner_is_a_backend_rejection() {
+        let mut state = SystemActionState::new(
+            MockRunner {
+                fail: true,
+                ..MockRunner::default()
+            },
+            true,
+            true,
+            [0x22; 16],
+        );
+        let response = state.handle("c123456789abcdef0123456789abcdef", &request(), 120_000);
+        assert_eq!(
+            response,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+    }
+}
