@@ -116,6 +116,7 @@ python3 -m unittest \
   tools/test_stage_device_board_profile_gate.py \
   tools/test_stage_device_boardd_gate.py \
   tools/test_storage_acceptance_probe.py \
+  tools/test_capture_vendor_replacement_state.py \
   tools/test_compare_gui_parity.py \
   tools/test_hid_keymap_alignment.py \
   tools/test_phase3_control_boundaries.py \

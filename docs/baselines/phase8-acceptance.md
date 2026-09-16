@@ -38,7 +38,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 | E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the four actuation gates are open until the operator confirms the handoff |
 | E3 network and system actions | `network-write-gate-*.json`, `system-action-gate-*.json` | open |
 | E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the slot serving cutover is open |
-| E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | both parity captures recorded; the vendor replacement summary is open |
+| E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | recorded: both parity captures and the read-only vendor replacement summary (`tools/capture_vendor_replacement_state.py`, `result=passed`) |
 
 Recorded detail:
 
@@ -54,8 +54,13 @@ Recorded detail:
   `kvmd-removal-20260916-a.json` (`removal.kvmd_stopped=yes`).
 - E4: the signed application update commit cycle
   (`persistent-write-*-commit-*.json`).
-- E5: `gui-parity-ours-auth-20260916-a.json` and
-  `gui-parity-compare-20260916-a.json`.
+- E5: `gui-parity-ours-auth-20260916-a.json`,
+  `gui-parity-compare-20260916-a.json` and
+  `vendor-replacement-20260916-b.json`: our five units active, every KVMD unit
+  inactive and masked, the composite gadget bound with its four functions, the
+  MSD partition mounted at our images directory with the reviewed image, both
+  video sockets present, and the public health endpoint answering with the Rust
+  backend and our platform identity.
 
 Open device gates need an operator confirmation and their own stage tool: the
 board daemon gates (fan, panel, LED and button) run through
