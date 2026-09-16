@@ -215,8 +215,10 @@ configfs mounted) and not a substitute host.
   Undo with `rm -f /var/lib/hardened-blikvm-gadget/images/kubuntu.img`.
 - The board has a single UDC and KVMD holds it, so the owner cannot bind its
   gadget without it: `--takeover-udc` unbinds the `kvmd` gadget right after the
-  KVMD stop, stops `kvmd-otg`/`kvmd-main` first (the vendor OTG helper rebinds
-  the UDC otherwise), releases the UDC and records `kvmd_udc_unbound`; teardown
+  KVMD stop, stops `kvmd-otg`/`kvmd-main` (the vendor OTG unit removes its gadget
+  with it), then requires that no gadget directory binds the UDC (`udc_bound=none`)
+  and records `kvmd_udc_unbound`; the kernel's per-UDC state file is stale on this
+  board and is not trusted. Teardown
   restarts all three units, waits for and requires `kvmd_udc_bound=yes`, so KVMD
   always owns its gadget again afterwards.
 - For the native ATX bench add `--accept-atx-bench --confirm-physical-disconnect`

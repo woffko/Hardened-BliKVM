@@ -47,7 +47,8 @@ APPLY_FACTS = {
     "gadget_name",
     "kvmd_stopped",
     "kvmd_udc_unbound",
-    "udc_state",
+    "kvmd_gadget",
+    "udc_bound",
 }
 TEARDOWN_FACTS = {
     "owner_stopped",
@@ -137,34 +138,40 @@ def build_apply_script(
         # gadget when it stops, so the UDC is released either way; verify from
         # the UDC state instead of assuming.
         udc_name = str(owner_env["BLI_KVM_GADGET_UDC"])
+        # One UDC. The vendor OTG unit removes its gadget when it stops, so the
+        # controller is free once no gadget directory binds it; the kernel's
+        # per-UDC state file is stale on this board and is not used.
         udc_block = (
             "gdir0=/sys/kernel/config/usb_gadget\n"
             "systemctl stop kvmd-otg.service kvmd-main.service >/dev/null 2>&1 || true\n"
             "i=0\n"
             "while [ \"$i\" -lt 20 ]; do\n"
-            "  if [ ! -d \"$gdir0/kvmd\" ] || [ -z \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then break; fi\n"
+            "  bound=\"\"\n"
+            "  for gadget in \"$gdir0\"/*; do\n"
+            "    [ -d \"$gadget\" ] || continue\n"
+            "    if [ -n \"$(cat \"$gadget/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then bound=$(basename \"$gadget\"); break; fi\n"
+            "  done\n"
+            "  [ -z \"$bound\" ] && break\n"
             "  i=$((i + 1)); sleep 0.5\n"
             "done\n"
             "if [ -d \"$gdir0/kvmd\" ] && [ -n \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
             "  printf '' > \"$gdir0/kvmd/UDC\" || true\n"
+            "  bound=\"\"\n"
+            "  for gadget in \"$gdir0\"/*; do\n"
+            "    [ -d \"$gadget\" ] || continue\n"
+            "    if [ -n \"$(cat \"$gadget/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then bound=$(basename \"$gadget\"); break; fi\n"
+            "  done\n"
             "fi\n"
-            "raw_state=$(cat /sys/class/udc/" + udc_name + "/state 2>/dev/null || echo missing)\n"
-            "case \"$raw_state\" in\n"
-            "  'not attached') udc_state=free ;;\n"
-            "  missing) udc_state=missing ;;\n"
-            "  *) udc_state=busy ;;\n"
-            "esac\n"
-            "printf 'udc_state=%s\\n' \"$udc_state\"\n"
-            "if [ -d \"$gdir0/kvmd\" ] && [ -n \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
-            "  printf 'kvmd_udc_unbound=no\\n'\n"
-            "elif [ \"$udc_state\" = \"free\" ]; then\n"
-            "  printf 'kvmd_udc_unbound=yes\\n'\n"
-            "else\n"
-            "  printf 'kvmd_udc_unbound=no\\n'\n"
-            "fi\n"
+            "if [ -d \"$gdir0/kvmd\" ]; then printf 'kvmd_gadget=present\\n'; else printf 'kvmd_gadget=absent\\n'; fi\n"
+            "printf 'udc_bound=%s\\n' \"${bound:-none}\"\n"
+            "if [ -z \"$bound\" ]; then printf 'kvmd_udc_unbound=yes\\n'; else printf 'kvmd_udc_unbound=no\\n'; fi\n"
         )
     else:
-        udc_block = "printf 'kvmd_udc_unbound=absent\\n'\n"
+        udc_block = (
+            "printf 'kvmd_gadget=absent\\n'\n"
+            "printf 'udc_bound=kvmd\\n'\n"
+            "printf 'kvmd_udc_unbound=absent\\n'\n"
+        )
     return f"""set -eu
 root={RUNTIME_ROOT}
 marker={MARKER}
