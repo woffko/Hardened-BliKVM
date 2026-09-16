@@ -36,7 +36,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 | E0 video | `video-frame-timing-*.json`, `video-two-client-probe-*.json`, `video-soak-probe-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E1 storage and media | `storage-acceptance-*.json`, `storage-upload-*.json`, `virtual-media-acceptance-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the four actuation gates are open until the operator confirms the handoff |
-| E3 network and system actions | `network-write-gate-*.json`, `system-action-gate-*.json` | open; the unprivileged session auto-lock (`/api/vm/session-lock`) is implemented and covered by server tests |
+| E3 network and system actions | `device-system-action-store-*.json`, `device-system-action-maintenance.json`, `system-action-gate-*.json`, `network-write-gate-*.json` | the privileged system-action store and maintenance dispatcher are recorded (`result=passed`); the end-to-end reboot gate and the network writes are open. The unprivileged session auto-lock (`/api/vm/session-lock`) is implemented and covered by server tests |
 | E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the slot serving cutover is open |
 | E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | recorded: both parity captures and the read-only vendor replacement summary (`tools/capture_vendor_replacement_state.py`, `result=passed`) |
 
@@ -60,6 +60,13 @@ Recorded detail:
   `boardd-button-preflight-...-a` (line 257 absent, as the read-only capture
   already showed for an unused line). Each plan receipt is `result=plan`, never a
   gate pass.
+- E3: `device-system-action-store-native.json` and
+  `device-system-action-maintenance.json` (`result=passed`): the privileged
+  system-action store and its maintenance dispatcher are verified on the board,
+  so reboot and shutdown have a journaled, policy-guarded path; what remains is
+  the server-side request surface and its end-to-end gate
+  (`system-action-gate-*.json`) plus the network writes
+  (`network-write-gate-*.json`).
 - E4: the signed application update commit cycle
   (`persistent-write-*-commit-*.json`).
 - E5: `gui-parity-ours-auth-20260916-a.json`,

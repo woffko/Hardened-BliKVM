@@ -167,12 +167,24 @@ PHASES: tuple[dict[str, Any], ...] = (
         ),
         "device": (
             {
-                "name": "network write gate",
-                "glob": "network-write-gate-*.json",
+                "name": "system action store",
+                "glob": "device-system-action-store-*.json",
+                "probe": "hardened-blikvm-system-action-store-native",
+                "marker": "result=passed",
             },
             {
-                "name": "system action gate",
+                "name": "system action maintenance dispatcher",
+                "glob": "device-system-action-maintenance.json",
+                "probe": "hardened-blikvm-system-action-maintenance",
+                "marker": "result=passed",
+            },
+            {
+                "name": "system action end-to-end gate",
                 "glob": "system-action-gate-*.json",
+            },
+            {
+                "name": "network write gate",
+                "glob": "network-write-gate-*.json",
             },
         ),
     },
