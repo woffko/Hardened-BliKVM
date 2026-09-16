@@ -1,360 +1,248 @@
-# Hardened BLi-KVM GUI parity plan
+# Hardened BLi-KVM vendor replacement plan
 
-Status: canonical plan, approved 2026-09-14. **This document supersedes the
-previous session objective and the phase numbering and ATX constraint in
-`docs/implementation-plan.md`.** It drives the port of the Hardened NanoKVM
-operator surface onto the H616 BliKVM while removing KVMD. Every slice is
-implemented, verified and committed in English with a green `scripts/check.sh`.
+Status: canonical plan, rewritten 2026-09-16. **This document supersedes the
+2026-09-14 revision of itself and the older `docs/implementation-plan.md`.** It
+drives the full replacement of the BliKVM vendor stack on the H616 board with
+our hardened port: privileged Rust backend, Nano-derived GUI, our Rust USB
+gadget, our Rust board daemon, the vendor `ustreamer` as the video engine and
+the retained signed application-update model. Every slice is implemented,
+verified and committed in English with a green `scripts/check.sh`.
 
 ## Supersedes
 
-- This plan replaces the old objective "идти по зафиксированному плану BLi-KVM"
-  in full: its phase order and its Phase 3 restriction "ATX только через KVMD
-  fixed waiting routes, без нативного GPIO-перехвата" no longer apply.
-- Decision 4 (the Rust board owner, including native ATX GPIO) is now
-  authorized. The default profile still pulses through the KVMD fixed routes
-  during migration; the native GPIO path is a non-default, compile-time-gated
-  executor that is enabled only after the reviewed physical line handoff.
-  `tools/test_phase3_control_boundaries.py` pins that gating.
-- Approximate mapping to the pre-existing documents: `implementation-plan.md`
-  Phase 4 (Video) maps to canonical Phase 4/8, Phase 5 (Virtual media/board) to
-  canonical Phase 3/5, Phase 6 (Hardening/updates) to canonical Phase 6, and
-  Phase 7 (Release acceptance) to canonical Phase 8.
+- The 2026-09-14 revision, including its phase numbering (0-8) and its framing
+  of "removing KVMD". Removal was never the objective: **every vendor subsystem
+  is replaced by our equivalent, and the old component is retired only after
+  the replacement passes its device gate.**
+- The old objective "идти по зафиксированному плану BLi-KVM" and its Phase 3
+  restriction "ATX только через KVMD fixed waiting routes, без нативного
+  GPIO-перехвата" no longer apply.
+- Phase mapping: old Phase 0/1 → E0-E1 recon/API baseline; old Phase 2 → E2
+  (board daemon) plus the ATX part already delivered in E0; old Phase 3 → E1
+  (storage/media) plus the gadget part already delivered in E0; old Phase 4 →
+  E0 (video); old Phase 5 → E3 (network); old Phase 6 → E4 (update); old
+  Phase 7 → E5 (extensions, off by default); old Phase 8 → E5 (parity and
+  acceptance).
 
-## Status and stop rule
+## Principles and locked decisions
 
-The H616 board is available (corrected 2026-09-15): `https://10.0.77.118/`
-(SSH root) with KVMD, the vendor stack and the `kvmd` gadget bound. An earlier
-"stand unavailable / plain Ubuntu" note came from a check that ran in a local
-shell instead of over SSH and is retracted.
-
-- Host-only slices continue without confirmation and keep the plan moving.
-- Device mutations (stopping KVMD, binding our gadget, ATX pulses, gadget
-  takeover) run only with explicit operator confirmation in the session and
-  produce a private receipt.
-- The restricted-control test profile is currently the active stand: its own
-  HTTPS proxy answers on `8443` with HID and virtual media enabled, while the
-  main proxy on `443` answers `502` because the main server unit is inactive.
-- The goal is not closed while a required device gate is unrun or unverified.
-
-## Locked decisions
-
-1. Architecture A: the hardened BLi-KVM server becomes a privileged management
+1. **Replace, then retire.** A vendor component is stopped or removed only
+   after its replacement has a passing device gate and a private receipt.
+2. **Functionality stays live.** Video, HID, MSD and ATX work throughout; "no
+   picture until later" is not an acceptable state.
+3. Architecture A: the hardened BLi-KVM server is the privileged management
    backend and exposes the NanoKVM-compatible API; the Nano-derived web GUI is
    kept.
-2. Media and HID move to our own Rust USB gadget (HID + mass storage), fully off
-   KVMD. Gadget takeover is a physical gate with rollback; a brief USB/HID
-   interruption to the target is accepted.
-3. Gadget descriptors: generic and driver-safe `idVendor=0x1d6b`,
-   `idProduct=0x0104`; unique `manufacturer`/`product`/`config`/`serialnumber`
-   strings (serial derived per device from board serial/MAC/SoC and persisted).
-   HID functions keep standard subclass/protocol/report length (keyboard 1/1/8,
-   relative mouse 0/0/7, absolute mouse 1/2/5) for BIOS compatibility.
-4. Board daemon: the vendor C `kvmd-main` (gpio/atx/fan/oled/rtc/switch) is
-   rewritten in Rust; ATX becomes our daemon. This supersedes the earlier
-   KVMD-only ATX constraint (see "Supersedes").
-5. Update follows the reference behaviour, adapted to this board and to the
-   retained signed application-update model; `raw` stays off by default.
-6. Exec features (terminal/script/picoclaw) exist but are off by default in
-   settings, matching the reference.
-7. KVMD (PiKVM Python) and the C `kvmd-main` are removed completely by the end;
-   they remain a fallback until each subsystem is proven.
+4. Media and HID run on our own Rust USB gadget. Descriptors are generic and
+   driver-safe (`idVendor=0x1d6b`, `idProduct=0x0104`) with unique strings and
+   standard HID subclass/protocol/report lengths (keyboard 1/1/8, relative
+   mouse 0/0/7, absolute mouse 1/2/5).
+5. The vendor C `kvmd-main` (gpio/atx/fan/oled/rtc/switch) is replaced by our
+   Rust board daemon; native ATX GPIO is the only ATX path.
+6. Video parity is **MJPEG**: the vendor `ustreamer` stays the capture engine
+   and our `bli-kvm-video-proxy` serves it. h264/WebRTC (SG2002-native in the
+   reference) is not ported and stays hidden.
+7. Updates use the retained signed application-update model; `raw` stays off.
+8. Exec features (terminal/script/picoclaw) exist but stay off by default.
+9. KVMD (PiKVM Python) and the C `kvmd-main` are hard-retired: the units are
+   masked, not kept as a fallback. Recovery is only from the recorded unit
+   backups.
+10. Private evidence, credentials and endpoints stay outside Git; device
+    mutations run with explicit operator confirmation and a private receipt.
 
-## Progress (2026-09-14)
+## Replacement matrix
 
-Phases 0-1 are done for the read-only surface, and the KVMD-free host stack for
-Phases 2-3 is complete. Everything below is committed with a green
-`scripts/check.sh`.
+"Vendor" is what the board shipped; "ours" is the replacement. States are as of
+2026-09-16.
 
-- Phase 0: plan, corrected provenance and the read-only topology probe.
-- Phase 1 (read-only only): `/api/system/time`, `/api/system-log/*`,
-  `/api/application/{version,preview}`, `/api/vm/{info,hardware,autostart}`
-  and a capability-gated read-only settings System tab; auth already matched
-  the reference shapes. Download exposes read-only capability flags; the
-  remaining Phase 1 modules (network, firewall) are not implemented and stay
-  capability-hidden.
-- Phases 2-3 (host, no KVMD in the gadget/board builds): backend seams for the
-  ATX, media and HID transition engines; the idempotent configfs USB gadget
-  state machine; feature-gated gadget media/HID executors; a feature-gated
-  native ATX GPIO executor plus the Linux GPIO character-device driver; and the
-  single board owner that serves media, HID and ATX from one control socket.
-  The host toolchain builds, verifies and stages the board owner reversibly
-  (`scripts/build-board-profile.sh`, `tools/verify_board_profile_bundle.py`,
-  `tools/plan_board_profile_handoff.py`, `tools/stage_device_board_profile_gate.py`);
-  the real aarch64 build also fixed the GPIO ioctl request cast for
-  aarch64-musl, and `tools/test_gadget_profile_boundary.py` pins that the
-  gadget/gpio profiles link no `bli-kvm-kvmd-*` crate.
-- Device (2026-09-15): preflight `handoffReady=true` on the board, read-only
-  topology and HID descriptor captures, and the **reversible board-owner
-  handoff gate passed** (KVMD stopped, the Rust owner served its control socket,
-  teardown restored KVMD and removed only our state) - see
-  `docs/baselines/board-handoff-gate.md`. The captured HID report
-  descriptors are pinned in `crates/bli-kvm-usb-gadget` (verified against the
-  recorded SHA-256), and the board gadget is now a composite device: MSD plus
-  the three pinned HID functions. The pointer interfaces are pinned exactly as
-  captured: `hid.usb1` is the absolute mouse (`<BHHbb`, 16-bit X/Y in
-  `0..=32767`) and `hid.usb2` is the relative mouse (`<Bbbbb`, signed 8-bit
-  deltas); the executor composes both, follows KVMD's move-range remap for
-  absolute moves, and clears the interface left behind when the pointer mode
-  switches. Media/HID and ATX pulse gates remain.
+| # | Vendor component on the board                              | Our replacement                                       | State                                                        |
+| - | ---------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
+| 1 | `kvmd-nginx` HTTPS front                                   | `hardened-blikvm-nginx`                               | deployed, serving 80/443                                     |
+| 2 | KVMD API/WebUI/auth                                        | `bli-kvm-server` + Nano-derived GUI (37 routes)       | deployed; some routes capability-hidden                      |
+| 3 | KVMD HID (`kvmd-otg`, `hid.usb0/1/2`)                      | our gadget HID in `hardened-blikvm-board-owner`       | deployed and accepted (composite gadget)                     |
+| 4 | KVMD MSD + `/var/lib/kvmd/msd` (`mmcblk0p4`)                | our gadget MSD, our own image layout                  | image still via a symlink into the KVMD directory (E1)       |
+| 5 | KVMD streamer supervision                                  | vendor `ustreamer` + `bli-kvm-video-proxy`            | **down since the cutover; E0 restores it**                   |
+| 6 | KVMD ATX routes + C `kvmd-main` ATX                        | `bli-kvm-atx-gpio-executor` in the board owner        | deployed and accepted (500/5000/500 ms)                      |
+| 7 | C `kvmd-main`: fan, OLED ST7789, display buttons, activity LED, serial switch, RTC, boot config, recovery inputs | Rust board daemon                                    | policy crates and recon snapshots exist; no daemon or units (E2) |
+| 8 | KVMD system actions (reboot/session-lock/memory/swap)      | `system-action-*` crates                              | host-side only (E3)                                          |
+| 9 | KVMD network/wifi/wol/firewall/ssh/mdns                    | `bli-kvm-server` network module                       | read-only views live; writes and wifi/firewall missing (E3)  |
+| 10 | Vendor update watchdog + signed slots serving our build    | retained signed-slot pipeline                         | slots and trust intact, serving/watchdog idled by the cutover (E4) |
+| 11 | Extras: janus (WebRTC), webterm, vnc, ipmi                  | reference behaviour: hidden/off by default            | not ported; `janus.service` disabled (E5)                    |
+| 12 | KVMD diagnostics                                            | our diagnostic collector/store/export stack           | host-side and partially device-verified                      |
 
-  Read-only KVMD sourcing (`tools/capture_device_kvmd_control_source.py`,
-  receipts `evidence/private/device-kvmd-control-source-20260915-{a,b}.json`)
-  confirmed the
-  report layouts and the remap formula, and recorded the board's real ATX lines
-  from `/etc/kvmd/override.yaml`: gpiochip0 with power switch 228 and reset
-  switch 272 (LEDs 234/233). Read-only disassembly of the vendor `/usr/bin/atx`
-  (`evidence/private/device-vendor-atx-timings-20260915-a.json`) then pinned the
-  intended pulse durations: `power_on` 500 ms, `power_off` (force off) 5000 ms
-  and `power_reset` 500 ms. They are now the board defaults in
-  `crates/bli-kvm-platform-bli` and in the handoff tools, still overridable and
-  still awaiting a bench confirmation. The bench itself is now a bundled,
-  argument-free gate binary (`bli-kvm-atx-gpio-bench-gate`) that the handoff gate
-  can run with `--accept-atx-bench --confirm-physical-disconnect`; it records the
-  measured hold per action and fails closed on drift. The rebuilt board bundle
-  (`sha256 39991edf…`, 36 members, receipt
-  `evidence/private/board-bundle-verify-20260915-b.json`) carries it.
+## API parity status
 
-  The restricted surface also accepts one bounded image upload
-  (`POST /api/download/file`, `.img`/`.iso`, 4 GiB) and records it in the media
-  catalog atomically. The board owner re-reads the catalog from disk before
-  every applied operation (keeping the last good copy if the file is briefly
-  unreadable), so a newly uploaded image is selectable without a restart.
-  `bli-kvm-usb-gadget::reconnect` performs the reviewed unbind/rebind primitive
-  for the reference's USB-reconnect action; the protocol, policy and API wiring
-  for `/api/storage/usb/reconnect` remain a separate reviewed slice. The
-  GUI places its upload control in the download menu, which is gated by the
-  remote-download capability and therefore stays hidden today: the upload is an
-  operator/API capability until the menu gating is revisited in Phase 6 (the
-  remote `POST /api/download/image` stays unimplemented).
+Our hardened server exposes, as of 2026-09-16: 37 routes. The read-only
+management surface is implemented and capability-visible: `/api/system/time`
+(`time` read-only), `/api/system-log/{config,messages}`
+(`config`,`messages` read-only), `/api/application/{version,preview}`
+(`version`,`preview` read-only), `/api/vm/{hostname,info,hardware}`
+(`hostname`,`info`,`hardware` read-only), `/api/vm/autostart`
+(`autostart` list/content read-only) and
+`/api/download/image/{enabled,remote/enabled}`
+(`image/enabled`,`image/remote/enabled` read-only). Media select/attach/eject,
+the restricted HID lease, `/api/ws` and `/api/hid/shortcut/leader-key` are
+implemented on the restricted surface. The remaining reference routes stay
+capability-hidden until their phase lands: HID control modes, storage
+reconnect, h264 and detect, vm board/system, ssh and mdns, script and terminal,
+firewall, network writes, download upload, tailscale and the application update
+UI.
 
-## Device-bound remainder (board available)
+## Current device state (2026-09-16)
 
-The H616 board is present and ready (`https://10.0.77.118/`, SSH root;
-preflight `handoffReady=true`: KVMD and the vendor daemon present, the `kvmd`
-gadget bound, configfs mounted). An earlier note wrongly reported the endpoint
-as a plain Ubuntu host; that check ran in a local shell instead of over SSH and
-is retracted. The earlier restricted-control stand on `https://10.0.77.118:8443/`
-is superseded by the 2026-09-16 cutover below; the main surface now serves the
-board profile.
+`https://10.0.77.118/` serves our board profile: node
+`hardened-blikvm-board-owner` (gadget, media, HID, ATX over
+`/run/hardened-blikvm-gadget/control.sock`) plus
+`hardened-blikvm-board-server` (KVMD-free, `127.0.0.1:18080`) behind
+`hardened-blikvm-nginx`. HID, Power and virtual media report `read_write`; the
+`hardened` composite gadget is bound with the reviewed image attached. Plain
+HTTP is a `308` to HTTPS because session cookies are `Secure`.
 
-**2026-09-16: the board-owner acceptance window passed on the real board.** Our
-composite gadget was created by our own media attach and bound
-(`hid.usb0,hid.usb1,hid.usb2,mass_storage.usb0`, `hid_write=ok`), our native ATX
-executor pulsed the real lines inside tolerance (500/5000/500 ms,
-`within_tolerance=yes`), the three GUI probes passed against a temporary server
-wired to the owner socket, and teardown restored KVMD and its UDC. Receipts:
-`board-handoff-gate-20260916-k.json`, `board-handoff-teardown-20260916-a.json`,
-`virtual-media-acceptance-20260916-a.json`,
-`restricted-keyboard-20260916-a.json`,
-`restricted-power-20260916-a.json`; baseline
-`docs/baselines/board-owner-acceptance.md`. That baseline also lists the eight
-device-only defects the window exposed (staging restart, UDC takeover,
-raw `report_desc`, LUN attribute order, absolute symlink target, GPIO offset
-bound, chip-info ioctl number, bench fact keys). The acceptance report now shows
-only the KVMD removal gate open.
+KVMD units are stopped, disabled and masked; the KVMD-coupled
+`hardened-blikvm-platform-broker`, `hardened-blikvm-video-proxy`,
+`hardened-blikvm-server-current` and `hardened-blikvm-update-watchdog.timer`
+are stopped and disabled with unit backups under
+`/var/lib/hardened-blikvm/backup-20260916/serving/`. Video is the one live
+regression: the streamer went away with KVMD. Receipts:
+`evidence/private/board-serving-cutover-20260916-a.json`,
+`evidence/private/kvmd-removal-20260916-a.json`,
+`evidence/private/phase8-acceptance-20260916-c.json`; baselines
+`docs/baselines/board-serving-cutover.md`,
+`docs/baselines/board-owner-acceptance.md`.
 
-**2026-09-16: KVMD retired and the board profile put on the main surface.** With
-the operator's explicit approval, `tools/stage_device_kvmd_removal.py
---confirm-removal` copied the four KVMD unit files, stopped and disabled them,
-and verified our owner socket and gadget; the units are now also masked. The
-verified board bundle 76136df6 (37 members) was installed over the
-installed-application paths, and the KVMD-free
-`hardened-blikvm-board-server.service` serves `127.0.0.1:18080` behind nginx, so
-the main HTTPS surface is our GUI with HID, Power and virtual media
-`read_write`, and the `hardened` composite gadget is bound with the reviewed
-image attached. plain HTTP stays a `308` to HTTPS because session cookies are
-`Secure`. The signed-slot serving units and the update watchdog
-timer are idled reversibly (unit files and enablement states backed up) so the
-vendor arrangement cannot resurrect KVMD; the update supervisor, trust, sockets
-and slots stay in place. The cutover exposed a real dependency defect: the
-package-backed server requires the KVMD-coupled platform broker, which requires
-`kvmd.service`. Receipt and restore steps:
-`evidence/private/board-serving-cutover-20260916-a.json`; baseline
-`docs/baselines/board-serving-cutover.md`. The acceptance report is now
-`overall=complete`, `deviceUnrun=0`
-(`evidence/private/phase8-acceptance-20260916-c.json`). Follow-up: package the
-current board build as a signed application slot and re-enable the retained
-signed update path.
+The acceptance report currently reads `overall=complete` because the Phase 4
+video receipts predate the cutover; E0 must re-produce them against the live
+surface before that phase counts again.
 
-The following now run on the board, mutation steps only with explicit operator
-confirmation, each producing a private receipt:
+## Phases
 
-- HID report descriptors and function parameters (captured read-only:
-  `evidence/private/device-hid-descriptors-20260915-a.json`);
-- the reversible board-owner handoff gate
-  (`tools/stage_device_board_profile_gate.py --confirm-handoff`): stop KVMD,
-  start the Rust owner, verify the owner socket and the `hardened` gadget,
-  then `--teardown` restores KVMD;
-- media attach/eject/upload, BIOS boot, interruption/reconnect and reboot;
-- Phase 4 video gates, Phase 6 image/recovery and Phase 8 acceptance.
+### E0 - video replacement (immediate)
 
-KVMD retirement executed on 2026-09-16 (see above). `tools/stage_device_kvmd_removal.py`
-records a read-only inventory (receipt
-`evidence/private/kvmd-inventory-20260915-a.json`) and refuses to stop anything
-until the private receipts prove the replacement (composite-gadget acceptance,
-media attach/eject, native ATX bench). The refusal is a real receipt
-(`kvmd-removal-refusal-20260915-a.json`) and the accepted path copies the unit
-files into a timestamped backup before disabling the four KVMD units and
-verifying our owner still serves.
+Goal: restore the picture with the vendor streamer under our own units, keeping
+KVMD retired.
 
-Phase 4 video host harness: `tools/playwright/video_frame_timing_probe.mjs`
-consumes the MJPEG stream and records complete-frame count, mean/p95/max frame
-interval, FPS and average frame bytes (host-tested against a local MJPEG
-fixture). A device receipt requires the main profile to serve video: the
-restricted-control stand answers `503` for `/api/stream/mjpeg` (its video proxy
-is inactive) and the main proxy answers `502` while its server unit is down, so
-the timing/hotplug/resolution gates stay with the operator.
+- Host: `packaging/systemd/hardened-blikvm-ustreamer.service` (vendor
+  `ustreamer`, `/dev/kvmd-video`, MJPG, 1280x720, 40 fps, same-frame drop and
+  `--slowdown`, socket under `/run/hardened-blikvm-ustreamer/`) and
+  `packaging/systemd/hardened-blikvm-board-video-proxy.service` (our proxy,
+  socket `/run/hardened-blikvm-video/mjpeg.sock`). A udev rule replaces the
+  KVMD rule that maps the UVC capture to `/dev/kvmd-video`.
+- Device gate: frames flow through the authenticated `/api/stream/mjpeg`;
+  `video_frame_timing_probe.mjs` passes; two clients stream simultaneously;
+  the soak probe passes.
+- Receipts: `video-two-client-probe-*.json`, `video-frame-timing-*.json`,
+  `video-soak-probe-*.json`. Rollback: stop both units.
 
-The human-readable audit lives in `docs/baselines/phase8-acceptance.md`: it
-repeats the generated report, names every open gate and the exact tool that
-produces its receipt, and states that KVMD stays the fallback.
+### E1 - storage and media
 
-Phase 8 acceptance report (host-only, read-only): `tools/phase8_acceptance_report.py`
-walks an explicit manifest of host artifacts and device receipts and writes a
-private report; a device item without a matching receipt stays `unrun` and the
-overall status stays `incomplete`. Current report
-(`evidence/private/phase8-acceptance-20260915-a.json`): phases 0, 1, 4 and 6
-complete; phase 2 awaits the native ATX GPIO bench confirmation, phase 3 the
-composite-gadget acceptance and phase 8 the virtual-media acceptance receipt.
+Goal: own the media path end to end.
 
-`tools/playwright/app_harness.mjs` serves the built `web/dist` with a mock
-restricted API. `tools/test_restricted_power_probe.mjs`, `tools/test_restricted_keyboard_probe.mjs`
-and `tools/test_virtual_media_probe_app.mjs` run the power, on-screen-keyboard and
-virtual-media probes against it, so the three GUI control paths are verified
-locally before any device run. The media probe reads the wrapped
-`{code,data}` response, the shape the real server returns.
-`tools/test_gui_parity_app.mjs` serves the built `web/dist` with a mock API and
-runs the probe against the real application: it proves the desktop still
-renders, that the leader-key load now hits the implemented endpoint, and that
-the removed legacy calls (`/api/vm/gpio`, `/api/hid/mode`, `/api/hid/reset`)
-are no longer requested.
+- Move images into our own layout (own directory and mount handling instead of
+  the symlink into `/var/lib/kvmd/msd`), keep the catalog reload writer.
+- Wire the missing `/api/storage/usb/reconnect` surface.
+- Device gates: attach, eject, reconnect, upload and a reboot with the image
+  re-attached. Receipts: `virtual-media-acceptance-*.json` plus a reconnect
+  receipt.
 
-Phase 8 parity harness (host-only, no mutation): `gui_parity_probe.mjs` now
-captures menu labels, tag counts, the capability manifest, surface markers
-(mobile keyboard input, on-screen keys, video elements), the settings tab labels
-(best effort: it needs the menu to expand) and bounded console error samples; `compare_gui_parity.py` separates label differences that a
-differing capability explains or that are intentional branding from
-`unexplainedLabelsOnlyInReference/InOurs`, the real gaps, and only compares
-capabilities, markers and the recorded failed GUI requests when both receipts
-carry them, so a one-sided capture never reads as a gap. Latest read-only
-capture (ours-f, compare-b) has no unexplained differences in labels. The
-observed console errors on the rc stand name one real gap to track: the GUI
-opens `wss://…/api/ws`, which our server does not implement yet (parity matrix
-target 3/7); the two `503`s come from the inactive platform broker in that
-profile and the `401`/`404` are pre-login and asset requests.
+### E2 - board daemon instead of C `kvmd-main`
 
-## Provenance
+Goal: the vendor C daemon is replaced by one Rust daemon.
 
-- PiKVM KVMD: `github.com/pikvm/kvmd` v3.291 (upstream daemon), installed on the
-  device through the Bli-PiKVM line (`RainCat1998 == woffko/Bli-PiKVM`); the
-  device carries the `srepac/kvmd-armbian` checkout (`e67a3b4`).
-- Original BliKVM H616 hardware/app: `blikvm/blikvm` / `ThomasVon2021/blikvm`
-  (C `blikvm_server`/`kvmd-main`, `src/kvmd/blikvm_*`, `package/kvmd-*`,
-  `ustreamer.bin`, janus). Source for H616 board behaviour.
-- Reference GUI/management: Hardened NanoKVM `server-rust` (axum) and web
-  (`10.0.87.133`).
+- Deliver a `bli-kvm-boardd` binary and unit covering fan/PWM and thermal,
+  OLED ST7789 and display buttons, activity LED, serial switch, RTC and boot
+  config, exposed over the owner control socket.
+- Device gates: one per subsystem, starting from the existing recon receipts
+  (`device-oled-topology`, `device-fan-gpio`, `device-serial-topology`,
+  `device-rtc`).
+- Retire `kvmd-main`, its `/var/blikvm/*.sock` sockets and
+  `/dev/shm/blikvm/*` state only after every subsystem gate passes;
+  `kvmd-fix.service` is handled in the same slice.
 
-## Device topology (historical capture 2026-09-14)
+### E3 - system and network writes
 
-This section is a historical read-only capture of the BliKVM H616 stand. It is
-**not** the current state of `10.0.77.118` (see "Device-gated remainder").
+Goal: close the remaining KVMD management surfaces.
 
-- One OTG gadget `kvmd` (KVMD-owned): `hid.usb0/1/2` + `mass_storage.usb0`,
-  config `c.1`, UDC `musb-hdrc.2.auto`; modules `dwc2`, `libcomposite`.
-- Descriptor at capture: `0x1d6b:0x0104`, `manufacturer=PiKVM`,
-  `product=Composite KVM Device`, `serialnumber=CAFEBABE`,
-  `Config 1: PiKVM device`.
-- BliKVM vendor stack present: `/usr/bin/blikvm/{kvmd-main,kvmd-main.sh,
-enable-gadget.sh,kvmd-msd.sh,kvmd-video.sh,ustreamer.bin}`, ATX socket
-  `/var/blikvm/atx.sock`, state `/dev/shm/blikvm/atx`; `kvmd-main.service`
-  runs the C daemon.
-- MSD storage `/var/lib/kvmd/msd` on `mmcblk0p4` mounted read-only.
-- Video: ustreamer MJPEG.
+- System actions on the device: reboot, session lock, memory and swap.
+- Network writes: DNS and IPv6, firewall, SSH/mDNS, Wake-on-LAN and wifi where
+  the hardware supports it.
+- Device gates: capability-gated safe writes plus a reboot-persistence proof.
 
-## Phases (canonical)
+### E4 - update path
 
-- Phase 0 — recon + this matrix; update `docs/baselines/upstream.md`.
-- Phase 1 — Nano-compatible API/GUI parity and hardware-agnostic management
-  modules, KVMD still running. Read-only part done; the rest is capability
-  hidden.
-- Phase 2 — Rust board daemon (kvmd-main → Rust) with handoff and gates.
-- Phase 3 — Rust USB gadget (HID + MSD) off KVMD; media UX as reference.
-- Phase 4 — video gates (hotplug, resolution, two clients, latency, soak) and
-  removal of KVMD once every subsystem is ours.
-- Phase 5 — network management.
-- Phase 6 — system update and extensions.
-- Phase 7 — exec/agent features, off by default.
-- Phase 8 — GUI parity verification harness and acceptance report.
+Goal: ship our build through the retained signed update model.
 
-## Parity matrix
+- Build the production bundle from the current source, publish it as a
+  candidate, run candidate health, confirm it into `current`, and re-enable the
+  activation/watchdog units. Our units and binaries are delivered by the slot.
+- Device gate: the signed update commit cycle and a reboot that keeps the new
+  `current`. Receipts: `persistent-write-*-commit-*.json` and the update
+  runtime/status receipts.
 
-Reference routes are from `server-rust/src/http/routes.rs`. "Our status" is the
-hardened BLi-KVM server as of 2026-09-15: 37 routes.
+### E5 - extensions, parity and acceptance
 
-| Subsystem                                                                                                                                                            | Reference endpoints                                                                                 | Our status                                                                                                                                                          | Target phase            |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| auth                                                                                                                                                                 | `/api/auth/{logout,account,password}` (+`setup`,`login`)                                            | implemented (`setup`,`login`,`logout`,`account`,`password`)                                                                                                         | 1 (Nano response shape) |
-| capabilities/health/inventory/diagnostics                                                                                                                            | `compatibility_routes`, `/api/health`                                                               | implemented (`capabilities`,`health`,`inventory`,`diagnostics`)                                                                                                     | 1                       |
-| HID live                                                                                                                                                             | `/api/hid/{focus,lease}`                                                                            | implemented (restricted profile); gadget executor exists host-side behind a feature                                                                                 | 3                       |
-| HID control                                                                                                                                                          | `/api/hid/{mode,usb-wakeup,reset,paste,shortcuts,shortcut,shortcut/leader-key}`                     | hidden; `shortcut/leader-key` implemented on the restricted surface (state-dir preference)                                                                          | 3                       |
-| websocket                                                                                                                                                            | `/api/ws`                                                                                           | restricted HID live over `/api/ws` (session lease, same-origin); terminal target 7                                                                                  | 3 (HID) / 7 (terminal)  |
-| storage/media                                                                                                                                                        | `/api/storage/image`, `/image/mounted`, `/image/mount`, `/image/delete`, `/cdrom`, `/usb/reconnect` | partial: catalog, select/attach/eject, bounded upload (`/api/download/file`); the gadget rebind primitive exists, the `/usb/reconnect` API surface is not wired yet | 3                       |
-| stream                                                                                                                                                               | `/api/stream/mjpeg`, `/h264`, `/h264/direct`, `/mjpeg/detect`, `/mjpeg/detect/stop`                 | `mjpeg` implemented; h264/detect hidden                                                                                                                             | 4 / 8                   |
-| vm read-only                                                                                                                                                         | `/api/vm/{info,hardware,hostname,gpio,web-title,device/virtual}`                                    | `hostname`,`info`,`hardware` read-only (`ips`/`deviceKey` intentionally empty)                                                                                      | 1 (done) / 2            |
-| vm board                                                                                                                                                             | `/api/vm/{oled,hdmi,hdmi/reset,hdmi/enable,hdmi/disable,gpio}`                                      | hidden; the GUI no longer falls back to `/api/vm/gpio` on this platform                                                                                             | 2                       |
-| vm system                                                                                                                                                            | `/api/vm/{system/reboot,session-lock,memory/limit,swap,mouse-jiggler,tls}`                          | hidden                                                                                                                                                              | 2 / 6                   |
-| vm ssh/mdns                                                                                                                                                          | `/api/vm/{ssh,ssh/enable,ssh/disable,mdns,mdns/enable,mdns/disable}`                                | hidden                                                                                                                                                              | 5                       |
-| vm autostart/script                                                                                                                                                  | `/api/vm/autostart{,/{name}}`, `/api/vm/script{,/upload,/run}`                                      | `autostart` list/content read-only; script hidden                                                                                                                   | 1 (read) / 7            |
-| terminal                                                                                                                                                             | `/api/vm/terminal{,/unlock,/enabled}`                                                               | hidden                                                                                                                                                              | 7 (off by default)      |
-| application                                                                                                                                                          | `/api/application/{version,update,update/offline,preview}`                                          | `version`,`preview` read-only; `current-version`; app-update (`status`,`upload`,`activate`)                                                                         | 1 (read) / 6            |
-| system update, firewall, network, download, tailscale: hidden/read-only flags; `/api/network/dns`, `/api/network/ipv6` and `/api/network/interfaces` read-only views | targets 5/6                                                                                         |
-| system log                                                                                                                                                           | `/api/system-log/{config,messages,test}`                                                            | `config`,`messages` read-only                                                                                                                                       | 1 (done) / 6            |
-| system time                                                                                                                                                          | `/api/system/time`, `/sync`                                                                         | `time` read-only                                                                                                                                                    | 1 (done) / 3            |
-| firewall                                                                                                                                                             | `/api/system/firewall`, `/confirm`                                                                  | hidden                                                                                                                                                              | 5                       |
-| network                                                                                                                                                              | `/api/network/{wol,wol/mac,wol/mac/name,dns,ipv6,wifi,wifi/connect,wifi/disconnect}`                | hidden                                                                                                                                                              | 5                       |
-| download                                                                                                                                                             | `/api/download/{image,image/status,image/enabled,image/remote/enabled,file}`                        | `image/enabled`,`image/remote/enabled` read-only (remote disabled); upload hidden                                                                                   | 1 (read) / 6            |
-| tailscale                                                                                                                                                            | `/api/extensions/tailscale/*`                                                                       | hidden                                                                                                                                                              | 6                       |
-| power/ATX                                                                                                                                                            | `/api/application-power` (ours)                                                                     | implemented (restricted profile); KVMD routes default, native GPIO behind a feature                                                                                 | 2 (board owner)         |
+Goal: prove the replacement is complete.
 
-## Verification
+- Extensions: keep janus/webterm/vnc/ipmi hidden or off by default, matching
+  the reference; terminal and script stay behind the exec decision.
+- Update `tools/phase8_acceptance_report.py` so the manifest reflects the new
+  phases (video in E0, storage in E1, board daemon in E2, network in E3, update
+  in E4) and keeps "KVMD removal" after the video gates.
+- Run the GUI parity probe against `https://10.0.87.133/` and compare; produce
+  the final report, reboot/soak acceptance and the baselines.
 
-- `tools/capture_device_kvm_topology.py` records a sanitized, read-only snapshot
-  of the gadget functions, a descriptor-block hash, the KVMD hid/msd mode, the
-  vendor daemon presence, the ATX socket, the MSD mount mode and active
-  services (receipt `evidence/private/device-kvm-topology-20260914-a.json`).
-  Run it before and after every gadget/board ownership handoff.
-- `tools/capture_device_handoff_preflight.py` is the read-only gate check that
-  the target really is the BliKVM H616 stack (KVMD, vendor daemon, gadget, UDC,
-  configfs) and returns `handoffReady`; it must pass before any handoff step.
-- `tools/capture_device_hid_descriptors.py` captures the gadget HID function
-  parameters and report descriptors read-only into a sanitized private receipt,
-  with a host-tested bounded parser (name, range, hex and hash checks). Running
-  it against the board is part of the device-gated handoff.
-- `tools/playwright/gui_parity_probe.mjs` captures the title, route, bounded
-  visible menu labels (text, `aria-label` or `title`), tag counts and
-  console-error count for one page and writes a sanitized receipt under
-  `evidence/private` (never committed). It optionally logs in (username file
-  plus password on stdin) so authenticated desktop menus can be captured, and is
-  self-tested against a local `file://` fixture
-  (`tools/test_gui_parity_probe.mjs`). The live stand is reachable at
-  `https://10.0.77.118/` and the reference at `https://10.0.87.133/`, so Phase 8
-  runs over HTTP and is not hardware-gated; only the gadget/board phases are.
-- `tools/compare_gui_parity.py` compares our build receipt with the reference
-  receipt (menu-label and tag-count differences, console-error delta) into a
-  sanitized private receipt, so the Phase 8 acceptance report can be produced
-  from two probe runs once both endpoints are reachable.
-- Each slice keeps `scripts/check.sh` green and adds focused host tests.
+## Gates, order and rollback
+
+- Order per subsystem: replacement deployed, gate passed, receipt recorded,
+  then the vendor component is retired. No bulk removals.
+- One owner per gadget, video and ATX line; every switch is reversible with a
+  unit backup and documented restore steps.
+- Every slice keeps `scripts/check.sh` green and adds focused host tests; the
+  board bundle and `scripts/verify-systemd-units.sh` carry the new units.
+
+## Verification tooling
+
+- `tools/capture_device_handoff_preflight.py` and
+  `tools/capture_device_kvm_topology.py`: read-only board gates before and after
+  every ownership change.
+- `tools/capture_device_hid_descriptors.py`: HID function/descriptor capture.
+- `tools/stage_device_board_profile_gate.py --confirm-handoff`: reversible
+  board-owner handoff gate (owner socket and `hardened` gadget).
+- `tools/stage_device_kvmd_removal.py`: evidence-gated KVMD retirement with unit
+  backups and `--restore`.
+- `tools/playwright/video_frame_timing_probe.mjs`,
+  `tools/playwright/video_two_client_probe.mjs`,
+  `tools/playwright/video_soak_probe.mjs`: MJPEG gates for E0.
+- `tools/playwright/gui_parity_probe.mjs` and `tools/compare_gui_parity.py`:
+  parity capture and comparison for E5.
+- `tools/phase8_acceptance_report.py`: audited acceptance report over the
+  manifest.
+- `tools/build-board-profile.sh`, `tools/verify_board_profile_bundle.py`,
+  `tools/stage_device_board_bundle.py`: board build, verification and staging.
 
 ## Invariants
 
-- No dead legacy calls: every visible control is either implemented or hidden by
+- No dead legacy calls: every visible control is implemented or hidden by
   capability. Shipped builds keep restricted surfaces compiled out.
-- Private evidence, credentials and endpoints stay outside Git; secrets only via
-  `project-memory-exec`.
+- Private evidence, credentials and endpoints stay outside Git; secrets only
+  via `project-memory-exec`.
 - Builds and large artifacts under `/mnt/d/debug/blikvm/hardened-blikvm/`.
-- A single owner per gadget line: takeover only through an isolated gate with
+- A single owner per gadget line; takeover only through an isolated gate with
   handoff, verification and rollback.
-- Reference video/WebRTC (SG2002 native) is not ported; video stays our
-  ustreamer MJPEG. Hardware behaviour is sourced from BliKVM (H616), not Nano
-  (SG2002).
+- Reference WebRTC is not ported; video stays our ustreamer MJPEG. Hardware
+  behaviour is sourced from BliKVM (H616), not Nano (SG2002).
+
+## Provenance and historical topology
+
+- PiKVM KVMD: `github.com/pikvm/kvmd` v3.291 through the Bli-PiKVM line; the
+  device carries the `srepac/kvmd-armbian` checkout (`e67a3b4`).
+- Original BliKVM H616 hardware/app: `blikvm/blikvm` /
+  `ThomasVon2021/blikvm` (C `blikvm_server`/`kvmd-main`, `src/kvmd/blikvm_*`,
+  `package/kvmd-*`, `ustreamer.bin`, janus).
+- Reference GUI/management: Hardened NanoKVM `server-rust` (axum) and web
+  (`10.0.87.133`).
+- Historical device capture and file inventory: `docs/baselines/upstream.md`,
+  `docs/baselines/hardware.md`, `docs/baselines/device-video.md`,
+  `docs/baselines/device-fan-gpio.md`, `docs/baselines/device-oled-topology.md`,
+  `docs/baselines/device-serial-topology.md`, `docs/baselines/device-rtc.md`.
+- One OTG gadget per owner; module set `dwc2` and `libcomposite`; the single UDC
+  `musb-hdrc.2.auto` is the serialisation point for every handoff.
