@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use bli_kvm_activity_led_policy::{ActivityLedConfig, OutputLevel};
 use bli_kvm_fan_policy::{FanCurvePoint, FanPolicyConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -121,6 +122,37 @@ impl DisplayConfig {
     }
 }
 
+/// Activity LED: reviewed line, pulse shape and the level that means
+/// "asserted" for the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LedConfig {
+    pub line: LineSpec,
+    /// Whether the policy's asserted pulse drives the line high.
+    pub asserted_high: bool,
+    pub period_ms: u64,
+    pub pulse_ms: u64,
+    /// Whether the LED pulse starts enabled; the operator can change it over
+    /// the control surface.
+    pub enabled: bool,
+}
+
+impl LedConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        ActivityLedConfig {
+            asserted_level: if self.asserted_high {
+                OutputLevel::High
+            } else {
+                OutputLevel::Low
+            },
+            period_ms: self.period_ms,
+            pulse_ms: self.pulse_ms,
+        }
+        .validate()
+        .map_err(|_| ConfigError::Invalid)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BoarddConfig {
@@ -132,6 +164,7 @@ pub struct BoarddConfig {
     pub sample_interval_ms: u64,
     pub fan: FanConfig,
     pub display: DisplayConfig,
+    pub led: LedConfig,
 }
 
 impl FanConfig {
@@ -226,7 +259,8 @@ impl BoarddConfig {
             return Err(ConfigError::Invalid);
         }
         self.fan.validate()?;
-        self.display.validate()
+        self.display.validate()?;
+        self.led.validate()
     }
 }
 
@@ -261,6 +295,16 @@ mod tests {
                         duty_percent: 80,
                     },
                 ],
+            },
+            led: LedConfig {
+                line: LineSpec {
+                    offset: 261,
+                    active_low: false,
+                },
+                asserted_high: true,
+                period_ms: 2_000,
+                pulse_ms: 100,
+                enabled: true,
             },
             display: DisplayConfig {
                 spidev: PathBuf::from("/dev/spidev1.0"),
@@ -344,6 +388,10 @@ mod tests {
 
         let mut invalid = config();
         invalid.display.clock_hz = 0;
+        assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
+
+        let mut invalid = config();
+        invalid.led.period_ms = 10;
         assert_eq!(invalid.validate(), Err(ConfigError::Invalid));
     }
 

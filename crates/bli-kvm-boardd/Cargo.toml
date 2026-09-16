@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bli-kvm-activity-led-policy = { path = "../bli-kvm-activity-led-policy" }
 bli-kvm-fan-policy = { path = "../bli-kvm-fan-policy" }
 bli-kvm-fan-supervisor = { path = "../bli-kvm-fan-supervisor" }
 bli-kvm-gpio-chardev = { path = "../bli-kvm-gpio-chardev" }

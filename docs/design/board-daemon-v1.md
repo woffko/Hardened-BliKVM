@@ -86,6 +86,19 @@ that fails to come up never stops the fan, it is reported on stderr and shown as
 absent. Still open before the panel gate: the panel lines handoff (unexport the
 vendor sysfs lines 259/262/260 and provision the operator configuration).
 
+## Implemented slice 3 (2026-09-16): activity LED
+
+`led` module and its reviewed configuration section: the activity LED runtime
+keeps the line in step with `bli-kvm-activity-led-policy` (asserted level, period
+and pulse from the operator), writes only when the level changes, and exposes
+`led_enabled_set` plus the `ledPresent` / `ledEnabled` / `ledLevel` status
+fields. The sampling thread drives the pulse; a missing or failing LED never
+stops the fan. The LED policy keeps its purity guard, now expressed as exactly
+one reviewed consumer (the board daemon), the same rule the panel model follows.
+
+Still open in the daemon: the display button needs a line *read* path, which the
+GPIO driver trait does not expose yet, and the RTC and boot-config views.
+
 ## Ownership handoff and rollback
 
 The vendor C daemon and our daemon must never own a line at the same time:

@@ -25,6 +25,13 @@ pub trait DisplayControl: Send {
     fn backlight_on(&self) -> bool;
 }
 
+/// Activity LED operations the control surface exposes.
+pub trait LedControl: Send {
+    fn set_enabled(&mut self, enabled: bool, now_ms: u64) -> Result<(), &'static str>;
+    fn enabled(&self) -> bool;
+    fn level(&self) -> bool;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FanModeName {
@@ -40,6 +47,7 @@ pub enum Request {
     FanDutySet { percent: u8 },
     DisplayTest,
     DisplayBacklightSet { on: bool },
+    LedEnabledSet { enabled: bool },
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -57,6 +65,9 @@ pub struct StatusView {
     pub display_present: bool,
     pub display_initialized: bool,
     pub display_backlight_on: bool,
+    pub led_present: bool,
+    pub led_enabled: bool,
+    pub led_level: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,6 +121,7 @@ pub struct BoarddState<A: FanActuator> {
     last_thermal: Option<i32>,
     thermal_error: Option<&'static str>,
     display: Option<Box<dyn DisplayControl>>,
+    led: Option<Box<dyn LedControl>>,
 }
 
 impl<A> BoarddState<A>
@@ -128,9 +140,11 @@ where
         pwm_period_ms: u64,
         fan_line: u16,
         display: Option<Box<dyn DisplayControl>>,
+        led: Option<Box<dyn LedControl>>,
     ) -> Self {
         Self {
             display,
+            led,
             supervisor,
             mode,
             manual_duty,
@@ -196,7 +210,34 @@ where
                 .display
                 .as_ref()
                 .is_some_and(|display| display.backlight_on()),
+            led_present: self.led.is_some(),
+            led_enabled: self.led.as_ref().is_some_and(|led| led.enabled()),
+            led_level: self.led.as_ref().is_some_and(|led| led.level()),
         }
+    }
+
+    pub fn has_led(&self) -> bool {
+        self.led.is_some()
+    }
+
+    pub fn set_led_enabled(&mut self, enabled: bool) -> Result<(), BoarddError> {
+        let Some(led) = self.led.as_mut() else {
+            return Err(BoarddError::InvalidState);
+        };
+        led.set_enabled(enabled, unix_millis_now())
+            .map_err(|kind| match kind {
+                "invalid_state" => BoarddError::InvalidState,
+                _ => BoarddError::BackendUnavailable,
+            })
+    }
+
+    /// Drive the LED pulse forward; called by the sampling thread.
+    pub fn tick_led(&mut self) {
+        let Some(led) = self.led.as_mut() else {
+            return;
+        };
+        let enabled = led.enabled();
+        let _ = led.set_enabled(enabled, unix_millis_now());
     }
 
     pub fn draw_display_test(&mut self) -> Result<(), BoarddError> {
@@ -316,7 +357,18 @@ where
             Ok(()) => Response::ok(state),
             Err(error) => Response::error(-error_code(&error), error.to_string_static()),
         },
+        Request::LedEnabledSet { enabled } => match state.set_led_enabled(enabled) {
+            Ok(()) => Response::ok(state),
+            Err(error) => Response::error(-error_code(&error), error.to_string_static()),
+        },
     }
+}
+
+fn unix_millis_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn error_code(error: &BoarddError) -> i32 {
@@ -437,6 +489,7 @@ mod tests {
             40,
             269,
             None,
+            None,
         )
     }
 
@@ -493,6 +546,7 @@ mod tests {
             40,
             269,
             Some(Box::new(display)),
+            None,
         )
     }
 
@@ -509,6 +563,81 @@ mod tests {
         let data = response.data.unwrap();
         assert!(!data.display_backlight_on);
         assert!(data.display_initialized);
+    }
+
+    #[derive(Default)]
+    struct MockLed {
+        enabled: bool,
+        level: bool,
+        fail: bool,
+    }
+
+    impl LedControl for MockLed {
+        fn set_enabled(&mut self, enabled: bool, _now_ms: u64) -> Result<(), &'static str> {
+            if self.fail {
+                return Err("backend_unavailable");
+            }
+            self.enabled = enabled;
+            self.level = enabled;
+            Ok(())
+        }
+
+        fn enabled(&self) -> bool {
+            self.enabled
+        }
+
+        fn level(&self) -> bool {
+            self.level
+        }
+    }
+
+    fn state_with_led(led: MockLed) -> BoarddState<MockActuator> {
+        let mut supervisor = FanSupervisor::new(policy(), 0, MockActuator::default()).unwrap();
+        let _ = supervisor.initialize();
+        BoarddState::new(
+            supervisor,
+            FanModeName::Auto,
+            0,
+            20,
+            100,
+            true,
+            40,
+            269,
+            None,
+            Some(Box::new(led)),
+        )
+    }
+
+    #[test]
+    fn led_request_reaches_the_pulse_runtime() {
+        let mut state = state_with_led(MockLed {
+            enabled: true,
+            level: true,
+            ..MockLed::default()
+        });
+        assert!(state.status().led_present);
+        assert!(state.status().led_enabled);
+        let response = handle(&mut state, Request::LedEnabledSet { enabled: false });
+        assert_eq!(response.code, 0);
+        let data = response.data.unwrap();
+        assert!(!data.led_enabled);
+        assert!(!data.led_level);
+
+        let mut without = self::state();
+        assert!(!without.status().led_present);
+        assert_eq!(
+            handle(&mut without, Request::LedEnabledSet { enabled: true }).code,
+            -2
+        );
+
+        let mut broken = state_with_led(MockLed {
+            fail: true,
+            ..MockLed::default()
+        });
+        assert_eq!(
+            handle(&mut broken, Request::LedEnabledSet { enabled: true }).code,
+            -4
+        );
     }
 
     #[test]

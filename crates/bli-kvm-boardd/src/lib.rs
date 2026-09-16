@@ -9,6 +9,7 @@
 pub mod config;
 pub mod display;
 pub mod fan;
+pub mod led;
 pub mod server;
 pub mod spi;
 
@@ -66,6 +67,7 @@ pub fn build_state(
     let mut supervisor = FanSupervisor::new(config.fan.policy_config(), unix_millis(), fan)?;
     supervisor.initialize()?;
     let display = build_display(config, pwm_enabled);
+    let led = build_led(config, pwm_enabled);
     Ok(BoarddState::new(
         supervisor,
         FanModeName::Auto,
@@ -76,7 +78,33 @@ pub fn build_state(
         config.fan.pwm_period_ms,
         config.fan.line,
         display,
+        led,
     ))
+}
+
+/// Build the activity LED runtime; a failure never stops the fan.
+fn build_led(
+    config: &config::BoarddConfig,
+    actuation_enabled: bool,
+) -> Option<Box<dyn server::LedControl>> {
+    if !actuation_enabled {
+        return None;
+    }
+    let driver = match bli_kvm_gpio_chardev::ChardevGpioDriver::open(&config.gpio_chip) {
+        Ok(driver) => driver,
+        Err(error) => {
+            eprintln!("boardd: activity LED line unavailable: {error:?}");
+            return None;
+        }
+    };
+    let line = led::activity_led_line(&config.led);
+    match led::LedRuntime::new(driver, line, &config.led, unix_millis()) {
+        Ok(runtime) => Some(Box::new(runtime)),
+        Err(error) => {
+            eprintln!("boardd: activity LED unavailable: {error}");
+            None
+        }
+    }
 }
 
 /// Build the panel runtime when the daemon may actuate.
@@ -141,6 +169,7 @@ pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
             if let Ok(mut state) = sampler_state.lock() {
                 state.note_thermal(thermal.map_err(|error| error.class()));
                 let _ = state.sample(unix_millis());
+                state.tick_led();
             }
             std::thread::sleep(interval);
         }

@@ -113,9 +113,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("[dependencies]", manifest)
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
             if other_manifest != crate / "Cargo.toml":
-                self.assertNotIn(
-                    "bli-kvm-display-button-policy", other_manifest.read_text()
-                )
+                self.assertNotIn("bli-kvm-display-button-policy", other_manifest.read_text())
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("WakeDisplayCycle", source)
@@ -130,16 +128,27 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_activity_led_policy_is_pure_no_std_and_unlinked(self) -> None:
+    def _assert_only_board_daemon_consumes(self, crate_name: str) -> None:
+        crate = ROOT / "crates" / crate_name
+        consumers = [
+            manifest
+            for manifest in (ROOT / "crates").glob("*/Cargo.toml")
+            if manifest != crate / "Cargo.toml" and crate_name in manifest.read_text()
+        ]
+        self.assertEqual(
+            [consumer.parent.name for consumer in consumers],
+            ["bli-kvm-boardd"],
+            f"{crate_name} must have exactly one reviewed consumer",
+        )
+
+    def test_activity_led_policy_is_pure_no_std_and_single_consumer(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-activity-led-policy"
         manifest = (crate / "Cargo.toml").read_text()
         source = (crate / "src/lib.rs").read_text()
         self.assertIn('"crates/bli-kvm-activity-led-policy"', workspace)
         self.assertNotIn("[dependencies]", manifest)
-        for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest != crate / "Cargo.toml":
-                self.assertNotIn("bli-kvm-activity-led-policy", other_manifest.read_text())
+        self._assert_only_board_daemon_consumes("bli-kvm-activity-led-policy")
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
         self.assertIn("FaultInactive", source)
