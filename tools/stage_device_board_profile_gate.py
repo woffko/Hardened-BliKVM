@@ -49,6 +49,7 @@ APPLY_FACTS = {
     "kvmd_udc_unbound",
     "kvmd_gadget",
     "udc_bound",
+    "udc_bound_by",
 }
 TEARDOWN_FACTS = {
     "owner_stopped",
@@ -163,13 +164,13 @@ def build_apply_script(
             "  done\n"
             "fi\n"
             "if [ -d \"$gdir0/kvmd\" ]; then printf 'kvmd_gadget=present\\n'; else printf 'kvmd_gadget=absent\\n'; fi\n"
-            "printf 'udc_bound=%s\\n' \"${bound:-none}\"\n"
+            "printf 'udc_bound_by=%s\\n' \"${bound:-none}\"\n"
             "if [ -z \"$bound\" ]; then printf 'kvmd_udc_unbound=yes\\n'; else printf 'kvmd_udc_unbound=no\\n'; fi\n"
         )
     else:
         udc_block = (
             "printf 'kvmd_gadget=absent\\n'\n"
-            "printf 'udc_bound=kvmd\\n'\n"
+            "printf 'udc_bound_by=kvmd\\n'\n"
             "printf 'kvmd_udc_unbound=absent\\n'\n"
         )
     return f"""set -eu

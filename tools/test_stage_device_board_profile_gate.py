@@ -46,7 +46,8 @@ def apply_facts() -> dict[str, str]:
         "kvmd_stopped": "yes",
         "kvmd_udc_unbound": "yes",
         "kvmd_gadget": "absent",
-        "udc_bound": "none",
+        "udc_bound": "no",
+        "udc_bound_by": "none",
     }
 
 
