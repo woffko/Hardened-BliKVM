@@ -57,11 +57,15 @@ Recorded detail:
 - E5: `gui-parity-ours-auth-20260916-a.json` and
   `gui-parity-compare-20260916-a.json`.
 
-Open device gates need an operator confirmation and their own stage tool; the
-board daemon gates (fan, panel, LED, button) run through the daemon gate tool
-added with that handoff, the network and system action gates through theirs, the
-slot serving cutover through `tools/switch_signed_slot_server.py`, and the
-vendor replacement summary through the final acceptance run. KVMD retirement
+Open device gates need an operator confirmation and their own stage tool: the
+board daemon gates (fan, panel, LED and button) run through
+`tools/stage_device_boardd_gate.py --subsystem <name> --confirm-handoff`, which
+records the vendor sysfs exports, installs the daemon from the verified bundle,
+drives the subsystem over the control socket and only records `passed` with
+`--confirm-observed`; the network and system action gates run through their
+stage tools, the slot serving cutover through
+`tools/switch_signed_slot_server.py`, and the vendor replacement summary through
+the final acceptance run. KVMD retirement
 came from `tools/stage_device_kvmd_removal.py --confirm-removal`.
 
 ## Read-only evidence already in place
