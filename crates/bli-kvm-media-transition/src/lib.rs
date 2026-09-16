@@ -221,11 +221,19 @@ impl GadgetMediaExecutor {
         let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root)
             .map_err(|_| MediaTransitionError::Backend)?;
         let storage = state.mass_storage.as_ref();
+        let connected = state.udc.is_some();
         Ok(MediaState {
-            file: storage
-                .and_then(|storage| storage.file.file_name())
-                .map(|name| name.to_string_lossy().into_owned()),
-            connected: state.udc.is_some(),
+            // The reference surface treats a disconnected image as unmounted:
+            // the backing file may stay configured for a later remount, but it
+            // is only reported while the gadget is attached.
+            file: connected
+                .then(|| {
+                    storage
+                        .and_then(|storage| storage.file.file_name())
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .flatten(),
+            connected,
             cdrom: storage.is_some_and(|storage| storage.cdrom),
             writable: storage.is_some_and(|storage| !storage.read_only),
         })
@@ -242,11 +250,26 @@ impl GadgetMediaExecutor {
         mode: bli_kvm_core::VirtualMediaControlMode,
         writable: bool,
     ) -> bool {
-        if self.state_present() && bli_kvm_usb_gadget::unbind(&self.config.configfs_root).is_err() {
+        // A LUN that still has a backing file open refuses attribute writes
+        // (the kernel returns EBUSY for `ro`, `cdrom` and `file`), so drop the
+        // gadget and rebuild it for the new selection instead of patching it.
+        let Ok(selection) = catalog.resolve(image_id, mode, writable) else {
+            return false;
+        };
+        let selected = SelectedImage {
+            path: self.config.image_directory.join(selection.image_name()),
+            read_only: !selection.writable(),
+            cdrom: selection.mode() == bli_kvm_core::VirtualMediaControlMode::CdRom,
+        };
+        if self.state_present()
+            && bli_kvm_usb_gadget::remove(&self.config.configfs_root, &self.spec(&selected))
+                .is_err()
+        {
             return false;
         }
-        if !self.select(catalog, image_id, mode, writable) {
-            return false;
+        match self.selected.lock() {
+            Ok(mut guard) => *guard = Some(selected),
+            Err(_) => return false,
         }
         self.set_connected(true)
     }
