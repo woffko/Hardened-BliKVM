@@ -164,6 +164,9 @@ pub struct SystemCapabilities {
     pub status: FeatureStatus,
     pub read_only_rootfs: bool,
     pub maintenance_write_mode: bool,
+    /// Reboot and shutdown requests: advertised only when the privileged
+    /// system-action profile is armed.
+    pub actions: FeatureStatus,
     pub signed_application_updates: FeatureStatus,
     pub signed_system_updates: FeatureStatus,
     pub automatic_rollback: FeatureStatus,
@@ -299,6 +302,7 @@ mod tests {
                 status: FeatureStatus::unavailable(),
                 read_only_rootfs: false,
                 maintenance_write_mode: false,
+                actions: FeatureStatus::unavailable(),
                 signed_application_updates: FeatureStatus::unavailable(),
                 signed_system_updates: FeatureStatus::unavailable(),
                 automatic_rollback: FeatureStatus::unavailable(),

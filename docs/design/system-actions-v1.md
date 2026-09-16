@@ -42,12 +42,13 @@ journal or runs the action itself.
    fixed protocol code. Dispatch records the intent first and then asks the
    runner, which is the maintenance dispatcher in the device profile and a mock
    in the host tests.
-3. **Server endpoints** (`GET/POST /api/vm/system/reboot`, `/shutdown`): the
+3. **Server endpoints** (`POST /api/vm/system/reboot`, `/shutdown`): the
    settings UI's confirm action, gated by the usual session, CSRF and origin
-   checks plus a new `systemActions` capability that stays `unavailable` in
-   shipped builds and is advertised only with the reviewed profile. The POST
-   forwards the operator confirmation and maps the broker response; the GET
-   reports whether the capability is armed.
+   checks plus the `system.actions` capability, which stays `unavailable` in
+   shipped builds and is advertised only when the operator arms the surface
+   (`BLI_KVM_SYSTEM_ACTIONS=1` in a restricted build with a control socket).
+   The POST forwards the operator confirmation, refuses a request without it
+   before any IPC and maps the broker response.
 4. **Post-boot acceptance**: after a reboot the maintenance dispatcher records
    the post-boot observation, and `accept_post_boot` closes the journal entry
    only when the boot identity changed and the guards are healthy. A pending

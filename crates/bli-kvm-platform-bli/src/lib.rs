@@ -126,6 +126,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 status: FeatureStatus::read_only(user_reported),
                 read_only_rootfs: true,
                 maintenance_write_mode: true,
+                actions: FeatureStatus::unavailable(),
                 signed_application_updates: FeatureStatus::unavailable(),
                 signed_system_updates: FeatureStatus::unavailable(),
                 automatic_rollback: FeatureStatus::unavailable(),

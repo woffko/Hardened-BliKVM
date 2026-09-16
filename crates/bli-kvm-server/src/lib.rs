@@ -39,6 +39,7 @@ mod leader_key;
 mod media;
 mod network;
 mod session_lock;
+mod system_action;
 mod system_log;
 mod system_time;
 mod update;
@@ -99,6 +100,9 @@ pub struct ServerOptions {
     /// `restricted-control-surface` build. Requires the restricted surface and
     /// a configured control socket.
     pub media_controls_enabled: bool,
+    /// Explicit opt-in for the privileged reboot and shutdown requests. The
+    /// capability stays unavailable, and every request is refused, without it.
+    pub system_actions_enabled: bool,
     /// Image directory an operator upload writes into. Must be the same
     /// directory the board owner serves, and is required for uploads.
     pub media_directory: Option<PathBuf>,
@@ -124,6 +128,7 @@ impl Default for ServerOptions {
             restricted_controls_enabled: false,
             media_catalog: None,
             media_controls_enabled: false,
+            system_actions_enabled: false,
             media_directory: None,
         }
     }
@@ -198,6 +203,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         if options.media_controls_enabled {
             manifest.virtual_media.status =
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
+        if options.system_actions_enabled {
+            manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
     }
     manifest
@@ -323,6 +331,8 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(session_lock::get_session_lock).post(session_lock::set_session_lock),
         )
         .route("/application-power", post(atx::application_power))
+        .route("/vm/system/reboot", post(system_action::reboot))
+        .route("/vm/system/shutdown", post(system_action::shutdown))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
     // The media upload takes a large body, so it keeps its own bound, but it
@@ -1067,6 +1077,168 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), expected);
         }
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn system_action_requires_authentication_and_the_explicit_opt_in() {
+        // No session.
+        let response = app()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/vm/system/reboot",
+                serde_json::json!({"confirm": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Session, but the capability is not armed: refused before any IPC.
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(root.path().join("control.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut request = json_request(
+            Method::POST,
+            "/api/vm/system/reboot",
+            serde_json::json!({"confirm": true}),
+        );
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let capabilities = json_body(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/capabilities")
+                        .header(header::HOST, "kvm.test")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            capabilities["data"]["system"]["actions"]["availability"],
+            "unavailable"
+        );
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn system_action_forwards_the_confirmation_and_maps_refusals() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut served = 0_u32;
+            while served < 2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::SystemAction { request } => {
+                        assert_eq!(request.action, bli_kvm_core::SystemActionKind::Reboot);
+                        assert!(request.session_binding != 0);
+                        if served == 0 {
+                            bli_kvm_control_protocol::ControlResponse::Applied
+                        } else {
+                            bli_kvm_control_protocol::ControlResponse::Rejected {
+                                code: bli_kvm_control_protocol::ControlRejectionCode::NotArmed,
+                            }
+                        }
+                    }
+                    _ => panic!("unexpected request"),
+                };
+                served += 1;
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response,
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            secure_cookies: true,
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            system_actions_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        // A request without the explicit confirmation never reaches the owner.
+        let mut unconfirmed = json_request(
+            Method::POST,
+            "/api/vm/system/reboot",
+            serde_json::json!({"confirm": false}),
+        );
+        unconfirmed
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        unconfirmed
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        // The reference API reports application errors as HTTP 200 with a
+        // negative code, like every other write on this surface.
+        let response = app.clone().oneshot(unconfirmed).await.unwrap();
+        let status = response.status();
+        let body = json_body(response).await;
+        assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+        assert_eq!(body["code"], -1);
+
+        // CSRF is required like every other write.
+        let mut no_csrf = json_request(
+            Method::POST,
+            "/api/vm/system/reboot",
+            serde_json::json!({"confirm": true}),
+        );
+        no_csrf
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let response = app.clone().oneshot(no_csrf).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        for (expected_applied, expected_rejection) in [(true, None), (false, Some("not_armed"))] {
+            let mut request = json_request(
+                Method::POST,
+                "/api/vm/system/reboot",
+                serde_json::json!({"confirm": true}),
+            );
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            let body = json_body(app.clone().oneshot(request).await.unwrap()).await;
+            assert_eq!(body["data"]["applied"], expected_applied);
+            match expected_rejection {
+                Some(rejection) => assert_eq!(body["data"]["rejection"], rejection),
+                None => assert!(body["data"].get("rejection").is_none()),
+            }
+        }
+        broker.await.unwrap();
     }
 
     #[tokio::test]
