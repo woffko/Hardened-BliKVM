@@ -29,14 +29,23 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 - **Phase 6 — update and extensions.** Signed application-update commit-cycle
   and runtime-package receipts recorded; production bundle tools present.
 
+## Recorded on the board (2026-09-16)
+
+The board-owner acceptance window passed; see
+`docs/baselines/board-owner-acceptance.md` for the full record.
+
+- Composite gadget, native ATX bench and the three GUI probes:
+  `board-handoff-gate-20260916-k.json` (`functions=hid.usb0,hid.usb1,hid.usb2,
+  mass_storage.usb0`, `hid_write=ok`, every ATX action `within_tolerance=yes`),
+  `virtual-media-acceptance-20260916-a.json`,
+  `restricted-keyboard-20260916-a.json`,
+  `restricted-power-20260916-a.json`; teardown
+  `board-handoff-teardown-20260916-a.json` restored KVMD and its UDC.
+
 ## Open device gates
 
 | Gate | Needed receipt | How it is produced |
 | --- | --- | --- |
-| Composite gadget acceptance | `board-handoff-gate-*.json` with `acceptanceFacts.gadget_present=yes` | `tools/stage_device_board_profile_gate.py --confirm-handoff --accept-media-hid …` plus the two GUI probes, then `--teardown` |
-| Native ATX GPIO bench | same gate receipt with `atxBenchFacts.power_short=ok` | add `--accept-atx-bench --confirm-physical-disconnect` (Power/Reset unplugged) |
-| Virtual-media acceptance | `virtual-media-acceptance-*.json` with `result=passed` | `tools/playwright/virtual_media_acceptance.mjs` during the media/HID window |
-| Restricted power GUI | `restricted-power-*.json` with `result=passed` | `tools/playwright/restricted_power_probe.mjs` (Power/Reset unplugged) |
 | KVMD removal | `kvmd-removal-*.json` with `removal.kvmd_stopped=yes` | `tools/stage_device_kvmd_removal.py --confirm-removal`, which refuses until the three receipts above exist |
 
 Frame timing is recorded: `video-frame-timing-20260916-a.json` measured 258

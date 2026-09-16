@@ -138,6 +138,22 @@ is retracted. The active stand is the restricted-control profile on
 `https://10.0.77.118:8443/`; the main proxy on `443` returns `502` while
 `hardened-blikvm-server.service` is inactive.
 
+**2026-09-16: the board-owner acceptance window passed on the real board.** Our
+composite gadget was created by our own media attach and bound
+(`hid.usb0,hid.usb1,hid.usb2,mass_storage.usb0`, `hid_write=ok`), our native ATX
+executor pulsed the real lines inside tolerance (500/5000/500 ms,
+`within_tolerance=yes`), the three GUI probes passed against a temporary server
+wired to the owner socket, and teardown restored KVMD and its UDC. Receipts:
+`board-handoff-gate-20260916-k.json`, `board-handoff-teardown-20260916-a.json`,
+`virtual-media-acceptance-20260916-a.json`,
+`restricted-keyboard-20260916-a.json`,
+`restricted-power-20260916-a.json`; baseline
+`docs/baselines/board-owner-acceptance.md`. That baseline also lists the eight
+device-only defects the window exposed (staging restart, UDC takeover,
+raw `report_desc`, LUN attribute order, absolute symlink target, GPIO offset
+bound, chip-info ioctl number, bench fact keys). The acceptance report now shows
+only the KVMD removal gate open.
+
 The following now run on the board, mutation steps only with explicit operator
 confirmation, each producing a private receipt:
 
