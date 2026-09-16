@@ -47,6 +47,7 @@ APPLY_FACTS = {
     "gadget_name",
     "kvmd_stopped",
     "kvmd_udc_unbound",
+    "udc_state",
 }
 TEARDOWN_FACTS = {
     "owner_stopped",
@@ -132,25 +133,29 @@ def build_apply_script(
         # One UDC, held by the KVMD gadget. The vendor OTG helper rebinds it, so
         # stopping kvmd.service alone is not enough: the OTG and main units must
         # stop first, then the UDC is released (or unbound explicitly).
+        # One UDC, held by the KVMD gadget. The vendor OTG unit removes its
+        # gadget when it stops, so the UDC is released either way; verify from
+        # the UDC state instead of assuming.
+        udc_name = str(owner_env["BLI_KVM_GADGET_UDC"])
         udc_block = (
             "gdir0=/sys/kernel/config/usb_gadget\n"
             "systemctl stop kvmd-otg.service kvmd-main.service >/dev/null 2>&1 || true\n"
             "i=0\n"
             "while [ \"$i\" -lt 20 ]; do\n"
-            "  if [ -z \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then break; fi\n"
+            "  if [ ! -d \"$gdir0/kvmd\" ] || [ -z \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then break; fi\n"
             "  i=$((i + 1)); sleep 0.5\n"
             "done\n"
-            "if [ -d \"$gdir0/kvmd\" ]; then\n"
-            "  if [ -n \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
-            "    printf '' > \"$gdir0/kvmd/UDC\" || true\n"
-            "  fi\n"
-            "  if [ -z \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
-            "    printf 'kvmd_udc_unbound=yes\\n'\n"
-            "  else\n"
-            "    printf 'kvmd_udc_unbound=no\\n'\n"
-            "  fi\n"
+            "if [ -d \"$gdir0/kvmd\" ] && [ -n \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
+            "  printf '' > \"$gdir0/kvmd/UDC\" || true\n"
+            "fi\n"
+            "udc_state=$(cat /sys/class/udc/" + udc_name + "/state 2>/dev/null || echo missing)\n"
+            "printf 'udc_state=%s\\n' \"$udc_state\"\n"
+            "if [ -d \"$gdir0/kvmd\" ] && [ -n \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
+            "  printf 'kvmd_udc_unbound=no\\n'\n"
+            "elif [ \"$udc_state\" = \"not attached\" ]; then\n"
+            "  printf 'kvmd_udc_unbound=yes\\n'\n"
             "else\n"
-            "  printf 'kvmd_udc_unbound=absent\\n'\n"
+            "  printf 'kvmd_udc_unbound=no\\n'\n"
             "fi\n"
         )
     else:
