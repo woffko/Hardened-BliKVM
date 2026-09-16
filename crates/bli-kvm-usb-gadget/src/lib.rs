@@ -372,42 +372,47 @@ pub fn remove_steps(spec: &GadgetSpec) -> Vec<Step> {
     steps
 }
 
+fn step_error(path: &Path, error: std::io::Error) -> GadgetError {
+    GadgetError::Io(format!("{}: {error}", path.display()))
+}
+
 fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
     for step in steps {
         match step {
             Step::WriteFile { path, value } => {
                 let full = root.join(path);
                 if let Some(parent) = full.parent() {
-                    std::fs::create_dir_all(parent).map_err(io_error)?;
+                    std::fs::create_dir_all(parent).map_err(|error| step_error(path, error))?;
                 }
-                std::fs::write(&full, value).map_err(io_error)?;
+                std::fs::write(&full, value).map_err(|error| step_error(path, error))?;
             }
             Step::WriteBytes { path, value } => {
                 let full = root.join(path);
                 if let Some(parent) = full.parent() {
-                    std::fs::create_dir_all(parent).map_err(io_error)?;
+                    std::fs::create_dir_all(parent).map_err(|error| step_error(path, error))?;
                 }
-                std::fs::write(&full, value).map_err(io_error)?;
+                std::fs::write(&full, value).map_err(|error| step_error(path, error))?;
             }
             Step::Symlink { link, target } => {
                 let full = root.join(link);
                 if !full.exists() {
                     if let Some(parent) = full.parent() {
-                        std::fs::create_dir_all(parent).map_err(io_error)?;
+                        std::fs::create_dir_all(parent).map_err(|error| step_error(link, error))?;
                     }
-                    std::os::unix::fs::symlink(target, &full).map_err(io_error)?;
+                    std::os::unix::fs::symlink(target, &full)
+                        .map_err(|error| step_error(link, error))?;
                 }
             }
             Step::RemoveFile { path } => {
                 let full = root.join(path);
                 if full.exists() {
-                    std::fs::remove_file(&full).map_err(io_error)?;
+                    std::fs::remove_file(&full).map_err(|error| step_error(path, error))?;
                 }
             }
             Step::RemoveDir { path } => {
                 let full = root.join(path);
                 if full.exists() {
-                    std::fs::remove_dir_all(&full).map_err(io_error)?;
+                    std::fs::remove_dir_all(&full).map_err(|error| step_error(path, error))?;
                 }
             }
         }
