@@ -186,7 +186,7 @@ configfs mounted) and not a substitute host.
     --known-hosts evidence/private/ssh-known-hosts \
     --bundle /mnt/d/debug/blikvm/hardened-blikvm/bundles/hardened-blikvm-board-profile-aarch64.tar.gz \
     --output evidence/private/board-handoff-gate-<date>.json \
-    --udc musb-hdrc.2.auto --confirm-handoff \
+    --udc musb-hdrc.2.auto --confirm-handoff --takeover-udc \
     --accept-media-hid --accept-timeout-seconds 300 --accept-image kubuntu.img \
     --accept-atx-bench --confirm-physical-disconnect
   ```
@@ -206,6 +206,10 @@ configfs mounted) and not a substitute host.
   the gate waits, drive the reviewed GUI actions (attach `kubuntu.img`, press a
   key, move the pointer) and confirm the target sees them; the gate fails closed
   if any recorded fact is missing or unexpected.
+- The board has a single UDC and KVMD holds it, so the owner cannot bind its
+  gadget without it: `--takeover-udc` unbinds the `kvmd` gadget right after the
+  KVMD stop and records `kvmd_udc_unbound`; teardown waits for and requires
+  `kvmd_udc_bound=yes`, so KVMD always owns its gadget again afterwards.
 - For the native ATX bench add `--accept-atx-bench --confirm-physical-disconnect`
   to the same gate run: it executes the bundled
   `bli-kvm-atx-gpio-bench-gate` (argument-free, `BLI_KVM_ATX_BENCH_CONFIRM=1`)

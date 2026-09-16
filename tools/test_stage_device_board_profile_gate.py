@@ -44,6 +44,7 @@ def apply_facts() -> dict[str, str]:
         "udc_bound": "yes",
         "gadget_name": "hardened",
         "kvmd_stopped": "yes",
+        "kvmd_udc_unbound": "yes",
     }
 
 
@@ -53,6 +54,7 @@ def teardown_facts() -> dict[str, str]:
         "hardened_gadget_removed": "yes",
         "runtime_removed": "yes",
         "kvmd_restarted": "yes",
+        "kvmd_udc_bound": "yes",
     }
 
 
@@ -143,6 +145,36 @@ class StageBoardProfileGateTests(unittest.TestCase):
         base.update(overrides)
         return base
 
+    def test_udc_takeover_is_optional_and_verified_both_ways(self) -> None:
+        environment = {"ownerEnvironment": {"BLI_KVM_CONTROL_SOCKET": "/run/x.sock"}, "atxEnvironmentFile": {}}
+        plain = gate.build_apply_script(environment, "a" * 64)
+        takeover = gate.build_apply_script(environment, "a" * 64, takeover_udc=True)
+        self.assertNotIn("kvmd_udc_unbound=yes", plain)
+        self.assertIn("kvmd_udc_unbound=absent", plain)
+        self.assertIn('printf \'\' > "$gdir0/kvmd/UDC"', takeover)
+        self.assertIn("kvmd_udc_unbound=yes", takeover)
+
+        for script in (plain, takeover, gate.build_teardown_script()):
+            syntax = subprocess.run(
+                ["sh", "-n"],
+                input=script.encode(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr.decode())
+
+        gate.validate_apply(
+            {"socket_present": "yes", "owner_started": "yes", "kvmd_udc_unbound": "yes"},
+            takeover_udc=True,
+        )
+        with self.assertRaises(ValueError):
+            gate.validate_apply(
+                {"socket_present": "yes", "owner_started": "yes", "kvmd_udc_unbound": "no"},
+                takeover_udc=True,
+            )
+        self.assertIn("kvmd_udc_bound=yes", gate.build_teardown_script())
+
     def test_atx_bench_script_pins_the_binary_and_timing(self) -> None:
         script = gate.build_atx_bench_script("/dev/gpiochip0", (500, 5000, 500))
         self.assertIn("BLI_KVM_ATX_BENCH_CONFIRM=1", script)
@@ -196,7 +228,11 @@ class StageBoardProfileGateTests(unittest.TestCase):
         self.assertIn("systemctl start kvmd.service", teardown)
         self.assertIn('rm -rf -- "$root"', teardown)
         self.assertIn("$gdir/hardened", teardown)
-        self.assertNotIn("$gdir/kvmd", teardown)
+        # The teardown only reads the kvmd gadget to prove it is bound again; it
+        # must never write to it or remove anything of KVMD's.
+        self.assertNotIn('> "$gdir/kvmd', teardown)
+        self.assertNotIn("rm -f -- \"$gdir/kvmd", teardown)
+        self.assertIn('$gdir/kvmd/UDC', teardown)
         self.assertIn(gate.MARKER, teardown)
         self.assertIn("rm -f -- /run/hardened-blikvm-gadget/control.sock", teardown)
 

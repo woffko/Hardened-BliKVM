@@ -46,12 +46,14 @@ APPLY_FACTS = {
     "udc_bound",
     "gadget_name",
     "kvmd_stopped",
+    "kvmd_udc_unbound",
 }
 TEARDOWN_FACTS = {
     "owner_stopped",
     "hardened_gadget_removed",
     "runtime_removed",
     "kvmd_restarted",
+    "kvmd_udc_bound",
 }
 ATX_BENCH_ACTIONS = ("power_short", "power_long", "reset")
 ATX_BENCH_FACTS = {"run_rc"} | {
@@ -103,6 +105,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_ACCEPT_TIMEOUT_SECONDS,
     )
     _ = parser.add_argument("--accept-image", default="kubuntu.img")
+    _ = parser.add_argument("--takeover-udc", action="store_true")
     _ = parser.add_argument("--accept-atx-bench", action="store_true")
     _ = parser.add_argument("--confirm-physical-disconnect", action="store_true")
     _ = parser.add_argument("--atx-chip", default="/dev/gpiochip0")
@@ -117,9 +120,32 @@ def _env_args(environment: dict[str, str]) -> str:
     return " ".join(f"{key}={value}" for key, value in sorted(environment.items()))
 
 
-def build_apply_script(plan: dict[str, Any], bundle_sha256: str) -> str:
+def build_apply_script(
+    plan: dict[str, Any], bundle_sha256: str, takeover_udc: bool = False
+) -> str:
     owner_env = plan["ownerEnvironment"]
     atx_env = plan["atxEnvironmentFile"]
+    if takeover_udc:
+        # The board has one UDC and KVMD holds it; the owner cannot bind its own
+        # gadget until KVMD's gadget is unbound. Teardown proves it is bound
+        # again after KVMD restarts.
+        udc_block = (
+            "gdir0=/sys/kernel/config/usb_gadget\n"
+            "if [ -d \"$gdir0/kvmd\" ]; then\n"
+            "  if [ -n \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
+            "    printf '' > \"$gdir0/kvmd/UDC\" || true\n"
+            "  fi\n"
+            "  if [ -z \"$(cat \"$gdir0/kvmd/UDC\" 2>/dev/null | tr -d '\\n')\" ]; then\n"
+            "    printf 'kvmd_udc_unbound=yes\\n'\n"
+            "  else\n"
+            "    printf 'kvmd_udc_unbound=no\\n'\n"
+            "  fi\n"
+            "else\n"
+            "  printf 'kvmd_udc_unbound=absent\\n'\n"
+            "fi\n"
+        )
+    else:
+        udc_block = "printf 'kvmd_udc_unbound=absent\\n'\n"
     return f"""set -eu
 root={RUNTIME_ROOT}
 marker={MARKER}
@@ -138,7 +164,7 @@ ATXEOF
 if systemctl is-active kvmd.service >/dev/null 2>&1; then printf 'kvmd_was_active=yes\\n'; else printf 'kvmd_was_active=no\\n'; fi
 systemctl stop kvmd.service >/dev/null 2>&1 || true
 if systemctl is-active kvmd.service >/dev/null 2>&1; then printf 'kvmd_stopped=no\\n'; else printf 'kvmd_stopped=yes\\n'; fi
-env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root {_env_args(owner_env)} setsid "$broker" >"$root/owner.log" 2>&1 &
+{udc_block}env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root {_env_args(owner_env)} setsid "$broker" >"$root/owner.log" 2>&1 &
 owner_pid=$!
 printf '%s' "$owner_pid" > "$root/owner.pid"
 socket=$(printf '%s' "{owner_env['BLI_KVM_CONTROL_SOCKET']}")
@@ -285,20 +311,36 @@ rm -f -- /run/hardened-blikvm-gadget/control.sock
 if [ ! -e "$root" ]; then printf 'runtime_removed=yes\\n'; else printf 'runtime_removed=no\\n'; fi
 systemctl start kvmd.service >/dev/null 2>&1 || true
 if systemctl is-active kvmd.service >/dev/null 2>&1; then printf 'kvmd_restarted=yes\\n'; else printf 'kvmd_restarted=no\\n'; fi
+i=0
+while [ "$i" -lt 20 ]; do
+  if [ -n "$(cat "$gdir/kvmd/UDC" 2>/dev/null | tr -d '\\n')" ]; then break; fi
+  i=$((i + 1)); sleep 0.5
+done
+if [ -n "$(cat "$gdir/kvmd/UDC" 2>/dev/null | tr -d '\\n')" ]; then printf 'kvmd_udc_bound=yes\\n'; else printf 'kvmd_udc_bound=no\\n'; fi
 """
 
 
-def validate_apply(facts: dict[str, str]) -> None:
+def validate_apply(facts: dict[str, str], takeover_udc: bool = False) -> None:
     # The owner serves the control socket on start; the composite gadget is
     # created on demand by the first attach, so gadget facts are informational
     # here and are asserted by the media/HID gates.
     for key in ("socket_present", "owner_started"):
         if facts[key] != "yes":
             raise ValueError(f"apply gate failed: {key}={facts[key]}")
+    if takeover_udc and facts["kvmd_udc_unbound"] != "yes":
+        raise ValueError(
+            f"apply gate failed: the kvmd UDC is still bound ({facts['kvmd_udc_unbound']})"
+        )
 
 
 def validate_teardown(facts: dict[str, str]) -> None:
-    for key in ("owner_stopped", "hardened_gadget_removed", "runtime_removed", "kvmd_restarted"):
+    for key in (
+        "owner_stopped",
+        "hardened_gadget_removed",
+        "runtime_removed",
+        "kvmd_restarted",
+        "kvmd_udc_bound",
+    ):
         if facts[key] != "yes":
             raise ValueError(f"teardown gate failed: {key}={facts[key]}")
 
@@ -347,6 +389,7 @@ def execute(args: argparse.Namespace) -> int:
             "timeoutSeconds": args.accept_timeout_seconds,
             "expectedImage": args.accept_image,
             "operatorDrivesGui": True,
+            "takeoverUdc": bool(args.takeover_udc),
             "atxBench": bool(args.accept_atx_bench),
             "physicalDisconnectConfirmed": bool(args.confirm_physical_disconnect),
         },
@@ -373,12 +416,16 @@ def execute(args: argparse.Namespace) -> int:
             apply = prototype.run_ssh(
                 target,
                 secret,
-                build_apply_script(plan, str(plan["bundle"]["sha256"])),
+                build_apply_script(
+                    plan,
+                    str(plan["bundle"]["sha256"]),
+                    takeover_udc=bool(args.takeover_udc),
+                ),
                 timeout=120,
             )
             apply.check_returncode()
             facts = prototype.parse_facts(apply.stdout, set(APPLY_FACTS))
-            validate_apply(facts)
+            validate_apply(facts, takeover_udc=bool(args.takeover_udc))
             if args.accept_media_hid:
                 acceptance = prototype.run_ssh(
                     target,
