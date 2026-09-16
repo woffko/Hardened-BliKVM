@@ -292,7 +292,14 @@ fn function_steps(function: &Function) -> Vec<Step> {
 
     steps.push(Step::Symlink {
         link: config.join(&name),
-        target: PathBuf::from("../../functions").join(&name),
+        // configfs accepts the link target exactly in the form the stock
+        // gadget on this board uses, i.e. a path that climbs out of the
+        // configuration directory into the configfs mount and back down to the
+        // function.
+        target: PathBuf::from("../../../../usb_gadget")
+            .join(GADGET_NAME)
+            .join("functions")
+            .join(&name),
     });
     steps
 }
@@ -399,7 +406,9 @@ fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
             }
             Step::Symlink { link, target } => {
                 let full = root.join(link);
-                if !full.exists() {
+                // Test the link itself: configfs resolves `functions/<name>`
+                // against the gadget root, so a plain exists() can misread it.
+                if std::fs::symlink_metadata(&full).is_err() {
                     if let Some(parent) = full.parent() {
                         std::fs::create_dir_all(parent).map_err(|error| step_error(link, error))?;
                     }
@@ -739,11 +748,11 @@ mod tests {
             .unwrap(),
             vec![0x05, 0x01, 0x09, 0x06]
         );
-        assert!(
-            directory
-                .path()
-                .join("hardened/configs/c.1/hid.usb0")
-                .is_symlink()
+        let link = directory.path().join("hardened/configs/c.1/hid.usb0");
+        assert!(link.is_symlink());
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            PathBuf::from("../../../../usb_gadget/hardened/functions/hid.usb0")
         );
     }
 
