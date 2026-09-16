@@ -51,7 +51,15 @@ Recorded detail:
   re-attach).
 - E2: `boardd-fan-preflight-20260916-a.json` (vendor sysfs lines 259, 260, 261,
   262 and 269 still claimed, line 257 unused, thermal about 51.5 C) and
-  `kvmd-removal-20260916-a.json` (`removal.kvmd_stopped=yes`).
+  `kvmd-removal-20260916-a.json` (`removal.kvmd_stopped=yes`). The gate tool's
+  read-only plan mode was also run per subsystem before any handoff:
+  `boardd-fan-preflight-20260916-b.json` (line 269 present, value 0, output,
+  active-high, daemon absent, thermal 53.5 C), `boardd-panel-preflight-...-a`
+  (lines 259, 262 and 260 present, value 1, output, active-high),
+  `boardd-led-preflight-...-a` (line 261 present, value 1) and
+  `boardd-button-preflight-...-a` (line 257 absent, as the read-only capture
+  already showed for an unused line). Each plan receipt is `result=plan`, never a
+  gate pass.
 - E4: the signed application update commit cycle
   (`persistent-write-*-commit-*.json`).
 - E5: `gui-parity-ours-auth-20260916-a.json`,
