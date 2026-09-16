@@ -79,8 +79,12 @@ enables the backlight; it draws a colour-bar test pattern across the full panel
 in bounded chunks through the pinned `bli-kvm-st7789-model` encoder, which now
 has exactly one reviewed consumer. The panel lines gained reviewed roles
 (`DisplayDataCommand`, `DisplayReset`, `DisplayBacklight`) and the unit allows
-`/dev/spidev1.0`. Still open before the panel gate: the two control-surface
-requests (`display_test`, `display_backlight_set`) and the panel lines handoff.
+`/dev/spidev1.0`. The control surface now also carries
+`display_test` and `display_backlight_set` plus the panel fields in the status
+view (`displayPresent`, `displayInitialized`, `displayBacklightOn`); a panel
+that fails to come up never stops the fan, it is reported on stderr and shown as
+absent. Still open before the panel gate: the panel lines handoff (unexport the
+vendor sysfs lines 259/262/260 and provision the operator configuration).
 
 ## Ownership handoff and rollback
 

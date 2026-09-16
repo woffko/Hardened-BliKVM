@@ -65,6 +65,7 @@ pub fn build_state(
     fan.start()?;
     let mut supervisor = FanSupervisor::new(config.fan.policy_config(), unix_millis(), fan)?;
     supervisor.initialize()?;
+    let display = build_display(config, pwm_enabled);
     Ok(BoarddState::new(
         supervisor,
         FanModeName::Auto,
@@ -74,7 +75,42 @@ pub fn build_state(
         pwm_enabled,
         config.fan.pwm_period_ms,
         config.fan.line,
+        display,
     ))
+}
+
+/// Build the panel runtime when the daemon may actuate.
+///
+/// A panel that cannot be brought up never stops the fan: the failure is
+/// reported on stderr and the status view shows the display as absent.
+fn build_display(
+    config: &config::BoarddConfig,
+    actuation_enabled: bool,
+) -> Option<Box<dyn server::DisplayControl>> {
+    if !actuation_enabled {
+        return None;
+    }
+    let bus = match spi::SpidevBus::open(&config.display.spidev, config.display.clock_hz) {
+        Ok(bus) => bus,
+        Err(error) => {
+            eprintln!("boardd: display bus unavailable: {error}");
+            return None;
+        }
+    };
+    let driver = match bli_kvm_gpio_chardev::ChardevGpioDriver::open(&config.gpio_chip) {
+        Ok(driver) => driver,
+        Err(error) => {
+            eprintln!("boardd: display lines unavailable: {error:?}");
+            return None;
+        }
+    };
+    let mut display =
+        display::Display::new(bus, driver, display::ThreadSleeper, config.display.clone());
+    if let Err(error) = display.initialize() {
+        eprintln!("boardd: display initialization failed: {error}");
+        return None;
+    }
+    Some(Box::new(display))
 }
 
 /// Run one automatic evaluation and print the status, then release the line.

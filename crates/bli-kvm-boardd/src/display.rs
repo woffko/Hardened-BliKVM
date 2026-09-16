@@ -192,6 +192,35 @@ where
     }
 }
 
+impl<B, G, S> crate::server::DisplayControl for Display<B, G, S>
+where
+    B: SpiBus,
+    G: GpioDriver + Send,
+    S: Sleeper + Send,
+{
+    fn test_pattern(&mut self) -> Result<(), &'static str> {
+        self.draw_color_bars().map_err(|error| match error {
+            DisplayError::NotInitialized => "invalid_state",
+            _ => "backend_unavailable",
+        })
+    }
+
+    fn set_backlight(&mut self, on: bool) -> Result<(), &'static str> {
+        Display::set_backlight(self, on).map_err(|error| match error {
+            DisplayError::NotInitialized => "invalid_state",
+            _ => "backend_unavailable",
+        })
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    fn backlight_on(&self) -> bool {
+        self.backlight_on
+    }
+}
+
 fn line(role: GpioRole, spec: crate::config::LineSpec) -> LineRequest {
     LineRequest {
         chip: "gpiochip0",

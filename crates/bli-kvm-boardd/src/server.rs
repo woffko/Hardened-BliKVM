@@ -15,6 +15,16 @@ use thiserror::Error;
 /// Largest request line the daemon accepts.
 pub const MAX_REQUEST_BYTES: usize = 4 * 1024;
 
+/// Display operations the control surface exposes. The daemon holds this as a
+/// trait object so the panel runtime stays behind the board configuration and
+/// the host tests can use a mock.
+pub trait DisplayControl: Send {
+    fn test_pattern(&mut self) -> Result<(), &'static str>;
+    fn set_backlight(&mut self, on: bool) -> Result<(), &'static str>;
+    fn is_initialized(&self) -> bool;
+    fn backlight_on(&self) -> bool;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FanModeName {
@@ -28,6 +38,8 @@ pub enum Request {
     Status,
     FanModeSet { mode: FanModeName },
     FanDutySet { percent: u8 },
+    DisplayTest,
+    DisplayBacklightSet { on: bool },
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -42,6 +54,9 @@ pub struct StatusView {
     pub thermal_millidegrees: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thermal_error: Option<&'static str>,
+    pub display_present: bool,
+    pub display_initialized: bool,
+    pub display_backlight_on: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +109,7 @@ pub struct BoarddState<A: FanActuator> {
     fan_line: u16,
     last_thermal: Option<i32>,
     thermal_error: Option<&'static str>,
+    display: Option<Box<dyn DisplayControl>>,
 }
 
 impl<A> BoarddState<A>
@@ -111,8 +127,10 @@ where
         pwm_enabled: bool,
         pwm_period_ms: u64,
         fan_line: u16,
+        display: Option<Box<dyn DisplayControl>>,
     ) -> Self {
         Self {
+            display,
             supervisor,
             mode,
             manual_duty,
@@ -123,6 +141,17 @@ where
             fan_line,
             last_thermal: None,
             thermal_error: None,
+        }
+    }
+
+    pub fn has_display(&self) -> bool {
+        self.display.is_some()
+    }
+
+    fn display(&mut self) -> Result<&mut (dyn DisplayControl + 'static), BoarddError> {
+        match self.display.as_mut() {
+            Some(display) => Ok(display.as_mut()),
+            None => Err(BoarddError::InvalidState),
         }
     }
 
@@ -158,7 +187,32 @@ where
             fan_line: self.fan_line,
             thermal_millidegrees: self.last_thermal,
             thermal_error: self.thermal_error,
+            display_present: self.display.is_some(),
+            display_initialized: self
+                .display
+                .as_ref()
+                .is_some_and(|display| display.is_initialized()),
+            display_backlight_on: self
+                .display
+                .as_ref()
+                .is_some_and(|display| display.backlight_on()),
         }
+    }
+
+    pub fn draw_display_test(&mut self) -> Result<(), BoarddError> {
+        let display = self.display()?;
+        display.test_pattern().map_err(|kind| match kind {
+            "invalid_state" => BoarddError::InvalidState,
+            _ => BoarddError::BackendUnavailable,
+        })
+    }
+
+    pub fn set_display_backlight(&mut self, on: bool) -> Result<(), BoarddError> {
+        let display = self.display()?;
+        display.set_backlight(on).map_err(|kind| match kind {
+            "invalid_state" => BoarddError::InvalidState,
+            _ => BoarddError::BackendUnavailable,
+        })
     }
 
     pub fn set_mode(&mut self, mode: FanModeName) -> Result<(), BoarddError> {
@@ -251,6 +305,14 @@ where
             Err(error) => Response::error(-error_code(&error), error.to_string_static()),
         },
         Request::FanDutySet { percent } => match state.set_manual_duty(percent) {
+            Ok(()) => Response::ok(state),
+            Err(error) => Response::error(-error_code(&error), error.to_string_static()),
+        },
+        Request::DisplayTest => match state.draw_display_test() {
+            Ok(()) => Response::ok(state),
+            Err(error) => Response::error(-error_code(&error), error.to_string_static()),
+        },
+        Request::DisplayBacklightSet { on } => match state.set_display_backlight(on) {
             Ok(()) => Response::ok(state),
             Err(error) => Response::error(-error_code(&error), error.to_string_static()),
         },
@@ -365,7 +427,105 @@ mod tests {
     fn state() -> BoarddState<MockActuator> {
         let mut supervisor = FanSupervisor::new(policy(), 0, MockActuator::default()).unwrap();
         let _ = supervisor.initialize();
-        BoarddState::new(supervisor, FanModeName::Auto, 0, 20, 100, true, 40, 269)
+        BoarddState::new(
+            supervisor,
+            FanModeName::Auto,
+            0,
+            20,
+            100,
+            true,
+            40,
+            269,
+            None,
+        )
+    }
+
+    #[derive(Default)]
+    struct MockDisplay {
+        initialized: bool,
+        backlight: bool,
+        fail: bool,
+        patterns: usize,
+    }
+
+    impl DisplayControl for MockDisplay {
+        fn test_pattern(&mut self) -> Result<(), &'static str> {
+            if self.fail {
+                return Err("backend_unavailable");
+            }
+            if !self.initialized {
+                return Err("invalid_state");
+            }
+            self.patterns += 1;
+            Ok(())
+        }
+
+        fn set_backlight(&mut self, on: bool) -> Result<(), &'static str> {
+            if self.fail {
+                return Err("backend_unavailable");
+            }
+            if !self.initialized && on {
+                return Err("invalid_state");
+            }
+            self.backlight = on;
+            Ok(())
+        }
+
+        fn is_initialized(&self) -> bool {
+            self.initialized
+        }
+
+        fn backlight_on(&self) -> bool {
+            self.backlight
+        }
+    }
+
+    fn state_with_display(display: MockDisplay) -> BoarddState<MockActuator> {
+        let mut supervisor = FanSupervisor::new(policy(), 0, MockActuator::default()).unwrap();
+        let _ = supervisor.initialize();
+        BoarddState::new(
+            supervisor,
+            FanModeName::Auto,
+            0,
+            20,
+            100,
+            true,
+            40,
+            269,
+            Some(Box::new(display)),
+        )
+    }
+
+    #[test]
+    fn display_requests_reach_the_panel_runtime() {
+        let mut state = state_with_display(MockDisplay {
+            initialized: true,
+            ..MockDisplay::default()
+        });
+        assert!(state.status().display_present);
+        assert_eq!(handle(&mut state, Request::DisplayTest).code, 0);
+        let response = handle(&mut state, Request::DisplayBacklightSet { on: false });
+        assert_eq!(response.code, 0);
+        let data = response.data.unwrap();
+        assert!(!data.display_backlight_on);
+        assert!(data.display_initialized);
+    }
+
+    #[test]
+    fn display_requests_fail_closed_without_or_on_a_broken_panel() {
+        let mut state = state();
+        assert!(!state.status().display_present);
+        assert_eq!(handle(&mut state, Request::DisplayTest).code, -2);
+
+        let mut broken = state_with_display(MockDisplay {
+            initialized: true,
+            fail: true,
+            ..MockDisplay::default()
+        });
+        assert_eq!(handle(&mut broken, Request::DisplayTest).code, -4);
+
+        let mut uninitialized = state_with_display(MockDisplay::default());
+        assert_eq!(handle(&mut uninitialized, Request::DisplayTest).code, -2);
     }
 
     #[test]
