@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import http.cookiejar
 import json
 import os
@@ -22,6 +23,7 @@ import re
 import sys
 import urllib.error
 import urllib.parse
+import ssl
 import urllib.request
 import uuid
 from pathlib import Path
@@ -78,9 +80,56 @@ def multipart_body(name: str, content: bytes, boundary: str) -> bytes:
     return head + content + tail
 
 
-def build_opener() -> urllib.request.OpenerDirector:
+class _NamedHttpsConnection(http.client.HTTPSConnection):
+    """Connect to the URL host but verify (and send SNI for) another name.
+
+    The stand's own certificate names the board, not its address, so the
+    operator connects to the address and verifies the certificate name with
+    `--tls-server-name`, the same idea as `curl --resolve`.
+    """
+
+    def __init__(self, *args: object, server_name: str | None = None, **kwargs: object) -> None:
+        self._server_name = server_name
+        super().__init__(*args, **kwargs)
+
+    def connect(self) -> None:
+        http.client.HTTPConnection.connect(self)
+        if self.sock is None:
+            raise OSError("connection failed")
+        self.sock = self._context.wrap_socket(
+            self.sock, server_hostname=self._server_name or self.host
+        )
+
+
+class _NamedHttpsHandler(urllib.request.HTTPSHandler):
+    def __init__(self, context: ssl.SSLContext, server_name: str) -> None:
+        super().__init__(context=context)
+        self._server_name = server_name
+
+    def https_open(self, req: urllib.request.Request) -> object:
+        return self.do_open(
+            lambda host, **kwargs: _NamedHttpsConnection(
+                host, server_name=self._server_name, **kwargs
+            ),
+            req,
+        )
+
+
+def build_opener(
+    ca_file: str | None = None,
+    tls_server_name: str | None = None,
+) -> urllib.request.OpenerDirector:
     jar = http.cookiejar.CookieJar()
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    handlers: list[urllib.request.BaseHandler] = [urllib.request.HTTPCookieProcessor(jar)]
+    if ca_file is not None:
+        # The stand serves its own certificate; verify against the operator's
+        # copy of it instead of disabling verification.
+        context = ssl.create_default_context(cafile=ca_file)
+        if tls_server_name is not None:
+            handlers.append(_NamedHttpsHandler(context, tls_server_name))
+        else:
+            handlers.append(urllib.request.HTTPSHandler(context=context))
+    return urllib.request.build_opener(*handlers)
 
 
 def post_json(
@@ -105,6 +154,12 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument("--username", required=True)
     _ = parser.add_argument("--file", required=True)
     _ = parser.add_argument("--output", required=True)
+    _ = parser.add_argument("--ca-file", default=None)
+    _ = parser.add_argument(
+        "--tls-server-name",
+        default=None,
+        help="certificate name to verify when connecting by address",
+    )
     return parser.parse_args()
 
 
@@ -137,7 +192,7 @@ def execute(args: argparse.Namespace) -> int:
             "receiptContainsSecrets": False,
         },
     }
-    opener = build_opener()
+    opener = build_opener(args.ca_file, args.tls_server_name)
     setup = json.loads(
         opener.open(urllib.parse.urljoin(base, "/api/auth/setup"), timeout=30)
         .read()

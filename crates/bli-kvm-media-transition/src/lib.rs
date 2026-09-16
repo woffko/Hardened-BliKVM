@@ -103,6 +103,7 @@ pub struct GadgetMediaConfig {
 }
 
 #[cfg(feature = "gadget-media-profile")]
+#[derive(Clone)]
 struct SelectedImage {
     path: PathBuf,
     read_only: bool,
@@ -198,14 +199,10 @@ impl GadgetMediaExecutor {
             }
             return bli_kvm_usb_gadget::unbind(&self.config.configfs_root).is_ok();
         }
-        let selected = match self.selected.lock() {
-            Ok(guard) => guard,
-            Err(_) => return false,
-        };
-        let Some(selected) = selected.as_ref() else {
+        let Some(selected) = self.current_selection() else {
             return false;
         };
-        let spec = self.spec(selected);
+        let spec = self.spec(&selected);
         match bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec) {
             Ok(()) => true,
             Err(error) => {
@@ -239,8 +236,45 @@ impl GadgetMediaExecutor {
         })
     }
 
+    /// The recorded selection, or the one the gadget currently exposes after
+    /// a restart of the owner process.
+    fn current_selection(&self) -> Option<SelectedImage> {
+        if let Ok(guard) = self.selected.lock()
+            && let Some(selected) = guard.clone()
+        {
+            return Some(selected);
+        }
+        let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root).ok()?;
+        let storage = state.mass_storage?;
+        Some(SelectedImage {
+            path: storage.file,
+            read_only: storage.read_only,
+            cdrom: storage.cdrom,
+        })
+    }
+
     fn reconnect(&self) -> bool {
-        bli_kvm_usb_gadget::reconnect(&self.config.configfs_root, &self.config.udc).is_ok()
+        // Rebuild the function when the selection is known: that covers a
+        // gadget left torn by a failed swap and a stale controller after an
+        // eject, and it re-enumerates cleanly for the target.
+        if self.state_present()
+            && let Some(selected) = self.current_selection()
+        {
+            match bli_kvm_usb_gadget::replace_mass_storage(
+                &self.config.configfs_root,
+                &self.spec(&selected),
+            ) {
+                Ok(()) => return true,
+                Err(error) => eprintln!("media: gadget reconnect failed: {error:?}"),
+            }
+        }
+        match bli_kvm_usb_gadget::reconnect(&self.config.configfs_root, &self.config.udc) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("media: gadget rebind failed: {error:?}");
+                false
+            }
+        }
     }
 
     fn mount(
@@ -261,17 +295,25 @@ impl GadgetMediaExecutor {
             read_only: !selection.writable(),
             cdrom: selection.mode() == bli_kvm_core::VirtualMediaControlMode::CdRom,
         };
-        if self.state_present()
-            && bli_kvm_usb_gadget::remove(&self.config.configfs_root, &self.spec(&selected))
-                .is_err()
-        {
+        // The kernel refuses `ro`, `cdrom` and `file` writes while a LUN still
+        // holds a backing file, so rebuild the mass-storage function for the
+        // new selection instead of patching the existing one. The HID
+        // functions are left alone: the owner keeps their character devices.
+        let spec = self.spec(&selected);
+        let result = if self.state_present() {
+            bli_kvm_usb_gadget::replace_mass_storage(&self.config.configfs_root, &spec)
+        } else {
+            bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec)
+        };
+        if let Err(error) = result {
+            eprintln!("media: gadget mount failed: {error:?}");
             return false;
         }
         match self.selected.lock() {
             Ok(mut guard) => *guard = Some(selected),
             Err(_) => return false,
         }
-        self.set_connected(true)
+        true
     }
 
     fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
@@ -807,6 +849,32 @@ mod tests {
         let cdrom = executor.state().unwrap();
         assert!(cdrom.cdrom);
         assert!(cdrom.connected);
+
+        // Eject, then mount a different mode: the executor must drop and
+        // rebuild the mass-storage function instead of patching a busy LUN.
+        assert!(executor.execute(
+            &VirtualMediaCommand::SetConnected { connected: false },
+            &catalog
+        ));
+        assert_eq!(executor.state().unwrap().file, None);
+        assert!(executor.execute(
+            &VirtualMediaCommand::Mount {
+                image_id: 7,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: false,
+            },
+            &catalog
+        ));
+        let after = executor.state().unwrap();
+        assert!(after.connected);
+        assert!(!after.cdrom);
+        assert_eq!(after.file.as_deref(), Some("kubuntu.img"));
+
+        // Reconnect keeps the selection and re-enumerates.
+        assert!(executor.execute(&VirtualMediaCommand::Reconnect, &catalog));
+        let reconnected = executor.state().unwrap();
+        assert!(reconnected.connected);
+        assert_eq!(reconnected.file.as_deref(), Some("kubuntu.img"));
     }
 
     #[cfg(feature = "gadget-media-profile")]

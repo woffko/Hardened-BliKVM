@@ -129,6 +129,23 @@ pub enum Step {
         path: PathBuf,
         value: Vec<u8>,
     },
+    /// Release a configfs attribute by writing a single newline.
+    ///
+    /// A zero-byte write never reaches the kernel's store handler, so an empty
+    /// value silently does nothing; the newline is the shortest write that
+    /// still clears the attribute. This is how the UDC is unbound and how the
+    /// mass-storage backing file is released.
+    ClearAttribute {
+        path: PathBuf,
+    },
+    /// Remove a configfs item directory.
+    ///
+    /// On configfs a plain `rmdir` drops the item and its attributes. The
+    /// fallback covers the host tests, whose fake configfs is a real directory
+    /// tree where the attribute files must be deleted first.
+    RemoveEmptyDir {
+        path: PathBuf,
+    },
     Symlink {
         link: PathBuf,
         target: PathBuf,
@@ -427,6 +444,21 @@ fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
                     std::fs::remove_dir_all(&full).map_err(|error| step_error(path, error))?;
                 }
             }
+            Step::ClearAttribute { path } => {
+                let full = root.join(path);
+                std::fs::write(&full, "\n").map_err(|error| step_error(path, error))?;
+            }
+            Step::RemoveEmptyDir { path } => {
+                let full = root.join(path);
+                if !full.exists() {
+                    continue;
+                }
+                if std::fs::remove_dir(&full).is_err() {
+                    // Real configfs removed the item; the fallback handles an
+                    // ordinary directory tree with attribute files inside.
+                    std::fs::remove_dir_all(&full).map_err(|error| step_error(path, error))?;
+                }
+            }
         }
     }
     Ok(())
@@ -449,6 +481,49 @@ pub fn apply(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
 /// Unbind and remove the gadget. Idempotent.
 pub fn remove(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
     execute(root, &remove_steps(spec))
+}
+
+/// Replace the mass-storage function in place without touching the other
+/// functions.
+///
+/// This is the image-swap path. The kernel refuses `ro`, `cdrom` and
+/// `removable` writes while a LUN still holds a backing file, and it refuses
+/// to drop a function that is linked into a bound configuration, so the only
+/// reliable order is: unbind, drop the old function, write the new attributes
+/// (read-only first, file last) and bind again. The HID functions and their
+/// open character devices are left alone, which is what makes an image change
+/// possible while the board owner keeps running.
+pub fn replace_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
+    validate_spec(spec)?;
+    let gadget = gadget_path();
+    let config = config_path();
+    let Some(function) = spec
+        .functions
+        .iter()
+        .find(|function| matches!(function, Function::MassStorage(_)))
+    else {
+        return Err(GadgetError::NoFunctions);
+    };
+    // Order matters: the config must stop referencing the function, the LUN
+    // must release its backing file, and only then can the function item be
+    // dropped.
+    unbind(root)?;
+    let mut steps = vec![Step::RemoveFile {
+        path: config.join(MSD_FUNCTION),
+    }];
+    let lun_file = function_path(MSD_FUNCTION).join("lun.0").join("file");
+    if root.join(&lun_file).exists() {
+        steps.push(Step::ClearAttribute { path: lun_file });
+    }
+    steps.push(Step::RemoveEmptyDir {
+        path: function_path(MSD_FUNCTION),
+    });
+    steps.extend(function_steps(function));
+    steps.push(Step::WriteFile {
+        path: gadget.join("UDC"),
+        value: spec.udc.clone(),
+    });
+    execute(root, &steps)
 }
 
 /// Write the selected image to the mass-storage LUN. Requires the function to
@@ -478,11 +553,32 @@ pub fn bind(root: &Path, udc: &str) -> Result<(), GadgetError> {
 
 /// Unbind the gadget from its UDC controller. Idempotent.
 pub fn unbind(root: &Path) -> Result<(), GadgetError> {
+    // The kernel answers an empty write to an already empty UDC with ENODEV,
+    // so idempotence needs the state read, not just a tolerant write.
+    if !udc_bound(root) {
+        return Ok(());
+    }
     execute(
         root,
-        &[Step::WriteFile {
+        &[Step::ClearAttribute {
             path: gadget_path().join("UDC"),
-            value: String::new(),
+        }],
+    )
+}
+
+/// Whether the gadget currently has a controller bound.
+fn udc_bound(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(gadget_path()).join("UDC"))
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Release the backing image from LUN 0 without touching the gadget.
+pub fn clear_lun_file(root: &Path) -> Result<(), GadgetError> {
+    execute(
+        root,
+        &[Step::ClearAttribute {
+            path: function_path(MSD_FUNCTION).join("lun.0").join("file"),
         }],
     )
 }
@@ -1030,7 +1126,36 @@ mod tests {
         assert_eq!(reconnect(directory.path(), &spec.udc), Ok(()));
         assert_eq!(read(directory.path(), "hardened/UDC"), spec.udc);
         assert_eq!(unbind(directory.path()), Ok(()));
-        assert_eq!(read(directory.path(), "hardened/UDC"), "");
+        // A real configfs strips the trailing newline of the one-byte write.
+        assert_eq!(read(directory.path(), "hardened/UDC").trim(), "");
+    }
+
+    #[test]
+    fn replace_mass_storage_swaps_the_image_and_rebinds() {
+        let directory = root_with_image();
+        std::fs::write(directory.path().join("other.img"), b"image").unwrap();
+        let base = spec(&directory.path().join(IMAGE_NAME));
+        assert_eq!(apply(directory.path(), &base), Ok(()));
+        assert_eq!(read(directory.path(), "hardened/UDC"), base.udc);
+
+        assert_eq!(unbind(directory.path()), Ok(()));
+        assert_eq!(unbind(directory.path()), Ok(()));
+        // Rebind so the swap starts from a bound gadget, the common path.
+        assert_eq!(apply(directory.path(), &base), Ok(()));
+
+        let swapped = spec(&directory.path().join("other.img"));
+        assert_eq!(replace_mass_storage(directory.path(), &swapped), Ok(()));
+        assert_eq!(read(directory.path(), "hardened/UDC"), swapped.udc);
+        let state = observe(directory.path()).unwrap();
+        let storage = state.mass_storage.unwrap();
+        assert!(storage.file.ends_with("other.img"));
+        // The function is recreated, not duplicated.
+        assert!(
+            directory
+                .path()
+                .join("hardened/functions/mass_storage.usb0/lun.0/file")
+                .is_file()
+        );
     }
 
     #[test]
