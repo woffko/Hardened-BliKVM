@@ -90,6 +90,7 @@ try {
         // the fixture uses the flat shape.
         const result = body?.data ?? body;
         event.applied = Boolean(result?.applied);
+        event.rejection = result?.rejection;
         event.action = result?.command?.action;
         event.connected = result?.command?.connected;
         if (request.method() === "POST" && route === "/api/virtual-media") {

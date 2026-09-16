@@ -204,6 +204,8 @@ done
 if [ -S "$socket" ]; then printf 'socket_present=yes\\n'; else printf 'socket_present=no\\n'; fi
 if kill -0 "$owner_pid" 2>/dev/null; then printf 'owner_started=yes\\n'; else printf 'owner_started=no\\n'; fi
 gdir=/sys/kernel/config/usb_gadget
+# Our own gadget is removed whenever it exists: a previous attempt may have left
+# it half-created after its runtime root was already gone.
 if [ -d "$gdir/hardened" ]; then printf 'gadget_present=yes\\n'; printf 'gadget_name=hardened\\n'; else printf 'gadget_present=no\\n'; printf 'gadget_name=none\\n'; fi
 if [ -n "$(cat "$gdir/hardened/UDC" 2>/dev/null | tr -d '\\n')" ]; then printf 'udc_bound=yes\\n'; else printf 'udc_bound=no\\n'; fi
 """
@@ -261,7 +263,7 @@ for path in "$gdir"/hardened/functions/*; do
   [ -d "$path" ] || continue
   if [ -z "$functions" ]; then functions=$(basename "$path"); else functions="$functions,$(basename "$path")"; fi
 done
-printf 'functions=%s\n' "$functions"
+if [ -n "$functions" ]; then printf 'functions=%s\n' "$functions"; else printf 'functions=none\n'; fi
 file=$(cat "$gdir/hardened/functions/mass_storage.usb0/lun.0/file" 2>/dev/null | tr -d '\n' || true)
 if [ -n "$file" ]; then printf 'msd_file=%s\n' "$(basename "$file")"; else printf 'msd_file=none\n'; fi
 hidg=""
@@ -317,7 +319,7 @@ else
   printf 'owner_stopped=yes\\n'
 fi
 gdir=/sys/kernel/config/usb_gadget
-if [ -d "$gdir/hardened" ] && [ -f "$marker" ]; then
+if [ -d "$gdir/hardened" ]; then
   printf '' > "$gdir/hardened/UDC" || true
   for link in "$gdir"/hardened/configs/*/*; do
     [ -L "$link" ] || continue
@@ -456,7 +458,13 @@ def execute(args: argparse.Namespace) -> int:
                     f"stdout={apply.stdout[:400].decode(errors='replace')!r} "
                     f"stderr={apply.stderr[:400].decode(errors='replace')!r}"
                 )
-            facts = prototype.parse_facts(apply.stdout, set(APPLY_FACTS))
+            try:
+                facts = prototype.parse_facts(apply.stdout, set(APPLY_FACTS))
+            except ValueError as error:
+                raise ValueError(
+                    f"apply facts were rejected ({error}); "
+                    f"stdout={apply.stdout[:400].decode(errors='replace')!r}"
+                ) from error
             validate_apply(facts, takeover_udc=bool(args.takeover_udc))
             if args.accept_media_hid:
                 acceptance = prototype.run_ssh(
@@ -468,9 +476,15 @@ def execute(args: argparse.Namespace) -> int:
                     timeout=args.accept_timeout_seconds + 60,
                 )
                 acceptance.check_returncode()
-                acceptance_facts = prototype.parse_facts(
-                    acceptance.stdout, set(ACCEPTANCE_FACTS)
-                )
+                try:
+                    acceptance_facts = prototype.parse_facts(
+                        acceptance.stdout, set(ACCEPTANCE_FACTS)
+                    )
+                except ValueError as error:
+                    raise ValueError(
+                        f"acceptance facts were rejected ({error}); "
+                        f"stdout={acceptance.stdout[:400].decode(errors='replace')!r}"
+                    ) from error
                 validate_acceptance(acceptance_facts, args.accept_image)
                 receipt["acceptanceFacts"] = acceptance_facts
             if args.accept_atx_bench:
@@ -493,7 +507,13 @@ def execute(args: argparse.Namespace) -> int:
                     timeout=120,
                 )
                 bench.check_returncode()
-                bench_facts = prototype.parse_facts(bench.stdout, set(ATX_BENCH_FACTS))
+                try:
+                    bench_facts = prototype.parse_facts(bench.stdout, set(ATX_BENCH_FACTS))
+                except ValueError as error:
+                    raise ValueError(
+                        f"ATX bench facts were rejected ({error}); "
+                        f"stdout={bench.stdout[:400].decode(errors='replace')!r}"
+                    ) from error
                 validate_atx_bench(bench_facts)
                 receipt["atxBenchFacts"] = bench_facts
         except Exception:

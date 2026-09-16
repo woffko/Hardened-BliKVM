@@ -68,6 +68,7 @@ try {
       .json()
       .then((body) => {
         event.applied = Boolean(body?.data?.applied);
+        event.rejection = body?.data?.rejection;
         event.attested = Boolean(body?.data?.attested);
       })
       .catch(() => {
