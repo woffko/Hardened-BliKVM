@@ -250,11 +250,9 @@ fn function_steps(function: &Function) -> Vec<Step> {
 
     match function {
         Function::MassStorage(storage) => {
+            // The kernel makes the LUN busy as soon as `file` is written, so
+            // every other attribute must be set first.
             let lun = base.join("lun.0");
-            steps.push(Step::WriteFile {
-                path: lun.join("file"),
-                value: storage.file.to_string_lossy().into_owned(),
-            });
             steps.push(Step::WriteFile {
                 path: lun.join("ro"),
                 value: bool_value(storage.read_only),
@@ -266,6 +264,10 @@ fn function_steps(function: &Function) -> Vec<Step> {
             steps.push(Step::WriteFile {
                 path: lun.join("removable"),
                 value: bool_value(storage.removable),
+            });
+            steps.push(Step::WriteFile {
+                path: lun.join("file"),
+                value: storage.file.to_string_lossy().into_owned(),
             });
         }
         Function::Hid(hid) => {
@@ -742,6 +744,32 @@ mod tests {
                 .path()
                 .join("hardened/configs/c.1/hid.usb0")
                 .is_symlink()
+        );
+    }
+
+    #[test]
+    fn mass_storage_attributes_are_written_before_the_file() {
+        let directory = root_with_image();
+        let spec = spec(&directory.path().join(IMAGE_NAME));
+        let steps = bind_steps(&spec);
+        let order: Vec<&Path> = steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::WriteFile { path, .. } => Some(path.as_path()),
+                _ => None,
+            })
+            .collect();
+        let ro = order
+            .iter()
+            .position(|path| path.ends_with("lun.0/ro"))
+            .expect("ro is written");
+        let file = order
+            .iter()
+            .position(|path| path.ends_with("lun.0/file"))
+            .expect("file is written");
+        assert!(
+            ro < file,
+            "the LUN attributes must be set before the backing file: {order:?}"
         );
     }
 
