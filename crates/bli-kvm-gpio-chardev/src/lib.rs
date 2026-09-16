@@ -15,11 +15,35 @@ use std::path::Path;
 use bli_kvm_platform_bli::{BOARD_CONSUMER, GpioDriver, LineDirection, LineRequest};
 use thiserror::Error;
 
+/// GPIO_GET_CHIPINFO_IOCTL from the Linux GPIO character-device UAPI.
+pub const GET_CHIPINFO_IOCTL: u32 = 0x8044_1b01;
+
 pub const GPIOHANDLE_REQUEST_INPUT: u32 = 0x01;
 pub const GPIOHANDLE_REQUEST_OUTPUT: u32 = 0x02;
 pub const GPIOHANDLE_REQUEST_ACTIVE_LOW: u32 = 0x04;
 
 const MAX_LINES: usize = 64;
+const CHIP_NAME_LEN: usize = 32;
+const CHIP_LABEL_LEN: usize = 32;
+
+/// `struct gpiochip_info` from the Linux GPIO character-device UAPI.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GpiochipInfo {
+    name: [u8; CHIP_NAME_LEN],
+    label: [u8; CHIP_LABEL_LEN],
+    lines: u32,
+}
+
+impl Default for GpiochipInfo {
+    fn default() -> Self {
+        Self {
+            name: [0; CHIP_NAME_LEN],
+            label: [0; CHIP_LABEL_LEN],
+            lines: 0,
+        }
+    }
+}
 const CONSUMER_LABEL_LEN: usize = 32;
 const MAX_CONSUMER_LEN: usize = CONSUMER_LABEL_LEN - 1;
 
@@ -119,24 +143,38 @@ fn consumer_label() -> Result<[u8; CONSUMER_LABEL_LEN], GpioChardevError> {
 pub struct ChardevGpioDriver {
     chip: File,
     consumer: [u8; CONSUMER_LABEL_LEN],
+    /// Line count reported by the chip; the reviewed bound for every offset.
+    chip_lines: u32,
     handles: BTreeMap<u16, RawFd>,
 }
 
 impl ChardevGpioDriver {
     pub fn open(chip_path: &Path) -> Result<Self, GpioChardevError> {
         let chip = OpenOptions::new().read(true).write(true).open(chip_path)?;
+        let mut info = GpiochipInfo::default();
+        let result = unsafe { libc::ioctl(chip.as_raw_fd(), GET_CHIPINFO_IOCTL as _, &mut info) };
+        if result < 0 {
+            return Err(GpioChardevError::Io(std::io::Error::last_os_error()));
+        }
+        if info.lines == 0 {
+            return Err(GpioChardevError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "gpio chip reports no lines",
+            )));
+        }
         Ok(Self {
             chip,
             consumer: consumer_label()?,
+            chip_lines: info.lines,
             handles: BTreeMap::new(),
         })
     }
 
     fn request(&mut self, request: &LineRequest) -> Result<RawFd, GpioChardevError> {
-        if request.offset as usize >= MAX_LINES {
+        if u32::from(request.offset) >= self.chip_lines {
             return Err(GpioChardevError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "line offset exceeds the reviewed range",
+                "line offset exceeds the chip's line count",
             )));
         }
         let mut payload = GpiohandleRequest {
@@ -166,6 +204,24 @@ impl ChardevGpioDriver {
             .get(&offset)
             .copied()
             .ok_or(GpioChardevError::NotRequested)
+    }
+}
+
+#[cfg(test)]
+impl ChardevGpioDriver {
+    /// Test-only constructor: the chip-info ioctl cannot run against a plain
+    /// file, so the tests supply the line count directly.
+    pub(crate) fn with_chip_lines(
+        chip_path: &Path,
+        chip_lines: u32,
+    ) -> Result<Self, GpioChardevError> {
+        let chip = OpenOptions::new().read(true).write(true).open(chip_path)?;
+        Ok(Self {
+            chip,
+            consumer: consumer_label()?,
+            chip_lines,
+            handles: BTreeMap::new(),
+        })
     }
 }
 
@@ -258,7 +314,7 @@ mod tests {
         let chip_path = std::env::temp_dir().join("hardened-blikvm-gpio-chardev");
         let _ = std::fs::remove_file(&chip_path);
         std::fs::write(&chip_path, b"").unwrap();
-        let mut driver = ChardevGpioDriver::open(&chip_path).unwrap();
+        let mut driver = ChardevGpioDriver::with_chip_lines(&chip_path, 512).unwrap();
         let power = hardened_board_request(GpioRole::AtxPower).unwrap();
         assert!(matches!(
             driver.write_line(&power, true),
