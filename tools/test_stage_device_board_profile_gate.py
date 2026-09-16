@@ -225,7 +225,10 @@ class StageBoardProfileGateTests(unittest.TestCase):
 
     def test_teardown_restores_kvmd_and_removes_only_our_state(self) -> None:
         _, teardown = render()
-        self.assertIn("systemctl start kvmd.service", teardown)
+        self.assertIn(
+            "systemctl start kvmd-main.service kvmd-otg.service kvmd.service", teardown
+        )
+        self.assertIn("kvmd_udc_bound=yes", teardown)
         self.assertIn('rm -rf -- "$root"', teardown)
         self.assertIn("$gdir/hardened", teardown)
         # The teardown only reads the kvmd gadget to prove it is bound again; it
