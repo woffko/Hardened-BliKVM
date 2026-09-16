@@ -79,6 +79,33 @@ The vendor C daemon and our daemon must never own a line at the same time:
 3. Rollback: stop the daemon, unexport/return the lines, re-enable the vendor
    unit from its backup if needed.
 
+## Fan gate runbook (needs explicit operator confirmation)
+
+Read-only preflight receipt: `evidence/private/boardd-fan-preflight-20260916-a.json`.
+It records that lines 259, 260, 261, 262 and 269 are still claimed by the
+deprecated sysfs export (consumer `sysfs`, direction `out`, all `active-high`),
+line 257 is unused, no vendor process is running, the only holder of
+`/dev/gpiochip0` is our board owner, and the thermal zone reads about 51.5 C.
+
+Confirmed order for the gate (every step reversible):
+
+1. Xexport the vendor sysfs lines (`echo <n> > /sys/class/gpio/unexport` for
+   269, 261, 259, 260, 262) after checking no process depends on them; the
+   previous values are recorded first.
+2. Write `/etc/hardened-blikvm-gadget/boardd.json` with the reviewed facts
+   (fan line 269, active-high, PWM period, thresholds, curve, sample interval,
+   socket path) — no value comes from the vendor source.
+3. Install `libexec/bli-kvm-boardd` and `hardened-blikvm-boardd.service` from
+   the verified bundle, then run `bli-kvm-boardd --config ... --once`: it
+   requests the line, applies the failsafe duty and prints the status without
+   enabling PWM.
+4. Start the unit and run a bounded manual sweep (`fan_mode_set` manual, then
+   `fan_duty_set` at the reviewed points) with the operator watching the fan;
+   the receipt records the duty, the temperature and what the operator saw.
+5. Rollback: stop the unit, unexport nothing, re-export the vendor lines with
+   their recorded values, and re-enable the vendor daemon from its backup if
+   the fan must return to it.
+
 ## Gates (one per subsystem, in order)
 
 1. **Fan**: read-only temperature + line ownership capture, then a bounded duty
