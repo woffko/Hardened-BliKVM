@@ -212,6 +212,7 @@ python3 -m unittest \
   tools/test_capture_device_kvmd_control_source.py \
   tools/test_phase8_acceptance_report.py \
   tools/test_stage_device_kvmd_removal.py \
+  tools/test_stage_device_board_bundle.py \
   tools/test_upload_media_image.py \
   tools/test_phase8_acceptance_manifest.py \
   tools/test_doc_tool_paths.py \
