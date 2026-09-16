@@ -45,7 +45,7 @@ def apply_facts() -> dict[str, str]:
         "gadget_name": "hardened",
         "kvmd_stopped": "yes",
         "kvmd_udc_unbound": "yes",
-        "udc_state": "not attached",
+        "udc_state": "free",
     }
 
 
@@ -147,7 +147,13 @@ class StageBoardProfileGateTests(unittest.TestCase):
         return base
 
     def test_udc_takeover_is_optional_and_verified_both_ways(self) -> None:
-        environment = {"ownerEnvironment": {"BLI_KVM_CONTROL_SOCKET": "/run/x.sock"}, "atxEnvironmentFile": {}}
+        environment = {
+            "ownerEnvironment": {
+                "BLI_KVM_CONTROL_SOCKET": "/run/x.sock",
+                "BLI_KVM_GADGET_UDC": "musb-hdrc.2.auto",
+            },
+            "atxEnvironmentFile": {},
+        }
         plain = gate.build_apply_script(environment, "a" * 64)
         takeover = gate.build_apply_script(environment, "a" * 64, takeover_udc=True)
         self.assertNotIn("kvmd_udc_unbound=yes", plain)
