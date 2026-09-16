@@ -39,6 +39,10 @@ class BoardProfileBuildTests(unittest.TestCase):
             "packaging/systemd/hardened-blikvm-board-video-proxy.service", script
         )
         self.assertIn("packaging/systemd/hardened-blikvm-ustreamer.service", script)
+        self.assertIn("packaging/systemd/hardened-blikvm-boardd.service", script)
+        self.assertIn(
+            'install -m 0755 "$boardd_binary" "$stage/libexec/bli-kvm-boardd"', script
+        )
         self.assertIn("packaging/udev/99-hardened-blikvm-video.rules", script)
         self.assertIn("packaging/tmpfiles.d/hardened-blikvm-gadget.conf", script)
         self.assertIn('profile: "board-owner-test"', script)

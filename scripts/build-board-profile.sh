@@ -35,6 +35,7 @@ PNPM_CONFIG_STORE_DIR="$pnpm_store" corepack pnpm --dir web build
 release_dir="$target_dir/aarch64-unknown-linux-musl/release"
 server_binary="$release_dir/bli-kvm-server"
 broker_binary="$release_dir/bli-kvm-control-broker"
+boardd_binary="$release_dir/bli-kvm-boardd"
 video_proxy_binary="$release_dir/bli-kvm-video-proxy"
 bench_gate_binary="$release_dir/bli-kvm-atx-gpio-bench-gate"
 
@@ -57,6 +58,7 @@ install -d -m 0755 \
 install -m 0755 "$server_binary" "$stage/libexec/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-control-broker"
 install -m 0755 "$video_proxy_binary" "$stage/libexec/bli-kvm-video-proxy"
+install -m 0755 "$boardd_binary" "$stage/libexec/bli-kvm-boardd"
 install -m 0755 "$bench_gate_binary" "$stage/libexec/bli-kvm-atx-gpio-bench-gate"
 cp -a web/dist/. "$stage/share/web/"
 install -m 0644 \
@@ -64,6 +66,7 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-board-server.service \
   packaging/systemd/hardened-blikvm-board-video-proxy.service \
   packaging/systemd/hardened-blikvm-ustreamer.service \
+  packaging/systemd/hardened-blikvm-boardd.service \
   "$stage/share/systemd/"
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \

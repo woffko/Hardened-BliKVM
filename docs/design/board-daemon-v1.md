@@ -54,6 +54,19 @@ capabilities.
   `/dev/spidev1.0` and `/dev/gpiochip0`, `ProtectSystem=strict`, and the LED /
   button / fan lines released from the vendor sysfs export before start.
 
+## Implemented slice (2026-09-16)
+
+`crates/bli-kvm-boardd` now exists with: the operator configuration file
+(bounded, strict, every board fact supplied there), the fan actuator (soft-PWM
+thread over the reviewed line, level-only mode for gates without actuation), the
+control surface (typed JSON lines: `status`, `fan_mode_set`, `fan_duty_set`
+with fixed error codes) and the run modes `--once` (single automatic evaluation
+and status print, no actuation) and `--serve`. It ships in the board bundle as
+`libexec/bli-kvm-boardd` with `hardened-blikvm-boardd.service`, and the fan
+supervisor gained `actuator_mut` for the manual duty path. Host tests cover the
+config bounds, the duty split, level and PWM actuation, the protocol state
+machine and one socket round-trip.
+
 ## Ownership handoff and rollback
 
 The vendor C daemon and our daemon must never own a line at the same time:

@@ -21,6 +21,7 @@ members = [
   "crates/bli-kvm-media-isolated-gate",
   "crates/bli-kvm-fan-policy",
   "crates/bli-kvm-fan-supervisor",
+  "crates/bli-kvm-boardd",
   "crates/bli-kvm-serial-switch-codec",
   "crates/bli-kvm-st7789-model",
   "crates/bli-kvm-display-button-policy",

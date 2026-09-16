@@ -113,6 +113,14 @@ where
         &self.actuator
     }
 
+    /// Manual actuation path: the operator took over from the automatic curve,
+    /// so the caller applies a reviewed duty directly instead of a policy
+    /// decision. Automatic evaluations replace it again as soon as the mode
+    /// returns to automatic.
+    pub fn actuator_mut(&mut self) -> &mut A {
+        &mut self.actuator
+    }
+
     pub fn initialize(&mut self) -> Result<FanSupervisorOutcome, FanSupervisorError<A::Error>> {
         match self.status {
             FanSupervisorStatus::Uninitialized => {}

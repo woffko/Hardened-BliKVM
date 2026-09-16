@@ -176,6 +176,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-boardd"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-fan-policy",
+ "bli-kvm-fan-supervisor",
+ "bli-kvm-gpio-chardev",
+ "bli-kvm-platform-bli",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-broker-client"
 version = "0.1.0"
 dependencies = [
