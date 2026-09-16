@@ -153,8 +153,10 @@ fn function_path(name: &str) -> PathBuf {
     gadget_path().join("functions").join(name)
 }
 
+/// configfs parses these attributes with base 0, so the `0x` prefix is
+/// required (`1d6b` alone is rejected with EINVAL).
 fn hex16(value: u16) -> String {
-    format!("{value:04x}")
+    format!("0x{value:04x}")
 }
 
 fn bool_value(value: bool) -> String {
@@ -669,8 +671,8 @@ mod tests {
             Some(Step::WriteFile { path, value }) if value == "musb-hdrc.2.auto" && path.ends_with("UDC")
         ));
         assert_eq!(execute(directory.path(), &steps), Ok(()));
-        assert_eq!(read(directory.path(), "hardened/idVendor"), "1d6b");
-        assert_eq!(read(directory.path(), "hardened/idProduct"), "0104");
+        assert_eq!(read(directory.path(), "hardened/idVendor"), "0x1d6b");
+        assert_eq!(read(directory.path(), "hardened/idProduct"), "0x0104");
         assert_eq!(
             read(directory.path(), "hardened/strings/0x409/manufacturer"),
             "Hardened BLi-KVM"
