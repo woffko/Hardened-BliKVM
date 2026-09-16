@@ -120,11 +120,18 @@ class RestrictedControlProfileTests(unittest.TestCase):
         source = (ROOT / "tools/stage_device_restricted_control_profile.py").read_text()
         self.assertIn('"web_assets_missing_restricted_gui"', source)
         self.assertIn('add_header Cache-Control "no-store" always;', source)
+        # A live unit must be replaced, not silently kept: `start` on an active
+        # unit is a no-op and left an old binary serving the stand.
+        self.assertIn("systemctl restart hardened-blikvm-rc-server.service", script)
+        self.assertIn("systemctl restart hardened-blikvm-rc-broker.service", script)
+        self.assertIn("systemctl restart hardened-blikvm-rc-nginx.service", script)
+        self.assertIn("server_exe_matches=yes", script)
         for key in (
             "extracted",
             "broker_started",
             "control_socket_present",
             "server_started",
+            "server_exe_matches",
             "health",
             "hid_availability",
             "power_availability",

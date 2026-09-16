@@ -37,14 +37,16 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 | Native ATX GPIO bench | same gate receipt with `atxBenchFacts.power_short=ok` | add `--accept-atx-bench --confirm-physical-disconnect` (Power/Reset unplugged) |
 | Virtual-media acceptance | `virtual-media-acceptance-*.json` with `result=passed` | `tools/playwright/virtual_media_acceptance.mjs` during the media/HID window |
 | Restricted power GUI | `restricted-power-*.json` with `result=passed` | `tools/playwright/restricted_power_probe.mjs` (Power/Reset unplugged) |
-| Frame timing | `video-frame-timing-*.json` with `result=passed` | `tools/playwright/video_frame_timing_probe.mjs` against a stand that serves `/api/stream/mjpeg` |
 | KVMD removal | `kvmd-removal-*.json` with `removal.kvmd_stopped=yes` | `tools/stage_device_kvmd_removal.py --confirm-removal`, which refuses until the three receipts above exist |
 
-The restricted-control stand (`https://10.0.77.118:8443/`) answers `503` for
-`/api/stream/mjpeg` and the main proxy answers `502` while
-`hardened-blikvm-server.service` is inactive, so the frame-timing gate needs the
-main profile running. A fresh reference GUI capture for capability and marker
-comparison needs the reference operator credential.
+Frame timing is recorded: `video-frame-timing-20260916-a.json` measured 258
+frames in 10 s (26 fps, mean interval 38.5 ms, p95 52.8 ms) against the
+refreshed restricted-control stand `https://10.0.77.118:8443/`, whose video
+proxy is now active. The board bundle is deployed to that stand (sha256
+`1382c061…`, receipt `rc-profile-refresh-20260916-b.json`, `server_exe_matches=yes`);
+the main proxy on `443` still answers `502` while
+`hardened-blikvm-server.service` is inactive. A fresh reference GUI capture for
+capability and marker comparison needs the reference operator credential.
 
 ## Read-only evidence already in place
 
@@ -66,8 +68,11 @@ comparison needs the reference operator credential.
 - Board bundle verification: `board-bundle-verify-20260915-b.json`
   (`sha256 39991edf…`, 36 members, includes the ATX GPIO bench gate).
 - GUI parity capture and comparison:
-  `gui-parity-ours-auth-20260915-g.json`, `gui-parity-compare-20260915-c.json`
-  (no unexplained label differences; branding differences are expected).
+  `gui-parity-ours-auth-20260916-a.json` (console errors 3, settings tabs
+  captured live, no dead legacy calls) and `gui-parity-compare-20260915-c.json`.
+- Frame timing: `video-frame-timing-20260916-a.json` (`result=passed`).
+- Restricted-control stand refresh: `rc-profile-refresh-20260916-b.json`
+  (bundle `1382c061…`, `server_exe_matches=yes`).
 
 KVMD and the vendor C daemon remain the fallback until every gate above is
 recorded and their receipts exist.

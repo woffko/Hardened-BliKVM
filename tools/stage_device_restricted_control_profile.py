@@ -66,6 +66,7 @@ APPLY_KEYS = {
     "broker_started",
     "control_socket_present",
     "server_started",
+    "server_exe_matches",
     "health",
     "hid_availability",
     "power_availability",
@@ -491,6 +492,7 @@ web_ready=no
 broker_started=no
 control_socket_present=no
 server_started=no
+server_exe_matches=no
 health=no
 hid=unavailable
 power=unavailable
@@ -535,7 +537,7 @@ CATALOG
   systemctl daemon-reload
   rm -f "$root/state/control.sock"
   systemctl reset-failed hardened-blikvm-rc-broker.service >/dev/null 2>&1 || true
-  systemctl start hardened-blikvm-rc-broker.service >"$root/broker.log" 2>&1 || true
+  systemctl restart hardened-blikvm-rc-broker.service >"$root/broker.log" 2>&1 || true
   i=0
   while [ "$i" -lt 80 ]; do
     if [ -S "$root/state/control.sock" ]; then break; fi
@@ -545,7 +547,7 @@ CATALOG
   if [ -S "$root/state/control.sock" ]; then control_socket_present=yes; fi
   if [ "$(systemctl is-active hardened-blikvm-rc-broker.service 2>/dev/null || true)" = active ]; then broker_started=yes; fi
 
-  systemctl start hardened-blikvm-rc-server.service >>"$root/broker.log" 2>&1 || true
+  systemctl restart hardened-blikvm-rc-server.service >>"$root/broker.log" 2>&1 || true
   i=0
   while [ "$i" -lt 80 ]; do
     if curl -sf "http://127.0.0.1:$port/api/health" >/dev/null 2>&1; then break; fi
@@ -553,6 +555,13 @@ CATALOG
     i=$((i + 1))
   done
   if curl -sf "http://127.0.0.1:$port/api/health" >/dev/null 2>&1; then server_started=yes; health=ok; fi
+  server_pid=$(systemctl show -p MainPID --value hardened-blikvm-rc-server.service 2>/dev/null || echo 0)
+  if [ -n "$server_pid" ] && [ "$server_pid" != "0" ] \
+     && [ "$(readlink -f "/proc/$server_pid/exe" 2>/dev/null || true)" = "$root/libexec/bli-kvm-server" ]; then
+    server_exe_matches=yes
+  else
+    server_exe_matches=no
+  fi
   caps=$(curl -sf "http://127.0.0.1:$port/api/capabilities" 2>/dev/null || printf '{{}}')
   hid=$(printf '%s' "$caps" | python3 -c 'import sys,json
 try:
@@ -577,7 +586,7 @@ except Exception:
   cat > /run/systemd/system/hardened-blikvm-rc-nginx.service <<'UNIT'
 {nginx_unit}UNIT
   systemctl daemon-reload
-  systemctl start hardened-blikvm-rc-nginx.service >>"$root/broker.log" 2>&1 || true
+  systemctl restart hardened-blikvm-rc-nginx.service >>"$root/broker.log" 2>&1 || true
   i=0
   while [ "$i" -lt 80 ]; do
     if curl -skf "https://127.0.0.1:$https_port/api/health" >/dev/null 2>&1; then break; fi
@@ -592,6 +601,7 @@ emit web_ready "$web_ready"
 emit broker_started "$broker_started"
 emit control_socket_present "$control_socket_present"
 emit server_started "$server_started"
+emit server_exe_matches "$server_exe_matches"
 emit health "$health"
 emit hid_availability "$hid"
 emit power_availability "$power"
@@ -641,6 +651,8 @@ def validate_apply(facts: dict[str, str]) -> None:
         raise GateError("apply", "broker_did_not_start")
     if facts.get("server_started") != "yes" or facts.get("health") != "ok":
         raise GateError("apply", "server_did_not_start")
+    if facts.get("server_exe_matches") != "yes":
+        raise GateError("apply", "staged_server_binary_not_running")
     if facts.get("hid_availability") != "read_write":
         raise GateError("apply", "hid_capability_not_advertised")
     if facts.get("power_availability") != "read_write":
