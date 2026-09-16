@@ -120,10 +120,15 @@ implemented and live (43 routes): list, mounted, cdrom, mount, delete and
 usb-reconnect over the control surface, with an atomic mount command, an observe
 request and a reconnect command. The MSD partition now mounts through our own
 fstab entry at our images directory, and the media paths are provisioned for the
-unprivileged server user in tmpfiles. List, observe, a fresh mount and eject
-pass; remount-after-eject and reconnect return `backend_rejected` and the upload
-and reboot halves of the gate still need to run. Receipt
-`evidence/private/board-storage-e1-20260916-a.json`; baseline
+unprivileged server user in tmpfiles. The storage gate now passes end to end (list, mounted, cdrom, mount,
+usb/reconnect, eject, re-attach); four device defects were fixed on the way
+(zero-byte configfs writes were silent no-ops, the media swap must unbind and
+rebuild the function, the board certificate had no subject alternative name and
+the nginx temp buffers needed the unit runtime directory). The media image
+upload still aborts the request and the reboot half of the gate still needs
+operator confirmation. Receipts
+`evidence/private/board-storage-e1-20260916-{a,b}.json`,
+`evidence/private/storage-acceptance-20260916-a.json`; baseline
 `docs/baselines/board-storage-e1.md`. Other receipts:
 `evidence/private/board-serving-cutover-20260916-a.json`,
 `evidence/private/kvmd-removal-20260916-a.json`,

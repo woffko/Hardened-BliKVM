@@ -35,13 +35,32 @@ and only touches a bare name inside the media directory.
 
 ## Gate status
 
-Passing on the live surface: image list, mounted image, cdrom flag, a fresh
-`mount`, and `eject` (the state then reports the image as unmounted).
+Passing on the live surface (receipt
+`evidence/private/storage-acceptance-20260916-a.json`): image list, mounted
+image, cdrom flag, `mount`, `usb/reconnect`, `eject` (the state then reports the
+image as unmounted) and a re-attach.
 
-Open: remounting or reconnecting after a state change answers
-`backend_rejected`. The kernel refuses LUN attribute writes while a backing file
-is open (`lun.0/ro` returns EBUSY), and `reconnect` binds a controller that a
-preceding eject already unbound. A fresh attach works, and the board is left
-attached and streaming. The upload and reboot halves of the E1 gate are not run:
-upload needs a reviewed writable-path check, reboot needs explicit operator
-confirmation.
+Four device defects the gate exposed, all fixed and committed:
+
+1. A zero-byte configfs write never reaches the kernel store handler, so the
+   gadget unbind and the LUN file release were silent no-ops. They now write a
+   single newline, and `unbind` reads the UDC state first because the kernel
+   answers an empty write to an empty UDC with ENODEV.
+2. A LUN that still holds a backing file refuses `ro`, `cdrom` and `file`
+   writes, and a config that still links a function refuses to drop it. The
+   image swap now unbinds, unlinks the config, releases the file, drops the
+   function and rebuilds it (`replace_mass_storage`).
+3. The board certificate was a self-signed leaf with no subject alternative
+   name, so no client could verify it. It is regenerated with CN and SAN for the
+   board name and address; `curl --cacert <copy> https://10.0.77.118/` answers
+   200, and the operator tools gained `--ca-file` and `--tls-server-name` so
+   they verify instead of disabling TLS.
+4. The nginx unit's `ProtectSystem=strict` keeps the compiled-in
+   `/var/lib/nginx` temp paths read-only, which broke the config test once the
+   ownership changed; every temp buffer now lives in the unit runtime
+   directory.
+
+Open: the media image upload (`POST /api/download/file`) aborts the request
+(nginx logs `writev() failed (32: Broken pipe) while sending request to
+upstream`; a direct POST answers 503) and writes neither a file nor a catalog
+entry. The reboot half of the gate needs explicit operator confirmation.
