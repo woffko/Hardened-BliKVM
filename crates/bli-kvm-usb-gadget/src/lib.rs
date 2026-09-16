@@ -120,10 +120,25 @@ pub struct GadgetSpec {
 /// One configfs operation, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    WriteFile { path: PathBuf, value: String },
-    Symlink { link: PathBuf, target: PathBuf },
-    RemoveFile { path: PathBuf },
-    RemoveDir { path: PathBuf },
+    WriteFile {
+        path: PathBuf,
+        value: String,
+    },
+    /// Binary configfs attributes (the HID report descriptor is raw bytes).
+    WriteBytes {
+        path: PathBuf,
+        value: Vec<u8>,
+    },
+    Symlink {
+        link: PathBuf,
+        target: PathBuf,
+    },
+    RemoveFile {
+        path: PathBuf,
+    },
+    RemoveDir {
+        path: PathBuf,
+    },
 }
 
 fn gadget_path() -> PathBuf {
@@ -140,10 +155,6 @@ fn function_path(name: &str) -> PathBuf {
 
 fn hex16(value: u16) -> String {
     format!("{value:04x}")
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn bool_value(value: bool) -> String {
@@ -268,9 +279,9 @@ fn function_steps(function: &Function) -> Vec<Step> {
                 path: base.join("report_length"),
                 value: hid.report_length.to_string(),
             });
-            steps.push(Step::WriteFile {
+            steps.push(Step::WriteBytes {
                 path: base.join("report_desc"),
-                value: hex_bytes(&hid.report_descriptor),
+                value: hid.report_descriptor.clone(),
             });
         }
     }
@@ -365,6 +376,13 @@ fn execute(root: &Path, steps: &[Step]) -> Result<(), GadgetError> {
     for step in steps {
         match step {
             Step::WriteFile { path, value } => {
+                let full = root.join(path);
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).map_err(io_error)?;
+                }
+                std::fs::write(&full, value).map_err(io_error)?;
+            }
+            Step::WriteBytes { path, value } => {
                 let full = root.join(path);
                 if let Some(parent) = full.parent() {
                     std::fs::create_dir_all(parent).map_err(io_error)?;
@@ -702,9 +720,15 @@ mod tests {
             ),
             "8"
         );
+        // configfs expects the raw descriptor bytes, never a hex rendering.
         assert_eq!(
-            read(directory.path(), "hardened/functions/hid.usb0/report_desc"),
-            "05010906"
+            std::fs::read(
+                directory
+                    .path()
+                    .join("hardened/functions/hid.usb0/report_desc")
+            )
+            .unwrap(),
+            vec![0x05, 0x01, 0x09, 0x06]
         );
         assert!(
             directory
