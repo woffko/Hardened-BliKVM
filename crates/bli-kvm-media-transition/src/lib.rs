@@ -211,7 +211,7 @@ impl GadgetMediaExecutor {
             Err(error) => {
                 // The board owner has no other channel to explain a failed
                 // attach; the operator log is the diagnostic surface.
-                eprintln!("media: gadget apply failed: {error}");
+                eprintln!("media: gadget apply failed: {error:?}");
                 false
             }
         }
