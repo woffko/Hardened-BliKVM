@@ -442,7 +442,12 @@ def execute(args: argparse.Namespace) -> int:
                 ),
                 timeout=120,
             )
-            apply.check_returncode()
+            if apply.returncode != 0:
+                raise ValueError(
+                    "apply script failed: "
+                    f"stdout={apply.stdout[:400].decode(errors='replace')!r} "
+                    f"stderr={apply.stderr[:400].decode(errors='replace')!r}"
+                )
             facts = prototype.parse_facts(apply.stdout, set(APPLY_FACTS))
             validate_apply(facts, takeover_udc=bool(args.takeover_udc))
             if args.accept_media_hid:
