@@ -33,6 +33,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagno
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-maintenance"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-persistence-gate"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
+install -m 0755 /bin/true "$test_root/usr/bin/ustreamer"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0755 /bin/true "$test_root/usr/bin/install"
 install -m 0755 /bin/true "$test_root/usr/sbin/nginx"
@@ -86,6 +87,8 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-gadget-owner.service \
   hardened-blikvm-board-owner.service \
   hardened-blikvm-board-server.service \
+  hardened-blikvm-board-video-proxy.service \
+  hardened-blikvm-ustreamer.service \
   hardened-blikvm-hid-credential.service \
   hardened-blikvm-video-proxy.service \
   hardened-blikvm-server.service \
@@ -120,6 +123,8 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-gadget-owner.service" \
   "$project_root/packaging/systemd/hardened-blikvm-board-owner.service" \
   "$project_root/packaging/systemd/hardened-blikvm-board-server.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-board-video-proxy.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-ustreamer.service" \
   "$project_root/packaging/systemd/hardened-blikvm-hid-credential.service" \
   "$project_root/packaging/systemd/hardened-blikvm-video-proxy.service" \
   "$project_root/packaging/systemd/hardened-blikvm-server.service" \

@@ -1,0 +1,65 @@
+[Unit]
+Description=Hardened BliKVM MJPEG streamer (vendor ustreamer, KVMD-free)
+Documentation=https://github.com/woffko/Hardened-BliKVM
+Conflicts=kvmd.service
+After=local-fs.target
+ConditionPathExists=/dev/kvmd-video
+
+[Service]
+Type=simple
+User=hardened-blikvm-video
+Group=hardened-blikvm
+SupplementaryGroups=video
+UMask=0007
+RuntimeDirectory=hardened-blikvm-ustreamer
+RuntimeDirectoryMode=0750
+Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
+ExecStart=/usr/bin/ustreamer \
+  --device=/dev/kvmd-video \
+  --persistent \
+  --format=mjpeg \
+  --resolution=1280x720 \
+  --desired-fps=40 \
+  --drop-same-frames=30 \
+  --unix=/run/hardened-blikvm-ustreamer/ustreamer.sock \
+  --unix-rm \
+  --unix-mode=0660 \
+  --slowdown
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=15s
+TimeoutStopSec=10s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+DeviceAllow=/dev/video1 rw
+DeviceAllow=/dev/media1 rw
+DeviceAllow=/dev/kvmd-video rw
+IPAddressDeny=any
+ReadWritePaths=/run/hardened-blikvm-ustreamer
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

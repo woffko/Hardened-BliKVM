@@ -41,7 +41,10 @@ REQUIRED_MEMBERS = {
     "libexec/bli-kvm-atx-gpio-bench-gate",
     "share/systemd/hardened-blikvm-board-owner.service",
     "share/systemd/hardened-blikvm-board-server.service",
+    "share/systemd/hardened-blikvm-board-video-proxy.service",
+    "share/systemd/hardened-blikvm-ustreamer.service",
     "share/tmpfiles.d/hardened-blikvm-gadget.conf",
+    "share/udev/99-hardened-blikvm-video.rules",
     "share/atx.env.example",
     "share/web/index.html",
 }

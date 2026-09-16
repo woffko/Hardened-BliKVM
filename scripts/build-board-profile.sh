@@ -51,6 +51,7 @@ install -d -m 0755 \
   "$stage/libexec" \
   "$stage/share/systemd" \
   "$stage/share/tmpfiles.d" \
+  "$stage/share/udev" \
   "$stage/share/web"
 install -m 0755 "$server_binary" "$stage/libexec/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-control-broker"
@@ -59,7 +60,12 @@ cp -a web/dist/. "$stage/share/web/"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-board-owner.service \
   packaging/systemd/hardened-blikvm-board-server.service \
+  packaging/systemd/hardened-blikvm-board-video-proxy.service \
+  packaging/systemd/hardened-blikvm-ustreamer.service \
   "$stage/share/systemd/"
+install -m 0644 \
+  packaging/udev/99-hardened-blikvm-video.rules \
+  "$stage/share/udev/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-gadget.conf \
   "$stage/share/tmpfiles.d/"

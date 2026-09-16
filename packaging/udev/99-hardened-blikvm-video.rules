@@ -1,0 +1,6 @@
+# Map the USB HDMI capture to /dev/kvmd-video for the board video path.
+#
+# This replaces the retired KVMD rule: it selects the capture interface by its
+# USB identity and video index instead of the vendor helper script, and it puts
+# the node in the group our streamer and proxy run with.
+ACTION=="add|change", SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", ATTR{index}=="0", ATTRS{idVendor}=="345f", ATTRS{idProduct}=="2131", GROUP="video", SYMLINK+="kvmd-video"
