@@ -206,6 +206,13 @@ configfs mounted) and not a substitute host.
   the gate waits, drive the reviewed GUI actions (attach `kubuntu.img`, press a
   key, move the pointer) and confirm the target sees them; the gate fails closed
   if any recorded fact is missing or unexpected.
+- The owner resolves a catalog entry to `<images dir>/<name>`, and that
+  directory is empty on a fresh board while the reviewed image lives in KVMD's
+  MSD directory. Materialize the verified link (never a copy) with
+  `tools/stage_device_owner_image.py --image kubuntu.img --source kubuntu.img
+  --expected-sha256 <catalog sha> --expected-bytes <catalog size>`; the tool
+  hashes the source on the board, refuses any mismatch, and records the receipt.
+  Undo with `rm -f /var/lib/hardened-blikvm-gadget/images/kubuntu.img`.
 - The board has a single UDC and KVMD holds it, so the owner cannot bind its
   gadget without it: `--takeover-udc` unbinds the `kvmd` gadget right after the
   KVMD stop and records `kvmd_udc_unbound`; teardown waits for and requires
