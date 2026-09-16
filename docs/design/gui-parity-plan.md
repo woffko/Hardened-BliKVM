@@ -212,6 +212,13 @@ Goal: ship our build through the retained signed update model.
 - Build the production bundle from the current source, publish it as a
   candidate, run candidate health, confirm it into `current`, and re-enable the
   activation/watchdog units. Our units and binaries are delivered by the slot.
+- Host gap to close first: the update supervisor's activation installs
+  `bin/`, `libexec/` and `share/web` only, so a bundle that carries our unit
+  files under `share/systemd/` (board owner, board server, board daemon,
+  ustreamer, video proxy, nginx) and the tmpfiles/udev files would leave them
+  uninstalled. Extend the activation to install those paths, add the board
+  daemon to the production bundle's binary mapping, and pin both in the bundle
+  verifier and its tests.
 - Device gate: the signed update commit cycle and a reboot that keeps the new
   `current`. Receipts: `persistent-write-*-commit-*.json` and the update
   runtime/status receipts.
