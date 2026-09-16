@@ -705,7 +705,9 @@ where
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "control response invalid"))?;
     let rejection = match &response.response {
         ControlResponse::Rejected { code } => Some(reason_for(*code)),
-        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => None,
+        ControlResponse::Applied
+        | ControlResponse::LeaseGranted { .. }
+        | ControlResponse::MediaState { .. } => None,
     };
     timeout(
         request_timeout,
@@ -1312,6 +1314,34 @@ mod tests {
                 .unwrap(),
             ControlResponse::Applied
         );
+
+        match client
+            .execute_v2(
+                "2123456789abcdef0123456789abcdef",
+                PlatformControlRequestV2::VirtualMediaObserve {
+                    request: bli_kvm_core::MediaObserveRequest {
+                        session_binding: 9,
+                        target_binding: [0x11; 32],
+                        issued_at_unix_ms,
+                    },
+                },
+            )
+            .await
+            .unwrap()
+        {
+            ControlResponse::MediaState {
+                file,
+                connected,
+                cdrom,
+                writable,
+            } => {
+                assert_eq!(file.as_deref(), Some("rescue.iso"));
+                assert!(connected);
+                assert!(cdrom);
+                assert!(!writable);
+            }
+            other => panic!("unexpected media state response: {other:?}"),
+        }
 
         let state = bli_kvm_usb_gadget::observe(&configfs).unwrap();
         assert!(state.present);

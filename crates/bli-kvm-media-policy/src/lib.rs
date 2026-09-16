@@ -220,7 +220,10 @@ impl MediaPolicyEngine {
             VirtualMediaCommand::SetConnected { connected } if connected == observed.connected => {
                 return Ok(MediaDecision::Noop);
             }
-            VirtualMediaCommand::Select { .. } | VirtualMediaCommand::SetConnected { .. } => {}
+            VirtualMediaCommand::Select { .. }
+            | VirtualMediaCommand::Mount { .. }
+            | VirtualMediaCommand::SetConnected { .. }
+            | VirtualMediaCommand::Reconnect => {}
         }
         if self.document.records.iter().any(|record| {
             record.status == OperationStatus::Applied

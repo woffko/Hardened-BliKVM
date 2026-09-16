@@ -101,7 +101,16 @@ The v2 protocol now carries a typed virtual-media request:
 ```
 VirtualMedia { request: MediaRequest }
 MediaRequest {
-  command: VirtualMediaCommand,   // select { imageId, mode, writable } | set_connected { connected }
+  command: VirtualMediaCommand,   // select { imageId, mode, writable }
+                                  // | mount { imageId, mode, writable }
+                                  // | set_connected { connected }
+                                  // | reconnect
+  sessionBinding: u64,
+  targetBinding: [u8; 32],
+  issuedAtUnixMs: u64,
+}
+VirtualMediaObserve { request: MediaObserveRequest }
+MediaObserveRequest {
   sessionBinding: u64,
   targetBinding: [u8; 32],
   issuedAtUnixMs: u64,
@@ -109,15 +118,21 @@ MediaRequest {
 ```
 
 Validation requires non-zero session and target bindings, a non-zero issued
-timestamp and a valid command; there is no path, URL or filename field. Shipped
-builds reject it with `backend_unavailable`; a separate
-`media-transition-profile` build may attach the persisted media engine, and the
-broker/server wiring remains a Phase 5 slice.
+timestamp and a valid command; there is no path, URL or filename field. A
+`mount` selects the image and attaches it as one recorded operation, so the
+reference single-call mount does not trip the per-operation cooldown;
+`reconnect` re-enumerates the gadget without changing the selection. Shipped
+builds reject both requests with `backend_unavailable`; the feature-gated media
+profiles attach the persisted media engine and the board owner executes them on
+the Rust gadget (the KVMD profile maps `mount` onto its two fixed routes and
+rejects `reconnect` as unsupported).
 
 ## Responses
 
 A response is `applied`, `lease_granted { lease_id }` with a non-zero
-128-bit identifier, or one of the fixed codes: `capability_disabled`,
+128-bit identifier, `media_state { file, connected, cdrom, writable }` for a
+`VirtualMediaObserve` request (the file is a bare image name, never a path), or
+one of the fixed codes: `capability_disabled`,
 `not_armed`, `not_attested`, `lease_conflict`, `lease_expired`,
 `cooldown_active`, `confirmation_stale`, `duplicate`, `pending_unreconciled`,
 `invalid_state`, `backend_unavailable`, `backend_rejected`, `internal`.

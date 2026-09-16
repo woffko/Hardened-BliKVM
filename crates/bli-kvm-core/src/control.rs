@@ -36,6 +36,14 @@ pub enum VirtualMediaCommand {
     SetConnected {
         connected: bool,
     },
+    /// Select an image and attach it as one operation (the reference mount).
+    Mount {
+        image_id: u64,
+        mode: VirtualMediaControlMode,
+        writable: bool,
+    },
+    /// Re-enumerate the gadget without changing the selection.
+    Reconnect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,10 +98,18 @@ impl VirtualMediaCommand {
                 image_id,
                 mode,
                 writable,
+            }
+            | Self::Mount {
+                image_id,
+                mode,
+                writable,
             } if *image_id == 0 || (*mode == VirtualMediaControlMode::CdRom && *writable) => {
                 Err(ControlValidationError::InvalidVirtualMediaCommand)
             }
-            Self::Select { .. } | Self::SetConnected { .. } => Ok(()),
+            Self::Select { .. }
+            | Self::Mount { .. }
+            | Self::SetConnected { .. }
+            | Self::Reconnect => Ok(()),
         }
     }
 }
@@ -133,6 +149,38 @@ fn validate_absolute_mouse_report(data: &[u8; 6]) -> Result<(), ControlValidatio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_mount_and_reconnect_commands() {
+        assert_eq!(
+            VirtualMediaCommand::Mount {
+                image_id: 0,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: false,
+            }
+            .validate(),
+            Err(ControlValidationError::InvalidVirtualMediaCommand)
+        );
+        assert_eq!(
+            VirtualMediaCommand::Mount {
+                image_id: 1,
+                mode: VirtualMediaControlMode::CdRom,
+                writable: true,
+            }
+            .validate(),
+            Err(ControlValidationError::InvalidVirtualMediaCommand)
+        );
+        assert_eq!(
+            VirtualMediaCommand::Mount {
+                image_id: 1,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: true,
+            }
+            .validate(),
+            Ok(())
+        );
+        assert_eq!(VirtualMediaCommand::Reconnect.validate(), Ok(()));
+    }
 
     #[test]
     fn validates_fixed_hid_report_shapes_and_reserved_fields() {

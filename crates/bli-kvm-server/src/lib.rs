@@ -311,6 +311,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/ws", get(ws::hid_socket))
         .route("/virtual-media", post(media::virtual_media))
         .route("/virtual-media/catalog", get(media::media_catalog))
+        .route("/storage/image", get(media::storage_images))
+        .route("/storage/image/mounted", get(media::storage_mounted))
+        .route("/storage/image/mount", post(media::storage_mount))
+        .route("/storage/image/delete", post(media::storage_delete))
+        .route("/storage/cdrom", get(media::storage_cdrom))
+        .route("/storage/usb/reconnect", post(media::storage_reconnect))
         .route("/application-power", post(atx::application_power))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route_layer(from_fn_with_state(state.clone(), protected));
@@ -2493,6 +2499,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn storage_routes_require_an_authenticated_session() {
+        for (method, uri) in [
+            (Method::GET, "/api/storage/image"),
+            (Method::GET, "/api/storage/image/mounted"),
+            (Method::GET, "/api/storage/cdrom"),
+            (Method::POST, "/api/storage/image/mount"),
+            (Method::POST, "/api/storage/image/delete"),
+            (Method::POST, "/api/storage/usb/reconnect"),
+        ] {
+            let request = if method == Method::POST {
+                json_request(method.clone(), uri, serde_json::json!({"file": ""}))
+            } else {
+                Request::builder()
+                    .method(method.clone())
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap()
+            };
+            assert_eq!(
+                app().oneshot(request).await.unwrap().status(),
+                StatusCode::UNAUTHORIZED,
+                "{uri}"
+            );
+        }
     }
 
     #[tokio::test]

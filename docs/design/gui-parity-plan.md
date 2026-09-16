@@ -60,7 +60,7 @@ verified and committed in English with a green `scripts/check.sh`.
 | 1 | `kvmd-nginx` HTTPS front                                   | `hardened-blikvm-nginx`                               | deployed, serving 80/443                                     |
 | 2 | KVMD API/WebUI/auth                                        | `bli-kvm-server` + Nano-derived GUI (37 routes)       | deployed; some routes capability-hidden                      |
 | 3 | KVMD HID (`kvmd-otg`, `hid.usb0/1/2`)                      | our gadget HID in `hardened-blikvm-board-owner`       | deployed and accepted (composite gadget)                     |
-| 4 | KVMD MSD + `/var/lib/kvmd/msd` (`mmcblk0p4`)                | our gadget MSD, our own image layout                  | image still via a symlink into the KVMD directory (E1)       |
+| 4 | KVMD MSD + `/var/lib/kvmd/msd` (`mmcblk0p4`)                | our gadget MSD, our own image layout                  | reference storage API live; image layout move is the E1 device step |
 | 5 | KVMD streamer supervision                                  | vendor `ustreamer` + `bli-kvm-video-proxy`            | deployed by E0; MJPEG gates passed on the live surface       |
 | 6 | KVMD ATX routes + C `kvmd-main` ATX                        | `bli-kvm-atx-gpio-executor` in the board owner        | deployed and accepted (500/5000/500 ms)                      |
 | 7 | C `kvmd-main`: fan, OLED ST7789, display buttons, activity LED, serial switch, RTC, boot config, recovery inputs | Rust board daemon                                    | policy crates and recon snapshots exist; no daemon or units (E2) |
@@ -72,7 +72,7 @@ verified and committed in English with a green `scripts/check.sh`.
 
 ## API parity status
 
-Our hardened server exposes, as of 2026-09-16: 37 routes. The read-only
+Our hardened server exposes, as of 2026-09-16: 43 routes. The read-only
 management surface is implemented and capability-visible: `/api/system/time`
 (`time` read-only), `/api/system-log/{config,messages}`
 (`config`,`messages` read-only), `/api/application/{version,preview}`

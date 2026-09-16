@@ -224,7 +224,9 @@ pub(crate) async fn confirm_focus(
         .await
         .map_err(|_| AppError::ServiceUnavailable("HID control channel is unavailable".into()))?;
     let attested = match &response {
-        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => true,
+        ControlResponse::Applied
+        | ControlResponse::LeaseGranted { .. }
+        | ControlResponse::MediaState { .. } => true,
         ControlResponse::Rejected { .. } => false,
     };
     if attested {
@@ -235,7 +237,9 @@ pub(crate) async fn confirm_focus(
             .remember_bindings(&session.token, bindings, now);
     }
     Ok(Json(ApiResponse::ok(match response {
-        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => FocusConfirmResponse {
+        ControlResponse::Applied
+        | ControlResponse::LeaseGranted { .. }
+        | ControlResponse::MediaState { .. } => FocusConfirmResponse {
             attested: true,
             rejection: None,
         },
@@ -390,7 +394,7 @@ pub(crate) async fn hid_lease(
                 );
             }
         }
-        ControlResponse::Applied => {
+        ControlResponse::Applied | ControlResponse::MediaState { .. } => {
             if matches!(request, HidLeaseBody::Release { .. }) {
                 state.hid_ws_leases.lock().await.clear(&session.token);
             } else if let Some(ttl) = requested_ttl {
@@ -421,6 +425,12 @@ pub(crate) async fn hid_lease(
             lease_id: None,
             ttl_seconds: None,
             rejection: Some(rejection_name(code)),
+        },
+        ControlResponse::MediaState { .. } => HidLeaseResponse {
+            applied: false,
+            lease_id: None,
+            ttl_seconds: None,
+            rejection: Some("invalid_state"),
         },
     })))
 }

@@ -68,6 +68,14 @@ pub struct MediaRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MediaObserveRequest {
+    pub session_binding: u64,
+    pub target_binding: [u8; 32],
+    pub issued_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlatformControlRequestV2 {
     TargetAttest {
@@ -85,6 +93,9 @@ pub enum PlatformControlRequestV2 {
     },
     VirtualMedia {
         request: MediaRequest,
+    },
+    VirtualMediaObserve {
+        request: MediaObserveRequest,
     },
 }
 
@@ -122,6 +133,7 @@ impl PlatformControlRequestV2 {
             Self::HidLease { lease } => lease.validate(),
             Self::Atx { confirmation, .. } => confirmation.validate(),
             Self::VirtualMedia { request } => request.validate(),
+            Self::VirtualMediaObserve { request } => request.validate(),
         }
     }
 }
@@ -221,6 +233,17 @@ impl MediaRequest {
         self.command
             .validate()
             .map_err(|_| ControlV2ValidationError::InvalidMediaCommand)
+    }
+}
+
+impl MediaObserveRequest {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        validate_session_binding(self.session_binding)?;
+        validate_target_binding(&self.target_binding)?;
+        if self.issued_at_unix_ms == 0 {
+            return Err(ControlV2ValidationError::InvalidMediaTimestamp);
+        }
+        Ok(())
     }
 }
 

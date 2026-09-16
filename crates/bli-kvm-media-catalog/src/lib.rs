@@ -149,6 +149,43 @@ impl MediaCatalog {
             .collect()
     }
 
+    /// Find one sanitized entry by its exact file name.
+    pub fn find_by_name(&self, image_name: &str) -> Option<MediaSummary> {
+        self.summaries()
+            .into_iter()
+            .find(|entry| entry.image_name == image_name)
+    }
+
+    /// Remove one entry by image name and persist the catalog atomically.
+    pub fn remove_image(path: &Path, image_name: &str) -> Result<MediaSummary, MediaCatalogError> {
+        if !valid_image_name(image_name) {
+            return Err(MediaCatalogError::InvalidEntry);
+        }
+        let catalog = Self::open(path)?;
+        let mut entries = catalog.entries;
+        let Some(index) = entries
+            .iter()
+            .position(|entry| entry.image_name == image_name)
+        else {
+            return Err(MediaCatalogError::NotFound);
+        };
+        let removed = entries.remove(index);
+        let document = CatalogDocument {
+            schema_version: CATALOG_SCHEMA_VERSION,
+            entries,
+        };
+        validate_document(&document)?;
+        write_document(path, &document)?;
+        Ok(MediaSummary {
+            image_id: removed.image_id,
+            image_name: removed.image_name,
+            size: removed.size,
+            cdrom_allowed: removed.cdrom_allowed,
+            removable_allowed: removed.removable_allowed,
+            writable_allowed: removed.writable_allowed,
+        })
+    }
+
     /// Insert or replace one entry by image name and persist the catalog
     /// atomically. An existing entry keeps its image ID; a new one gets the
     /// next free ID. The catalog directory and file must already be safe.

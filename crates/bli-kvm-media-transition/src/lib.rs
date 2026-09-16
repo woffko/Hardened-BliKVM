@@ -217,6 +217,40 @@ impl GadgetMediaExecutor {
         }
     }
 
+    fn state(&self) -> Result<MediaState, MediaTransitionError> {
+        let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root)
+            .map_err(|_| MediaTransitionError::Backend)?;
+        let storage = state.mass_storage.as_ref();
+        Ok(MediaState {
+            file: storage
+                .and_then(|storage| storage.file.file_name())
+                .map(|name| name.to_string_lossy().into_owned()),
+            connected: state.udc.is_some(),
+            cdrom: storage.is_some_and(|storage| storage.cdrom),
+            writable: storage.is_some_and(|storage| !storage.read_only),
+        })
+    }
+
+    fn reconnect(&self) -> bool {
+        bli_kvm_usb_gadget::reconnect(&self.config.configfs_root, &self.config.udc).is_ok()
+    }
+
+    fn mount(
+        &self,
+        catalog: &MediaCatalog,
+        image_id: u64,
+        mode: bli_kvm_core::VirtualMediaControlMode,
+        writable: bool,
+    ) -> bool {
+        if self.state_present() && bli_kvm_usb_gadget::unbind(&self.config.configfs_root).is_err() {
+            return false;
+        }
+        if !self.select(catalog, image_id, mode, writable) {
+            return false;
+        }
+        self.set_connected(true)
+    }
+
     fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
         match command {
             VirtualMediaCommand::Select {
@@ -224,12 +258,38 @@ impl GadgetMediaExecutor {
                 mode,
                 writable,
             } => self.select(catalog, *image_id, *mode, *writable),
+            VirtualMediaCommand::Mount {
+                image_id,
+                mode,
+                writable,
+            } => self.mount(catalog, *image_id, *mode, *writable),
             VirtualMediaCommand::SetConnected { connected } => self.set_connected(*connected),
+            VirtualMediaCommand::Reconnect => self.reconnect(),
         }
     }
 }
 
+/// Read-only current media state, independent of the policy journal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaState {
+    pub file: Option<String>,
+    pub connected: bool,
+    pub cdrom: bool,
+    pub writable: bool,
+}
+
 impl MediaExecutor {
+    async fn state(&self) -> Option<MediaState> {
+        match self {
+            #[cfg(feature = "kvmd-media-profile")]
+            MediaExecutor::Kvmd(_) => None,
+            #[cfg(feature = "gadget-media-profile")]
+            MediaExecutor::Gadget(executor) => executor.state().ok(),
+            #[cfg(test)]
+            MediaExecutor::Test { .. } => None,
+        }
+    }
+
     async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
         match self {
             #[cfg(feature = "kvmd-media-profile")]
@@ -325,6 +385,12 @@ impl MediaTransitionEngine {
     /// Reads the fixed read-only `/msd` state used for media eligibility.
     pub async fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
         self.executor.observe().await
+    }
+
+    /// Current backend state (image name, attachment, mode), when the backend
+    /// can report it. KVMD profiles cannot and return `None`.
+    pub async fn state(&self) -> Option<MediaState> {
+        self.executor.state().await
     }
 
     pub async fn execute(
@@ -651,6 +717,73 @@ mod tests {
         ));
         assert!(!executor.observe().unwrap().connected);
         assert!(!configfs.join("hardened").exists());
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn gadget_executor_mounts_and_reconnects() {
+        let directory = tempfile::tempdir().unwrap();
+        let image_dir = directory.path().join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        std::fs::write(image_dir.join("kubuntu.img"), b"image").unwrap();
+        let catalog_path = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog_path,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"kubuntu.img","size":1,"sha256":"{}","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        let catalog = MediaCatalog::open(&catalog_path).unwrap();
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+        let executor = GadgetMediaExecutor::new(GadgetMediaConfig {
+            configfs_root: configfs.clone(),
+            udc: "musb-hdrc.2.auto".into(),
+            image_directory: image_dir,
+            strings: GadgetStrings {
+                manufacturer: "Hardened BLi-KVM".into(),
+                product: "BLi-KVM Composite Device".into(),
+                serial: "BLK-mount-test".into(),
+                configuration: "BLi-KVM configuration".into(),
+            },
+            id_vendor: 0x1d6b,
+            id_product: 0x0104,
+            bcd_usb: 0x0200,
+            bcd_device: 0x0100,
+        });
+
+        assert!(executor.execute(
+            &VirtualMediaCommand::Mount {
+                image_id: 7,
+                mode: VirtualMediaControlMode::RemovableDisk,
+                writable: false,
+            },
+            &catalog
+        ));
+        let state = executor.state().unwrap();
+        assert_eq!(state.file.as_deref(), Some("kubuntu.img"));
+        assert!(state.connected);
+        assert!(!state.cdrom);
+        assert!(!state.writable);
+
+        assert!(executor.execute(&VirtualMediaCommand::Reconnect, &catalog));
+        let after = executor.state().unwrap();
+        assert!(after.connected);
+        assert_eq!(after.file.as_deref(), Some("kubuntu.img"));
+
+        assert!(executor.execute(
+            &VirtualMediaCommand::Mount {
+                image_id: 7,
+                mode: VirtualMediaControlMode::CdRom,
+                writable: false,
+            },
+            &catalog
+        ));
+        let cdrom = executor.state().unwrap();
+        assert!(cdrom.cdrom);
+        assert!(cdrom.connected);
     }
 
     #[cfg(feature = "gadget-media-profile")]

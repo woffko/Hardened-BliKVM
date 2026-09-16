@@ -209,6 +209,9 @@ impl ControlV2State {
             PlatformControlRequestV2::VirtualMedia { request } => {
                 self.handle_media(operation_id, request, now).await
             }
+            PlatformControlRequestV2::VirtualMediaObserve { request } => {
+                self.handle_media_observe(request).await
+            }
         }
     }
 
@@ -395,6 +398,13 @@ impl ControlV2State {
 
 #[cfg(not(any(feature = "media-transition-profile", feature = "gadget-media-profile")))]
 impl ControlV2State {
+    async fn handle_media_observe(
+        &mut self,
+        _request: &bli_kvm_core::MediaObserveRequest,
+    ) -> ControlResponse {
+        reject(ControlRejectionCode::BackendUnavailable)
+    }
+
     async fn handle_media(
         &mut self,
         _operation_id: &str,
@@ -407,6 +417,27 @@ impl ControlV2State {
 
 #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
 impl ControlV2State {
+    async fn handle_media_observe(
+        &mut self,
+        request: &bli_kvm_core::MediaObserveRequest,
+    ) -> ControlResponse {
+        if request.validate().is_err() {
+            return reject(ControlRejectionCode::InvalidState);
+        }
+        let Some(engine) = self.media.as_mut() else {
+            return reject(ControlRejectionCode::BackendUnavailable);
+        };
+        match engine.state().await {
+            Some(state) => ControlResponse::MediaState {
+                file: state.file,
+                connected: state.connected,
+                cdrom: state.cdrom,
+                writable: state.writable,
+            },
+            None => reject(ControlRejectionCode::BackendUnavailable),
+        }
+    }
+
     async fn handle_media(
         &mut self,
         operation_id: &str,

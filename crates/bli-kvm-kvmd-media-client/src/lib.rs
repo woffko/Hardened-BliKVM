@@ -32,6 +32,8 @@ pub enum KvmdMediaClientError {
     Catalog(#[from] MediaCatalogError),
     #[error("KVMD media request timed out")]
     Timeout,
+    #[error("KVMD media route is not supported")]
+    Unsupported,
     #[error("KVMD media Unix socket I/O failed")]
     Io(#[from] std::io::Error),
     #[error("KVMD media HTTP request construction failed")]
@@ -111,6 +113,28 @@ impl KvmdMediaClient {
             VirtualMediaCommand::SetConnected { connected } => {
                 format!("/msd/set_connected?connected={}", u8::from(*connected))
             }
+            VirtualMediaCommand::Mount {
+                image_id,
+                mode,
+                writable,
+            } => {
+                let selection = catalog.resolve(*image_id, *mode, *writable)?;
+                let uri = selection_uri(
+                    selection.image_name(),
+                    selection.mode(),
+                    selection.writable(),
+                );
+                timeout(self.timeout, self.post(&uri, credentials))
+                    .await
+                    .map_err(|_| KvmdMediaClientError::Timeout)??;
+                return timeout(
+                    self.timeout,
+                    self.post("/msd/set_connected?connected=1", credentials),
+                )
+                .await
+                .map_err(|_| KvmdMediaClientError::Timeout)?;
+            }
+            VirtualMediaCommand::Reconnect => return Err(KvmdMediaClientError::Unsupported),
         };
         timeout(self.timeout, self.post(&uri, credentials))
             .await

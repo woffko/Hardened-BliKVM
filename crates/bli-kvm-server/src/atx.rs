@@ -89,7 +89,9 @@ pub(crate) async fn application_power(
         .await
         .map_err(|_| AppError::ServiceUnavailable("ATX control channel is unavailable".into()))?;
     Ok(Json(ApiResponse::ok(match response {
-        ControlResponse::Applied | ControlResponse::LeaseGranted { .. } => AtxResponse {
+        ControlResponse::Applied
+        | ControlResponse::LeaseGranted { .. }
+        | ControlResponse::MediaState { .. } => AtxResponse {
             applied: true,
             rejection: None,
         },

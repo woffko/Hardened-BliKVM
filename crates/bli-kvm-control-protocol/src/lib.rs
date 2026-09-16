@@ -43,8 +43,18 @@ pub enum ControlRejectionCode {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
     Applied,
-    LeaseGranted { lease_id: [u8; 16] },
-    Rejected { code: ControlRejectionCode },
+    LeaseGranted {
+        lease_id: [u8; 16],
+    },
+    MediaState {
+        file: Option<String>,
+        connected: bool,
+        cdrom: bool,
+        writable: bool,
+    },
+    Rejected {
+        code: ControlRejectionCode,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +248,12 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
+    if let ControlResponse::MediaState { file, .. } = response
+        && let Some(file) = file
+        && (file.is_empty() || file.len() > 255 || file.contains('/'))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
     Ok(())
 }
 
@@ -302,8 +318,8 @@ fn ensure_version(actual: u16, expected: u16) -> Result<(), ControlProtocolError
 #[cfg(test)]
 mod tests {
     use bli_kvm_core::{
-        AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, MediaRequest,
-        TargetAttestation, VirtualMediaCommand, VirtualMediaControlMode,
+        AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, MediaObserveRequest,
+        MediaRequest, TargetAttestation, VirtualMediaCommand, VirtualMediaControlMode,
     };
 
     use super::*;
@@ -559,6 +575,56 @@ mod tests {
         let json = encode_response_v2(&response).unwrap();
         assert_eq!(decode_response_v2(&json).unwrap(), response);
         assert!(!String::from_utf8_lossy(&json).contains("message"));
+    }
+
+    #[test]
+    fn media_state_response_round_trips_and_rejects_unsafe_names() {
+        let response = ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 24,
+            operation_id: OPERATION_ID.into(),
+            response: ControlResponse::MediaState {
+                file: Some("rescue.iso".into()),
+                connected: true,
+                cdrom: true,
+                writable: false,
+            },
+        };
+        let json = encode_response_v2(&response).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), response);
+
+        for file in ["", "../../etc/passwd", "a".repeat(256).as_str()] {
+            let invalid = ControlResponseEnvelope {
+                schema_version: CONTROL_SCHEMA_VERSION_V2,
+                request_id: 25,
+                operation_id: OPERATION_ID.into(),
+                response: ControlResponse::MediaState {
+                    file: Some(file.into()),
+                    connected: false,
+                    cdrom: false,
+                    writable: false,
+                },
+            };
+            assert!(encode_response_v2(&invalid).is_err(), "{file}");
+        }
+    }
+
+    #[test]
+    fn v2_virtual_media_observe_request_round_trips() {
+        let request = ControlRequestEnvelopeV2 {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 26,
+            operation_id: OPERATION_ID.into(),
+            request: PlatformControlRequestV2::VirtualMediaObserve {
+                request: MediaObserveRequest {
+                    session_binding: 9,
+                    target_binding: [0x11; 32],
+                    issued_at_unix_ms: 1_700_000_000_000,
+                },
+            },
+        };
+        let json = encode_request_v2(&request).unwrap();
+        assert_eq!(decode_request_v2(&json).unwrap(), request);
     }
 
     #[test]

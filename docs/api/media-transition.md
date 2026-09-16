@@ -63,6 +63,18 @@ without another call, a no-op never touches the journal, and a busy or failed
 backend response is persisted as rejected. The engine is still not connected to
 the broker or server.
 
+## Board owner commands (2026-09-16)
+
+The Rust media engine now carries four commands. `select` and `set_connected`
+are unchanged; `mount` selects and attaches in one recorded operation so the
+reference single-call mount does not trip the 2 s per-operation cooldown;
+`reconnect` re-enumerates the gadget through the owner without changing the
+selection. The engine also exposes a read-only `state` (image name, attachment,
+cdrom, writable) that the broker returns as `media_state`, which is how the
+server serves `/api/storage/image/mounted`, `/api/storage/cdrom` and the delete
+guard. The KVMD profile maps `mount` onto its two fixed routes and rejects
+`reconnect` as unsupported, so no new KVMD route is introduced.
+
 ## Remaining gates
 
 Before media mutation can be wired or advertised:
