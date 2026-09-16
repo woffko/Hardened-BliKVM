@@ -15,9 +15,6 @@ use std::path::Path;
 use bli_kvm_platform_bli::{BOARD_CONSUMER, GpioDriver, LineDirection, LineRequest};
 use thiserror::Error;
 
-/// GPIO_GET_CHIPINFO_IOCTL from the Linux GPIO character-device UAPI.
-pub const GET_CHIPINFO_IOCTL: u32 = 0x8044_1b01;
-
 pub const GPIOHANDLE_REQUEST_INPUT: u32 = 0x01;
 pub const GPIOHANDLE_REQUEST_OUTPUT: u32 = 0x02;
 pub const GPIOHANDLE_REQUEST_ACTIVE_LOW: u32 = 0x04;
@@ -50,6 +47,7 @@ const MAX_CONSUMER_LEN: usize = CONSUMER_LABEL_LEN - 1;
 const IOC_WRITE: u32 = 1;
 const IOC_READ: u32 = 2;
 const GPIO_IOC_TYPE: u32 = 0xB4;
+const GET_CHIPINFO_NR: u32 = 0x01;
 const GET_LINEHANDLE_NR: u32 = 0x03;
 const SET_LINE_VALUES_NR: u32 = 0x09;
 
@@ -89,6 +87,12 @@ const fn iowr(ty: u32, nr: u32, size: usize) -> u64 {
     ioc(IOC_READ | IOC_WRITE, ty, nr, size)
 }
 
+const GET_CHIPINFO_IOCTL: u64 = ioc(
+    IOC_READ,
+    GPIO_IOC_TYPE,
+    GET_CHIPINFO_NR,
+    std::mem::size_of::<GpiochipInfo>(),
+);
 const GET_LINEHANDLE_IOCTL: u64 = iowr(
     GPIO_IOC_TYPE,
     GET_LINEHANDLE_NR,
@@ -266,8 +270,10 @@ mod tests {
 
     #[test]
     fn ioctl_numbers_match_the_kernel_abi() {
+        // _IOR(0xB4, 0x01, struct gpiochip_info),
         // _IOWR(0xB4, 0x03, struct gpiohandle_request) and
         // _IOWR(0xB4, 0x09, struct gpiohandle_data).
+        assert_eq!(GET_CHIPINFO_IOCTL, 0x8044_B401);
         assert_eq!(GET_LINEHANDLE_IOCTL, 0xC16C_B403);
         assert_eq!(SET_LINE_VALUES_IOCTL, 0xC040_B409);
     }
