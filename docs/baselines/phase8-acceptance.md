@@ -85,6 +85,13 @@ Recorded detail:
   sequence (plan-only by default).
 - E4: the signed application update commit cycle
   (`persistent-write-*-commit-*.json`).
+- E5 parity (2026-09-17): the reference stand answers with a NanoKVM-branded
+  build (`Remote Desktop - NanoKVM`, label `Hardened NanoKVM`) and our build
+  answers with `Remote Desktop - Hardened BliKVM` (label `Hardened BliKVM`).
+  `tools/compare_gui_parity.py` reports that the only captured label difference
+  is the product name, with no unexplained labels, no capability differences, no
+  marker differences and an unchanged console-error count; the settings-tab and
+  capability surfaces still need an authenticated capture on both sides.
 - E5: `gui-parity-ours-auth-20260916-a.json`,
   `gui-parity-compare-20260916-a.json` and
   `vendor-replacement-20260916-b.json`: our five units active, every KVMD unit
