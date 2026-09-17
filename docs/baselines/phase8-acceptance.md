@@ -35,7 +35,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 | --- | --- | --- |
 | E0 video | `video-frame-timing-*.json`, `video-two-client-probe-*.json`, `video-soak-probe-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E1 storage and media | `storage-acceptance-*.json`, `storage-upload-*.json`, `virtual-media-acceptance-*.json` | recorded 2026-09-16 (`result=passed`) |
-| E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the fan, LED and panel handoffs are recorded on 2026-09-17 as `observed-pending` (the daemon owns the lines and answered every request; the operator's physical observation is still open), and the button gate is left to the operator, who is running the ATX check personally |
+| E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-atx-leds-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the fan, LED and panel handoffs are recorded on 2026-09-17 as `observed-pending` (the daemon owns the lines and answered every request; the operator's physical observation is still open), the button gate is left to the operator, who runs the ATX check personally, and the ATX host LED inputs read through the owner to `inventory.powerLed` (`backend=native`) |
 | E3 network and system actions | `device-system-action-store-*.json`, `device-system-action-maintenance.json`, `system-action-gate-*.json`, `network-write-gate-*.json` | the privileged system-action store and maintenance dispatcher are recorded (`result=passed`); the end-to-end reboot gate is staged (`tools/stage_device_system_action_gate.py`) and the network writes are open. The unprivileged session auto-lock (`/api/vm/session-lock`) is implemented and covered by server tests |
 | E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the host chain is verified end to end (shipped bundle `7e0ab131…`, board-profile features, `libexec/bli-kvm-boardd` and our board units staged; runtime package `0743cc85…` maps the daemon and the units); the slot-serving cutover is implemented on the host (the shipped build compiles the board profile, the runtime package and the production bundle carry `bli-kvm-boardd` and our board units, and `server-current`/`server-candidate` serve the slot through the board owner socket), while the device candidate/confirm cycle is open |
 | E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | recorded: both parity captures and the read-only vendor replacement summary (`tools/capture_vendor_replacement_state.py`, `result=passed`) |
@@ -49,6 +49,13 @@ Recorded detail:
   reconnect, eject, re-attach), `storage-upload-20260916-b.json` and
   `storage-upload-cycle-20260916-a.json` (upload, mount, eject, delete,
   re-attach).
+- E2 ATX: the owner unit enables the reviewed `BLI_KVM_GPIO_ATX_PROFILE`, so
+  the capability advertises the power and reset actions again, and the daemon
+  reads the host power (234) and HDD (233) LED inputs. `POST /api/network/wol`
+  matches the captured reference contract. The board profile serves the power
+  state from its own arrangement: the owner proxies one read-only board status
+  and `/api/inventory` reports `backend=native` with `powerLed` (observed
+  `false` with the host LED off).
 - E2: `boardd-fan-preflight-20260916-a.json` (vendor sysfs lines 259, 260, 261,
   262 and 269 still claimed, line 257 unused, thermal about 51.5 C) and
   `kvmd-removal-20260916-a.json` (`removal.kvmd_stopped=yes`). The gate tool's
