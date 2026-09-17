@@ -1258,6 +1258,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn network_writes_require_authentication_and_the_explicit_opt_in() {
+        // No session.
+        let response = app()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/network/dns",
+                serde_json::json!({"servers": ["1.1.1.1"], "confirm": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // Session, but no opt-in: refused before any IPC.
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(root.path().join("control.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut request = json_request(
+            Method::POST,
+            "/api/network/dns",
+            serde_json::json!({"servers": ["1.1.1.1"], "confirm": true}),
+        );
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        // Enabled, but the request carries no confirmation: refused as invalid.
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(root.path().join("control.sock")),
+            restricted_controls_enabled: true,
+            network_writes_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut request = json_request(
+            Method::POST,
+            "/api/network/ipv6",
+            serde_json::json!({"interface": "wlan0", "disabled": true}),
+        );
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = json_body(response).await;
+        // The enabled handler refuses before any IPC and reports the
+        // application-level rejection the reference style uses; without the
+        // restricted surface the route is an unavailable stub.
+        if cfg!(feature = "restricted-control-surface") {
+            assert_eq!(status, StatusCode::OK);
+            assert!(
+                body["code"].as_i64().unwrap_or(0) < 0,
+                "unexpected body: {body}"
+            );
+        } else {
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        }
+
+        let capabilities = json_body(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/capabilities")
+                        .header(header::HOST, "kvm.test")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        let availability = if cfg!(feature = "restricted-control-surface") {
+            "read_write"
+        } else {
+            "unavailable"
+        };
+        assert_eq!(
+            capabilities["data"]["network"]["dns"]["availability"],
+            availability
+        );
+        assert_eq!(
+            capabilities["data"]["network"]["ipv6"]["availability"],
+            availability
+        );
+    }
+
+    #[tokio::test]
     async fn media_upload_requires_session_csrf_and_same_origin_before_the_body() {
         struct NeverBody;
         impl http_body::Body for NeverBody {
