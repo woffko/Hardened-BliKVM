@@ -216,6 +216,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             manifest.network.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.dns = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.ipv6 = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            manifest.network.wol = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
     }
     manifest
@@ -308,6 +309,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/network/ipv6",
             get(network::network_ipv6).post(network_write::ipv6),
         )
+        .route("/network/wol", post(network_write::wol))
         .route("/network/interfaces", get(network::network_interfaces))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
@@ -1428,6 +1430,25 @@ mod tests {
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         }
 
+        // The Wake-on-LAN route repeats the confirmation requirement.
+        let mut request = json_request(
+            Method::POST,
+            "/api/network/wol",
+            serde_json::json!({"mac": "00:11:22:aa:bb:cc"}),
+        );
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        if cfg!(feature = "restricted-control-surface") {
+            assert_eq!(response.status(), StatusCode::OK);
+        } else {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+
         let capabilities = json_body(
             app.clone()
                 .oneshot(
@@ -1446,14 +1467,12 @@ mod tests {
         } else {
             "unavailable"
         };
-        assert_eq!(
-            capabilities["data"]["network"]["dns"]["availability"],
-            availability
-        );
-        assert_eq!(
-            capabilities["data"]["network"]["ipv6"]["availability"],
-            availability
-        );
+        for component in ["dns", "ipv6", "wol"] {
+            assert_eq!(
+                capabilities["data"]["network"][component]["availability"],
+                availability
+            );
+        }
     }
 
     #[tokio::test]

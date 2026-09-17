@@ -49,6 +49,8 @@ pub struct ControlV2State {
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
     board_status: Option<crate::board_status::BoardStatusClient>,
+    #[cfg(feature = "network-write-profile")]
+    wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
 }
 
 impl ControlV2State {
@@ -68,6 +70,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -105,6 +109,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -124,6 +130,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -143,6 +151,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -176,6 +186,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -197,6 +209,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -224,6 +238,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -236,6 +252,16 @@ impl ControlV2State {
         state: crate::system_action::SystemActionState<Box<dyn crate::system_action::ActionRunner>>,
     ) {
         self.system_action = Some(state);
+    }
+
+    /// Attach the reviewed Wake-on-LAN sender, so the owner can serve the
+    /// bounded magic-packet write behind the capability gate.
+    #[cfg(feature = "network-write-profile")]
+    pub fn attach_wol(
+        &mut self,
+        state: crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>,
+    ) {
+        self.wol = Some(state);
     }
 
     /// Attach the reviewed network-write surface, so the owner serves DNS and
@@ -287,6 +313,8 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             board_status: None,
+            #[cfg(feature = "network-write-profile")]
+            wol: None,
         }
     }
 
@@ -384,6 +412,10 @@ impl ControlV2State {
                 interface,
                 disabled,
             } => state.set_ipv6(interface, *disabled),
+            NetworkWriteTarget::Wol { mac } => match self.wol.as_ref() {
+                Some(wol) => wol.send(mac),
+                None => NetworkWriteOutcome::Unavailable,
+            },
         };
         match outcome {
             NetworkWriteOutcome::Applied { .. } => ControlResponse::Applied,
@@ -928,6 +960,25 @@ mod tests {
                 code: ControlRejectionCode::BackendRejected
             }
         );
+        // The Wake-on-LAN target needs the reviewed sender; without it the
+        // capability is reported unavailable instead of sending anything.
+        let wol = PlatformControlRequestV2::NetworkWrite {
+            request: bli_kvm_core::NetworkWriteRequest {
+                target: bli_kvm_core::NetworkWriteTarget::Wol {
+                    mac: "00:11:22:aa:bb:cc".to_string(),
+                },
+                session_binding: 9,
+                confirmation_binding: [0x11; 32],
+                issued_at_unix_ms: 1_000,
+            },
+        };
+        assert_eq!(
+            state.handle(&wol, Instant::now()).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled
+            }
+        );
+
         // A request without the reviewed bindings never reaches the writer.
         let mut unbounded = request(vec!["not-an-address".to_string()]);
         if let PlatformControlRequestV2::NetworkWrite { request } = &mut unbounded {

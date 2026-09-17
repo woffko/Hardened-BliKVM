@@ -53,6 +53,15 @@ pub(crate) struct NetworkIpv6Body {
     pub confirm: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct NetworkWolBody {
+    pub mac: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkWriteOutcome {
@@ -147,6 +156,30 @@ pub(crate) async fn ipv6(
     State(_state): State<AppState>,
     Extension(CurrentSession(_session)): Extension<CurrentSession>,
     Json(_body): Json<NetworkIpv6Body>,
+) -> AppResult<Json<ApiResponse<NetworkWriteOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "network writes are not configured".into(),
+    ))
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn wol(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<NetworkWolBody>,
+) -> AppResult<Json<ApiResponse<NetworkWriteOutcome>>> {
+    let target = NetworkWriteTarget::Wol {
+        mac: body.mac.clone(),
+    };
+    let outcome = request_write(&state, &session, target, body.confirm, "wol").await?;
+    Ok(Json(ApiResponse::ok(outcome)))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn wol(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<NetworkWolBody>,
 ) -> AppResult<Json<ApiResponse<NetworkWriteOutcome>>> {
     Err(AppError::ServiceUnavailable(
         "network writes are not configured".into(),

@@ -167,6 +167,8 @@ pub struct NetworkCapabilities {
     pub dns: FeatureStatus,
     /// Per-interface IPv6 writes.
     pub ipv6: FeatureStatus,
+    /// Bounded Wake-on-LAN writes.
+    pub wol: FeatureStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,6 +316,7 @@ mod tests {
                 status: FeatureStatus::unavailable(),
                 dns: FeatureStatus::unavailable(),
                 ipv6: FeatureStatus::unavailable(),
+                wol: FeatureStatus::unavailable(),
             },
             system: SystemCapabilities {
                 status: FeatureStatus::unavailable(),

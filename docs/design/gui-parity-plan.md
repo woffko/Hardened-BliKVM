@@ -72,7 +72,7 @@ verified and committed in English with a green `scripts/check.sh`.
 
 ## API parity status
 
-Our hardened server exposes, as of 2026-09-16: 46 routes. The read-only
+Our hardened server exposes, as of 2026-09-17: 47 routes. The read-only
 management surface is implemented and capability-visible: `/api/system/time`
 (`time` read-only), `/api/system-log/{config,messages}`
 (`config`,`messages` read-only), `/api/application/{version,preview}`
@@ -199,9 +199,10 @@ Goal: close the remaining KVMD management surfaces. Design:
   dispatcher already passed on the device) and are advertised only by a new
   `systemActions` capability; memory and swap writes are bounded owner actions
   with read-back. The capability manifest carries a `network` section
-  (`status`, `dns`, `ipv6`), and the two network writes are advertised as
+  (`status`, `dns`, `ipv6`, `wol`), and the network writes are advertised as
   `read_write` only when the board owner serves the reviewed network-write
-  surface.
+  surface. The bounded Wake-on-LAN write (`POST /api/network/wol`) matches the
+  captured reference contract (`mac` plus an explicit confirmation).
 - Network writes: DNS and IPv6 first, then firewall, SSH/mDNS, Wake-on-LAN and
   wifi where the hardware supports it (the board has `wlan0` and
   NetworkManager); interactive wifi stays out of scope until a reviewed helper

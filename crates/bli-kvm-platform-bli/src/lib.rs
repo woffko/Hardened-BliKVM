@@ -124,6 +124,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 status: FeatureStatus::not_exposed(runtime_verified),
                 dns: FeatureStatus::not_exposed(runtime_verified),
                 ipv6: FeatureStatus::not_exposed(runtime_verified),
+                wol: FeatureStatus::not_exposed(runtime_verified),
             },
             board: BoardCapabilities {
                 features: board_features,

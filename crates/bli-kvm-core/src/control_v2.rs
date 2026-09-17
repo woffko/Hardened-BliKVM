@@ -121,8 +121,17 @@ pub struct NetworkWriteRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetworkWriteTarget {
-    Dns { servers: Vec<String> },
-    Ipv6 { interface: String, disabled: bool },
+    Dns {
+        servers: Vec<String>,
+    },
+    Ipv6 {
+        interface: String,
+        disabled: bool,
+    },
+    /// One Wake-on-LAN magic packet for the given MAC address.
+    Wol {
+        mac: String,
+    },
 }
 
 impl NetworkWriteRequest {
