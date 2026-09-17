@@ -6,6 +6,7 @@
 //! typed control surface. Everything is configured from the operator file and
 //! nothing about the board is guessed.
 
+pub mod atx_leds;
 pub mod button;
 pub mod config;
 pub mod display;
@@ -70,6 +71,7 @@ pub fn build_state(
     let display = build_display(config, pwm_enabled);
     let led = build_led(config, pwm_enabled);
     let button = build_button(config, pwm_enabled);
+    let atx_leds = build_atx_leds(config, pwm_enabled);
     Ok(BoarddState::new(
         supervisor,
         FanModeName::Auto,
@@ -82,7 +84,36 @@ pub fn build_state(
         display,
         led,
         button,
+        atx_leds,
     ))
+}
+
+/// Build the ATX host LED inputs; a failure never stops the fan.
+fn build_atx_leds(
+    config: &config::BoarddConfig,
+    actuation_enabled: bool,
+) -> Option<Box<dyn server::AtxLedControl>> {
+    let atx_leds = config.atx_leds.as_ref()?;
+    let _ = actuation_enabled;
+    let driver = match bli_kvm_gpio_chardev::ChardevGpioDriver::open(&config.gpio_chip) {
+        Ok(driver) => driver,
+        Err(error) => {
+            eprintln!("boardd: ATX LED lines unavailable: {error:?}");
+            return None;
+        }
+    };
+    match atx_leds::AtxLedsRuntime::new(
+        driver,
+        atx_leds::atx_power_led_line(atx_leds),
+        atx_leds::atx_hdd_led_line(atx_leds),
+        atx_leds,
+    ) {
+        Ok(runtime) => Some(Box::new(runtime)),
+        Err(error) => {
+            eprintln!("boardd: ATX LED inputs unavailable: {error}");
+            None
+        }
+    }
 }
 
 /// Build the display button runtime; a failure never stops the fan.
@@ -219,6 +250,7 @@ pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
                 let _ = state.sample(unix_millis());
                 state.tick_led();
                 state.tick_button();
+                state.tick_atx_leds();
             }
             std::thread::sleep(interval);
         }

@@ -154,6 +154,23 @@ impl LedConfig {
     }
 }
 
+/// ATX host LED inputs: reviewed read-only lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AtxLedsConfig {
+    pub power: LineSpec,
+    pub hdd: LineSpec,
+}
+
+impl AtxLedsConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.power.offset == self.hdd.offset || self.power.offset == 0 || self.hdd.offset == 0 {
+            return Err(ConfigError::Invalid);
+        }
+        Ok(())
+    }
+}
+
 /// Display button: reviewed input line and debounce windows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -194,6 +211,9 @@ pub struct BoarddConfig {
     pub display: DisplayConfig,
     pub led: LedConfig,
     pub button: ButtonConfig,
+    /// Optional read-only ATX host LED inputs.
+    #[serde(default)]
+    pub atx_leds: Option<AtxLedsConfig>,
 }
 
 impl FanConfig {
@@ -290,7 +310,11 @@ impl BoarddConfig {
         self.fan.validate()?;
         self.display.validate()?;
         self.led.validate()?;
-        self.button.validate()
+        self.button.validate()?;
+        if let Some(atx_leds) = self.atx_leds.as_ref() {
+            atx_leds.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -300,6 +324,7 @@ mod tests {
 
     fn config() -> BoarddConfig {
         BoarddConfig {
+            atx_leds: None,
             socket: PathBuf::from("/run/hardened-blikvm-boardd/control.sock"),
             gpio_chip: PathBuf::from("/dev/gpiochip0"),
             sample_interval_ms: 1_000,

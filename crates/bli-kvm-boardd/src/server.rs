@@ -32,6 +32,15 @@ pub trait ButtonControl: Send {
     fn wakeups(&self) -> u64;
 }
 
+/// ATX host LED inputs the status view reports.
+pub trait AtxLedControl: Send {
+    fn sample(&mut self) -> Result<(), &'static str>;
+    fn power_present(&self) -> bool;
+    fn power_on(&self) -> bool;
+    fn hdd_present(&self) -> bool;
+    fn hdd_on(&self) -> bool;
+}
+
 /// Activity LED operations the control surface exposes.
 pub trait LedControl: Send {
     fn set_enabled(&mut self, enabled: bool, now_ms: u64) -> Result<(), &'static str>;
@@ -77,6 +86,10 @@ pub struct StatusView {
     pub led_level: bool,
     pub button_present: bool,
     pub button_wakeups: u64,
+    pub atx_power_led_present: bool,
+    pub atx_power_led_on: bool,
+    pub atx_hdd_led_present: bool,
+    pub atx_hdd_led_on: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_rtc_seconds: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,6 +154,7 @@ pub struct BoarddState<A: FanActuator> {
     display: Option<Box<dyn DisplayControl>>,
     led: Option<Box<dyn LedControl>>,
     button: Option<Box<dyn ButtonControl>>,
+    atx_leds: Option<Box<dyn AtxLedControl>>,
 }
 
 impl<A> BoarddState<A>
@@ -161,11 +175,13 @@ where
         display: Option<Box<dyn DisplayControl>>,
         led: Option<Box<dyn LedControl>>,
         button: Option<Box<dyn ButtonControl>>,
+        atx_leds: Option<Box<dyn AtxLedControl>>,
     ) -> Self {
         Self {
             display,
             led,
             button,
+            atx_leds,
             supervisor,
             mode,
             manual_duty,
@@ -239,6 +255,16 @@ where
             led_level: self.led.as_ref().is_some_and(|led| led.level()),
             button_present: self.button.is_some(),
             button_wakeups: self.button.as_ref().map_or(0, |button| button.wakeups()),
+            atx_power_led_present: self
+                .atx_leds
+                .as_ref()
+                .is_some_and(|leds| leds.power_present()),
+            atx_power_led_on: self.atx_leds.as_ref().is_some_and(|leds| leds.power_on()),
+            atx_hdd_led_present: self
+                .atx_leds
+                .as_ref()
+                .is_some_and(|leds| leds.hdd_present()),
+            atx_hdd_led_on: self.atx_leds.as_ref().is_some_and(|leds| leds.hdd_on()),
             external_rtc_seconds: self.external_rtc,
             external_rtc_offset_seconds: self.external_rtc_offset,
             external_rtc_error: self.external_rtc_error,
@@ -289,6 +315,14 @@ where
         {
             let _ = display.set_backlight(true);
         }
+    }
+
+    /// Sample the ATX host LED inputs; called by the sampling thread.
+    pub fn tick_atx_leds(&mut self) {
+        let Some(atx_leds) = self.atx_leds.as_mut() else {
+            return;
+        };
+        let _ = atx_leds.sample();
     }
 
     /// Drive the LED pulse forward; called by the sampling thread.
@@ -551,6 +585,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -607,6 +642,7 @@ mod tests {
             40,
             269,
             Some(Box::new(display)),
+            None,
             None,
             None,
         )
@@ -667,6 +703,7 @@ mod tests {
             269,
             None,
             Some(Box::new(led)),
+            None,
             None,
         )
     }
@@ -746,6 +783,7 @@ mod tests {
             display.map(|display| Box::new(display) as Box<dyn DisplayControl>),
             None,
             Some(Box::new(button)),
+            None,
         )
     }
 

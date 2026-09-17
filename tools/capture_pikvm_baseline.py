@@ -8,7 +8,6 @@ hostnames, and device identifiers are never written to the output file.
 from __future__ import annotations
 
 import argparse
-import base64
 from dataclasses import dataclass
 from http.client import HTTPResponse
 import http.cookiejar
@@ -20,7 +19,7 @@ import ssl
 import sys
 import tempfile
 from typing import TypedDict, cast
-from urllib import error, parse, request
+from urllib import parse, request
 
 
 READ_ONLY_PATHS = (
@@ -170,11 +169,14 @@ def login(
         },
         method="POST",
     )
-    with cast(
-        HTTPResponse, opener.open(request_, timeout=8)
-    ) as response:
-        payload = json.loads(response.read(MAX_RESPONSE_BYTES + 1).decode())
-    token = str((payload.get("data") or {}).get("csrfToken") or "")
+    with cast(HTTPResponse, opener.open(request_, timeout=8)) as response:
+        payload: dict[str, object] = json.loads(
+            response.read(MAX_RESPONSE_BYTES + 1).decode()
+        )
+    data = payload.get("data")
+    token = ""
+    if isinstance(data, dict):
+        token = str(cast(dict[str, object], data).get("csrfToken") or "")
     if payload.get("code") != 0 or not token:
         raise ValueError("login was refused")
     return opener, token
@@ -195,26 +197,11 @@ def fetch_json(
         data = response.read(MAX_RESPONSE_BYTES + 1)
         if len(data) > MAX_RESPONSE_BYTES:
             raise ValueError("response exceeded the bounded size limit")
-        payload = json.loads(data.decode())
-    if not isinstance(payload, dict):
+        status: int = response.status
+        decoded: object = json.loads(data.decode())
+    if not isinstance(decoded, dict):
         raise ValueError("unexpected response shape")
-    return response.status, payload
-
-
-def _request_json(
-    url: str, headers: dict[str, str], context: ssl.SSLContext
-) -> tuple[int, dict[str, object]]:
-    req = request.Request(url, headers=headers, method="GET")
-    with cast(
-        HTTPResponse, request.urlopen(req, timeout=8, context=context)
-    ) as response:
-        data = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(data) > MAX_RESPONSE_BYTES:
-            raise ValueError("response exceeded the bounded size limit")
-        decoded = cast(object, json.loads(data))
-        if not isinstance(decoded, dict):
-            raise ValueError("JSON response root must be an object")
-        return response.status, cast(dict[str, object], decoded)
+    return status, cast(dict[str, object], decoded)
 
 
 def write_json_0600_atomic(path: Path, value: object) -> None:
