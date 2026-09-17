@@ -33,6 +33,7 @@ FILE_MAP = {
     "libexec/bli-kvm-platform-broker": "usr/libexec/hardened-blikvm/bli-kvm-platform-broker",
     "libexec/bli-kvm-video-proxy": "usr/libexec/hardened-blikvm/bli-kvm-video-proxy",
     "libexec/bli-kvm-control-broker": "usr/libexec/hardened-blikvm/bli-kvm-control-broker",
+    "libexec/bli-kvm-boardd": "usr/libexec/hardened-blikvm/bli-kvm-boardd",
     "share/systemd/hardened-blikvm-platform-broker.service":
         "lib/systemd/system/hardened-blikvm-platform-broker.service",
     "share/systemd/hardened-blikvm-video-proxy.service":
@@ -41,6 +42,16 @@ FILE_MAP = {
         "lib/systemd/system/hardened-blikvm-control-broker.service",
     "share/systemd/hardened-blikvm-server.service":
         "lib/systemd/system/hardened-blikvm-server.service",
+    "share/systemd/hardened-blikvm-board-owner.service":
+        "lib/systemd/system/hardened-blikvm-board-owner.service",
+    "share/systemd/hardened-blikvm-board-server.service":
+        "lib/systemd/system/hardened-blikvm-board-server.service",
+    "share/systemd/hardened-blikvm-board-video-proxy.service":
+        "lib/systemd/system/hardened-blikvm-board-video-proxy.service",
+    "share/systemd/hardened-blikvm-boardd.service":
+        "lib/systemd/system/hardened-blikvm-boardd.service",
+    "share/systemd/hardened-blikvm-ustreamer.service":
+        "lib/systemd/system/hardened-blikvm-ustreamer.service",
     "share/systemd/hardened-blikvm-nginx.service":
         "lib/systemd/system/hardened-blikvm-nginx.service",
     "share/sysusers.d/hardened-blikvm.conf":
@@ -60,6 +71,7 @@ EXECUTABLE_DESTINATIONS = {
     "usr/libexec/hardened-blikvm/bli-kvm-platform-broker",
     "usr/libexec/hardened-blikvm/bli-kvm-video-proxy",
     "usr/libexec/hardened-blikvm/bli-kvm-control-broker",
+    "usr/libexec/hardened-blikvm/bli-kvm-boardd",
 }
 
 FORBIDDEN_PACKAGE_NAMES = {

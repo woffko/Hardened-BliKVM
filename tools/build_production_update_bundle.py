@@ -47,6 +47,9 @@ RUNTIME_BINARY_MAPPING: Final = {
     PurePosixPath(
         "usr/libexec/hardened-blikvm/bli-kvm-control-broker"
     ): "libexec/bli-kvm-control-broker",
+    PurePosixPath(
+        "usr/libexec/hardened-blikvm/bli-kvm-boardd"
+    ): "libexec/bli-kvm-boardd",
 }
 WEB_PREFIX: Final = PurePosixPath("usr/share/hardened-blikvm/web")
 REQUIRED_BUNDLE_PATHS: Final = {
@@ -54,6 +57,7 @@ REQUIRED_BUNDLE_PATHS: Final = {
     "libexec/bli-kvm-platform-broker",
     "libexec/bli-kvm-video-proxy",
     "libexec/bli-kvm-control-broker",
+    "libexec/bli-kvm-boardd",
     "share/web/index.html",
 }
 

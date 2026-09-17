@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -60,7 +61,17 @@ class HidTransitionServiceTests(unittest.TestCase):
     def test_default_prototype_bundle_excludes_the_transition_profile(self) -> None:
         default_bundle = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertNotIn(UNIT_NAME, default_bundle)
-        self.assertNotIn("BLI_KVM_CARGO_FEATURES", default_bundle)
+        # Shipped builds carry the board profile (the gadget media and HID
+        # profiles) but never the HID transition profile itself, which exists
+        # only in its own test bundle.
+        match = re.search(
+            r"cargo_features=\$\{BLI_KVM_CARGO_FEATURES:-([^}]*)\}", default_bundle
+        )
+        if match is None:
+            self.fail("the default bundle declares no feature set")
+        default_features = match.group(1)
+        self.assertNotIn("transition-profile", default_features)
+        self.assertIn("gadget-hid-profile", default_features)
         profile_bundle = (ROOT / "scripts/build-hid-transition-profile.sh").read_text()
         self.assertIn(UNIT_NAME, profile_bundle)
 

@@ -7,6 +7,10 @@ target_dir=${1:-/mnt/d/debug/blikvm/hardened-blikvm/target-aarch64}
 output_dir=${2:-/mnt/d/debug/blikvm/hardened-blikvm/bundles}
 pnpm_store=${BLI_KVM_PNPM_STORE:-/mnt/d/debug/blikvm/hardened-blikvm/pnpm-store}
 bundle_name=hardened-blikvm-prototype-0.1.0-dev-aarch64
+# The shipped build carries the board profile: the Rust gadget (media + HID),
+# the reviewed native ATX GPIO executor and the privileged system-action
+# profile, so the signed slot serves our board arrangement.
+cargo_features=${BLI_KVM_CARGO_FEATURES:-restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile,system-action-profile}
 
 for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
   case "$directory" in
@@ -19,7 +23,7 @@ for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
 done
 
 cd "$project_root"
-scripts/build-aarch64.sh "$target_dir"
+BLI_KVM_CARGO_FEATURES="$cargo_features" scripts/build-aarch64.sh "$target_dir"
 PNPM_CONFIG_STORE_DIR="$pnpm_store" corepack pnpm --dir web build
 
 release_dir="$target_dir/aarch64-unknown-linux-musl/release"
@@ -27,13 +31,14 @@ server_binary="$release_dir/bli-kvm-server"
 broker_binary="$release_dir/bli-kvm-platform-broker"
 video_proxy_binary="$release_dir/bli-kvm-video-proxy"
 control_broker_binary="$release_dir/bli-kvm-control-broker"
+boardd_binary="$release_dir/bli-kvm-boardd"
 hid_credential_gate_binary="$release_dir/bli-kvm-hid-credential-gate"
 hid_isolated_gate_binary="$release_dir/bli-kvm-hid-isolated-gate"
 atx_live_gate_binary="$release_dir/bli-kvm-atx-live-gate"
 media_isolated_gate_binary="$release_dir/bli-kvm-media-isolated-gate"
 update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
-scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
+scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 temp_root=$(mktemp -d /tmp/hardened-blikvm-bundle.XXXXXX)
 cleanup() {
@@ -53,11 +58,13 @@ install -d -m 0755 \
   "$stage/share/systemd" \
   "$stage/share/sysusers.d" \
   "$stage/share/tmpfiles.d" \
+  "$stage/share/udev" \
   "$stage/share/docs"
 install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
 install -m 0755 "$video_proxy_binary" "$stage/libexec/bli-kvm-video-proxy"
 install -m 0755 "$control_broker_binary" "$stage/libexec/bli-kvm-control-broker"
+install -m 0755 "$boardd_binary" "$stage/libexec/bli-kvm-boardd"
 install -m 0755 "$hid_credential_gate_binary" "$stage/libexec/bli-kvm-hid-credential-gate"
 install -m 0755 "$hid_isolated_gate_binary" "$stage/libexec/bli-kvm-hid-isolated-gate"
 install -m 0755 "$atx_live_gate_binary" "$stage/libexec/bli-kvm-atx-live-gate"
@@ -78,6 +85,11 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-video-proxy.service \
   packaging/systemd/hardened-blikvm-server.service \
   packaging/systemd/hardened-blikvm-nginx.service \
+  packaging/systemd/hardened-blikvm-board-owner.service \
+  packaging/systemd/hardened-blikvm-board-server.service \
+  packaging/systemd/hardened-blikvm-board-video-proxy.service \
+  packaging/systemd/hardened-blikvm-boardd.service \
+  packaging/systemd/hardened-blikvm-ustreamer.service \
   packaging/systemd/hardened-blikvm-update-watchdog.service \
   packaging/systemd/hardened-blikvm-update-recover.service \
   packaging/systemd/hardened-blikvm-update-status.socket \
@@ -102,7 +114,11 @@ install -m 0644 \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \
+  packaging/tmpfiles.d/hardened-blikvm-gadget.conf \
   "$stage/share/tmpfiles.d/"
+install -m 0644 \
+  packaging/udev/99-hardened-blikvm-video.rules \
+  "$stage/share/udev/"
 install -m 0644 LICENSE "$stage/LICENSE"
 install -m 0644 packaging/PROTOTYPE-README.md "$stage/README.md"
 install -m 0644 docs/architecture.md "$stage/share/docs/architecture.md"
