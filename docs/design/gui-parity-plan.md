@@ -255,7 +255,8 @@ Goal: prove the replacement is complete.
   phases (video in E0, storage in E1, board daemon in E2, network in E3, update
   in E4) and keeps "KVMD removal" after the video gates.
 - Run the GUI parity probe against `https://10.0.87.133/` and compare; produce
-  the final report, reboot/soak acceptance and the baselines.
+  the final report, reboot/soak acceptance and the baselines. The status report
+  is `docs/baselines/vendor-replaced.md`.
 
 ## Gates, order and rollback
 
