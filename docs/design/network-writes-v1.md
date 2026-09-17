@@ -52,9 +52,10 @@ Validation happens on both sides and never trusts the other:
 Writes are applied once and read back; the caller reports the read-back, never
 the intent.
 
-- Resolver: the file is replaced through a sibling temporary file and a rename,
-  and a symlinked or non-regular target is refused, so the reviewed path cannot
-  be redirected.
+- Resolver: the reviewed sandbox grants write access to the file itself rather
+  than to its directory, so the bounded payload is written in place and read
+  back, and a symlinked or non-regular target is refused so the reviewed path
+  cannot be redirected.
 - IPv6: exactly one interface's `disable_ipv6` node is written.
 - Wake-on-LAN: the MAC must be six two-digit groups with one consistent
   separator or twelve digits; the owner sends exactly one magic packet to the

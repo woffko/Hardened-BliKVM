@@ -146,13 +146,20 @@ impl NetworkWriter for FileWriter {
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(NetworkWriteError::Refused);
         }
-        let directory = self
-            .resolv_conf
-            .parent()
-            .ok_or(NetworkWriteError::Refused)?;
-        let temporary = directory.join(".resolv.conf.hardened-blikvm");
-        fs::write(&temporary, content).map_err(|_| NetworkWriteError::Unavailable)?;
-        fs::rename(&temporary, &self.resolv_conf).map_err(|_| NetworkWriteError::Unavailable)?;
+        // The reviewed sandbox grants write access to the file itself, not to
+        // its directory, so the bounded payload is written in place and then
+        // read back instead of being renamed into position.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.resolv_conf)
+            .map_err(|_| NetworkWriteError::Unavailable)?;
+        std::io::Write::write_all(&mut file, content.as_bytes())
+            .map_err(|_| NetworkWriteError::Unavailable)?;
+        std::io::Write::flush(&mut file).map_err(|_| NetworkWriteError::Unavailable)?;
+        file.sync_all()
+            .map_err(|_| NetworkWriteError::Unavailable)?;
+        drop(file);
         fs::read_to_string(&self.resolv_conf).map_err(|_| NetworkWriteError::Unavailable)
     }
 
@@ -501,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn the_file_writer_replaces_atomically_and_refuses_symlinks() {
+    fn the_file_writer_writes_in_place_and_refuses_symlinks() {
         let directory = tempfile::tempdir().unwrap();
         let resolv = directory.path().join("resolv.conf");
         let ipv6 = directory.path().join("ipv6");
