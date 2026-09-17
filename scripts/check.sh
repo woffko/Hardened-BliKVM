@@ -119,6 +119,7 @@ python3 -m unittest \
   tools/test_stage_device_boardd_gate.py \
   tools/test_stage_device_system_action_gate.py \
   tools/test_stage_device_network_write_gate.py \
+  tools/test_stage_device_storage_reboot_gate.py \
   tools/test_storage_acceptance_probe.py \
   tools/test_capture_vendor_replacement_state.py \
   tools/test_compare_gui_parity.py \
