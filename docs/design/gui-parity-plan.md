@@ -191,7 +191,8 @@ control surface, ownership handoff, per-subsystem gates).
 ### E3 - system and network writes
 
 Goal: close the remaining KVMD management surfaces. Design:
-`docs/design/system-actions-v1.md`.
+`docs/design/system-actions-v1.md` for the system actions and
+`docs/design/network-writes-v1.md` for the bounded network writes.
 
 - System actions: the session auto-lock is implemented; reboot and shutdown go
   through the board owner's journaled policy path (the store and maintenance
