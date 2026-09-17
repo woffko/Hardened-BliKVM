@@ -78,6 +78,27 @@ journal or runs the action itself.
    lands the device gate reports the dispatch and the boot change but not the
    acceptance.
 
+### Post-boot acceptance step
+
+The owner persists the journal through the exact-root store; the acceptance
+itself is a separate, operator-reviewed step, because only a human can attest
+that the reboot really happened and that the device is idle again:
+
+- `bli-kvm-system-action-maintenance accept-post-boot` closes exactly one
+  pending record. `--expect-operation <hex>` pins the reviewed operation id and
+  `--pending` selects the single pending record when the owner only reports one;
+  more than one pending record is `ambiguous` and changes nothing.
+- The command never invents guards. Without `--guards-ready` the policy sees
+  unknown guards and answers `waiting`, which records the observation without
+  changing the journal. `--require-accepted` turns a non-accepting outcome into a
+  non-zero exit so the gate cannot pass on a `waiting` receipt.
+- `hardened-blikvm-system-action-accept.service` is the reviewed acceptance
+  unit. It is deliberately not installable (`[Install]` is absent): starting it
+  by hand is the operator's attestation that the update, storage, recovery and
+  health guards are idle again. It is never enabled at boot.
+- The device gate reports `accepted` only from the persisted store, after the
+  boot identity changed and the record reached the accepted phase.
+
 ## Memory and swap
 
 - Reads stay in the server (`/api/vm/memory/limit`, `/api/vm/swap` views from

@@ -1812,7 +1812,12 @@ class PackagingBoundaryTests(unittest.TestCase):
             if manifest not in (crate / "Cargo.toml", journal)
             and "bli-kvm-system-action-policy" in manifest.read_text()
         )
-        self.assertEqual(consumers, ["bli-kvm-control-broker"])
+        # The maintenance binary is the third reviewed consumer: the boot
+        # acceptance step restores the same pure engine to close the record
+        # the owner persisted. It is static, confined and unshipped.
+        self.assertEqual(
+            consumers, ["bli-kvm-control-broker", "bli-kvm-system-action-maintenance"]
+        )
         self.assertIn("bli-kvm-system-action-policy", journal.read_text())
         self.assertIn("#![no_std]", source)
         self.assertIn("#![forbid(unsafe_code)]", source)
@@ -1940,6 +1945,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 )
         self.assertIn('"initialize-empty"', production_library)
         self.assertIn('"inspect-empty"', production_library)
+        self.assertIn('"accept-post-boot"', production_library)
         for forbidden in (
             '"repair"',
             '"reboot"',
@@ -1984,9 +1990,23 @@ class PackagingBoundaryTests(unittest.TestCase):
             "# Type Path Mode User Group Age Argument\n"
             "d /var/lib/hardened-blikvm-system-actions 0700 root root - -\n",
         )
+        accept_unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-system-action-accept.service"
+        ).read_text()
+        self.assertIn("User=root", accept_unit)
+        self.assertIn("PrivateNetwork=yes", accept_unit)
+        self.assertIn("PrivateDevices=yes", accept_unit)
+        self.assertIn("ProtectSystem=strict", accept_unit)
+        self.assertIn("ReadWritePaths=/var/lib/hardened-blikvm-system-actions", accept_unit)
+        self.assertNotIn("[Install]", accept_unit)
+        self.assertIn(
+            "bli-kvm-system-action-maintenance accept-post-boot --pending --guards-ready --require-accepted",
+            accept_unit,
+        )
         builder = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
         self.assertNotIn("bli-kvm-system-action-maintenance", builder)
         self.assertNotIn("hardened-blikvm-system-action-store-init", builder)
+        self.assertNotIn("hardened-blikvm-system-action-accept", builder)
         self.assertNotIn("hardened-blikvm-system-actions.conf", builder)
 
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:

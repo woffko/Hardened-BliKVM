@@ -1,0 +1,50 @@
+[Unit]
+Description=Hardened BliKVM system-action post-boot acceptance
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=local-fs.target
+ConditionPathIsDirectory=/var/lib/hardened-blikvm-system-actions
+ConditionPathExists=/var/lib/hardened-blikvm-system-actions/journal-a.bin
+ConditionPathExists=/var/lib/hardened-blikvm-system-actions/journal-b.bin
+
+# This unit is the reviewed acceptance step and is never enabled at boot:
+# starting it is the operator's statement that the reboot happened and that the
+# update, storage, recovery and health guards are idle again. It closes exactly
+# the pending record the owner persisted, and fails instead of changing the
+# journal when the record cannot be accepted.
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance accept-post-boot --pending --guards-ready --require-accepted
+TimeoutStartSec=10s
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hardened-blikvm-system-actions
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+IPAddressDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

@@ -1,9 +1,9 @@
 use std::{env, io::Write, process::ExitCode};
 
-use bli_kvm_system_action_maintenance::{parse_arguments, run_exact};
+use bli_kvm_system_action_maintenance::{parse_invocation, run_exact_invocation};
 
 fn main() -> ExitCode {
-    match parse_arguments(env::args_os()).and_then(run_exact) {
+    match parse_invocation(env::args_os()).and_then(run_exact_invocation) {
         Ok(receipt) => {
             let stdout = std::io::stdout();
             let mut locked = stdout.lock();

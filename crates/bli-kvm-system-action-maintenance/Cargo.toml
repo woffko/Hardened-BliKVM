@@ -8,4 +8,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy" }
 bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store" }
