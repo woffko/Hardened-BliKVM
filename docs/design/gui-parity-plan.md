@@ -186,7 +186,13 @@ control surface, ownership handoff, per-subsystem gates).
   `device-rtc`).
 - Retire `kvmd-main`, its `/var/blikvm/*.sock` sockets and
   `/dev/shm/blikvm/*` state only after every subsystem gate passes;
-  `kvmd-fix.service` is handled in the same slice.
+  `kvmd-fix.service` and `kvmd-bootconfig.service` are stopped and masked in
+  the same slice.
+- Scope note: the boot config and the recovery inputs are not a daemon surface.
+  The vendor `kvmd-bootconfig` helper edited the boot files directly, and the
+  A/B boot selector and recovery inputs belong to the retained system-image path
+  modelled by `bli-kvm-system-boot-control`; the daemon therefore ships no boot
+  editor, and the recon kept only the boot chain's key names, never values.
 
 ### E3 - system and network writes
 
@@ -197,8 +203,11 @@ Goal: close the remaining KVMD management surfaces. Design:
 - System actions: the session auto-lock is implemented; reboot and shutdown go
   through the board owner's journaled policy path (the store and maintenance
   dispatcher already passed on the device) and are advertised only by a new
-  `systemActions` capability; memory and swap writes are bounded owner actions
-  with read-back. The capability manifest carries a `network` section
+  `systemActions` capability.
+- Scope note on memory and swap: the reference build exposes them only inside
+  its Tailscale section, which this plan keeps hidden and unported, so no
+  memory/swap endpoint is added here; inventing one would exceed the reference
+  surface. The capability manifest carries a `network` section
   (`status`, `dns`, `ipv6`, `wol`), and the network writes are advertised as
   `read_write` only when the board owner serves the reviewed network-write
   surface. The bounded Wake-on-LAN write (`POST /api/network/wol`) matches the
