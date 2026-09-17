@@ -108,7 +108,7 @@ try {
       'input[type="text"], input[type="email"], input[name*="user" i]',
     );
     const passInput = await page.$('input[type="password"]');
-    if (apiLogin !== "accepted" && userInput && passInput && password) {
+    if (userInput && passInput && password) {
       await userInput.fill(username);
       await passInput.fill(password);
       const submit = await page.$('button[type="submit"], button');
