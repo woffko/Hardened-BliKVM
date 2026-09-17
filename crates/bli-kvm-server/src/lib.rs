@@ -38,6 +38,7 @@ mod hid;
 mod leader_key;
 mod media;
 mod network;
+mod network_write;
 mod session_lock;
 mod system_action;
 mod system_log;
@@ -299,8 +300,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/inventory", get(runtime_inventory))
         .route("/hostname", get(hostname))
         .route("/system/time", get(system_time::get_config))
-        .route("/network/dns", get(network::network_dns))
-        .route("/network/ipv6", get(network::network_ipv6))
+        .route(
+            "/network/dns",
+            get(network::network_dns).post(network_write::dns),
+        )
+        .route(
+            "/network/ipv6",
+            get(network::network_ipv6).post(network_write::ipv6),
+        )
         .route("/network/interfaces", get(network::network_interfaces))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
