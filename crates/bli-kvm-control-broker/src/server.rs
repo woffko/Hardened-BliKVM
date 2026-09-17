@@ -322,6 +322,7 @@ async fn board_state(
     // for the owner as well as for the server.
     #[cfg(feature = "network-write-profile")]
     if std::env::var("BLI_KVM_NETWORK_WRITES").as_deref() == Ok("1") {
+        eprintln!("board profile: reviewed network writes attached");
         state.attach_network_write(crate::network_write::NetworkWriteState::new(
             Box::new(crate::network_write::file_writer()),
             true,
