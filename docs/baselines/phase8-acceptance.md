@@ -84,7 +84,13 @@ Recorded detail:
   `tools/stage_device_network_write_gate.py` stages them with a write-and-restore
   sequence (plan-only by default).
 - E4: the signed application update commit cycle
-  (`persistent-write-*-commit-*.json`).
+  (`persistent-write-*-commit-*.json`). On 2026-09-17 the production bundle for
+  the board profile was built and signed with the production key: runtime
+  package `589a9eaa…` from the shipped bundle `2883ca79…`, signed artifact
+  `hardened-blikvm-application-0.1.0-dev2-seq7.tar` (sha256 `1b8281cd…`, 28
+  payload files, source commit `3cd6b07`). Publishing it as a candidate, running
+  candidate health, confirming it into `current` and the slot-serving cutover
+  are the remaining device steps.
 - E5 parity (2026-09-17): the reference stand answers with a NanoKVM-branded
   build (`Remote Desktop - NanoKVM`, label `Hardened NanoKVM`) and our build
   answers with `Remote Desktop - Hardened BliKVM` (label `Hardened BliKVM`).
