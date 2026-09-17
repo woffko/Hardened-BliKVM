@@ -122,6 +122,15 @@ stage tools, the slot serving cutover through
 the final acceptance run. KVMD retirement
 came from `tools/stage_device_kvmd_removal.py --confirm-removal`.
 
+## Regression verification after the board-profile deployments
+
+On 2026-09-17, after the owner, daemon and server binaries were reinstalled and
+the ATX profile, the reviewed sandbox grants and the network writers changed,
+the live surface was re-verified: the video frame-timing probe measured 221
+frames at 27.93 fps (mean 35.8 ms, p95 46.6 ms) and the storage acceptance gate
+passed all nine steps (list, mounted, cdrom, mount, reconnect, eject and
+re-attach), so neither the stream nor the media engine regressed.
+
 ## Read-only evidence already in place
 
 - Preflight, topology and HID descriptors:
