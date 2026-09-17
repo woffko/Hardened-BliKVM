@@ -318,6 +318,19 @@ async fn board_state(
     if let Some(client) = crate::board_status::board_status_client_from_environment() {
         state.attach_board_status(client);
     }
+    // The bounded network writes stay refused until the operator enables them
+    // for the owner as well as for the server.
+    #[cfg(feature = "network-write-profile")]
+    if std::env::var("BLI_KVM_NETWORK_WRITES").as_deref() == Ok("1") {
+        state.attach_network_write(crate::network_write::NetworkWriteState::new(
+            Box::new(crate::network_write::file_writer()),
+            true,
+        ));
+        state.attach_wol(crate::network_write::WolState::new(
+            Box::new(crate::network_write::UdpWolSender),
+            true,
+        ));
+    }
     Ok(state)
 }
 
