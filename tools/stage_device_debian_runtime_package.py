@@ -46,6 +46,13 @@ ALLOWED_UNIT_FILES = {
     PurePosixPath("lib/systemd/system/hardened-blikvm-control-broker.service"),
     PurePosixPath("lib/systemd/system/hardened-blikvm-server.service"),
     PurePosixPath("lib/systemd/system/hardened-blikvm-nginx.service"),
+    # The board profile ships its own arrangement with the runtime package.
+    PurePosixPath("lib/systemd/system/hardened-blikvm-board-owner.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-board-server.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-board-video-proxy.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-boardd.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-ustreamer.service"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-msd-writable.service"),
 }
 ALLOWED_DATA_PARENT_DIRECTORIES = {
     PurePosixPath("usr"),
