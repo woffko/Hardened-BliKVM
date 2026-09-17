@@ -1,5 +1,7 @@
 mod attestation;
 mod config;
+#[cfg(feature = "network-write-profile")]
+pub mod network_write;
 #[cfg(any(
     feature = "hid-transition-profile",
     feature = "atx-transition-profile",

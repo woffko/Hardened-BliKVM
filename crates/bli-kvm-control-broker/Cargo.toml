@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+network-write-profile = []
 system-action-profile = ["dep:bli-kvm-system-action-policy", "dep:bli-kvm-system-action-store"]
 atx-transition-profile = [
   "dep:bli-kvm-atx-policy",
