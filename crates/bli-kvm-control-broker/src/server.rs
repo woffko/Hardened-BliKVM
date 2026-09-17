@@ -340,7 +340,7 @@ pub async fn run_with_board_profile(
         .as_ref()
         .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
         .unwrap_or(ControlDiagnostics::Disabled);
-    let state = board_state(
+    let mut state = board_state(
         media_journal,
         catalog_path,
         gadget,
@@ -351,6 +351,9 @@ pub async fn run_with_board_profile(
         reconciliations,
     )
     .await?;
+    if let Some(client) = crate::board_status::board_status_client_from_environment() {
+        state.attach_board_status(client);
+    }
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
     result
@@ -434,9 +437,6 @@ pub async fn run_with_chardev_board_profile_with_system_action(
         }
     }
     state.attach_system_action(system_action);
-    if let Some(client) = crate::board_status::board_status_client_from_environment() {
-        state.attach_board_status(client);
-    }
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
     result
