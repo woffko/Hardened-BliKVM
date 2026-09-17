@@ -308,11 +308,17 @@ async fn board_state(
         )
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     }
-    Ok(ControlV2State::with_board_backends(
+    let mut state = ControlV2State::with_board_backends(
         media,
         bli_kvm_hid_policy::HidControlPolicy::new(hid),
         atx,
-    ))
+    );
+    // Every board-profile entry point serves the read-only board status when
+    // the operator configured the daemon socket.
+    if let Some(client) = crate::board_status::board_status_client_from_environment() {
+        state.attach_board_status(client);
+    }
+    Ok(state)
 }
 
 /// Serves the media, HID and ATX backends from one process: the single owner
@@ -340,7 +346,7 @@ pub async fn run_with_board_profile(
         .as_ref()
         .map(|reporter| ControlDiagnostics::Reporter(reporter.handle()))
         .unwrap_or(ControlDiagnostics::Disabled);
-    let mut state = board_state(
+    let state = board_state(
         media_journal,
         catalog_path,
         gadget,
@@ -351,9 +357,6 @@ pub async fn run_with_board_profile(
         reconciliations,
     )
     .await?;
-    if let Some(client) = crate::board_status::board_status_client_from_environment() {
-        state.attach_board_status(client);
-    }
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
     result
