@@ -59,7 +59,9 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RemoveIPC=yes
-CapabilityBoundingSet=
+# The reviewed network writes need exactly one capability: the per-interface
+# disable_ipv6 sysctl. The resolver file is writable through ReadWritePaths.
+CapabilityBoundingSet=CAP_NET_ADMIN
 AmbientCapabilities=
 DevicePolicy=closed
 DeviceAllow=/dev/gpiochip0 rw
@@ -67,7 +69,7 @@ DeviceAllow=/dev/hidg0 rw
 DeviceAllow=/dev/hidg1 rw
 DeviceAllow=/dev/hidg2 rw
 IPAddressDeny=any
-ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget
+ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /etc/resolv.conf
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

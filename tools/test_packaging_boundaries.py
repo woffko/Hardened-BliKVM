@@ -1929,6 +1929,19 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_the_board_owner_allows_exactly_the_network_write_surface(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-board-owner.service"
+        ).read_text()
+        self.assertIn(
+            "ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget "
+            "/var/lib/hardened-blikvm-gadget /etc/resolv.conf",
+            unit,
+        )
+        self.assertIn("CapabilityBoundingSet=CAP_NET_ADMIN", unit)
+        self.assertNotIn("CAP_SYS_ADMIN", unit)
+        self.assertNotIn("AmbientCapabilities=CAP", unit)
+
     def test_the_board_profile_takes_precedence_over_the_atx_only_entry_point(self) -> None:
         # The ATX-only entry point binds the same control socket without the
         # board state, so a build that runs the board profile must never take
