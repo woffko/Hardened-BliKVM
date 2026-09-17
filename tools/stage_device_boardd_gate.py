@@ -82,6 +82,19 @@ SUBSYSTEMS: Final[dict[str, dict[str, Any]]] = {
         "requests": (),
         "status_fields": ("buttonPresent", "buttonWakeups"),
     },
+    # The ATX host LED inputs are read-only: the gate installs nothing to drive
+    # them and only records what the daemon samples while the operator compares
+    # the two states with the host.
+    "atx-leds": {
+        "lines": (234, 233),
+        "requests": (),
+        "status_fields": (
+            "atxPowerLedPresent",
+            "atxPowerLedOn",
+            "atxHddLedPresent",
+            "atxHddLedOn",
+        ),
+    },
 }
 
 

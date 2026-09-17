@@ -36,6 +36,13 @@ class BoarddGateTests(unittest.TestCase):
         self.assertIn("/sys/class/gpio/export", script)
         self.assertIn("exports_restored=yes", script)
 
+    def test_the_atx_leds_entry_is_read_only_and_reports_both_inputs(self) -> None:
+        spec = gate.SUBSYSTEMS["atx-leds"]
+        self.assertEqual(spec["lines"], (234, 233))
+        self.assertEqual(spec["requests"], ())
+        self.assertIn("atxPowerLedOn", spec["status_fields"])
+        self.assertIn("atxHddLedOn", spec["status_fields"])
+
     def test_facts_parse_ignores_indented_output(self) -> None:
         facts = gate.parse_facts("  line269 present\nunit_active=active\nbad key=1\n")
         self.assertEqual(facts, {"unit_active": "active"})
