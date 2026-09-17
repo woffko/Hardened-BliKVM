@@ -80,9 +80,18 @@ writes and both restores applied:
 The receipt records the preflight facts, the plan and the four booleans
 (`dns_applied`, `dns_restored`, `ipv6_applied`, `ipv6_restored`).
 
-## Remaining items
+## Remaining items and one open question
 
 Firewall, SSH/mDNS, Wake-on-LAN and wifi follow the same shape: validate a
 bounded target in the owner, forward from a capability-gated server route, and
 gate with a write-and-restore probe. Interactive wifi stays out of scope until a
 reviewed helper exists, and every item is limited to what the hardware supports.
+
+The reviewed reference capture (`tools/capture_pikvm_baseline.py`) records only
+`/api/info`, `/api/atx`, `/api/hid`, `/api/msd` and `/api/streamer`, and the
+reference settings pages for firewall, SSH/mDNS, Wake-on-LAN and wifi have not
+been captured yet because that capture needs the reference operator password.
+Their write contracts must therefore not be invented: before implementing any of
+them, capture the reference surface and record the contract here first. The two
+network writes the reference settings exercise today (the resolver list and the
+per-interface IPv6 flag) are implemented and gated.
