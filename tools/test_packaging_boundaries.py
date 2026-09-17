@@ -1929,6 +1929,15 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_the_owner_unit_can_read_the_kernel_boot_identity(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-board-owner.service"
+        ).read_text()
+        self.assertIn("ProcSubset=all", unit)
+        self.assertNotIn("\nProcSubset=pid\n", unit)
+        self.assertIn("ProtectProc=invisible", unit)
+        self.assertIn("ProtectKernelTunables=no", unit)
+
     def test_the_msd_remount_unit_is_reviewed_and_writable_only(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-msd-writable.service"

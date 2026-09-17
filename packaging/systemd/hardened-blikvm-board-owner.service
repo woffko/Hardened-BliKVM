@@ -51,7 +51,9 @@ ProtectKernelModules=yes
 ProtectKernelTunables=no
 ProtectProc=invisible
 ProtectSystem=strict
-ProcSubset=pid
+# The armed system-action profile reads the kernel boot identity from
+# /proc/sys/kernel/random/boot_id, which ProcSubset=pid would hide.
+ProcSubset=all
 RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes
