@@ -1929,6 +1929,17 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_the_board_profile_takes_precedence_over_the_atx_only_entry_point(self) -> None:
+        # The ATX-only entry point binds the same control socket without the
+        # board state, so a build that runs the board profile must never take
+        # it: the board profile serves the ATX lines itself.
+        main = (ROOT / "crates/bli-kvm-control-broker/src/main.rs").read_text()
+        atx_only = main.index('std::env::var("BLI_KVM_GPIO_ATX_PROFILE")')
+        board_profile = main.index('std::env::var("BLI_KVM_BOARD_PROFILE")')
+        self.assertLess(board_profile, atx_only)
+        guard = main[board_profile:atx_only]
+        self.assertIn('!= Ok("1")', guard)
+
     def test_system_action_maintenance_is_static_confined_and_unshipped(self) -> None:
         workspace = (ROOT / "Cargo.toml").read_text()
         crate = ROOT / "crates/bli-kvm-system-action-maintenance"

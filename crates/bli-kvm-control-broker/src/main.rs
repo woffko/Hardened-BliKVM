@@ -55,7 +55,11 @@ fn env_u64(key: &str) -> Result<u64, Box<dyn Error>> {
 async fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "chardev-atx-profile")]
     {
-        if std::env::var("BLI_KVM_GPIO_ATX_PROFILE").as_deref() == Ok("1") {
+        // The board profile serves the ATX lines itself, so the ATX-only entry
+        // point is reserved for builds that do not run the board profile.
+        if std::env::var("BLI_KVM_BOARD_PROFILE").as_deref() != Ok("1")
+            && std::env::var("BLI_KVM_GPIO_ATX_PROFILE").as_deref() == Ok("1")
+        {
             let chip = std::env::var("BLI_KVM_ATX_CHIP").map_err(|_| {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing BLI_KVM_ATX_CHIP")
             })?;
