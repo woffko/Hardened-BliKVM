@@ -107,6 +107,37 @@ impl SystemActionWireRequest {
     }
 }
 
+/// One bounded network write. The owner validates the target content itself;
+/// this type only carries the reviewed confirmation bindings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NetworkWriteRequest {
+    pub target: NetworkWriteTarget,
+    pub session_binding: u64,
+    pub confirmation_binding: [u8; 32],
+    pub issued_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NetworkWriteTarget {
+    Dns { servers: Vec<String> },
+    Ipv6 { interface: String, disabled: bool },
+}
+
+impl NetworkWriteRequest {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        validate_session_binding(self.session_binding)?;
+        if self.confirmation_binding.iter().all(|byte| *byte == 0) {
+            return Err(ControlV2ValidationError::InvalidConfirmationBinding);
+        }
+        if self.issued_at_unix_ms == 0 {
+            return Err(ControlV2ValidationError::InvalidConfirmationTimestamp);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlatformControlRequestV2 {
@@ -131,6 +162,9 @@ pub enum PlatformControlRequestV2 {
     },
     SystemAction {
         request: SystemActionWireRequest,
+    },
+    NetworkWrite {
+        request: NetworkWriteRequest,
     },
 }
 
@@ -170,6 +204,7 @@ impl PlatformControlRequestV2 {
             Self::VirtualMedia { request } => request.validate(),
             Self::VirtualMediaObserve { request } => request.validate(),
             Self::SystemAction { request } => request.validate(),
+            Self::NetworkWrite { request } => request.validate(),
         }
     }
 }

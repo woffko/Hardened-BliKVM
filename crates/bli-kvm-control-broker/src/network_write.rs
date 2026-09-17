@@ -31,7 +31,7 @@ pub enum NetworkWriteOutcome {
     Unavailable,
 }
 
-pub trait NetworkWriter {
+pub trait NetworkWriter: Send {
     /// Replace the resolver configuration and return what the file now holds.
     fn write_resolv_conf(&self, content: &str) -> Result<String, NetworkWriteError>;
 
@@ -42,6 +42,20 @@ pub trait NetworkWriter {
         interface: &str,
         disabled: bool,
     ) -> Result<String, NetworkWriteError>;
+}
+
+impl NetworkWriter for Box<dyn NetworkWriter> {
+    fn write_resolv_conf(&self, content: &str) -> Result<String, NetworkWriteError> {
+        (**self).write_resolv_conf(content)
+    }
+
+    fn write_ipv6_disabled(
+        &self,
+        interface: &str,
+        disabled: bool,
+    ) -> Result<String, NetworkWriteError> {
+        (**self).write_ipv6_disabled(interface, disabled)
+    }
 }
 
 /// A writer that never writes: an unconfigured profile must refuse.
