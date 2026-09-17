@@ -9,7 +9,7 @@ reboot gate and the signed slot-serving cutover).
 
 | Vendor component | Replacement | Evidence |
 | --- | --- | --- |
-| `kvmd-nginx` | `hardened-blikvm-nginx` | vendor units inactive, disabled and masked; `kvmd-removal-20260916-a.json` |
+| `kvmd-nginx` | `hardened-blikvm-nginx` | vendor units inactive, disabled and masked, including the `kvmd-fix` and `kvmd-bootconfig` helpers; `kvmd-removal-20260916-a.json` |
 | KVMD API/WebUI/auth | `bli-kvm-server` (47 routes) | route-drift guard; `gui-parity-compare-20260917-c.json` |
 | KVMD HID | our composite gadget in the board owner | gadget `hardened` bound to `musb-hdrc.2.auto` with `hid.usb0/1/2` and `mass_storage.usb0` |
 | KVMD MSD | our gadget MSD on `mmcblk0p4` | `storage-acceptance-20260916-b.json`, `storage-upload-cycle-20260916-a.json` |
@@ -30,6 +30,11 @@ reboot gate and the signed slot-serving cutover).
   backend identity.
 - The reference stand serves a NanoKVM-branded build; desktop-surface parity
   matches except the product name, and our settings surface reports five tabs.
+- `vendor-replacement-20260917-a.json` (`result=passed`): our five units active,
+  every KVMD unit inactive and masked, the composite gadget bound with its four
+  functions, the MSD partition mounted at our images directory with the reviewed
+  image, both video sockets present, and the health endpoint answering with the
+  Rust backend and our platform identity.
 
 ## Remaining acceptance items
 
