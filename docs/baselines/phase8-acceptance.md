@@ -72,7 +72,10 @@ Recorded detail:
   `tools/stage_device_system_action_gate.py` stages the end-to-end gate with a
   reboot-free persistence mode. What remains is the armed device run
   (`system-action-gate-*.json`) plus the network writes
-  (`network-write-gate-*.json`).
+  (`network-write-gate-*.json`). The bounded DNS and IPv6 writes are
+  implemented as capability-gated API routes that forward to the owner, and
+  `tools/stage_device_network_write_gate.py` stages them with a write-and-restore
+  sequence (plan-only by default).
 - E4: the signed application update commit cycle
   (`persistent-write-*-commit-*.json`).
 - E5: `gui-parity-ours-auth-20260916-a.json`,

@@ -164,7 +164,9 @@ PHASES: tuple[dict[str, Any], ...] = (
             "crates/bli-kvm-system-action-policy/src/lib.rs",
             "crates/bli-kvm-system-action-journal/src/lib.rs",
             "crates/bli-kvm-system-action-store/src/lib.rs",
+            "crates/bli-kvm-server/src/network_write.rs",
             "tools/stage_device_system_action_gate.py",
+            "tools/stage_device_network_write_gate.py",
         ),
         "device": (
             {
