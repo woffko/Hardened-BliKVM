@@ -7,8 +7,9 @@
 
 use std::{
     fs,
-    net::IpAddr,
+    net::{IpAddr, UdpSocket},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 /// The reference GUI allows at most three resolvers.
@@ -16,6 +17,8 @@ pub const MAX_DNS_SERVERS: usize = 3;
 pub const MAX_NAMESERVER_LINE_BYTES: usize = 64;
 pub const MAX_RESOLV_CONF_BYTES: usize = 512;
 pub const MAX_INTERFACE_NAME_BYTES: usize = 15;
+/// The reference sends the Wake-on-LAN magic packet to the discard port.
+pub const WOL_MAGIC_PORT: u16 = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkWriteError {
@@ -55,6 +58,50 @@ impl NetworkWriter for Box<dyn NetworkWriter> {
         disabled: bool,
     ) -> Result<String, NetworkWriteError> {
         (**self).write_ipv6_disabled(interface, disabled)
+    }
+}
+
+/// A Wake-on-LAN sender: exactly one magic packet for one validated address.
+pub trait WolSender: Send {
+    fn send_magic_packet(&self, mac: [u8; 6]) -> Result<(), NetworkWriteError>;
+}
+
+impl WolSender for Box<dyn WolSender> {
+    fn send_magic_packet(&self, mac: [u8; 6]) -> Result<(), NetworkWriteError> {
+        (**self).send_magic_packet(mac)
+    }
+}
+
+/// A sender that never sends: an unconfigured profile must refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefusingWolSender;
+
+impl WolSender for RefusingWolSender {
+    fn send_magic_packet(&self, _mac: [u8; 6]) -> Result<(), NetworkWriteError> {
+        Err(NetworkWriteError::Refused)
+    }
+}
+
+/// The reviewed sender: one broadcast datagram, no socket kept open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UdpWolSender;
+
+impl WolSender for UdpWolSender {
+    fn send_magic_packet(&self, mac: [u8; 6]) -> Result<(), NetworkWriteError> {
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|_| NetworkWriteError::Unavailable)?;
+        socket
+            .set_broadcast(true)
+            .map_err(|_| NetworkWriteError::Unavailable)?;
+        let _ = socket.set_write_timeout(Some(Duration::from_secs(2)));
+        let mut packet = [0xff_u8; 6 + 6 * 16];
+        for index in 0..16 {
+            let offset = 6 + index * 6;
+            packet[offset..offset + 6].copy_from_slice(&mac);
+        }
+        socket
+            .send_to(&packet, ("255.255.255.255", WOL_MAGIC_PORT))
+            .map_err(|_| NetworkWriteError::Unavailable)?;
+        Ok(())
     }
 }
 
@@ -146,6 +193,46 @@ pub fn render_resolv_conf(servers: &[String]) -> Result<String, NetworkWriteErro
     Ok(content)
 }
 
+/// One MAC address in colon or dash notation, or as twelve hex characters.
+/// The notation must be consistent: six two-digit groups with one separator, or
+/// twelve digits with none.
+pub fn normalize_mac(value: &str) -> Result<[u8; 6], NetworkWriteError> {
+    if value.trim() != value || value.is_empty() || value.len() > 17 {
+        return Err(NetworkWriteError::InvalidRequest);
+    }
+    let separator = value
+        .chars()
+        .find(|character| *character == ':' || *character == '-');
+    let compact = match separator {
+        Some(separator) => {
+            let groups: Vec<&str> = value.split(separator).collect();
+            if groups.len() != 6 {
+                return Err(NetworkWriteError::InvalidRequest);
+            }
+            let mut compact = String::with_capacity(12);
+            for group in groups {
+                if group.len() != 2 || !group.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(NetworkWriteError::InvalidRequest);
+                }
+                compact.push_str(group);
+            }
+            compact
+        }
+        None => {
+            if value.len() != 12 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(NetworkWriteError::InvalidRequest);
+            }
+            value.to_string()
+        }
+    };
+    let mut bytes = [0_u8; 6];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&compact[index * 2..index * 2 + 2], 16)
+            .map_err(|_| NetworkWriteError::InvalidRequest)?;
+    }
+    Ok(bytes)
+}
+
 /// A network interface name is the kernel's own restricted charset.
 pub fn normalize_interface(interface: &str) -> Result<&str, NetworkWriteError> {
     if interface.is_empty()
@@ -157,6 +244,39 @@ pub fn normalize_interface(interface: &str) -> Result<&str, NetworkWriteError> {
         return Err(NetworkWriteError::InvalidRequest);
     }
     Ok(interface)
+}
+
+pub struct WolState<S: WolSender> {
+    sender: S,
+    enabled: bool,
+}
+
+impl<S: WolSender> WolState<S> {
+    pub const fn new(sender: S, enabled: bool) -> Self {
+        Self { sender, enabled }
+    }
+
+    /// Wake-on-LAN has nothing to read back, so the applied outcome names the
+    /// address that was actually transmitted.
+    pub fn send(&self, mac: &str) -> NetworkWriteOutcome {
+        if !self.enabled {
+            return NetworkWriteOutcome::Unavailable;
+        }
+        let mac = match normalize_mac(mac) {
+            Ok(mac) => mac,
+            Err(_) => return NetworkWriteOutcome::Refused,
+        };
+        match self.sender.send_magic_packet(mac) {
+            Ok(()) => NetworkWriteOutcome::Applied {
+                read_back: format!(
+                    "mac={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+                ),
+            },
+            Err(NetworkWriteError::Unavailable) => NetworkWriteOutcome::Unavailable,
+            Err(_) => NetworkWriteOutcome::Refused,
+        }
+    }
 }
 
 pub struct NetworkWriteState<W: NetworkWriter> {
@@ -271,6 +391,59 @@ mod tests {
                 Err(NetworkWriteError::InvalidRequest)
             );
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingSender {
+        sent: RefCell<Vec<[u8; 6]>>,
+    }
+
+    impl WolSender for RecordingSender {
+        fn send_magic_packet(&self, mac: [u8; 6]) -> Result<(), NetworkWriteError> {
+            self.sent.borrow_mut().push(mac);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn macs_accept_colon_and_dash_notation_only() {
+        let expected = [0x00, 0x11, 0x22, 0xaa, 0xbb, 0xcc];
+        for valid in ["00:11:22:aa:bb:cc", "00-11-22-AA-BB-CC", "001122aabbcc"] {
+            assert_eq!(normalize_mac(valid), Ok(expected), "{valid}");
+        }
+        for invalid in [
+            "",
+            "00:11:22:aa:bb",
+            "00:11:22:aa:bb:cc:dd",
+            "0011:22aa:bbcc",
+            "not-a-mac",
+            " 00:11:22:aa:bb:cc",
+        ] {
+            assert_eq!(
+                normalize_mac(invalid),
+                Err(NetworkWriteError::InvalidRequest)
+            );
+        }
+    }
+
+    #[test]
+    fn wake_on_lan_sends_exactly_one_validated_packet() {
+        let state = WolState::new(RecordingSender::default(), true);
+        assert_eq!(
+            state.send("00:11:22:aa:bb:cc"),
+            NetworkWriteOutcome::Applied {
+                read_back: "mac=00:11:22:aa:bb:cc".to_string()
+            }
+        );
+        assert_eq!(state.send("not-a-mac"), NetworkWriteOutcome::Refused);
+        assert_eq!(
+            WolState::new(RefusingWolSender, true).send("00:11:22:aa:bb:cc"),
+            NetworkWriteOutcome::Refused
+        );
+        assert_eq!(
+            WolState::new(RecordingSender::default(), false).send("00:11:22:aa:bb:cc"),
+            NetworkWriteOutcome::Unavailable
+        );
     }
 
     #[test]

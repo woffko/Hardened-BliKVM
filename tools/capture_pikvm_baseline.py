@@ -11,6 +11,7 @@ import argparse
 import base64
 from dataclasses import dataclass
 from http.client import HTTPResponse
+import http.cookiejar
 import json
 import os
 from pathlib import Path
@@ -147,30 +148,57 @@ def response_summary(
     }
 
 
+def login(
+    endpoint: str, username: str, password: str, context: ssl.SSLContext
+) -> tuple[request.OpenerDirector, str]:
+    """Open a session with the JSON login and return the opener plus the
+    CSRF token it issued. The password is used once and never stored."""
+    jar = http.cookiejar.CookieJar()
+    opener = request.build_opener(
+        request.HTTPCookieProcessor(jar),
+        request.HTTPSHandler(context=context),
+    )
+    body = json.dumps({"username": username, "password": password}).encode()
+    request_ = request.Request(
+        endpoint + "/api/auth/login",
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Origin": endpoint,
+            "User-Agent": "BLi-KVM-baseline/0.1",
+        },
+        method="POST",
+    )
+    with cast(
+        HTTPResponse, opener.open(request_, timeout=8)
+    ) as response:
+        payload = json.loads(response.read(MAX_RESPONSE_BYTES + 1).decode())
+    token = str((payload.get("data") or {}).get("csrfToken") or "")
+    if payload.get("code") != 0 or not token:
+        raise ValueError("login was refused")
+    return opener, token
+
+
 def fetch_json(
+    opener: request.OpenerDirector,
     endpoint: str,
     path: str,
-    username: str,
-    password: str,
-    context: ssl.SSLContext,
 ) -> tuple[int, dict[str, object]]:
     url = endpoint + path
     headers = {
         "Accept": "application/json",
         "User-Agent": "BLi-KVM-baseline/0.1",
-        "X-KVMD-User": username,
-        "X-KVMD-Passwd": password,
     }
-    try:
-        return _request_json(url, headers, context)
-    except error.HTTPError as first_error:
-        if first_error.code != 401:
-            raise
-    basic = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
-    _ = headers.pop("X-KVMD-User")
-    _ = headers.pop("X-KVMD-Passwd")
-    headers["Authorization"] = f"Basic {basic}"
-    return _request_json(url, headers, context)
+    request_ = request.Request(url, headers=headers, method="GET")
+    with cast(HTTPResponse, opener.open(request_, timeout=8)) as response:
+        data = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(data) > MAX_RESPONSE_BYTES:
+            raise ValueError("response exceeded the bounded size limit")
+        payload = json.loads(data.decode())
+    if not isinstance(payload, dict):
+        raise ValueError("unexpected response shape")
+    return response.status, payload
 
 
 def _request_json(
@@ -219,14 +247,18 @@ def main() -> int:
 
     summaries: list[ResponseSummary] = []
     failures: list[FailureSummary] = []
-    for path in READ_ONLY_PATHS:
-        try:
-            status, payload = fetch_json(
-                endpoint, path, args.username, password, context
-            )
-            summaries.append(response_summary(path, status, payload))
-        except Exception as exc:  # The output intentionally omits body and URL.
-            failures.append({"path": path, "errorType": type(exc).__name__})
+    try:
+        opener, _csrf = login(endpoint, args.username, password, context)
+    except Exception as exc:  # The output intentionally omits body and URL.
+        opener = None
+        failures.append({"path": "/api/auth/login", "errorType": type(exc).__name__})
+    if opener is not None:
+        for path in READ_ONLY_PATHS:
+            try:
+                status, payload = fetch_json(opener, endpoint, path)
+                summaries.append(response_summary(path, status, payload))
+            except Exception as exc:  # The output intentionally omits body and URL.
+                failures.append({"path": path, "errorType": type(exc).__name__})
 
     output: BaselineOutput = {
         "schemaVersion": 1,

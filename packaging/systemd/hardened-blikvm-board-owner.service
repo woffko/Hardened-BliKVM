@@ -28,6 +28,9 @@ Environment=BLI_KVM_GADGET_UDC=musb-hdrc.2.auto
 Environment=BLI_KVM_GADGET_SERIAL_FILE=/etc/hardened-blikvm-gadget/serial
 Environment=BLI_KVM_GADGET_HID_LEDGER=/var/lib/hardened-blikvm-gadget/hid-ledger.json
 Environment=BLI_KVM_GADGET_HIDG_DIR=/dev
+# The board profile serves the ATX pulses itself through the reviewed GPIO
+# character-device executor; the line timings come from atx.env.
+Environment=BLI_KVM_GPIO_ATX_PROFILE=1
 Environment=BLI_KVM_ATX_JOURNAL=/var/lib/hardened-blikvm-gadget/atx-journal.json
 Environment=BLI_KVM_ATX_CHIP=/dev/gpiochip0
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-control-broker
