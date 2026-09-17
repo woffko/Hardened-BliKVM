@@ -172,6 +172,25 @@ def decide_outcome(*, confirm_write: bool, preflight: dict[str, str], write: dic
     return "inspect"
 
 
+def read_credentials(*, confirm_write: bool) -> tuple[bytearray, str]:
+    """Read the reviewed stdin payload: the SSH secret on the first line and,
+    for a write run, the operator password on the second. Both stay in memory."""
+    stream = getattr(sys.stdin, "buffer", sys.stdin)
+    first = stream.readline()
+    if not first or len(first) > 512:
+        raise SystemExit("the SSH secret is missing on stdin")
+    secret = bytearray(first.rstrip(b"\r\n"))
+    if not secret:
+        raise SystemExit("the SSH secret is missing on stdin")
+    password = ""
+    if confirm_write:
+        second = stream.readline()
+        password = second.decode("utf-8", "replace").rstrip("\r\n")
+        if len(password) < 8:
+            raise SystemExit("the operator password is missing on stdin")
+    return secret, password
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--endpoint", required=True)
@@ -211,7 +230,7 @@ def main() -> int:
 
     host, ssh_port = prototype.parse_endpoint(args.endpoint)
     target = prototype.RemoteTarget(host, ssh_port, args.username, Path(args.known_hosts))
-    secret = prototype.read_secret_stdin()
+    secret, operator_password = read_credentials(confirm_write=args.confirm_write)
     result = prototype.run_ssh(
         target, secret, preflight_script(args.interface), timeout=args.timeout
     )
@@ -243,9 +262,7 @@ def main() -> int:
             raise SystemExit("the board server does not enable network writes")
         if facts.get("ipv6_present") != "yes":
             raise SystemExit("the reviewed interface has no disable_ipv6 node")
-        password = upload.read_password()
-        if len(password) < 8:
-            raise SystemExit("password input is invalid")
+        password = operator_password
         ca = args.ca_file
         name = args.tls_server_name
         base = args.base_url

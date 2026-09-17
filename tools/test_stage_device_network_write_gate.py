@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import tempfile
@@ -73,6 +74,18 @@ class NetworkWriteGateTests(unittest.TestCase):
             gate.decide_outcome(confirm_write=True, preflight={}, write=nothing), "inspect"
         )
 
+    def test_a_write_run_needs_both_stdin_lines(self) -> None:
+        with mock.patch.object(sys, "stdin", io.BytesIO(b"only-the-ssh-secret\n")):
+            with self.assertRaises(SystemExit):
+                gate.read_credentials(confirm_write=True)
+        with mock.patch.object(sys, "stdin", io.BytesIO(b"ssh-secret\n")):
+            secret, password = gate.read_credentials(confirm_write=False)
+        self.assertEqual(bytes(secret), b"ssh-secret")
+        self.assertEqual(password, "")
+        with mock.patch.object(sys, "stdin", io.BytesIO(b"ssh-secret\n")):
+            with self.assertRaises(SystemExit):
+                gate.read_credentials(confirm_write=True)
+
     def test_a_reviewed_wol_target_must_be_a_mac(self) -> None:
         with self.assertRaises(SystemExit):
             self._run(["--wol-mac", "not-a-mac"], "writes_enabled=no")
@@ -118,11 +131,14 @@ class NetworkWriteGateTests(unittest.TestCase):
         with (
             mock.patch.object(sys, "argv", argv),
             mock.patch.object(gate.prototype, "run_ssh", return_value=fake),
-            mock.patch.object(gate.prototype, "read_secret_stdin", return_value=b"x"),
+            mock.patch.object(
+                sys,
+                "stdin",
+                io.BytesIO(b"ssh-secret\noperator-password\n"),
+            ),
             mock.patch.object(
                 gate, "api_write", return_value={"applied": applied, "status": 200}
             ),
-            mock.patch.object(gate.upload, "read_password", return_value="a-password"),
         ):
             code = gate.main()
         self.assertEqual(code, expected_code)
