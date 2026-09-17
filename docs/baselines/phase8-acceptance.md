@@ -90,8 +90,11 @@ Recorded detail:
   answers with `Remote Desktop - Hardened BliKVM` (label `Hardened BliKVM`).
   `tools/compare_gui_parity.py` reports that the only captured label difference
   is the product name, with no unexplained labels, no capability differences, no
-  marker differences and an unchanged console-error count; the settings-tab and
-  capability surfaces still need an authenticated capture on both sides.
+  marker differences and an unchanged console-error count. The probe finds our
+  settings surface (`About BliKVM`, `Diagnostics`, `Appearance`, `System`,
+  `Account`) but not the reference's: that stand serves a NanoKVM-branded build
+  whose settings entry the reviewed probe does not reach, so the settings-tab
+  and capability surfaces stay uncaptured on the reference side.
 - E5: `gui-parity-ours-auth-20260916-a.json`,
   `gui-parity-compare-20260916-a.json` and
   `vendor-replacement-20260916-b.json`: our five units active, every KVMD unit

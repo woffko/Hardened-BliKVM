@@ -238,10 +238,17 @@ try {
       // The menu auto-hides, so hover the top-centre strip to expand it first.
       await page.mouse.move(Math.round(viewport.width / 2), 30);
       await page.waitForTimeout(400);
-      await page
-        .locator("svg.lucide-settings")
-        .first()
-        .click({ force: true, timeout: 3000 });
+      // The settings entry is a labelled control; older captures only matched
+      // the icon, which the current build does not render for it.
+      const labelled = page.getByRole("button", { name: /settings/i });
+      if ((await labelled.count()) > 0) {
+        await labelled.first().click({ force: true, timeout: 3000 });
+      } else {
+        await page
+          .locator("svg.lucide-settings")
+          .first()
+          .click({ force: true, timeout: 3000 });
+      }
       await page
         .waitForSelector("[data-settings-tab]", { timeout: 3000 })
         .catch(() => {});
