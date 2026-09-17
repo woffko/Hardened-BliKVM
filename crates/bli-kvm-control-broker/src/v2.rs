@@ -282,7 +282,14 @@ impl ControlV2State {
     }
 
     fn handle_board_status(&self) -> ControlResponse {
-        let Some(client) = self.board_status.as_ref() else {
+        // The operator configuration is the capability: an unattached client
+        // is resolved from the environment on first use, so the proxy works on
+        // every board-profile entry point.
+        let resolved = self
+            .board_status
+            .clone()
+            .or_else(crate::board_status::board_status_client_from_environment);
+        let Some(client) = resolved.as_ref() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         match client.read() {
