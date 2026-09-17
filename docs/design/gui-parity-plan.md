@@ -236,6 +236,13 @@ Goal: ship our build through the retained signed update model.
 - Device gate: the signed update commit cycle and a reboot that keeps the new
   `current`. Receipts: `persistent-write-*-commit-*.json` and the update
   runtime/status receipts.
+- Blocked on operator material: producing the signed production bundle needs the
+  operator-held signing key and the current enrollment request file (the last
+  recorded enrollment request digest is
+  `0c7b995accf0edffe9a463b6b9822a74c079465e663ba93da4e824c170909208`, while the
+  private key is never stored with the bundle). The host chain is verified up to
+  and including the runtime package, so once the key and request are provided the
+  bundle can be built and published as a candidate.
 
 ### E5 - extensions, parity and acceptance
 
