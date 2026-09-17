@@ -103,6 +103,12 @@ Recorded detail:
   video sockets present, and the public health endpoint answering with the Rust
   backend and our platform identity.
 
+The storage reboot gate is staged: `tools/stage_device_storage_reboot_gate.py`
+ran plan-only on 2026-09-17 and recorded the pre-reboot state the reboot must
+preserve (fstab entry, mount source/target/type/options, tmpfiles entries,
+directory owners and modes, the catalogued image, no failed units), all intact.
+Its `--confirm-reboot` step needs the operator's separate reboot approval.
+
 Open device gates need an operator confirmation and their own stage tool: the
 board daemon gates (fan, panel, LED and button) run through
 `tools/stage_device_boardd_gate.py --subsystem <name> --confirm-handoff`, which
