@@ -68,10 +68,15 @@ journal or runs the action itself.
    (`BLI_KVM_SYSTEM_ACTIONS=1` in a restricted build with a control socket).
    The POST forwards the operator confirmation, refuses a request without it
    before any IPC and maps the broker response.
-4. **Post-boot acceptance**: after a reboot the maintenance dispatcher records
-   the post-boot observation, and `accept_post_boot` closes the journal entry
+4. **Post-boot acceptance** (decided by the operator 2026-09-16): the journal
+   is persisted through `bli-kvm-system-action-store` - the owner loads the
+   state at startup and writes it back after every prepare and dispatch - and a
+   one-shot boot unit runs the maintenance binary with a new `accept-post-boot`
+   command, which records the post-boot observation and calls `accept_post_boot`
    only when the boot identity changed and the guards are healthy. A pending
-   entry blocks another action; it is never retried automatically.
+   entry blocks another action; it is never retried automatically. Until this
+   lands the device gate reports the dispatch and the boot change but not the
+   acceptance.
 
 ## Memory and swap
 
