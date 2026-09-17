@@ -28,17 +28,24 @@ class NetworkWriteGateTests(unittest.TestCase):
         self.assertEqual(facts, {"server_unit": "active"})
 
     def test_the_plan_restores_what_it_observed(self) -> None:
-        plan = gate.plan_writes(["9.9.9.9"], "wlan0", "0")
+        plan = gate.plan_writes(["9.9.9.9"], "wlan0", "0", None)
         self.assertEqual(plan["dns"]["servers"], [gate.REVIEWED_RESOLVER])
         self.assertEqual(plan["dns"]["restore"], ["9.9.9.9"])
         self.assertIs(plan["dns"]["changed"], True)
         self.assertEqual(plan["ipv6"]["interface"], "wlan0")
         self.assertIs(plan["ipv6"]["disabled"], True)
         self.assertIs(plan["ipv6"]["restore_disabled"], False)
-        unchanged = gate.plan_writes([gate.REVIEWED_RESOLVER], "wlan0", "1")
+        unchanged = gate.plan_writes([gate.REVIEWED_RESOLVER], "wlan0", "1", None)
         self.assertIs(unchanged["dns"]["changed"], False)
         self.assertIs(unchanged["ipv6"]["disabled"], False)
         self.assertIs(unchanged["ipv6"]["restore_disabled"], True)
+
+    def test_the_plan_records_the_optional_wake_on_lan_target(self) -> None:
+        without = gate.plan_writes(["9.9.9.9"], "wlan0", "0", None)
+        self.assertIs(without["wol"]["requested"], False)
+        with_mac = gate.plan_writes(["9.9.9.9"], "wlan0", "0", "00:11:22:aa:bb:cc")
+        self.assertIs(with_mac["wol"]["requested"], True)
+        self.assertEqual(with_mac["wol"]["mac"], "00:11:22:aa:bb:cc")
 
     def test_outcome_table(self) -> None:
         self.assertEqual(
@@ -52,6 +59,7 @@ class NetworkWriteGateTests(unittest.TestCase):
             "dns_restored": True,
             "ipv6_applied": True,
             "ipv6_restored": True,
+            "wol_applied": None,
         }
         self.assertEqual(
             gate.decide_outcome(confirm_write=True, preflight={}, write=complete), "passed"
@@ -64,6 +72,10 @@ class NetworkWriteGateTests(unittest.TestCase):
         self.assertEqual(
             gate.decide_outcome(confirm_write=True, preflight={}, write=nothing), "inspect"
         )
+
+    def test_a_reviewed_wol_target_must_be_a_mac(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._run(["--wol-mac", "not-a-mac"], "writes_enabled=no")
 
     def test_plain_http_is_refused_for_a_remote_board(self) -> None:
         with self.assertRaises(ValueError):

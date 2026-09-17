@@ -30,6 +30,13 @@ One request carries a single target:
 }}
 ```
 
+```json
+{"type": "network_write", "request": {
+  "target": {"kind": "wol", "mac": "aa:bb:cc:dd:ee:ff"},
+  "sessionBinding": 123, "confirmationBinding": "…32 bytes…", "issuedAtUnixMs": 0
+}}
+```
+
 Validation happens on both sides and never trusts the other:
 
 - Bindings: the session binding and a per-target confirmation binding are
@@ -49,6 +56,10 @@ the intent.
   and a symlinked or non-regular target is refused, so the reviewed path cannot
   be redirected.
 - IPv6: exactly one interface's `disable_ipv6` node is written.
+- Wake-on-LAN: the MAC must be six two-digit groups with one consistent
+  separator or twelve digits; the owner sends exactly one magic packet to the
+  discard port and keeps no socket open. There is nothing to read back, so the
+  applied outcome names the address that was transmitted.
 
 Outcomes map to the fixed control responses: `applied` (with read-back),
 `backend_rejected` for a refused write, `capability_disabled` when the profile
@@ -59,9 +70,10 @@ is not armed or no writer is installed.
 - The capability manifest carries a `network` section; `dns` and `ipv6` become
   `read_write` only when the restricted control surface, a control socket and
   `BLI_KVM_NETWORK_WRITES=1` are all present.
-- `POST /api/network/dns` and `POST /api/network/ipv6` require an authenticated
-  session and an explicit `confirm`; a missing confirmation is refused before
-  any IPC.
+- `POST /api/network/dns`, `POST /api/network/ipv6` and `POST /api/network/wol`
+  require an authenticated session and an explicit `confirm`; a missing
+  confirmation is refused before any IPC, and the WoL body carries the reviewed
+  `mac` field the reference uses.
 - The owner compiles the surface only with the `network-write-profile` feature,
   which the shipped board profile carries.
 
@@ -75,7 +87,9 @@ writes and both restores applied:
 - resolver: read the current `nameserver` lines, write the reviewed resolver,
   read it back, restore the observed list;
 - IPv6: read one interface's `disable_ipv6`, flip it, read it back, restore the
-  observed value.
+  observed value;
+- Wake-on-LAN (optional, with `--wol-mac`): one packet to the operator's own
+  host, which carries nothing to restore.
 
 The receipt records the preflight facts, the plan and the four booleans
 (`dns_applied`, `dns_restored`, `ipv6_applied`, `ipv6_restored`).

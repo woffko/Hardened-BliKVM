@@ -76,7 +76,10 @@ def fact_list(facts: dict[str, str], prefix: str) -> list[str]:
 
 
 def plan_writes(
-    current_resolvers: list[str], interface: str, ipv6_before: str
+    current_resolvers: list[str],
+    interface: str,
+    ipv6_before: str,
+    wol_mac: str | None,
 ) -> dict[str, Any]:
     """The reviewed write plan: one DNS write plus restore, one IPv6 flip plus
     restore. Nothing is invented: the restore value is the observation."""
@@ -93,6 +96,9 @@ def plan_writes(
             "restore_disabled": ipv6_before == "1",
             "changed": True,
         },
+        # Wake-on-LAN carries nothing to restore: the reviewed target is the
+        # operator's own host address and the packet changes no device state.
+        "wol": {"mac": wol_mac, "requested": wol_mac is not None},
     }
 
 
@@ -150,15 +156,18 @@ def decide_outcome(*, confirm_write: bool, preflight: dict[str, str], write: dic
         return "plan"
     if not write:
         return "preflight"
-    required = (
+    required = [
         write.get("dns_applied") is True,
         write.get("dns_restored") is True,
         write.get("ipv6_applied") is True,
         write.get("ipv6_restored") is True,
-    )
-    if all(required):
+    ]
+    if write.get("wol_applied") is not None:
+        required.append(write["wol_applied"] is True)
+    passed = all(required)
+    if passed:
         return "passed"
-    if any(value is True for value in required):
+    if any(required):
         return "partial"
     return "inspect"
 
@@ -174,6 +183,10 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument("--ca-file")
     _ = parser.add_argument("--tls-server-name")
     _ = parser.add_argument("--interface", default="wlan0")
+    _ = parser.add_argument(
+        "--wol-mac",
+        help="reviewed host MAC for one Wake-on-LAN packet (optional)",
+    )
     _ = parser.add_argument("--confirm-write", action="store_true")
     _ = parser.add_argument(
         "--confirm-observed",
@@ -189,6 +202,10 @@ def main() -> int:
     output: Path = prototype.validate_output_path(args.output)
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", args.interface):
         raise SystemExit("interface name is invalid")
+    if args.wol_mac is not None and not re.fullmatch(
+        r"[0-9a-fA-F]{2}([:-][0-9a-fA-F]{2}){5}", args.wol_mac
+    ):
+        raise SystemExit("--wol-mac is not a MAC address")
     if args.confirm_observed and not args.confirm_write:
         raise SystemExit("--confirm-observed needs --confirm-write")
 
@@ -202,7 +219,9 @@ def main() -> int:
     print(stdout)
     facts = parse_facts(stdout)
     resolvers = fact_list(facts, "resolver")
-    plan = plan_writes(resolvers, args.interface, facts.get("ipv6_disable_before", ""))
+    plan = plan_writes(
+        resolvers, args.interface, facts.get("ipv6_disable_before", ""), args.wol_mac
+    )
 
     receipt: dict[str, Any] = {
         "schemaVersion": 1,
@@ -252,6 +271,17 @@ def main() -> int:
                 name,
             )
             write["dns_restored"] = bool(restored.get("applied"))
+        write["wol_applied"] = None
+        if plan["wol"]["requested"]:
+            wol = api_write(
+                base,
+                "/api/network/wol",
+                {"mac": plan["wol"]["mac"], "confirm": True},
+                password,
+                ca,
+                name,
+            )
+            write["wol_applied"] = bool(wol.get("applied"))
         ipv6 = api_write(
             base,
             "/api/network/ipv6",
