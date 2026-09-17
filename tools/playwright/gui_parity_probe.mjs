@@ -67,12 +67,10 @@ try {
     }
   });
 
-  await page.goto(targetUrl, { waitUntil: "load", timeout: 20_000 });
-  await page.waitForTimeout(500);
-
+  let username = "";
+  let password = "";
   if (usernameFile) {
-    const username = fs.readFileSync(usernameFile, "utf8").trim();
-    let password = "";
+    username = fs.readFileSync(usernameFile, "utf8").trim();
     for await (const chunk of process.stdin) {
       password += chunk.toString("utf8");
       if (password.length > 4096) {
@@ -80,11 +78,37 @@ try {
       }
     }
     password = password.replace(/[\r\n]+$/, "");
+  }
+
+  // The JSON login gives the browser context a session before the first
+  // navigation; the DOM login below stays as the fallback.
+  let apiLogin = "";
+  if (username && password && url.protocol !== "file:") {
+    try {
+      const response = await context.request.post(
+        new URL("/api/auth/login", url).href,
+        {
+          data: { username, password },
+          headers: { origin: url.origin },
+          timeout: 10_000,
+        },
+      );
+      const payload = await response.json();
+      apiLogin = payload?.code === 0 ? "accepted" : "refused";
+    } catch {
+      apiLogin = "unavailable";
+    }
+  }
+
+  await page.goto(targetUrl, { waitUntil: "load", timeout: 20_000 });
+  await page.waitForTimeout(500);
+
+  if (username) {
     const userInput = await page.$(
       'input[type="text"], input[type="email"], input[name*="user" i]',
     );
     const passInput = await page.$('input[type="password"]');
-    if (userInput && passInput && password) {
+    if (apiLogin !== "accepted" && userInput && passInput && password) {
       await userInput.fill(username);
       await passInput.fill(password);
       const submit = await page.$('button[type="submit"], button');
@@ -287,6 +311,7 @@ try {
     capabilities,
     settingsTabs,
     settingsCaptureError,
+    apiLogin,
     markers,
     consoleErrors,
     consoleErrorSamples,
