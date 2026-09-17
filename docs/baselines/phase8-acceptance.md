@@ -36,8 +36,8 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 | E0 video | `video-frame-timing-*.json`, `video-two-client-probe-*.json`, `video-soak-probe-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E1 storage and media | `storage-acceptance-*.json`, `storage-upload-*.json`, `virtual-media-acceptance-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the four actuation gates are open until the operator confirms the handoff |
-| E3 network and system actions | `device-system-action-store-*.json`, `device-system-action-maintenance.json`, `system-action-gate-*.json`, `network-write-gate-*.json` | the privileged system-action store and maintenance dispatcher are recorded (`result=passed`); the end-to-end reboot gate and the network writes are open. The unprivileged session auto-lock (`/api/vm/session-lock`) is implemented and covered by server tests |
-| E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the slot serving cutover is open |
+| E3 network and system actions | `device-system-action-store-*.json`, `device-system-action-maintenance.json`, `system-action-gate-*.json`, `network-write-gate-*.json` | the privileged system-action store and maintenance dispatcher are recorded (`result=passed`); the end-to-end reboot gate is staged (`tools/stage_device_system_action_gate.py`) and the network writes are open. The unprivileged session auto-lock (`/api/vm/session-lock`) is implemented and covered by server tests |
+| E4 retained update path | `persistent-write-*-commit-*.json`, `update-slot-serving-*.json` | commit cycle recorded; the slot-serving cutover is implemented on the host (the shipped build compiles the board profile, the runtime package and the production bundle carry `bli-kvm-boardd` and our board units, and `server-current`/`server-candidate` serve the slot through the board owner socket), while the device candidate/confirm cycle is open |
 | E5 GUI parity and acceptance | `gui-parity-ours-auth-*.json`, `gui-parity-compare-*.json`, `vendor-replacement-*.json` | recorded: both parity captures and the read-only vendor replacement summary (`tools/capture_vendor_replacement_state.py`, `result=passed`) |
 
 Recorded detail:
@@ -63,8 +63,14 @@ Recorded detail:
 - E3: `device-system-action-store-native.json` and
   `device-system-action-maintenance.json` (`result=passed`): the privileged
   system-action store and its maintenance dispatcher are verified on the board,
-  so reboot and shutdown have a journaled, policy-guarded path; what remains is
-  the server-side request surface and its end-to-end gate
+  so reboot and shutdown have a journaled, policy-guarded path. The owner now
+  persists that journal across restarts (`crates/bli-kvm-control-broker`, with a
+  broker test that restores the recorded phase from the store), the reviewed
+  acceptance step is `bli-kvm-system-action-maintenance accept-post-boot` behind
+  `hardened-blikvm-system-action-accept.service` (not installable: starting it
+  is the operator's guard attestation), and
+  `tools/stage_device_system_action_gate.py` stages the end-to-end gate with a
+  reboot-free persistence mode. What remains is the armed device run
   (`system-action-gate-*.json`) plus the network writes
   (`network-write-gate-*.json`).
 - E4: the signed application update commit cycle
