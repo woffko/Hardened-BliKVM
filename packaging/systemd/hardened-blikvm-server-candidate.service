@@ -1,9 +1,10 @@
 [Unit]
 Description=Hardened BliKVM health-gated candidate application server
 Documentation=https://github.com/woffko/Hardened-BliKVM
-Requires=hardened-blikvm-platform-broker.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover.service
-Wants=hardened-blikvm-video-proxy.service
-After=hardened-blikvm-platform-broker.service hardened-blikvm-video-proxy.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover.service
+# The candidate slot runs the same board arrangement as the confirmed slot.
+Requires=hardened-blikvm-board-owner.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover.service
+Wants=hardened-blikvm-board-video-proxy.service
+After=hardened-blikvm-board-owner.service hardened-blikvm-board-video-proxy.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover.service
 Conflicts=hardened-blikvm-server.service hardened-blikvm-server-current.service
 ConditionPathExists=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
 ConditionPathExists=/var/lib/hardened-blikvm-slots/current/share/web/index.html
@@ -20,6 +21,11 @@ Environment=BLI_KVM_BIND=127.0.0.1:18080
 Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots/current/share/web
 Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
+Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
+Environment=BLI_KVM_RESTRICTED_CONTROLS=1
+Environment=BLI_KVM_MEDIA_CONTROLS=1
+Environment=BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
@@ -42,6 +48,7 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
+ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
 BindReadOnlyPaths=/run/credentials/%n:/run/hardened-blikvm-candidate-credentials/%n
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes

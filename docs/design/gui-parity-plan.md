@@ -220,7 +220,15 @@ Goal: ship our build through the retained signed update model.
   package, and switch the slot-serving units to our arrangement (board owner
   plus control socket) so the confirmed slot is served by the board profile.
   The production bundle then carries the board daemon and the web, and the
-  bundle verifier and its tests pin both.
+  bundle verifier and its tests pin both. Implemented on the host: the shipped
+  build compiles the board profile, the prototype bundle verifies and stages
+  `bli-kvm-boardd` plus our board units, the Debian runtime package maps the
+  daemon and the units into the system, the production update bundle maps and
+  requires the daemon payload, and `server-current`/`server-candidate` now
+  run the slot payload against the board owner control socket, the board video
+  proxy and the media catalog while the activation-flow fixture models the
+  board placeholders. The device cycle (candidate, health, confirm, reboot) is
+  the remaining step.
 - Device gate: the signed update commit cycle and a reboot that keeps the new
   `current`. Receipts: `persistent-write-*-commit-*.json` and the update
   runtime/status receipts.

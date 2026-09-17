@@ -55,6 +55,8 @@ def names(token: str) -> dict[str, str]:
     base = PREFIX + token + "-"
     return {"current": base + "current.service", "candidate": base + "candidate.service",
             "recover": base + "recover.service",
+            "board-owner": base + "board-owner.service",
+            "board-video-proxy": base + "board-video-proxy.service",
             "apply-confirmed": base + "apply-confirmed.service", "apply-candidate": base + "apply-candidate.service",
             "watchdog": base + "watchdog.service", "timer": base + "watchdog.timer",
             "activate": base + "activate@.service", "confirm": base + "confirm@.service", "socket": base + "confirm.socket",
@@ -74,6 +76,8 @@ def render(template: str, key: str, root: Path, runtime: Path, units: dict[str, 
         "/usr/libexec/hardened-blikvm/bli-kvm-update-supervisor": str(root / "supervisor"),
         "/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter": str(root / "reporter"),
         "BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm": "BLI_KVM_STATE_DIR=" + str(root / "server-state"),
+        "/var/lib/hardened-blikvm-gadget": str(root / "gadget"),
+        "/etc/hardened-blikvm-gadget": str(root / "gadget-etc"),
         "127.0.0.1:18080": f"127.0.0.1:{PORT}",
         "SocketBindAllow=tcp:18080": f"SocketBindAllow=tcp:{PORT}",
     })
@@ -91,7 +95,7 @@ def cleanup(root: Path) -> None:
             "invalid fixture namespace")
     require(not root.is_symlink() and root.stat().st_uid == 0, "unsafe fixture root")
     units = names(root.name.removeprefix(PREFIX))
-    for key in ("timer", "deadline", "socket", "apply-candidate", "apply-confirmed", "candidate", "current", "watchdog", "recover"):
+    for key in ("timer", "deadline", "socket", "apply-candidate", "apply-confirmed", "candidate", "current", "watchdog", "recover", "board-owner", "board-video-proxy"):
         command(["systemctl", "stop", units[key]])
     instances = checked(["systemctl", "list-units", "--all", "--plain", "--no-legend", root.name + "-*@*.service"])
     for line in instances.decode().splitlines():
@@ -143,6 +147,12 @@ def main() -> None:
             path.mkdir(mode=0o750 if name == "slots" else 0o700)
             path.chmod(0o750 if name == "slots" else 0o700)
             os.chown(path, server_uid if name == "server-state" else updater_uid, group)
+        # The serving units write the media directory and read the catalog.
+        for name, mode, owner in (("gadget", 0o700, server_uid), ("gadget-etc", 0o700, server_uid)):
+            path = root / name
+            path.mkdir(mode=mode)
+            path.chmod(mode)
+            os.chown(path, owner, group)
         for name in ("supervisor", "reporter"):
             shutil.copyfile(assets / name, root / name)
             (root / name).chmod(0o755)
@@ -176,6 +186,8 @@ def main() -> None:
         run("initialize", slots[0])
         for key, filename in TEMPLATES.items():
             (UNIT_ROOT / units[key]).write_text(render((assets / filename).read_text(), key, root, runtime, units))
+        for key in ("board-owner", "board-video-proxy"):
+            (UNIT_ROOT / units[key]).write_text("[Service]\nType=oneshot\nExecStart=/bin/true\n")
         (UNIT_ROOT / units["cleanup"]).write_text(f"[Service]\nType=oneshot\nExecStart=/usr/bin/python3 -B {root}/cleanup.py --cleanup-root {root}\n")
         (UNIT_ROOT / units["deadline"]).write_text(f"[Timer]\nOnActiveSec=100\nUnit={units['cleanup']}\n")
         checked(["systemctl", "daemon-reload"])
