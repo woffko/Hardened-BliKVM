@@ -41,6 +41,11 @@ class NetworkWriteGateTests(unittest.TestCase):
         self.assertIs(unchanged["ipv6"]["disabled"], False)
         self.assertIs(unchanged["ipv6"]["restore_disabled"], True)
 
+    def test_the_ipv6_step_can_be_skipped_with_a_reason(self) -> None:
+        plan = gate.plan_writes(["9.9.9.9"], "wlan0", "0", None, True)
+        self.assertIs(plan["ipv6"]["skipped"], True)
+        self.assertIs(plan["ipv6"]["changed"], False)
+
     def test_the_plan_records_the_optional_wake_on_lan_target(self) -> None:
         without = gate.plan_writes(["9.9.9.9"], "wlan0", "0", None)
         self.assertIs(without["wol"]["requested"], False)
@@ -64,6 +69,10 @@ class NetworkWriteGateTests(unittest.TestCase):
         }
         self.assertEqual(
             gate.decide_outcome(confirm_write=True, preflight={}, write=complete), "passed"
+        )
+        skipped = dict(complete, ipv6_applied=None, ipv6_restored=None)
+        self.assertEqual(
+            gate.decide_outcome(confirm_write=True, preflight={}, write=skipped), "passed"
         )
         partial = dict(complete, ipv6_restored=False)
         self.assertEqual(

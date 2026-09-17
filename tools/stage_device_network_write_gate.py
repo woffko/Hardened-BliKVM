@@ -80,6 +80,7 @@ def plan_writes(
     interface: str,
     ipv6_before: str,
     wol_mac: str | None,
+    skip_ipv6: bool = False,
 ) -> dict[str, Any]:
     """The reviewed write plan: one DNS write plus restore, one IPv6 flip plus
     restore. Nothing is invented: the restore value is the observation."""
@@ -94,7 +95,8 @@ def plan_writes(
             "interface": interface,
             "disabled": ipv6_before != "1",
             "restore_disabled": ipv6_before == "1",
-            "changed": True,
+            "changed": not skip_ipv6,
+            "skipped": skip_ipv6,
         },
         # Wake-on-LAN carries nothing to restore: the reviewed target is the
         # operator's own host address and the packet changes no device state.
@@ -159,9 +161,11 @@ def decide_outcome(*, confirm_write: bool, preflight: dict[str, str], write: dic
     required = [
         write.get("dns_applied") is True,
         write.get("dns_restored") is True,
-        write.get("ipv6_applied") is True,
-        write.get("ipv6_restored") is True,
     ]
+    if write.get("ipv6_applied") is not None:
+        required.append(write["ipv6_applied"] is True)
+    if write.get("ipv6_restored") is not None:
+        required.append(write["ipv6_restored"] is True)
     if write.get("wol_applied") is not None:
         required.append(write["wol_applied"] is True)
     passed = all(required)
@@ -203,6 +207,11 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument("--tls-server-name")
     _ = parser.add_argument("--interface", default="wlan0")
     _ = parser.add_argument(
+        "--skip-ipv6",
+        action="store_true",
+        help="the board owner has no host network namespace; record the skip",
+    )
+    _ = parser.add_argument(
         "--wol-mac",
         help="reviewed host MAC for one Wake-on-LAN packet (optional)",
     )
@@ -239,7 +248,11 @@ def main() -> int:
     facts = parse_facts(stdout)
     resolvers = fact_list(facts, "resolver")
     plan = plan_writes(
-        resolvers, args.interface, facts.get("ipv6_disable_before", ""), args.wol_mac
+        resolvers,
+        args.interface,
+        facts.get("ipv6_disable_before", ""),
+        args.wol_mac,
+        args.skip_ipv6,
     )
 
     receipt: dict[str, Any] = {
@@ -299,33 +312,37 @@ def main() -> int:
                 name,
             )
             write["wol_applied"] = bool(wol.get("applied"))
-        ipv6 = api_write(
-            base,
-            "/api/network/ipv6",
-            {
-                "interface": ipv6_plan["interface"],
-                "disabled": ipv6_plan["disabled"],
-                "confirm": True,
-            },
-            password,
-            ca,
-            name,
-        )
-        write["ipv6_applied"] = bool(ipv6.get("applied"))
-        if write["ipv6_applied"]:
-            back = api_write(
+        write["ipv6_applied"] = None
+        write["ipv6_restored"] = None
+        if not plan["ipv6"]["skipped"]:
+            write["ipv6_applied"] = False
+            ipv6 = api_write(
                 base,
                 "/api/network/ipv6",
                 {
                     "interface": ipv6_plan["interface"],
-                    "disabled": ipv6_plan["restore_disabled"],
+                    "disabled": ipv6_plan["disabled"],
                     "confirm": True,
                 },
                 password,
                 ca,
                 name,
             )
-            write["ipv6_restored"] = bool(back.get("applied"))
+            write["ipv6_applied"] = bool(ipv6.get("applied"))
+            if write["ipv6_applied"]:
+                back = api_write(
+                    base,
+                    "/api/network/ipv6",
+                    {
+                        "interface": ipv6_plan["interface"],
+                        "disabled": ipv6_plan["restore_disabled"],
+                        "confirm": True,
+                    },
+                    password,
+                    ca,
+                    name,
+                )
+                write["ipv6_restored"] = bool(back.get("applied"))
         password = ""
     receipt["write"] = write
     receipt["mode"] = "write" if args.confirm_write else "plan"

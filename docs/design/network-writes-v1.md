@@ -56,7 +56,10 @@ the intent.
   than to its directory, so the bounded payload is written in place and read
   back, and a symlinked or non-regular target is refused so the reviewed path
   cannot be redirected.
-- IPv6: exactly one interface's `disable_ipv6` node is written.
+- IPv6: exactly one interface's `disable_ipv6` node is written. The board
+  owner runs with `PrivateNetwork=yes`, so it has no host interface of its own:
+  the IPv6 write is only available to an owner deployed without that isolation,
+  and the gate records an explicit skip otherwise (`--skip-ipv6`).
 - Wake-on-LAN: the MAC must be six two-digit groups with one consistent
   separator or twelve digits; the owner sends exactly one magic packet to the
   discard port and keeps no socket open. There is nothing to read back, so the
