@@ -193,8 +193,10 @@ PHASES: tuple[dict[str, Any], ...] = (
         "phase": "E4",
         "title": "retained signed update path",
         "host": (
+            "tools/build_debian_runtime_package.py",
             "tools/build_production_update_bundle.py",
             "tools/verify_production_update_bundle.py",
+            "packaging/systemd/hardened-blikvm-server-current.service",
             "docs/baselines/device-installed-application-update.md",
             "docs/design/retained-application-update-runbook.md",
         ),
