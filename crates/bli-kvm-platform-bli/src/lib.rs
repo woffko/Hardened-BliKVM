@@ -32,9 +32,9 @@ use std::collections::BTreeMap;
 
 use bli_kvm_core::{
     BoardCapabilities, CAPABILITY_SCHEMA_VERSION, CapabilityManifest, CapabilityProvider,
-    EvidenceLevel, FeatureStatus, HidCapabilities, HidMode, PlatformIdentity, PowerAction,
-    PowerCapabilities, ProductIdentity, SystemCapabilities, VideoCapabilities, VideoTransport,
-    VirtualMediaCapabilities, VirtualMediaMode,
+    EvidenceLevel, FeatureStatus, HidCapabilities, HidMode, NetworkCapabilities, PlatformIdentity,
+    PowerAction, PowerCapabilities, ProductIdentity, SystemCapabilities, VideoCapabilities,
+    VideoTransport, VirtualMediaCapabilities, VirtualMediaMode,
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -118,6 +118,11 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 modes: vec![VirtualMediaMode::CdRom, VirtualMediaMode::RemovableDisk],
                 resumable_upload: FeatureStatus::unavailable(),
                 remote_download: FeatureStatus::unavailable(),
+            },
+            network: NetworkCapabilities {
+                status: FeatureStatus::not_exposed(runtime_verified),
+                dns: FeatureStatus::not_exposed(runtime_verified),
+                ipv6: FeatureStatus::not_exposed(runtime_verified),
             },
             board: BoardCapabilities {
                 features: board_features,

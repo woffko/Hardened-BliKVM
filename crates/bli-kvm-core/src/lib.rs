@@ -13,8 +13,8 @@ mod platform;
 
 pub use capabilities::{
     Availability, BoardCapabilities, CapabilityError, CapabilityManifest, EvidenceLevel,
-    FeatureStatus, HidCapabilities, HidMode, PlatformIdentity, PowerAction, PowerCapabilities,
-    ProductIdentity, SystemCapabilities, VideoCapabilities, VideoTransport,
+    FeatureStatus, HidCapabilities, HidMode, NetworkCapabilities, PlatformIdentity, PowerAction,
+    PowerCapabilities, ProductIdentity, SystemCapabilities, VideoCapabilities, VideoTransport,
     VirtualMediaCapabilities, VirtualMediaMode,
 };
 pub use control::{

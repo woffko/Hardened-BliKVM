@@ -197,7 +197,10 @@ Goal: close the remaining KVMD management surfaces. Design:
   through the board owner's journaled policy path (the store and maintenance
   dispatcher already passed on the device) and are advertised only by a new
   `systemActions` capability; memory and swap writes are bounded owner actions
-  with read-back.
+  with read-back. The capability manifest carries a `network` section
+  (`status`, `dns`, `ipv6`), and the two network writes are advertised as
+  `read_write` only when the board owner serves the reviewed network-write
+  surface.
 - Network writes: DNS and IPv6 first, then firewall, SSH/mDNS, Wake-on-LAN and
   wifi where the hardware supports it (the board has `wlan0` and
   NetworkManager); interactive wifi stays out of scope until a reviewed helper

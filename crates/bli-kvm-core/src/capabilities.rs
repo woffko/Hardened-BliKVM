@@ -160,6 +160,17 @@ pub struct BoardCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NetworkCapabilities {
+    pub status: FeatureStatus,
+    /// Resolver writes: advertised only when the board owner serves the
+    /// reviewed network-write surface.
+    pub dns: FeatureStatus,
+    /// Per-interface IPv6 writes.
+    pub ipv6: FeatureStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemCapabilities {
     pub status: FeatureStatus,
     pub read_only_rootfs: bool,
@@ -184,6 +195,7 @@ pub struct CapabilityManifest {
     pub virtual_media: VirtualMediaCapabilities,
     pub board: BoardCapabilities,
     pub system: SystemCapabilities,
+    pub network: NetworkCapabilities,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -297,6 +309,11 @@ mod tests {
             },
             board: BoardCapabilities {
                 features: BTreeMap::new(),
+            },
+            network: NetworkCapabilities {
+                status: FeatureStatus::unavailable(),
+                dns: FeatureStatus::unavailable(),
+                ipv6: FeatureStatus::unavailable(),
             },
             system: SystemCapabilities {
                 status: FeatureStatus::unavailable(),
