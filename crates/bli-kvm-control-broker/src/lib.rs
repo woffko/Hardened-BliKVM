@@ -1,4 +1,5 @@
 mod attestation;
+pub mod board_status;
 mod config;
 #[cfg(feature = "network-write-profile")]
 pub mod network_write;

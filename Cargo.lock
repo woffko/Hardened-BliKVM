@@ -244,6 +244,7 @@ dependencies = [
  "bli-kvm-usb-gadget",
  "libc",
  "rand_core 0.6.4",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

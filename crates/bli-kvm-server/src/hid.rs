@@ -227,7 +227,7 @@ pub(crate) async fn confirm_focus(
         ControlResponse::Applied
         | ControlResponse::LeaseGranted { .. }
         | ControlResponse::MediaState { .. } => true,
-        ControlResponse::Rejected { .. } => false,
+        ControlResponse::Rejected { .. } | ControlResponse::BoardStatus { .. } => false,
     };
     if attested {
         state
@@ -242,6 +242,10 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MediaState { .. } => FocusConfirmResponse {
             attested: true,
             rejection: None,
+        },
+        ControlResponse::BoardStatus { .. } => FocusConfirmResponse {
+            attested: false,
+            rejection: Some("internal"),
         },
         ControlResponse::Rejected { code } => FocusConfirmResponse {
             attested: false,
@@ -405,7 +409,7 @@ pub(crate) async fn hid_lease(
                     .extend(&session.token, now + Duration::from_secs(u64::from(ttl)));
             }
         }
-        ControlResponse::Rejected { .. } => {}
+        ControlResponse::Rejected { .. } | ControlResponse::BoardStatus { .. } => {}
     }
     Ok(Json(ApiResponse::ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
@@ -425,6 +429,12 @@ pub(crate) async fn hid_lease(
             lease_id: None,
             ttl_seconds: None,
             rejection: Some(rejection_name(code)),
+        },
+        ControlResponse::BoardStatus { .. } => HidLeaseResponse {
+            applied: false,
+            lease_id: None,
+            ttl_seconds: None,
+            rejection: Some("internal"),
         },
         ControlResponse::MediaState { .. } => HidLeaseResponse {
             applied: false,

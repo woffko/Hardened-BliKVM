@@ -99,6 +99,10 @@ pub(crate) async fn application_power(
             applied: false,
             rejection: Some(rejection_name(code)),
         },
+        ControlResponse::BoardStatus { .. } => AtxResponse {
+            applied: false,
+            rejection: Some("internal"),
+        },
     })))
 }
 

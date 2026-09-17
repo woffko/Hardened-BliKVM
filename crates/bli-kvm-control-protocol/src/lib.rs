@@ -52,6 +52,12 @@ pub enum ControlResponse {
         cdrom: bool,
         writable: bool,
     },
+    BoardStatus {
+        power_led_present: bool,
+        power_led_on: bool,
+        hdd_led_present: bool,
+        hdd_led_on: bool,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

@@ -67,6 +67,7 @@ gadget-media-profile = [
 ]
 
 [dependencies]
+serde_json.workspace = true
 bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy", optional = true }
 bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store", optional = true }
 bli-kvm-atx-gpio-executor = { path = "../bli-kvm-atx-gpio-executor", optional = true }

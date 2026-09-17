@@ -48,6 +48,7 @@ pub struct ControlV2State {
     network_write: Option<
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
+    board_status: Option<crate::board_status::BoardStatusClient>,
 }
 
 impl ControlV2State {
@@ -64,7 +65,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -99,7 +102,9 @@ impl ControlV2State {
             hid: None,
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -116,7 +121,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -133,7 +140,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -164,7 +173,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -183,7 +194,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -208,7 +221,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -235,6 +250,26 @@ impl ControlV2State {
         self.network_write = Some(state);
     }
 
+    /// Attach the read-only board status proxy to the board daemon.
+    pub fn attach_board_status(&mut self, client: crate::board_status::BoardStatusClient) {
+        self.board_status = Some(client);
+    }
+
+    fn handle_board_status(&self) -> ControlResponse {
+        let Some(client) = self.board_status.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        match client.read() {
+            Ok(status) => ControlResponse::BoardStatus {
+                power_led_present: status.power_led_present,
+                power_led_on: status.power_led_on,
+                hdd_led_present: status.hdd_led_present,
+                hdd_led_on: status.hdd_led_on,
+            },
+            Err(_) => reject(ControlRejectionCode::BackendUnavailable),
+        }
+    }
+
     #[cfg(test)]
     fn enabled_for_test() -> Self {
         Self {
@@ -249,7 +284,9 @@ impl ControlV2State {
             #[cfg(feature = "system-action-profile")]
             system_action: None,
             #[cfg(feature = "network-write-profile")]
+            #[cfg(feature = "network-write-profile")]
             network_write: None,
+            board_status: None,
         }
     }
 
@@ -312,6 +349,7 @@ impl ControlV2State {
             PlatformControlRequestV2::NetworkWrite { request } => {
                 self.handle_network_write(request)
             }
+            PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
         }
     }
 

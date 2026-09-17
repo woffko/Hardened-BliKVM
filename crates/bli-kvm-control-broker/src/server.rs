@@ -434,6 +434,9 @@ pub async fn run_with_chardev_board_profile_with_system_action(
         }
     }
     state.attach_system_action(system_action);
+    if let Some(client) = crate::board_status::board_status_client_from_environment() {
+        state.attach_board_status(client);
+    }
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
     result
@@ -819,7 +822,8 @@ where
         ControlResponse::Rejected { code } => Some(reason_for(*code)),
         ControlResponse::Applied
         | ControlResponse::LeaseGranted { .. }
-        | ControlResponse::MediaState { .. } => None,
+        | ControlResponse::MediaState { .. }
+        | ControlResponse::BoardStatus { .. } => None,
     };
     timeout(
         request_timeout,

@@ -166,6 +166,8 @@ pub enum PlatformControlRequestV2 {
     NetworkWrite {
         request: NetworkWriteRequest,
     },
+    /// Read-only board status from the daemon that owns the board lines.
+    BoardStatus {},
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +207,7 @@ impl PlatformControlRequestV2 {
             Self::VirtualMediaObserve { request } => request.validate(),
             Self::SystemAction { request } => request.validate(),
             Self::NetworkWrite { request } => request.validate(),
+            Self::BoardStatus {} => Ok(()),
         }
     }
 }
