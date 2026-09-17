@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-system-action-profile = ["dep:bli-kvm-system-action-policy"]
+system-action-profile = ["dep:bli-kvm-system-action-policy", "dep:bli-kvm-system-action-store"]
 atx-transition-profile = [
   "dep:bli-kvm-atx-policy",
   "dep:bli-kvm-atx-transition",
@@ -67,6 +67,7 @@ gadget-media-profile = [
 
 [dependencies]
 bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy", optional = true }
+bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store", optional = true }
 bli-kvm-atx-gpio-executor = { path = "../bli-kvm-atx-gpio-executor", optional = true }
 bli-kvm-atx-policy = { path = "../bli-kvm-atx-policy", optional = true }
 bli-kvm-atx-transition = { path = "../bli-kvm-atx-transition", optional = true, default-features = false }
@@ -90,5 +91,6 @@ rand_core = { workspace = true, optional = true }
 tokio.workspace = true
 
 [dev-dependencies]
+libc.workspace = true
 bli-kvm-control-client = { path = "../bli-kvm-control-client" }
 tempfile.workspace = true

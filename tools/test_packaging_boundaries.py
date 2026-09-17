@@ -1870,10 +1870,37 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn('"crates/bli-kvm-system-action-store"', workspace)
         self.assertIn("bli-kvm-system-action-journal", manifest)
         self.assertIn("libc.workspace = true", manifest)
+        # The root-only store has exactly two reviewed consumers: the static
+        # maintenance binary, and the board owner's system-action profile. The
+        # owner runs as root and is the component that must persist a prepared
+        # action across a restart; the dependency stays optional so a build
+        # without that profile cannot link the store at all.
+        broker = ROOT / "crates/bli-kvm-control-broker/Cargo.toml"
         for other_manifest in (ROOT / "crates").glob("*/Cargo.toml"):
-            if other_manifest not in (crate / "Cargo.toml", maintenance):
+            if other_manifest not in (crate / "Cargo.toml", maintenance, broker):
                 self.assertNotIn("bli-kvm-system-action-store", other_manifest.read_text())
         self.assertIn("bli-kvm-system-action-store", maintenance.read_text())
+        broker_manifest = broker.read_text()
+        self.assertIn(
+            'bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store", optional = true }',
+            broker_manifest,
+        )
+        self.assertIn(
+            'system-action-profile = ["dep:bli-kvm-system-action-policy", "dep:bli-kvm-system-action-store"]',
+            broker_manifest,
+        )
+        broker_sources = [
+            path
+            for path in (ROOT / "crates/bli-kvm-control-broker/src").glob("*.rs")
+            if "bli_kvm_system_action_store" in path.read_text()
+        ]
+        self.assertEqual(
+            sorted(path.name for path in broker_sources), ["server.rs", "system_action.rs"]
+        )
+        self.assertIn(
+            "SystemActionStore::open()",
+            (ROOT / "crates/bli-kvm-control-broker/src/server.rs").read_text(),
+        )
         self.assertIn(
             '"/var/lib/hardened-blikvm-system-actions"', source
         )

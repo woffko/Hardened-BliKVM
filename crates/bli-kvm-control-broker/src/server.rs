@@ -403,7 +403,9 @@ pub async fn run_with_chardev_board_profile_with_system_action(
         reconciliations,
     )
     .await?;
-    state.attach_system_action(crate::system_action::SystemActionState::new(
+    let mut system_action: crate::system_action::SystemActionState<
+        Box<dyn crate::system_action::ActionRunner>,
+    > = crate::system_action::SystemActionState::new(
         Box::new(crate::system_action::ExecRunner::new(
             system_action_reboot,
             system_action_shutdown,
@@ -411,7 +413,27 @@ pub async fn run_with_chardev_board_profile_with_system_action(
         capability_enabled,
         backend_ready,
         boot_binding,
-    ));
+    );
+    if capability_enabled {
+        // Persistence is part of the contract: a prepared action must survive a
+        // restart or a reboot, and the boot step accepts it. A journal that
+        // cannot be opened or trusted fails the capability closed instead of
+        // dispatching an action that could never be accepted.
+        match bli_kvm_system_action_store::SystemActionStore::open() {
+            Ok(store) => match system_action.with_store(store) {
+                Ok(()) => {}
+                Err(reason) => {
+                    eprintln!("system-action journal rejected: {reason}");
+                    system_action.disable_capability();
+                }
+            },
+            Err(error) => {
+                eprintln!("system-action journal unavailable: {error}");
+                system_action.disable_capability();
+            }
+        }
+    }
+    state.attach_system_action(system_action);
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
     result

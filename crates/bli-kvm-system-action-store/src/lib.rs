@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use bli_kvm_system_action_journal::{
+pub use bli_kvm_system_action_journal::{
     CopyIndex, JOURNAL_COPY_BYTES, JournalError, RawJournalCopy, SelectedJournal, plan_initialize,
     plan_repair, plan_update, select_copies, verify_written,
 };
@@ -251,7 +251,9 @@ impl SystemActionStore {
         })
     }
 
-    fn open_at(
+    /// Open a store rooted at an explicit path, for the device root and for
+    /// tests that use a private directory.
+    pub fn open_at(
         root: PathBuf,
         expected_owner: u32,
         expected_group: u32,

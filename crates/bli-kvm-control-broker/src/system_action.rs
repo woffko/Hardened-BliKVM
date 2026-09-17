@@ -90,6 +90,11 @@ pub struct SystemActionState<R: ActionRunner> {
     backend_ready: bool,
     /// Origin boot binding: the running boot this owner belongs to.
     boot_binding: [u8; 16],
+    /// Persisted journal, when the profile keeps one. The state is loaded at
+    /// construction and written back after every phase change, so a restart or
+    /// a reboot cannot lose a prepared action.
+    store: Option<bli_kvm_system_action_store::SystemActionStore>,
+    generation: u64,
 }
 
 impl<R: ActionRunner> SystemActionState<R> {
@@ -105,6 +110,57 @@ impl<R: ActionRunner> SystemActionState<R> {
             capability_enabled,
             backend_ready,
             boot_binding,
+            store: None,
+            generation: 0,
+        }
+    }
+
+    /// Attach the persisted journal and restore the state it holds.
+    ///
+    /// An empty store keeps a fresh engine; a stored state is restored, so a
+    /// prepared or dispatching action survives an owner restart and a reboot.
+    pub fn with_store(
+        &mut self,
+        store: bli_kvm_system_action_store::SystemActionStore,
+    ) -> Result<(), &'static str> {
+        match store.load(1) {
+            Ok(selected) => {
+                self.policy = SystemActionPolicyEngine::restore(selected.state())
+                    .map_err(|_| "the stored system-action state is invalid")?;
+                self.generation = selected.generation();
+            }
+            Err(bli_kvm_system_action_store::SystemActionStoreError::Journal(
+                bli_kvm_system_action_store::JournalError::NoValidCopy,
+            )) => {
+                // The store exists but holds no journal yet: start fresh and
+                // let the first persist initialize it.
+                self.generation = 0;
+            }
+            Err(_) => return Err("the system-action journal is unavailable"),
+        }
+        self.store = Some(store);
+        Ok(())
+    }
+
+    /// Fail closed: a journal that cannot be trusted must not leave the
+    /// capability enabled, because an unrecorded action could be dispatched and
+    /// then never accepted after the reboot.
+    pub fn disable_capability(&mut self) {
+        self.capability_enabled = false;
+    }
+
+    fn persist(&mut self) {
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+        if self.generation == 0 {
+            if let Ok(persisted) = store.initialize(self.policy.snapshot()) {
+                self.generation = persisted.generation;
+            }
+            return;
+        }
+        if let Ok(persisted) = store.update(self.generation, 1, self.policy.snapshot()) {
+            self.generation = persisted.generation;
         }
     }
 
@@ -163,11 +219,13 @@ impl<R: ActionRunner> SystemActionState<R> {
 
         match self.policy.prepare(prepared, eligibility, environment) {
             Ok(SystemActionDecision::PersistPrepared(ticket)) => {
+                self.persist();
                 match self
                     .policy
                     .record_dispatch_intent(ticket, eligibility, environment)
                 {
                     Ok(SystemActionDispatchDecision::PersistDispatching(_intent)) => {
+                        self.persist();
                         match self.runner.dispatch(action) {
                             Ok(()) => ControlResponse::Applied,
                             Err(reason) => {
@@ -328,6 +386,48 @@ mod tests {
             response,
             ControlResponse::Rejected {
                 code: ControlRejectionCode::InvalidState
+            }
+        );
+    }
+
+    #[test]
+    fn the_journal_survives_a_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("store");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        // Safety: the effective ids are read once for the store ownership.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+
+        let store = bli_kvm_system_action_store::SystemActionStore::open_at(root.clone(), uid, gid)
+            .unwrap();
+        {
+            let mut first = SystemActionState::new(MockRunner::default(), true, true, [0x22; 16]);
+            first.with_store(store).unwrap();
+            assert_eq!(
+                first.handle("a123456789abcdef0123456789abcdef", &request(), 120_000),
+                ControlResponse::Applied
+            );
+        }
+
+        // A fresh state reading the same store must see the recorded phase, so
+        // an owner restart cannot silently lose the action.
+        let store =
+            bli_kvm_system_action_store::SystemActionStore::open_at(root, uid, gid).unwrap();
+        let mut second = SystemActionState::new(MockRunner::default(), true, true, [0x22; 16]);
+        second.with_store(store).unwrap();
+        let replay = second.handle("a123456789abcdef0123456789abcdef", &request(), 121_000);
+        assert_eq!(replay, ControlResponse::Applied);
+
+        // A different action must stay blocked by the restored pending record.
+        let mut next_request = request();
+        next_request.confirmed_at_unix_ms = 120_000;
+        let blocked = second.handle("b123456789abcdef0123456789abcdef", &next_request, 121_000);
+        assert_eq!(
+            blocked,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::PendingUnreconciled
             }
         );
     }
