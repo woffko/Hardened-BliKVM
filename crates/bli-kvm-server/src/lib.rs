@@ -103,6 +103,9 @@ pub struct ServerOptions {
     /// Explicit opt-in for the privileged reboot and shutdown requests. The
     /// capability stays unavailable, and every request is refused, without it.
     pub system_actions_enabled: bool,
+    /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
+    /// stays unavailable, and every request is refused, without it.
+    pub network_writes_enabled: bool,
     /// Image directory an operator upload writes into. Must be the same
     /// directory the board owner serves, and is required for uploads.
     pub media_directory: Option<PathBuf>,
@@ -129,6 +132,7 @@ impl Default for ServerOptions {
             media_catalog: None,
             media_controls_enabled: false,
             system_actions_enabled: false,
+            network_writes_enabled: false,
             media_directory: None,
         }
     }
@@ -206,6 +210,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
+        if options.network_writes_enabled {
+            manifest.network.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            manifest.network.dns = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            manifest.network.ipv6 = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
     }
     manifest
