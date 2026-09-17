@@ -266,6 +266,12 @@ Goal: prove the replacement is complete.
 - Run the GUI parity probe against `https://10.0.87.133/` and compare; produce
   the final report, reboot/soak acceptance and the baselines. The status report
   is `docs/baselines/vendor-replaced.md`.
+- Release-stage re-verification: the physical confirmations recorded during E2
+  (fan, activity LED, panel, ATX power/HDD LED inputs and the display button)
+  are repeated at the final release stage before the release is accepted, with a
+  fresh per-subsystem receipt from `tools/stage_device_boardd_gate.py`; the E2
+  receipts stay as the development-stage evidence and the release run is
+  recorded separately.
 
 ## Gates, order and rollback
 

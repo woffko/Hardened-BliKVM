@@ -45,7 +45,9 @@ reboot gate and the signed slot-serving cutover).
    (`storage-reboot-gate-20260917-a.json`, all preserved facts intact).
 3. Signed slot-serving cutover (`update-slot-serving-*.json`) — needs the
    operator signing key and the current enrollment request.
-4. Physical confirmation of the fan, LED and panel handoffs, and the operator's
-   ATX check.
+4. Physical confirmation of the fan, LED, panel, ATX LED and button handoffs is
+   recorded as `passed` on 2026-09-17 (`boardd-*-gate-20260917-b.json`), and the
+   plan schedules a release-stage re-verification of the same subsystems with
+   fresh receipts before the release is accepted.
 5. A 24-hour soak and the post-reboot acceptance run, both after the reboot
    approval.
