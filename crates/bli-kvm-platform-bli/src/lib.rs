@@ -23,6 +23,7 @@ pub use hardware::{
     H616_VENDOR_PROFILE, H616VendorProfile, RtcEvidence, VENDOR_SOURCE_REVISION,
 };
 pub use inventory::BliPlatformObservations;
+pub use inventory::{NativeBoardObservations, native_board_inventory};
 #[cfg(feature = "kvmd-inventory")]
 pub use inventory::{sanitize_kvmd_inventory, sanitize_kvmd_inventory_with_observations};
 pub use rtc::{RtcReadError, RtcReadout, read_h616_external_rtc};

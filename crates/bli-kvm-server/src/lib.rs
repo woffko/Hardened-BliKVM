@@ -391,12 +391,57 @@ async fn capability_manifest(
 async fn runtime_inventory(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<RuntimeInventory>>> {
-    let inventory = state
-        .inventory
-        .inventory()
-        .await
-        .map_err(|_| AppError::ServiceUnavailable("platform broker unavailable".into()))?;
+    let inventory = match state.inventory.inventory().await {
+        Ok(inventory) => inventory,
+        // The board profile has no vendor backend: report the facts our own
+        // arrangement observes instead of failing the whole view.
+        Err(_) if state.options.restricted_controls_enabled && state.control.is_some() => {
+            native_inventory(&state).await
+        }
+        Err(_) => {
+            return Err(AppError::ServiceUnavailable(
+                "platform broker unavailable".into(),
+            ));
+        }
+    };
     Ok(Json(ApiResponse::ok(inventory)))
+}
+
+/// Assemble the native board inventory: thermal and RTC from the kernel views,
+/// the host power LED from the board owner, and nothing that we do not observe.
+async fn native_inventory(state: &AppState) -> RuntimeInventory {
+    let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees().ok();
+    let rtc = bli_kvm_platform_bli::read_h616_external_rtc().ok();
+    let power_led = match state.control.as_ref() {
+        Some(control) => {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0);
+            let operation_id = format!("{now_ms:032x}");
+            match control
+                .execute_v2(
+                    operation_id,
+                    bli_kvm_core::PlatformControlRequestV2::BoardStatus {},
+                )
+                .await
+            {
+                Ok(bli_kvm_control_protocol::ControlResponse::BoardStatus {
+                    power_led_present,
+                    power_led_on,
+                    ..
+                }) => power_led_present.then_some(power_led_on),
+                _ => None,
+            }
+        }
+        None => None,
+    };
+    bli_kvm_platform_bli::native_board_inventory(bli_kvm_platform_bli::NativeBoardObservations {
+        thermal_millidegrees_celsius: thermal,
+        external_rtc_seconds: rtc.map(|readout| readout.unix_seconds),
+        external_rtc_offset_seconds: rtc.map(|readout| readout.offset_from_system_seconds),
+        power_led,
+    })
 }
 
 async fn diagnostics_view(
@@ -1148,6 +1193,60 @@ mod tests {
             capabilities["data"]["system"]["actions"]["availability"],
             "unavailable"
         );
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn the_board_profile_inventory_reports_the_host_power_led() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut prefix = [0_u8; 4];
+            stream.read_exact(&mut prefix).await.unwrap();
+            let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut payload).await.unwrap();
+            let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+            assert!(matches!(
+                request.request,
+                bli_kvm_core::PlatformControlRequestV2::BoardStatus {}
+            ));
+            let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                request_id: request.request_id,
+                operation_id: request.operation_id,
+                response: bli_kvm_control_protocol::ControlResponse::BoardStatus {
+                    power_led_present: true,
+                    power_led_on: true,
+                    hdd_led_present: true,
+                    hdd_led_on: false,
+                },
+            };
+            let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+            stream
+                .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                .await
+                .unwrap();
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, _csrf) = setup_and_login(&app).await;
+        let request = Request::builder()
+            .uri("/api/inventory")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .unwrap();
+        let body = json_body(app.clone().oneshot(request).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["backend"], "native");
+        assert_eq!(body["data"]["powerLed"], true);
+        broker.await.unwrap();
     }
 
     #[cfg(feature = "restricted-control-surface")]
