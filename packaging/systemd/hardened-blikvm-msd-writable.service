@@ -1,0 +1,16 @@
+[Unit]
+Description=Hardened BliKVM MSD remount writable
+Documentation=https://github.com/woffko/Hardened-BliKVM
+# The reviewed MSD partition can come up read-only when the initramfs or the
+# boot-time fsck holds it first; the images directory must be writable for
+# uploads and writable media, so this unit remounts it once the mount exists.
+RequiresMountsFor=/var/lib/hardened-blikvm-gadget/images
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -o remount,rw /var/lib/hardened-blikvm-gadget/images
+
+[Install]
+WantedBy=multi-user.target

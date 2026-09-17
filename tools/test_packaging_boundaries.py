@@ -1929,6 +1929,19 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_the_msd_remount_unit_is_reviewed_and_writable_only(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-msd-writable.service"
+        ).read_text()
+        self.assertIn("RequiresMountsFor=/var/lib/hardened-blikvm-gadget/images", unit)
+        self.assertIn(
+            "ExecStart=/bin/mount -o remount,rw /var/lib/hardened-blikvm-gadget/images",
+            unit,
+        )
+        self.assertIn("WantedBy=multi-user.target", unit)
+        self.assertNotIn("rm -", unit)
+        self.assertNotIn("mkfs", unit)
+
     def test_the_board_owner_allows_exactly_the_network_write_surface(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-board-owner.service"

@@ -67,6 +67,7 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-board-video-proxy.service \
   packaging/systemd/hardened-blikvm-ustreamer.service \
   packaging/systemd/hardened-blikvm-boardd.service \
+  packaging/systemd/hardened-blikvm-msd-writable.service \
   "$stage/share/systemd/"
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \

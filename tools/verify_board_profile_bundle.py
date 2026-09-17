@@ -48,6 +48,7 @@ REQUIRED_MEMBERS = {
     "share/systemd/hardened-blikvm-board-video-proxy.service",
     "share/systemd/hardened-blikvm-ustreamer.service",
     "share/systemd/hardened-blikvm-boardd.service",
+    "share/systemd/hardened-blikvm-msd-writable.service",
     "share/tmpfiles.d/hardened-blikvm-gadget.conf",
     "share/udev/99-hardened-blikvm-video.rules",
     "share/atx.env.example",
