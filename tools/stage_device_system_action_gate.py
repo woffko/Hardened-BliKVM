@@ -246,9 +246,29 @@ def require_ssh(args: argparse.Namespace) -> prototype.RemoteTarget:
     )
 
 
-def run_remote(args: argparse.Namespace, script: str) -> dict[str, str]:
+def read_credentials(*, dispatch: bool) -> tuple[bytearray, str]:
+    """Read the reviewed stdin payload: the SSH secret on the first line and,
+    for a reboot dispatch run, the operator password on the second."""
+    stream = getattr(sys.stdin, "buffer", sys.stdin)
+    first = stream.readline()
+    if not first or len(first) > 512:
+        raise SystemExit("the SSH secret is missing on stdin")
+    secret = bytearray(first.rstrip(b"\r\n"))
+    if not secret:
+        raise SystemExit("the SSH secret is missing on stdin")
+    password = ""
+    if dispatch:
+        second = stream.readline()
+        password = second.decode("utf-8", "replace").rstrip("\r\n")
+        if len(password) < 8:
+            raise SystemExit("the operator password is missing on stdin")
+    return secret, password
+
+
+def run_remote(
+    args: argparse.Namespace, script: str, secret: bytearray
+) -> dict[str, str]:
     target = require_ssh(args)
-    secret = prototype.read_secret_stdin()
     result = prototype.run_ssh(target, secret, script, timeout=args.timeout)
     stdout = (result.stdout or b"").decode("utf-8", "replace")
     print(stdout)
@@ -278,11 +298,13 @@ def main() -> int:
     }
     preflight: dict[str, str] = {}
     phase: dict[str, str] = {}
+    dispatch = bool(args.confirm_reboot)
+    secret, operator_password = read_credentials(dispatch=dispatch)
 
     if args.confirm_reboot and not args.confirm_observed:
         if not args.base_url or not args.api_username:
             raise SystemExit("--confirm-reboot needs --base-url and --api-username")
-        password = upload.read_password()
+        password = operator_password
         if len(password) < 8:
             raise SystemExit("password input is invalid")
         receipt["dispatch"] = dispatch_reboot(
@@ -293,7 +315,7 @@ def main() -> int:
             args.tls_server_name,
         )
         password = ""
-        preflight = run_remote(args, preflight_script())
+        preflight = run_remote(args, preflight_script(), secret)
         receipt["mode"] = "reboot"
         receipt["result"] = decide_outcome(
             confirm_restart=False,
@@ -303,7 +325,7 @@ def main() -> int:
             phase={},
         )
     elif args.confirm_restart:
-        phase = run_remote(args, restart_script())
+        phase = run_remote(args, restart_script(), secret)
         receipt["mode"] = "restart"
         receipt["phase"] = phase
         receipt["result"] = decide_outcome(
@@ -314,14 +336,14 @@ def main() -> int:
             phase=phase,
         )
     elif args.confirm_observed:
-        preflight = run_remote(args, preflight_script())
-        boot = run_remote(args, post_boot_script(args.expect_operation))
+        preflight = run_remote(args, preflight_script(), secret)
+        boot = run_remote(args, post_boot_script(args.expect_operation), secret)
         operation = args.expect_operation or boot.get("operation", "")
         if not HEX_OPERATION.fullmatch(operation):
             boot["store_observation"] = boot.get("store_observation", "absent")
             phase = boot
         else:
-            phase = run_remote(args, accept_script(operation))
+            phase = run_remote(args, accept_script(operation), secret)
             phase.update({f"boot_{key}": value for key, value in boot.items()})
         receipt["mode"] = "accept"
         receipt["phase"] = phase
@@ -333,7 +355,7 @@ def main() -> int:
             phase=phase,
         )
     else:
-        preflight = run_remote(args, preflight_script())
+        preflight = run_remote(args, preflight_script(), secret)
         receipt["mode"] = "plan"
         receipt["result"] = "plan"
 

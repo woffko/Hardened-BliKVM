@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import tempfile
@@ -156,7 +157,11 @@ class SystemActionGateTests(unittest.TestCase):
         with (
             mock.patch.object(sys, "argv", argv),
             mock.patch.object(gate.prototype, "run_ssh", side_effect=results),
-            mock.patch.object(gate.prototype, "read_secret_stdin", return_value=b"x"),
+            mock.patch.object(
+                sys,
+                "stdin",
+                io.BytesIO(b"ssh-secret\noperator-password\n"),
+            ),
         ):
             code = gate.main()
         self.assertEqual(code, expected_code)
