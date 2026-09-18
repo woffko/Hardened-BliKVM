@@ -67,6 +67,18 @@ until the first media attach.
    owner-side acceptance until the gate reports `passed`; the reviewed wrapper
    keeps `systemctl --no-block`.
 
+   The P0.2 boot gate passed on the board: after a reviewed reboot the boot
+   identity changed, six of six units were active without help, `443` answered,
+   `/api/health` returned `200`, `systemctl --failed` was empty, the owner
+   logged the startup HID bind, and the journald drop-in ordered the journal
+   after `/var/log.hdd` so the first boot records survived. The armed-reboot
+   half then reproduced the known first-run regression: the dispatch was
+   accepted (`system-action-gate-20260918-b.json`, `dispatching`) and the board
+   never returned (no ICMP, ports 22/80/443 unreachable after about six
+   minutes), which needs a physical power cycle and then the post-boot
+   acceptance. The cause is not yet known; the persistent journal is the
+   post-mortem source.
+
 ## P1 - video menu
 
 `fps`, `quality`, `qualityHigh` and `qualityLossless` in the toolbar menu, with
