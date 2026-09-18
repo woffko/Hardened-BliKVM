@@ -211,6 +211,7 @@ python3 -m unittest \
   tools/test_stage_device_media_isolated_gate.py \
   tools/test_stage_device_hid_reboot_gate.py \
   tools/test_stage_device_boot_gate.py \
+  tools/test_stage_device_video_settings_gate.py \
   tools/test_stage_device_gadget_gate.py \
   tools/test_check_device_log_health.py \
   tools/test_gadget_profile_boundary.py \
@@ -408,6 +409,7 @@ python3 -m py_compile \
   tools/test_stage_device_media_isolated_gate.py \
   tools/test_stage_device_hid_reboot_gate.py \
   tools/test_stage_device_boot_gate.py \
+  tools/test_stage_device_video_settings_gate.py \
   tools/test_stage_device_gadget_gate.py \
   tools/test_check_device_log_health.py \
   tools/test_license_inventory.py \
@@ -598,6 +600,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_media_isolated_gate.py \
     tools/stage_device_hid_reboot_gate.py \
     tools/stage_device_boot_gate.py \
+    tools/stage_device_video_settings_gate.py \
     tools/stage_device_gadget_gate.py \
     tools/check_device_log_health.py \
     tools/license_inventory.py \
@@ -664,6 +667,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_media_isolated_gate.py \
     tools/test_stage_device_hid_reboot_gate.py \
     tools/test_stage_device_boot_gate.py \
+    tools/test_stage_device_video_settings_gate.py \
+  tools/test_stage_device_video_settings_gate.py \
     tools/test_stage_device_gadget_gate.py \
     tools/test_check_device_log_health.py \
     tools/test_license_inventory.py \
