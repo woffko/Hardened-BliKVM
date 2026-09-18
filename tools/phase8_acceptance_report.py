@@ -109,6 +109,27 @@ PHASES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "phase": "P1",
+        "title": "video menu settings",
+        "host": (
+            "crates/bli-kvm-core/src/video_settings.rs",
+            "crates/bli-kvm-control-broker/src/video_settings.rs",
+            "crates/bli-kvm-server/src/video_settings.rs",
+            "packaging/systemd/hardened-blikvm-ustreamer.service",
+            "packaging/tmpfiles.d/hardened-blikvm-video.conf",
+            "web/src/pages/desktop/menu/screen/index.tsx",
+            "tools/stage_device_video_settings_gate.py",
+        ),
+        "device": (
+            {
+                "name": "video settings gate",
+                "glob": "video-settings-gate-*.json",
+                "probe": "hardened-blikvm-video-settings-gate",
+                "marker": "result=passed",
+            },
+        ),
+    },
+    {
         "phase": "E1",
         "title": "storage and media",
         "host": (

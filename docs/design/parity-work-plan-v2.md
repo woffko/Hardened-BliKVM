@@ -131,9 +131,13 @@ read-back over `GET /api/vm/screen`. The manifest carries the reviewed setting
 list, so the menu offers the frame rate and the JPEG quality (the
 `qualityHigh` and `qualityLossless` entries are values 80 and 100) and hides
 the reference's video-mode, resolution, GOP and frame-detect switches, which
-the MJPEG engine cannot apply. The device gate still has to prove that the
-owner can restart the streamer from its sandbox and that the engine reports the
-new values.
+the MJPEG engine cannot apply. The device gate then passed
+(`video-settings-gate-20260918-a.json`): the owner restarts the streamer from
+its sandbox, the API read-back reports the applied frame rate and quality, the
+engine's own `/state` moves from 40 to 24 desired fps and the gate restores 40
+and 80 afterwards. The hardware encoder reports quality `0` in `/state`, so the
+gate requires the engine to agree on the frame rate and verifies the quality
+through the owner's file and the API read-back.
 
 ## P2 - settings sections
 
