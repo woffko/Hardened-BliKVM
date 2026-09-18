@@ -6,6 +6,9 @@ Before=hardened-blikvm-server.service hardened-blikvm-server-current.service
 [Service]
 Type=simple
 User=root
+# The service group comes from the reviewed drop-in that keeps the control
+# socket reachable; the store instead sets the ownership of its journal copies
+# explicitly, which is why CAP_CHOWN is kept.
 UMask=0077
 RuntimeDirectory=hardened-blikvm-gadget
 RuntimeDirectoryMode=0750
@@ -61,9 +64,11 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RemoveIPC=yes
-# The reviewed network writes need exactly one capability: the per-interface
-# disable_ipv6 sysctl. The resolver file is writable through ReadWritePaths.
-CapabilityBoundingSet=CAP_NET_ADMIN
+# The reviewed network writes need the per-interface disable_ipv6 sysctl and
+# the resolver file is writable through ReadWritePaths. CAP_CHOWN lets the
+# owner set the root ownership the system-action store requires on the journal
+# copies it creates, which its service group cannot produce by itself.
+CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN
 AmbientCapabilities=
 DevicePolicy=closed
 DeviceAllow=/dev/gpiochip0 rw
@@ -71,7 +76,10 @@ DeviceAllow=/dev/hidg0 rw
 DeviceAllow=/dev/hidg1 rw
 DeviceAllow=/dev/hidg2 rw
 IPAddressDeny=any
-ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /etc/resolv.conf
+# The owner holds the privileged system-action journal, and the armed profile
+# must persist a record before the reboot it triggers, so the store
+# directory is writable together with the gadget and network surfaces.
+ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /etc/resolv.conf
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

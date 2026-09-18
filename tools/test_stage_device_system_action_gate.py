@@ -223,6 +223,35 @@ class SystemActionGateTests(unittest.TestCase):
         )
         self.assertEqual(receipt["result"], "inspect")
 
+    def test_a_refused_dispatch_is_not_recorded_as_sent(self) -> None:
+        refused = gate.decide_outcome(
+            confirm_restart=False,
+            confirm_reboot=True,
+            confirm_observed=False,
+            preflight={},
+            phase={},
+            dispatch={"applied": False, "rejection": "internal"},
+        )
+        self.assertEqual(refused, "inspect")
+        accepted = gate.decide_outcome(
+            confirm_restart=False,
+            confirm_reboot=True,
+            confirm_observed=False,
+            preflight={},
+            phase={},
+            dispatch={"applied": True},
+        )
+        self.assertEqual(accepted, "dispatching")
+        unknown = gate.decide_outcome(
+            confirm_restart=False,
+            confirm_reboot=True,
+            confirm_observed=False,
+            preflight={},
+            phase={},
+            dispatch=None,
+        )
+        self.assertEqual(unknown, "dispatching")
+
     def test_operation_id_is_validated(self) -> None:
         with self.assertRaises(SystemExit):
             self._run(["--confirm-observed", "--expect-operation", "not-hex"], [])

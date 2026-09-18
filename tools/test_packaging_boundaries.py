@@ -1952,6 +1952,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         ).read_text()
         self.assertIn("ProcSubset=all", unit)
         self.assertNotIn("\nProcSubset=pid\n", unit)
+        # The store rejects a journal copy that is not root-owned, so the
+        # owner keeps the capability to set the ownership it creates.
+        self.assertIn("CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN", unit)
         self.assertIn("ProtectProc=invisible", unit)
         self.assertIn("ProtectKernelTunables=no", unit)
 
@@ -2001,10 +2004,11 @@ class PackagingBoundaryTests(unittest.TestCase):
         ).read_text()
         self.assertIn(
             "ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget "
-            "/var/lib/hardened-blikvm-gadget /etc/resolv.conf",
+            "/var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions "
+            "/etc/resolv.conf",
             unit,
         )
-        self.assertIn("CapabilityBoundingSet=CAP_NET_ADMIN", unit)
+        self.assertIn("CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN", unit)
         self.assertNotIn("CAP_SYS_ADMIN", unit)
         self.assertNotIn("AmbientCapabilities=CAP", unit)
 

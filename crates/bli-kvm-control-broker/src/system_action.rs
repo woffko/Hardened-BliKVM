@@ -292,7 +292,7 @@ impl<R: ActionRunner> SystemActionState<R> {
                 true
             }
             Err(error) => {
-                eprintln!("system-action journal write failed: {error}");
+                eprintln!("system-action journal write failed: {error:?}");
                 false
             }
         }

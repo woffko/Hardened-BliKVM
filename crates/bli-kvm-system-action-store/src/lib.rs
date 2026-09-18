@@ -452,17 +452,36 @@ impl SystemActionStore {
             OwnedFd::from_raw_fd(descriptor)
         };
         let file = File::from(owned);
+        // The ownership contract belongs to the store, not to the caller: a
+        // service that runs with a dedicated socket group still has to produce
+        // the root-owned copies the validator accepts, so set them explicitly.
+        let chown = unsafe {
+            // SAFETY: the descriptor is owned and valid, and the ids are the
+            // reviewed expected values the store already verifies afterwards.
+            libc::fchown(file.as_raw_fd(), self.expected_owner, self.expected_group)
+        };
+        if chown != 0 {
+            drop(file);
+            self.cleanup_temporary_if_present(index)?;
+            return Err(SystemActionStoreError::Io(std::io::Error::last_os_error()));
+        }
         file.set_permissions(Permissions::from_mode(COPY_MODE))?;
-        validate_file_metadata(
+        if validate_file_metadata(
             &file.metadata()?,
             self.identity,
             self.expected_owner,
             self.expected_group,
             Some(0),
         )
-        .map_err(|_| SystemActionStoreError::UnsafeTemporary(index))?;
-        validate_no_posix_acl(&file, false)
-            .map_err(|_| SystemActionStoreError::UnsafeTemporary(index))?;
+        .is_err()
+            || validate_no_posix_acl(&file, false).is_err()
+        {
+            // A rejected temporary must not become the unsafe leftover that
+            // the next attempt refuses to clean up.
+            drop(file);
+            self.cleanup_temporary_if_present(index)?;
+            return Err(SystemActionStoreError::UnsafeTemporary(index));
+        }
         Ok(file)
     }
 

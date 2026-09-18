@@ -29,7 +29,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Final
+from typing import Any, Final, cast
 
 sys.dont_write_bytecode = True
 
@@ -260,8 +260,14 @@ def decide_outcome(
     confirm_observed: bool,
     preflight: dict[str, str],
     phase: dict[str, str],
+    dispatch: dict[str, Any] | None = None,
 ) -> str:
     if confirm_reboot and not phase:
+        # A dispatch the board refused (for example because its journal write
+        # failed) must not be recorded as sent: the action never ran and the
+        # post-boot acceptance can never pass.
+        if dispatch is not None and dispatch.get("applied") is not True:
+            return "inspect"
         return "dispatching"
     if confirm_restart:
         persisted = (
@@ -405,6 +411,7 @@ def main() -> int:
             confirm_observed=False,
             preflight=preflight,
             phase={},
+            dispatch=cast(Any, receipt["dispatch"]),
         )
     elif args.confirm_restart:
         phase = run_remote(args, restart_script(), secret)
