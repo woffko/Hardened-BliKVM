@@ -216,6 +216,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Disconnect the profile the owner brought up.
     WifiDisconnect {},
+    /// Read the HTTPS redirect state and the public certificate.
+    TlsState {},
+    /// Switch the HTTP listener between serving and redirecting to HTTPS.
+    TlsSet {
+        enabled: bool,
+    },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -277,6 +283,8 @@ impl PlatformControlRequestV2 {
             Self::WifiState {} => Ok(()),
             Self::WifiConnect { .. } => Ok(()),
             Self::WifiDisconnect {} => Ok(()),
+            Self::TlsState {} => Ok(()),
+            Self::TlsSet { .. } => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

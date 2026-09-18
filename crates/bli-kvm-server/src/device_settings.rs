@@ -156,6 +156,117 @@ pub(crate) struct HidOnlyView {
     pub enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TlsView {
+    pub enabled: bool,
+    pub subject: String,
+    pub issuer: String,
+    pub not_after: String,
+    pub fingerprint_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct TlsBody {
+    pub enabled: bool,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn tls_state(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<TlsView>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "TLS control is not configured".into(),
+        ));
+    };
+    let response = control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::TlsState {},
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("TLS control is unavailable".into()))?;
+    match response {
+        ControlResponse::TlsState {
+            enabled,
+            subject,
+            issuer,
+            not_after,
+            fingerprint_sha256,
+        } => Ok(Json(ApiResponse::ok(TlsView {
+            enabled,
+            subject,
+            issuer,
+            not_after,
+            fingerprint_sha256,
+        }))),
+        _ => Err(AppError::ServiceUnavailable(
+            "TLS state is unavailable".into(),
+        )),
+    }
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn tls_update(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<TlsBody>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "TLS control is not configured".into(),
+        ));
+    };
+    let response = control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::TlsSet {
+                enabled: body.enabled,
+            },
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("TLS control is unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(match response {
+        ControlResponse::Applied => ToggleOutcome {
+            applied: true,
+            rejection: None,
+        },
+        ControlResponse::Rejected { code } => ToggleOutcome {
+            applied: false,
+            rejection: Some(rejection_name(code)),
+        },
+        _ => ToggleOutcome {
+            applied: false,
+            rejection: Some("unexpected_response"),
+        },
+    })))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn tls_state(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<TlsView>>> {
+    Err(AppError::ServiceUnavailable(
+        "TLS control is not configured".into(),
+    ))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn tls_update(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<TlsBody>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "TLS control is not configured".into(),
+    ))
+}
+
 #[cfg(feature = "restricted-control-surface")]
 pub(crate) async fn hid_only_state(
     State(state): State<AppState>,

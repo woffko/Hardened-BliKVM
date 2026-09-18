@@ -104,7 +104,8 @@ pub(crate) async fn application_power(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
-        | ControlResponse::WifiState { .. } => AtxResponse {
+        | ControlResponse::WifiState { .. }
+        | ControlResponse::TlsState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),
         },

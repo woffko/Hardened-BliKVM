@@ -19,10 +19,14 @@ mod profile;
 mod server;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
+pub mod tls_settings;
 mod video_settings;
 pub use device_settings::{HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState};
 pub use mouse_jiggler::{JiggleWriter, MouseJigglerState};
 pub use network_settings::{NM_CONNECTIONS_DIR, NmcliRunner, WifiRunner, WifiState, WifiStatus};
+pub use tls_settings::{
+    CertificateView, NGINX_CONF, NGINX_UNIT, SystemTlsRunner, TlsRunner, TlsState,
+};
 pub use video_settings::{ExecVideoRestartRunner, VideoRestartRunner, VideoSettingsState};
 mod v2;
 

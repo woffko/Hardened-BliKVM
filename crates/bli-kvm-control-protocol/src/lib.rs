@@ -84,6 +84,14 @@ pub enum ControlResponse {
         ssid: Option<String>,
         state: String,
     },
+    /// The HTTPS redirect state and the public certificate the front serves.
+    TlsState {
+        enabled: bool,
+        subject: String,
+        issuer: String,
+        not_after: String,
+        fingerprint_sha256: String,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

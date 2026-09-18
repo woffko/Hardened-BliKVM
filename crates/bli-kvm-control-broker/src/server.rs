@@ -344,6 +344,13 @@ async fn board_state(
         Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
         true,
     ));
+    // The reviewed HTTPS surface edits the front's own configuration.
+    state.with_tls(crate::tls_settings::TlsState::open(
+        crate::tls_settings::NGINX_CONF,
+        crate::tls_settings::NGINX_UNIT,
+        Box::new(crate::tls_settings::SystemTlsRunner),
+        true,
+    ));
     // The reviewed WiFi surface drives NetworkManager through the owner.
     state.with_wifi(crate::network_settings::WifiState::open(
         Box::new(crate::network_settings::NmcliRunner::new(
@@ -922,7 +929,8 @@ where
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
-        | ControlResponse::WifiState { .. } => None,
+        | ControlResponse::WifiState { .. }
+        | ControlResponse::TlsState { .. } => None,
     };
     timeout(
         request_timeout,
