@@ -181,11 +181,11 @@ class SystemActionGateTests(unittest.TestCase):
         facts = "\n".join(
             [
                 "observe_before=pending",
-                
+
                 "restart_started=yes",
                 "owner_unit=active",
                 "observe_after=pending",
-                
+
                 "boot_id=abc",
             ]
         )
