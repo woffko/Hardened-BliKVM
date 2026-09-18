@@ -24,6 +24,7 @@ import json
 import re
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -306,9 +307,10 @@ def require_ssh(options: Options, secret: bytearray, script: str, timeout: int) 
 
 
 class BoardApi:
-    csrf: str
+    csrf: str | None
 
     def __init__(self, options: Options, password: str) -> None:
+        self.csrf = None
         self.base = options.base_url.rstrip("/")
         parsed = urllib.parse.urlparse(self.base)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -363,7 +365,8 @@ class BoardApi:
                 entries.append(cast(Json, entry))
         return entries
 
-    def command(self, command: Json) -> bool:
+    def command(self, command: Json) -> tuple[bool, str]:
+        """Run one reviewed media command and report applied plus rejection."""
         body = self._request(
             "POST",
             "/api/virtual-media",
@@ -372,7 +375,28 @@ class BoardApi:
         if body.get("code") != 0:
             raise GateError("api", f"command_rejected_{body.get('code')}")
         data = cast(Json, body.get("data") or {})
-        return bool(data.get("applied"))
+        rejection = data.get("rejection")
+        return bool(data.get("applied")), rejection if isinstance(rejection, str) else ""
+
+
+def command_with_retry(
+    api: BoardApi, command: Json, timeout_seconds: int, stage: str
+) -> None:
+    """Apply a media command, waiting out the reviewed mutation cooldown.
+
+    The media policy keeps a short global cooldown after every applied
+    mutation, so an attach that follows a select can be answered with
+    ``cooldown_active``; the gate waits for it instead of reporting a false
+    failure, and fails closed on anything else.
+    """
+    deadline = time.monotonic() + min(timeout_seconds, 60)
+    while True:
+        applied, rejection = api.command(command)
+        if applied:
+            return
+        if rejection != "cooldown_active" or time.monotonic() >= deadline:
+            raise GateError(stage, f"{command.get('action', 'command')}_{rejection or 'not_applied'}")
+        time.sleep(1.0)
 
 
 def execute(options: Options) -> int:
@@ -440,17 +464,23 @@ def execute(options: Options) -> int:
             if not match:
                 raise GateError(stage, "image_not_catalogued")
             mode = "removable_disk" if match[0].get("removableAllowed") else "cdrom"
-            if not api.command(
+            command_with_retry(
+                api,
                 {
                     "action": "select",
                     "imageId": match[0].get("imageId"),
                     "mode": mode,
                     "writable": False,
-                }
-            ):
-                raise GateError(stage, "select_not_applied")
-            if not api.command({"action": "set_connected", "connected": True}):
-                raise GateError(stage, "attach_not_applied")
+                },
+                options.timeout_seconds,
+                stage,
+            )
+            command_with_retry(
+                api,
+                {"action": "set_connected", "connected": True},
+                options.timeout_seconds,
+                stage,
+            )
             receipt["attachApplied"] = True
             attached = require_ssh(
                 options, secret, facts_script(), min(options.timeout_seconds, 60)
@@ -463,8 +493,12 @@ def execute(options: Options) -> int:
             receipt["hidgDevices"] = attached.get("hidg_devices", "")
 
             stage = "eject"
-            if not api.command({"action": "set_connected", "connected": False}):
-                raise GateError(stage, "eject_not_applied")
+            command_with_retry(
+                api,
+                {"action": "set_connected", "connected": False},
+                options.timeout_seconds,
+                stage,
+            )
             receipt["ejectApplied"] = True
             ejected = require_ssh(
                 options, secret, facts_script(), min(options.timeout_seconds, 60)
@@ -499,6 +533,12 @@ def main() -> int:
     try:
         return execute(parse_args())
     except (OSError, UnicodeError, ValueError):
+        return 2
+    except Exception as error:  # noqa: BLE001 - the operator log is the surface
+        import traceback
+
+        traceback.print_exc()
+        print(f"gate failed before a receipt: {error!r}", file=sys.stderr)
         return 2
 
 

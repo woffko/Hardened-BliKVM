@@ -316,6 +316,12 @@ def main() -> int:
         return execute(parse_args())
     except (OSError, UnicodeError, ValueError):
         return 2
+    except Exception as error:  # noqa: BLE001 - the operator log is the surface
+        import traceback
+
+        traceback.print_exc()
+        print(f"gate failed before a receipt: {error!r}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
