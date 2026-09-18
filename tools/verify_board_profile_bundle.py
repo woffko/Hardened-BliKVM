@@ -52,6 +52,7 @@ REQUIRED_MEMBERS = {
     "share/tmpfiles.d/hardened-blikvm-gadget.conf",
     "share/udev/99-hardened-blikvm-video.rules",
     "share/atx.env.example",
+    "share/boardd.json.example",
     "share/web/index.html",
 }
 MAX_MEMBERS = 4096

@@ -1929,6 +1929,23 @@ class PackagingBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_the_boardd_example_carries_the_verified_panel_parameters(self) -> None:
+        import json
+
+        example = json.loads((ROOT / "packaging/boardd.json.example").read_text())
+        display = example["display"]
+        self.assertEqual(display["reset"], {"offset": 262, "activeLow": True})
+        self.assertEqual(display["dataCommand"], {"offset": 259, "activeLow": False})
+        self.assertEqual(display["backlight"], {"offset": 260, "activeLow": False})
+        self.assertEqual(display["spidev"], "/dev/spidev1.0")
+        self.assertEqual(display["clockHz"], 40000000)
+        commands = [step["command"] for step in display["init"]]
+        # The vendor 240x240 sequence: MADCTL, COLMOD, power/gamma blocks,
+        # inversion, sleep out and display on.
+        for required in (0x36, 0x3A, 0xB2, 0xE0, 0xE1, 0x21, 0x11, 0x29):
+            self.assertIn(required, commands)
+        self.assertNotIn(0x01, commands)
+
     def test_the_owner_unit_can_read_the_kernel_boot_identity(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-board-owner.service"

@@ -82,6 +82,7 @@ install -m 0644 docs/design/gui-parity-plan.md "$stage/share/gui-parity-plan.md"
 install -m 0644 docs/design/phase3-5-device-gate-runbook.md \
   "$stage/share/device-gate-runbook.md"
 
+install -m 0644 packaging/boardd.json.example "$stage/share/boardd.json.example"
 cat > "$stage/share/system-action.env.example" <<'EOF'
 # Reviewed system actions. The profile is compiled into the board build; it
 # stays refused unless these are set, and the two commands are executed with no

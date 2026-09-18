@@ -64,3 +64,23 @@ frequency policy, process ownership, text/fonts, user-visible content, retries,
 timeouts, or crash behavior. Existing GPIO259/260/262 ownership still blocks a
 concrete worker. The OLED/display capability remains unavailable until the
 owner-handoff and physical gates in `device-oled-topology.md` pass.
+
+## Bench-verified panel parameters (2026-09-17)
+
+The 240x240 panel was brought up on the board with the vendor's own driver
+parameters (pinned vendor revision `3e34c04a`, `third_lib/SPI_LCD/LCD_1in3.c`):
+
+- SPI channel 1 at 40 MHz; D/C offset 259, reset offset 262, backlight offset
+  260, all active-high except the reset, which is **active low** (the vendor
+  pulses RST high -> low -> high, 100 ms each).
+- Initialization exactly as the vendor sends it: MADCTL `0x36=0x70`, COLMOD
+  `0x3A=0x05`, the porch/gate/VCOM/LCM/VDV/VRH/frame-rate/power blocks
+  (`0xB2`, `0xB7`, `0xBB`, `0xC0`, `0xC2`, `0xC3`, `0xC4`, `0xC6`, `0xD0`), both
+  gamma tables (`0xE0`, `0xE1`), display inversion on (`0x21`), sleep out
+  (`0x11`) and display on (`0x29`). No software reset: the hardware reset is the
+  reviewed pulse.
+- The two defects found on the bench were the inverted reset polarity (the owner
+  configuration asserted the line high, leaving the panel in reset) and the
+  missing initialization block; the operator confirmed the image on the panel
+  after the fix. The reviewed values live in `packaging/boardd.json.example`,
+  which the bundle stages and the verifier pins.
