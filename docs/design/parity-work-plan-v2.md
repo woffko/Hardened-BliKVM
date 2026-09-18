@@ -121,6 +121,20 @@ server-side: implement `/api/vm/screen`, apply the settings in
 `bli-kvm-video-proxy`/`ustreamer`, read them back, and advertise the
 capability only when the proxy can enforce them.
 
+Implemented: the retained `ustreamer` is start-up-configured, so the privileged
+board owner applies a change by writing the reviewed environment file the
+streamer unit reads and restarting that unit (restoring the previous file when
+the restart fails). The core crate owns the bounded, tamper-tolerant settings
+model; the server maps `{type,value}` onto it, forwards one request over the
+control socket, answers unsupported entries explicitly, and serves the
+read-back over `GET /api/vm/screen`. The manifest carries the reviewed setting
+list, so the menu offers the frame rate and the JPEG quality (the
+`qualityHigh` and `qualityLossless` entries are values 80 and 100) and hides
+the reference's video-mode, resolution, GOP and frame-detect switches, which
+the MJPEG engine cannot apply. The device gate still has to prove that the
+owner can restart the streamer from its sandbox and that the engine reports the
+new values.
+
 ## P2 - settings sections
 
 - `device`: `autostart`, `hidOnly`, `mouseJiggler`, `mdns` and the `network`
