@@ -141,18 +141,48 @@ through the owner's file and the API read-back.
 
 ## P2 - settings sections
 
-- `device`: `autostart`, `hidOnly`, `mouseJiggler`, `mdns` and the `network`
-  link; `hdmi`, `disk` and `advanced` stay hidden with a documented reason.
-- `network`: `dns` and `ipv6` (the APIs exist), `tls` (certificate view and
-  replacement) and `wifi` through NetworkManager.
-- `system.firewall`: the reference baseline model over the owner and nftables.
-  The package is installed only with the operator's approval; until then the
-  capability stays hidden and fail-closed. The gate writes and restores.
-- `systemLog`: `kernel` and `local` through the existing API; `remote`, `save`
-  and `test` where the hardware supports them.
-- Beyond the reference: cards for the thermal curve, the panel and its
-  backlight, the activity LED, the ATX power and HDD LEDs, the RTC and the
-  session lock, all fed by existing observations.
+Inventory taken on 2026-09-18: the built interface already ships every section
+the reference has (`about, account, appearance, device, network, system,
+system-log, tailscale, update` under `web/src/pages/desktop/menu/settings/`),
+including the firewall page, the mDNS and mouse-jiggler toggles and the panel
+(`oled`) switch, so P2 is again mostly server-side.
+
+- **device**: `mdns` is implemented end to end (owner flips the reviewed
+  `systemd-resolved` key and restarts the unit; `GET /api/vm/mdns` plus the
+  enable/disable routes and a server test). Still to do: `mouseJiggler`
+  (owner-side periodic HID nudge, the page and API shapes already exist),
+  `hidOnly` (the owner refuses media attach and the media capability follows),
+  the read-only `autostart` list surfaced in the page (uploading scripts stays
+  owner-only), the `network` link (our network controls live inside the
+  `system` tab, so the link switches tabs), and `hdmi` hidden with the reason
+  recorded (the board captures HDMI, it has no HDMI output or hotplug control
+  to toggle).
+- **network**: `dns` (read and the reviewed write) and `interfaces`/`wol` are
+  implemented; `ipv6` has the write path and needs the UI/capability wiring;
+  `tls` (certificate view and replacement) and `wifi` (NetworkManager is
+  active) still need routes and caps.
+- **system.firewall**: the bundled capability already reports the firewall as
+  not exposed, which is the fail-closed state the plan requires while `nft` is
+  absent; the reference baseline model plus the write-and-restore gate is the
+  work to land once the operator approves installing the backend.
+- **systemLog**: `/system-log/config` and `/system-log/messages` already serve
+  the kernel and local views; `remote`, `save` and `test` are assessed per
+  capability.
+- Beyond the reference: the panel switch (`oled`), session lock and the
+  thermal/RTC views already exist in the interface; the fan curve, activity
+  LED and ATX LED cards are the remaining additions.
+
+
+Reference mapping, kept here for the sections that are still open: `device`
+carries `autostart`, `hidOnly`, `mouseJiggler`, `mdns` and the `network` link,
+while `hdmi`, `disk` and `advanced` stay hidden with a documented reason;
+`network` carries `dns`, `ipv6`, `tls` and `wifi`; `system.firewall` is the
+reference baseline model over the owner and nftables, installed only with the
+operator's approval and hidden and fail-closed until then, with the gate
+writing and restoring; `systemLog` carries `kernel`, `local`, `remote`, `save`
+and `test` where the hardware supports them; and beyond the reference the
+thermal curve, the panel and its backlight, the activity LED, the ATX power and
+HDD LEDs, the RTC and the session lock are fed by existing observations.
 
 ## P3 - HID and inputs
 
