@@ -96,6 +96,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 max_width: None,
                 max_height: None,
                 audio: FeatureStatus::unavailable(),
+                settings: vec![],
             },
             hid: HidCapabilities {
                 status: FeatureStatus::not_exposed(runtime_verified),

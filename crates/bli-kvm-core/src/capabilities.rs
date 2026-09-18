@@ -103,6 +103,17 @@ pub struct VideoCapabilities {
     pub max_width: Option<u32>,
     pub max_height: Option<u32>,
     pub audio: FeatureStatus,
+    /// Settings the interface may offer because the owner can enforce them.
+    #[serde(default)]
+    pub settings: Vec<VideoSetting>,
+}
+
+/// One reviewed video-engine setting the interface can change at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoSetting {
+    Fps,
+    Quality,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +304,7 @@ mod tests {
                 max_width: None,
                 max_height: None,
                 audio: FeatureStatus::unavailable(),
+                settings: vec![],
             },
             hid: HidCapabilities {
                 status: FeatureStatus::unavailable(),

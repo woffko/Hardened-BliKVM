@@ -218,6 +218,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }
         if options.video_controls_enabled {
             manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            // Only the entries the owner can enforce are offered; the MJPEG
+            // engine has no video-mode, GOP or frame-detect switch.
+            manifest.video.settings = vec![
+                bli_kvm_core::VideoSetting::Fps,
+                bli_kvm_core::VideoSetting::Quality,
+            ];
         }
         if options.network_writes_enabled {
             manifest.network.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);

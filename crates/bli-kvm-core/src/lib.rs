@@ -15,8 +15,8 @@ mod video_settings;
 pub use capabilities::{
     Availability, BoardCapabilities, CapabilityError, CapabilityManifest, EvidenceLevel,
     FeatureStatus, HidCapabilities, HidMode, NetworkCapabilities, PlatformIdentity, PowerAction,
-    PowerCapabilities, ProductIdentity, SystemCapabilities, VideoCapabilities, VideoTransport,
-    VirtualMediaCapabilities, VirtualMediaMode,
+    PowerCapabilities, ProductIdentity, SystemCapabilities, VideoCapabilities, VideoSetting,
+    VideoTransport, VirtualMediaCapabilities, VirtualMediaMode,
 };
 pub use control::{
     AtxControlAction, ControlValidationError, HidReport, PlatformControlRequest,
