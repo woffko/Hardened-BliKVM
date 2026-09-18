@@ -109,6 +109,40 @@ class BoarddGateTests(unittest.TestCase):
         self.assertEqual(passed["result"], "passed")
         self.assertIs(passed["operatorObserved"], True)
 
+    def test_a_failed_driver_never_passes(self) -> None:
+        facts = "\n".join(
+            [
+                "exports_backed_up=yes",
+                "config_installed=yes",
+                "unit_active=active",
+                "status_code=0",
+                "once_status=bli-kvm-boardd: fan driver failed: GPIO busy",
+            ]
+        )
+        receipt = self._run(
+            ["--subsystem", "fan", "--confirm-handoff", "--confirm-observed"],
+            facts,
+            expected_code=1,
+        )
+        self.assertEqual(receipt["result"], "inspect")
+
+    def test_the_panel_gate_requires_the_visible_pattern(self) -> None:
+        facts = "\n".join(
+            [
+                "exports_backed_up=yes",
+                "config_installed=yes",
+                "unit_active=active",
+                "status_code=0",
+                "request=display_test code=-2 applied=False",
+            ]
+        )
+        receipt = self._run(
+            ["--subsystem", "panel", "--confirm-handoff", "--confirm-observed"],
+            facts,
+            expected_code=1,
+        )
+        self.assertEqual(receipt["result"], "inspect")
+
     def test_missing_facts_stay_inspect(self) -> None:
         receipt = self._run(
             ["--subsystem", "fan", "--confirm-handoff"], "unexpected=1", expected_code=1

@@ -299,7 +299,14 @@ def main() -> int:
             "unit_active": "active",
             "status_code": "0",
         }
-        if all(facts.get(key) == value for key, value in required.items()):
+        healthy = all(facts.get(key) == value for key, value in required.items())
+        # A status that reports a failed driver is never a pass, and the panel
+        # gate additionally requires the visible pattern to have applied.
+        if "driver failed" in facts.get("once_status", ""):
+            healthy = False
+        if args.subsystem == "panel" and "applied=True" not in facts.get("request", ""):
+            healthy = False
+        if healthy:
             outcome = "passed" if args.confirm_observed else "observed-pending"
         else:
             outcome = "inspect"
