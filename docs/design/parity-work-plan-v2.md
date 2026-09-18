@@ -182,10 +182,14 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   and write/restore gate with the operator's approval), systemLog
   `remote`/`save`/`test`, the extra cards (fan curve, activity LED, ATX LEDs)
   and one reviewed device window for the new toggles.
-- **system.firewall**: the bundled capability already reports the firewall as
-  not exposed, which is the fail-closed state the plan requires while `nft` is
-  absent; the reference baseline model plus the write-and-restore gate is the
-  work to land once the operator approves installing the backend.
+- **system.firewall**: implemented fail-closed. The owner probes the reviewed
+  backends (`nft`, `iptables`, `ip6tables`), reports the baseline as
+  unavailable and refuses every request while `nft` is absent, and applies the
+  one reviewed ruleset with `nft -f` when a backend exists, saving the previous
+  ruleset and restoring it when the apply fails. The server exposes the
+  reference status, mode and confirm routes, offering only the baseline mode
+  and refusing the others with a reason. Running the write/restore on the
+  device needs `nft` installed, which remains a separate operator approval.
 - **systemLog**: `/system-log/config` and `/system-log/messages` already serve
   the kernel and local views; `remote`, `save` and `test` are assessed per
   capability.
