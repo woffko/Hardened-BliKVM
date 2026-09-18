@@ -12,7 +12,12 @@ use axum::Json;
 use axum::extract::Query;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ApiResponse, AppError, AppResult};
+use crate::{
+    AppState,
+    auth::middleware::CurrentSession,
+    error::{ApiResponse, AppError, AppResult},
+};
+use axum::{Extension, extract::State};
 
 const CONFIG_FILE: &str = "/etc/kvm/syslog.json";
 const LOG_FILE: &str = "/tmp/hardened-syslog/messages";
@@ -322,4 +327,73 @@ mod tests {
         assert_eq!(content, "");
         assert!(!truncated);
     }
+}
+
+/// Writes one reviewed test line through the owner, which owns the journal.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn send_test(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "system log is not configured".into(),
+        ));
+    };
+    let mut hasher = sha2::Sha256::new();
+    use sha2::Digest;
+    hasher.update(b"hardened-blikvm-system-log-op-v1");
+    hasher.update(session.token.as_bytes());
+    hasher.update(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
+    let operation_id: String = hasher
+        .finalize()
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let response = control
+        .execute_v2(
+            operation_id,
+            bli_kvm_core::PlatformControlRequestV2::SystemLogTest {},
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("system log is unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(match response {
+        bli_kvm_control_protocol::ControlResponse::Applied => ToggleOutcome {
+            applied: true,
+            rejection: None,
+        },
+        bli_kvm_control_protocol::ControlResponse::Rejected { code } => ToggleOutcome {
+            applied: false,
+            rejection: Some(crate::hid::rejection_name(code)),
+        },
+        _ => ToggleOutcome {
+            applied: false,
+            rejection: Some("unexpected_response"),
+        },
+    })))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn send_test(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "system log is not configured".into(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ToggleOutcome {
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<&'static str>,
 }

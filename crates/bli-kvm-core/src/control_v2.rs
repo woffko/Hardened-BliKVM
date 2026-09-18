@@ -228,6 +228,8 @@ pub enum PlatformControlRequestV2 {
     FirewallBaseline {
         enabled: bool,
     },
+    /// Write one reviewed test line through the system log.
+    SystemLogTest {},
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -293,6 +295,7 @@ impl PlatformControlRequestV2 {
             Self::TlsSet { .. } => Ok(()),
             Self::FirewallState {} => Ok(()),
             Self::FirewallBaseline { .. } => Ok(()),
+            Self::SystemLogTest {} => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

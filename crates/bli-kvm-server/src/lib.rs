@@ -368,6 +368,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/hardware", get(vm_info::vm_hardware))
         .route("/system-log/config", get(system_log::get_config))
         .route("/system-log/messages", get(system_log::get_messages))
+        .route("/system-log/test", post(system_log::send_test))
         .route("/diagnostics", get(diagnostics_view))
         .route("/application-update/status", get(update::status))
         .route("/application-update/upload", post(update::upload))

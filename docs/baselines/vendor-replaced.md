@@ -10,7 +10,7 @@ reboot gate and the signed slot-serving cutover).
 | Vendor component | Replacement | Evidence |
 | --- | --- | --- |
 | `kvmd-nginx` | `hardened-blikvm-nginx` | vendor units inactive, disabled and masked, including the `kvmd-fix` and `kvmd-bootconfig` helpers; `kvmd-removal-20260916-a.json` |
-| KVMD API/WebUI/auth | `bli-kvm-server` (59 routes) | route-drift guard; `gui-parity-compare-20260917-c.json` |
+| KVMD API/WebUI/auth | `bli-kvm-server` (60 routes) | route-drift guard; `gui-parity-compare-20260917-c.json` |
 | KVMD HID | our composite gadget in the board owner | gadget `hardened` bound to `musb-hdrc.2.auto` with `hid.usb0/1/2` and `mass_storage.usb0` |
 | KVMD MSD | our gadget MSD on `mmcblk0p4` | `storage-acceptance-20260916-b.json`, `storage-upload-cycle-20260916-a.json` |
 | KVMD streamer supervision | vendor `ustreamer` under our unit plus `bli-kvm-video-proxy` | `video-frame-timing-20260916-b.json`, `video-two-client-probe-20260916-a.json`, `video-soak-probe-20260916-a.json` |

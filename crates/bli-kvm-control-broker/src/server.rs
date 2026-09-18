@@ -344,6 +344,11 @@ async fn board_state(
         Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
         true,
     ));
+    // The reviewed system-log test line goes straight to the journal.
+    state.with_system_log(crate::system_log_settings::SystemLogState::open(
+        Box::new(crate::system_log_settings::SystemLogExecRunner),
+        true,
+    ));
     // The reviewed firewall baseline stays refused while no backend is installed.
     state.with_firewall(crate::firewall_settings::FirewallState::open(
         Box::new(crate::firewall_settings::SystemFirewallRunner),
