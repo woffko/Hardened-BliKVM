@@ -147,6 +147,14 @@ impl NetworkWriteRequest {
     }
 }
 
+/// Operator input for the post-boot acceptance: whether the reviewed guards are
+/// idle again. The boot identity and the uptime come from the device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AcceptPostBootRequest {
+    pub guards_ready: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlatformControlRequestV2 {
@@ -177,6 +185,11 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
+    /// Reviewed post-boot acceptance: only the owner holds the journal, so the
+    /// operator attests the guards and the owner closes the pending record.
+    AcceptPostBoot {
+        request: AcceptPostBootRequest,
+    },
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +230,7 @@ impl PlatformControlRequestV2 {
             Self::SystemAction { request } => request.validate(),
             Self::NetworkWrite { request } => request.validate(),
             Self::BoardStatus {} => Ok(()),
+            Self::AcceptPostBoot { .. } => Ok(()),
         }
     }
 }

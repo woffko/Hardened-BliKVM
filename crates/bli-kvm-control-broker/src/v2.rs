@@ -281,6 +281,19 @@ impl ControlV2State {
         self.board_status = Some(client);
     }
 
+    #[cfg(feature = "system-action-profile")]
+    fn handle_accept_post_boot(&mut self, guards_ready: bool) -> ControlResponse {
+        let Some(state) = self.system_action.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        state.accept_post_boot(guards_ready)
+    }
+
+    #[cfg(not(feature = "system-action-profile"))]
+    fn handle_accept_post_boot(&mut self, _guards_ready: bool) -> ControlResponse {
+        reject(ControlRejectionCode::CapabilityDisabled)
+    }
+
     fn handle_board_status(&self) -> ControlResponse {
         // The operator configuration is the capability: an unattached client
         // is resolved from the environment on first use, so the proxy works on
@@ -385,6 +398,9 @@ impl ControlV2State {
                 self.handle_network_write(request)
             }
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
+            PlatformControlRequestV2::AcceptPostBoot { request } => {
+                self.handle_accept_post_boot(request.guards_ready)
+            }
         }
     }
 

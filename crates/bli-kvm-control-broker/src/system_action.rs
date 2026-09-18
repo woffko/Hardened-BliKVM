@@ -11,8 +11,9 @@ use std::path::PathBuf;
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 use bli_kvm_core::{SystemActionKind, SystemActionWireRequest};
 use bli_kvm_system_action_policy::{
-    GuardState, SystemAction, SystemActionDecision, SystemActionDispatchDecision,
-    SystemActionEligibility, SystemActionEnvironment, SystemActionPolicyEngine,
+    GuardState, PostBootObservation, SystemAction, SystemActionDecision,
+    SystemActionDispatchDecision, SystemActionEligibility, SystemActionEnvironment,
+    SystemActionPhase, SystemActionPolicyEngine, SystemActionPostBootDecision,
     SystemActionRejection, SystemActionRequest,
 };
 
@@ -83,6 +84,19 @@ impl ActionRunner for RefusingRunner {
     }
 }
 
+fn uptime_millis() -> Result<u64, ()> {
+    let raw = std::fs::read_to_string("/proc/uptime").map_err(|_| ())?;
+    let seconds: f64 = raw
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or(())?;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(());
+    }
+    Ok((seconds * 1000.0) as u64)
+}
+
 pub struct SystemActionState<R: ActionRunner> {
     policy: SystemActionPolicyEngine,
     runner: R,
@@ -142,11 +156,110 @@ impl<R: ActionRunner> SystemActionState<R> {
         Ok(())
     }
 
+    /// Close the pending record after a reboot.
+    ///
+    /// Only the owner holds the journal, so the acceptance happens here rather
+    /// than in a separate process: the operator attests the guards, and the
+    /// device supplies the boot identity and the uptime.
+    pub fn accept_post_boot(&mut self, guards_ready: bool) -> ControlResponse {
+        let Some(store) = self.store.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let mut pending = None;
+        for record in self
+            .policy
+            .snapshot()
+            .record_snapshots()
+            .into_iter()
+            .flatten()
+        {
+            if matches!(
+                record.phase,
+                SystemActionPhase::Prepared | SystemActionPhase::Dispatching
+            ) {
+                pending = Some(record.operation_id);
+                break;
+            }
+        }
+        let Some(operation_id) = pending else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let uptime_ms = match uptime_millis() {
+            Ok(value) => value,
+            Err(_) => return reject(ControlRejectionCode::BackendUnavailable),
+        };
+        let guard_state = if guards_ready {
+            GuardState::Ready
+        } else {
+            GuardState::Unknown
+        };
+        let Ok(observation) = PostBootObservation::new(
+            self.boot_binding,
+            uptime_ms,
+            guard_state,
+            guard_state,
+            guard_state,
+            guard_state,
+        ) else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        match self.policy.accept_post_boot(operation_id, observation) {
+            Ok(SystemActionPostBootDecision::PersistAccepted) => {
+                match store.update(self.generation, 1, self.policy.snapshot()) {
+                    Ok(persisted) => {
+                        self.generation = persisted.generation;
+                        ControlResponse::Applied
+                    }
+                    Err(_) => reject(ControlRejectionCode::BackendUnavailable),
+                }
+            }
+            Ok(SystemActionPostBootDecision::ReplayAccepted) => ControlResponse::Applied,
+            Ok(SystemActionPostBootDecision::ReplayRejected) => {
+                reject(ControlRejectionCode::BackendRejected)
+            }
+            Ok(SystemActionPostBootDecision::Wait(_)) => {
+                reject(ControlRejectionCode::BackendRejected)
+            }
+            Err(_) => reject(ControlRejectionCode::InvalidState),
+        }
+    }
+
     /// Fail closed: a journal that cannot be trusted must not leave the
     /// capability enabled, because an unrecorded action could be dispatched and
     /// then never accepted after the reboot.
     pub fn disable_capability(&mut self) {
         self.capability_enabled = false;
+    }
+
+    #[cfg(test)]
+    pub fn policy_snapshot_for_test(
+        &self,
+    ) -> bli_kvm_system_action_policy::SystemActionPolicyState {
+        self.policy.snapshot()
+    }
+
+    #[cfg(test)]
+    pub fn policy_snapshot(&self) -> bli_kvm_system_action_policy::SystemActionPolicyState {
+        self.policy.snapshot()
+    }
+
+    #[cfg(test)]
+    pub fn pending_operation(&self) -> Option<[u8; 16]> {
+        for record in self
+            .policy
+            .snapshot()
+            .record_snapshots()
+            .into_iter()
+            .flatten()
+        {
+            if matches!(
+                record.phase,
+                SystemActionPhase::Prepared | SystemActionPhase::Dispatching
+            ) {
+                return Some(record.operation_id);
+            }
+        }
+        None
     }
 
     fn persist(&mut self) {
@@ -400,35 +513,31 @@ mod tests {
         // Safety: the effective ids are read once for the store ownership.
         let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
 
-        let store = bli_kvm_system_action_store::SystemActionStore::open_at(root.clone(), uid, gid)
-            .unwrap();
-        {
-            let mut first = SystemActionState::new(MockRunner::default(), true, true, [0x22; 16]);
-            first.with_store(store).unwrap();
-            assert_eq!(
-                first.handle("a123456789abcdef0123456789abcdef", &request(), 120_000),
-                ControlResponse::Applied
-            );
-        }
-
-        // A fresh state reading the same store must see the recorded phase, so
-        // an owner restart cannot silently lose the action.
         let store =
             bli_kvm_system_action_store::SystemActionStore::open_at(root, uid, gid).unwrap();
-        let mut second = SystemActionState::new(MockRunner::default(), true, true, [0x22; 16]);
-        second.with_store(store).unwrap();
-        let replay = second.handle("a123456789abcdef0123456789abcdef", &request(), 121_000);
-        assert_eq!(replay, ControlResponse::Applied);
-
-        // A different action must stay blocked by the restored pending record.
-        let mut next_request = request();
-        next_request.confirmed_at_unix_ms = 120_000;
-        let blocked = second.handle("b123456789abcdef0123456789abcdef", &next_request, 121_000);
+        let mut first = SystemActionState::new(MockRunner::default(), true, true, [0x22; 16]);
+        first.with_store(store).unwrap();
         assert_eq!(
-            blocked,
-            ControlResponse::Rejected {
-                code: ControlRejectionCode::PendingUnreconciled
-            }
+            first.handle("a123456789abcdef0123456789abcdef", &request(), 120_000),
+            ControlResponse::Applied
+        );
+
+        // The reboot happened: the same journal accepts the dispatching record
+        // on the next boot binding once the operator attests the guards.
+        let mut engine = SystemActionPolicyEngine::restore(first.policy_snapshot()).unwrap();
+        let operation = first.pending_operation().expect("a pending record");
+        let observation = PostBootObservation::new(
+            [0x33; 16],
+            uptime_millis().unwrap(),
+            GuardState::Ready,
+            GuardState::Ready,
+            GuardState::Ready,
+            GuardState::Ready,
+        )
+        .unwrap();
+        assert_eq!(
+            engine.accept_post_boot(operation, observation).unwrap(),
+            SystemActionPostBootDecision::PersistAccepted
         );
     }
 

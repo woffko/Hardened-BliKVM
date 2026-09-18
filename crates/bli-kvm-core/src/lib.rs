@@ -22,8 +22,8 @@ pub use control::{
     VirtualMediaCommand, VirtualMediaControlMode,
 };
 pub use control_v2::{
-    AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest,
-    MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
+    AcceptPostBootRequest, AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS,
+    HidLeaseRequest, MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
     PlatformControlRequestV2, SystemActionKind, SystemActionWireRequest,
     TARGET_ATTESTATION_MAX_TTL_SECONDS, TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation,
     TargetRelease,
