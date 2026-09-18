@@ -79,6 +79,16 @@ until the first media attach.
    acceptance. The cause is not yet known; the persistent journal is the
    post-mortem source.
 
+   The post-boot acceptance then found the store still holding the empty
+   initialized record, and the code explained why: the owner deferred the
+   journal write to the first dispatch, and when the store already held copies
+   that `initialize` failed with a generation gap while the failure was
+   swallowed, so the reboot was dispatched with no record and could never be
+   accepted. The owner now initializes the journal as it loads a store with no
+   valid copy and refuses the action when a write fails (fail-closed), which a
+   test pins. The board still has to re-run the armed dispatch to prove the
+   record and to see whether the reboot hang reproduces.
+
 ## P1 - video menu
 
 `fps`, `quality`, `qualityHigh` and `qualityLossless` in the toolbar menu, with

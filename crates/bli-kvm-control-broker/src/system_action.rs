@@ -146,9 +146,14 @@ impl<R: ActionRunner> SystemActionState<R> {
             Err(bli_kvm_system_action_store::SystemActionStoreError::Journal(
                 bli_kvm_system_action_store::JournalError::NoValidCopy,
             )) => {
-                // The store exists but holds no journal yet: start fresh and
-                // let the first persist initialize it.
-                self.generation = 0;
+                // The store exists but holds no journal yet. Initialize it here
+                // so the owner always runs with a durable generation: deferring
+                // the write to the first dispatch let a store that already had
+                // copies fail its initialize and lose the record silently.
+                let persisted = store
+                    .initialize(self.policy.snapshot())
+                    .map_err(|_| "the system-action journal could not be initialized")?;
+                self.generation = persisted.generation;
             }
             Err(_) => return Err("the system-action journal is unavailable"),
         }
@@ -262,18 +267,34 @@ impl<R: ActionRunner> SystemActionState<R> {
         None
     }
 
-    fn persist(&mut self) {
-        let Some(store) = self.store.as_ref() else {
-            return;
-        };
-        if self.generation == 0 {
-            if let Ok(persisted) = store.initialize(self.policy.snapshot()) {
-                self.generation = persisted.generation;
-            }
-            return;
+    /// Writes the current policy snapshot through the store and reports whether
+    /// the journal now holds it.
+    ///
+    /// Persistence is part of the contract, so a failed write is reported to the
+    /// caller instead of being swallowed: an action that is dispatched without a
+    /// journal record can never be accepted after the reboot it triggers.
+    fn persist(&mut self) -> bool {
+        // The production wiring disables the capability when the journal cannot
+        // be opened, so a state without a store has nothing to persist.
+        if self.store.is_none() {
+            return true;
         }
-        if let Ok(persisted) = store.update(self.generation, 1, self.policy.snapshot()) {
-            self.generation = persisted.generation;
+        let generation = self.generation;
+        let snapshot = self.policy.snapshot();
+        let result = match self.store.as_ref() {
+            Some(store) if generation == 0 => store.initialize(snapshot),
+            Some(store) => store.update(generation, 1, snapshot),
+            None => return false,
+        };
+        match result {
+            Ok(persisted) => {
+                self.generation = persisted.generation;
+                true
+            }
+            Err(error) => {
+                eprintln!("system-action journal write failed: {error}");
+                false
+            }
         }
     }
 
@@ -332,13 +353,19 @@ impl<R: ActionRunner> SystemActionState<R> {
 
         match self.policy.prepare(prepared, eligibility, environment) {
             Ok(SystemActionDecision::PersistPrepared(ticket)) => {
-                self.persist();
+                if !self.persist() {
+                    self.disable_capability();
+                    return reject(ControlRejectionCode::Internal);
+                }
                 match self
                     .policy
                     .record_dispatch_intent(ticket, eligibility, environment)
                 {
                     Ok(SystemActionDispatchDecision::PersistDispatching(_intent)) => {
-                        self.persist();
+                        if !self.persist() {
+                            self.disable_capability();
+                            return reject(ControlRejectionCode::Internal);
+                        }
                         match self.runner.dispatch(action) {
                             Ok(()) => ControlResponse::Applied,
                             Err(reason) => {
@@ -501,6 +528,39 @@ mod tests {
                 code: ControlRejectionCode::InvalidState
             }
         );
+    }
+
+    #[test]
+    fn a_journal_write_failure_refuses_the_action() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("store");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, PermissionsExt::from_mode(0o700)).unwrap();
+        // Safety: the effective ids are read once for the store ownership.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        let store = bli_kvm_system_action_store::SystemActionStore::open_at(root.clone(), uid, gid)
+            .unwrap();
+        let seed = SystemActionState::new(MockRunner::default(), true, true, [0x22; 16]);
+        store.initialize(seed.policy_snapshot()).unwrap();
+
+        let dispatched = Arc::new(Mutex::new(Vec::new()));
+        let runner = MockRunner {
+            dispatched: dispatched.clone(),
+            fail: false,
+        };
+        let mut state = SystemActionState::new(runner, true, true, [0x22; 16]);
+        state.with_store(store).unwrap();
+        // The journal stops accepting writes: the action must be refused, not
+        // dispatched into a reboot that could never be accepted afterwards.
+        std::fs::set_permissions(&root, PermissionsExt::from_mode(0o500)).unwrap();
+        assert_eq!(
+            state.handle("a123456789abcdef0123456789abcdef", &request(), 120_000),
+            reject(ControlRejectionCode::Internal)
+        );
+        assert!(dispatched.lock().unwrap().is_empty());
+        assert!(!state.capability_enabled());
     }
 
     #[test]

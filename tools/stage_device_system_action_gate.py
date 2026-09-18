@@ -242,11 +242,14 @@ def dispatch_reboot(
     except urllib.error.HTTPError as error:
         body = json.loads(error.read().decode() or "{}")
         status = error.code
+    data = body.get("data") or {}
     return {
         "status": status,
         "code": body.get("code"),
         "error": body.get("error"),
         "capability": body.get("data") is not None,
+        "applied": data.get("applied") is True,
+        "rejection": data.get("rejection"),
     }
 
 
