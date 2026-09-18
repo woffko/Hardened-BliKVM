@@ -124,6 +124,20 @@ pub struct Ipv6State {
 #[serde(rename_all = "camelCase")]
 pub struct NetworkIpv6Response {
     pub ipv6: Ipv6State,
+    /// The reference shape: the mode the primary interface runs in. The kernel
+    /// sysctl only distinguishes disabled from automatic, so `manual` and
+    /// `dhcpv6` are never reported back.
+    pub mode: &'static str,
+    pub interface: String,
+}
+
+/// Maps the kernel state of the primary interface onto the reference mode.
+pub(crate) fn ipv6_mode(states: &Ipv6State, interface: &str) -> &'static str {
+    match states.interfaces.get(interface).map(String::as_str) {
+        Some("disabled") => "disabled",
+        Some(_) => "slaac",
+        None => "disabled",
+    }
 }
 
 fn interface_name_valid(name: &str) -> bool {
@@ -262,8 +276,19 @@ pub(crate) async fn network_interfaces() -> AppResult<Json<ApiResponse<NetworkIn
 }
 
 pub(crate) async fn network_ipv6() -> AppResult<Json<ApiResponse<NetworkIpv6Response>>> {
+    let ipv6 = read_ipv6_states(Path::new(IPV6_CONF_ROOT));
+    let route = std::fs::read_to_string(ROUTE_FILE).unwrap_or_default();
+    let interface = parse_default_route(&route);
+    let interface = if interface.is_empty() {
+        "eth0".to_string()
+    } else {
+        interface
+    };
+    let mode = ipv6_mode(&ipv6, &interface);
     Ok(Json(ApiResponse::ok(NetworkIpv6Response {
-        ipv6: read_ipv6_states(Path::new(IPV6_CONF_ROOT)),
+        ipv6,
+        mode,
+        interface,
     })))
 }
 
@@ -394,6 +419,22 @@ domain ignored.example
         assert!(response.interfaces.is_empty());
         assert_eq!(response.default_route, "");
         assert_eq!(parse_default_route(""), "");
+    }
+
+    #[test]
+    fn the_reference_ipv6_mode_comes_from_the_primary_interface() {
+        let mut states = Ipv6State {
+            source: "sysctl".into(),
+            default_state: "enabled".into(),
+            interfaces: Default::default(),
+        };
+        states.interfaces.insert("eth0".into(), "enabled".into());
+        assert_eq!(ipv6_mode(&states, "eth0"), "slaac");
+        states.interfaces.insert("eth0".into(), "disabled".into());
+        assert_eq!(ipv6_mode(&states, "eth0"), "disabled");
+        // An interface the tree does not know is reported disabled, like the
+        // reference does before the sysctl exists.
+        assert_eq!(ipv6_mode(&states, "wlan9"), "disabled");
     }
 
     #[test]
