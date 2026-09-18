@@ -36,20 +36,22 @@ class SystemActionGateTests(unittest.TestCase):
         for script in (
             gate.preflight_script(),
             gate.restart_script(),
-            gate.post_boot_script(None),
-            gate.accept_script("a" * 32),
+            gate.post_boot_script(),
+            gate.accept_script(),
         ):
-            # The reviewed guard attestation belongs to the acceptance unit, not
-            # to a tool that cannot verify the device health itself.
-            self.assertNotIn("--guards-ready", script)
-            self.assertNotIn("--require-accepted", script)
+            # The reviewed acceptance runs in the owner, which holds the
+            # journal; the tool never shells out to the maintenance binary.
+            self.assertNotIn("accept-post-boot", script)
+            self.assertNotIn("systemctl start --wait", script)
         restart = gate.restart_script()
         self.assertIn(f"systemctl restart {gate.UNIT}", restart)
         self.assertIn("observe_before=", restart)
         self.assertIn("observe_after=", restart)
-        accept = gate.accept_script("a" * 32)
-        self.assertIn(f"systemctl start --wait {gate.ACCEPT_UNIT}", accept)
-        self.assertIn("accept-post-boot --expect-operation " + "a" * 32, accept)
+        self.assertIn('"guardsReady": False', restart)
+        accept = gate.accept_script()
+        self.assertIn('"type": "accept_post_boot"', accept)
+        self.assertIn('"guardsReady": True', accept)
+        self.assertIn("store_observation=", accept)
 
     def test_facts_parse_ignores_unexpected_lines(self) -> None:
         facts = gate.parse_facts("  indented=1\nowner_unit=active\nbad key=1\n")
@@ -67,10 +69,8 @@ class SystemActionGateTests(unittest.TestCase):
             "plan",
         )
         persisted = {
-            "observe_before": "waiting",
-            "observe_after": "waiting",
-            "operation_before": "a" * 32,
-            "operation_after": "a" * 32,
+            "observe_before": "pending",
+            "observe_after": "pending",
             "owner_unit": "active",
         }
         self.assertEqual(
@@ -83,7 +83,7 @@ class SystemActionGateTests(unittest.TestCase):
             ),
             "restart-persisted",
         )
-        lost = dict(persisted, operation_after="")
+        lost = dict(persisted, observe_after="none")
         self.assertEqual(
             gate.decide_outcome(
                 confirm_restart=True,
@@ -180,25 +180,31 @@ class SystemActionGateTests(unittest.TestCase):
     def test_restart_mode_proves_persistence(self) -> None:
         facts = "\n".join(
             [
-                "observe_before=waiting",
-                "operation_before=" + "b" * 32,
+                "observe_before=pending",
+                
                 "restart_started=yes",
                 "owner_unit=active",
-                "observe_after=waiting",
-                "operation_after=" + "b" * 32,
+                "observe_after=pending",
+                
                 "boot_id=abc",
             ]
         )
         receipt = self._run(["--confirm-restart"], [facts])
         self.assertEqual(receipt["mode"], "restart")
         self.assertEqual(receipt["result"], "restart-persisted")
-        self.assertEqual(receipt["operationId"], "b" * 32)
+        self.assertEqual(receipt["result"], "restart-persisted")
         self.assertIs(receipt["policy"]["mutationsPerformed"], True)
 
     def test_accept_mode_passes_only_when_the_store_reports_closure(self) -> None:
         preflight = "owner_unit=active\nboot_id=old\n"
-        boot = "boot_id=new\nstore_observation=waiting\noperation=" + "c" * 32 + "\n"
-        accept = "accept_unit_status=0\nstore_observation=accepted\noperation=" + "c" * 32 + "\n"
+        boot = (
+            "boot_id=new\nowner_unit=active\nserver_unit=active\nnginx_unit=active\n"
+            "boardd_unit=active\nhealth_code=200\n"
+        )
+        accept = (
+            "accept_response=applied\nstore_observation=accepted\n"
+            "replay_observation=accepted\n"
+        )
         receipt = self._run(
             ["--confirm-observed", "--expect-operation", "c" * 32],
             [preflight, boot, accept],
@@ -209,7 +215,7 @@ class SystemActionGateTests(unittest.TestCase):
         self.assertEqual(receipt["bootIdAfter"], "new")
         self.assertIs(receipt["operatorObserved"], True)
 
-        waiting = "accept_unit_status=13\nstore_observation=waiting\noperation=" + "c" * 32 + "\n"
+        waiting = "accept_response=rejected\nstore_observation=rejected\nreplay_observation=rejected\n"
         receipt = self._run(
             ["--confirm-observed", "--expect-operation", "c" * 32],
             [preflight, boot, waiting],

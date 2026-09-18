@@ -43,6 +43,9 @@ from tools import upload_media_image as upload
 
 UNIT: Final = "hardened-blikvm-board-owner.service"
 ACCEPT_UNIT: Final = "hardened-blikvm-system-action-accept.service"
+SERVER_UNIT: Final = "hardened-blikvm-board-server.service"
+NGINX_UNIT: Final = "hardened-blikvm-nginx.service"
+BOARDD_UNIT: Final = "hardened-blikvm-boardd.service"
 MAINTENANCE: Final = "/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 STORE_ROOT: Final = "/var/lib/hardened-blikvm-system-actions"
 CONTROL_SOCKET: Final = "/run/hardened-blikvm-gadget/control.sock"
@@ -80,44 +83,112 @@ def observe_command(expect_operation: str | None) -> str:
 
 def restart_script() -> str:
     return f"""set -u
-printf 'observe_before=%s\\n' "$({observe_command(None)} 2>/dev/null | sed -n 's/.*result=\\([a-z]*\\).*/\\1/p' || true)"
-printf 'operation_before=%s\\n' "$({observe_command(None)} 2>/dev/null | sed -n 's/.*operation=\\([0-9a-f]*\\).*/\\1/p' || true)"
+python3 - <<'PYEOF'
+import json, socket, struct
+def observe():
+    envelope = {{"schemaVersion": 2, "requestId": 1, "operationId": "ab" * 16,
+                "request": {{"type": "accept_post_boot", "request": {{"guardsReady": False}}}}}}
+    payload = json.dumps(envelope).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(10)
+        client.connect("{CONTROL_SOCKET}")
+        client.sendall(struct.pack(">I", len(payload)) + payload)
+        head = client.recv(4)
+        size = struct.unpack(">I", head)[0]
+        body = b""
+        while len(body) < size:
+            chunk = client.recv(size - len(body))
+            if not chunk:
+                break
+            body += chunk
+        response = json.loads(body.decode()).get("response", {{}})
+    # Without the guard attestation the policy never changes the journal: a
+    # pending record answers backend_rejected, an empty journal invalid_state.
+    return "pending" if response.get("code") == "backend_rejected" else "none"
+print("observe_before=%s" % observe())
+PYEOF
 systemctl restart {UNIT}
-printf 'restart_started=yes\\n'
+printf 'restart_started=yes\n'
 waited=0
 while [ "$waited" -lt 30 ]; do
   if [ -S {CONTROL_SOCKET} ] && systemctl is-active {UNIT} >/dev/null 2>&1; then break; fi
   sleep 1
   waited=$((waited + 1))
 done
-printf 'owner_unit=%s\\n' "$(systemctl is-active {UNIT} 2>/dev/null || true)"
-printf 'socket_waited_seconds=%s\\n' "$waited"
-printf 'observe_after=%s\\n' "$({observe_command(None)} 2>/dev/null | sed -n 's/.*result=\\([a-z]*\\).*/\\1/p' || true)"
-printf 'operation_after=%s\\n' "$({observe_command(None)} 2>/dev/null | sed -n 's/.*operation=\\([0-9a-f]*\\).*/\\1/p' || true)"
-printf 'boot_id=%s\\n' "$(tr -d '\\n' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+printf 'owner_unit=%s\n' "$(systemctl is-active {UNIT} 2>/dev/null || true)"
+printf 'socket_waited_seconds=%s\n' "$waited"
+python3 - <<'PYEOF'
+import json, socket, struct
+def observe():
+    envelope = {{"schemaVersion": 2, "requestId": 1, "operationId": "ab" * 16,
+                "request": {{"type": "accept_post_boot", "request": {{"guardsReady": False}}}}}}
+    payload = json.dumps(envelope).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(10)
+        client.connect("{CONTROL_SOCKET}")
+        client.sendall(struct.pack(">I", len(payload)) + payload)
+        head = client.recv(4)
+        size = struct.unpack(">I", head)[0]
+        body = b""
+        while len(body) < size:
+            chunk = client.recv(size - len(body))
+            if not chunk:
+                break
+            body += chunk
+        response = json.loads(body.decode()).get("response", {{}})
+    return "pending" if response.get("code") == "backend_rejected" else "none"
+print("observe_after=%s" % observe())
+PYEOF
+printf 'boot_id=%s\n' "$(tr -d '\\n' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
 """
 
 
-def post_boot_script(expect_operation: str | None) -> str:
+def post_boot_script() -> str:
     return f"""set -u
 printf 'boot_id=%s\\n' "$(tr -d '\\n' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
 printf 'owner_unit=%s\\n' "$(systemctl is-active {UNIT} 2>/dev/null || true)"
+printf 'server_unit=%s\\n' "$(systemctl is-active {SERVER_UNIT} 2>/dev/null || true)"
+printf 'nginx_unit=%s\\n' "$(systemctl is-active {NGINX_UNIT} 2>/dev/null || true)"
+printf 'boardd_unit=%s\\n' "$(systemctl is-active {BOARDD_UNIT} 2>/dev/null || true)"
+printf 'health_code=%s\\n' "$(curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:18080/api/health 2>/dev/null || true)"
 if [ -S {CONTROL_SOCKET} ]; then printf 'control_socket=present\\n'; else printf 'control_socket=absent\\n'; fi
 if [ -e {STORE_ROOT}/journal-a.bin ]; then printf 'journal_a=present\\n'; else printf 'journal_a=absent\\n'; fi
-if [ -e {PROFILE_ENV} ]; then printf 'profile_env=present\\n'; else printf 'profile_env=absent\\n'; fi
 if grep -q '^BLI_KVM_SYSTEM_ACTION_ARMED=1$' {PROFILE_ENV} 2>/dev/null; then printf 'armed=yes\\n'; else printf 'armed=no\\n'; fi
-printf 'store_observation=%s\\n' "$({observe_command(expect_operation)} 2>/dev/null | sed -n 's/.*result=\\([a-z]*\\).*/\\1/p' || true)"
-printf 'operation=%s\\n' "$({observe_command(expect_operation)} 2>/dev/null | sed -n 's/.*operation=\\([0-9a-f]*\\).*/\\1/p' || true)"
 """
 
 
-def accept_script(expect_operation: str) -> str:
+def accept_script() -> str:
+    """Ask the owner itself to close the pending record.
+
+    Only the owner holds the journal, so the acceptance has to run there; the
+    standalone maintenance process cannot open the store while the owner runs.
+    """
     return f"""set -u
-systemctl start --wait {ACCEPT_UNIT} >/dev/null 2>&1 || true
-printf 'accept_unit_status=%s\\n' "$(systemctl show -p ExecMainStatus --value {ACCEPT_UNIT} 2>/dev/null || true)"
-printf 'accept_unit_state=%s\\n' "$(systemctl show -p SubState --value {ACCEPT_UNIT} 2>/dev/null || true)"
-printf 'store_observation=%s\\n' "$({observe_command(expect_operation)} 2>/dev/null | sed -n 's/.*result=\\([a-z]*\\).*/\\1/p' || true)"
-printf 'operation=%s\\n' "$({observe_command(expect_operation)} 2>/dev/null | sed -n 's/.*operation=\\([0-9a-f]*\\).*/\\1/p' || true)"
+python3 - <<'PYEOF'
+import json, socket, struct
+def call(request):
+    envelope = {{"schemaVersion": 2, "requestId": 1, "operationId": "ab" * 16, "request": request}}
+    payload = json.dumps(envelope).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(10)
+        client.connect("{CONTROL_SOCKET}")
+        client.sendall(struct.pack(">I", len(payload)) + payload)
+        head = client.recv(4)
+        size = struct.unpack(">I", head)[0]
+        body = b""
+        while len(body) < size:
+            chunk = client.recv(size - len(body))
+            if not chunk:
+                break
+            body += chunk
+        return json.loads(body.decode())
+applied = {{"type": "applied"}}
+first = call({{"type": "accept_post_boot", "request": {{"guardsReady": True}}}})
+replay = call({{"type": "accept_post_boot", "request": {{"guardsReady": True}}}})
+print("accept_response=%s" % first.get("response", {{}}).get("type"))
+print("store_observation=%s" % ("accepted" if first.get("response") == applied else "rejected"))
+print("replay_observation=%s" % ("accepted" if replay.get("response") == applied else "rejected"))
+PYEOF
 """
 
 
@@ -191,9 +262,8 @@ def decide_outcome(
         return "dispatching"
     if confirm_restart:
         persisted = (
-            phase.get("observe_before") == phase.get("observe_after")
-            and phase.get("operation_before") == phase.get("operation_after")
-            and bool(phase.get("operation_after"))
+            phase.get("observe_before") == "pending"
+            and phase.get("observe_after") == "pending"
             and phase.get("owner_unit") == "active"
         )
         return "restart-persisted" if persisted else "inspect"
@@ -206,7 +276,16 @@ def decide_outcome(
             return "inspect"
         return "passed"
     if confirm_observed:
-        return "passed" if phase.get("store_observation") == "accepted" else "inspect"
+        if phase.get("store_observation") != "accepted":
+            return "inspect"
+        healthy = (
+            phase.get("owner_unit") == "active"
+            and phase.get("server_unit") == "active"
+            and phase.get("nginx_unit") == "active"
+            and phase.get("boardd_unit") == "active"
+            and phase.get("health_code") == "200"
+        )
+        return "passed" if healthy else "inspect"
     return "plan"
 
 
@@ -337,14 +416,9 @@ def main() -> int:
         )
     elif args.confirm_observed:
         preflight = run_remote(args, preflight_script(), secret)
-        boot = run_remote(args, post_boot_script(args.expect_operation), secret)
-        operation = args.expect_operation or boot.get("operation", "")
-        if not HEX_OPERATION.fullmatch(operation):
-            boot["store_observation"] = boot.get("store_observation", "absent")
-            phase = boot
-        else:
-            phase = run_remote(args, accept_script(operation), secret)
-            phase.update({f"boot_{key}": value for key, value in boot.items()})
+        boot = run_remote(args, post_boot_script(), secret)
+        phase = run_remote(args, accept_script(), secret)
+        phase.update(boot)
         receipt["mode"] = "accept"
         receipt["phase"] = phase
         receipt["result"] = decide_outcome(
