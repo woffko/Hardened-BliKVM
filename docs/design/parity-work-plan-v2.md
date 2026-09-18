@@ -173,9 +173,15 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   bringing that profile up, which keeps the password out of argv, the
   environment and every log; a profile that fails to come up is removed again
   and only an owner-created profile can be disconnected. The server exposes
-  the reference routes and refuses the access-point mode with a reason. `tls`
-  (certificate view and the HTTPS redirect toggle) is the remaining network
-  slice.
+  the reference routes and refuses the access-point mode with a reason. `tls` is implemented: the owner toggles the
+  reviewed front configuration with a marker block inside the port-80 server
+  (test the configuration, reload the unit, restore the file on failure) and
+  serves the public certificate view through `openssl`, with `GET`/`POST
+  /api/vm/tls` on the server. The network section is complete; the remaining
+  P2 work is the firewall (fail-closed while `nft` is absent, baseline model
+  and write/restore gate with the operator's approval), systemLog
+  `remote`/`save`/`test`, the extra cards (fan curve, activity LED, ATX LEDs)
+  and one reviewed device window for the new toggles.
 - **system.firewall**: the bundled capability already reports the firewall as
   not exposed, which is the fail-closed state the plan requires while `nft` is
   absent; the reference baseline model plus the write-and-restore gate is the
