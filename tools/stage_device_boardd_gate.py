@@ -162,6 +162,9 @@ printf '%s' '{payload}' | base64 -d > {CONFIG_PATH}
 chmod 0600 {CONFIG_PATH}
 echo "config_installed=yes"
 systemctl daemon-reload
+# A daemon left over from an earlier gate run holds the GPIO lines, so the
+# single-shot validation would only see "Resource busy"; stop it first.
+systemctl stop {UNIT} >/dev/null 2>&1 || true
 echo "== read-only validation before the unit owns the line =="
 printf 'once_status=%s\\n' "$(timeout 20 {BOARD_BINARY} --config {CONFIG_PATH} --once 2>&1 | tail -1)"
 systemctl enable {UNIT} >/dev/null 2>&1 || true

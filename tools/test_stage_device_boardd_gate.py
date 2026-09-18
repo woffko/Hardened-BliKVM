@@ -16,6 +16,12 @@ class BoarddGateTests(unittest.TestCase):
             for forbidden in ("unexport", "install -m", "systemctl restart", "base64 -d"):
                 self.assertNotIn(forbidden, script, subsystem)
 
+    def test_the_apply_script_stops_the_unit_before_the_single_shot_check(self) -> None:
+        script = gate.build_apply_script("panel", "a" * 64, {"socket": "/run/x.sock"}, False)
+        stop = script.index("systemctl stop")
+        once = script.index("--once")
+        self.assertLess(stop, once)
+
     def test_apply_script_backs_up_and_hands_over_one_subsystem(self) -> None:
         script = gate.build_apply_script("fan", "a" * 64, {"socket": "/run/x.sock"}, True)
         self.assertIn("exports_backed_up=yes", script)
