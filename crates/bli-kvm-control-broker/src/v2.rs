@@ -57,6 +57,7 @@ pub struct ControlV2State {
     hid_only: Option<crate::device_settings::HidOnlyState>,
     wifi: Option<crate::network_settings::WifiState>,
     tls: Option<crate::tls_settings::TlsState>,
+    firewall: Option<crate::firewall_settings::FirewallState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
@@ -84,6 +85,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -116,6 +118,11 @@ impl ControlV2State {
     /// Attach the reviewed device toggles to the board state.
     pub fn with_device_settings(&mut self, mdns: crate::device_settings::MdnsState) {
         self.mdns = Some(mdns);
+    }
+
+    /// Attach the reviewed firewall baseline to the board state.
+    pub fn with_firewall(&mut self, firewall: crate::firewall_settings::FirewallState) {
+        self.firewall = Some(firewall);
     }
 
     /// Attach the reviewed HTTPS surface to the board state.
@@ -168,6 +175,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -195,6 +203,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -222,6 +231,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -263,6 +273,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -292,6 +303,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -327,6 +339,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -389,6 +402,31 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         state.handle(change)
+    }
+
+    fn handle_firewall_state(&mut self) -> ControlResponse {
+        let Some(firewall) = self.firewall.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let view = firewall.view();
+        ControlResponse::FirewallState {
+            backend_available: view.backend_available,
+            baseline_active: view.baseline_active,
+            mode: view.mode,
+            message: view.message,
+            nft_installed: view.nft.installed,
+            nft_detail: view.nft.detail,
+            iptables_installed: view.iptables.installed,
+            ip6tables_installed: view.ip6tables.installed,
+            rules_nft: view.rules_nft,
+        }
+    }
+
+    fn handle_firewall_baseline(&mut self, enabled: bool) -> ControlResponse {
+        let Some(firewall) = self.firewall.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        firewall.set_baseline(enabled)
     }
 
     fn handle_tls_state(&mut self) -> ControlResponse {
@@ -559,6 +597,7 @@ impl ControlV2State {
             hid_only: None,
             wifi: None,
             tls: None,
+            firewall: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -641,6 +680,10 @@ impl ControlV2State {
             PlatformControlRequestV2::WifiDisconnect {} => self.handle_wifi_disconnect(),
             PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
             PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
+            PlatformControlRequestV2::FirewallState {} => self.handle_firewall_state(),
+            PlatformControlRequestV2::FirewallBaseline { enabled } => {
+                self.handle_firewall_baseline(*enabled)
+            }
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)

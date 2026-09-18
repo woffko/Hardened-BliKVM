@@ -2,6 +2,7 @@ mod attestation;
 pub mod board_status;
 mod config;
 mod device_settings;
+pub mod firewall_settings;
 pub mod mouse_jiggler;
 pub mod network_settings;
 #[cfg(feature = "network-write-profile")]
@@ -22,6 +23,9 @@ pub mod system_action;
 pub mod tls_settings;
 mod video_settings;
 pub use device_settings::{HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState};
+pub use firewall_settings::{
+    FIREWALL_STATE_DIR, FirewallRunner, FirewallState, FirewallView, SystemFirewallRunner,
+};
 pub use mouse_jiggler::{JiggleWriter, MouseJigglerState};
 pub use network_settings::{NM_CONNECTIONS_DIR, NmcliRunner, WifiRunner, WifiState, WifiStatus};
 pub use tls_settings::{

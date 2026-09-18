@@ -234,7 +234,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
-        | ControlResponse::TlsState { .. } => false,
+        | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallState { .. } => false,
     };
     if attested {
         state
@@ -256,7 +257,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
-        | ControlResponse::TlsState { .. } => FocusConfirmResponse {
+        | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallState { .. } => FocusConfirmResponse {
             attested: false,
             rejection: Some("internal"),
         },
@@ -429,7 +431,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
-        | ControlResponse::TlsState { .. } => {}
+        | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallState { .. } => {}
     }
     Ok(Json(ApiResponse::ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
@@ -456,7 +459,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
-        | ControlResponse::TlsState { .. } => HidLeaseResponse {
+        | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallState { .. } => HidLeaseResponse {
             applied: false,
             lease_id: None,
             ttl_seconds: None,

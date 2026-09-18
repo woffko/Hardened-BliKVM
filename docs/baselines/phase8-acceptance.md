@@ -18,7 +18,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
   test; topology capture recorded
   (`evidence/private/device-kvm-topology-20260915-a.json`).
 - **Phase 1 — read-only platform API.** Server routes plus the route-drift guard
-  `tools/test_plan_route_drift.py`; 57 routes as of 2026-09-18.
+  `tools/test_plan_route_drift.py`; 59 routes as of 2026-09-18.
 - **Phase 4 — video gates (partly).** Two-client probe and soak receipts
   recorded (`video-two-client-probe-20260913-a.json`,
   `video-soak-probe-20260913-a.json`); the frame-timing probe is added and

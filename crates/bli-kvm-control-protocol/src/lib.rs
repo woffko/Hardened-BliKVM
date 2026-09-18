@@ -92,6 +92,18 @@ pub enum ControlResponse {
         not_after: String,
         fingerprint_sha256: String,
     },
+    /// The reviewed firewall baseline state.
+    FirewallState {
+        backend_available: bool,
+        baseline_active: bool,
+        mode: String,
+        message: String,
+        nft_installed: bool,
+        nft_detail: String,
+        iptables_installed: bool,
+        ip6tables_installed: bool,
+        rules_nft: String,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

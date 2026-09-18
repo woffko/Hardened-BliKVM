@@ -344,6 +344,12 @@ async fn board_state(
         Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
         true,
     ));
+    // The reviewed firewall baseline stays refused while no backend is installed.
+    state.with_firewall(crate::firewall_settings::FirewallState::open(
+        Box::new(crate::firewall_settings::SystemFirewallRunner),
+        crate::firewall_settings::FIREWALL_STATE_DIR,
+        true,
+    ));
     // The reviewed HTTPS surface edits the front's own configuration.
     state.with_tls(crate::tls_settings::TlsState::open(
         crate::tls_settings::NGINX_CONF,
@@ -930,7 +936,8 @@ where
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
-        | ControlResponse::TlsState { .. } => None,
+        | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallState { .. } => None,
     };
     timeout(
         request_timeout,

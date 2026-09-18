@@ -340,6 +340,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route("/network/wol", post(network_write::wol))
         .route(
+            "/system/firewall",
+            get(device_settings::firewall_state).post(device_settings::firewall_set),
+        )
+        .route(
+            "/system/firewall/confirm",
+            post(device_settings::firewall_confirm),
+        )
+        .route(
             "/network/wifi",
             get(network::network_wifi).post(network::network_wifi_ap),
         )

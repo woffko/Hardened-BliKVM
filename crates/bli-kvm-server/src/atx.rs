@@ -105,7 +105,8 @@ pub(crate) async fn application_power(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
-        | ControlResponse::TlsState { .. } => AtxResponse {
+        | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),
         },

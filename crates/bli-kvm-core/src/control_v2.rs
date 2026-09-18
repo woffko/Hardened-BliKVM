@@ -222,6 +222,12 @@ pub enum PlatformControlRequestV2 {
     TlsSet {
         enabled: bool,
     },
+    /// Read the reviewed firewall baseline state.
+    FirewallState {},
+    /// Enable or disable the reviewed firewall baseline.
+    FirewallBaseline {
+        enabled: bool,
+    },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -285,6 +291,8 @@ impl PlatformControlRequestV2 {
             Self::WifiDisconnect {} => Ok(()),
             Self::TlsState {} => Ok(()),
             Self::TlsSet { .. } => Ok(()),
+            Self::FirewallState {} => Ok(()),
+            Self::FirewallBaseline { .. } => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }
