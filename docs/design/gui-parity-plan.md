@@ -76,7 +76,7 @@ disagree.
 
 ## API parity status
 
-Our hardened server exposes, as of 2026-09-17: 47 routes. The read-only
+Our hardened server exposes, as of 2026-09-18: 48 routes. The read-only
 management surface is implemented and capability-visible: `/api/system/time`
 (`time` read-only), `/api/system-log/{config,messages}`
 (`config`,`messages` read-only), `/api/application/{version,preview}`

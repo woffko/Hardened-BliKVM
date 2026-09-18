@@ -317,6 +317,17 @@ impl ControlV2State {
         state.handle(change)
     }
 
+    fn handle_video_settings_state(&self) -> ControlResponse {
+        let Some(state) = self.video_settings.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let current = state.current();
+        ControlResponse::VideoState {
+            fps: current.fps,
+            quality: current.quality,
+        }
+    }
+
     fn handle_board_status(&self) -> ControlResponse {
         // The operator configuration is the capability: an unattached client
         // is resolved from the environment on first use, so the proxy works on
@@ -424,6 +435,7 @@ impl ControlV2State {
             PlatformControlRequestV2::VideoSettings { change } => {
                 self.handle_video_settings(change)
             }
+            PlatformControlRequestV2::VideoSettingsState {} => self.handle_video_settings_state(),
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)

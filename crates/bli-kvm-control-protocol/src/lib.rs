@@ -58,6 +58,11 @@ pub enum ControlResponse {
         hdd_led_present: bool,
         hdd_led_on: bool,
     },
+    /// The video settings the owner will run the streamer with.
+    VideoState {
+        fps: u16,
+        quality: u8,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

@@ -1974,6 +1974,13 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("After=hardened-blikvm-board-owner.service", unit)
         self.assertIn("Restart=on-failure", unit)
 
+    def test_the_board_server_advertises_the_reviewed_video_settings(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-board-server.service"
+        ).read_text()
+        self.assertIn("Environment=BLI_KVM_VIDEO_CONTROLS=1", unit)
+        self.assertIn("Environment=BLI_KVM_RESTRICTED_CONTROLS=1", unit)
+
     def test_the_video_engine_reads_the_owner_settings_file(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-ustreamer.service"

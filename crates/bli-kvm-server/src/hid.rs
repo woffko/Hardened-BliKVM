@@ -227,7 +227,9 @@ pub(crate) async fn confirm_focus(
         ControlResponse::Applied
         | ControlResponse::LeaseGranted { .. }
         | ControlResponse::MediaState { .. } => true,
-        ControlResponse::Rejected { .. } | ControlResponse::BoardStatus { .. } => false,
+        ControlResponse::Rejected { .. }
+        | ControlResponse::BoardStatus { .. }
+        | ControlResponse::VideoState { .. } => false,
     };
     if attested {
         state
@@ -243,10 +245,12 @@ pub(crate) async fn confirm_focus(
             attested: true,
             rejection: None,
         },
-        ControlResponse::BoardStatus { .. } => FocusConfirmResponse {
-            attested: false,
-            rejection: Some("internal"),
-        },
+        ControlResponse::BoardStatus { .. } | ControlResponse::VideoState { .. } => {
+            FocusConfirmResponse {
+                attested: false,
+                rejection: Some("internal"),
+            }
+        }
         ControlResponse::Rejected { code } => FocusConfirmResponse {
             attested: false,
             rejection: Some(rejection_name(code)),
@@ -409,7 +413,9 @@ pub(crate) async fn hid_lease(
                     .extend(&session.token, now + Duration::from_secs(u64::from(ttl)));
             }
         }
-        ControlResponse::Rejected { .. } | ControlResponse::BoardStatus { .. } => {}
+        ControlResponse::Rejected { .. }
+        | ControlResponse::BoardStatus { .. }
+        | ControlResponse::VideoState { .. } => {}
     }
     Ok(Json(ApiResponse::ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
@@ -430,12 +436,14 @@ pub(crate) async fn hid_lease(
             ttl_seconds: None,
             rejection: Some(rejection_name(code)),
         },
-        ControlResponse::BoardStatus { .. } => HidLeaseResponse {
-            applied: false,
-            lease_id: None,
-            ttl_seconds: None,
-            rejection: Some("internal"),
-        },
+        ControlResponse::BoardStatus { .. } | ControlResponse::VideoState { .. } => {
+            HidLeaseResponse {
+                applied: false,
+                lease_id: None,
+                ttl_seconds: None,
+                rejection: Some("internal"),
+            }
+        }
         ControlResponse::MediaState { .. } => HidLeaseResponse {
             applied: false,
             lease_id: None,

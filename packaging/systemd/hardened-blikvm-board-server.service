@@ -21,6 +21,8 @@ Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
 Environment=BLI_KVM_RESTRICTED_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CONTROLS=1
+# The board owner applies the reviewed video-engine settings.
+Environment=BLI_KVM_VIDEO_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
 Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_SECURE_COOKIES=1

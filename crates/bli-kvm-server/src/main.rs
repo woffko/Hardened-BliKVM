@@ -47,6 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         media_controls_enabled: env::var("BLI_KVM_MEDIA_CONTROLS").as_deref() == Ok("1"),
         system_actions_enabled: env::var("BLI_KVM_SYSTEM_ACTIONS").as_deref() == Ok("1"),
         network_writes_enabled: env::var("BLI_KVM_NETWORK_WRITES").as_deref() == Ok("1"),
+        video_controls_enabled: env::var("BLI_KVM_VIDEO_CONTROLS").as_deref() == Ok("1"),
         media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),
         ..ServerOptions::default()
     };

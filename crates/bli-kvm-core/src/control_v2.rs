@@ -187,6 +187,8 @@ pub enum PlatformControlRequestV2 {
     VideoSettings {
         change: crate::video_settings::VideoSettingsChange,
     },
+    /// Read back the settings the owner will run the streamer with.
+    VideoSettingsState {},
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -238,6 +240,7 @@ impl PlatformControlRequestV2 {
             Self::VideoSettings { change } => change
                 .validate()
                 .map_err(|_| ControlV2ValidationError::InvalidVideoSettings),
+            Self::VideoSettingsState {} => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

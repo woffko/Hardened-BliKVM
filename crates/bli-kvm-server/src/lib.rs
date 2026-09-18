@@ -45,6 +45,7 @@ mod system_log;
 mod system_time;
 mod update;
 mod video;
+mod video_settings;
 mod vm_info;
 mod ws;
 
@@ -104,6 +105,8 @@ pub struct ServerOptions {
     /// Explicit opt-in for the privileged reboot and shutdown requests. The
     /// capability stays unavailable, and every request is refused, without it.
     pub system_actions_enabled: bool,
+    /// The board owner applies the reviewed video-engine settings.
+    pub video_controls_enabled: bool,
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
@@ -133,6 +136,7 @@ impl Default for ServerOptions {
             media_catalog: None,
             media_controls_enabled: false,
             system_actions_enabled: false,
+            video_controls_enabled: false,
             network_writes_enabled: false,
             media_directory: None,
         }
@@ -211,6 +215,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
+        if options.video_controls_enabled {
+            manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
         if options.network_writes_enabled {
             manifest.network.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -352,6 +359,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/system/reboot", post(system_action::reboot))
         .route("/vm/system/shutdown", post(system_action::shutdown))
         .route("/stream/mjpeg", get(video::mjpeg))
+        .route(
+            "/vm/screen",
+            get(video_settings::screen_state).post(video_settings::update_screen),
+        )
         .route_layer(from_fn_with_state(state.clone(), protected));
     // The media upload takes a large body, so it keeps its own bound, but it
     // must still pass the session, CSRF and origin checks before the body is
@@ -1248,6 +1259,123 @@ mod tests {
         assert_eq!(body["code"], 0);
         assert_eq!(body["data"]["backend"], "native");
         assert_eq!(body["data"]["powerLed"], true);
+        broker.await.unwrap();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn video_settings_are_forwarded_and_read_back() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut served = 0_u32;
+            while served < 2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::VideoSettings { change } => {
+                        assert_eq!(change.fps, Some(24));
+                        assert_eq!(change.quality, None);
+                        bli_kvm_control_protocol::ControlResponse::Applied
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::VideoSettingsState {} => {
+                        bli_kvm_control_protocol::ControlResponse::VideoState {
+                            fps: 24,
+                            quality: 80,
+                        }
+                    }
+                    _ => panic!("unexpected request"),
+                };
+                served += 1;
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response,
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            video_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let mut update = json_request(
+            Method::POST,
+            "/api/vm/screen",
+            serde_json::json!({"type": "fps", "value": 24}),
+        );
+        update
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        update
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let body = json_body(app.clone().oneshot(update).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["applied"], true);
+
+        // An unsupported menu entry is refused without touching the owner.
+        let mut unsupported = json_request(
+            Method::POST,
+            "/api/vm/screen",
+            serde_json::json!({"type": "gop", "value": 30}),
+        );
+        unsupported
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        unsupported
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let body = json_body(app.clone().oneshot(unsupported).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["applied"], false);
+        assert_eq!(body["data"]["rejection"], "unsupported_setting");
+
+        // The read-back reports the settings the owner will run the engine with.
+        let read_back = Request::builder()
+            .uri("/api/vm/screen")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .unwrap();
+        let body = json_body(app.clone().oneshot(read_back).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["fps"], 24);
+        assert_eq!(body["data"]["quality"], 80);
+
+        // The capability is advertised only with the reviewed opt-in.
+        let capabilities = json_body(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/capabilities")
+                        .header(header::HOST, "kvm.test")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            capabilities["data"]["video"]["status"]["availability"],
+            "read_write"
+        );
         broker.await.unwrap();
     }
 

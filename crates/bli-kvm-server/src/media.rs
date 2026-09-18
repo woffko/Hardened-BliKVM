@@ -125,12 +125,12 @@ pub(crate) async fn virtual_media(
                 applied: false,
                 rejection: Some(rejection_name(code)),
             },
-            ControlResponse::MediaState { .. } | ControlResponse::BoardStatus { .. } => {
-                VirtualMediaOutcome {
-                    applied: false,
-                    rejection: Some("invalid_state"),
-                }
-            }
+            ControlResponse::MediaState { .. }
+            | ControlResponse::BoardStatus { .. }
+            | ControlResponse::VideoState { .. } => VirtualMediaOutcome {
+                applied: false,
+                rejection: Some("invalid_state"),
+            },
         })))
     }
 }

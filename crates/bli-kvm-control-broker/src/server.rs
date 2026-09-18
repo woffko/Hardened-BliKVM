@@ -872,7 +872,8 @@ where
         ControlResponse::Applied
         | ControlResponse::LeaseGranted { .. }
         | ControlResponse::MediaState { .. }
-        | ControlResponse::BoardStatus { .. } => None,
+        | ControlResponse::BoardStatus { .. }
+        | ControlResponse::VideoState { .. } => None,
     };
     timeout(
         request_timeout,
