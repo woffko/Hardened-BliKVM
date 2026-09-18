@@ -149,9 +149,12 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
 
 - **device**: `mdns` is implemented end to end (owner flips the reviewed
   `systemd-resolved` key and restarts the unit; `GET /api/vm/mdns` plus the
-  enable/disable routes and a server test). Still to do: `mouseJiggler`
-  (owner-side periodic HID nudge, the page and API shapes already exist),
-  `hidOnly` (the owner refuses media attach and the media capability follows),
+  enable/disable routes and a server test). `mouseJiggler` is implemented too:
+  the owner persists the accepted mode and the serve loop sends a one-pixel
+  relative move plus its release on every interval, the absolute mode is
+  refused because the target never reports the pointer position, and
+  `/api/vm/mouse-jiggler` reports what the owner holds. Still to do: `hidOnly`
+  (the owner refuses media attach and the media capability follows),
   the read-only `autostart` list surfaced in the page (uploading scripts stays
   owner-only), the `network` link (our network controls live inside the
   `system` tab, so the link switches tabs), and `hdmi` hidden with the reason
