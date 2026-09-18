@@ -189,6 +189,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the settings the owner will run the streamer with.
     VideoSettingsState {},
+    /// Publish the device name over mDNS.
+    Mdns {
+        enabled: bool,
+    },
+    /// Read back whether mDNS publishing is on.
+    MdnsState {},
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -241,6 +247,8 @@ impl PlatformControlRequestV2 {
                 .validate()
                 .map_err(|_| ControlV2ValidationError::InvalidVideoSettings),
             Self::VideoSettingsState {} => Ok(()),
+            Self::Mdns { .. } => Ok(()),
+            Self::MdnsState {} => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

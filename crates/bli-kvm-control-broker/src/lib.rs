@@ -1,6 +1,7 @@
 mod attestation;
 pub mod board_status;
 mod config;
+mod device_settings;
 #[cfg(feature = "network-write-profile")]
 pub mod network_write;
 #[cfg(any(
@@ -17,6 +18,7 @@ mod server;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
 mod video_settings;
+pub use device_settings::{MDNS_CONF, MDNS_UNIT, MdnsState};
 pub use video_settings::{ExecVideoRestartRunner, VideoRestartRunner, VideoSettingsState};
 mod v2;
 

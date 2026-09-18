@@ -334,6 +334,13 @@ async fn board_state(
         true,
         true,
     ));
+    // The reviewed device toggles use the same bounded restart runner.
+    state.with_device_settings(crate::device_settings::MdnsState::open(
+        crate::device_settings::MDNS_CONF,
+        crate::device_settings::MDNS_UNIT,
+        Box::new(crate::video_settings::ExecVideoRestartRunner),
+        true,
+    ));
     // The bounded network writes stay refused until the operator enables them
     // for the owner as well as for the server.
     #[cfg(feature = "network-write-profile")]
@@ -873,7 +880,8 @@ where
         | ControlResponse::LeaseGranted { .. }
         | ControlResponse::MediaState { .. }
         | ControlResponse::BoardStatus { .. }
-        | ControlResponse::VideoState { .. } => None,
+        | ControlResponse::VideoState { .. }
+        | ControlResponse::MdnsState { .. } => None,
     };
     timeout(
         request_timeout,

@@ -52,6 +52,7 @@ pub struct ControlV2State {
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
     video_settings: Option<crate::video_settings::VideoSettingsState>,
+    mdns: Option<crate::device_settings::MdnsState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
@@ -74,6 +75,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -103,6 +105,11 @@ impl ControlV2State {
         self.video_settings = Some(state);
     }
 
+    /// Attach the reviewed device toggles to the board state.
+    pub fn with_device_settings(&mut self, mdns: crate::device_settings::MdnsState) {
+        self.mdns = Some(mdns);
+    }
+
     #[cfg(feature = "system-action-profile")]
     fn enabled_base() -> Self {
         Self {
@@ -119,6 +126,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -141,6 +149,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -163,6 +172,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -199,6 +209,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -223,6 +234,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -253,6 +265,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -317,6 +330,22 @@ impl ControlV2State {
         state.handle(change)
     }
 
+    fn handle_mdns(&mut self, enabled: bool) -> ControlResponse {
+        let Some(state) = self.mdns.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        state.handle(enabled)
+    }
+
+    fn handle_mdns_state(&self) -> ControlResponse {
+        let Some(state) = self.mdns.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        ControlResponse::MdnsState {
+            enabled: state.current(),
+        }
+    }
+
     fn handle_video_settings_state(&self) -> ControlResponse {
         let Some(state) = self.video_settings.as_ref() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
@@ -367,6 +396,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             network_write: None,
             video_settings: None,
+            mdns: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -436,6 +466,8 @@ impl ControlV2State {
                 self.handle_video_settings(change)
             }
             PlatformControlRequestV2::VideoSettingsState {} => self.handle_video_settings_state(),
+            PlatformControlRequestV2::Mdns { enabled } => self.handle_mdns(*enabled),
+            PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)

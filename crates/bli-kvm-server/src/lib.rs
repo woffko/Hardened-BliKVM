@@ -32,6 +32,7 @@ mod application;
 mod atx;
 mod auth;
 mod autostart;
+mod device_settings;
 mod download;
 mod error;
 mod hid;
@@ -313,6 +314,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application/preview", get(application::preview))
         .route("/inventory", get(runtime_inventory))
         .route("/hostname", get(hostname))
+        .route("/vm/mdns", get(device_settings::mdns_state))
+        .route("/vm/mdns/enable", post(device_settings::mdns_enable))
+        .route("/vm/mdns/disable", post(device_settings::mdns_disable))
         .route("/system/time", get(system_time::get_config))
         .route(
             "/network/dns",
@@ -1265,6 +1269,83 @@ mod tests {
         assert_eq!(body["code"], 0);
         assert_eq!(body["data"]["backend"], "native");
         assert_eq!(body["data"]["powerLed"], true);
+        broker.await.unwrap();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn mdns_toggles_are_forwarded_and_read_back() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut served = 0_u32;
+            while served < 3 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::MdnsState {} => {
+                        bli_kvm_control_protocol::ControlResponse::MdnsState { enabled: false }
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::Mdns { enabled } => {
+                        assert!(enabled, "the enable route asks for the enabled state");
+                        served = 9;
+                        bli_kvm_control_protocol::ControlResponse::Applied
+                    }
+                    _ => panic!("unexpected request"),
+                };
+                served = if served == 9 { 3 } else { served + 1 };
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response,
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let state_request = Request::builder()
+            .uri("/api/vm/mdns")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .unwrap();
+        let body = json_body(app.clone().oneshot(state_request).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["enabled"], false);
+
+        let mut enable = Request::builder()
+            .method(Method::POST)
+            .uri("/api/vm/mdns/enable")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, cookie)
+            .header("x-csrf-token", csrf)
+            .body(Body::from("{}"))
+            .unwrap();
+        enable
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, "2".parse().unwrap());
+        let body = json_body(app.clone().oneshot(enable).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["applied"], true);
         broker.await.unwrap();
     }
 

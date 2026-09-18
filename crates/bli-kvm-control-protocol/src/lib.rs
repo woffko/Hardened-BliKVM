@@ -63,6 +63,10 @@ pub enum ControlResponse {
         fps: u16,
         quality: u8,
     },
+    /// Whether the device name is published over mDNS.
+    MdnsState {
+        enabled: bool,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

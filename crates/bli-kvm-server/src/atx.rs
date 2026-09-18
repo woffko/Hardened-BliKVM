@@ -99,7 +99,9 @@ pub(crate) async fn application_power(
             applied: false,
             rejection: Some(rejection_name(code)),
         },
-        ControlResponse::BoardStatus { .. } | ControlResponse::VideoState { .. } => AtxResponse {
+        ControlResponse::BoardStatus { .. }
+        | ControlResponse::VideoState { .. }
+        | ControlResponse::MdnsState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),
         },
