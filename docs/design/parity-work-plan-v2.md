@@ -97,9 +97,14 @@ until the first media attach.
    (`system-action-gate-20260918-i.json`: the dispatch applied, the post-boot
    acceptance applied, the store reported the record accepted and a replay was
    rejected). One observation stays open and is recorded rather than explained:
-   the board was unreachable for about six minutes after each armed reboot (the
-   first one needed a physical power cycle) while the same reviewed wrapper
-   returned the board promptly when the operator ran the boot gate instead.
+   the board answered no probe for about six minutes after each armed reboot
+   (the first one needed a physical power cycle), while the same reviewed
+   wrapper returned the board promptly when the boot gate ran it. The operator
+   confirmed the second boot recovered on its own. The boot itself is not slow
+   in the journal (userspace reaches `graphical.target` in 27 s and
+   `NetworkManager` starts within seconds), so the dark window is consistent
+   with the board's Ethernet link or DHCP taking minutes after a warm reboot
+   rather than with a stalled unit; the boot gate's own reboot does not show it.
 
 ## P1 - video menu
 
