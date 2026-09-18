@@ -63,6 +63,8 @@ pub enum GadgetError {
     InvalidReportDescriptor,
     #[error("invalid HID report")]
     InvalidReport,
+    #[error("gadget spec does not match the requested operation")]
+    InvalidSpec,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -519,6 +521,43 @@ pub fn replace_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), Gadget
         path: function_path(MSD_FUNCTION),
     });
     steps.extend(function_steps(function));
+    steps.push(Step::WriteFile {
+        path: gadget.join("UDC"),
+        value: spec.udc.clone(),
+    });
+    execute(root, &steps)
+}
+
+/// Remove the mass-storage function from a live gadget without touching the
+/// other functions.
+///
+/// This is the media-detach path. The order mirrors [`replace_mass_storage`]:
+/// the configuration must stop referencing the function, the LUN must release
+/// its backing file, and only then can the function item be dropped. The pinned
+/// HID functions and their character devices stay in place and are rebound, so
+/// an eject does not take the keyboard and mouse down with it.
+pub fn remove_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetError> {
+    validate_spec(spec)?;
+    if spec
+        .functions
+        .iter()
+        .any(|function| matches!(function, Function::MassStorage(_)))
+    {
+        return Err(GadgetError::InvalidSpec);
+    }
+    let gadget = gadget_path();
+    let config = config_path();
+    unbind(root)?;
+    let lun_file = function_path(MSD_FUNCTION).join("lun.0").join("file");
+    let mut steps = vec![Step::RemoveFile {
+        path: config.join(MSD_FUNCTION),
+    }];
+    if root.join(&lun_file).exists() {
+        steps.push(Step::ClearAttribute { path: lun_file });
+    }
+    steps.push(Step::RemoveEmptyDir {
+        path: function_path(MSD_FUNCTION),
+    });
     steps.push(Step::WriteFile {
         path: gadget.join("UDC"),
         value: spec.udc.clone(),
@@ -1155,6 +1194,42 @@ mod tests {
                 .path()
                 .join("hardened/functions/mass_storage.usb0/lun.0/file")
                 .is_file()
+        );
+    }
+
+    #[test]
+    fn remove_mass_storage_keeps_the_other_functions_bound() {
+        let directory = root_with_image();
+        let image = directory.path().join(IMAGE_NAME);
+        let mut functions = vec![msd(&image)];
+        functions.extend(pinned_hid_functions());
+        let composite = GadgetSpec {
+            functions,
+            ..spec(&image)
+        };
+        assert_eq!(apply(directory.path(), &composite), Ok(()));
+
+        let hid_only = GadgetSpec {
+            functions: pinned_hid_functions(),
+            ..spec(&image)
+        };
+        assert_eq!(remove_mass_storage(directory.path(), &hid_only), Ok(()));
+        let state = observe(directory.path()).unwrap();
+        // The drive is gone while the gadget stays bound for HID.
+        assert!(state.mass_storage.is_none());
+        assert_eq!(state.udc.as_deref(), Some("musb-hdrc.2.auto"));
+        assert!(
+            directory
+                .path()
+                .join("hardened/functions/hid.usb0")
+                .is_dir()
+        );
+        // Removing it again is a tolerated no-op, and a mass-storage spec is
+        // rejected: this path only ever drops the drive.
+        assert_eq!(remove_mass_storage(directory.path(), &hid_only), Ok(()));
+        assert_eq!(
+            remove_mass_storage(directory.path(), &composite),
+            Err(GadgetError::InvalidSpec)
         );
     }
 

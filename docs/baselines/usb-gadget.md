@@ -41,6 +41,27 @@ or HID executor needs after the gadget exists (select an image, attach, detach)
 without rebuilding the whole gadget. Inputs are validated the same way as the
 full spec, and the operations are covered by tests over a temporary root.
 
+## Composite lifecycle owned by the board owner
+
+A reboot loses the configfs gadget, so the board owner binds the pinned HID
+functions itself: `MediaTransitionEngine::ensure_hid_gadget` creates a HID-only
+gadget when the configfs root exists and nothing is bound, reads the UDC back to
+confirm the attach, and leaves a gadget that is already present untouched. The
+owner calls it before serving (the gadget and HID profiles) and again before a
+HID lease is granted, so the first keyboard or mouse request after a reboot
+finds a device.
+
+Because the owner now keeps the gadget bound for HID, the media slice changes an
+attached gadget in place:
+
+- attach and image swap use `replace_mass_storage`, which rebuilds only the
+  mass-storage function and keeps the HID character devices open;
+- eject uses `remove_mass_storage`, the same order without re-adding the
+  function, so the drive disappears while the keyboard and mouse stay bound;
+- `MediaState.connected` and the observed media state require the
+  mass-storage function, not only a bound UDC, so a HID-only gadget is not
+  reported as an attached image.
+
 ## HID report primitive
 
 `write_report(hidg_dir, function, report)` writes one bounded report to the

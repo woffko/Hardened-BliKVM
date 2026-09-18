@@ -211,6 +211,7 @@ pub async fn run_with_gadget_profile(
     )
     .map_err(|_| ControlBrokerError::TransitionUnavailable)?
     .with_catalog_path(catalog_path);
+    ensure_gadget_hid(&media);
     let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
@@ -277,6 +278,7 @@ async fn board_state(
     )
     .map_err(|_| ControlBrokerError::TransitionUnavailable)?
     .with_catalog_path(catalog_path);
+    ensure_gadget_hid(&media);
     let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
@@ -750,6 +752,9 @@ pub async fn run_with_gadget_media_profile(
     )
     .map_err(|_| ControlBrokerError::TransitionUnavailable)?
     .with_catalog_path(catalog_path);
+    if let Err(error) = engine.ensure_hid_gadget() {
+        eprintln!("gadget: startup HID bind failed: {error:?}");
+    }
     let state = ControlV2State::disabled().with_media_engine(engine);
     let result = serve(config, diagnostics, state).await;
     drop(diagnostic_reporter);
@@ -762,6 +767,19 @@ fn now_unix_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Binds the pinned HID functions before the owner starts serving so a reboot
+/// does not leave the keyboard and mouse without a gadget. A failure is
+/// diagnostic, not fatal: the owner stays the single authority for ATX and the
+/// control API, and the device HID gate is the acceptance proof.
+#[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+fn ensure_gadget_hid(media: &bli_kvm_media_transition::MediaTransitionEngine) {
+    match media.ensure_hid_gadget() {
+        Ok(true) => eprintln!("gadget: pinned HID functions bound before serving"),
+        Ok(false) => {}
+        Err(error) => eprintln!("gadget: startup HID bind failed: {error:?}"),
+    }
 }
 async fn serve<D>(
     config: ControlBrokerConfig,

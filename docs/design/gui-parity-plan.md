@@ -8,6 +8,10 @@ gadget, our Rust board daemon, the vendor `ustreamer` as the video engine and
 the retained signed application-update model. Every slice is implemented,
 verified and committed in English with a green `scripts/check.sh`.
 
+The remaining work is ordered by the reference-driven plan v2,
+`docs/design/parity-work-plan-v2.md`, which takes priority where the two
+disagree.
+
 ## Supersedes
 
 - The 2026-09-14 revision, including its phase numbering (0-8) and its framing

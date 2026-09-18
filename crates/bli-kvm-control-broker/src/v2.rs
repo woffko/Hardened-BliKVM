@@ -495,6 +495,16 @@ impl ControlV2State {
             };
         }
 
+        // Lazy gadget recovery: a gadget lost to an external unbind or a USB
+        // controller reset is rebuilt before the lease is served, so the first
+        // HID request after a reboot still finds a keyboard and a mouse.
+        #[cfg(feature = "gadget-media-profile")]
+        if let Some(media) = self.media.as_ref()
+            && let Err(error) = media.ensure_hid_gadget()
+        {
+            eprintln!("gadget: lazy HID bind failed: {error:?}");
+        }
+
         let (session_binding, target_binding, ttl_seconds) = match lease {
             HidLeaseRequest::Acquire {
                 session_binding,

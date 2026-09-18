@@ -88,6 +88,26 @@ pub enum MediaExecutor {
     },
 }
 
+impl MediaExecutor {
+    /// Binds the pinned HID functions when the configfs root exists and no
+    /// gadget is present, so keyboard and mouse work after a reboot before the
+    /// first media operation. Returns whether a gadget was created and attached;
+    /// backends without a gadget leave the call a no-op.
+    pub fn ensure_hid_gadget(&self) -> Result<bool, MediaTransitionError> {
+        #[cfg(feature = "gadget-media-profile")]
+        match self {
+            MediaExecutor::Gadget(executor) => executor.ensure_hid_gadget(),
+            #[allow(unreachable_patterns)]
+            _ => Ok(false),
+        }
+        #[cfg(not(feature = "gadget-media-profile"))]
+        {
+            let _ = self;
+            Ok(false)
+        }
+    }
+}
+
 /// Configuration for the Rust configfs gadget media executor.
 #[cfg(feature = "gadget-media-profile")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +174,47 @@ impl GadgetMediaExecutor {
             .unwrap_or(false)
     }
 
+    /// Whether the present gadget exposes the mass-storage function. The owner
+    /// keeps a HID-only gadget bound after a reboot, so "the gadget is up" no
+    /// longer implies "an image is attached".
+    fn has_mass_storage(&self) -> bool {
+        bli_kvm_usb_gadget::observe(&self.config.configfs_root)
+            .map(|state| state.mass_storage.is_some())
+            .unwrap_or(false)
+    }
+
+    fn hid_spec(&self) -> GadgetSpec {
+        GadgetSpec {
+            id_vendor: self.config.id_vendor,
+            id_product: self.config.id_product,
+            bcd_usb: self.config.bcd_usb,
+            bcd_device: self.config.bcd_device,
+            strings: self.config.strings.clone(),
+            udc: self.config.udc.clone(),
+            functions: bli_kvm_usb_gadget::pinned_hid_functions(),
+        }
+    }
+
+    /// Brings the pinned HID functions up before the first media operation. A
+    /// reboot leaves no gadget behind, so without this the keyboard and mouse
+    /// stay dead until an image is attached. A gadget that is already present is
+    /// left untouched, so an attached image survives an owner restart.
+    pub fn ensure_hid_gadget(&self) -> Result<bool, MediaTransitionError> {
+        if !self.config.configfs_root.is_dir() || self.state_present() {
+            return Ok(false);
+        }
+        bli_kvm_usb_gadget::apply(&self.config.configfs_root, &self.hid_spec())
+            .map_err(|_| MediaTransitionError::Backend)?;
+        // Read back what the kernel accepted: a spec that applied but did not
+        // attach is still a broken HID path and must be visible to the caller.
+        let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root)
+            .map_err(|_| MediaTransitionError::Backend)?;
+        if state.udc.is_none() {
+            return Err(MediaTransitionError::Backend);
+        }
+        Ok(true)
+    }
+
     fn observe(&self) -> Result<MediaObservedState, MediaTransitionError> {
         let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root)
             .map_err(|_| MediaTransitionError::Backend)?;
@@ -161,7 +222,7 @@ impl GadgetMediaExecutor {
             enabled: true,
             online: self.config.configfs_root.is_dir(),
             busy: false,
-            connected: state.udc.is_some(),
+            connected: state.udc.is_some() && state.mass_storage.is_some(),
         })
     }
 
@@ -181,6 +242,7 @@ impl GadgetMediaExecutor {
             cdrom: selection.mode() == bli_kvm_core::VirtualMediaControlMode::CdRom,
         };
         if self.state_present()
+            && self.has_mass_storage()
             && bli_kvm_usb_gadget::set_lun_file(&self.config.configfs_root, &selected.path).is_err()
         {
             return false;
@@ -194,16 +256,29 @@ impl GadgetMediaExecutor {
 
     fn set_connected(&self, connected: bool) -> bool {
         if !connected {
-            if !self.state_present() {
+            if !self.state_present() || !self.has_mass_storage() {
                 return true;
             }
-            return bli_kvm_usb_gadget::unbind(&self.config.configfs_root).is_ok();
+            // The gadget also owns the pinned HID functions, so an eject drops
+            // the drive and leaves the keyboard and mouse bound.
+            return bli_kvm_usb_gadget::remove_mass_storage(
+                &self.config.configfs_root,
+                &self.hid_spec(),
+            )
+            .is_ok();
         }
         let Some(selected) = self.current_selection() else {
             return false;
         };
         let spec = self.spec(&selected);
-        match bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec) {
+        // A gadget kept up for HID is extended in place; a cold gadget is built
+        // from scratch. Both attach the drive to the target.
+        let result = if self.state_present() {
+            bli_kvm_usb_gadget::replace_mass_storage(&self.config.configfs_root, &spec)
+        } else {
+            bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec)
+        };
+        match result {
             Ok(()) => true,
             Err(error) => {
                 // The board owner has no other channel to explain a failed
@@ -218,7 +293,7 @@ impl GadgetMediaExecutor {
         let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root)
             .map_err(|_| MediaTransitionError::Backend)?;
         let storage = state.mass_storage.as_ref();
-        let connected = state.udc.is_some();
+        let connected = state.udc.is_some() && storage.is_some();
         Ok(MediaState {
             // The reference surface treats a disconnected image as unmounted:
             // the backing file may stay configured for a later remount, but it
@@ -434,6 +509,14 @@ impl MediaTransitionEngine {
         self
     }
 
+    /// Binds the pinned HID functions at owner startup so a reboot does not
+    /// leave the keyboard and mouse without a gadget. Best-effort by design:
+    /// the caller keeps serving ATX and the control API when the USB path is
+    /// unavailable, and the device HID gate is the acceptance proof.
+    pub fn ensure_hid_gadget(&self) -> Result<bool, MediaTransitionError> {
+        self.executor.ensure_hid_gadget()
+    }
+
     fn refresh_catalog(&mut self) {
         let Some(path) = self.catalog_path.as_deref() else {
             return;
@@ -646,6 +729,61 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, MediaTransitionOutcome::Applied);
         drop(server);
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    fn gadget_config_for_test(directory: &std::path::Path, serial: &str) -> GadgetMediaConfig {
+        let image_dir = directory.join("images");
+        std::fs::create_dir_all(&image_dir).unwrap();
+        GadgetMediaConfig {
+            configfs_root: directory.join("configfs"),
+            udc: "musb-hdrc.2.auto".into(),
+            image_directory: image_dir,
+            strings: GadgetStrings {
+                manufacturer: "Hardened BLi-KVM".into(),
+                product: "BLi-KVM Composite Device".into(),
+                serial: serial.into(),
+                configuration: "BLi-KVM configuration".into(),
+            },
+            id_vendor: 0x1d6b,
+            id_product: 0x0104,
+            bcd_usb: 0x0200,
+            bcd_device: 0x0100,
+        }
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[test]
+    fn startup_binds_the_pinned_hid_functions_before_the_first_media_request() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("configfs")).unwrap();
+        let config = gadget_config_for_test(directory.path(), "BLK-ensure-hid");
+        let configfs = config.configfs_root.clone();
+        let executor = GadgetMediaExecutor::new(config);
+
+        assert!(executor.ensure_hid_gadget().unwrap());
+        let state = bli_kvm_usb_gadget::observe(&configfs).unwrap();
+        assert!(state.present);
+        assert!(
+            state.udc.is_some(),
+            "the gadget must attach, not only exist"
+        );
+        assert!(state.mass_storage.is_none());
+        // The pinned keyboard and mouse functions are the point of the bind.
+        assert!(configfs.join("hardened/functions/hid.usb0").is_dir());
+        assert!(configfs.join("hardened/functions/hid.usb1").is_dir());
+        assert!(configfs.join("hardened/functions/hid.usb2").is_dir());
+        // A gadget that is already up is left untouched.
+        assert!(!executor.ensure_hid_gadget().unwrap());
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[test]
+    fn startup_bind_is_a_noop_without_a_configfs_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = gadget_config_for_test(directory.path(), "BLK-ensure-absent");
+        let executor = GadgetMediaExecutor::new(config);
+        assert!(!executor.ensure_hid_gadget().unwrap());
     }
 
     #[cfg(feature = "gadget-media-profile")]
