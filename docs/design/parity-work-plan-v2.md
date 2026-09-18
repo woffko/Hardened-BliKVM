@@ -167,12 +167,15 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   mode from the primary interface's kernel state and the write accepts either
   `{mode}` or the reviewed `{interface, disabled}` toggle, resolving an omitted
   interface from the default route and refusing `manual` instead of silently
-  downgrading it. `wifi` is next and is real on this board: `wlan0` exists,
-  `NetworkManager` is active and `nmcli` is present, so the state view plus
-  connect/disconnect land next, with the password written straight into a
-  mode-0600 NetworkManager keyfile by the owner (never argv, never logs, and
-  the profile is removed again when bringing it up fails). `tls` (certificate
-  view and the HTTPS redirect toggle) is the remaining network slice.
+  downgrading it. `wifi` is implemented: the board really has
+  `wlan0` with an active NetworkManager, so the owner reads the device state
+  with `nmcli` and connects by writing a mode-0600 NetworkManager keyfile and
+  bringing that profile up, which keeps the password out of argv, the
+  environment and every log; a profile that fails to come up is removed again
+  and only an owner-created profile can be disconnected. The server exposes
+  the reference routes and refuses the access-point mode with a reason. `tls`
+  (certificate view and the HTTPS redirect toggle) is the remaining network
+  slice.
 - **system.firewall**: the bundled capability already reports the firewall as
   not exposed, which is the fail-closed state the plan requires while `nft` is
   absent; the reference baseline model plus the write-and-restore gate is the
