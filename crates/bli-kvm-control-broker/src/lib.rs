@@ -19,7 +19,7 @@ mod server;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
 mod video_settings;
-pub use device_settings::{MDNS_CONF, MDNS_UNIT, MdnsState};
+pub use device_settings::{HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState};
 pub use mouse_jiggler::{JiggleWriter, MouseJigglerState};
 pub use video_settings::{ExecVideoRestartRunner, VideoRestartRunner, VideoSettingsState};
 mod v2;

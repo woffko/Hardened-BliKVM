@@ -43,6 +43,13 @@ pub(crate) struct MdnsView {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct HidOnlyBody {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) struct MouseJigglerBody {
     pub enabled: bool,
     pub mode: String,
@@ -141,6 +148,96 @@ pub(crate) async fn mouse_jiggler_update(
             rejection: Some("unexpected_response"),
         },
     })))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HidOnlyView {
+    pub enabled: bool,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn hid_only_state(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<HidOnlyView>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "device settings are not configured".into(),
+        ));
+    };
+    let response = control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::HidOnlyState {},
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("device settings are unavailable".into()))?;
+    match response {
+        ControlResponse::HidOnlyState { enabled } => {
+            Ok(Json(ApiResponse::ok(HidOnlyView { enabled })))
+        }
+        _ => Err(AppError::ServiceUnavailable(
+            "device settings are unavailable".into(),
+        )),
+    }
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn hid_only_update(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<HidOnlyBody>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "device settings are not configured".into(),
+        ));
+    };
+    let response = control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::HidOnly {
+                enabled: body.enabled,
+            },
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("device settings are unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(match response {
+        ControlResponse::Applied => ToggleOutcome {
+            applied: true,
+            rejection: None,
+        },
+        ControlResponse::Rejected { code } => ToggleOutcome {
+            applied: false,
+            rejection: Some(rejection_name(code)),
+        },
+        _ => ToggleOutcome {
+            applied: false,
+            rejection: Some("unexpected_response"),
+        },
+    })))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn hid_only_state(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<HidOnlyView>>> {
+    Err(AppError::ServiceUnavailable(
+        "device settings are not configured".into(),
+    ))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn hid_only_update(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<HidOnlyBody>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "device settings are not configured".into(),
+    ))
 }
 
 #[cfg(not(feature = "restricted-control-surface"))]

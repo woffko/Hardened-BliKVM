@@ -165,6 +165,16 @@ export function disableMdns() {
   return http.post('/api/vm/mdns/disable');
 }
 
+// get HID-only mode
+export function getHidOnly() {
+  return http.get('/api/vm/hid-only');
+}
+
+// set HID-only mode
+export function setHidOnly(enabled: boolean) {
+  return http.post('/api/vm/hid-only', { enabled });
+}
+
 // enable / disable TLS
 export function setTLS(enabled: boolean) {
   return http.post('/api/vm/tls', { enabled });

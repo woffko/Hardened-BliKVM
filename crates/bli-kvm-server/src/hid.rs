@@ -231,7 +231,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
-        | ControlResponse::MouseJigglerState { .. } => false,
+        | ControlResponse::MouseJigglerState { .. }
+        | ControlResponse::HidOnlyState { .. } => false,
     };
     if attested {
         state
@@ -250,7 +251,8 @@ pub(crate) async fn confirm_focus(
         ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
-        | ControlResponse::MouseJigglerState { .. } => FocusConfirmResponse {
+        | ControlResponse::MouseJigglerState { .. }
+        | ControlResponse::HidOnlyState { .. } => FocusConfirmResponse {
             attested: false,
             rejection: Some("internal"),
         },
@@ -420,7 +422,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
-        | ControlResponse::MouseJigglerState { .. } => {}
+        | ControlResponse::MouseJigglerState { .. }
+        | ControlResponse::HidOnlyState { .. } => {}
     }
     Ok(Json(ApiResponse::ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
@@ -444,7 +447,8 @@ pub(crate) async fn hid_lease(
         ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
-        | ControlResponse::MouseJigglerState { .. } => HidLeaseResponse {
+        | ControlResponse::MouseJigglerState { .. }
+        | ControlResponse::HidOnlyState { .. } => HidLeaseResponse {
             applied: false,
             lease_id: None,
             ttl_seconds: None,

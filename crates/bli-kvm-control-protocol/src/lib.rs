@@ -72,6 +72,10 @@ pub enum ControlResponse {
         enabled: bool,
         mode: bli_kvm_core::MouseJigglerMode,
     },
+    /// Whether the gadget presents HID only.
+    HidOnlyState {
+        enabled: bool,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

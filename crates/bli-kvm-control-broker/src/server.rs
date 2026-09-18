@@ -344,6 +344,11 @@ async fn board_state(
         Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
         true,
     ));
+    // The reviewed HID-only switch keeps media attaches refused while on.
+    state.with_hid_only(crate::device_settings::HidOnlyState::open(
+        crate::device_settings::HID_ONLY_STATE,
+        true,
+    ));
     // The reviewed device toggles use the same bounded restart runner.
     state.with_device_settings(crate::device_settings::MdnsState::open(
         crate::device_settings::MDNS_CONF,
@@ -908,7 +913,8 @@ where
         | ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
-        | ControlResponse::MouseJigglerState { .. } => None,
+        | ControlResponse::MouseJigglerState { .. }
+        | ControlResponse::HidOnlyState { .. } => None,
     };
     timeout(
         request_timeout,

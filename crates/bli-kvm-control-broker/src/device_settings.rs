@@ -270,3 +270,120 @@ mod tests {
         assert!(!conf.exists());
     }
 }
+
+/// When the operator asks for HID only, the owner refuses every media attach
+/// and reports the state so the interface can show it.
+pub const HID_ONLY_STATE: &str = "/var/lib/hardened-blikvm-gadget/hid-only.env";
+
+pub struct HidOnlyState {
+    state_path: PathBuf,
+    enabled: bool,
+    capability_enabled: bool,
+}
+
+impl HidOnlyState {
+    pub fn open(state_path: impl Into<PathBuf>, capability_enabled: bool) -> Self {
+        let state_path = state_path.into();
+        let enabled = std::fs::read_to_string(&state_path)
+            .map(|text| parse_flag(&text))
+            .unwrap_or(false);
+        Self {
+            state_path,
+            enabled,
+            capability_enabled,
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn handle(&mut self, enabled: bool) -> ControlResponse {
+        if !self.capability_enabled {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        }
+        if enabled == self.enabled {
+            return ControlResponse::Applied;
+        }
+        if let Err(reason) = write_flag(&self.state_path, enabled) {
+            eprintln!("device settings: hid-only state write failed: {reason}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        self.enabled = enabled;
+        ControlResponse::Applied
+    }
+}
+
+fn parse_flag(text: &str) -> bool {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("enabled="))
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("yes"))
+}
+
+fn render_flag(enabled: bool) -> String {
+    format!("enabled={}\n", if enabled { "yes" } else { "no" })
+}
+
+fn write_flag(path: &Path, enabled: bool) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "the state file has no parent directory".to_string())?;
+    let metadata = std::fs::symlink_metadata(parent)
+        .map_err(|error| format!("the state directory is unavailable: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("the state directory must be a real directory".into());
+    }
+    let temporary = path.with_extension("env.new");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temporary)
+        .map_err(|error| format!("the temporary state file is unavailable: {error}"))?;
+    file.write_all(render_flag(enabled).as_bytes())
+        .map_err(|error| format!("the temporary state file could not be written: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("the temporary state file could not be synced: {error}"))?;
+    drop(file);
+    std::fs::rename(&temporary, path)
+        .map_err(|error| format!("the state file could not be replaced: {error}"))
+}
+
+#[cfg(test)]
+mod hid_only_tests {
+    use super::*;
+
+    #[test]
+    fn the_flag_persists_and_normalises() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("hid-only.env");
+        let mut state = HidOnlyState::open(&path, true);
+        assert!(!state.enabled());
+        assert_eq!(state.handle(true), ControlResponse::Applied);
+        assert!(state.enabled());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("enabled=yes")
+        );
+        let reloaded = HidOnlyState::open(&path, true);
+        assert!(reloaded.enabled());
+        assert_eq!(state.handle(true), ControlResponse::Applied);
+        assert_eq!(state.handle(false), ControlResponse::Applied);
+        assert!(!state.enabled());
+    }
+
+    #[test]
+    fn a_disabled_capability_never_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("hid-only.env");
+        let mut state = HidOnlyState::open(&path, false);
+        assert_eq!(
+            state.handle(true),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled
+            }
+        );
+        assert!(!path.exists());
+    }
+}

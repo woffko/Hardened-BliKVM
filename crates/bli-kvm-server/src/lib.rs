@@ -318,6 +318,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/mdns/enable", post(device_settings::mdns_enable))
         .route("/vm/mdns/disable", post(device_settings::mdns_disable))
         .route(
+            "/vm/hid-only",
+            get(device_settings::hid_only_state).post(device_settings::hid_only_update),
+        )
+        .route(
             "/vm/mouse-jiggler",
             get(device_settings::mouse_jiggler_state).post(device_settings::mouse_jiggler_update),
         )

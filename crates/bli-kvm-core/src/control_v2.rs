@@ -201,6 +201,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the accepted jiggler state.
     MouseJigglerState {},
+    /// Present HID only and refuse every virtual-media attach.
+    HidOnly {
+        enabled: bool,
+    },
+    /// Read back whether HID-only mode is on.
+    HidOnlyState {},
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -257,6 +263,8 @@ impl PlatformControlRequestV2 {
             Self::MdnsState {} => Ok(()),
             Self::MouseJiggler { .. } => Ok(()),
             Self::MouseJigglerState {} => Ok(()),
+            Self::HidOnly { .. } => Ok(()),
+            Self::HidOnlyState {} => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

@@ -54,6 +54,7 @@ pub struct ControlV2State {
     video_settings: Option<crate::video_settings::VideoSettingsState>,
     mdns: Option<crate::device_settings::MdnsState>,
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
+    hid_only: Option<crate::device_settings::HidOnlyState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
@@ -78,6 +79,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -112,6 +114,11 @@ impl ControlV2State {
         self.mdns = Some(mdns);
     }
 
+    /// Attach the reviewed HID-only switch to the board state.
+    pub fn with_hid_only(&mut self, hid_only: crate::device_settings::HidOnlyState) {
+        self.hid_only = Some(hid_only);
+    }
+
     /// Attach the reviewed mouse jiggler to the board state.
     pub fn with_mouse_jiggler(&mut self, jiggler: crate::mouse_jiggler::MouseJigglerState) {
         self.mouse_jiggler = Some(jiggler);
@@ -144,6 +151,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -168,6 +176,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -192,6 +201,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -230,6 +240,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -256,6 +267,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -288,6 +300,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -350,6 +363,22 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         state.handle(change)
+    }
+
+    fn handle_hid_only(&mut self, enabled: bool) -> ControlResponse {
+        let Some(state) = self.hid_only.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        state.handle(enabled)
+    }
+
+    fn handle_hid_only_state(&self) -> ControlResponse {
+        let Some(state) = self.hid_only.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        ControlResponse::HidOnlyState {
+            enabled: state.enabled(),
+        }
     }
 
     fn handle_mouse_jiggler(
@@ -440,6 +469,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            hid_only: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -513,6 +543,8 @@ impl ControlV2State {
             PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
             PlatformControlRequestV2::MouseJiggler { change } => self.handle_mouse_jiggler(change),
             PlatformControlRequestV2::MouseJigglerState {} => self.handle_mouse_jiggler_state(),
+            PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled),
+            PlatformControlRequestV2::HidOnlyState {} => self.handle_hid_only_state(),
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)
@@ -820,6 +852,15 @@ impl ControlV2State {
         request: &bli_kvm_core::MediaRequest,
         _now: Instant,
     ) -> ControlResponse {
+        // HID-only mode keeps the keyboard and mouse and refuses every media
+        // attach; a detach stays available so an attached image can be removed.
+        let detaching = matches!(
+            request.command,
+            bli_kvm_core::VirtualMediaCommand::SetConnected { connected: false }
+        );
+        if self.hid_only.as_ref().is_some_and(|state| state.enabled()) && !detaching {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        }
         let Some(engine) = self.media.as_mut() else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
