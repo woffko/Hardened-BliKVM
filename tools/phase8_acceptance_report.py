@@ -130,6 +130,29 @@ PHASES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "phase": "P2",
+        "title": "settings sections",
+        "host": (
+            "crates/bli-kvm-control-broker/src/device_settings.rs",
+            "crates/bli-kvm-control-broker/src/mouse_jiggler.rs",
+            "crates/bli-kvm-control-broker/src/network_settings.rs",
+            "crates/bli-kvm-control-broker/src/tls_settings.rs",
+            "crates/bli-kvm-control-broker/src/firewall_settings.rs",
+            "crates/bli-kvm-control-broker/src/system_log_settings.rs",
+            "crates/bli-kvm-server/src/device_settings.rs",
+            "crates/bli-kvm-server/src/network.rs",
+            "tools/stage_device_settings_gate.py",
+        ),
+        "device": (
+            {
+                "name": "device settings gate",
+                "glob": "device-settings-gate-*.json",
+                "probe": "hardened-blikvm-device-settings-gate",
+                "marker": "result=passed",
+            },
+        ),
+    },
+    {
         "phase": "E1",
         "title": "storage and media",
         "host": (
