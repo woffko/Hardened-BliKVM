@@ -191,8 +191,15 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   and refusing the others with a reason. Running the write/restore on the
   device needs `nft` installed, which remains a separate operator approval.
 - **systemLog**: `/system-log/config` and `/system-log/messages` already serve
-  the kernel and local views; `remote`, `save` and `test` are assessed per
-  capability.
+  the configuration, kernel and local views. `test` is implemented: the owner
+  writes exactly one bounded line to the journal with `logger`, which is the
+  surface the local view reads, and `POST /api/system-log/test` fails closed
+  when the owner refuses. `remote` stays unavailable by design (this board has
+  no vendor log service to forward through) and `save` is the existing
+  download surface; the configuration write is the remaining item, because the
+  reviewed settings live in our own persistent-journal drop-in rather than in
+  the reference's log service, so the interface's save button has nothing
+  reviewed to apply yet.
 - Beyond the reference: the panel switch (`oled`), session lock and the
   thermal/RTC views already exist in the interface; the fan curve, activity
   LED and ATX LED cards are the remaining additions.
