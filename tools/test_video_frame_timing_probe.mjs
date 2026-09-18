@@ -144,7 +144,7 @@ test("frame timing probe rejects a remote plain-http stand", () => {
         probePath,
         modulePath,
         executablePath,
-        "http://10.0.77.118",
+        "http://192.0.2.10",
         usernameFile,
         path.resolve("evidence", "private", `vt-bad-${process.pid}.json`),
         "3",

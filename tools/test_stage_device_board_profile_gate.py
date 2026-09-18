@@ -66,7 +66,7 @@ class StageBoardProfileGateTests(unittest.TestCase):
         argv = [
             "gate",
             "--endpoint",
-            "ssh://10.0.77.118:22/",
+            "ssh://192.0.2.10:22/",
             "--username",
             "root",
             "--known-hosts",

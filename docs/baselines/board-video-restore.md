@@ -35,7 +35,7 @@ The vendor `ustreamer` stays the capture engine, now started by our unit:
 
 ## Gates
 
-Live on `https://10.0.77.118/` (authenticated):
+Live on `https://<board-address>/` (authenticated):
 
 - `video-frame-timing-20260916-b.json`: passed, 277 frames, 27.9 fps,
   p95 frame interval 48.7 ms;

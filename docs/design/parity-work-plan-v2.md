@@ -1,7 +1,7 @@
 # Reference-driven parity work plan (v2)
 
 Status: supersedes the E0-E5 ordering for the remaining work. The reference is
-the stand at `https://10.0.87.133`; its interface surface was extracted from the
+the stand at `https://<reference-address>`; its interface surface was extracted from the
 served JavaScript bundle and is the source of truth for what parity means.
 
 ## Reference surface (evidence)
@@ -50,6 +50,19 @@ until the first media attach.
    ordering and drop-ins, and a board server that starts after a reboot. Gate:
    reboot, then six of six units active, `443` answering and `/api/health` at
    `200`.
+
+   The device audit found the board keeps `/var/log` on a RAM disk and points
+   `/var/log/journal` at `/var/log.hdd/journal`, so an early journald start
+   writes into a dangling symlink and loses the first boot records; the drop-in
+   shipped in `packaging/systemd/systemd-journald.service.d` now orders
+   journald after that mount. The owner is `Type=simple`, so a boot-time start
+   of the server can race the control socket and leave the unit dead behind the
+   nginx 502; the unit now waits for the socket with a bounded `ExecStartPre`.
+   Running `scripts/check.sh` here also exposed that the source-boundary secret
+   and private-address scans had never run because `ripgrep` was absent, so the
+   committed tree still carried the operator signing-key directory and board
+   addresses; the key is no longer tracked and the addresses are sanitized.
+   The reboot gate itself still needs its own approval.
 3. **Armed reboot.** A clean dispatch while the server is healthy plus the
    owner-side acceptance until the gate reports `passed`; the reviewed wrapper
    keeps `systemctl --no-block`.

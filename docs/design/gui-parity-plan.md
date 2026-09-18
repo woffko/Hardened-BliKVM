@@ -97,7 +97,7 @@ UI.
 
 ## Current device state (2026-09-16)
 
-`https://10.0.77.118/` serves our board profile: node
+`https://<board-address>/` serves our board profile: node
 `hardened-blikvm-board-owner` (gadget, media, HID, ATX over
 `/run/hardened-blikvm-gadget/control.sock`) plus
 `hardened-blikvm-board-server` (KVMD-free, `127.0.0.1:18080`) behind
@@ -267,7 +267,7 @@ Goal: prove the replacement is complete.
 - Update `tools/phase8_acceptance_report.py` so the manifest reflects the new
   phases (video in E0, storage in E1, board daemon in E2, network in E3, update
   in E4) and keeps "KVMD removal" after the video gates.
-- Run the GUI parity probe against `https://10.0.87.133/` and compare; produce
+- Run the GUI parity probe against `https://<reference-address>/` and compare; produce
   the final report, reboot/soak acceptance and the baselines. The status report
   is `docs/baselines/vendor-replaced.md`.
 - Release-stage re-verification: the physical confirmations recorded during E2
@@ -326,7 +326,7 @@ Goal: prove the replacement is complete.
   `ThomasVon2021/blikvm` (C `blikvm_server`/`kvmd-main`, `src/kvmd/blikvm_*`,
   `package/kvmd-*`, `ustreamer.bin`, janus).
 - Reference GUI/management: Hardened NanoKVM `server-rust` (axum) and web
-  (`10.0.87.133`).
+  (the reference stand address, kept outside the repository).
 - Historical device capture and file inventory: `docs/baselines/upstream.md`,
   `docs/baselines/hardware.md`, `docs/baselines/device-video.md`,
   `docs/baselines/device-fan-gpio.md`, `docs/baselines/device-oled-topology.md`,

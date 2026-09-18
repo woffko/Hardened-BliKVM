@@ -102,7 +102,7 @@ class NetworkWriteGateTests(unittest.TestCase):
     def test_plain_http_is_refused_for_a_remote_board(self) -> None:
         with self.assertRaises(ValueError):
             gate.api_write(
-                "http://10.0.77.118",
+                "http://192.0.2.10",
                 "/api/network/dns",
                 {"servers": [], "confirm": True},
                 "password",
@@ -184,14 +184,14 @@ class NetworkWriteGateTests(unittest.TestCase):
             ]
         )
         receipt = self._run(
-            ["--base-url", "https://10.0.77.118", "--confirm-write"], facts
+            ["--base-url", "https://192.0.2.10", "--confirm-write"], facts
         )
         self.assertEqual(receipt["mode"], "write")
         self.assertEqual(receipt["result"], "passed")
         self.assertIs(receipt["policy"]["mutationsPerformed"], True)
 
         failed = self._run(
-            ["--base-url", "https://10.0.77.118", "--confirm-write"],
+            ["--base-url", "https://192.0.2.10", "--confirm-write"],
             facts,
             applied=False,
             expected_code=1,
@@ -201,11 +201,11 @@ class NetworkWriteGateTests(unittest.TestCase):
     def test_write_mode_requires_the_reviewed_prerequisites(self) -> None:
         disabled = "\n".join(["writes_enabled=no", "ipv6_present=yes"])
         with self.assertRaises(SystemExit):
-            self._run(["--base-url", "https://10.0.77.118", "--confirm-write"], disabled)
+            self._run(["--base-url", "https://192.0.2.10", "--confirm-write"], disabled)
         missing_ipv6 = "\n".join(["writes_enabled=yes", "ipv6_present=no"])
         with self.assertRaises(SystemExit):
             self._run(
-                ["--base-url", "https://10.0.77.118", "--confirm-write"], missing_ipv6
+                ["--base-url", "https://192.0.2.10", "--confirm-write"], missing_ipv6
             )
 
 

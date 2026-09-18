@@ -281,8 +281,8 @@ mod tests {
     #[test]
     fn parses_little_endian_route_gateway() {
         assert_eq!(
-            parse_route_gateway("0101A8C0").as_deref(),
-            Some("192.168.1.1")
+            parse_route_gateway("010200C0").as_deref(),
+            Some("192.0.2.1")
         );
         assert_eq!(parse_route_gateway("00000000"), None);
         assert_eq!(parse_route_gateway("nothex"), None);
@@ -290,14 +290,11 @@ mod tests {
 
     #[test]
     fn selects_the_default_ipv4_route_only() {
-        let content = "Iface\tDestination\tGateway\neth0\t00000000\t0101A8C0\t0\t0\t0\t00000000\n";
-        assert_eq!(
-            default_ipv4_gateway(content).as_deref(),
-            Some("192.168.1.1")
-        );
+        let content = "Iface\tDestination\tGateway\neth0\t00000000\t010200C0\t0\t0\t0\t00000000\n";
+        assert_eq!(default_ipv4_gateway(content).as_deref(), Some("192.0.2.1"));
         assert_eq!(default_ipv4_gateway("Iface\tDestination\tGateway\n"), None);
         assert_eq!(
-            default_ipv4_gateway("Iface\tDestination\tGateway\neth0\t0000000A\t0202A8C0\n"),
+            default_ipv4_gateway("Iface\tDestination\tGateway\neth0\t0000000A\t020200C0\n"),
             None
         );
     }

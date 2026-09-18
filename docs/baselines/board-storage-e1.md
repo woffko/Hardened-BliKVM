@@ -52,7 +52,7 @@ Four device defects the gate exposed, all fixed and committed:
    function and rebuilds it (`replace_mass_storage`).
 3. The board certificate was a self-signed leaf with no subject alternative
    name, so no client could verify it. It is regenerated with CN and SAN for the
-   board name and address; `curl --cacert <copy> https://10.0.77.118/` answers
+   board name and address; `curl --cacert <copy> https://<board-address>/` answers
    200, and the operator tools gained `--ca-file` and `--tls-server-name` so
    they verify instead of disabling TLS.
 4. The nginx unit's `ProtectSystem=strict` keeps the compiled-in

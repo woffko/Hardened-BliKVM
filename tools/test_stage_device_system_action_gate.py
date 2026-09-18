@@ -128,7 +128,7 @@ class SystemActionGateTests(unittest.TestCase):
     def test_dispatch_rejects_plain_http_for_a_remote_board(self) -> None:
         with self.assertRaises(ValueError):
             gate.dispatch_reboot(
-                "http://10.0.77.118", "admin", "password", None, None
+                "http://192.0.2.10", "admin", "password", None, None
             )
 
     def _run(self, extra: list[str], outputs: list[str], expected_code: int = 0) -> dict:

@@ -1,6 +1,6 @@
 # Board-owner handoff gate (real device)
 
-Status: passed 2026-09-15 on the H616 board (`10.0.77.118`, Armbian Jammy).
+Status: passed 2026-09-15 on the H616 board (`<board-address>`, Armbian Jammy).
 
 ## What the gate proves
 

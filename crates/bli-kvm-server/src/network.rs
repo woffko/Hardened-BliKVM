@@ -281,16 +281,16 @@ mod tests {
     fn servers_and_domains_are_parsed_and_bounded() {
         let content = "\
 # comment
-nameserver 10.0.0.1
+nameserver 192.0.2.1
 nameserver 2001:db8::53  # inline comment
 nameserver not-an-ip
-nameserver 10.0.0.1
+nameserver 192.0.2.1
 search lan example.internal
 domain ignored.example
 ";
         let config = parse_resolv_conf(content);
         assert_eq!(config.source, RESOLV_CONF_FILE);
-        assert_eq!(config.servers, vec!["10.0.0.1", "2001:db8::53"]);
+        assert_eq!(config.servers, vec!["192.0.2.1", "2001:db8::53"]);
         assert_eq!(
             config.search_domains,
             vec!["lan", "example.internal", "ignored.example"]

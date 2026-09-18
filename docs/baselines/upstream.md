@@ -3,7 +3,7 @@
 Verified on 2026-08-30.
 
 > Stand status (2026-09-15): the H616 board is present and ready
-> (`10.0.77.118`, Armbian Jammy, KVMD and the vendor stack installed, `kvmd`
+> (`<board-address>`, Armbian Jammy, KVMD and the vendor stack installed, `kvmd`
 > gadget bound, `handoffReady=true`). An earlier "plain Ubuntu" note was a
 > local-shell mistake and is retracted.
 

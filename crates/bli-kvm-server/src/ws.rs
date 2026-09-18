@@ -230,29 +230,29 @@ mod tests {
     #[test]
     fn origin_must_match_the_request_host() {
         assert!(origin_allowed(
-            &headers(Some("https://10.0.77.118:8443"), "10.0.77.118:8443"),
+            &headers(Some("https://192.0.2.10:8443"), "192.0.2.10:8443"),
             false
         ));
         assert!(origin_allowed(
-            &headers(Some("https://10.0.77.118"), "10.0.77.118"),
+            &headers(Some("https://192.0.2.10"), "192.0.2.10"),
             false
         ));
         assert!(!origin_allowed(
-            &headers(Some("https://evil.example"), "10.0.77.118"),
+            &headers(Some("https://evil.example"), "192.0.2.10"),
             false
         ));
         assert!(!origin_allowed(
-            &headers(Some("file://10.0.77.118"), "10.0.77.118"),
+            &headers(Some("file://192.0.2.10"), "192.0.2.10"),
             false
         ));
         assert!(!origin_allowed(
-            &headers(Some("https://10.0.77.118"), "10.0.77.118:8443"),
+            &headers(Some("https://192.0.2.10"), "192.0.2.10:8443"),
             false
         ));
-        assert!(!origin_allowed(&headers(None, "10.0.77.118"), false));
-        assert!(origin_allowed(&headers(None, "10.0.77.118"), true));
+        assert!(!origin_allowed(&headers(None, "192.0.2.10"), false));
+        assert!(origin_allowed(&headers(None, "192.0.2.10"), true));
         assert!(!origin_allowed(
-            &headers(Some("not-a-url"), "10.0.77.118"),
+            &headers(Some("not-a-url"), "192.0.2.10"),
             false
         ));
     }

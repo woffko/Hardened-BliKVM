@@ -22,6 +22,8 @@ install -d -m 0755 \
   "$test_root/usr/libexec/hardened-blikvm" \
   "$test_root/usr/share/hardened-blikvm/web"
 install -m 0755 /bin/true "$test_root/bin/true"
+# The board server waits for the owner socket with a bounded shell loop.
+install -m 0755 /bin/sh "$test_root/bin/sh"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-platform-broker"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-control-broker"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-hid-credential-gate"
