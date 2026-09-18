@@ -82,6 +82,7 @@ install -m 0644 \
   "$stage/share/udev/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-gadget.conf \
+  packaging/tmpfiles.d/hardened-blikvm-video.conf \
   "$stage/share/tmpfiles.d/"
 install -m 0644 docs/api/control-v2.md "$stage/share/control-v2.md"
 install -m 0644 docs/api/hid-transition.md "$stage/share/hid-transition.md"

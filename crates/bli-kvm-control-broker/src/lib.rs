@@ -16,6 +16,8 @@ mod profile;
 mod server;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
+mod video_settings;
+pub use video_settings::{ExecVideoRestartRunner, VideoRestartRunner, VideoSettingsState};
 mod v2;
 
 pub use attestation::{

@@ -1974,6 +1974,35 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("After=hardened-blikvm-board-owner.service", unit)
         self.assertIn("Restart=on-failure", unit)
 
+    def test_the_video_engine_reads_the_owner_settings_file(self) -> None:
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-ustreamer.service"
+        ).read_text()
+        # The defaults are reviewed values and the owner's file is processed
+        # after them, so an accepted request wins.
+        self.assertIn("Environment=BLI_KVM_USTREAMER_FPS=40", unit)
+        self.assertIn("Environment=BLI_KVM_USTREAMER_QUALITY=80", unit)
+        self.assertIn(
+            "EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env", unit
+        )
+        self.assertIn("--desired-fps=${BLI_KVM_USTREAMER_FPS}", unit)
+        self.assertIn("--quality=${BLI_KVM_USTREAMER_QUALITY}", unit)
+        self.assertLess(
+            unit.index("Environment=BLI_KVM_USTREAMER_FPS=40"),
+            unit.index("EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env"),
+        )
+        self.assertLess(
+            unit.index("EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env"),
+            unit.index("ExecStart="),
+        )
+        tmpfiles = (
+            ROOT / "packaging/tmpfiles.d/hardened-blikvm-video.conf"
+        ).read_text()
+        self.assertIn("d /var/lib/hardened-blikvm-video 0755 root root - -", tmpfiles)
+        self.assertIn(
+            "f /var/lib/hardened-blikvm-video/ustreamer.env 0644 root root - -", tmpfiles
+        )
+
     def test_the_journald_dropin_keeps_early_boot_records_on_the_card(self) -> None:
         # /var/log/journal is a symlink into /var/log.hdd on the board, so an
         # early journald start writes into a dangling symlink and loses the
@@ -2005,7 +2034,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn(
             "ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget "
             "/var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions "
-            "/etc/resolv.conf",
+            "/var/lib/hardened-blikvm-video /etc/resolv.conf",
             unit,
         )
         self.assertIn("CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN", unit)

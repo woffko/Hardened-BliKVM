@@ -10,6 +10,7 @@ mod control_v2;
 mod diagnostics;
 mod inventory;
 mod platform;
+mod video_settings;
 
 pub use capabilities::{
     Availability, BoardCapabilities, CapabilityError, CapabilityManifest, EvidenceLevel,
@@ -39,6 +40,11 @@ pub use inventory::{
     RtcObservation, RuntimeInventory, RuntimeVersions, ThermalObservation,
 };
 pub use platform::CapabilityProvider;
+pub use video_settings::{
+    VIDEO_FPS_DEFAULT, VIDEO_FPS_ENV, VIDEO_FPS_MAX, VIDEO_FPS_MIN, VIDEO_QUALITY_DEFAULT,
+    VIDEO_QUALITY_ENV, VIDEO_QUALITY_MAX, VIDEO_QUALITY_MIN, VideoSettings, VideoSettingsChange,
+    VideoSettingsError,
+};
 
 /// Version of the JSON capability contract consumed by the web interface.
 pub const CAPABILITY_SCHEMA_VERSION: u16 = 1;

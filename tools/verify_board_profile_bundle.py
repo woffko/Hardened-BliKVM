@@ -52,6 +52,7 @@ REQUIRED_MEMBERS = {
     "share/systemd/systemd-journald.service.d/99-hardened-blikvm-persistent-journal.conf",
     "share/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf",
     "share/tmpfiles.d/hardened-blikvm-gadget.conf",
+    "share/tmpfiles.d/hardened-blikvm-video.conf",
     "share/udev/99-hardened-blikvm-video.rules",
     "share/atx.env.example",
     "share/boardd.json.example",

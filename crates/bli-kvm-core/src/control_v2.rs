@@ -183,6 +183,10 @@ pub enum PlatformControlRequestV2 {
     NetworkWrite {
         request: NetworkWriteRequest,
     },
+    /// Reviewed video-engine settings change (desired frame rate, JPEG quality).
+    VideoSettings {
+        change: crate::video_settings::VideoSettingsChange,
+    },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -216,6 +220,8 @@ pub enum ControlV2ValidationError {
     InvalidMediaCommand,
     #[error("virtual-media request timestamp is invalid")]
     InvalidMediaTimestamp,
+    #[error("video-settings change is invalid")]
+    InvalidVideoSettings,
 }
 
 impl PlatformControlRequestV2 {
@@ -229,6 +235,9 @@ impl PlatformControlRequestV2 {
             Self::VirtualMediaObserve { request } => request.validate(),
             Self::SystemAction { request } => request.validate(),
             Self::NetworkWrite { request } => request.validate(),
+            Self::VideoSettings { change } => change
+                .validate()
+                .map_err(|_| ControlV2ValidationError::InvalidVideoSettings),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

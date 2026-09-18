@@ -12,7 +12,10 @@ use std::time::Instant;
 use std::time::Duration;
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
-use bli_kvm_core::{AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2};
+use bli_kvm_core::{
+    AtxConfirmation, AtxControlAction, HidLeaseRequest, PlatformControlRequestV2,
+    VideoSettingsChange,
+};
 
 use crate::{DEFAULT_MAX_ATTESTATIONS, TargetAttestationRegistry};
 
@@ -48,6 +51,7 @@ pub struct ControlV2State {
     network_write: Option<
         crate::network_write::NetworkWriteState<Box<dyn crate::network_write::NetworkWriter>>,
     >,
+    video_settings: Option<crate::video_settings::VideoSettingsState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
@@ -69,6 +73,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -93,6 +98,11 @@ impl ControlV2State {
         state
     }
 
+    /// Attach the reviewed video-settings surface to the board state.
+    pub fn with_video_settings(&mut self, state: crate::video_settings::VideoSettingsState) {
+        self.video_settings = Some(state);
+    }
+
     #[cfg(feature = "system-action-profile")]
     fn enabled_base() -> Self {
         Self {
@@ -108,6 +118,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -129,6 +140,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -150,6 +162,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -185,6 +198,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -208,6 +222,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -237,6 +252,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -294,6 +310,13 @@ impl ControlV2State {
         reject(ControlRejectionCode::CapabilityDisabled)
     }
 
+    fn handle_video_settings(&mut self, change: &VideoSettingsChange) -> ControlResponse {
+        let Some(state) = self.video_settings.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        state.handle(change)
+    }
+
     fn handle_board_status(&self) -> ControlResponse {
         // The operator configuration is the capability: an unattached client
         // is resolved from the environment on first use, so the proxy works on
@@ -332,6 +355,7 @@ impl ControlV2State {
             #[cfg(feature = "network-write-profile")]
             #[cfg(feature = "network-write-profile")]
             network_write: None,
+            video_settings: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -396,6 +420,9 @@ impl ControlV2State {
             }
             PlatformControlRequestV2::NetworkWrite { request } => {
                 self.handle_network_write(request)
+            }
+            PlatformControlRequestV2::VideoSettings { change } => {
+                self.handle_video_settings(change)
             }
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {

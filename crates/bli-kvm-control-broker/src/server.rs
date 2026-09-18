@@ -320,6 +320,20 @@ async fn board_state(
     if let Some(client) = crate::board_status::board_status_client_from_environment() {
         state.attach_board_status(client);
     }
+    // The video-engine settings are applied by the privileged owner: it writes
+    // the reviewed environment file the streamer unit reads and restarts that
+    // unit. Both paths are operator-overridable for the device gates.
+    let video_unit = std::env::var("BLI_KVM_VIDEO_UNIT")
+        .unwrap_or_else(|_| "hardened-blikvm-ustreamer.service".to_string());
+    let video_env = std::env::var("BLI_KVM_VIDEO_SETTINGS_ENV")
+        .unwrap_or_else(|_| "/var/lib/hardened-blikvm-video/ustreamer.env".to_string());
+    state.with_video_settings(crate::video_settings::VideoSettingsState::open(
+        video_env,
+        video_unit,
+        Box::new(crate::video_settings::ExecVideoRestartRunner),
+        true,
+        true,
+    ));
     // The bounded network writes stay refused until the operator enables them
     // for the owner as well as for the server.
     #[cfg(feature = "network-write-profile")]
