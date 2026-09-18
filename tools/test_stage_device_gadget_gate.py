@@ -117,7 +117,7 @@ class GadgetGateTests(unittest.TestCase):
         output = (
             Path(__file__).resolve().parent.parent
             / "evidence/private"
-            / f"gadget-lifecycle-gate-test-{uuid.uuid4().hex}.json"
+            / f"test-gadget-lifecycle-gate-{uuid.uuid4().hex}.json"
         )
         return output, known_hosts
 

@@ -80,14 +80,26 @@ until the first media attach.
    post-mortem source.
 
    The post-boot acceptance then found the store still holding the empty
-   initialized record, and the code explained why: the owner deferred the
+   initialized record, and two defects followed from it. The owner deferred the
    journal write to the first dispatch, and when the store already held copies
    that `initialize` failed with a generation gap while the failure was
    swallowed, so the reboot was dispatched with no record and could never be
    accepted. The owner now initializes the journal as it loads a store with no
-   valid copy and refuses the action when a write fails (fail-closed), which a
-   test pins. The board still has to re-run the armed dispatch to prove the
-   record and to see whether the reboot hang reproduces.
+   valid copy and refuses the action when a write fails (fail-closed). That
+   refusal then exposed the second defect: the owner runs with the reviewed
+   drop-in group that keeps the control socket reachable, so its journal copies
+   were group-owned by that group and the store rejected them as unsafe. The
+   store now sets the ownership of every copy it creates from its own reviewed
+   identity, the owner keeps `CAP_CHOWN` for exactly that, and the previously
+   device-only socket-group drop-in is shipped from the repository.
+
+   With both fixed the armed cycle passed
+   (`system-action-gate-20260918-i.json`: the dispatch applied, the post-boot
+   acceptance applied, the store reported the record accepted and a replay was
+   rejected). One observation stays open and is recorded rather than explained:
+   the board was unreachable for about six minutes after each armed reboot (the
+   first one needed a physical power cycle) while the same reviewed wrapper
+   returned the board promptly when the operator ran the boot gate instead.
 
 ## P1 - video menu
 

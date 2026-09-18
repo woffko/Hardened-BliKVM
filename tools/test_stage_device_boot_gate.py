@@ -84,7 +84,7 @@ class BootGateTests(unittest.TestCase):
         output = (
             Path(__file__).resolve().parent.parent
             / "evidence/private"
-            / f"boot-gate-test-{uuid.uuid4().hex}.json"
+            / f"test-boot-gate-{uuid.uuid4().hex}.json"
         )
         argv = [
             "stage_device_boot_gate.py",
