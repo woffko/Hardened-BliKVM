@@ -2,6 +2,7 @@ import { Divider } from 'antd';
 import { useTranslation } from 'react-i18next';
 
 import { Advanced } from './advanced';
+import { Autostart } from './autostart.tsx';
 import { HidOnly } from './hid-only.tsx';
 import { Mdns } from './mdns.tsx';
 import { MouseJiggler } from './mouse-jiggler.tsx';
@@ -23,6 +24,7 @@ export const Device = () => {
         <Ssh />
         <Mdns />
         <HidOnly />
+        <Autostart />
         <Divider className="opacity-50" />
 
         <VirtualDevices />

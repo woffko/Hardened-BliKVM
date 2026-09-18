@@ -188,6 +188,11 @@ const en = {
       },
       requestPointer: 'Using relative mode. Please click desktop to get mouse pointer.',
       resetHid: 'Reset HID',
+      autostart: {
+        title: 'Autostart',
+        empty: 'No autostart scripts. Uploads are owner-only.',
+        network: 'Network settings'
+      },
       hidOnly: {
         title: 'HID-Only mode',
         desc: "If your mouse and keyboard stop responding and resetting HID doesn't help, it could be a compatibility issue between the BliKVM and the device. Try to enable HID-Only mode for better compatibility.",

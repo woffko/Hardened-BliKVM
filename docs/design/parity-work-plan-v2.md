@@ -155,11 +155,13 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   refused because the target never reports the pointer position, and
   `/api/vm/mouse-jiggler` reports what the owner holds. Still to do: `hidOnly`
   (the owner refuses media attach and the media capability follows),
-  the read-only `autostart` list surfaced in the page (uploading scripts stays
-  owner-only), the `network` link (our network controls live inside the
-  `system` tab, so the link switches tabs), and `hdmi` hidden with the reason
-  recorded (the board captures HDMI, it has no HDMI output or hotplug control
-  to toggle).
+  `hidOnly` (the owner persists the switch and refuses every virtual-media
+  command except a detach while it is on, with `GET`/`POST /api/vm/hid-only`
+  and a switch in the device section). The read-only `autostart` list is
+  surfaced with the network link (both live in the device section and the link
+  switches the shared settings tab to `system`), and the `hdmi` entry is gone
+  with the reason recorded: the board captures HDMI and has no HDMI output or
+  hotplug control to toggle.
 - **network**: `dns` (read and the reviewed write) and `interfaces`/`wol` are
   implemented; `ipv6` has the write path and needs the UI/capability wiring;
   `tls` (certificate view and replacement) and `wifi` (NetworkManager is

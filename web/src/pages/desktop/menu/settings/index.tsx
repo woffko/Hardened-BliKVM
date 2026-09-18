@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Modal, Tooltip } from 'antd';
 import clsx from 'clsx';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
   ActivityIcon,
   BadgeInfoIcon,
@@ -24,7 +24,7 @@ import {
 import * as ls from '@/lib/localstorage.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
-import { submenuOpenCountAtom } from '@/jotai/settings.ts';
+import { settingsTabAtom, submenuOpenCountAtom } from '@/jotai/settings.ts';
 import { useIsTouchLayout } from '@/hooks/useResponsiveLayout.ts';
 import { Tailscale as TailscaleIcon } from '@/components/icons/tailscale';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -44,7 +44,7 @@ export const Settings = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
-  const [currentTab, setCurrentTab] = useState('about');
+  const [currentTab, setCurrentTab] = useAtom(settingsTabAtom);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const isTouchLayout = useIsTouchLayout();
 

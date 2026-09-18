@@ -16,3 +16,6 @@ export const menuDisplayModeAtom = atom<string>('auto');
 
 // responsive layout mode: 'auto' | 'mobile'
 export const layoutModeAtom = atom<LayoutMode>(getLayoutMode());
+
+// selected settings tab, so sections can link to each other
+export const settingsTabAtom = atom('about');
