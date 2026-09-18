@@ -111,6 +111,16 @@ until the first media attach.
 `fps`, `quality`, `qualityHigh` and `qualityLossless` in the toolbar menu, with
 the parameters applied to `bli-kvm-video-proxy`/`ustreamer` and read back.
 
+Reconnaissance: the built interface already ships the whole screen menu
+(`web/src/pages/desktop/menu/screen/` with video mode, resolution, quality,
+fps, gop, frame detect, scale and reset) and posts to `/api/vm/screen`, but it
+shows only `Scale` because the menu entries are gated on
+`capabilities.video.status.availability === 'read_write'` and the server does
+not implement the route or advertise that capability. The work is therefore
+server-side: implement `/api/vm/screen`, apply the settings in
+`bli-kvm-video-proxy`/`ustreamer`, read them back, and advertise the
+capability only when the proxy can enforce them.
+
 ## P2 - settings sections
 
 - `device`: `autostart`, `hidOnly`, `mouseJiggler`, `mdns` and the `network`
