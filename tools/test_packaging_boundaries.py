@@ -1955,6 +1955,33 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("ProtectProc=invisible", unit)
         self.assertIn("ProtectKernelTunables=no", unit)
 
+    def test_the_board_server_waits_for_the_owner_socket_before_starting(self) -> None:
+        # The owner is Type=simple, so a boot-time start of the server can race
+        # the control socket; without the wait the unit dies and nginx answers
+        # 502 until it is started by hand.
+        unit = (
+            ROOT / "packaging/systemd/hardened-blikvm-board-server.service"
+        ).read_text()
+        self.assertIn(
+            "ExecStartPre=/bin/sh -c 'i=0; while [ ! -S \"$BLI_KVM_CONTROL_SOCKET\" ]; "
+            'do i=$((i+1)); [ "$i" -gt 150 ] && exit 1; sleep 0.2; done\'',
+            unit,
+        )
+        self.assertIn("Requires=hardened-blikvm-board-owner.service", unit)
+        self.assertIn("After=hardened-blikvm-board-owner.service", unit)
+        self.assertIn("Restart=on-failure", unit)
+
+    def test_the_journald_dropin_keeps_early_boot_records_on_the_card(self) -> None:
+        # /var/log/journal is a symlink into /var/log.hdd on the board, so an
+        # early journald start writes into a dangling symlink and loses the
+        # first boot records.
+        dropin = (
+            ROOT
+            / "packaging/systemd/systemd-journald.service.d"
+            / "99-hardened-blikvm-persistent-journal.conf"
+        ).read_text()
+        self.assertIn("RequiresMountsFor=/var/log.hdd", dropin)
+
     def test_the_msd_remount_unit_is_reviewed_and_writable_only(self) -> None:
         unit = (
             ROOT / "packaging/systemd/hardened-blikvm-msd-writable.service"

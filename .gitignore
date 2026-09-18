@@ -21,3 +21,4 @@ __pycache__/
 /web/.env.*
 /state/
 *.log
+/app-production-2026-09-05-01/

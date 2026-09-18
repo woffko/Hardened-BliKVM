@@ -26,6 +26,10 @@ Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-server
+# The owner is Type=simple, so systemd considers it started before the control
+# socket exists. Waiting here keeps a boot-time start from racing the owner and
+# leaving the unit dead behind an nginx 502.
+ExecStartPre=/bin/sh -c 'i=0; while [ ! -S "$BLI_KVM_CONTROL_SOCKET" ]; do i=$((i+1)); [ "$i" -gt 150 ] && exit 1; sleep 0.2; done'
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=15s

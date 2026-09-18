@@ -69,6 +69,10 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-boardd.service \
   packaging/systemd/hardened-blikvm-msd-writable.service \
   "$stage/share/systemd/"
+install -d -m 0755 "$stage/share/systemd/systemd-journald.service.d"
+install -m 0644 \
+  packaging/systemd/systemd-journald.service.d/99-hardened-blikvm-persistent-journal.conf \
+  "$stage/share/systemd/systemd-journald.service.d/"
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \
   "$stage/share/udev/"
