@@ -9,10 +9,12 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
-use axum::Json;
-use serde::Serialize;
+use axum::{Extension, Json, extract::State};
+use serde::{Deserialize, Serialize};
 
-use crate::error::{ApiResponse, AppResult};
+use crate::AppState;
+use crate::auth::middleware::CurrentSession;
+use crate::error::{ApiResponse, AppError, AppResult};
 
 pub(crate) const RESOLV_CONF_FILE: &str = "/etc/resolv.conf";
 pub(crate) const IPV6_CONF_ROOT: &str = "/proc/sys/net/ipv6/conf";
@@ -457,4 +459,206 @@ domain ignored.example
         assert_eq!(json["resolver"]["searchDomains"][0], "lan");
         assert_eq!(json["resolver"]["servers"][0], "192.0.2.1");
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WifiView {
+    pub available: bool,
+    pub connected: bool,
+    pub ssid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interface: Option<String>,
+    pub state: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct WifiConnectBody {
+    pub ssid: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WifiOutcome {
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<&'static str>,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+fn wifi_operation_id(session_token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"hardened-blikvm-wifi-op-v1");
+    hasher.update(session_token.as_bytes());
+    hasher.update(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
+    let digest = hasher.finalize();
+    digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[cfg(feature = "restricted-control-surface")]
+async fn wifi_request(
+    state: &AppState,
+    session: &crate::auth::session::Session,
+    request: bli_kvm_core::PlatformControlRequestV2,
+) -> AppResult<bli_kvm_control_protocol::ControlResponse> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "WiFi control is not configured".into(),
+        ));
+    };
+    control
+        .execute_v2(wifi_operation_id(&session.token), request)
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("WiFi control is unavailable".into()))
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn network_wifi(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<WifiView>>> {
+    let response = wifi_request(
+        &state,
+        &session,
+        bli_kvm_core::PlatformControlRequestV2::WifiState {},
+    )
+    .await?;
+    match response {
+        bli_kvm_control_protocol::ControlResponse::WifiState {
+            available,
+            up,
+            interface,
+            ssid,
+            state: connection,
+        } => Ok(Json(ApiResponse::ok(WifiView {
+            available,
+            connected: up,
+            ssid: ssid.unwrap_or_default(),
+            interface,
+            state: connection,
+        }))),
+        _ => Err(AppError::ServiceUnavailable(
+            "WiFi state is unavailable".into(),
+        )),
+    }
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn network_wifi_connect(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<WifiConnectBody>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    let response = wifi_request(
+        &state,
+        &session,
+        bli_kvm_core::PlatformControlRequestV2::WifiConnect {
+            ssid: body.ssid,
+            password: body.password,
+        },
+    )
+    .await?;
+    Ok(Json(ApiResponse::ok(wifi_outcome(response))))
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn network_wifi_disconnect(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    let response = wifi_request(
+        &state,
+        &session,
+        bli_kvm_core::PlatformControlRequestV2::WifiDisconnect {},
+    )
+    .await?;
+    Ok(Json(ApiResponse::ok(wifi_outcome(response))))
+}
+
+/// The reference also offers an access-point mode; this board serves the
+/// interface over its own network, so the request is refused with a reason.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn network_wifi_ap(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<WifiConnectBody>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    Ok(Json(ApiResponse::ok(WifiOutcome {
+        applied: false,
+        rejection: Some("unsupported_mode"),
+    })))
+}
+
+#[cfg(feature = "restricted-control-surface")]
+fn wifi_outcome(response: bli_kvm_control_protocol::ControlResponse) -> WifiOutcome {
+    match response {
+        bli_kvm_control_protocol::ControlResponse::Applied => WifiOutcome {
+            applied: true,
+            rejection: None,
+        },
+        bli_kvm_control_protocol::ControlResponse::Rejected { code } => WifiOutcome {
+            applied: false,
+            rejection: Some(crate::hid::rejection_name(code)),
+        },
+        _ => WifiOutcome {
+            applied: false,
+            rejection: Some("unexpected_response"),
+        },
+    }
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn network_wifi(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<WifiView>>> {
+    Err(AppError::ServiceUnavailable(
+        "WiFi control is not configured".into(),
+    ))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn network_wifi_connect(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<WifiConnectBody>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "WiFi control is not configured".into(),
+    ))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn network_wifi_disconnect(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "WiFi control is not configured".into(),
+    ))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn network_wifi_ap(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<WifiConnectBody>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "WiFi control is not configured".into(),
+    ))
 }

@@ -207,6 +207,15 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back whether HID-only mode is on.
     HidOnlyState {},
+    /// Read the WiFi device state.
+    WifiState {},
+    /// Connect to a WiFi network through NetworkManager.
+    WifiConnect {
+        ssid: String,
+        password: String,
+    },
+    /// Disconnect the profile the owner brought up.
+    WifiDisconnect {},
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -265,6 +274,9 @@ impl PlatformControlRequestV2 {
             Self::MouseJigglerState {} => Ok(()),
             Self::HidOnly { .. } => Ok(()),
             Self::HidOnlyState {} => Ok(()),
+            Self::WifiState {} => Ok(()),
+            Self::WifiConnect { .. } => Ok(()),
+            Self::WifiDisconnect {} => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

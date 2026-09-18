@@ -76,6 +76,14 @@ pub enum ControlResponse {
     HidOnlyState {
         enabled: bool,
     },
+    /// The WiFi device state the owner observed.
+    WifiState {
+        available: bool,
+        up: bool,
+        interface: Option<String>,
+        ssid: Option<String>,
+        state: String,
+    },
     Rejected {
         code: ControlRejectionCode,
     },

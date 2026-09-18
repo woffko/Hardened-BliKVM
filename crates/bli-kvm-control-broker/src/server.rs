@@ -344,6 +344,13 @@ async fn board_state(
         Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
         true,
     ));
+    // The reviewed WiFi surface drives NetworkManager through the owner.
+    state.with_wifi(crate::network_settings::WifiState::open(
+        Box::new(crate::network_settings::NmcliRunner::new(
+            crate::network_settings::NM_CONNECTIONS_DIR,
+        )),
+        true,
+    ));
     // The reviewed HID-only switch keeps media attaches refused while on.
     state.with_hid_only(crate::device_settings::HidOnlyState::open(
         crate::device_settings::HID_ONLY_STATE,
@@ -914,7 +921,8 @@ where
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
-        | ControlResponse::HidOnlyState { .. } => None,
+        | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::WifiState { .. } => None,
     };
     timeout(
         request_timeout,

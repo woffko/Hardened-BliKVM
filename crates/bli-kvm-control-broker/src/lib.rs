@@ -3,6 +3,7 @@ pub mod board_status;
 mod config;
 mod device_settings;
 pub mod mouse_jiggler;
+pub mod network_settings;
 #[cfg(feature = "network-write-profile")]
 pub mod network_write;
 #[cfg(any(
@@ -21,6 +22,7 @@ pub mod system_action;
 mod video_settings;
 pub use device_settings::{HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState};
 pub use mouse_jiggler::{JiggleWriter, MouseJigglerState};
+pub use network_settings::{NM_CONNECTIONS_DIR, NmcliRunner, WifiRunner, WifiState, WifiStatus};
 pub use video_settings::{ExecVideoRestartRunner, VideoRestartRunner, VideoSettingsState};
 mod v2;
 

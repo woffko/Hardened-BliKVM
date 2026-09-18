@@ -335,6 +335,15 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(network::network_ipv6).post(network_write::ipv6),
         )
         .route("/network/wol", post(network_write::wol))
+        .route(
+            "/network/wifi",
+            get(network::network_wifi).post(network::network_wifi_ap),
+        )
+        .route("/network/wifi/connect", post(network::network_wifi_connect))
+        .route(
+            "/network/wifi/disconnect",
+            post(network::network_wifi_disconnect),
+        )
         .route("/network/interfaces", get(network::network_interfaces))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))

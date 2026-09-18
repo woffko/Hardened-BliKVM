@@ -79,7 +79,7 @@ IPAddressDeny=any
 # The owner holds the privileged system-action journal, and the armed profile
 # must persist a record before the reboot it triggers, so the store
 # directory is writable together with the gadget and network surfaces.
-ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /var/lib/hardened-blikvm-video /etc/resolv.conf /etc/systemd/resolved.conf
+ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /var/lib/hardened-blikvm-video /etc/resolv.conf /etc/systemd/resolved.conf /etc/NetworkManager/system-connections
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
