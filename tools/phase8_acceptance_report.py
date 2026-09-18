@@ -81,6 +81,34 @@ PHASES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "phase": "P0",
+        "title": "stability: gadget lifecycle and boot reliability",
+        "host": (
+            "crates/bli-kvm-media-transition/src/lib.rs",
+            "crates/bli-kvm-usb-gadget/src/lib.rs",
+            "crates/bli-kvm-control-broker/src/server.rs",
+            "packaging/systemd/hardened-blikvm-board-owner.service",
+            "packaging/systemd/hardened-blikvm-board-server.service",
+            "packaging/systemd/systemd-journald.service.d/99-hardened-blikvm-persistent-journal.conf",
+            "tools/stage_device_gadget_gate.py",
+            "tools/stage_device_boot_gate.py",
+        ),
+        "device": (
+            {
+                "name": "gadget lifecycle gate",
+                "glob": "gadget-lifecycle-gate-*.json",
+                "probe": "hardened-blikvm-gadget-lifecycle-gate",
+                "marker": "result=passed",
+            },
+            {
+                "name": "boot reliability gate",
+                "glob": "boot-gate-*.json",
+                "probe": "hardened-blikvm-boot-gate",
+                "marker": "result=passed",
+            },
+        ),
+    },
+    {
         "phase": "E1",
         "title": "storage and media",
         "host": (

@@ -33,6 +33,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
 
 | Phase | Device receipts (glob) | Status |
 | --- | --- | --- |
+| P0 stability | `gadget-lifecycle-gate-*.json`, `boot-gate-*.json` | the lifecycle gate tool restarts the owner and requires the startup bind plus an attach/eject cycle that leaves HID bound (`result=passed`); the boot gate tool reboots once and requires the changed boot identity, six active product units, `443` and `/api/health` at `200`, an empty failed-unit list and surviving first-boot journal records (`result=passed`) |
 | E0 video | `video-frame-timing-*.json`, `video-two-client-probe-*.json`, `video-soak-probe-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E1 storage and media | `storage-acceptance-*.json`, `storage-upload-*.json`, `virtual-media-acceptance-*.json` | recorded 2026-09-16 (`result=passed`) |
 | E2 board daemon | `boardd-fan-preflight-*.json`, `boardd-fan-gate-*.json`, `boardd-panel-gate-*.json`, `boardd-led-gate-*.json`, `boardd-button-gate-*.json`, `boardd-atx-leds-gate-*.json`, `kvmd-removal-*.json` | preflight and KVMD retirement recorded; the fan, LED and panel handoffs are recorded on 2026-09-17 as `observed-pending` (the daemon owns the lines and answered every request; the operator's physical observation is still open), the button gate is left to the operator, who runs the ATX check personally, the ATX host LED inputs read through the owner to `inventory.powerLed` (`backend=native`), and the panel is bench-verified: the vendor 240x240 initialization with the active-low reset brought the image up and the re-run panel gate passed (`boardd-panel-gate-20260917-d.json`, with the visible pattern required and a driver failure failing the gate) |
@@ -118,6 +119,15 @@ directory owners and modes, the catalogued image, no failed units), all intact.
 Its `--confirm-reboot` step needs the operator's separate reboot approval.
 
 Open device gates need an operator confirmation and their own stage tool: the
+stability gates run through `tools/stage_device_gadget_gate.py` (probe
+`hardened-blikvm-gadget-lifecycle-gate`: `--confirm-restart` proves the owner's
+startup bind and `--image` with `--confirm-media-cycle` proves that an attach
+and eject leave the pinned HID functions bound) and
+`tools/stage_device_boot_gate.py` (probe `hardened-blikvm-boot-gate`:
+`--confirm-reboot` requests the reviewed reboot once and only records `passed`
+when the board returns with every product unit active, `443` and
+`/api/health` at `200`, no failed unit and surviving first-boot journal
+records). The
 board daemon gates (fan, panel, LED and button) run through
 `tools/stage_device_boardd_gate.py --subsystem <name> --confirm-handoff`, which
 records the vendor sysfs exports, installs the daemon from the verified bundle,
