@@ -34,6 +34,18 @@ until the first media attach.
    and a documented recovery after a reboot. Device gates: the HID probe
    (keyboard and mouse against an operator-observed target) and the media
    attach gate.
+
+   Host side is implemented in `3b49bb4`: the owner binds a HID-only gadget
+   before serving and before every HID lease, and the media slice changes a
+   live gadget in place (`replace_mass_storage` on attach, the new
+   `remove_mass_storage` on eject) so HID survives an eject. Device window
+   `gadget-lifecycle-acceptance-20260918-a.json` (private) passed on the board:
+   the restarted owner logged the startup bind, the gadget came up bound with
+   `hid.usb0/1/2` and `/dev/hidg0..2`, the media probe
+   (`virtual-media-acceptance-20260918-a.json`) applied select, attach and
+   eject, and the post-eject state kept the HID functions bound with the
+   mass-storage function gone. Keyboard and mouse on the target and behaviour
+   across a reboot were not part of that window.
 2. **Boot reliability.** Persistent journal, an audit of the serving unit's
    ordering and drop-ins, and a board server that starts after a reboot. Gate:
    reboot, then six of six units active, `443` answering and `/api/health` at
