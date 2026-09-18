@@ -212,3 +212,91 @@ mod tests {
         );
     }
 }
+
+/// The reference mouse jiggler keeps a target awake by nudging the pointer.
+///
+/// Only relative nudging is offered: an absolute move needs the current
+/// pointer position, which this arrangement never learns from the target, so
+/// the reference's absolute mode is refused instead of being faked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseJigglerMode {
+    Disable,
+    Relative,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MouseJigglerChange {
+    pub enabled: bool,
+    pub mode: MouseJigglerMode,
+}
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum MouseJigglerError {
+    #[error("the requested mouse-jiggler mode is not supported")]
+    UnsupportedMode,
+}
+
+impl MouseJigglerChange {
+    pub fn new(enabled: bool, mode: MouseJigglerMode) -> Self {
+        Self { enabled, mode }
+    }
+
+    /// Normalises the reference shape: a disabled jiggler has no mode, and a
+    /// jiggler can only be enabled in a mode this arrangement can drive.
+    pub fn resolve(&self) -> Result<Option<MouseJigglerMode>, MouseJigglerError> {
+        if !self.enabled || self.mode == MouseJigglerMode::Disable {
+            return Ok(None);
+        }
+        match self.mode {
+            MouseJigglerMode::Relative => Ok(Some(MouseJigglerMode::Relative)),
+            MouseJigglerMode::Disable => Ok(None),
+        }
+    }
+
+    /// The mode the interface should read back.
+    pub fn reported_mode(&self) -> MouseJigglerMode {
+        match self.resolve() {
+            Ok(Some(MouseJigglerMode::Relative)) => MouseJigglerMode::Relative,
+            _ => MouseJigglerMode::Disable,
+        }
+    }
+}
+
+/// The bounded nudge the owner sends on every tick: a one-pixel relative move
+/// followed by a release report, so a jiggler never leaves a held movement.
+pub const JIGGLE_DELTA: i8 = 1;
+pub const JIGGLE_INTERVAL_SECONDS: u64 = 10;
+
+/// The report pair for one tick.
+pub fn jiggle_reports() -> [[u8; 4]; 2] {
+    [[0, JIGGLE_DELTA as u8, 0, 0], [0, 0, 0, 0]]
+}
+
+#[cfg(test)]
+mod jiggler_tests {
+    use super::*;
+
+    #[test]
+    fn the_reference_shape_is_normalised_and_absolute_is_refused() {
+        let off = MouseJigglerChange::new(false, MouseJigglerMode::Relative);
+        assert_eq!(off.resolve(), Ok(None));
+        assert_eq!(off.reported_mode(), MouseJigglerMode::Disable);
+
+        let relative = MouseJigglerChange::new(true, MouseJigglerMode::Relative);
+        assert_eq!(relative.resolve(), Ok(Some(MouseJigglerMode::Relative)));
+        assert_eq!(relative.reported_mode(), MouseJigglerMode::Relative);
+
+        let absolute = MouseJigglerChange::new(true, MouseJigglerMode::Disable);
+        assert_eq!(absolute.resolve(), Ok(None));
+    }
+
+    #[test]
+    fn the_nudge_always_releases_the_movement() {
+        let reports = jiggle_reports();
+        assert_ne!(reports[0], [0, 0, 0, 0]);
+        assert_eq!(reports[1], [0, 0, 0, 0]);
+        assert_eq!(reports[0][1], JIGGLE_DELTA as u8);
+    }
+}

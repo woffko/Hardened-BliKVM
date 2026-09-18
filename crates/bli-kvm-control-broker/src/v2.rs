@@ -53,6 +53,7 @@ pub struct ControlV2State {
     >,
     video_settings: Option<crate::video_settings::VideoSettingsState>,
     mdns: Option<crate::device_settings::MdnsState>,
+    mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
@@ -76,6 +77,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -110,6 +112,20 @@ impl ControlV2State {
         self.mdns = Some(mdns);
     }
 
+    /// Attach the reviewed mouse jiggler to the board state.
+    pub fn with_mouse_jiggler(&mut self, jiggler: crate::mouse_jiggler::MouseJigglerState) {
+        self.mouse_jiggler = Some(jiggler);
+    }
+
+    /// One jiggler interval: the serve loop calls this, and it is a no-op when
+    /// no jiggler is attached or the jiggler is off.
+    pub fn jiggle_tick(&mut self) -> Result<(), String> {
+        match self.mouse_jiggler.as_mut() {
+            Some(jiggler) => jiggler.tick(),
+            None => Ok(()),
+        }
+    }
+
     #[cfg(feature = "system-action-profile")]
     fn enabled_base() -> Self {
         Self {
@@ -127,6 +143,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -150,6 +167,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -173,6 +191,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -210,6 +229,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -235,6 +255,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -266,6 +287,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -328,6 +350,26 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         state.handle(change)
+    }
+
+    fn handle_mouse_jiggler(
+        &mut self,
+        change: &bli_kvm_core::MouseJigglerChange,
+    ) -> ControlResponse {
+        let Some(jiggler) = self.mouse_jiggler.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        jiggler.handle(change)
+    }
+
+    fn handle_mouse_jiggler_state(&self) -> ControlResponse {
+        let Some(jiggler) = self.mouse_jiggler.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        ControlResponse::MouseJigglerState {
+            enabled: jiggler.enabled(),
+            mode: jiggler.mode(),
+        }
     }
 
     fn handle_mdns(&mut self, enabled: bool) -> ControlResponse {
@@ -397,6 +439,7 @@ impl ControlV2State {
             network_write: None,
             video_settings: None,
             mdns: None,
+            mouse_jiggler: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -468,6 +511,8 @@ impl ControlV2State {
             PlatformControlRequestV2::VideoSettingsState {} => self.handle_video_settings_state(),
             PlatformControlRequestV2::Mdns { enabled } => self.handle_mdns(*enabled),
             PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
+            PlatformControlRequestV2::MouseJiggler { change } => self.handle_mouse_jiggler(change),
+            PlatformControlRequestV2::MouseJigglerState {} => self.handle_mouse_jiggler_state(),
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)

@@ -128,7 +128,8 @@ pub(crate) async fn virtual_media(
             ControlResponse::MediaState { .. }
             | ControlResponse::BoardStatus { .. }
             | ControlResponse::VideoState { .. }
-            | ControlResponse::MdnsState { .. } => VirtualMediaOutcome {
+            | ControlResponse::MdnsState { .. }
+            | ControlResponse::MouseJigglerState { .. } => VirtualMediaOutcome {
                 applied: false,
                 rejection: Some("invalid_state"),
             },

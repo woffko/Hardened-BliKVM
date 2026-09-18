@@ -101,7 +101,8 @@ pub(crate) async fn application_power(
         },
         ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
-        | ControlResponse::MdnsState { .. } => AtxResponse {
+        | ControlResponse::MdnsState { .. }
+        | ControlResponse::MouseJigglerState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),
         },

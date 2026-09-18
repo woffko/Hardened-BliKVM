@@ -334,6 +334,16 @@ async fn board_state(
         true,
         true,
     ));
+    // The mouse jiggler writes the pinned relative-mouse HID function; the
+    // state file keeps the accepted mode across restarts.
+    let hidg_dir = std::env::var("BLI_KVM_GADGET_HIDG_DIR").unwrap_or_else(|_| "/dev".to_string());
+    let jiggler_state = std::env::var("BLI_KVM_MOUSE_JIGGLER_STATE")
+        .unwrap_or_else(|_| "/var/lib/hardened-blikvm-gadget/mouse-jiggler.env".to_string());
+    state.with_mouse_jiggler(crate::mouse_jiggler::MouseJigglerState::open(
+        jiggler_state,
+        Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
+        true,
+    ));
     // The reviewed device toggles use the same bounded restart runner.
     state.with_device_settings(crate::device_settings::MdnsState::open(
         crate::device_settings::MDNS_CONF,
@@ -820,6 +830,22 @@ where
     fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
     let v2 = Arc::new(TokioMutex::new(v2_state));
+    // The mouse jiggler, when attached, nudges the target on a fixed interval.
+    {
+        let v2 = v2.clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(bli_kvm_core::JIGGLE_INTERVAL_SECONDS);
+            let mut ticker = tokio::time::interval(interval);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                let mut state = v2.lock().await;
+                if let Err(reason) = state.jiggle_tick() {
+                    eprintln!("mouse jiggler: {reason}");
+                }
+            }
+        });
+    }
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -881,7 +907,8 @@ where
         | ControlResponse::MediaState { .. }
         | ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
-        | ControlResponse::MdnsState { .. } => None,
+        | ControlResponse::MdnsState { .. }
+        | ControlResponse::MouseJigglerState { .. } => None,
     };
     timeout(
         request_timeout,

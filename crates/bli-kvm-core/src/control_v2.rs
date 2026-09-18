@@ -195,6 +195,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back whether mDNS publishing is on.
     MdnsState {},
+    /// Keep the target awake with the reviewed relative nudge.
+    MouseJiggler {
+        change: crate::video_settings::MouseJigglerChange,
+    },
+    /// Read back the accepted jiggler state.
+    MouseJigglerState {},
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -249,6 +255,8 @@ impl PlatformControlRequestV2 {
             Self::VideoSettingsState {} => Ok(()),
             Self::Mdns { .. } => Ok(()),
             Self::MdnsState {} => Ok(()),
+            Self::MouseJiggler { .. } => Ok(()),
+            Self::MouseJigglerState {} => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

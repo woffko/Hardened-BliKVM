@@ -16,10 +16,11 @@ export const MouseJiggler = () => {
     getMouseJiggler();
   }, []);
 
+  // The absolute mode needs the pointer position the target never reports, so
+  // only the reviewed relative nudge is offered.
   const options = [
     { value: 'disable', label: t('settings.device.mouseJiggler.disable') },
-    { value: 'relative', label: t('settings.device.mouseJiggler.relative') },
-    { value: 'absolute', label: t('settings.device.mouseJiggler.absolute') }
+    { value: 'relative', label: t('settings.device.mouseJiggler.relative') }
   ];
 
   function getMouseJiggler() {

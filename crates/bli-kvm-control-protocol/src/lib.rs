@@ -67,6 +67,11 @@ pub enum ControlResponse {
     MdnsState {
         enabled: bool,
     },
+    /// The accepted mouse-jiggler state.
+    MouseJigglerState {
+        enabled: bool,
+        mode: bli_kvm_core::MouseJigglerMode,
+    },
     Rejected {
         code: ControlRejectionCode,
     },
