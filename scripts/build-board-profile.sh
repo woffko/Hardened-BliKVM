@@ -73,6 +73,10 @@ install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-owner.service.d"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf \
   "$stage/share/systemd/hardened-blikvm-board-owner.service.d/"
+install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-server.service.d"
+install -m 0644 \
+  packaging/systemd/hardened-blikvm-board-server.service.d/94-application-update.conf \
+  "$stage/share/systemd/hardened-blikvm-board-server.service.d/"
 install -d -m 0755 "$stage/share/systemd/systemd-journald.service.d"
 install -m 0644 \
   packaging/systemd/systemd-journald.service.d/99-hardened-blikvm-persistent-journal.conf \
