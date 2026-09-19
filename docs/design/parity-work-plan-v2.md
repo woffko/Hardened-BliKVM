@@ -477,6 +477,19 @@ implementation of it.
 
 ## Status snapshot (2026-09-19)
 
+Additional progress (later 2026-09-19): the application-update API
+(status/upload/activation sockets plus the write opt-in) is wired on the
+running board server and the authenticated status answers again; the firewall
+baseline gate passes with the owner sandbox intact (a transient unit runs
+`nft`); the video matrix gate holds a viewer and shows the idle 10 fps is the
+`--slowdown` rate; a 180 s video soak passed; and the ST7789 status screen now
+draws correctly (LSB-first font, no frame mirror, primary address from
+`/proc/net/fib_trie`). The remaining device item is the E4 slot-serving cutover,
+which needs the rotated signing key enrolled; swapping the single trust key
+invalidates the existing old-key slots, so it needs either a state
+re-initialisation or a retired-KVMD-aware trust tool.
+
+
 `tools/phase8_acceptance_report.py` reports `overall=incomplete`,
 `hostMissing=0`, `deviceUnrun=2`:
 
