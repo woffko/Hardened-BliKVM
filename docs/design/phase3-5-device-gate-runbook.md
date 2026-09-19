@@ -434,3 +434,34 @@ Note the ownership rule that the direct CLI exposes: a release supervisor
 trusts only a root-owned config, while the stager requires the slot root owned
 by the effective user, so a root CLI needs root-owned roots and the socket
 services (user `hardened-blikvm-update`) need those roots owned by that user.
+
+## 8. Completing the device update cycle after the root rotation
+
+The upload path is fixed (the upload and activation units now list the `-v2`
+roots in `ReadWritePaths`), so a signed candidate stages through
+`POST /api/application-update/upload` and the status surface reports it. The
+activation/apply path is still bound to the **default** roots and must be
+aligned before `POST /api/application-update/activate` can complete on a
+rotated board:
+
+| Unit | Default reference | Needs the `-v2` equivalent |
+| --- | --- | --- |
+| `hardened-blikvm-update-apply-candidate.service` | `ConditionPathExists=/run/hardened-blikvm-update/health-token` | `/run/hardened-blikvm-update-v2/health-token` (OR) |
+| `hardened-blikvm-update-apply-confirmed.service` | `ConditionPathExists[!/]=/run/hardened-blikvm-update/{health-token,confirmed-apply-request.json}`, `ReadWritePaths`, `BindReadOnlyPaths` | `-v2` paths |
+| `hardened-blikvm-server-candidate.service` | `ExecStart`/`WEB_ROOT`/conditions on `/var/lib/hardened-blikvm-slots`, `LoadCredential=application-health-token:/run/hardened-blikvm-update/health-token` | `-v2` slot/report paths |
+| `hardened-blikvm-server-current.service` | `ExecStart`/`WEB_ROOT`/conditions on `/var/lib/hardened-blikvm-slots` | `-v2` slot paths |
+| `hardened-blikvm-update-confirm@.service`, `-activate@.service`, `-recover.service`, `-watchdog.service` | `/var/lib/hardened-blikvm-update`, `/run/hardened-blikvm-update` | `-v2` state/runtime paths |
+
+That change also moves the port-18080 owner from
+`hardened-blikvm-board-server.service` (the board profile serving unit, whose
+drop-in follows `<slotRoot>/current`) to the `-server-candidate`/`-server-current`
+pair, which is the shipped arrangement. The candidate health check runs on
+`127.0.0.1:18080`, so the candidate and board server cannot both run; the board
+server's `Conflicts=` already stops it when the candidate starts. Roll back a
+failed attempt with `systemctl start hardened-blikvm-board-server` after
+stopping `hardened-blikvm-server-current.service`/`-candidate.service`; the
+`current` symlink and state remain on the pre-activation slot until a confirmed
+apply.
+
+Until this alignment is done, keep the serving on the board server and treat
+the candidate as staged-but-not-activated.
