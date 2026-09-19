@@ -137,7 +137,8 @@ fn memory_text() -> String {
         return "mem n/a".into();
     }
     let used_mib = total.saturating_sub(available) / 1024;
-    format!("mem {used_mib}M")
+    let total_mib = total / 1024;
+    format!("{used_mib}/{total_mib}M")
 }
 
 fn parse_kib(value: &str) -> u64 {
@@ -187,33 +188,25 @@ pub fn load_background(path: &Path) -> Result<Vec<Rgb565>, StatusError> {
     Ok(frame)
 }
 
-/// Render the status screen: the background image, then the text overlay.
+/// Render the status screen: the background image, then the value overlay at
+/// the vendor's field positions with dark text on the light image.
 pub fn render(background: Option<&[Rgb565]>, info: &SystemInfo) -> Vec<Rgb565> {
     let mut frame = match background {
         Some(image) if image.len() == DISPLAY_PIXEL_COUNT as usize => image.to_vec(),
         _ => vec![Rgb565::BLACK; DISPLAY_PIXEL_COUNT as usize],
     };
-    draw_text(
-        &mut frame,
-        DISPLAY_WIDTH,
-        DISPLAY_HEIGHT,
-        8,
-        8,
-        "BLIKVM V4",
-        Rgb565::WHITE,
-    );
-    let mut y = 40;
-    for line in info.lines() {
-        draw_text(
-            &mut frame,
-            DISPLAY_WIDTH,
-            DISPLAY_HEIGHT,
-            8,
-            y,
-            &line,
-            Rgb565::WHITE,
-        );
-        y += 24;
+    // The vendor image provides the icons and the table; the values fill the
+    // empty cells. Dark text keeps them readable on the light background.
+    let ink = Rgb565::from_rgb888(0x20, 0x20, 0x30);
+    for (x, y, text) in [
+        (60, 12, "BliKVM V4"),
+        (60, 58, info.address.as_str()),
+        (60, 92, info.temperature.as_str()),
+        (60, 136, info.uptime.as_str()),
+        (60, 176, info.load.as_str()),
+        (196, 176, info.memory.as_str()),
+    ] {
+        draw_text(&mut frame, DISPLAY_WIDTH, DISPLAY_HEIGHT, x, y, text, ink);
     }
     frame
 }
@@ -283,10 +276,12 @@ mod tests {
         let background = vec![Rgb565::GREEN; DISPLAY_PIXEL_COUNT as usize];
         let frame = render(Some(&background), &info);
         assert_eq!(frame.len(), DISPLAY_PIXEL_COUNT as usize);
-        assert!(frame.contains(&Rgb565::WHITE));
+        // The ink differs from the background and from black.
+        let ink = Rgb565::from_rgb888(0x20, 0x20, 0x30);
+        assert!(frame.contains(&ink));
         assert!(frame.contains(&Rgb565::GREEN));
         let empty = render(None, &info);
-        assert!(empty.contains(&Rgb565::WHITE));
+        assert!(empty.contains(&ink));
     }
 
     #[test]

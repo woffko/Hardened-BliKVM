@@ -61,6 +61,25 @@ REVIEWED_RESOLUTIONS = (1080, 720, 600, 480)
 REQUESTED_FPS = (10, 20, 30, 40, 50, 60)
 CAPTURED_FPS_TOLERANCE = 2
 SETTLE_SECONDS = 12
+# ustreamer's --slowdown drops the capture rate while nobody is watching, so the
+# sweep holds one client open on the engine socket for the run and the reported
+# rate is the delivered one.
+ENGINE_SOCKET = "/run/hardened-blikvm-ustreamer/ustreamer.sock"
+VIEWER_START = (
+    "set +e\n"
+    # Each apply restarts ustreamer and drops the client, so the viewer must
+    # reconnect for the whole sweep.
+    f"setsid sh -c 'while true; do curl -s --max-time 30 --unix-socket {ENGINE_SOCKET} "
+    "http://localhost/stream >/dev/null 2>&1; sleep 1; done' "
+    "</dev/null >/dev/null 2>&1 &\n"
+    "sleep 2\n"
+    "echo viewer=started\n"
+)
+VIEWER_STOP = (
+    "set +e\n"
+    f"pkill -f 'ustreamer.sock http://localhost/stream' 2>/dev/null\n"
+    "echo viewer=stopped\n"
+)
 
 
 class MatrixError(Exception):
@@ -80,6 +99,7 @@ class Receipt(TypedDict):
     reviewedResolutions: list[int]
     requestedFps: list[int]
     rows: list[dict[str, Any]]
+    viewerHeld: bool
     restoredFps: int
     restoredResolution: str
     failureStage: str
@@ -296,6 +316,7 @@ def execute(options: Options) -> int:
         "reviewedResolutions": list(REVIEWED_RESOLUTIONS),
         "requestedFps": list(REQUESTED_FPS),
         "rows": [],
+        "viewerHeld": False,
         "restoredFps": 0,
         "restoredResolution": "",
         "failureStage": "",
@@ -355,6 +376,10 @@ def execute(options: Options) -> int:
         if not options.confirm:
             write_json_0600_atomic(output, receipt)
             return 0
+
+        stage = "viewer"
+        require_ssh(options, secret, VIEWER_START, min(options.timeout_seconds, 30))
+        receipt["viewerHeld"] = True
 
         stage = "sweep"
         for height in REVIEWED_RESOLUTIONS:
@@ -417,6 +442,8 @@ def execute(options: Options) -> int:
 
         stage = "restore"
         restore()
+        require_ssh(options, secret, VIEWER_STOP, min(options.timeout_seconds, 30))
+        receipt["viewerHeld"] = False
         if receipt["restoredFps"] != initial_fps:
             raise MatrixError(stage, "fps_restore_mismatch")
         if receipt["restoredResolution"] != before["engine_resolution"]:

@@ -73,11 +73,14 @@ class VideoMatrixTests(unittest.TestCase):
         fps_values: tuple[int, ...] = (30,),
     ) -> dict[str, Any]:
         output, known_hosts = self._paths()
-        replies = [
+        engine_mocks = [
             mock.Mock(stdout=reply.encode(), stderr=b"", returncode=0)
             for reply in engines
         ]
-        replies = replies + [replies[-1]] * 40
+        # The viewer start/stop SSH calls consume one reply each around the
+        # engine reads; their output is ignored by parse_facts.
+        replies = [engine_mocks[0], engine_mocks[0]] + engine_mocks[1:]
+        replies = replies + [engine_mocks[-1], engine_mocks[-1]] + [engine_mocks[-1]] * 40
         settings_replies = list(settings) + [settings[-1]] * 40
         api = mock.Mock()
         api.settings.side_effect = settings_replies

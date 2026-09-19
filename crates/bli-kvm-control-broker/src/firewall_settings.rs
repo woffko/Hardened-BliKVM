@@ -5,9 +5,16 @@
 //! request is refused while no backend exists. When a backend is installed the
 //! baseline is one reviewed ruleset applied with `nft -f`, with the previous
 //! ruleset saved and restored when the apply fails.
+//!
+//! The owner runs in its own network namespace, so `nft` there would edit that
+//! namespace instead of the host. Each `nft` command is therefore executed by
+//! a short-lived systemd unit the owner asks PID1 to start: the transient unit
+//! shares the host network namespace and holds only `CAP_NET_ADMIN`, while the
+//! long-running owner keeps its reviewed sandbox.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 
@@ -43,6 +50,9 @@ pub struct FirewallView {
 /// the probe, the apply and the restore without a device.
 pub trait FirewallRunner: Send {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String>;
+    /// Whether a reviewed backend binary exists; the owner must not execute
+    /// `nft` inside its own sandbox just to answer that.
+    fn exists(&mut self, path: &Path) -> bool;
     fn read_file(&mut self, path: &Path) -> Result<String, String>;
     fn write_file(&mut self, path: &Path, text: &str) -> Result<(), String>;
     fn remove_file(&mut self, path: &Path) -> Result<(), String>;
@@ -50,8 +60,45 @@ pub trait FirewallRunner: Send {
 
 pub struct SystemFirewallRunner;
 
+pub const SYSTEMD_RUN: &str = "/usr/bin/systemd-run";
+
+impl SystemFirewallRunner {
+    /// Run `nft` in a short-lived host-network unit so the baseline applies to
+    /// the host and not to the owner's private namespace.
+    fn run_nft(&mut self, args: &[&str]) -> Result<String, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+        let unit = format!(
+            "hardened-blikvm-firewall-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let output = Command::new(SYSTEMD_RUN)
+            .arg("--quiet")
+            .arg("--collect")
+            .arg("--wait")
+            .arg(format!("--unit={unit}"))
+            .arg("--property=NoNewPrivileges=yes")
+            .arg("--property=PrivateDevices=yes")
+            .arg("--property=ProtectSystem=strict")
+            .arg("--property=RestrictAddressFamilies=AF_NETLINK")
+            .arg("--property=CapabilityBoundingSet=CAP_NET_ADMIN")
+            .arg("--")
+            .arg(NFT)
+            .args(args)
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
 impl FirewallRunner for SystemFirewallRunner {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
+        if program == NFT {
+            return self.run_nft(args);
+        }
         let output = Command::new(program)
             .args(args)
             .output()
@@ -60,6 +107,10 @@ impl FirewallRunner for SystemFirewallRunner {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn exists(&mut self, path: &Path) -> bool {
+        path.is_file()
     }
 
     fn read_file(&mut self, path: &Path) -> Result<String, String> {
@@ -155,16 +206,18 @@ impl FirewallState {
         ControlResponse::Applied
     }
 
-    fn probe(&mut self, program: &str, args: &[&str]) -> BackendView {
-        match self.runner.run(program, args) {
-            Ok(output) => BackendView {
+    fn probe(&mut self, program: &str, _args: &[&str]) -> BackendView {
+        let path = Path::new(program);
+        if self.runner.exists(path) {
+            BackendView {
                 installed: true,
-                detail: output.trim().to_string(),
-            },
-            Err(detail) => BackendView {
+                detail: program.to_string(),
+            }
+        } else {
+            BackendView {
                 installed: false,
-                detail,
-            },
+                detail: format!("{program} is not installed"),
+            }
         }
     }
 
@@ -244,6 +297,10 @@ mod tests {
     }
 
     impl FirewallRunner for RecordingRunner {
+        fn exists(&mut self, _path: &Path) -> bool {
+            self.installed
+        }
+
         fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
             let call = format!("{program} {}", args.join(" "));
             self.calls.lock().unwrap().push(call.clone());

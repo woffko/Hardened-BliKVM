@@ -157,6 +157,12 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "probe": "hardened-blikvm-device-settings-gate",
                 "marker": "result=passed",
             },
+            {
+                "name": "firewall baseline gate",
+                "glob": "firewall-gate-*.json",
+                "probe": "hardened-blikvm-firewall-gate",
+                "marker": "result=passed",
+            },
         ),
     },
     {

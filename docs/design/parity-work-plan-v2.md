@@ -206,9 +206,14 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   resolution is now a reviewed setting of its own (owner env file, unit
   `--resolution=${BLI_KVM_USTREAMER_RESOLUTION}`, four modes the interface
   offers, applied and read back on the device) and the 1080p experiment shows
-  the 10 fps limit is independent of the output mode *and* of motion: driving
-  the pointer for twenty seconds left the capture at 10 fps while two snapshot
-  frames two seconds apart differed, so the feed is live, just slow. The
+  the 10 fps figure is independent of the output mode *and* of motion: driving
+  the pointer for twenty seconds left the idle capture at 10 fps while two
+  snapshot frames two seconds apart differed, so the feed is live. The figure
+  is the `--slowdown` idle rate our unit requests, not a bridge limit: with one
+  with one MJPEG viewer connected the delivered rate follows
+  the request (10/20/30/50/50/50 at 1920x1080, 10/20/30/50/50/60 at 1280x720,
+  800x600 and 640x480; `video-matrix-20260919-e.json`), with the 1080p plateau
+  near 50 fps coming from `--drop-same-frames=30` on a static desktop. The
   delivered rate is now read back over the engine's read-only `/state` socket
   (`crates/bli-kvm-server/src/video_engine.rs`, env
   `BLI_KVM_USTREAMER_SOCKET`) and the screen menu shows it beside the requested
@@ -302,11 +307,13 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   restores the baseline. The device gate then found a sandbox limit: under
   `PrivateNetwork=yes` the owner's `nft` manages its own network namespace, and
   removing that directive raised the unit's `systemd-analyze security` exposure
-  from 1.7 to 2.1, above the reviewed threshold of 2.0. The baseline therefore
-  stays fail-closed until a transient helper unit (host network namespace,
-  `CAP_NET_ADMIN`) runs the reviewed `nft -f` for the owner; the gate and its
-  receipt glob are ready for that change and are not pinned in the manifest
-  yet.
+  from 1.7 to 2.1, above the reviewed threshold of 2.0. The fix is a transient helper:
+  each `nft` command is executed by a short-lived systemd unit the owner asks
+  PID1 to start (`systemd-run --wait`, host network namespace, only
+  `CAP_NET_ADMIN`), while the owner keeps its sandbox. The probe now checks the
+  backend binary's existence instead of executing it. The gate then passed on
+  the device with the unit unchanged (`firewall-gate-20260919-c.json`) and is
+  pinned in the P2 manifest.
 - **systemLog** (device gate, 2026-09-19): the test line works. `logger`
   returned success without the line ever appearing in the journal on this
   image, so the owner sends the reviewed native journal payload straight to

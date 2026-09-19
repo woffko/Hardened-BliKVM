@@ -54,8 +54,20 @@ pipeline, which needs a deliberate decision and its own gate.
 
 ## What actually limits the frame rate
 
-The engine asks for whatever the settings file says (currently 60) and reports
-`captured_fps: 10`. The bridge advertises 720p60 for MJPEG, so the 10 fps we
+The engine asks for whatever the settings file says (currently 60) and, while
+no viewer is connected, reports `captured_fps: 10` because our unit passes
+`--slowdown` (ustreamer drops the capture rate to save CPU when no stream or
+sink client is attached). With one MJPEG client connected on 2026-09-19 the engine
+reported `captured_fps: 60`, `stream.queued_fps: 60` and a client rate of
+60 fps, so the bridge is not limited to 10 fps; the idle figure is the
+power-saving rate. The vendor script passes no `--slowdown`, which is a
+deliberate difference.
+
+The viewer-held matrix (`video-matrix-20260919-e.json`) shows the delivered
+rate follows the request with a viewer: 10/20/30/50/50/50 fps at 1920x1080 and
+10/20/30/50/50/60 at 1280x720, 800x600 and 640x480. The 1080p plateau near
+50 fps is the static-desktop `--drop-same-frames=30` behaviour and the USB2
+budget, not a fixed 10 fps bridge limit. The bridge advertises 720p60 for MJPEG, so the 10 fps we
 see is either the HDMI input signal itself or the practical USB2 throughput of
 this dongle; `--drop-same-frames=30` also reduces the *streamed* rate on a
 static desktop. Measuring which one it is needs the frame-timing probe with a
