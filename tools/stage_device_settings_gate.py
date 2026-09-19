@@ -23,6 +23,7 @@ import argparse
 from dataclasses import dataclass
 import json
 import re
+import secrets
 import sys
 import time
 import urllib.error
@@ -362,7 +363,9 @@ def execute(options: Options) -> int:
         refusal = api.post(
             "/api/virtual-media",
             {
-                "operationId": "0" * 32,
+                # A real operation id: the reviewed media layer treats a
+                # repeated id as its own conflict.
+                "operationId": secrets.token_hex(16),
                 "command": {
                     "action": "select",
                     "imageId": images[0].get("imageId"),
