@@ -322,6 +322,33 @@ mod tests {
     }
 
     #[test]
+    fn the_native_board_inventory_maps_to_a_current_only_view() {
+        // The exact shape the platform broker returns on the H616 board.
+        let value = serde_json::json!({
+            "schemaVersion": 3,
+            "platformId": "bli-h616-pikvm",
+            "backend": "native",
+            "versions": {"kvmd": null, "streamer": null},
+            "video": {"enabled": null, "online": null, "busy": null, "connected": null},
+            "hid": {"enabled": null, "online": null, "busy": null, "connected": null},
+            "power": {"enabled": null, "online": null, "busy": null, "connected": null},
+            "virtualMedia": {"enabled": null, "online": null, "busy": null, "connected": null},
+            "thermal": {"temperatureMillidegreesCelsius": 51902},
+            "rtc": {"unixSeconds": null, "offsetFromSystemSeconds": null},
+            "powerLed": false,
+            "janusEnabled": null
+        });
+        let inventory: RuntimeInventory = serde_json::from_value(value).unwrap();
+        let view = DiagnosticsView::from_inventory(&inventory).unwrap();
+        assert_eq!(view.validate(), Ok(()));
+        assert_eq!(
+            view.current.temperature.state,
+            DiagnosticMetricState::Available
+        );
+        assert_eq!(view.current.rtc.state, DiagnosticMetricState::Unavailable);
+    }
+
+    #[test]
     fn serialized_view_excludes_identity_version_log_and_persistence_payloads() {
         let view = DiagnosticsView::from_inventory(&inventory()).unwrap();
         let json = serde_json::to_string(&view).unwrap();

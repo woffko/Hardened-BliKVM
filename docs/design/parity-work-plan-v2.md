@@ -639,8 +639,13 @@ Live surface smoke after the cutover (authenticated): `/api/health`,
 `/api/application/version`, `/api/application-update/status`,
 `/api/capabilities`, `/api/vm/screen`, `/api/vm/info`,
 `/api/virtual-media/catalog`, `/api/inventory`, `/api/hostname`,
-`/api/system/time` and `/api/network/dns` all answer `code=0`. Residual,
-pre-existing and outside the manifest: `/api/diagnostics` answers 503 because
-the diagnostic collector/store is not part of the board profile (the earlier
-`device-diagnostics-api-attempt*.json` receipts record the failed attempt; the
-collector itself was verified separately). KVMD and `kvmd-main` are masked.
+`/api/system/time` and `/api/network/dns` all answer `code=0`. The system-log surface (`/api/system-log/config`, `/api/system-log/messages`)
+answers `code=0`. Residual, pre-existing and outside the manifest:
+`/api/diagnostics` answers 503. A new host test
+(`the_native_board_inventory_maps_to_a_current_only_view`) shows the current
+source maps the exact board inventory to a valid current-only view, so the 503
+comes from the served binary being older than the current-only diagnostics API
+(commit `f0973ce`), not from the data; the earlier
+`device-diagnostics-api-attempt*.json` receipts record the failed attempt and
+the collector was verified separately. The fix path is a rebuilt server served
+through the retained update path. KVMD and `kvmd-main` are masked.

@@ -476,22 +476,25 @@ async fn capability_manifest(
     Json(ApiResponse::ok((*state.capabilities).clone()))
 }
 
+/// Resolve the runtime inventory the same way for every view: the vendor
+/// broker when it answers, otherwise (board profile) the facts our own
+/// arrangement observes instead of failing the whole view.
+async fn resolve_inventory(state: &AppState) -> AppResult<RuntimeInventory> {
+    match state.inventory.inventory().await {
+        Ok(inventory) => Ok(inventory),
+        Err(_) if state.options.restricted_controls_enabled && state.control.is_some() => {
+            Ok(native_inventory(state).await)
+        }
+        Err(_) => Err(AppError::ServiceUnavailable(
+            "platform broker unavailable".into(),
+        )),
+    }
+}
+
 async fn runtime_inventory(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<RuntimeInventory>>> {
-    let inventory = match state.inventory.inventory().await {
-        Ok(inventory) => inventory,
-        // The board profile has no vendor backend: report the facts our own
-        // arrangement observes instead of failing the whole view.
-        Err(_) if state.options.restricted_controls_enabled && state.control.is_some() => {
-            native_inventory(&state).await
-        }
-        Err(_) => {
-            return Err(AppError::ServiceUnavailable(
-                "platform broker unavailable".into(),
-            ));
-        }
-    };
+    let inventory = resolve_inventory(&state).await?;
     Ok(Json(ApiResponse::ok(inventory)))
 }
 
@@ -535,11 +538,7 @@ async fn native_inventory(state: &AppState) -> RuntimeInventory {
 async fn diagnostics_view(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<DiagnosticsView>>> {
-    let inventory = state
-        .inventory
-        .inventory()
-        .await
-        .map_err(|_| AppError::ServiceUnavailable("platform broker unavailable".into()))?;
+    let inventory = resolve_inventory(&state).await?;
     let diagnostics = DiagnosticsView::from_inventory(&inventory)
         .map_err(|_| AppError::ServiceUnavailable("diagnostics view unavailable".into()))?;
     Ok(Json(ApiResponse::ok(diagnostics)))
@@ -1334,6 +1333,60 @@ mod tests {
         assert_eq!(body["code"], 0);
         assert_eq!(body["data"]["backend"], "native");
         assert_eq!(body["data"]["powerLed"], true);
+        broker.await.unwrap();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn the_board_profile_diagnostics_use_the_native_inventory() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut prefix = [0_u8; 4];
+            stream.read_exact(&mut prefix).await.unwrap();
+            let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut payload).await.unwrap();
+            let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+            assert!(matches!(
+                request.request,
+                bli_kvm_core::PlatformControlRequestV2::BoardStatus {}
+            ));
+            let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                request_id: request.request_id,
+                operation_id: request.operation_id,
+                response: bli_kvm_control_protocol::ControlResponse::BoardStatus {
+                    power_led_present: true,
+                    power_led_on: true,
+                    hdd_led_present: true,
+                    hdd_led_on: false,
+                },
+            };
+            let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+            stream
+                .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                .await
+                .unwrap();
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, _csrf) = setup_and_login(&app).await;
+        let request = Request::builder()
+            .uri("/api/diagnostics")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .unwrap();
+        let body = json_body(app.clone().oneshot(request).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["availability"], "current_only");
+        assert_eq!(body["data"]["current"]["components"]["powerLed"], "active");
         broker.await.unwrap();
     }
 
