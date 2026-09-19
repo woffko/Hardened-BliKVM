@@ -16,7 +16,8 @@ class DeviceSettingsGateTests(unittest.TestCase):
         for forbidden in ("systemctl", "rm -", "install -m", "echo >", "tee "):
             self.assertNotIn(forbidden, script)
         self.assertIn("resolvectl mdns", script)
-        self.assertIn("journalctl -t hardened-blikvm", script)
+        self.assertIn("journalctl --since '-2min'", script)
+        self.assertIn("hardened-blikvm system-log test", script)
         facts = gate.parse_facts(
             "  indented=1\nmdns_link=yes\njournal_test_lines=3\nbad key=1\n"
         )

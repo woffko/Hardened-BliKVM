@@ -160,8 +160,9 @@ def facts_script() -> str:
         "printf 'mdns_link=%s\\n' \"$(resolvectl mdns 2>/dev/null | "
         "grep -m1 '^Global:' | sed 's/^Global:[[:space:]]*//' | "
         "tr -c 'A-Za-z0-9_.:-' '_')\"\n"
-        "printf 'journal_test_lines=%s\\n' \"$(journalctl -t hardened-blikvm "
-        "--no-pager 2>/dev/null | wc -l | tr -d ' ')\"\n"
+        "printf 'journal_test_lines=%s\\n' \"$(journalctl --since '-2min' "
+        "--no-pager 2>/dev/null | grep -c 'hardened-blikvm system-log test' "
+        "| tr -d ' ')\"\n"
     )
 
 
