@@ -401,5 +401,20 @@ reviewed path left is:
    discards the retained slot history (floor/generation reset). It needs the
    operator's explicit approval because the retained slots are removed.
 
-Until one is chosen the E4 slot-serving cutover stays unrun and the running
-build is updated only by the board-profile bundle deploy.
+A **non-destructive** rotation was performed on 2026-09-19 that keeps the old
+key, config and roots intact: a second config with the new key and fresh roots
+(`/var/lib/hardened-blikvm-{slots,update}-v2`, `/run/hardened-blikvm-update-v2`,
+owner `hardened-blikvm-update`) was validated, the seq13 bundle was staged and
+the fresh state initialised (floor 13, generation 1). The live
+`/etc/hardened-blikvm/update-supervisor.json` (root-owned, owner `0` is the only
+trusted config owner in release) now points at the new key and fresh roots, and
+the authenticated status surface reports the seq13 state
+(`evidence/private/update-trust-rotation-20260919-a.json`). The previous config
+is backed up and the previous roots are untouched, so the rotation is
+reversible. Activation and the slot-serving cutover were not performed and
+remain the operator's call.
+
+Note the ownership rule that the direct CLI exposes: a release supervisor
+trusts only a root-owned config, while the stager requires the slot root owned
+by the effective user, so a root CLI needs root-owned roots and the socket
+services (user `hardened-blikvm-update`) need those roots owned by that user.
