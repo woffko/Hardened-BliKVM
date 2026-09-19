@@ -252,6 +252,18 @@ HDD LEDs, the RTC and the session lock are fed by existing observations.
 
 ## P3 - HID and inputs
 
+Host side: the built interface already carries the keyboard (with the leader-key
+recorder) and mouse menus (absolute, relative and the mobile trackpad), and the
+server serves the HID lease, focus and leader-key routes. The one missing
+server surface was the shortcut store, which now exists reviewed
+(`crates/bli-kvm-server/src/shortcuts.rs`, `b611e12`): one to four keys per
+entry, ASCII key codes, a fixed entry count, an atomic mode-0600 file in the
+server's own state directory, and `GET`/`POST`/`DELETE /api/hid/shortcuts` in
+the shapes the interface already calls. What remains is the end-to-end gate on
+an observed target: the reviewed keyboard and mouse probes plus a shortcut
+round trip, with the operator watching the target.
+
+
 Keyboard and mouse menus, the leader key, shortcuts and the mobile keyboard are
 compared against the reference, with an end-to-end gate on an observed target.
 
