@@ -121,7 +121,20 @@ Recorded detail:
   reference receipt (`gui-parity-compare-20260919-a.json`): the only captured
   label difference is still the product name, with no capability differences, no
   marker differences, no failed requests and an unchanged console-error count.
-  The reference-side settings tabs remain uncaptured as recorded above.
+  The reference-side settings tabs remain uncaptured as recorded above. The
+  reference was re-captured on 2026-09-19 with the operator's credentials
+  (`gui-parity-reference-auth-20260919-a.json`) and compared with our fresh
+  capture (`gui-parity-compare-20260919-b.json`): the only label difference is
+  still the product name, with no capability, marker or request differences.
+- E2 firewall baseline (2026-09-19): `nftables` was installed. Applying the
+  reviewed baseline passed once with the owner moved to the host network
+  namespace (`firewall-gate-20260919-b.json`), but that change raised the
+  unit's `systemd-analyze security` exposure from 1.7 to 2.1, above the
+  reviewed threshold of 2.0, so the unit was reverted and the surface stays
+  fail-closed. The gate and the runbook section are ready for a transient
+  helper unit (host network namespace, `CAP_NET_ADMIN`) that runs the reviewed
+  `nft -f` for the owner; until then the firewall item is not pinned in the
+  manifest.
 - E5: `gui-parity-ours-auth-20260916-a.json`,
   `gui-parity-compare-20260916-a.json` and
   `vendor-replacement-20260916-b.json`: our five units active, every KVMD unit

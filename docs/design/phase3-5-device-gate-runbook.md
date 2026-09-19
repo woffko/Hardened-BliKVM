@@ -144,6 +144,27 @@ FPS (10/20/30/40/50/60), each with `engineResolution` equal to the reviewed mode
 and the original settings restored at the end. This sweep restarts the streamer
 per combination, so it is run as one approved window.
 
+## 1e. Firewall baseline gate (after nftables is installed)
+
+With `nftables` installed the owner can apply its reviewed baseline ruleset.
+The gate applies `baseline`, requires the confirmation and the active state, and
+restores the mode it found. It writes
+`evidence/private/firewall-gate-<date>.json` (probe
+`hardened-blikvm-firewall-gate`, `result=passed`):
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/stage_device_firewall_gate.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --base-url https://<host> --api-username admin \
+  --ca-file evidence/private/<host>.crt \
+  --confirm --output evidence/private/firewall-gate-<date>.json
+```
+
+Expected facts: `backendAvailable=true`, `nftInstalled=true`, `applied=true`,
+`confirmed=true` and the mode restored to the value it had before the run.
+
 ## 2. HID keyboard and mouse modes (safe target only)
 
 Prerequisite: a controlled target and its video visible to the operator.

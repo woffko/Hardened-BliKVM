@@ -297,8 +297,16 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   one reviewed ruleset with `nft -f` when a backend exists, saving the previous
   ruleset and restoring it when the apply fails. The server exposes the
   reference status, mode and confirm routes, offering only the baseline mode
-  and refusing the others with a reason. Running the write/restore on the
-  device needs `nft` installed, which remains a separate operator approval.
+  and refusing the others with a reason. `nftables` was installed on
+  2026-09-19, and the new `tools/stage_device_firewall_gate.py` applies and
+  restores the baseline. The device gate then found a sandbox limit: under
+  `PrivateNetwork=yes` the owner's `nft` manages its own network namespace, and
+  removing that directive raised the unit's `systemd-analyze security` exposure
+  from 1.7 to 2.1, above the reviewed threshold of 2.0. The baseline therefore
+  stays fail-closed until a transient helper unit (host network namespace,
+  `CAP_NET_ADMIN`) runs the reviewed `nft -f` for the owner; the gate and its
+  receipt glob are ready for that change and are not pinned in the manifest
+  yet.
 - **systemLog** (device gate, 2026-09-19): the test line works. `logger`
   returned success without the line ever appearing in the journal on this
   image, so the owner sends the reviewed native journal payload straight to

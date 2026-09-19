@@ -213,6 +213,7 @@ python3 -m unittest \
   tools/test_stage_device_boot_gate.py \
   tools/test_stage_device_video_settings_gate.py \
   tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_firewall_gate.py \
   tools/test_stage_device_hid_lease_gate.py \
   tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_gadget_gate.py \
@@ -416,6 +417,7 @@ python3 -m py_compile \
   tools/test_stage_device_boot_gate.py \
   tools/test_stage_device_video_settings_gate.py \
   tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_firewall_gate.py \
   tools/test_stage_device_hid_lease_gate.py \
   tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_gadget_gate.py \
@@ -610,6 +612,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_boot_gate.py \
     tools/stage_device_video_settings_gate.py \
     tools/stage_device_tailscale_gate.py \
+    tools/stage_device_firewall_gate.py \
     tools/stage_device_hid_lease_gate.py \
     tools/stage_device_settings_gate.py \
     tools/stage_device_gadget_gate.py \
@@ -680,11 +683,13 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_boot_gate.py \
     tools/test_stage_device_video_settings_gate.py \
   tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_firewall_gate.py \
   tools/test_stage_device_hid_lease_gate.py \
     tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_video_settings_gate.py \
   tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_firewall_gate.py \
   tools/test_stage_device_hid_lease_gate.py \
   tools/test_stage_device_settings_gate.py \
     tools/test_stage_device_gadget_gate.py \
