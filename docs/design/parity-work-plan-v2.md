@@ -619,3 +619,18 @@ again after the cutover (`hid-lease-supersede-gate-20260919-e.json`).
 
 `tools/phase8_acceptance_report.py` now reports `overall=complete`,
 `hostMissing=0`, `deviceUnrun=0` against the manifest.
+
+Build determinism: the runtime Debian package built twice from the same
+prototype bundle (`49c49a0f…`) is byte-identical
+(`db8f45a1…`, `SOURCE_DATE_EPOCH=0`); recorded in
+`evidence/private/runtime-deb-determinism-20260919-a.json`.
+
+Live surface smoke after the cutover (authenticated): `/api/health`,
+`/api/application/version`, `/api/application-update/status`,
+`/api/capabilities`, `/api/vm/screen`, `/api/vm/info`,
+`/api/virtual-media/catalog`, `/api/inventory`, `/api/hostname`,
+`/api/system/time` and `/api/network/dns` all answer `code=0`. Residual,
+pre-existing and outside the manifest: `/api/diagnostics` answers 503 because
+the diagnostic collector/store is not part of the board profile (the earlier
+`device-diagnostics-api-attempt*.json` receipts record the failed attempt; the
+collector itself was verified separately). KVMD and `kvmd-main` are masked.
