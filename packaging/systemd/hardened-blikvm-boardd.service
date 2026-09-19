@@ -30,7 +30,9 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
-ProcSubset=pid
+# The status panel reads uptime, load, memory and the interface table from
+# /proc; the process view stays hidden through ProtectProc=invisible.
+ProcSubset=all
 RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes

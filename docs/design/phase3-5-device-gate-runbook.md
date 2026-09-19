@@ -165,6 +165,26 @@ python3 -B tools/stage_device_firewall_gate.py \
 Expected facts: `backendAvailable=true`, `nftInstalled=true`, `applied=true`,
 `confirmed=true` and the mode restored to the value it had before the run.
 
+## 1f. Panel status gate (ST7789)
+
+Proves the daemon paints a defined frame: it reads the panel state, draws the
+fixed test pattern, restarts `hardened-blikvm-boardd`, and requires the daemon
+to re-initialize and light the panel by itself. It writes
+`evidence/private/panel-status-gate-<date>.json` (probe
+`hardened-blikvm-panel-status-gate`, `result=passed`):
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/stage_device_panel_gate.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --confirm --output evidence/private/panel-status-gate-<date>.json
+```
+
+Expected facts: `initializedBefore=true`, `testPatternCode=0`,
+`daemonRestarted=true`, `initializedAfter=true`, `backlightAfter=true`. The
+operator confirms the visible image.
+
 ## 2. HID keyboard and mouse modes (safe target only)
 
 Prerequisite: a controlled target and its video visible to the operator.

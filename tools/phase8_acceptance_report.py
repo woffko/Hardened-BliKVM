@@ -134,6 +134,12 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "probe": "hardened-blikvm-video-matrix-gate",
                 "marker": "result=passed",
             },
+            {
+                "name": "panel status gate",
+                "glob": "panel-status-gate-*.json",
+                "probe": "hardened-blikvm-panel-status-gate",
+                "marker": "result=passed",
+            },
         ),
     },
     {
