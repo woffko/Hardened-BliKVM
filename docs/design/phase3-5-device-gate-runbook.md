@@ -437,22 +437,21 @@ services (user `hardened-blikvm-update`) need those roots owned by that user.
 
 ## 8. Completing the device update cycle after the root rotation
 
-The upload path is fixed (the upload and activation units now list the `-v2`
-roots in `ReadWritePaths`), so a signed candidate stages through
-`POST /api/application-update/upload` and the status surface reports it. The
-activation/apply path is still bound to the **default** roots and must be
-aligned before `POST /api/application-update/activate` can complete on a
-rotated board:
-
-| Unit | Default reference | Needs the `-v2` equivalent |
-| --- | --- | --- |
-| `hardened-blikvm-update-apply-candidate.service` | `ConditionPathExists=/run/hardened-blikvm-update/health-token` | `/run/hardened-blikvm-update-v2/health-token` (OR) |
-| `hardened-blikvm-update-apply-confirmed.service` | `ConditionPathExists[!/]=/run/hardened-blikvm-update/{health-token,confirmed-apply-request.json}`, `ReadWritePaths`, `BindReadOnlyPaths` | `-v2` paths |
-| `hardened-blikvm-server-candidate.service` | `ExecStart`/`WEB_ROOT`/conditions on `/var/lib/hardened-blikvm-slots`, `LoadCredential=application-health-token:/run/hardened-blikvm-update/health-token` | `-v2` slot/report paths |
-| `hardened-blikvm-server-current.service` | `ExecStart`/`WEB_ROOT`/conditions on `/var/lib/hardened-blikvm-slots` | `-v2` slot paths |
-| `hardened-blikvm-update-confirm@.service`, `-activate@.service`, `-recover.service`, `-watchdog.service` | `/var/lib/hardened-blikvm-update`, `/run/hardened-blikvm-update` | `-v2` state/runtime paths |
-
-That change also moves the port-18080 owner from
+Done on 2026-09-19. The upload path was fixed first (the upload and activation
+units now list the `-v2` roots in `ReadWritePaths`), so a signed candidate stages
+through `POST /api/application-update/upload`. The activation/apply path is
+bound to the **default** roots, so instead of rewriting every condition the live
+config's `runtimeRoot` was aligned to the default `/run/hardened-blikvm-update`
+(matching all base conditions and credentials), the outdated installed
+`-server-candidate`/`-server-current` units (which still required the retired
+platform broker) were replaced by the board-owner packaging versions, and small
+`10-rotated.conf` drop-ins point the serving units' `ExecStart`/web root at
+`<slotRoot>/current` and add `-v2` write access to the update runtime units.
+`ConditionPathExists=` cannot be reset on systemd 249, so conditions were left
+to the (still-present) default paths. The state then reached generation 4,
+floor 14, confirmed seq14 with seq13 as `previous`
+(`evidence/private/update-cycle-seq13-to-seq14-20260919-a.json`), and the
+port-18080 owner moved from
 `hardened-blikvm-board-server.service` (the board profile serving unit, whose
 drop-in follows `<slotRoot>/current`) to the `-server-candidate`/`-server-current`
 pair, which is the shipped arrangement. The candidate health check runs on

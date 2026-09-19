@@ -666,12 +666,20 @@ optional (`-`) entries makes the upload succeed: `POST
 slot `app-...14-...`. The board also had its root filesystem at 98%; `apt-get
 clean` freed ~200M (317M free, 94%). `evidence/private/update-upload-fix-20260919-a.json`.
 
-Activation is still blocked: the apply/serving units are hardcoded to the
-default roots (`apply-candidate` `ConditionPathExists=/run/hardened-blikvm-update/health-token`;
-`hardened-blikvm-server-candidate.service`
-`ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server`), so with the
-live `-v2` runtime an activation would write the health token under `-v2` while
-the apply condition checks the default path, and the candidate would serve the
-pre-rotation slot. Aligning those units with the configured roots is the next
-chunk; activation was not performed to avoid a stuck `pending` state. KVMD and
-`kvmd-main` are masked.
+Activation then completed. The apply/serving units are hardcoded to the default
+roots, so the live config's `runtimeRoot` was aligned to the default
+`/run/hardened-blikvm-update` (matching every base condition and credential),
+the outdated installed `-server-candidate`/`-server-current` units (which still
+required the retired platform broker) were replaced by the board-owner packaging
+versions, and reviewed drop-ins point the serving units' `ExecStart`/web root at
+`<slotRoot>/current` and grant the update runtime units write access to the
+`-v2` roots. The device cycle then ran end to end: `upload` published seq14,
+`activate` returned `202 awaiting_health`, the candidate passed health,
+`apply-confirmed` restarted the server, and the state reached generation 4,
+floor 14, confirmed seq14 with seq13 as `previous`
+(`evidence/private/update-cycle-seq13-to-seq14-20260919-a.json`). Serving moved
+from the board server to `hardened-blikvm-server-current.service`
+(enabled, running the seq14 slot), which persisted across a reboot, and
+`/api/diagnostics` now returns `code=0` with the current-only native inventory
+fix live. The HID lease gate passed after the switch
+(`hid-lease-supersede-gate-20260919-f.json`). KVMD and `kvmd-main` are masked.
