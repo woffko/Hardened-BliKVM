@@ -211,6 +211,15 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   reference status, mode and confirm routes, offering only the baseline mode
   and refusing the others with a reason. Running the write/restore on the
   device needs `nft` installed, which remains a separate operator approval.
+- **systemLog** (device-gate note, 2026-09-19): the test line's *transport* is
+  the open item. `logger` returned success without the line ever appearing in
+  the journal on this image, so the owner now sends the reviewed native journal
+  payload straight to `/run/systemd/journal/socket` (`ef8e349`); the socket
+  accepts the datagram (the owner answers `applied=true`) but no entry shows up
+  under the tag either, so the payload format or journald's acceptance needs
+  one more look. The gate records `systemLogTestApplied=true` and
+  `systemLogLineObserved=false`, and the toggles were restored and verified
+  again (`enabled=no`, `MulticastDNS=no`).
 - **systemLog**: `/system-log/config` and `/system-log/messages` already serve
   the configuration, kernel and local views. `test` is implemented: the owner
   writes exactly one bounded line to the journal with `logger`, which is the
