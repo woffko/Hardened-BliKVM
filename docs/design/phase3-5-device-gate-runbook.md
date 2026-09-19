@@ -369,16 +369,17 @@ device on 2026-09-19 and is **not** sufficient by itself: every retained slot
 rejects the existing state (`GET /api/application-update/status` returns 503 and
 an upload answers `archive verification failed`). The change was rolled back.
 
-Two reviewed paths remain for the operator to choose:
+**Re-signing the retained slots is not viable**: `bli-kvm-update-verifier`
+requires `manifest.keyId == trust_root.keyId`, and the manifest `keyId` is part
+of the signed bytes, so changing it would change the manifest SHA and therefore
+the slot id (`app-<seq>-<manifest-sha>`) and the state that names it. The only
+reviewed path left is:
 
 1. **Re-initialise the application state under the new key**
    (`tools/initialize_application_state.py`, the first-signed-slot
    orchestrator). This provisions a fresh state with the new trust anchor and
-   discards the retained slot history (floor/generation reset).
-2. **Re-sign the retained slots with the new key** before swapping the anchor,
-   so the existing manifests verify under the new key. This preserves history
-   but writes new `manifest.sig` files into the retained slots and needs a
-   reviewed tool.
+   discards the retained slot history (floor/generation reset). It needs the
+   operator's explicit approval because the retained slots are removed.
 
 Until one is chosen the E4 slot-serving cutover stays unrun and the running
 build is updated only by the board-profile bundle deploy.
