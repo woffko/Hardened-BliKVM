@@ -155,7 +155,16 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   both toggles were restored by hand and verified (`enabled=no`,
   `MulticastDNS=no`, `resolvectl mdns` `Global: no`). The gate still has to
   pass in one run: it should wait for the owner socket and a healthy front
-  after a deploy before moving any switch.
+  after a deploy before moving any switch. That readiness and retry landed
+  (`a7613f4`) and the third run then showed the failure is deterministic and
+  specific: `POST /api/vm/hid-only {"enabled": true}` answers `-503` through the
+  server while the owner really applies the flag (the state file shows
+  `enabled=yes` and the media attach is then refused), whereas
+  `{"enabled": false}` answers `applied=true`. So the defect is in the server's
+  path for the enabling request (response mapping or a duplicate route), not in
+  the owner; the toggles were restored again and verified (`enabled=no`,
+  `MulticastDNS=no`, health 200). Fixing that is the next step, then the gate
+  should pass in one run.
 - **device**: `mdns` is implemented end to end (owner flips the reviewed
   `systemd-resolved` key and restarts the unit; `GET /api/vm/mdns` plus the
   enable/disable routes and a server test). `mouseJiggler` is implemented too:
