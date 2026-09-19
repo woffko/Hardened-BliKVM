@@ -147,6 +147,15 @@ system-log, tailscale, update` under `web/src/pages/desktop/menu/settings/`),
 including the firewall page, the mDNS and mouse-jiggler toggles and the panel
 (`oled`) switch, so P2 is again mostly server-side.
 
+- **device** (device-gate note, 2026-09-19): the first gate run found that the
+  owner's settings directory is read-only inside its sandbox, so the reviewed
+  configuration must be rewritten in place (as the resolver writer already
+  did); the second run applied and verified mDNS, then lost the HID-only call
+  to a `-503` immediately after the owner restart that the deploy performs, and
+  both toggles were restored by hand and verified (`enabled=no`,
+  `MulticastDNS=no`, `resolvectl mdns` `Global: no`). The gate still has to
+  pass in one run: it should wait for the owner socket and a healthy front
+  after a deploy before moving any switch.
 - **device**: `mdns` is implemented end to end (owner flips the reviewed
   `systemd-resolved` key and restarts the unit; `GET /api/vm/mdns` plus the
   enable/disable routes and a server test). `mouseJiggler` is implemented too:
