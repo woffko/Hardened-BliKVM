@@ -12,7 +12,7 @@ use bli_kvm_st7789_model::{
 };
 use thiserror::Error;
 
-use crate::{config::DisplayConfig, spi::SpiBus};
+use crate::{config::DisplayConfig, panel_status, spi::SpiBus};
 
 /// Consumer label the daemon requests the panel lines with.
 const DISPLAY_CONSUMER: &str = "hardened-blikvm-boardd";
@@ -67,6 +67,7 @@ where
     driver: G,
     sleeper: S,
     config: DisplayConfig,
+    background: Option<Vec<Rgb565>>,
     data_command: LineRequest,
     reset: LineRequest,
     backlight: LineRequest,
@@ -81,10 +82,15 @@ where
     S: Sleeper,
 {
     pub fn new(bus: B, driver: G, sleeper: S, config: DisplayConfig) -> Self {
+        let background = config
+            .status_image
+            .as_deref()
+            .and_then(|path| panel_status::load_background(path).ok());
         Self {
             bus,
             driver,
             sleeper,
+            background,
             data_command: line(GpioRole::DisplayDataCommand, config.data_command),
             reset: line(GpioRole::DisplayReset, config.reset),
             backlight: line(GpioRole::DisplayBacklight, config.backlight),
@@ -143,10 +149,27 @@ where
         Ok(())
     }
 
-    /// Draw the fixed test pattern across the full panel in bounded chunks.
+    /// Draw the fixed test pattern across the full panel.
     pub fn draw_color_bars(&mut self) -> Result<(), DisplayError> {
+        let mut frame = vec![Rgb565::BLACK; DISPLAY_PIXEL_COUNT as usize];
+        for y in 0..DISPLAY_HEIGHT {
+            let bar = usize::from(y) * BARS.len() / usize::from(DISPLAY_HEIGHT);
+            let colour = BARS[bar.min(BARS.len() - 1)];
+            let start = usize::from(y) * usize::from(DISPLAY_WIDTH);
+            for pixel in &mut frame[start..start + usize::from(DISPLAY_WIDTH)] {
+                *pixel = colour;
+            }
+        }
+        self.draw_frame(&frame)
+    }
+
+    /// Draw one complete frame from an RGB565 buffer.
+    pub fn draw_frame(&mut self, frame: &[Rgb565]) -> Result<(), DisplayError> {
         if !self.initialized {
             return Err(DisplayError::NotInitialized);
+        }
+        if frame.len() != DISPLAY_PIXEL_COUNT as usize {
+            return Err(DisplayError::PixelStream);
         }
         let window = DisplayWindow::FULL;
         for phase in window.program().phases() {
@@ -155,18 +178,11 @@ where
                 WindowPhase::AddressData(data) => self.write(true, &data)?,
             }
         }
-
         let mut stream = PixelStream::new(window);
         let mut encoded = [0_u8; MAX_PIXEL_CHUNK_PIXELS * BYTES_PER_PIXEL];
-        let mut row = vec![Rgb565::BLACK; DISPLAY_WIDTH as usize];
-        for y in 0..DISPLAY_HEIGHT {
-            let bar = usize::from(y) * BARS.len() / usize::from(DISPLAY_HEIGHT);
-            let colour = BARS[bar.min(BARS.len() - 1)];
-            for pixel in row.iter_mut() {
-                *pixel = colour;
-            }
+        for row in frame.chunks_exact(usize::from(DISPLAY_WIDTH)) {
             let written = stream
-                .encode_chunk(&row, &mut encoded)
+                .encode_chunk(row, &mut encoded)
                 .map_err(|_| DisplayError::PixelStream)?;
             self.write(true, &encoded[..written])?;
         }
@@ -174,6 +190,13 @@ where
             return Err(DisplayError::PixelStream);
         }
         Ok(())
+    }
+
+    /// Draw the status screen: the configured background plus the live values.
+    pub fn draw_status(&mut self) -> Result<(), DisplayError> {
+        let info = panel_status::SystemInfo::collect();
+        let frame = panel_status::render(self.background.as_deref(), &info);
+        self.draw_frame(&frame)
     }
 
     fn set_line(&mut self, line: &LineRequest, active: bool) -> Result<(), DisplayError> {
@@ -207,6 +230,13 @@ where
 
     fn set_backlight(&mut self, on: bool) -> Result<(), &'static str> {
         Display::set_backlight(self, on).map_err(|error| match error {
+            DisplayError::NotInitialized => "invalid_state",
+            _ => "backend_unavailable",
+        })
+    }
+
+    fn status(&mut self) -> Result<(), &'static str> {
+        self.draw_status().map_err(|error| match error {
             DisplayError::NotInitialized => "invalid_state",
             _ => "backend_unavailable",
         })
@@ -316,6 +346,8 @@ mod tests {
                 offset: 260,
                 active_low: false,
             },
+            status_image: None,
+            status_interval_ms: 5_000,
             reset_assert_ms: 10,
             reset_settle_ms: 120,
             backlight_settle_ms: 50,

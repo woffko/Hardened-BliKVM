@@ -12,6 +12,8 @@ pub mod config;
 pub mod display;
 pub mod fan;
 pub mod led;
+pub mod panel_font;
+pub mod panel_status;
 pub mod server;
 pub mod spi;
 
@@ -72,7 +74,7 @@ pub fn build_state(
     let led = build_led(config, pwm_enabled);
     let button = build_button(config, pwm_enabled);
     let atx_leds = build_atx_leds(config, pwm_enabled);
-    Ok(BoarddState::new(
+    let mut state = BoarddState::new(
         supervisor,
         FanModeName::Auto,
         0,
@@ -85,7 +87,9 @@ pub fn build_state(
         led,
         button,
         atx_leds,
-    ))
+    );
+    state.configure_display_status(config.display.status_interval_ms);
+    Ok(state)
 }
 
 /// Build the ATX host LED inputs; a failure never stops the fan.
@@ -235,6 +239,11 @@ pub fn run_once(config_path: &Path) -> Result<(), Box<dyn Error>> {
 pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
     let config = BoarddConfig::from_path(config_path)?;
     let state = Arc::new(Mutex::new(build_state(&config, true)?));
+    if let Ok(mut board) = state.lock() {
+        // Draw a defined frame immediately: an ST7789 keeps undefined GRAM
+        // after reset until the first full frame, which otherwise shows garbage.
+        let _ = board.draw_display_status();
+    }
     let interval = std::time::Duration::from_millis(config.sample_interval_ms);
     let sampler_state = Arc::clone(&state);
     std::thread::spawn(move || {
@@ -251,6 +260,7 @@ pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
                 state.tick_led();
                 state.tick_button();
                 state.tick_atx_leds();
+                state.tick_display(unix_millis());
             }
             std::thread::sleep(interval);
         }

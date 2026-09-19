@@ -83,9 +83,21 @@ class RestrictedControlGuiTests(unittest.TestCase):
         # the keyboard and the mouse mutually exclusive with lease_conflict.
         self.assertIn("let sharedSession: HidLeaseSession | null = null;", hook)
         self.assertIn("let sharedQueue: Promise<void> = Promise.resolve();", hook)
-        self.assertEqual(hook.count("new HidLeaseSession()"), 1)
+        # One shared session, and it refreshes the target attestation the
+        # broker requires before every acquire and renewal.
+        self.assertEqual(hook.count("new HidLeaseSession("), 1)
+        self.assertIn("new HidLeaseSession(() => ensureFocus(platformId))", hook)
         self.assertIn("let consumers = 0;", hook)
         self.assertIn("consumers === 0", hook)
+
+    def test_the_lease_session_refreshes_the_attestation(self) -> None:
+        lease = (ROOT / "web/src/lib/hid-lease.ts").read_text()
+        # The broker admits a lease only while the target attestation is live,
+        # and it expires long before an idle session would end.
+        self.assertEqual(lease.count("await this.attest();"), 2)
+        self.assertIn("constructor(private readonly attest: () => Promise<void>) {}", lease)
+        focus = (ROOT / "web/src/lib/restricted-power.ts").read_text()
+        self.assertIn("FOCUS_TTL_MS = 15_000", focus)
 
     def test_mouse_movement_is_coalesced_to_the_latest_report(self) -> None:
         hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()

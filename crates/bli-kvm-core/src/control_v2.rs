@@ -230,6 +230,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Write one reviewed test line through the system log.
     SystemLogTest {},
+    /// Read the Tailscale surface state.
+    TailscaleStatus {},
+    /// Run one reviewed Tailscale action.
+    TailscaleAction {
+        action: String,
+    },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
@@ -296,6 +302,8 @@ impl PlatformControlRequestV2 {
             Self::FirewallState {} => Ok(()),
             Self::FirewallBaseline { .. } => Ok(()),
             Self::SystemLogTest {} => Ok(()),
+            Self::TailscaleStatus {} => Ok(()),
+            Self::TailscaleAction { .. } => Ok(()),
             Self::BoardStatus {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }

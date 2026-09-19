@@ -114,6 +114,7 @@ pub struct VideoCapabilities {
 pub enum VideoSetting {
     Fps,
     Quality,
+    Resolution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

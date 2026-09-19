@@ -118,10 +118,20 @@ impl HidControlPolicy {
         if let Some(rejection) = mutation_gate(eligibility, ttl) {
             return HidDecision::Reject(rejection);
         }
-        self.engine
-            .acquire(identity, now, ttl)
-            .await
-            .map_or_else(map_error, |()| HidDecision::Applied)
+        // The broker admits one lease at a time. A client that lost its lease
+        // id must always be able to take its own session's lease back, so on a
+        // conflict the requester's own session is revoked and the acquire is
+        // retried once. A conflict with a different session still fails closed.
+        match self.engine.acquire(identity, now, ttl).await {
+            Err(HidTransitionError::Lease(HidLeaseError::Busy)) => {
+                let _ = self.engine.revoke_session(identity.session_binding()).await;
+                self.engine
+                    .acquire(identity, now, ttl)
+                    .await
+                    .map_or_else(map_error, |()| HidDecision::Applied)
+            }
+            result => result.map_or_else(map_error, |()| HidDecision::Applied),
+        }
     }
 
     pub async fn renew(
@@ -511,6 +521,40 @@ mod tests {
         let requests = server.await.unwrap();
         assert!(requests[0].contains("key=KeyA&state=0"));
         assert_eq!(policy.pending_release_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_lost_lease_id_never_locks_the_same_session_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        // The supersede path may issue a release and a fresh acquire, so the
+        // fake front answers generously and the test does not count requests.
+        let _server = serve_statuses(&socket, &["200 OK", "200 OK", "200 OK", "200 OK"]).await;
+        let mut policy = policy(&directory.path().join("ledger.json"), &socket);
+        let session = identity(1);
+        let now = Instant::now();
+        let eligible = HidEligibility::verified_for_test();
+
+        assert_eq!(
+            policy
+                .acquire(session, eligible, now, Duration::from_secs(30))
+                .await,
+            HidDecision::Applied
+        );
+        // The client lost its lease id and asks again: its own stale lease must
+        // not lock it out, while another session still conflicts.
+        assert_eq!(
+            policy
+                .acquire(session, eligible, now, Duration::from_secs(30))
+                .await,
+            HidDecision::Applied
+        );
+        assert_eq!(
+            policy
+                .acquire(identity(2), eligible, now, Duration::from_secs(30))
+                .await,
+            HidDecision::Reject(HidRejection::LeaseConflict)
+        );
     }
 
     #[tokio::test]

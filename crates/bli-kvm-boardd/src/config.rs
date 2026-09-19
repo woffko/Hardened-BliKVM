@@ -87,6 +87,16 @@ pub struct DisplayConfig {
     pub reset_settle_ms: u64,
     pub backlight_settle_ms: u64,
     pub init: Vec<InitStep>,
+    /// Optional background image drawn behind the status text.
+    #[serde(default)]
+    pub status_image: Option<PathBuf>,
+    /// Milliseconds between automatic status refreshes.
+    #[serde(default = "default_status_interval_ms")]
+    pub status_interval_ms: u64,
+}
+
+fn default_status_interval_ms() -> u64 {
+    5_000
 }
 
 impl DisplayConfig {
@@ -112,6 +122,14 @@ impl DisplayConfig {
             return Err(ConfigError::Invalid);
         }
         if self.init.is_empty() || self.init.len() > 64 {
+            return Err(ConfigError::Invalid);
+        }
+        if let Some(image) = &self.status_image {
+            if !image.is_absolute() {
+                return Err(ConfigError::Invalid);
+            }
+        }
+        if !(1_000..=600_000).contains(&self.status_interval_ms) {
             return Err(ConfigError::Invalid);
         }
         for step in &self.init {
@@ -410,6 +428,8 @@ mod tests {
                         delay_ms: 0,
                     },
                 ],
+                status_image: None,
+                status_interval_ms: 5_000,
             },
         }
     }

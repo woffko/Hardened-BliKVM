@@ -115,6 +115,7 @@ PHASES: tuple[dict[str, Any], ...] = (
             "crates/bli-kvm-core/src/video_settings.rs",
             "crates/bli-kvm-control-broker/src/video_settings.rs",
             "crates/bli-kvm-server/src/video_settings.rs",
+            "crates/bli-kvm-server/src/video_engine.rs",
             "packaging/systemd/hardened-blikvm-ustreamer.service",
             "packaging/tmpfiles.d/hardened-blikvm-video.conf",
             "web/src/pages/desktop/menu/screen/index.tsx",
@@ -125,6 +126,12 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "name": "video settings gate",
                 "glob": "video-settings-gate-*.json",
                 "probe": "hardened-blikvm-video-settings-gate",
+                "marker": "result=passed",
+            },
+            {
+                "name": "video capability matrix",
+                "glob": "video-matrix-*.json",
+                "probe": "hardened-blikvm-video-matrix-gate",
                 "marker": "result=passed",
             },
         ),
@@ -153,9 +160,50 @@ PHASES: tuple[dict[str, Any], ...] = (
         ),
     },
     {
-        "phase": "E1",
-        "title": "storage and media",
+        "phase": "P3",
+        "title": "HID inputs and the lease supersede fix",
         "host": (
+            "crates/bli-kvm-hid-policy/src/lib.rs",
+            "crates/bli-kvm-hid-adapter/src/lease.rs",
+            "crates/bli-kvm-hid-transition/src/lib.rs",
+            "crates/bli-kvm-server/src/hid.rs",
+            "web/src/lib/hid-lease.ts",
+            "web/src/hooks/useHidLease.ts",
+            "tools/stage_device_hid_lease_gate.py",
+        ),
+        "device": (
+            {
+                "name": "HID lease supersede gate",
+                "glob": "hid-lease-supersede-gate-*.json",
+                "probe": "hardened-blikvm-hid-lease-gate",
+                "marker": "result=passed",
+            },
+        ),
+    },
+    {
+        "phase": "P4",
+        "title": "application update and Tailscale",
+        "host": (
+            "crates/bli-kvm-control-broker/src/tailscale.rs",
+            "crates/bli-kvm-server/src/tailscale.rs",
+            "crates/bli-kvm-control-protocol/src/lib.rs",
+            "crates/bli-kvm-core/src/control_v2.rs",
+            "web/src/api/extensions/tailscale.ts",
+            "web/src/pages/desktop/menu/settings/update/bli.tsx",
+            "tools/stage_device_tailscale_gate.py",
+        ),
+        "device": (
+            {
+                "name": "Tailscale surface gate",
+                "glob": "tailscale-surface-gate-*.json",
+                "probe": "hardened-blikvm-tailscale-gate",
+                "marker": "result=passed",
+            },
+        ),
+    },
+    {
+        "phase": "E1",
+        "title": "storage and media",        "host": (
             "crates/bli-kvm-server/src/media.rs",
             "crates/bli-kvm-usb-gadget/src/lib.rs",
             "crates/bli-kvm-media-catalog/src/lib.rs",

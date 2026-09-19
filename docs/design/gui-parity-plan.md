@@ -69,14 +69,14 @@ disagree.
 | 6 | KVMD ATX routes + C `kvmd-main` ATX                        | `bli-kvm-atx-gpio-executor` in the board owner        | deployed and accepted (500/5000/500 ms)                      |
 | 7 | C `kvmd-main`: fan, OLED ST7789, display buttons, activity LED, serial switch, RTC, boot config, recovery inputs | Rust board daemon                                    | deployed: the daemon owns the fan, activity LED, panel and the ATX host LED inputs, the fan/LED/panel handoffs are recorded as observed-pending, the button gate is operator-owned, the serial switch stays hidden with a capability note and the vendor `kvmd-fix` and `kvmd-bootconfig` helpers are masked |
 | 8 | KVMD system actions (reboot/session-lock/memory/swap)      | `system-action-*` crates                              | session lock implemented; the privileged reboot and shutdown path is journaled, persisted across restarts and armed behind the reviewed acceptance step; the end-to-end gate is staged and awaits the operator's reboot approval; memory and swap remain |
-| 9 | KVMD network/wifi/wol/firewall/ssh/mdns                    | `bli-kvm-server` network module                       | read-only views live; the bounded DNS write and Wake-on-LAN are implemented as capability-gated routes that forward to the board owner and the DNS gate passed on the device (the IPv6 step is skipped while the owner has no host network namespace); the reference exposes no firewall, SSH/mDNS or wifi write surface |
+| 9 | KVMD network/wifi/wol/firewall/ssh/mdns                    | `bli-kvm-server` network module                       | read-only views live; the DNS, IPv6, WiFi (NetworkManager keyfile) and TLS-redirect writes and Wake-on-LAN are implemented as capability-gated routes that forward to the board owner, the DNS/WiFi/TLS steps passed on the device and the IPv6 step is skipped while the owner has no host network namespace. The reference does expose a firewall surface (`system.firewall.*`: backend, effective mode, enabled ports, HTTPS-first and a confirmed baseline apply/restore), so our firewall baseline is implemented fail-closed behind that reviewed confirmation and stays invisible while the board has no `nftables`; mDNS is a device setting in the reference and is implemented there. The reference has no SSH surface, so ours stays hidden |
 | 10 | Vendor update watchdog + signed slots serving our build    | retained signed-slot pipeline                         | slots and trust intact, serving/watchdog idled by the cutover (E4) |
 | 11 | Extras: janus (WebRTC), webterm, vnc, ipmi                  | reference behaviour: hidden/off by default            | not ported; `janus.service` disabled (E5)                    |
 | 12 | KVMD diagnostics                                            | our diagnostic collector/store/export stack           | host-side and partially device-verified; the board profile now reports the power state and thermal/RTC facts through the inventory |
 
 ## API parity status
 
-Our hardened server exposes, as of 2026-09-19: 62 routes. The read-only
+Our hardened server exposes, as of 2026-09-19: 72 routes. The read-only
 management surface is implemented and capability-visible: `/api/system/time`
 (`time` read-only), `/api/system-log/{config,messages}`
 (`config`,`messages` read-only), `/api/application/{version,preview}`
@@ -92,8 +92,12 @@ the restricted HID lease, `/api/ws` and `/api/hid/shortcut/leader-key` are
 implemented on the restricted surface. The remaining reference routes stay
 capability-hidden until their phase lands: HID control modes, storage
 reconnect, h264 and detect, vm board/system, ssh and mdns, script and terminal,
-firewall, network writes, download upload, tailscale and the application update
-UI.
+firewall, network writes, download upload and the application update
+UI. The Tailscale surface (`/api/extensions/tailscale/{status,install,uninstall,
+start,restart,stop,up,down,login,logout}`) is now implemented and fail-closed:
+the board owner reports the observable state (installed/running/enabled and the
+account fields) and refuses every action while no reviewed package exists, so
+the settings tab stays capability-hidden until that changes.
 
 ## Current device state (2026-09-16)
 

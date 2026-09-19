@@ -9,8 +9,9 @@ import { setResolution as setCookie } from '@/lib/localstorage';
 import { resolutionAtom } from '@/jotai/screen.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
 
+// The reviewed unit always passes a resolution, so there is no "auto" entry;
+// the four modes below are the ones the owner can enforce.
 const resolutions: TypeResolution[] = [
-  { width: 0, height: 0 },
   { width: 1920, height: 1080 },
   { width: 1280, height: 720 },
   { width: 800, height: 600 },

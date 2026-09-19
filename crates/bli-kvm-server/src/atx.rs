@@ -106,7 +106,8 @@ pub(crate) async fn application_power(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
-        | ControlResponse::FirewallState { .. } => AtxResponse {
+        | ControlResponse::FirewallState { .. }
+        | ControlResponse::TailscaleState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),
         },

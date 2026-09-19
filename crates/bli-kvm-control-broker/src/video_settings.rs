@@ -69,7 +69,7 @@ impl VideoSettingsState {
     }
 
     pub fn current(&self) -> VideoSettings {
-        self.current
+        self.current.clone()
     }
 
     pub fn handle(&mut self, change: &VideoSettingsChange) -> ControlResponse {

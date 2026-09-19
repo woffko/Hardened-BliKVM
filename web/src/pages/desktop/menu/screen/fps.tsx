@@ -19,9 +19,21 @@ const defaultFps = [60, 30, 24];
 type FpsProps = {
   fps: number;
   setFps: (fps: number) => void;
+  // The measured rate the capture bridge delivers; undefined when unknown.
+  capturedFps?: number;
+  deliveredWidth?: number;
+  deliveredHeight?: number;
+  queuedFps?: number;
 };
 
-export const Fps = ({ fps, setFps }: FpsProps) => {
+export const Fps = ({
+  fps,
+  setFps,
+  capturedFps,
+  deliveredWidth,
+  deliveredHeight,
+  queuedFps
+}: FpsProps) => {
   const { t } = useTranslation();
   const [isCustomize, setIsCustomize] = useState(false);
   const customizeRef = useRef(0);
@@ -92,6 +104,20 @@ export const Fps = ({ fps, setFps }: FpsProps) => {
           </>
         )}
       </div>
+
+      {typeof deliveredWidth === 'number' && typeof deliveredHeight === 'number' && (
+        <div className="pl-1 pt-1 text-xs text-neutral-400">
+          {t('screen.deliveredFrame', {
+            width: deliveredWidth,
+            height: deliveredHeight
+          })}
+          {typeof capturedFps === 'number' &&
+            capturedFps !== fps &&
+            ` · ${t('screen.deliveredFps', { value: capturedFps })}`}
+          {typeof queuedFps === 'number' &&
+            ` · ${t('screen.deliveredQueued', { value: queuedFps })}`}
+        </div>
+      )}
 
       {isCustomize && (
         <div className="flex w-[140px] items-center space-x-1 py-1">

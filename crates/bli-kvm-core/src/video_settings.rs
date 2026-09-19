@@ -21,6 +21,16 @@ pub const VIDEO_QUALITY_DEFAULT: u8 = 80;
 
 /// Environment keys of the reviewed environment file.
 pub const VIDEO_FPS_ENV: &str = "BLI_KVM_USTREAMER_FPS";
+pub const VIDEO_RESOLUTION_ENV: &str = "BLI_KVM_USTREAMER_RESOLUTION";
+/// The reviewed capture modes, taken from the vendor list and from the modes
+/// the interface offers, keyed by the height it sends.
+pub const VIDEO_RESOLUTIONS: [(&str, u16); 4] = [
+    ("1920x1080", 1080),
+    ("1280x720", 720),
+    ("800x600", 600),
+    ("640x480", 480),
+];
+pub const VIDEO_RESOLUTION_DEFAULT: &str = "1280x720";
 pub const VIDEO_QUALITY_ENV: &str = "BLI_KVM_USTREAMER_QUALITY";
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
@@ -31,26 +41,54 @@ pub enum VideoSettingsError {
     QualityOutOfRange,
     #[error("the settings request changes nothing")]
     Empty,
+    #[error("the capture resolution is not reviewed")]
+    ResolutionUnsupported,
+}
+
+/// Whether the mode is one of the reviewed capture modes.
+pub fn reviewed_resolution(resolution: &str) -> bool {
+    VIDEO_RESOLUTIONS
+        .iter()
+        .any(|(mode, _)| *mode == resolution)
+}
+
+/// Maps the height the interface sends onto a reviewed mode.
+pub fn resolution_for_height(height: u16) -> Option<&'static str> {
+    VIDEO_RESOLUTIONS
+        .iter()
+        .find(|(_, reviewed_height)| *reviewed_height == height)
+        .map(|(mode, _)| *mode)
 }
 
 /// One bounded change request: either field may be absent, and at least one
 /// must be present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VideoSettingsChange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fps: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
 }
 
 impl VideoSettingsChange {
     pub fn new(fps: Option<u16>, quality: Option<u8>) -> Self {
-        Self { fps, quality }
+        Self {
+            fps,
+            quality,
+            resolution: None,
+        }
+    }
+
+    pub fn with_resolution(mut self, resolution: impl Into<String>) -> Self {
+        self.resolution = Some(resolution.into());
+        self
     }
 
     pub fn validate(&self) -> Result<(), VideoSettingsError> {
-        if self.fps.is_none() && self.quality.is_none() {
+        if self.fps.is_none() && self.quality.is_none() && self.resolution.is_none() {
             return Err(VideoSettingsError::Empty);
         }
         if let Some(fps) = self.fps {
@@ -63,15 +101,21 @@ impl VideoSettingsChange {
                 return Err(VideoSettingsError::QualityOutOfRange);
             }
         }
+        if let Some(resolution) = self.resolution.as_deref() {
+            if !reviewed_resolution(resolution) {
+                return Err(VideoSettingsError::ResolutionUnsupported);
+            }
+        }
         Ok(())
     }
 }
 
 /// The complete desired video state, as it is written to the environment file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoSettings {
     pub fps: u16,
     pub quality: u8,
+    pub resolution: String,
 }
 
 impl Default for VideoSettings {
@@ -79,6 +123,7 @@ impl Default for VideoSettings {
         Self {
             fps: VIDEO_FPS_DEFAULT,
             quality: VIDEO_QUALITY_DEFAULT,
+            resolution: VIDEO_RESOLUTION_DEFAULT.to_string(),
         }
     }
 }
@@ -86,7 +131,11 @@ impl Default for VideoSettings {
 impl VideoSettings {
     pub fn new(fps: u16, quality: u8) -> Result<Self, VideoSettingsError> {
         VideoSettingsChange::new(Some(fps), Some(quality)).validate()?;
-        Ok(Self { fps, quality })
+        Ok(Self {
+            fps,
+            quality,
+            resolution: VIDEO_RESOLUTION_DEFAULT.to_string(),
+        })
     }
 
     /// Reads the state back from the reviewed environment-file text, falling
@@ -100,6 +149,11 @@ impl VideoSettings {
                     if (VIDEO_FPS_MIN..=VIDEO_FPS_MAX).contains(&fps) {
                         settings.fps = fps;
                     }
+                }
+            } else if let Some(value) = line.strip_prefix(&format!("{VIDEO_RESOLUTION_ENV}=")) {
+                let value = value.trim();
+                if reviewed_resolution(value) {
+                    settings.resolution = value.to_string();
                 }
             } else if let Some(value) = line.strip_prefix(&format!("{VIDEO_QUALITY_ENV}=")) {
                 if let Ok(quality) = value.trim().parse::<u8>() {
@@ -118,6 +172,10 @@ impl VideoSettings {
         Ok(Self {
             fps: change.fps.unwrap_or(self.fps),
             quality: change.quality.unwrap_or(self.quality),
+            resolution: change
+                .resolution
+                .clone()
+                .unwrap_or_else(|| self.resolution.clone()),
         })
     }
 
@@ -125,8 +183,9 @@ impl VideoSettings {
     pub fn to_env_file(&self) -> String {
         format!(
             "# Written by the Hardened BliKVM board owner from the reviewed \
-             video-settings request.\n{VIDEO_FPS_ENV}={}\n{VIDEO_QUALITY_ENV}={}\n",
-            self.fps, self.quality
+             video-settings request.\n{VIDEO_FPS_ENV}={}\n{VIDEO_QUALITY_ENV}={}\n\
+             {VIDEO_RESOLUTION_ENV}={}\n",
+            self.fps, self.quality, self.resolution
         )
     }
 }
@@ -174,7 +233,8 @@ mod tests {
             next,
             VideoSettings {
                 fps: 24,
-                quality: 80
+                quality: 80,
+                resolution: VIDEO_RESOLUTION_DEFAULT.to_string()
             }
         );
         let next = current
@@ -184,8 +244,45 @@ mod tests {
             next,
             VideoSettings {
                 fps: 40,
-                quality: 100
+                quality: 100,
+                resolution: VIDEO_RESOLUTION_DEFAULT.to_string()
             }
+        );
+    }
+
+    #[test]
+    fn the_reviewed_resolution_modes_are_what_the_interface_offers() {
+        assert_eq!(resolution_for_height(1080), Some("1920x1080"));
+        assert_eq!(resolution_for_height(720), Some("1280x720"));
+        assert_eq!(resolution_for_height(600), Some("800x600"));
+        assert_eq!(resolution_for_height(480), Some("640x480"));
+        // "auto" and anything the vendor list does not carry stay unsupported.
+        assert_eq!(resolution_for_height(0), None);
+        assert_eq!(resolution_for_height(1234), None);
+        assert!(reviewed_resolution("1920x1080"));
+        assert!(!reviewed_resolution("4096x2160"));
+
+        let change = VideoSettingsChange::new(None, None).with_resolution("1920x1080");
+        assert_eq!(change.validate(), Ok(()));
+        assert_eq!(
+            VideoSettingsChange::new(None, None)
+                .with_resolution("4096x2160")
+                .validate(),
+            Err(VideoSettingsError::ResolutionUnsupported)
+        );
+        let current = VideoSettings::new(60, 100).unwrap();
+        let next = current.apply(&change).unwrap();
+        assert_eq!(next.resolution, "1920x1080");
+        assert_eq!(next.fps, 60);
+        assert_eq!(next.quality, 100);
+        assert!(
+            next.to_env_file()
+                .contains("BLI_KVM_USTREAMER_RESOLUTION=1920x1080")
+        );
+        assert_eq!(VideoSettings::from_env_file(&next.to_env_file()), next);
+        assert_eq!(
+            VideoSettings::from_env_file("BLI_KVM_USTREAMER_RESOLUTION=4096x2160\n"),
+            VideoSettings::default()
         );
     }
 

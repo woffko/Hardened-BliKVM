@@ -4,7 +4,7 @@ import { useAtomValue } from 'jotai';
 import type { HidReport } from '@/api/restricted-control.ts';
 import { supportsRestrictedControls } from '@/lib/capabilities.ts';
 import { HidLeaseSession } from '@/lib/hid-lease.ts';
-import { ensureFocus } from '@/lib/restricted-power.ts';
+import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
@@ -78,7 +78,8 @@ export function useHidLease() {
       }
       await ensureFocus(current.platform.id);
       if (!sharedSession) {
-        const session = new HidLeaseSession();
+        const platformId = current.platform.id;
+        const session = new HidLeaseSession(() => ensureFocus(platformId));
         await session.start(LEASE_TTL_SECONDS);
         sharedSession = session;
       }
@@ -94,6 +95,9 @@ export function useHidLease() {
         .catch(() => {
           const session = sharedSession;
           sharedSession = null;
+          // A refused report may mean the confirmation lapsed, so the next
+          // attempt re-confirms instead of waiting for the cache.
+          resetFocusConfirmation();
           if (session) {
             void session.stop().catch(() => undefined);
           }

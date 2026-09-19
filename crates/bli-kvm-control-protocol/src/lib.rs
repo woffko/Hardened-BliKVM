@@ -92,6 +92,16 @@ pub enum ControlResponse {
         not_after: String,
         fingerprint_sha256: String,
     },
+    /// The reviewed Tailscale surface state.
+    TailscaleState {
+        installed: bool,
+        running: bool,
+        enabled: bool,
+        login_name: String,
+        device_ip: String,
+        device_name: String,
+        message: String,
+    },
     /// The reviewed firewall baseline state.
     FirewallState {
         backend_available: bool,

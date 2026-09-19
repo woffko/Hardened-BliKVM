@@ -212,6 +212,8 @@ python3 -m unittest \
   tools/test_stage_device_hid_reboot_gate.py \
   tools/test_stage_device_boot_gate.py \
   tools/test_stage_device_video_settings_gate.py \
+  tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_hid_lease_gate.py \
   tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_gadget_gate.py \
   tools/test_check_device_log_health.py \
@@ -220,6 +222,7 @@ python3 -m unittest \
   tools/test_crate_licenses.py \
   tools/test_capture_device_kvm_topology.py \
   tools/test_capture_device_hid_descriptors.py \
+  tools/test_capture_device_video_matrix.py \
   tools/test_capture_device_handoff_preflight.py \
   tools/test_capture_device_kvmd_control_source.py \
   tools/test_phase8_acceptance_report.py \
@@ -338,6 +341,7 @@ python3 -m py_compile \
   tools/stage_device_media_isolated_gate.py \
   tools/stage_device_hid_reboot_gate.py \
   tools/capture_device_hid_descriptors.py \
+  tools/capture_device_video_matrix.py \
   tools/capture_device_handoff_preflight.py \
   tools/verify_board_profile_bundle.py \
   tools/plan_board_profile_handoff.py \
@@ -411,6 +415,8 @@ python3 -m py_compile \
   tools/test_stage_device_hid_reboot_gate.py \
   tools/test_stage_device_boot_gate.py \
   tools/test_stage_device_video_settings_gate.py \
+  tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_hid_lease_gate.py \
   tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_gadget_gate.py \
   tools/test_check_device_log_health.py \
@@ -603,6 +609,8 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/stage_device_hid_reboot_gate.py \
     tools/stage_device_boot_gate.py \
     tools/stage_device_video_settings_gate.py \
+    tools/stage_device_tailscale_gate.py \
+    tools/stage_device_hid_lease_gate.py \
     tools/stage_device_settings_gate.py \
     tools/stage_device_gadget_gate.py \
     tools/check_device_log_health.py \
@@ -671,9 +679,13 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_hid_reboot_gate.py \
     tools/test_stage_device_boot_gate.py \
     tools/test_stage_device_video_settings_gate.py \
+  tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_hid_lease_gate.py \
     tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_settings_gate.py \
   tools/test_stage_device_video_settings_gate.py \
+  tools/test_stage_device_tailscale_gate.py \
+  tools/test_stage_device_hid_lease_gate.py \
   tools/test_stage_device_settings_gate.py \
     tools/test_stage_device_gadget_gate.py \
     tools/test_check_device_log_health.py \

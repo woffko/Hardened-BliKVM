@@ -33,6 +33,11 @@ export function updateScreen(type: string, value: number) {
   return http.post('/api/vm/screen', data);
 }
 
+// get the applied screen state, including the measured capture rate
+export function getScreen() {
+  return http.get('/api/vm/screen');
+}
+
 // get memory limit
 export function getMemoryLimit() {
   return http.get('/api/vm/memory/limit');

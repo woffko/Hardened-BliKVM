@@ -344,6 +344,12 @@ async fn board_state(
         Box::new(crate::mouse_jiggler::RelativeMouseWriter::new(hidg_dir)),
         true,
     ));
+    // The Tailscale surface is fail-closed: it reports what it can observe and
+    // refuses every action until a reviewed package exists.
+    state.with_tailscale(crate::tailscale::TailscaleState::open(
+        Box::new(crate::tailscale::SystemTailscaleRunner),
+        false,
+    ));
     // The reviewed system-log test line goes straight to the journal.
     state.with_system_log(crate::system_log_settings::SystemLogState::open(
         Box::new(crate::system_log_settings::SystemLogExecRunner),
@@ -942,7 +948,8 @@ where
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
-        | ControlResponse::FirewallState { .. } => None,
+        | ControlResponse::FirewallState { .. }
+        | ControlResponse::TailscaleState { .. } => None,
     };
     timeout(
         request_timeout,

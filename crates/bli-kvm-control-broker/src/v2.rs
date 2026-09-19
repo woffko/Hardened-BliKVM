@@ -59,6 +59,7 @@ pub struct ControlV2State {
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::FirewallState>,
     system_log: Option<crate::system_log_settings::SystemLogState>,
+    tailscale: Option<crate::tailscale::TailscaleState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
     #[cfg(feature = "network-write-profile")]
     wol: Option<crate::network_write::WolState<Box<dyn crate::network_write::WolSender>>>,
@@ -88,6 +89,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -120,6 +122,11 @@ impl ControlV2State {
     /// Attach the reviewed device toggles to the board state.
     pub fn with_device_settings(&mut self, mdns: crate::device_settings::MdnsState) {
         self.mdns = Some(mdns);
+    }
+
+    /// Attach the reviewed Tailscale surface to the board state.
+    pub fn with_tailscale(&mut self, tailscale: crate::tailscale::TailscaleState) {
+        self.tailscale = Some(tailscale);
     }
 
     /// Attach the reviewed system-log actions to the board state.
@@ -184,6 +191,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -213,6 +221,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -242,6 +251,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -285,6 +295,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -316,6 +327,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -353,6 +365,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -415,6 +428,32 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         state.handle(change)
+    }
+
+    fn handle_tailscale_status(&mut self) -> ControlResponse {
+        let Some(tailscale) = self.tailscale.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let status = tailscale.status();
+        ControlResponse::TailscaleState {
+            installed: status.installed,
+            running: status.running,
+            enabled: status.enabled,
+            login_name: status.login_name,
+            device_ip: status.device_ip,
+            device_name: status.device_name,
+            message: status.message,
+        }
+    }
+
+    fn handle_tailscale_action(&mut self, action: &str) -> ControlResponse {
+        let Some(tailscale) = self.tailscale.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        match crate::tailscale::TailscaleAction::parse(action) {
+            Some(action) => tailscale.act(action),
+            None => reject(ControlRejectionCode::InvalidState),
+        }
     }
 
     fn handle_system_log_test(&mut self) -> ControlResponse {
@@ -619,6 +658,7 @@ impl ControlV2State {
             tls: None,
             firewall: None,
             system_log: None,
+            tailscale: None,
             board_status: None,
             #[cfg(feature = "network-write-profile")]
             wol: None,
@@ -706,6 +746,10 @@ impl ControlV2State {
                 self.handle_firewall_baseline(*enabled)
             }
             PlatformControlRequestV2::SystemLogTest {} => self.handle_system_log_test(),
+            PlatformControlRequestV2::TailscaleStatus {} => self.handle_tailscale_status(),
+            PlatformControlRequestV2::TailscaleAction { action } => {
+                self.handle_tailscale_action(action)
+            }
             PlatformControlRequestV2::BoardStatus {} => self.handle_board_status(),
             PlatformControlRequestV2::AcceptPostBoot { request } => {
                 self.handle_accept_post_boot(request.guards_ready)
@@ -839,6 +883,24 @@ impl ControlV2State {
         {
             return reject(ControlRejectionCode::NotAttested);
         }
+        // A live lease proves the session is active, so its target attestation
+        // is extended while input flows: the reference keeps the keyboard and
+        // mouse alive for as long as the page is open, and a renewal that
+        // arrives inside the lease window must not depend on the client having
+        // refreshed its focus confirmation first.
+        if matches!(
+            lease,
+            HidLeaseRequest::Renew { .. } | HidLeaseRequest::Report { .. }
+        ) && let Some(focus_binding) = self.attestations.focus_binding(session_binding, now)
+        {
+            let attestation = bli_kvm_core::TargetAttestation {
+                session_binding,
+                target_binding: *target_binding,
+                focus_binding,
+                ttl_seconds: bli_kvm_core::TARGET_ATTESTATION_MAX_TTL_SECONDS,
+            };
+            let _ = self.attestations.attest(&attestation, now);
+        }
         let eligibility = HidEligibility::verified_for_test_profile();
         let ttl = Duration::from_secs(u64::from(ttl_seconds));
 
@@ -884,6 +946,25 @@ impl ControlV2State {
                 target_binding,
                 report,
             } => {
+                // A report proves the session is active, so it refreshes the
+                // lease to the reviewed maximum: input must not depend on the
+                // client's renewal cadence.
+                let Ok(refresh) =
+                    HidLeaseIdentity::new(*lease_id, *session_binding, *target_binding)
+                else {
+                    return reject(ControlRejectionCode::InvalidState);
+                };
+                if let HidDecision::Reject(rejection) = policy
+                    .renew(
+                        refresh,
+                        eligibility,
+                        now,
+                        Duration::from_secs(u64::from(bli_kvm_core::HID_LEASE_MAX_TTL_SECONDS)),
+                    )
+                    .await
+                {
+                    return reject(rejection.rejection_code());
+                }
                 let Ok(identity) =
                     HidLeaseIdentity::new(*lease_id, *session_binding, *target_binding)
                 else {

@@ -20,6 +20,8 @@ pub const MAX_REQUEST_BYTES: usize = 4 * 1024;
 /// the host tests can use a mock.
 pub trait DisplayControl: Send {
     fn test_pattern(&mut self) -> Result<(), &'static str>;
+    /// Draw the status screen (host name, address, temperature and so on).
+    fn status(&mut self) -> Result<(), &'static str>;
     fn set_backlight(&mut self, on: bool) -> Result<(), &'static str>;
     fn is_initialized(&self) -> bool;
     fn backlight_on(&self) -> bool;
@@ -152,6 +154,8 @@ pub struct BoarddState<A: FanActuator> {
     external_rtc_offset: Option<i64>,
     external_rtc_error: Option<&'static str>,
     display: Option<Box<dyn DisplayControl>>,
+    display_status_interval_ms: u64,
+    last_display_status_ms: u64,
     led: Option<Box<dyn LedControl>>,
     button: Option<Box<dyn ButtonControl>>,
     atx_leds: Option<Box<dyn AtxLedControl>>,
@@ -179,6 +183,8 @@ where
     ) -> Self {
         Self {
             display,
+            display_status_interval_ms: 5_000,
+            last_display_status_ms: 0,
             led,
             button,
             atx_leds,
@@ -200,6 +206,33 @@ where
 
     pub fn has_display(&self) -> bool {
         self.display.is_some()
+    }
+
+    /// Set the automatic status refresh interval in milliseconds.
+    pub fn configure_display_status(&mut self, interval_ms: u64) {
+        if interval_ms > 0 {
+            self.display_status_interval_ms = interval_ms;
+        }
+    }
+
+    /// Redraw the status screen when the refresh interval has elapsed.
+    pub fn tick_display(&mut self, now_ms: u64) {
+        if self.display.is_none() {
+            return;
+        }
+        if now_ms.saturating_sub(self.last_display_status_ms) < self.display_status_interval_ms {
+            return;
+        }
+        self.last_display_status_ms = now_ms;
+        let _ = self.draw_display_status();
+    }
+
+    pub fn draw_display_status(&mut self) -> Result<(), BoarddError> {
+        let display = self.display()?;
+        display.status().map_err(|kind| match kind {
+            "invalid_state" => BoarddError::InvalidState,
+            _ => BoarddError::BackendUnavailable,
+        })
     }
 
     fn display(&mut self) -> Result<&mut (dyn DisplayControl + 'static), BoarddError> {
@@ -315,6 +348,9 @@ where
         {
             let _ = display.set_backlight(true);
         }
+        // A wake cycle redraws the status so a stale or undefined frame is
+        // replaced the moment the panel is lit again.
+        let _ = self.draw_display_status();
     }
 
     /// Sample the ATX host LED inputs; called by the sampling thread.
@@ -598,6 +634,17 @@ mod tests {
     }
 
     impl DisplayControl for MockDisplay {
+        fn status(&mut self) -> Result<(), &'static str> {
+            if self.fail {
+                return Err("backend_unavailable");
+            }
+            if !self.initialized {
+                return Err("invalid_state");
+            }
+            self.patterns += 1;
+            Ok(())
+        }
+
         fn test_pattern(&mut self) -> Result<(), &'static str> {
             if self.fail {
                 return Err("backend_unavailable");

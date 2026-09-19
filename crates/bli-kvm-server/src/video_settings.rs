@@ -45,6 +45,18 @@ pub(crate) struct ScreenOutcome {
     pub rejection: Option<&'static str>,
     pub fps: u16,
     pub quality: u8,
+    /// The rate the bridge actually delivers, read from the engine. Absent when
+    /// the engine cannot be reached; never made up from the requested value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_fps: Option<u16>,
+    /// The current capture frame size and queued rate, read from the same
+    /// engine state so the interface can show what the stream really carries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queued_fps: Option<u16>,
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -87,6 +99,14 @@ fn change_from_body(body: &ScreenBody) -> Result<VideoSettingsChange, &'static s
             change.validate().map_err(|_| "value_out_of_range")?;
             Ok(change)
         }
+        // The interface sends the height; the reviewed capture modes are the
+        // ones the bridge and the vendor configuration list.
+        "resolution" => {
+            let height = u16::try_from(body.value).map_err(|_| "value_out_of_range")?;
+            let mode =
+                bli_kvm_core::resolution_for_height(height).ok_or("unsupported_resolution")?;
+            Ok(VideoSettingsChange::new(None, None).with_resolution(mode))
+        }
         _ => Err("unsupported_setting"),
     }
 }
@@ -99,24 +119,40 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             rejection: None,
             fps: 0,
             quality: 0,
+            captured_fps: None,
+            width: None,
+            height: None,
+            queued_fps: None,
         },
         ControlResponse::VideoState { fps, quality } => ScreenOutcome {
             applied: true,
             rejection: None,
             fps,
             quality,
+            captured_fps: None,
+            width: None,
+            height: None,
+            queued_fps: None,
         },
         ControlResponse::Rejected { code } => ScreenOutcome {
             applied: false,
             rejection: Some(rejection_name(code)),
             fps: 0,
             quality: 0,
+            captured_fps: None,
+            width: None,
+            height: None,
+            queued_fps: None,
         },
         _ => ScreenOutcome {
             applied: false,
             rejection: Some("unexpected_response"),
             fps: 0,
             quality: 0,
+            captured_fps: None,
+            width: None,
+            height: None,
+            queued_fps: None,
         },
     }
 }
@@ -135,6 +171,10 @@ pub(crate) async fn update_screen(
                 rejection: Some(rejection),
                 fps: 0,
                 quality: 0,
+                captured_fps: None,
+                width: None,
+                height: None,
+                queued_fps: None,
             })));
         }
     };
@@ -172,7 +212,25 @@ pub(crate) async fn screen_state(
         )
         .await
         .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?;
-    Ok(Json(ApiResponse::ok(outcome(response))))
+    let mut outcome = outcome(response);
+    // Read the measured state only for an applied state and only when the engine
+    // socket is configured; an unreachable engine simply omits the fields.
+    if outcome.applied {
+        if let Some(socket) = state.options.engine_socket.clone() {
+            let engine =
+                tokio::task::spawn_blocking(move || crate::video_engine::read_state(&socket))
+                    .await
+                    .ok()
+                    .flatten();
+            if let Some(engine) = engine {
+                outcome.captured_fps = engine.captured_fps;
+                outcome.width = engine.width;
+                outcome.height = engine.height;
+                outcome.queued_fps = engine.queued_fps;
+            }
+        }
+    }
+    Ok(Json(ApiResponse::ok(outcome)))
 }
 
 #[cfg(not(feature = "restricted-control-surface"))]
@@ -228,7 +286,8 @@ mod tests {
             ("quality", 0, "value_out_of_range"),
             ("quality", 101, "value_out_of_range"),
             ("quality", -1, "value_out_of_range"),
-            ("resolution", 720, "unsupported_setting"),
+            ("resolution", 0, "unsupported_resolution"),
+            ("resolution", 1234, "unsupported_resolution"),
             ("gop", 30, "unsupported_setting"),
             ("type", 1, "unsupported_setting"),
         ] {
@@ -251,6 +310,7 @@ mod tests {
         });
         assert!(applied.applied);
         assert_eq!((applied.fps, applied.quality), (24, 80));
+        assert_eq!(applied.captured_fps, None);
         let rejected = outcome(ControlResponse::Rejected {
             code: bli_kvm_control_protocol::ControlRejectionCode::CapabilityDisabled,
         });

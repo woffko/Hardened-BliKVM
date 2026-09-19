@@ -45,8 +45,11 @@ mod shortcuts;
 mod system_action;
 mod system_log;
 mod system_time;
+mod tailscale;
 mod update;
 mod video;
+#[cfg(feature = "restricted-control-surface")]
+mod video_engine;
 mod video_settings;
 mod vm_info;
 mod ws;
@@ -109,6 +112,9 @@ pub struct ServerOptions {
     pub system_actions_enabled: bool,
     /// The board owner applies the reviewed video-engine settings.
     pub video_controls_enabled: bool,
+    /// The engine's read-only control socket (`/state` read-back for the
+    /// measured capture rate). No value keeps the extra field absent.
+    pub engine_socket: Option<PathBuf>,
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
@@ -139,6 +145,7 @@ impl Default for ServerOptions {
             media_controls_enabled: false,
             system_actions_enabled: false,
             video_controls_enabled: false,
+            engine_socket: None,
             network_writes_enabled: false,
             media_directory: None,
         }
@@ -220,11 +227,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }
         if options.video_controls_enabled {
             manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
-            // Only the entries the owner can enforce are offered; the MJPEG
-            // engine has no video-mode, GOP or frame-detect switch.
+            // Only the entries the owner can enforce are offered. The engine's
+            // hardware encoder ignores the JPEG quality and the capture device
+            // delivers MJPEG, so the quality switch cannot change the picture
+            // on this board and stays hidden with the frame rate alone offered.
             manifest.video.settings = vec![
                 bli_kvm_core::VideoSetting::Fps,
-                bli_kvm_core::VideoSetting::Quality,
+                bli_kvm_core::VideoSetting::Resolution,
             ];
         }
         if options.network_writes_enabled {
@@ -340,6 +349,19 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(network::network_ipv6).post(network_write::ipv6),
         )
         .route("/network/wol", post(network_write::wol))
+        .route("/extensions/tailscale/status", get(tailscale::status))
+        .route("/extensions/tailscale/install", post(tailscale::install))
+        .route(
+            "/extensions/tailscale/uninstall",
+            post(tailscale::uninstall),
+        )
+        .route("/extensions/tailscale/start", post(tailscale::start))
+        .route("/extensions/tailscale/restart", post(tailscale::restart))
+        .route("/extensions/tailscale/stop", post(tailscale::stop))
+        .route("/extensions/tailscale/up", post(tailscale::up))
+        .route("/extensions/tailscale/down", post(tailscale::down))
+        .route("/extensions/tailscale/login", post(tailscale::login))
+        .route("/extensions/tailscale/logout", post(tailscale::logout))
         .route(
             "/system/firewall",
             get(device_settings::firewall_state).post(device_settings::firewall_set),

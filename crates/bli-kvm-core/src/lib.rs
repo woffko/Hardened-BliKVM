@@ -42,7 +42,8 @@ pub use inventory::{
 pub use platform::CapabilityProvider;
 pub use video_settings::{
     JIGGLE_DELTA, JIGGLE_INTERVAL_SECONDS, MouseJigglerChange, MouseJigglerError, MouseJigglerMode,
-    jiggle_reports,
+    VIDEO_RESOLUTION_DEFAULT, VIDEO_RESOLUTION_ENV, VIDEO_RESOLUTIONS, jiggle_reports,
+    resolution_for_height, reviewed_resolution,
 };
 pub use video_settings::{
     VIDEO_FPS_DEFAULT, VIDEO_FPS_ENV, VIDEO_FPS_MAX, VIDEO_FPS_MIN, VIDEO_QUALITY_DEFAULT,

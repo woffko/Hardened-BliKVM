@@ -18,13 +18,14 @@ Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.so
 # accepted video-settings request and restarts this unit.
 Environment=BLI_KVM_USTREAMER_FPS=40
 Environment=BLI_KVM_USTREAMER_QUALITY=80
+Environment=BLI_KVM_USTREAMER_RESOLUTION=1280x720
 # Processed after the defaults on purpose: the accepted request wins.
 EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env
 ExecStart=/usr/bin/ustreamer \
   --device=/dev/kvmd-video \
   --persistent \
   --format=mjpeg \
-  --resolution=1280x720 \
+  --resolution=${BLI_KVM_USTREAMER_RESOLUTION} \
   --desired-fps=${BLI_KVM_USTREAMER_FPS} \
   --quality=${BLI_KVM_USTREAMER_QUALITY} \
   --drop-same-frames=30 \

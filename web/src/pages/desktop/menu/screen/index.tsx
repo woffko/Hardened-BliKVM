@@ -3,7 +3,7 @@ import { useAtomValue } from 'jotai';
 import { MonitorIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { updateScreen } from '@/api/vm';
+import { getScreen, updateScreen } from '@/api/vm';
 import * as ls from '@/lib/localstorage';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
@@ -23,6 +23,12 @@ export const Screen = () => {
   const videoSettings = capabilities?.video.settings ?? [];
   const [fps, setFps] = useState(30);
   const [quality, setQuality] = useState(2);
+  const [capturedFps, setCapturedFps] = useState<number | undefined>(undefined);
+  const [delivered, setDelivered] = useState<{
+    width?: number;
+    height?: number;
+    queuedFps?: number;
+  }>({});
 
   useEffect(() => {
     if (!isWritable) return;
@@ -42,6 +48,19 @@ export const Screen = () => {
         if (rsp.code === 0) setFps(cookieFps);
       });
     }
+
+    // The bridge may deliver fewer frames than requested; report the measured
+    // rate and frame size instead of pretending the requested values are what
+    // the stream shows.
+    void getScreen().then((rsp: any) => {
+      const data = rsp?.data ?? {};
+      if (typeof data.capturedFps === 'number') setCapturedFps(data.capturedFps);
+      setDelivered({
+        width: typeof data.width === 'number' ? data.width : undefined,
+        height: typeof data.height === 'number' ? data.height : undefined,
+        queuedFps: typeof data.queuedFps === 'number' ? data.queuedFps : undefined
+      });
+    });
   }, [isWritable]);
 
   const content = (
@@ -49,7 +68,16 @@ export const Screen = () => {
       {isWritable && videoSettings.includes('quality') && (
         <Quality quality={quality} setQuality={setQuality} />
       )}
-      {isWritable && videoSettings.includes('fps') && <Fps fps={fps} setFps={setFps} />}
+      {isWritable && videoSettings.includes('fps') && (
+        <Fps
+          fps={fps}
+          setFps={setFps}
+          capturedFps={capturedFps}
+          deliveredWidth={delivered.width}
+          deliveredHeight={delivered.height}
+          queuedFps={delivered.queuedFps}
+        />
+      )}
       <Scale />
     </div>
   );

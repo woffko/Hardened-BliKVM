@@ -174,7 +174,9 @@
     },
     "resetAssertMs": 100,
     "resetSettleMs": 100,
-    "spidev": "/dev/spidev1.0"
+    "spidev": "/dev/spidev1.0",
+    "statusImage": "/usr/bin/blikvm/oled_info.bmp",
+    "statusIntervalMs": 5000
   },
   "fan": {
     "activeLow": false,

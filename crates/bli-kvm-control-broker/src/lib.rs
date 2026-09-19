@@ -21,6 +21,7 @@ mod server;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
 pub mod system_log_settings;
+pub mod tailscale;
 pub mod tls_settings;
 mod video_settings;
 pub use device_settings::{HID_ONLY_STATE, HidOnlyState, MDNS_CONF, MDNS_UNIT, MdnsState};

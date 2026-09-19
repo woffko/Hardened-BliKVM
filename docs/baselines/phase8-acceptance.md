@@ -18,7 +18,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
   test; topology capture recorded
   (`evidence/private/device-kvm-topology-20260915-a.json`).
 - **Phase 1 — read-only platform API.** Server routes plus the route-drift guard
-  `tools/test_plan_route_drift.py`; 62 routes as of 2026-09-19.
+  `tools/test_plan_route_drift.py`; 72 routes as of 2026-09-19.
 - **Phase 4 — video gates (partly).** Two-client probe and soak receipts
   recorded (`video-two-client-probe-20260913-a.json`,
   `video-soak-probe-20260913-a.json`); the frame-timing probe is added and
@@ -93,7 +93,15 @@ Recorded detail:
   `hardened-blikvm-application-0.1.0-dev2-seq7.tar` (sha256 `1b8281cd…`, 28
   payload files, source commit `3cd6b07`). Publishing it as a candidate, running
   candidate health, confirming it into `current` and the slot-serving cutover
-  are the remaining device steps.
+  are the remaining device steps. On 2026-09-19 the same package
+  (`589a9eaa…`) was re-signed with the rotated key
+  `app-production-2026-09-18-01` using the same source/current commit bindings:
+  the re-signed artifact is byte-identical across two independent builds
+  (sha256 `d80ef86d0e8d4ad58b39d21173d04ec69a6fd8f37bad4581a02449b513837ffa`,
+  28 payload files) and passed the host supervisor verification
+  (`evidence/private/production-application-newkey-seq7-host-verification.json`:
+  `result=passed`, `independentBuildsIdentical=true`, `wrongKeyRejected=true`,
+  `payloadExecuted=false`). The old-key seq7 bundle remains as history.
 - E5 parity (2026-09-17): the reference stand answers with a NanoKVM-branded
   build (`Remote Desktop - NanoKVM`, label `Hardened NanoKVM`) and our build
   answers with `Remote Desktop - Hardened BliKVM` (label `Hardened BliKVM`).
@@ -106,6 +114,14 @@ Recorded detail:
   that stand serves a NanoKVM-branded build whose settings UI the reviewed probe
   does not reach, so the settings-tab and capability surfaces stay uncaptured on
   the reference side.
+- E5 parity refresh (2026-09-19): the authenticated capture was re-run against
+  the deployed board profile (`gui-parity-ours-auth-20260919-a.json`,
+  `apiLogin=accepted`, `mutationsPerformed=false`, `consoleErrors=0`, markers
+  `mobileKeyboardInput=1`, `videoElements=2`) and compared with the latest
+  reference receipt (`gui-parity-compare-20260919-a.json`): the only captured
+  label difference is still the product name, with no capability differences, no
+  marker differences, no failed requests and an unchanged console-error count.
+  The reference-side settings tabs remain uncaptured as recorded above.
 - E5: `gui-parity-ours-auth-20260916-a.json`,
   `gui-parity-compare-20260916-a.json` and
   `vendor-replacement-20260916-b.json`: our five units active, every KVMD unit

@@ -19,6 +19,7 @@ Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
+Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
 Environment=BLI_KVM_RESTRICTED_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CONTROLS=1
 # The board owner applies the reviewed video-engine settings.

@@ -66,6 +66,17 @@ impl FocusChallengeStore {
             .map(|(_, bindings, _)| *bindings)
     }
 
+    /// Keeps a confirmed session's bindings alive while its lease is live.
+    pub(crate) fn extend_bindings(&mut self, session_token: &str, expires_at: Instant) {
+        if let Some((_, _, stored)) = self
+            .bindings
+            .iter_mut()
+            .find(|(token, _, _)| token == session_token)
+        {
+            *stored = expires_at;
+        }
+    }
+
     fn sweep_bindings(&mut self, now: Instant) {
         self.bindings.retain(|(_, _, expires_at)| now < *expires_at);
     }
@@ -235,7 +246,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
-        | ControlResponse::FirewallState { .. } => false,
+        | ControlResponse::FirewallState { .. }
+        | ControlResponse::TailscaleState { .. } => false,
     };
     if attested {
         state
@@ -258,7 +270,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
-        | ControlResponse::FirewallState { .. } => FocusConfirmResponse {
+        | ControlResponse::FirewallState { .. }
+        | ControlResponse::TailscaleState { .. } => FocusConfirmResponse {
             attested: false,
             rejection: Some("internal"),
         },
@@ -389,12 +402,37 @@ pub(crate) async fn hid_lease(
         return Err(AppError::BadRequest("lease operation ID is invalid".into()));
     }
     let now = Instant::now();
-    let bindings = state
-        .focus
-        .lock()
-        .await
-        .bindings(&session.token, now)
-        .ok_or_else(|| AppError::BadRequest("a current focus confirmation is required".into()))?;
+    let confirmed = { state.focus.lock().await.bindings(&session.token, now) };
+    let bindings = match confirmed {
+        Some(bindings) => bindings,
+        None => {
+            // A live lease already required a confirmed focus, so an active
+            // session keeps its bindings: the reference keeps the keyboard and
+            // mouse alive for as long as the page is open. A lapsed
+            // confirmation without a live lease is still refused.
+            let live = { state.hid_ws_leases.lock().await.live(&session.token, now) };
+            let continuing = matches!(
+                request,
+                HidLeaseBody::Renew { .. }
+                    | HidLeaseBody::Report { .. }
+                    | HidLeaseBody::Release { .. }
+            );
+            match live {
+                Some((_, bindings)) if continuing => {
+                    state.focus.lock().await.extend_bindings(
+                        &session.token,
+                        now + Duration::from_secs(u64::from(ATTESTATION_TTL_SECONDS)),
+                    );
+                    bindings
+                }
+                _ => {
+                    return Err(AppError::BadRequest(
+                        "a current focus confirmation is required".into(),
+                    ));
+                }
+            }
+        }
+    };
     let lease = build_lease_request(&request, &bindings)?;
     let requested_ttl = lease_ttl(&request);
     let response = control
@@ -402,6 +440,14 @@ pub(crate) async fn hid_lease(
         .await
         .map_err(|_| AppError::ServiceUnavailable("HID control channel is unavailable".into()))?;
     let now = Instant::now();
+    // The interface only sees a rejection code, so the operator log has to
+    // carry the reason: without it a dropped lease is invisible.
+    if let ControlResponse::Rejected { code } = &response {
+        eprintln!(
+            "hid lease {:?} rejected: {code:?}",
+            std::mem::discriminant(&request)
+        );
+    }
     match &response {
         ControlResponse::LeaseGranted { lease_id } => {
             if let Some(ttl) = requested_ttl {
@@ -416,6 +462,21 @@ pub(crate) async fn hid_lease(
         ControlResponse::Applied | ControlResponse::MediaState { .. } => {
             if matches!(request, HidLeaseBody::Release { .. }) {
                 state.hid_ws_leases.lock().await.clear(&session.token);
+            } else if matches!(request, HidLeaseBody::Report { .. }) {
+                // A report is proof of an active session: keep the lease entry
+                // and the confirmed bindings alive at the reviewed maximum.
+                let expires_at =
+                    now + Duration::from_secs(u64::from(bli_kvm_core::HID_LEASE_MAX_TTL_SECONDS));
+                state
+                    .hid_ws_leases
+                    .lock()
+                    .await
+                    .extend(&session.token, expires_at);
+                state
+                    .focus
+                    .lock()
+                    .await
+                    .extend_bindings(&session.token, expires_at);
             } else if let Some(ttl) = requested_ttl {
                 state
                     .hid_ws_leases
@@ -432,7 +493,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
-        | ControlResponse::FirewallState { .. } => {}
+        | ControlResponse::FirewallState { .. }
+        | ControlResponse::TailscaleState { .. } => {}
     }
     Ok(Json(ApiResponse::ok(match response {
         ControlResponse::Applied => HidLeaseResponse {
@@ -460,7 +522,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
-        | ControlResponse::FirewallState { .. } => HidLeaseResponse {
+        | ControlResponse::FirewallState { .. }
+        | ControlResponse::TailscaleState { .. } => HidLeaseResponse {
             applied: false,
             lease_id: None,
             ttl_seconds: None,

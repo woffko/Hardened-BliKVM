@@ -11,9 +11,16 @@ from unittest import mock
 from tools import stage_device_video_settings_gate as gate
 
 
-def engine_facts(fps: object, quality: object = 0, online: object = "yes") -> str:
+def engine_facts(
+    fps: object,
+    quality: object = 0,
+    online: object = "yes",
+    resolution: object = "1280x720",
+    captured: object = 10,
+) -> str:
     return (
         f"engine_online={online}\nengine_fps={fps}\nengine_quality={quality}\n"
+        f"engine_resolution={resolution}\nengine_captured_fps={captured}\n"
     )
 
 
@@ -69,16 +76,21 @@ class VideoSettingsGateTests(unittest.TestCase):
         engines: collections.abc.Sequence[collections.abc.Mapping[str, object]],
         *,
         apply_result: dict[str, object] | None = None,
+        captured: object = 10,
     ) -> dict[str, object]:
         output, known_hosts = self._paths()
         replies = [
             mock.Mock(stdout=engine_facts(**facts).encode(), stderr=b"", returncode=0)
             for facts in engines
         ]
-        settings_replies = list(settings_sequence) * 12
+        # A restore runs after a failed verify too, so the last engine reply is
+        # repeated for the settle loops.
+        replies = replies + [replies[-1]] * 24
+        settings_replies = list(settings_sequence) * 40
         api = mock.Mock()
         api.settings.side_effect = settings_replies
         api.apply.return_value = apply_result or {"applied": True}
+        api.captured_fps.return_value = captured
         with (
             mock.patch.object(sys, "argv", self._argv(output, known_hosts, extra)),
             mock.patch.object(gate.prototype, "run_ssh", side_effect=replies),
@@ -152,6 +164,75 @@ class VideoSettingsGateTests(unittest.TestCase):
         self.assertEqual(receipt["returnCode"], 1)
         self.assertEqual(receipt["failureStage"], "verify")
         self.assertEqual(receipt["failureType"], "engine_fps_mismatch")
+
+    def test_a_reviewed_resolution_is_applied_and_restored(self) -> None:
+        receipt = self._run(
+            ["--confirm", "--apply-resolution", "1080"],
+            [(40, 80), (24, 100), (40, 80)],
+            [
+                {"fps": 40, "quality": 0, "resolution": "1280x720"},
+                {"fps": 24, "quality": 0, "resolution": "1920x1080"},
+                {"fps": 40, "quality": 0, "resolution": "1280x720"},
+            ],
+        )
+        self.assertEqual(receipt["returnCode"], 0)
+        self.assertEqual(receipt["result"], "passed")
+        self.assertEqual(receipt["initialResolution"], "1280x720")
+        self.assertEqual(receipt["targetResolution"], 1080)
+        self.assertEqual(receipt["engineResolution"], "1920x1080")
+        self.assertEqual(receipt["engineRestoredResolution"], "1280x720")
+
+    def test_a_captured_rate_within_the_sampling_tolerance_passes(self) -> None:
+        receipt = self._run(
+            ["--confirm"],
+            [(40, 80), (24, 100), (40, 80)],
+            [
+                {"fps": 40, "quality": 0, "captured": 10},
+                {"fps": 24, "quality": 0, "captured": 9},
+                {"fps": 40, "quality": 0, "captured": 10},
+            ],
+            captured=9,
+        )
+        self.assertEqual(receipt["returnCode"], 0)
+        self.assertEqual(receipt["result"], "passed")
+        self.assertEqual(receipt["serverCapturedFps"], 9)
+        self.assertEqual(receipt["engineCapturedFps"], 9)
+
+    def test_a_failed_verify_still_restores_the_original_values(self) -> None:
+        receipt = self._run(
+            ["--confirm"],
+            [(40, 80), (24, 100), (40, 80)],
+            [
+                {"fps": 40, "quality": 0, "captured": 10},
+                {"fps": 24, "quality": 0, "captured": 10},
+                {"fps": 40, "quality": 0, "captured": 10},
+            ],
+            captured=1,
+        )
+        self.assertEqual(receipt["returnCode"], 1)
+        self.assertEqual(receipt["failureType"], "server_captured_mismatch")
+        self.assertEqual(receipt["restoredFps"], 40)
+        self.assertEqual(receipt["engineRestoredFps"], 40)
+
+    def test_the_server_captured_rate_must_match_the_engine(self) -> None:
+        receipt = self._run(
+            ["--confirm"],
+            [(40, 80), (24, 100)],
+            [{"fps": 40, "quality": 0}, {"fps": 24, "quality": 0}],
+            captured=7,
+        )
+        self.assertEqual(receipt["returnCode"], 1)
+        self.assertEqual(receipt["failureType"], "server_captured_mismatch")
+
+    def test_a_missing_server_captured_rate_fails_closed(self) -> None:
+        receipt = self._run(
+            ["--confirm"],
+            [(40, 80)] + [(24, 100)] * 30,
+            [{"fps": 40, "quality": 0}, {"fps": 24, "quality": 0}],
+            captured=None,
+        )
+        self.assertEqual(receipt["returnCode"], 1)
+        self.assertEqual(receipt["failureType"], "server_captured_missing")
 
     def test_an_offline_engine_is_refused(self) -> None:
         receipt = self._run(

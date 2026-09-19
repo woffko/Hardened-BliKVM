@@ -18,7 +18,15 @@ export class HidLeaseSession {
   private ttlSeconds = 0;
   private renewTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * The broker admits a lease only while the session's target attestation is
+   * live, and that attestation expires long before a lease acquired once would
+   * end. The session therefore refreshes it before it acquires or renews.
+   */
+  constructor(private readonly attest: () => Promise<void>) {}
+
   async start(ttlSeconds: number): Promise<void> {
+    await this.attest();
     const response = await api.acquireLease(newOperationId(), ttlSeconds);
     if (!response.data.applied || !response.data.leaseId) {
       throw new Error('HID lease was not granted');
@@ -60,6 +68,7 @@ export class HidLeaseSession {
       return;
     }
     try {
+      await this.attest();
       const response = await api.renewLease(newOperationId(), leaseId, this.ttlSeconds);
       if (response.data.applied) {
         this.scheduleRenew(response.data.ttlSeconds ?? this.ttlSeconds);
@@ -67,6 +76,8 @@ export class HidLeaseSession {
         this.leaseId = null;
       }
     } catch {
+      // A failed renewal could be a lapsed confirmation, so the next report
+      // re-confirms and re-acquires instead of reporting into a dead session.
       this.leaseId = null;
     }
   }

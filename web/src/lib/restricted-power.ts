@@ -2,7 +2,8 @@ import * as api from '@/api/restricted-control.ts';
 
 import { newOperationId } from './hid-lease.ts';
 
-const FOCUS_TTL_MS = 25_000;
+// The server attests for 30 s, so the client refreshes well inside that.
+const FOCUS_TTL_MS = 15_000;
 const TARGET_HASH_BYTES = 16;
 
 let confirmedAtMs = 0;
@@ -36,6 +37,14 @@ export async function ensureFocus(platformId: string): Promise<void> {
     throw new Error(confirmation.data.rejection ?? 'focus_not_attested');
   }
   confirmedAtMs = Date.now();
+}
+
+/**
+ * Drops the cached confirmation after a refusal, so the next attempt
+ * re-confirms immediately instead of waiting for the cache to lapse.
+ */
+export function resetFocusConfirmation(): void {
+  confirmedAtMs = 0;
 }
 
 export async function performPowerAction(

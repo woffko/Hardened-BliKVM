@@ -76,6 +76,74 @@ the `/tmp` runtime root. See
 `docs/baselines/phase3-restricted-control-test-profile.md` for the manual
 checklist and boundaries.
 
+## 1b. HID lease supersede gate (P3 input fix)
+
+This gate proves the reviewed fix for the "lost lease id" input drop: the owner
+supersedes the *same* session's stale lease but still refuses a *different*
+session. It writes `evidence/private/hid-lease-supersede-gate-<date>.json`
+(probe `hardened-blikvm-hid-lease-gate`, `result=passed`):
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/stage_device_hid_lease_gate.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --base-url https://<host> --api-username admin \
+  --ca-file evidence/private/<host>.crt \
+  --confirm --output evidence/private/hid-lease-supersede-gate-<date>.json
+```
+
+Expected facts: `superseded=true`, `secondLeaseId` differs from `firstLeaseId`,
+`reportsApplied=5` with `reportRejections=0`, `secondSessionRefused=true` with
+`secondSessionRejection=lease_conflict`, and the lease released at the end.
+
+## 1c. Tailscale surface gate (fail-closed)
+
+The board ships no Tailscale package, so the surface must be readable and must
+refuse every management action. The gate writes
+`evidence/private/tailscale-surface-gate-<date>.json` (probe
+`hardened-blikvm-tailscale-gate`, `result=passed`):
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/stage_device_tailscale_gate.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --base-url https://<host> --api-username admin \
+  --ca-file evidence/private/<host>.crt \
+  --confirm --output evidence/private/tailscale-surface-gate-<date>.json
+```
+
+Expected facts: the status answers with `installed=false` while no package is
+present, `actionsAttempted=9` with `actionsRefused=9`, `firstRejection` set, and
+`mutationsPerformed=false`. Once a reviewed package source exists, this gate is
+replaced by the enable/disable proof.
+
+## 1d. Video capability matrix (operator request)
+
+The operator asked for the real delivered rate per reviewed resolution instead
+of trusting the UI list. The sweep applies each reviewed mode against the
+requested FPS values, records the engine's `captured_fps`/`queued_fps` and the
+server `capturedFps`, and restores the original settings. It writes
+`evidence/private/video-matrix-<date>.json` (probe
+`hardened-blikvm-video-matrix-gate`, `result=passed`):
+
+```
+project-memory-exec --project BLi-KVM --secret ssh=<id>:ssh_password -- \
+python3 -B tools/capture_device_video_matrix.py \
+  --endpoint ssh://<host>:22 --username <user> \
+  --known-hosts evidence/private/ssh-known-hosts \
+  --base-url https://<host> --api-username admin \
+  --ca-file evidence/private/<host>.crt \
+  --confirm --output evidence/private/video-matrix-<date>.json
+```
+
+Expected facts: one row per reviewed resolution (1080/720/600/480) and requested
+FPS (10/20/30/40/50/60), each with `engineResolution` equal to the reviewed mode,
+`engineDesiredFps` equal to the requested value, `capturedMatchesServer=true`,
+and the original settings restored at the end. This sweep restarts the streamer
+per combination, so it is run as one approved window.
+
 ## 2. HID keyboard and mouse modes (safe target only)
 
 Prerequisite: a controlled target and its video visible to the operator.
