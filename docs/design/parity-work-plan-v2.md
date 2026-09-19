@@ -655,6 +655,12 @@ signed bundle was built and host-verified (two builds byte-identical, wrong key
 rejected, `production-application-seq14-host-verification-and-stage.json`), but
 the device staging step is blocked by the stager's root-ownership rule (the
 `-v2` slot root is owned by `hardened-blikvm-update`, so root staging is
-rejected; running as that user needs the socket service's credential), i.e. the
-same upload-socket route as the known 503 residual. KVMD and `kvmd-main` are
-masked.
+rejected; running as that user needs the socket service's credential).
+The retained-path upload route was then probed with the seq14 bundle: it is
+configured (not the "upload is not configured" 503), the first attempt returned
+`409` `QuotaExceeded` from `check_staging_capacity` because the root filesystem
+was at 98% (117M free), `apt-get clean` freed ~200M (317M free, 94%), and the
+subsequent attempts return a stable `503` from a non-quota worker error or a
+transport error that needs deeper debugging (the worker exits in under a second
+and publishes nothing). `evidence/private/update-upload-investigation-20260919-a.json`.
+KVMD and `kvmd-main` are masked.
