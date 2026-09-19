@@ -353,3 +353,32 @@ configfs mounted) and not a substitute host.
   power probe needs Power and Reset unplugged like the bench.
 - Only after these pass, enable the capability flags in the shipped build and
   remove `kvmd.service` from the board profile.
+
+## 7. Trust rotation after KVMD retirement (E4)
+
+The retained supervisor reads its trust anchor from
+`/etc/hardened-blikvm/update-supervisor.json` through a systemd credential
+(`update-supervisor-config`). The reviewed `stage_device_update_trust_config.py`
+tool validates and writes that file but also renders the nginx/web cutover and
+requires a cutover baseline with `kvmd_active=active`, which no longer holds on
+this board, so it cannot be used after retirement.
+
+Swapping the single `keyId`/`publicKeyHex` to a new key was checked on the
+device on 2026-09-19 and is **not** sufficient by itself: every retained slot
+(`app-...-03` .. `app-...-11`) is signed by the previous key, so the supervisor
+rejects the existing state (`GET /api/application-update/status` returns 503 and
+an upload answers `archive verification failed`). The change was rolled back.
+
+Two reviewed paths remain for the operator to choose:
+
+1. **Re-initialise the application state under the new key**
+   (`tools/initialize_application_state.py`, the first-signed-slot
+   orchestrator). This provisions a fresh state with the new trust anchor and
+   discards the retained slot history (floor/generation reset).
+2. **Re-sign the retained slots with the new key** before swapping the anchor,
+   so the existing manifests verify under the new key. This preserves history
+   but writes new `manifest.sig` files into the retained slots and needs a
+   reviewed tool.
+
+Until one is chosen the E4 slot-serving cutover stays unrun and the running
+build is updated only by the board-profile bundle deploy.
