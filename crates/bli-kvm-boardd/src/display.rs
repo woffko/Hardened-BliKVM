@@ -180,9 +180,15 @@ where
         }
         let mut stream = PixelStream::new(window);
         let mut encoded = [0_u8; MAX_PIXEL_CHUNK_PIXELS * BYTES_PER_PIXEL];
+        // The panel is mounted so its native scan mirrors the frame
+        // horizontally; reverse each row so text and images read correctly.
+        let mut row_buffer = vec![Rgb565::BLACK; usize::from(DISPLAY_WIDTH)];
         for row in frame.chunks_exact(usize::from(DISPLAY_WIDTH)) {
+            for (pixel, source) in row_buffer.iter_mut().zip(row.iter().rev()) {
+                *pixel = *source;
+            }
             let written = stream
-                .encode_chunk(row, &mut encoded)
+                .encode_chunk(&row_buffer, &mut encoded)
                 .map_err(|_| DisplayError::PixelStream)?;
             self.write(true, &encoded[..written])?;
         }
