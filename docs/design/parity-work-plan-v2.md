@@ -647,5 +647,14 @@ source maps the exact board inventory to a valid current-only view, so the 503
 comes from the served binary being older than the current-only diagnostics API
 (commit `f0973ce`), not from the data; the earlier
 `device-diagnostics-api-attempt*.json` receipts record the failed attempt and
-the collector was verified separately. The fix path is a rebuilt server served
-through the retained update path. KVMD and `kvmd-main` are masked.
+the collector was verified separately. The cause is that `runtime_inventory`
+falls back to the native board inventory when the vendor broker is absent, but
+`diagnostics_view` did not; a shared `resolve_inventory` now serves both and a
+test covers the board profile. The fix is host-complete and pushed. A seq14
+signed bundle was built and host-verified (two builds byte-identical, wrong key
+rejected, `production-application-seq14-host-verification-and-stage.json`), but
+the device staging step is blocked by the stager's root-ownership rule (the
+`-v2` slot root is owned by `hardened-blikvm-update`, so root staging is
+rejected; running as that user needs the socket service's credential), i.e. the
+same upload-socket route as the known 503 residual. KVMD and `kvmd-main` are
+masked.
