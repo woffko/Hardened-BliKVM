@@ -141,6 +141,12 @@ through the owner's file and the API read-back.
 
 ## P2 - settings sections
 
+Device gate: passed on 2026-09-19 (`device-settings-gate-20260918-f.json`) —
+mDNS toggled and verified through the resolver and restored, HID-only enabled
+with the media attach refused by the reviewed contract and restored, the test
+line applied and observed in the journal, and the IPv6, WiFi, TLS and jiggler
+views recorded. The manifest reports P2 complete.
+
 Inventory taken on 2026-09-18: the built interface already ships every section
 the reference has (`about, account, appearance, device, network, system,
 system-log, tailscale, update` under `web/src/pages/desktop/menu/settings/`),
@@ -211,15 +217,13 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   reference status, mode and confirm routes, offering only the baseline mode
   and refusing the others with a reason. Running the write/restore on the
   device needs `nft` installed, which remains a separate operator approval.
-- **systemLog** (device-gate note, 2026-09-19): the test line's *transport* is
-  the open item. `logger` returned success without the line ever appearing in
-  the journal on this image, so the owner now sends the reviewed native journal
-  payload straight to `/run/systemd/journal/socket` (`ef8e349`); the socket
-  accepts the datagram (the owner answers `applied=true`) but no entry shows up
-  under the tag either, so the payload format or journald's acceptance needs
-  one more look. The gate records `systemLogTestApplied=true` and
-  `systemLogLineObserved=false`, and the toggles were restored and verified
-  again (`enabled=no`, `MulticastDNS=no`).
+- **systemLog** (device gate, 2026-09-19): the test line works. `logger`
+  returned success without the line ever appearing in the journal on this
+  image, so the owner sends the reviewed native journal payload straight to
+  `/run/systemd/journal/socket` (`ef8e349`), and the line is in the journal as
+  `hardened-blikvm system-log test`. The gate's own check was the last bug: a
+  cumulative count hid the new line, so it now counts matches inside a
+  two-minute window (`2b87947`).
 - **systemLog**: `/system-log/config` and `/system-log/messages` already serve
   the configuration, kernel and local views. `test` is implemented: the owner
   writes exactly one bounded line to the journal with `logger`, which is the
