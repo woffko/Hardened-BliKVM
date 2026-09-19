@@ -484,10 +484,17 @@ baseline gate passes with the owner sandbox intact (a transient unit runs
 `nft`); the video matrix gate holds a viewer and shows the idle 10 fps is the
 `--slowdown` rate; a 180 s video soak passed; and the ST7789 status screen now
 draws correctly (LSB-first font, no frame mirror, primary address from
-`/proc/net/fib_trie`). The remaining device item is the E4 slot-serving cutover,
-which needs the rotated signing key enrolled; swapping the single trust key
-invalidates the existing old-key slots, so it needs either a state
-re-initialisation or a retired-KVMD-aware trust tool.
+`/proc/net/fib_trie`). The remaining device item is the E4 slot-serving cutover.
+The rotated signing key `app-production-2026-09-19-01` is now enrolled without
+discarding history: a second config with the new key and fresh roots
+(`-v2`) was validated, the seq13 bundle was staged and the fresh state
+initialised (floor 13, generation 1), the live trust config now points at it,
+and the authenticated status surface reports the seq13 state while the previous
+config and roots stay intact for rollback. The serving cutover still needs a
+decision because the serving unit hardcodes the original slot root
+(`/var/lib/hardened-blikvm-slots/current`) and lacks the board-server's newer
+environment; options are a destructive activation in the original root or a
+reviewed serving-unit change to the v2 root with the same environment.
 
 
 `tools/phase8_acceptance_report.py` reports `overall=incomplete`,
