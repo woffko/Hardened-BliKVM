@@ -41,6 +41,7 @@ mod media;
 mod network;
 mod network_write;
 mod session_lock;
+mod shortcuts;
 mod system_action;
 mod system_log;
 mod system_time;
@@ -378,6 +379,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
         )
         .route("/hid/lease", post(hid::hid_lease))
+        .route("/hid/shortcuts", get(shortcuts::list))
+        .route(
+            "/hid/shortcut",
+            post(shortcuts::add).delete(shortcuts::delete),
+        )
         .route(
             "/hid/shortcut/leader-key",
             get(leader_key::get_leader_key).post(leader_key::set_leader_key),
