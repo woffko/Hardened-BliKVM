@@ -36,3 +36,17 @@ retained vendor sources under `/opt/bin/blikvm/src` on the board (2026-09-19).
 The line and polarity facts are already identical, so no change is required
 there. Items 1 and 2 change thermal and acoustic behaviour and are left for the
 operator's explicit choice; item 3 is a UI decision.
+
+## Panel behaviour notes (2026-09-19)
+
+- The panel scans the frame the same way the vendor sends it; a software row
+  reversal is wrong and flipped the vendor image, so it was removed. The empty
+  fields were a colour mistake (white text on the light vendor image), now dark
+  text at the vendor's cell positions and at twice the font size.
+- The status address must be selected through the default route. Connecting a
+  UDP socket to a TEST-NET destination (`192.0.2.1`) has no route on this board
+  and produced `no ip`; a routable destination returns the real address
+  (verified `10.0.77.118`).
+- `GET /api/vm/screen` now also returns `capturedFps`, `width`, `height` and
+  `queuedFps`. The idle `capturedFps` is the `--slowdown` rate (about 10);
+  with a viewer the engine reports the requested rate.
