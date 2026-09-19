@@ -28,10 +28,11 @@ retained vendor sources under `/opt/bin/blikvm/src` on the board (2026-09-19).
    30 % at 50 C and 80 % at 70 C, with a 20 % minimum and no duty below 50 C
    over 30 %. Matching the vendor would keep the fan at >=50 % whenever it
    runs and start it far earlier.
-3. **Panel/OLED capability.** The platform still advertises `oled` as
-   `not_exposed` while the daemon now drives the panel. The reference exposes an
-   OLED enable/disable toggle; if we want that surface, the feature must be
-   advertised and the owner given a reviewed toggle.
+3. **Panel/OLED capability.** The platform advertises
+   `board.features.oled.availability = unavailable` while the daemon now drives
+   the panel. The captured reference exposes an empty `capabilities` and no
+   settings tabs, so there is no verified reference OLED control to match; a
+   reviewed OLED enable/disable toggle is optional and left to the operator.
 
 The line and polarity facts are already identical, so no change is required
 there. Items 1 and 2 change thermal and acoustic behaviour and are left for the
@@ -42,7 +43,8 @@ operator's explicit choice; item 3 is a UI decision.
 - The panel scans the frame the same way the vendor sends it; a software row
   reversal is wrong and flipped the vendor image, so it was removed. The empty
   fields were a colour mistake (white text on the light vendor image), now dark
-  text at the vendor's cell positions and at twice the font size.
+  text at the vendor's cell positions; the operator then confirmed the content
+  and asked for one uniform size, now 1.5x on every line.
 - The status address must be selected through the default route. Connecting a
   UDP socket to a TEST-NET destination (`192.0.2.1`) has no route on this board
   and produced `no ip`; a routable destination returns the real address
