@@ -348,7 +348,7 @@ async fn board_state(
     // refuses every action until a reviewed package exists.
     state.with_tailscale(crate::tailscale::TailscaleState::open(
         Box::new(crate::tailscale::SystemTailscaleRunner),
-        false,
+        true,
     ));
     // The reviewed system-log test line goes straight to the journal.
     state.with_system_log(crate::system_log_settings::SystemLogState::open(

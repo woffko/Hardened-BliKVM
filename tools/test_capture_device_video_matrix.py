@@ -149,8 +149,10 @@ class VideoMatrixTests(unittest.TestCase):
         receipt = self._run(
             ["--confirm"],
             settings=[(60, 100), (30, 100), (60, 100)],
-            engines=[engine_facts(60), engine_facts(30, captured=10), engine_facts(60)],
-            captured=1,
+            engines=[engine_facts(60)]
+            + [engine_facts(30, captured=3)] * 13
+            + [engine_facts(60)],
+            captured=0,
         )
         self.assertEqual(receipt["returnCode"], 1)
         self.assertEqual(receipt["result"], "failed")

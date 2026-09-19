@@ -370,23 +370,28 @@ def execute(options: Options) -> int:
                 after: dict[str, str] = {}
                 server_captured: int | None = None
                 read_back_fps = 0
+                engine_captured = 0
+                captured_matches = False
                 while settle < SETTLE_SECONDS:
                     read_back_fps, _quality = api.settings()
                     server_captured = api.captured_fps()
                     after = engine()
+                    engine_captured = int(after.get("engine_captured_fps", 0))
+                    captured_matches = (
+                        server_captured is not None
+                        and abs(server_captured - engine_captured) <= CAPTURED_FPS_TOLERANCE
+                    )
                     if (
                         int(after["engine_fps"]) == fps
                         and after["engine_resolution"] == expected_mode
-                        and server_captured is not None
+                        # The engine samples captured_fps over its own window and
+                        # reports a low value right after a restart, so wait for
+                        # the measured read-back to agree before judging it.
+                        and captured_matches
                     ):
                         break
                     time.sleep(1.0)
                     settle += 1
-                engine_captured = int(after.get("engine_captured_fps", 0))
-                captured_matches = (
-                    server_captured is not None
-                    and abs(server_captured - engine_captured) <= CAPTURED_FPS_TOLERANCE
-                )
                 row: dict[str, Any] = {
                     "resolutionHeight": height,
                     "requestedFps": fps,

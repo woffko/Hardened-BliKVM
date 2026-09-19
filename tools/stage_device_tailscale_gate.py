@@ -71,6 +71,7 @@ class Receipt(TypedDict):
     statusMessage: str
     actionsAttempted: int
     actionsRefused: int
+    actionsApplied: int
     firstRejection: str
     failureStage: str
     failureType: str
@@ -216,6 +217,7 @@ def execute(options: Options) -> int:
         "statusMessage": "",
         "actionsAttempted": 0,
         "actionsRefused": 0,
+        "actionsApplied": 0,
         "firstRejection": "",
         "failureStage": "",
         "failureType": "",
@@ -240,21 +242,40 @@ def execute(options: Options) -> int:
             return 0
 
         stage = "actions"
-        refused = 0
-        for name in ACTIONS:
-            outcome = api.action(name)
-            if outcome.get("applied") is True:
-                raise GateError(stage, f"{name}_admitted")
-            rejection = str(outcome.get("rejection") or "")
-            if not rejection:
-                raise GateError(stage, f"{name}_no_rejection")
-            if not receipt["firstRejection"]:
-                receipt["firstRejection"] = rejection
-            refused += 1
-        receipt["actionsAttempted"] = len(ACTIONS)
-        receipt["actionsRefused"] = refused
-        if refused != len(ACTIONS):
-            raise GateError(stage, "not_every_action_refused")
+        if not receipt["installed"]:
+            # No package: the surface must stay fail-closed.
+            refused = 0
+            for name in ACTIONS:
+                outcome = api.action(name)
+                if outcome.get("applied") is True:
+                    raise GateError(stage, f"{name}_admitted")
+                rejection = str(outcome.get("rejection") or "")
+                if not rejection:
+                    raise GateError(stage, f"{name}_no_rejection")
+                if not receipt["firstRejection"]:
+                    receipt["firstRejection"] = rejection
+                refused += 1
+            receipt["actionsAttempted"] = len(ACTIONS)
+            receipt["actionsRefused"] = refused
+            if refused != len(ACTIONS):
+                raise GateError(stage, "not_every_action_refused")
+        else:
+            # The package is present, so management follows the reference:
+            # start must apply, the daemon must run, and the previous state
+            # is restored.
+            was_running = receipt["running"]
+            started = api.action("start")
+            if started.get("applied") is not True:
+                raise GateError(stage, "start_refused")
+            refreshed = api.status()
+            if not bool(refreshed.get("running")):
+                raise GateError(stage, "start_did_not_run")
+            receipt["actionsAttempted"] = 1
+            receipt["actionsApplied"] = 1
+            if not was_running:
+                stopped = api.action("stop")
+                if stopped.get("applied") is not True:
+                    raise GateError(stage, "stop_refused")
     except GateError as error:
         receipt["result"] = "failed"
         receipt["failureStage"] = error.stage

@@ -225,6 +225,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
+        // The reference can install and control Tailscale. The package is
+        // optional, so the surface is advertised as writable and every action
+        // is refused by the owner while the package is absent.
+        manifest.board.features.insert(
+            "tailscale".into(),
+            FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+        );
         if options.video_controls_enabled {
             manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             // Only the entries the owner can enforce are offered. The engine's

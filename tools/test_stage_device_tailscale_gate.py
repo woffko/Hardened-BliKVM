@@ -92,6 +92,32 @@ class TailscaleGateTests(unittest.TestCase):
         self.assertIs(receipt["mutationsPerformed"], False)
         api.action.assert_not_called()
 
+    def test_an_installed_package_is_started_and_restored(self) -> None:
+        output, known_hosts = self._paths()
+        api = mock.Mock()
+        api.status.side_effect = [
+            {**STATUS, "installed": True, "running": False},
+            {**STATUS, "installed": True, "running": True},
+        ]
+        api.action.return_value = {"applied": True}
+        with (
+            mock.patch.object(
+                sys, "argv", self._argv(output, known_hosts, ["--confirm"])
+            ),
+            mock.patch.object(
+                sys, "stdin", io.BytesIO(b"ssh-secret\noperator-password\n")
+            ),
+            mock.patch.object(gate, "TailscaleApi", return_value=api),
+        ):
+            code = gate.main()
+        receipt = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["result"], "passed")
+        self.assertIs(receipt["installed"], True)
+        self.assertEqual(receipt["actionsApplied"], 1)
+        actions = [call.args[0] for call in api.action.call_args_list]
+        self.assertEqual(actions, ["start", "stop"])
+
     def test_every_reviewed_action_is_refused(self) -> None:
         receipt = self._run(["--confirm"])
         self.assertEqual(receipt["returnCode"], 0)
