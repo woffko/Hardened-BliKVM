@@ -46,7 +46,14 @@ operator's explicit choice; item 3 is a UI decision.
 - The status address must be selected through the default route. Connecting a
   UDP socket to a TEST-NET destination (`192.0.2.1`) has no route on this board
   and produced `no ip`; a routable destination returns the real address
-  (verified `10.0.77.118`).
+  (verified on the board's primary address).
 - `GET /api/vm/screen` now also returns `capturedFps`, `width`, `height` and
   `queuedFps`. The idle `capturedFps` is the `--slowdown` rate (about 10);
   with a viewer the engine reports the requested rate.
+
+- The 8x8 table is LSB-first (bit 0 is the leftmost pixel); drawing it
+  MSB-first mirrored every glyph, which is why the status text read backwards
+  while the vendor image stayed correct. The font renderer now uses LSB-first.
+- The daemon sandbox allows only `AF_UNIX`, so the UDP-socket address lookup
+  was blocked and the panel showed `no ip`. The primary address is now read
+  from `/proc/net/fib_trie` without creating any socket.

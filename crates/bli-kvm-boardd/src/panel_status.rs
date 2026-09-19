@@ -7,7 +7,6 @@
 
 use std::{
     fs,
-    net::UdpSocket,
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -60,18 +59,42 @@ fn read_trimmed(path: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// The primary IPv4 address without sending any packets.
+/// The primary IPv4 address without creating any socket: the daemon's sandbox
+/// allows only `AF_UNIX`, so the kernel's own interface table is read instead.
 fn primary_address() -> Option<String> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    // A routable destination selects the interface with the default route;
-    // the TEST-NET address used before has no route on this board.
-    socket.connect("1.1.1.1:53").ok()?;
-    let address = socket.local_addr().ok()?.ip();
-    if address.is_unspecified() {
-        None
-    } else {
-        Some(address.to_string())
+    let text = fs::read_to_string("/proc/net/fib_trie").ok()?;
+    let mut pending: Option<String> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.ends_with("host LOCAL") {
+            if let Some(address) = &pending {
+                if !address.starts_with("127.") && address != "0.0.0.0" {
+                    return Some(address.clone());
+                }
+            }
+        } else if let Some(address) = dotted_quad(trimmed) {
+            pending = Some(address);
+        }
     }
+    None
+}
+
+/// Extract the first `a.b.c.d` token from a line of `/proc/net/fib_trie`.
+fn dotted_quad(line: &str) -> Option<String> {
+    for token in line
+        .split(['|', '+', '-', ' ', '/', '\t'])
+        .filter(|item| !item.is_empty())
+    {
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() == 4
+            && parts
+                .iter()
+                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            return Some(token.to_string());
+        }
+    }
+    None
 }
 
 fn temperature_celsius() -> String {
@@ -286,6 +309,17 @@ mod tests {
         assert!(!due(1_000, 0, Duration::from_millis(5_000)));
         assert!(due(5_000, 0, Duration::from_millis(5_000)));
         assert!(due(9_000, 4_000, Duration::from_millis(5_000)));
+    }
+
+    #[test]
+    fn the_interface_table_parser_finds_local_addresses() {
+        assert_eq!(dotted_quad("|-- 203.0.113.7"), Some("203.0.113.7".into()));
+        assert_eq!(dotted_quad("   /32 host LOCAL"), None);
+        assert_eq!(
+            dotted_quad("+-- 203.0.113.0/24"),
+            Some("203.0.113.0".into())
+        );
+        assert_eq!(dotted_quad("Main:"), None);
     }
 
     #[test]

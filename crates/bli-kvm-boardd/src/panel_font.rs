@@ -161,7 +161,8 @@ pub fn draw_text(
         };
         for (row, bits) in rows.iter().enumerate() {
             for column in 0..u32::from(GLYPH_WIDTH) {
-                if bits & (0x80 >> column) == 0 {
+                // The public-domain table is LSB-first: bit 0 is leftmost.
+                if bits & (1 << column) == 0 {
                     continue;
                 }
                 for dy in 0..scale {
