@@ -22,7 +22,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         socket = Path("packaging/systemd/hardened-blikvm-update-activation.socket").read_text()
         for required in ("Type=oneshot", "TimeoutStartSec=15s", "activation-socket --peer-user hardened-blikvm-server",
                          "OnSuccess=hardened-blikvm-update-apply-candidate.service hardened-blikvm-update-apply-confirmed.service",
-                         "ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-update /run/hardened-blikvm-update"):
+                         "ReadWritePaths=/var/lib/hardened-blikvm-slots -/var/lib/hardened-blikvm-slots-v2 /var/lib/hardened-blikvm-update -/var/lib/hardened-blikvm-update-v2 /run/hardened-blikvm-update -/run/hardened-blikvm-update-v2"):
             self.assertIn(required, worker)
         for forbidden in ("SuccessExitStatus=", "OnFailure=", "ConditionPath", "ExecStart=/usr/bin/systemctl", " activate %i"):
             self.assertNotIn(forbidden, worker)
@@ -42,7 +42,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         for required in ("Type=simple", "RuntimeMaxSec=180s", "TimeoutStopSec=5s",
                          "StateDirectory=hardened-blikvm-upload", "StateDirectoryMode=0700",
                          "upload-socket --peer-user hardened-blikvm-server",
-                         "ReadWritePaths=/var/lib/hardened-blikvm-slots /var/lib/hardened-blikvm-upload"):
+                         "ReadWritePaths=/var/lib/hardened-blikvm-slots -/var/lib/hardened-blikvm-slots-v2 /var/lib/hardened-blikvm-upload"):
             self.assertIn(required, worker)
         for forbidden in ("OnSuccess=", " activate ", " confirm-stdin", "RuntimeDirectory=",
                           "ReadWritePaths=/var/lib/hardened-blikvm-update"):

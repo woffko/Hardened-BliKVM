@@ -656,11 +656,22 @@ rejected, `production-application-seq14-host-verification-and-stage.json`), but
 the device staging step is blocked by the stager's root-ownership rule (the
 `-v2` slot root is owned by `hardened-blikvm-update`, so root staging is
 rejected; running as that user needs the socket service's credential).
-The retained-path upload route was then probed with the seq14 bundle: it is
-configured (not the "upload is not configured" 503), the first attempt returned
-`409` `QuotaExceeded` from `check_staging_capacity` because the root filesystem
-was at 98% (117M free), `apt-get clean` freed ~200M (317M free, 94%), and the
-subsequent attempts return a stable `503` from a non-quota worker error or a
-transport error that needs deeper debugging (the worker exits in under a second
-and publishes nothing). `evidence/private/update-upload-investigation-20260919-a.json`.
-KVMD and `kvmd-main` are masked.
+The retained-path upload was then fixed: `hardened-blikvm-update-upload@.service`
+and `hardened-blikvm-update-activation@.service` granted write access only to the
+default roots (`ReadWritePaths=/var/lib/hardened-blikvm-slots ...`), so under
+`ProtectSystem=strict` the rotated `-v2` slot root was read-only and the stager
+failed with `Io(EROFS)` -> `Unavailable` -> `503`. Adding the `-v2` roots as
+optional (`-`) entries makes the upload succeed: `POST
+/api/application-update/upload` of seq14 now returns `code 0`, `published`,
+slot `app-...14-...`. The board also had its root filesystem at 98%; `apt-get
+clean` freed ~200M (317M free, 94%). `evidence/private/update-upload-fix-20260919-a.json`.
+
+Activation is still blocked: the apply/serving units are hardcoded to the
+default roots (`apply-candidate` `ConditionPathExists=/run/hardened-blikvm-update/health-token`;
+`hardened-blikvm-server-candidate.service`
+`ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server`), so with the
+live `-v2` runtime an activation would write the health token under `-v2` while
+the apply condition checks the default path, and the candidate would serve the
+pre-rotation slot. Aligning those units with the configured roots is the next
+chunk; activation was not performed to avoid a stuck `pending` state. KVMD and
+`kvmd-main` are masked.
