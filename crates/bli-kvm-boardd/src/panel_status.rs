@@ -211,20 +211,21 @@ pub fn render(background: Option<&[Rgb565]>, info: &SystemInfo) -> Vec<Rgb565> {
     // The vendor image provides the icons and the table; the values fill the
     // empty cells. Dark text keeps them readable on the light background.
     let ink = Rgb565::from_rgb888(0x20, 0x20, 0x30);
-    // The address uses the small size so a full IPv4 address fits the cell.
-    for (x, y, scale, text) in [
-        (56, 12, 2, "BliKVM V4"),
-        (56, 56, 1, info.address.as_str()),
-        (56, 94, 2, info.temperature.as_str()),
-        (56, 134, 2, info.uptime.as_str()),
-        (56, 174, 2, info.load.as_str()),
-        (176, 174, 2, info.memory.as_str()),
+    // One uniform size for every line: 1.5x, between the small integer step the
+    // address needed and the double step used for the numeric values.
+    for (x, y, text) in [
+        (56, 12, "BliKVM V4"),
+        (56, 56, info.address.as_str()),
+        (56, 94, info.temperature.as_str()),
+        (56, 134, info.uptime.as_str()),
+        (56, 174, info.load.as_str()),
+        (176, 174, info.memory.as_str()),
     ] {
         draw_text(
             &mut frame,
             DISPLAY_WIDTH,
             DISPLAY_HEIGHT,
-            TextStyle::new(x, y, scale),
+            TextStyle::ratio(x, y, 3, 2),
             text,
             ink,
         );

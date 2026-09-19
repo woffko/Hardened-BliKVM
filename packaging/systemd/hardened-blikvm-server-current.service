@@ -8,8 +8,8 @@ Requires=hardened-blikvm-board-owner.service hardened-blikvm-update-recover.serv
 Wants=hardened-blikvm-board-video-proxy.service
 After=hardened-blikvm-board-owner.service hardened-blikvm-board-video-proxy.service hardened-blikvm-update-recover.service
 Conflicts=hardened-blikvm-server.service hardened-blikvm-server-candidate.service
-ConditionPathExists=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
-ConditionPathExists=/var/lib/hardened-blikvm-slots/current/share/web/index.html
+ConditionPathExists=/var/lib/hardened-blikvm-slots-v2/current/bin/bli-kvm-server
+ConditionPathExists=/var/lib/hardened-blikvm-slots-v2/current/share/web/index.html
 
 [Service]
 Type=simple
@@ -19,7 +19,7 @@ UMask=0077
 StateDirectory=hardened-blikvm
 StateDirectoryMode=0700
 Environment=BLI_KVM_BIND=127.0.0.1:18080
-Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots/current/share/web
+Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots-v2/current/share/web
 Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
@@ -28,9 +28,17 @@ Environment=BLI_KVM_MEDIA_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
 Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
+Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
+Environment=BLI_KVM_VIDEO_CONTROLS=1
+Environment=BLI_KVM_NETWORK_WRITES=1
+Environment=BLI_KVM_SYSTEM_ACTIONS=1
+Environment=BLI_KVM_UPDATE_STATUS_SOCKET=/run/hardened-blikvm-update-api/status.sock
+Environment=BLI_KVM_UPDATE_UPLOAD_SOCKET=/run/hardened-blikvm-update-api/upload.sock
+Environment=BLI_KVM_UPDATE_ACTIVATION_SOCKET=/run/hardened-blikvm-update-api/activation.sock
+Environment=BLI_KVM_UPDATE_WRITES_ENABLED=1
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
-ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
+ExecStart=/var/lib/hardened-blikvm-slots-v2/current/bin/bli-kvm-server
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=15s

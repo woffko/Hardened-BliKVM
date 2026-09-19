@@ -129,17 +129,37 @@ pub fn glyph(character: char) -> Option<[u8; 8]> {
 
 /// Draw one line of text with a transparent background. Characters outside the
 /// table are skipped. Returns the x coordinate after the last glyph.
-/// Where and how large to draw one string.
+/// Where and how large to draw one string. The size is a rational multiplier of
+/// the 8x8 glyph cell so a fractional size between two integer steps is
+/// possible (`scale_num / scale_den`).
 #[derive(Debug, Clone, Copy)]
 pub struct TextStyle {
     pub x: i32,
     pub y: i32,
-    pub scale: i32,
+    pub scale_num: u16,
+    pub scale_den: u16,
 }
 
 impl TextStyle {
+    /// An integer multiple of the glyph cell.
     pub const fn new(x: i32, y: i32, scale: i32) -> Self {
-        Self { x, y, scale }
+        Self {
+            x,
+            y,
+            scale_num: if scale < 1 { 1 } else { scale as u16 },
+            scale_den: 1,
+        }
+    }
+
+    /// A fractional multiple, for example `TextStyle::ratio(x, y, 3, 2)` for a
+    /// 1.5x size that matches neither the small nor the double step.
+    pub const fn ratio(x: i32, y: i32, numerator: u16, denominator: u16) -> Self {
+        Self {
+            x,
+            y,
+            scale_num: if numerator < 1 { 1 } else { numerator },
+            scale_den: if denominator < 1 { 1 } else { denominator },
+        }
     }
 }
 
@@ -151,8 +171,9 @@ pub fn draw_text(
     text: &str,
     colour: Rgb565,
 ) -> i32 {
-    let scale = style.scale.max(1);
-    let advance = ADVANCE * scale;
+    let numerator = i32::from(style.scale_num.max(1));
+    let denominator = i32::from(style.scale_den.max(1));
+    let advance = ADVANCE * numerator / denominator;
     let mut cursor = style.x;
     for character in text.chars() {
         let Some(rows) = glyph(character) else {
@@ -160,21 +181,18 @@ pub fn draw_text(
             continue;
         };
         for (row, bits) in rows.iter().enumerate() {
+            // Map the source row onto the destination band [top, bottom).
+            let top = style.y + row as i32 * numerator / denominator;
+            let bottom = style.y + (row as i32 + 1) * numerator / denominator;
             for column in 0..u32::from(GLYPH_WIDTH) {
                 // The public-domain table is LSB-first: bit 0 is leftmost.
                 if bits & (1 << column) == 0 {
                     continue;
                 }
-                for dy in 0..scale {
-                    let py = style.y + row as i32 * scale + dy;
-                    if py < 0 || py >= i32::from(height) {
-                        continue;
-                    }
-                    for dx in 0..scale {
-                        let px = cursor + column as i32 * scale + dx;
-                        if px < 0 || px >= i32::from(width) {
-                            continue;
-                        }
+                let left = cursor + column as i32 * numerator / denominator;
+                let right = cursor + (column as i32 + 1) * numerator / denominator;
+                for py in top.max(0)..bottom.min(i32::from(height)) {
+                    for px in left.max(0)..right.min(i32::from(width)) {
                         let index = py as usize * usize::from(width) + px as usize;
                         buffer[index] = colour;
                     }
@@ -225,5 +243,32 @@ mod tests {
             "M",
             Rgb565::RED,
         );
+    }
+
+    #[test]
+    fn a_fractional_ratio_sizes_between_the_integer_steps() {
+        let mut buffer = vec![Rgb565::BLACK; 40 * 20];
+        let end = draw_text(
+            &mut buffer,
+            40,
+            20,
+            TextStyle::ratio(0, 0, 3, 2),
+            "A",
+            Rgb565::WHITE,
+        );
+        // 3/2 of the 9-pixel advance, rounded down.
+        assert_eq!(end, ADVANCE * 3 / 2);
+        let (mut max_x, mut max_y) = (0_i32, 0_i32);
+        for y in 0..20_i32 {
+            for x in 0..40_i32 {
+                if buffer[(y * 40 + x) as usize] == Rgb565::WHITE {
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+        }
+        // A 1.5x cell is smaller than the double step (16) but larger than 1x.
+        assert!(max_x < 12 && max_y < 12);
+        assert!(max_x >= 8 && max_y >= 8);
     }
 }
