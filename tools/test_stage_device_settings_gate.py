@@ -15,15 +15,15 @@ class DeviceSettingsGateTests(unittest.TestCase):
         script = gate.facts_script()
         for forbidden in ("systemctl", "rm -", "install -m", "echo >", "tee "):
             self.assertNotIn(forbidden, script)
-        self.assertIn("resolvectl status", script)
+        self.assertIn("resolvectl mdns", script)
         self.assertIn("journalctl -t hardened-blikvm", script)
         facts = gate.parse_facts(
-            "  indented=1\nmdns_link=yes_journal\njournal_test_lines=3\nbad key=1\n"
+            "  indented=1\nmdns_link=yes\njournal_test_lines=3\nbad key=1\n"
         )
         self.assertEqual(
-            facts, {"mdns_link": "yes_journal", "journal_test_lines": "3"}
+            facts, {"mdns_link": "yes", "journal_test_lines": "3"}
         )
-        self.assertTrue(gate.mdns_enabled({"mdns_link": "yes_journal"}))
+        self.assertTrue(gate.mdns_enabled({"mdns_link": "yes"}))
         self.assertFalse(gate.mdns_enabled({"mdns_link": "no"}))
         self.assertFalse(gate.mdns_enabled({}))
 

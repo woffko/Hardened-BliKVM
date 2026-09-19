@@ -120,35 +120,23 @@ fn render_mdns(text: &str, enabled: bool) -> String {
 }
 
 fn write_conf(path: &Path, text: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "the configuration file has no parent directory".to_string())?;
-    let metadata = std::fs::symlink_metadata(parent)
-        .map_err(|error| format!("the configuration directory is unavailable: {error}"))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("the configuration directory must be a real directory".into());
+    // The sandbox grants this file, not its directory, so the reviewed
+    // configuration is rewritten in place; the caller keeps the previous
+    // contents and restores them when the follow-up step fails.
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("the configuration file is unavailable: {error}"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("the configuration file must be a regular file".into());
     }
-    let temporary = path.with_extension("conf.new");
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
         .truncate(true)
-        .open(&temporary)
-        .map_err(|error| format!("the temporary configuration file is unavailable: {error}"))?;
-    file.write_all(text.as_bytes()).map_err(|error| {
-        format!("the temporary configuration file could not be written: {error}")
-    })?;
-    file.sync_all().map_err(|error| {
-        format!("the temporary configuration file could not be synced: {error}")
-    })?;
-    std::fs::set_permissions(
-        &temporary,
-        std::os::unix::fs::PermissionsExt::from_mode(0o644),
-    )
-    .map_err(|error| format!("the configuration file mode could not be set: {error}"))?;
-    drop(file);
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("the configuration file could not be replaced: {error}"))
+        .open(path)
+        .map_err(|error| format!("the configuration file could not be opened: {error}"))?;
+    file.write_all(text.as_bytes())
+        .map_err(|error| format!("the configuration file could not be written: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("the configuration file could not be synced: {error}"))
 }
 
 fn reject(code: ControlRejectionCode) -> ControlResponse {

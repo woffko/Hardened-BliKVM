@@ -153,13 +153,12 @@ def read_credentials(*, dispatch: bool) -> tuple[bytearray, str]:
 
 
 def facts_script() -> str:
-    """Read the resolver's link state and the journal test line count."""
+    """Read the resolver's own mDNS state and the journal test line count."""
     return (
         "set +e\n"
-        "resolvectl status 2>/dev/null | grep -m1 'Multicast DNS:' | tr -d '\\n'\n"
-        "printf '\\n'\n"
-        "printf 'mdns_link=%s\\n' \"$(resolvectl status 2>/dev/null | "
-        "grep -m1 'Multicast DNS:' | sed 's/.*Multicast DNS:[[:space:]]*//' | tr -c 'A-Za-z0-9_.:-' '_')\"\n"
+        "printf 'mdns_link=%s\\n' \"$(resolvectl mdns 2>/dev/null | "
+        "grep -m1 '^Global:' | sed 's/^Global:[[:space:]]*//' | "
+        "tr -c 'A-Za-z0-9_.:-' '_')\"\n"
         "printf 'journal_test_lines=%s\\n' \"$(journalctl -t hardened-blikvm "
         "--no-pager 2>/dev/null | wc -l | tr -d ' ')\"\n"
     )
@@ -310,7 +309,9 @@ def execute(options: Options) -> int:
 
         after = before
         target = not initial_mdns
-        api.post("/api/vm/mdns/enable" if target else "/api/vm/mdns/disable")
+        toggled = api.post("/api/vm/mdns/enable" if target else "/api/vm/mdns/disable")
+        if toggled.get("applied") is not True:
+            raise GateError("mdns", "mdns_toggle_not_applied")
         receipt["mutationsPerformed"] = True
         settle = 0
         while settle < 10:
@@ -325,7 +326,9 @@ def execute(options: Options) -> int:
             raise GateError("mdns", "mdns_state_not_applied")
         receipt["mdnsEnabled"] = True
 
-        api.post("/api/vm/hid-only", {"enabled": True})
+        hid_toggle = api.post("/api/vm/hid-only", {"enabled": True})
+        if hid_toggle.get("applied") is not True:
+            raise GateError("hid-only", "hid_only_not_applied")
         catalog = api.get("/api/virtual-media/catalog")
         images = cast(list[Json], catalog.get("images") or [])
         if not images:
@@ -347,7 +350,9 @@ def execute(options: Options) -> int:
         receipt["hidOnlyEnabled"] = True
         receipt["mediaRefusedWhileHidOnly"] = True
 
-        api.post("/api/system-log/test")
+        log_toggle = api.post("/api/system-log/test")
+        if log_toggle.get("applied") is not True:
+            raise GateError("system-log", "test_not_applied")
         receipt["systemLogTestApplied"] = True
         settle = 0
         while settle < 5:
