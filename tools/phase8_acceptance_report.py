@@ -330,6 +330,7 @@ PHASES: tuple[dict[str, Any], ...] = (
             "tools/build_debian_runtime_package.py",
             "tools/build_production_update_bundle.py",
             "tools/verify_production_update_bundle.py",
+            "tools/stage_device_slot_serving_gate.py",
             "packaging/systemd/hardened-blikvm-server-current.service",
             "docs/baselines/device-installed-application-update.md",
             "docs/design/retained-application-update-runbook.md",

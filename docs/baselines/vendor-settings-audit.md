@@ -57,3 +57,7 @@ operator's explicit choice; item 3 is a UI decision.
 - The daemon sandbox allows only `AF_UNIX`, so the UDP-socket address lookup
   was blocked and the panel showed `no ip`. The primary address is now read
   from `/proc/net/fib_trie` without creating any socket.
+- The address is the longest value and at 2x it overflows the 240-pixel cell,
+  so it originally used 1x while the other values used 2x. The operator asked
+  for one uniform size between the two; `TextStyle` now supports a rational
+  scale and every status line draws at 1.5x.

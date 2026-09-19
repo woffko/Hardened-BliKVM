@@ -591,3 +591,31 @@ only through `project-memory-exec`; device mutations only with the operator's
 explicit confirmation in the session; a reboot only with its own explicit
 confirmation; historical receipts are never rewritten and checks are never
 weakened; one owner per gadget, ATX and video line; every change reversible.
+
+## Completion addendum (2026-09-19, late)
+
+Panel: the operator confirmed the status screen content on the device and asked
+for a single font size, between the small address size and the double numeric
+size. `TextStyle` gained a rational scale (`ratio`); every status line now
+draws at 1.5x (`panel_font.rs`, `panel_status.rs`; 40 boardd tests). The
+update bundle `ff4ed3e9…` was deployed (backup `deploy-panel-20260919154527`)
+and the panel status gate passed again (`panel-status-gate-20260919-b.json`).
+
+Trust rotation: the non-destructive rotation is final on the device. The fresh
+`-v2` slot root was created with mode 0700 by the rotation script; the shipped
+design uses group-traversable mode `drwxr-x---` so the serving user (group
+`hardened-blikvm`) can execute the slot artifact. The mode was corrected to
+0750 with no other change.
+
+Slot-serving cutover: the running board server now executes the confirmed signed
+slot from `<slotRoot>/current/bin/bli-kvm-server` through a reviewed, reversible
+drop-in (`90-slot-serving.conf`); the slot and installed binaries and web entry
+are byte-identical, and the gate refuses a slot that differs from the installed
+artifact or a `current` that is not the confirmed slot. The new
+`tools/stage_device_slot_serving_gate.py` (with unit tests) records
+`update-slot-serving-20260919-a.json` (`result=passed`, HTTPS health after the
+restart, executable canonicalized to the seq13 slot). The HID lease gate passed
+again after the cutover (`hid-lease-supersede-gate-20260919-e.json`).
+
+`tools/phase8_acceptance_report.py` now reports `overall=complete`,
+`hostMissing=0`, `deviceUnrun=0` against the manifest.

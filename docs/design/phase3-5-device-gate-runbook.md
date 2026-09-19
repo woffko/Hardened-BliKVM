@@ -411,8 +411,24 @@ trusted config owner in release) now points at the new key and fresh roots, and
 the authenticated status surface reports the seq13 state
 (`evidence/private/update-trust-rotation-20260919-a.json`). The previous config
 is backed up and the previous roots are untouched, so the rotation is
-reversible. Activation and the slot-serving cutover were not performed and
-remain the operator's call.
+reversible.
+
+The slot-serving cutover was then performed on 2026-09-19. The running board
+server executes the confirmed slot through a reviewed, reversible drop-in
+(`/etc/systemd/system/hardened-blikvm-board-server.service.d/90-slot-serving.conf`)
+that resets `ExecStart` to `<slotRoot>/current/bin/bli-kvm-server` and points
+`BLI_KVM_WEB_ROOT` at the slot. The gate
+`tools/stage_device_slot_serving_gate.py` refuses a slot whose binary or web
+entry differs from the installed artifact, or a `current` that is not the
+confirmed slot; `--rollback` removes the drop-in and restores the installed
+server. It recorded `evidence/private/update-slot-serving-20260919-a.json`
+(`result=passed`). To undo: run the gate with `--rollback`.
+
+The slot root mode matters: the shipped design uses `drwxr-x---` (0750, group
+`hardened-blikvm`) so the serving user can execute the slot artifact. The
+rotation script created the fresh `-v2` slot root with 0700, which made the
+server fail with `203/EXEC` (`Permission denied`); the mode was corrected to
+0750. The update root stays 0700.
 
 Note the ownership rule that the direct CLI exposes: a release supervisor
 trusts only a root-owned config, while the stager requires the slot root owned
