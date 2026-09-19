@@ -625,6 +625,11 @@ prototype bundle (`49c49a0f…`) is byte-identical
 (`db8f45a1…`, `SOURCE_DATE_EPOCH=0`); recorded in
 `evidence/private/runtime-deb-determinism-20260919-a.json`.
 
+The HID lease gate is the operative automated HID check
+(`hid-lease-supersede-gate-20260919-e.json`); the pre-retirement
+`stage_device_hid_reboot_gate.py` fails at preflight with `kvmd_active_invalid`
+because it still expects KVMD to be active, so it is obsolete after retirement.
+
 The cutover persists across a reboot: the boot gate passed after the switch
 (`boot-gate-20260919-b.json`, identity changed, no failed units) and the server
 still executes the seq13 slot artifact after it
