@@ -625,6 +625,11 @@ prototype bundle (`49c49a0f…`) is byte-identical
 (`db8f45a1…`, `SOURCE_DATE_EPOCH=0`); recorded in
 `evidence/private/runtime-deb-determinism-20260919-a.json`.
 
+The cutover persists across a reboot: the boot gate passed after the switch
+(`boot-gate-20260919-b.json`, identity changed, no failed units) and the server
+still executes the seq13 slot artifact after it
+(`slot-serving-persist-20260919-b.json`).
+
 Live surface smoke after the cutover (authenticated): `/api/health`,
 `/api/application/version`, `/api/application-update/status`,
 `/api/capabilities`, `/api/vm/screen`, `/api/vm/info`,
