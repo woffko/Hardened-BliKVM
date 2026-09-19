@@ -240,10 +240,35 @@ class BoardApi:
         return cast(Json, body.get("data") or {})
 
     def post(self, route: str, payload: Json | None = None) -> Json:
-        body = self._request("POST", route, payload or {})
+        # A deploy restarts the owner, so the first write can hit a stale
+        # control connection; -503 is retried for a bounded time before the
+        # gate gives up and fails closed.
+        body: Json = {}
+        for _attempt in range(10):
+            body = self._request("POST", route, payload or {})
+            if body.get("code") != -503:
+                break
+            time.sleep(1.0)
         if body.get("code") != 0:
             raise GateError("api", f"write_failed_{body.get('code')}")
         return cast(Json, body.get("data") or {})
+
+    def wait_ready(self, timeout_seconds: int) -> None:
+        """Wait for the front and the owner path to answer before switching."""
+        deadline = time.monotonic() + timeout_seconds
+        last = "no response"
+        while time.monotonic() < deadline:
+            try:
+                body = self._request("GET", "/api/vm/hid-only", None)
+            except (OSError, ValueError) as error:
+                last = str(error)
+                time.sleep(1.0)
+                continue
+            if body.get("code") == 0:
+                return
+            last = f"code {body.get('code')}"
+            time.sleep(1.0)
+        raise GateError("readiness", f"owner_path_unavailable_{last}")
 
 
 def mdns_enabled(facts: dict[str, str]) -> bool:
@@ -283,6 +308,7 @@ def execute(options: Options) -> int:
     try:
         api = BoardApi(options, password_holder)
         password_holder = ""
+        api.wait_ready(min(options.timeout_seconds, 60))
         before = require_ssh(
             options, secret, facts_script(), min(options.timeout_seconds, 30)
         )
