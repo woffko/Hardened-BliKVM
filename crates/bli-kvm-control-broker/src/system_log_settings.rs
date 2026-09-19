@@ -4,31 +4,34 @@
 //! no such service, so the owner writes one bounded line to the journal with
 //! `logger`, which is the surface the interface's local view reads.
 
-use std::process::Command;
-
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 
-pub const LOGGER: &str = "/usr/bin/logger";
+/// The journal's native datagram socket: writing here is what `systemd-cat`
+/// does, and it does not depend on a syslog daemon being present.
+pub const JOURNAL_SOCKET: &str = "/run/systemd/journal/socket";
 pub const TEST_MESSAGE: &str = "hardened-blikvm system-log test";
+
+/// The native journal payload: one datagram with the reviewed identifier.
+pub fn journal_payload() -> String {
+    format!("PRIORITY=6\nSYSLOG_IDENTIFIER=hardened-blikvm\nMESSAGE={TEST_MESSAGE}\n")
+}
 
 /// Runs the reviewed `logger` call. Injected so a test asserts the exact
 /// command and the failure path.
 pub trait SystemLogRunner: Send {
-    fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String>;
+    /// Sends one bounded payload to the journal socket.
+    fn send(&mut self, socket: &str, payload: &str) -> Result<(), String>;
 }
 
 pub struct SystemLogExecRunner;
 
 impl SystemLogRunner for SystemLogExecRunner {
-    fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
-        let output = Command::new(program)
-            .args(args)
-            .output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    fn send(&mut self, socket: &str, payload: &str) -> Result<(), String> {
+        let sender = std::os::unix::net::UnixDatagram::unbound().map_err(|e| e.to_string())?;
+        sender
+            .send_to(payload.as_bytes(), socket)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -50,10 +53,7 @@ impl SystemLogState {
         if !self.capability_enabled {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }
-        match self.runner.run(
-            LOGGER,
-            &["-t", "hardened-blikvm", "-p", "user.notice", TEST_MESSAGE],
-        ) {
+        match self.runner.send(JOURNAL_SOCKET, &journal_payload()) {
             Ok(_) => ControlResponse::Applied,
             Err(reason) => {
                 eprintln!("system log: test message failed: {reason}");
@@ -79,15 +79,15 @@ mod tests {
     }
 
     impl SystemLogRunner for RecordingRunner {
-        fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
+        fn send(&mut self, socket: &str, payload: &str) -> Result<(), String> {
             self.calls
                 .lock()
                 .unwrap()
-                .push(format!("{program} {}", args.join(" ")));
+                .push(format!("{socket} {payload}"));
             if self.fail {
-                return Err("logger failure".into());
+                return Err("journal write failure".into());
             }
-            Ok(String::new())
+            Ok(())
         }
     }
 
@@ -106,7 +106,8 @@ mod tests {
         assert_eq!(state.test_message(), ControlResponse::Applied);
         let calls = calls.lock().unwrap().clone();
         assert_eq!(calls.len(), 1);
-        assert!(calls[0].starts_with("/usr/bin/logger -t hardened-blikvm"));
+        assert!(calls[0].starts_with("/run/systemd/journal/socket"));
+        assert!(calls[0].contains("SYSLOG_IDENTIFIER=hardened-blikvm"));
         assert!(calls[0].contains("system-log test"));
     }
 
