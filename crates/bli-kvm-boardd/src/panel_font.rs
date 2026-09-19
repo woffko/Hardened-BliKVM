@@ -129,39 +129,58 @@ pub fn glyph(character: char) -> Option<[u8; 8]> {
 
 /// Draw one line of text with a transparent background. Characters outside the
 /// table are skipped. Returns the x coordinate after the last glyph.
+/// Where and how large to draw one string.
+#[derive(Debug, Clone, Copy)]
+pub struct TextStyle {
+    pub x: i32,
+    pub y: i32,
+    pub scale: i32,
+}
+
+impl TextStyle {
+    pub const fn new(x: i32, y: i32, scale: i32) -> Self {
+        Self { x, y, scale }
+    }
+}
+
 pub fn draw_text(
     buffer: &mut [Rgb565],
     width: u16,
     height: u16,
-    x: i32,
-    y: i32,
+    style: TextStyle,
     text: &str,
     colour: Rgb565,
 ) -> i32 {
-    let mut cursor = x;
+    let scale = style.scale.max(1);
+    let advance = ADVANCE * scale;
+    let mut cursor = style.x;
     for character in text.chars() {
         let Some(rows) = glyph(character) else {
-            cursor += ADVANCE;
+            cursor += advance;
             continue;
         };
         for (row, bits) in rows.iter().enumerate() {
-            let py = y + row as i32;
-            if py < 0 || py >= i32::from(height) {
-                continue;
-            }
             for column in 0..u32::from(GLYPH_WIDTH) {
                 if bits & (0x80 >> column) == 0 {
                     continue;
                 }
-                let px = cursor + column as i32;
-                if px < 0 || px >= i32::from(width) {
-                    continue;
+                for dy in 0..scale {
+                    let py = style.y + row as i32 * scale + dy;
+                    if py < 0 || py >= i32::from(height) {
+                        continue;
+                    }
+                    for dx in 0..scale {
+                        let px = cursor + column as i32 * scale + dx;
+                        if px < 0 || px >= i32::from(width) {
+                            continue;
+                        }
+                        let index = py as usize * usize::from(width) + px as usize;
+                        buffer[index] = colour;
+                    }
                 }
-                let index = py as usize * usize::from(width) + px as usize;
-                buffer[index] = colour;
             }
         }
-        cursor += ADVANCE;
+        cursor += advance;
     }
     cursor
 }
@@ -183,13 +202,27 @@ mod tests {
     #[test]
     fn draw_text_marks_pixels_inside_the_buffer_only() {
         let mut buffer = vec![Rgb565::BLACK; 40 * 16];
-        let end = draw_text(&mut buffer, 40, 16, 1, 1, "AB", Rgb565::WHITE);
+        let end = draw_text(
+            &mut buffer,
+            40,
+            16,
+            TextStyle::new(1, 1, 1),
+            "AB",
+            Rgb565::WHITE,
+        );
         assert_eq!(end, 1 + 2 * ADVANCE);
         assert!(buffer.contains(&Rgb565::WHITE));
         // A glyph pushed off the right edge must not panic and must clip.
         let mut small = vec![Rgb565::BLACK; 9 * 8];
-        let _ = draw_text(&mut small, 9, 8, 8, 0, "M", Rgb565::RED);
+        let _ = draw_text(&mut small, 9, 8, TextStyle::new(8, 0, 1), "M", Rgb565::RED);
         // Negative coordinates clip too.
-        let _ = draw_text(&mut small, 9, 8, -4, -4, "M", Rgb565::RED);
+        let _ = draw_text(
+            &mut small,
+            9,
+            8,
+            TextStyle::new(-4, -4, 1),
+            "M",
+            Rgb565::RED,
+        );
     }
 }

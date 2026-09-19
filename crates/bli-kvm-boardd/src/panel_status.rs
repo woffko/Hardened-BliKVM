@@ -14,7 +14,7 @@ use std::{
 
 use bli_kvm_st7789_model::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH, Rgb565};
 
-use crate::panel_font::draw_text;
+use crate::panel_font::{TextStyle, draw_text};
 
 /// Reason a status frame could not be prepared.
 #[derive(Debug, PartialEq, Eq)]
@@ -51,17 +51,6 @@ impl SystemInfo {
             memory: memory_text(),
         }
     }
-
-    /// Lines in the order they are rendered.
-    pub fn lines(&self) -> [String; 5] {
-        [
-            self.address.clone(),
-            format!("{}  {}", self.temperature, self.uptime),
-            format!("load {}", self.load),
-            self.memory.clone(),
-            self.hostname.clone(),
-        ]
-    }
 }
 
 fn read_trimmed(path: &str) -> Option<String> {
@@ -74,7 +63,9 @@ fn read_trimmed(path: &str) -> Option<String> {
 /// The primary IPv4 address without sending any packets.
 fn primary_address() -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("192.0.2.1:9").ok()?;
+    // A routable destination selects the interface with the default route;
+    // the TEST-NET address used before has no route on this board.
+    socket.connect("1.1.1.1:53").ok()?;
     let address = socket.local_addr().ok()?.ip();
     if address.is_unspecified() {
         None
@@ -137,8 +128,7 @@ fn memory_text() -> String {
         return "mem n/a".into();
     }
     let used_mib = total.saturating_sub(available) / 1024;
-    let total_mib = total / 1024;
-    format!("{used_mib}/{total_mib}M")
+    format!("{used_mib}M")
 }
 
 fn parse_kib(value: &str) -> u64 {
@@ -199,14 +189,21 @@ pub fn render(background: Option<&[Rgb565]>, info: &SystemInfo) -> Vec<Rgb565> {
     // empty cells. Dark text keeps them readable on the light background.
     let ink = Rgb565::from_rgb888(0x20, 0x20, 0x30);
     for (x, y, text) in [
-        (60, 12, "BliKVM V4"),
-        (60, 58, info.address.as_str()),
-        (60, 92, info.temperature.as_str()),
-        (60, 136, info.uptime.as_str()),
-        (60, 176, info.load.as_str()),
-        (196, 176, info.memory.as_str()),
+        (56, 12, "BliKVM V4"),
+        (56, 54, info.address.as_str()),
+        (56, 94, info.temperature.as_str()),
+        (56, 134, info.uptime.as_str()),
+        (56, 174, info.load.as_str()),
+        (176, 174, info.memory.as_str()),
     ] {
-        draw_text(&mut frame, DISPLAY_WIDTH, DISPLAY_HEIGHT, x, y, text, ink);
+        draw_text(
+            &mut frame,
+            DISPLAY_WIDTH,
+            DISPLAY_HEIGHT,
+            TextStyle::new(x, y, 2),
+            text,
+            ink,
+        );
     }
     frame
 }
