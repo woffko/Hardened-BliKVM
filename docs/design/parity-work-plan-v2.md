@@ -4,6 +4,16 @@ Status: supersedes the E0-E5 ordering for the remaining work. The reference is
 the stand at `https://<reference-address>`; its interface surface was extracted from the
 served JavaScript bundle and is the source of truth for what parity means.
 
+> **Current status: complete (2026-09-19, late).** The authoritative, final
+> state is the "Completion addendum (2026-09-19, late)" at the end of this
+> document. The phase sections and the "Status snapshot" above/below are the
+> historical plan and interim snapshots written while the work was in progress;
+> where they disagree with the addendum, the addendum wins:
+> `phase8_acceptance_report.py` = `overall=complete`, `deviceUnrun=0`, the
+> device update cycle ran end to end (seq13 -> seq14, generation 4, floor 14),
+> serving is `hardened-blikvm-server-current.service`, and `/api/diagnostics`
+> returns 200.
+
 ## Reference surface (evidence)
 
 Settings sections: `about, account, appearance, device, network, system,
@@ -477,6 +487,13 @@ implementation of it.
 
 ## Status snapshot (2026-09-19)
 
+> Historical snapshot from earlier on 2026-09-19, kept for the record. It is
+> superseded by the "Completion addendum (2026-09-19, late)" at the end of this
+> document, which records the finished state: `overall=complete`,
+> `deviceUnrun=0`, the full device update cycle (seq13 -> seq14), the serving
+> switch to `hardened-blikvm-server-current.service`, and the live
+> `/api/diagnostics` fix.
+
 Additional progress (later 2026-09-19): the application-update API
 (status/upload/activation sockets plus the write opt-in) is wired on the
 running board server and the authenticated status answers again; the firewall
@@ -593,6 +610,12 @@ confirmation; historical receipts are never rewritten and checks are never
 weakened; one owner per gadget, ATX and video line; every change reversible.
 
 ## Completion addendum (2026-09-19, late)
+
+> Chronological checkpoints from the final work session. Some middle paragraphs
+> state problems that later paragraphs resolved (for example `/api/diagnostics`
+> was 503 and the upload was quota/503-limited before the upload fix and the
+> activation). The **final state is the last paragraph**, and the top-of-document
+> status note points here.
 
 Panel: the operator confirmed the status screen content on the device and asked
 for a single font size, between the small address size and the double numeric
