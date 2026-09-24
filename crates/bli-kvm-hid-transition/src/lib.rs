@@ -306,14 +306,20 @@ impl HidTransitionEngine {
             .await
     }
 
-    pub fn renew(
+    pub async fn renew(
         &mut self,
         identity: HidLeaseIdentity,
         now: Instant,
         ttl: Duration,
     ) -> Result<(), HidTransitionError> {
+        self.flush_pending().await?;
+        let before = self.manager.release_snapshot();
         let batch = self.manager.renew(identity, now, ttl);
-        match batch.error {
+        let after = self.manager.release_snapshot();
+        let lease_error = batch.error;
+        self.execute_transition(&before, &batch.events, &after)
+            .await?;
+        match lease_error {
             Some(error) => Err(HidTransitionError::Lease(error)),
             None => Ok(()),
         }
@@ -358,6 +364,7 @@ impl HidTransitionEngine {
     }
 
     pub async fn expire(&mut self, now: Instant) -> Result<(), HidTransitionError> {
+        self.flush_pending().await?;
         let before = self.manager.release_snapshot();
         let events = self.manager.expire(now);
         let after = self.manager.release_snapshot();
@@ -610,9 +617,82 @@ mod tests {
         assert!(requests[1].contains("key=KeyA&state=0"));
         assert_eq!(engine.pending_release_count(), 0);
         assert!(matches!(
-            engine.renew(owner, now, Duration::from_secs(10)),
+            engine.renew(owner, now, Duration::from_secs(10)).await,
             Err(HidTransitionError::Lease(HidLeaseError::NotActive))
         ));
+    }
+
+    #[tokio::test]
+    async fn expired_renew_executes_release_before_returning_expired() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let server = serve_statuses(&socket, &["200 OK", "200 OK"]).await;
+        let mut engine = engine(&socket, &directory.path().join("releases.json"));
+        let owner = identity(1);
+        let now = Instant::now();
+        engine
+            .acquire(owner, now, Duration::from_secs(2))
+            .await
+            .unwrap();
+        engine
+            .report(
+                owner,
+                now,
+                &HidReport::Keyboard {
+                    data: [0, 0, 4, 0, 0, 0, 0, 0],
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            engine
+                .renew(owner, now + Duration::from_secs(2), Duration::from_secs(2))
+                .await,
+            Err(HidTransitionError::Lease(HidLeaseError::Expired))
+        ));
+        let requests = server.await.unwrap();
+        assert!(requests[0].contains("key=KeyA&state=1"));
+        assert!(requests[1].contains("key=KeyA&state=0"));
+        assert_eq!(engine.pending_release_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn expiry_retries_a_release_after_the_backend_recovers() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let press_server = serve_statuses(&socket, &["200 OK"]).await;
+        let mut engine = engine(&socket, &directory.path().join("releases.json"));
+        let owner = identity(1);
+        let now = Instant::now();
+        engine
+            .acquire(owner, now, Duration::from_secs(2))
+            .await
+            .unwrap();
+        engine
+            .report(
+                owner,
+                now,
+                &HidReport::Keyboard {
+                    data: [0, 0, 4, 0, 0, 0, 0, 0],
+                },
+            )
+            .await
+            .unwrap();
+        let requests = press_server.await.unwrap();
+        assert!(requests[0].contains("key=KeyA&state=1"));
+        fs::remove_file(&socket).unwrap();
+
+        assert!(matches!(
+            engine.expire(now + Duration::from_secs(2)).await,
+            Err(HidTransitionError::Backend(_))
+        ));
+        assert_eq!(engine.pending_release_count(), 1);
+
+        let recovery_server = serve_statuses(&socket, &["200 OK"]).await;
+        engine.expire(now + Duration::from_secs(3)).await.unwrap();
+        let requests = recovery_server.await.unwrap();
+        assert!(requests[0].contains("key=KeyA&state=0"));
+        assert_eq!(engine.pending_release_count(), 0);
     }
 
     #[tokio::test]

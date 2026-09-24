@@ -40,6 +40,9 @@ pub(crate) struct ScreenBody {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScreenOutcome {
+    /// Configured capture mode; independent from observed frame dimensions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_resolution: Option<String>,
     pub applied: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rejection: Option<&'static str>,
@@ -48,7 +51,7 @@ pub(crate) struct ScreenOutcome {
     /// The rate the bridge actually delivers, read from the engine. Absent when
     /// the engine cannot be reached; never made up from the requested value.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub captured_fps: Option<u16>,
+    pub captured_fps: Option<f64>,
     /// The current capture frame size and queued rate, read from the same
     /// engine state so the interface can show what the stream really carries.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,7 +59,7 @@ pub(crate) struct ScreenOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub queued_fps: Option<u16>,
+    pub queued_fps: Option<f64>,
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -115,6 +118,7 @@ fn change_from_body(body: &ScreenBody) -> Result<VideoSettingsChange, &'static s
 fn outcome(response: ControlResponse) -> ScreenOutcome {
     match response {
         ControlResponse::Applied => ScreenOutcome {
+            requested_resolution: None,
             applied: true,
             rejection: None,
             fps: 0,
@@ -124,7 +128,12 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             height: None,
             queued_fps: None,
         },
-        ControlResponse::VideoState { fps, quality } => ScreenOutcome {
+        ControlResponse::VideoState {
+            fps,
+            quality,
+            resolution,
+        } => ScreenOutcome {
+            requested_resolution: resolution,
             applied: true,
             rejection: None,
             fps,
@@ -135,6 +144,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             queued_fps: None,
         },
         ControlResponse::Rejected { code } => ScreenOutcome {
+            requested_resolution: None,
             applied: false,
             rejection: Some(rejection_name(code)),
             fps: 0,
@@ -145,6 +155,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             queued_fps: None,
         },
         _ => ScreenOutcome {
+            requested_resolution: None,
             applied: false,
             rejection: Some("unexpected_response"),
             fps: 0,
@@ -167,6 +178,7 @@ pub(crate) async fn update_screen(
         Ok(change) => change,
         Err(rejection) => {
             return Ok(Json(ApiResponse::ok(ScreenOutcome {
+                requested_resolution: None,
                 applied: false,
                 rejection: Some(rejection),
                 fps: 0,
@@ -305,12 +317,15 @@ mod tests {
     #[test]
     fn renders_the_owner_state_and_rejection() {
         let applied = outcome(ControlResponse::VideoState {
+            resolution: Some("1280x720".into()),
             fps: 24,
             quality: 80,
         });
         assert!(applied.applied);
         assert_eq!((applied.fps, applied.quality), (24, 80));
         assert_eq!(applied.captured_fps, None);
+        assert_eq!(applied.requested_resolution.as_deref(), Some("1280x720"));
+        assert_eq!((applied.width, applied.height), (None, None));
         let rejected = outcome(ControlResponse::Rejected {
             code: bli_kvm_control_protocol::ControlRejectionCode::CapabilityDisabled,
         });

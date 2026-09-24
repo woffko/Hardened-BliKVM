@@ -162,10 +162,47 @@ impl ControlV2State {
     /// One jiggler interval: the serve loop calls this, and it is a no-op when
     /// no jiggler is attached or the jiggler is off.
     pub fn jiggle_tick(&mut self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
         match self.mouse_jiggler.as_mut() {
             Some(jiggler) => jiggler.tick(),
             None => Ok(()),
         }
+    }
+
+    /// Close command admission before releasing held HID state. Call while
+    /// holding the owner state lock, then drain in-flight external workers
+    /// before stopping the process. Repeating this retries persisted releases;
+    /// an error never reopens admission or resumes the jiggler.
+    pub async fn begin_quiescence(&mut self) -> Result<(), ControlRejectionCode> {
+        self.enabled = false;
+        #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
+        if let Some(policy) = self.hid.as_mut() {
+            return match policy.disconnect().await {
+                HidDecision::Applied => Ok(()),
+                HidDecision::Reject(rejection) => Err(rejection.rejection_code()),
+            };
+        }
+        Ok(())
+    }
+
+    /// Release held HID state when an idle lease reaches its deadline. The
+    /// broker serve loop calls this independently of client traffic.
+    #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
+    pub async fn hid_expiry_tick(&mut self, now: Instant) -> Result<(), ControlRejectionCode> {
+        let Some(policy) = self.hid.as_mut() else {
+            return Ok(());
+        };
+        match policy.expire(now).await {
+            HidDecision::Applied => Ok(()),
+            HidDecision::Reject(rejection) => Err(rejection.rejection_code()),
+        }
+    }
+
+    #[cfg(not(any(feature = "hid-transition-profile", feature = "gadget-hid-profile")))]
+    pub async fn hid_expiry_tick(&mut self, _now: Instant) -> Result<(), ControlRejectionCode> {
+        Ok(())
     }
 
     #[cfg(feature = "system-action-profile")]
@@ -605,10 +642,14 @@ impl ControlV2State {
         let Some(state) = self.video_settings.as_ref() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        let current = state.current();
+        let current = match state.readback() {
+            Ok(current) => current,
+            Err(code) => return reject(code),
+        };
         ControlResponse::VideoState {
             fps: current.fps,
             quality: current.quality,
+            resolution: Some(current.resolution),
         }
     }
 
@@ -669,6 +710,28 @@ impl ControlV2State {
         self.enabled
     }
 
+    fn hid_reconciliation_state(&self) -> ControlResponse {
+        #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
+        if let Some(hid) = &self.hid {
+            return match u64::try_from(hid.pending_release_count()) {
+                Ok(pending_releases) => {
+                    ControlResponse::HidReconciliationState { pending_releases }
+                }
+                Err(_) => reject(ControlRejectionCode::Internal),
+            };
+        }
+        reject(ControlRejectionCode::CapabilityDisabled)
+    }
+
+    pub fn firewall_mode_runtime(&self) -> Option<crate::firewall_runtime::SharedModeRuntime> {
+        if !self.enabled {
+            return None;
+        }
+        self.firewall
+            .as_ref()
+            .and_then(crate::firewall_settings::FirewallState::mode_runtime)
+    }
+
     pub async fn handle(
         &mut self,
         request: &PlatformControlRequestV2,
@@ -687,6 +750,7 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }
         match request {
+            PlatformControlRequestV2::HidReconciliationState {} => self.hid_reconciliation_state(),
             PlatformControlRequestV2::TargetAttest { attestation } => {
                 match self.attestations.attest(attestation, now) {
                     Ok(()) => ControlResponse::Applied,
@@ -742,6 +806,11 @@ impl ControlV2State {
             PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
             PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
             PlatformControlRequestV2::FirewallState {} => self.handle_firewall_state(),
+            PlatformControlRequestV2::FirewallModeChange { .. }
+            | PlatformControlRequestV2::FirewallModeStatus {}
+            | PlatformControlRequestV2::FirewallModeConfirm { .. } => ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled,
+            },
             PlatformControlRequestV2::FirewallBaseline { enabled } => {
                 self.handle_firewall_baseline(*enabled)
             }
@@ -1203,6 +1272,62 @@ fn atx_code(rejection: AtxRejection) -> ControlRejectionCode {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn hid_reconciliation_observation_preserves_pending_ledger_without_device_access() {
+        use bli_kvm_hid_adapter::{KvmdHidEvent, KvmdKeyCode};
+        use bli_kvm_hid_transition::{
+            GadgetHidConfig, GadgetHidExecutor, HidExecutor, HidReleaseLedger, HidTransitionEngine,
+        };
+        for pending in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("ledger.json");
+            let ledger = HidReleaseLedger::new(&path).unwrap();
+            let events = if pending {
+                vec![KvmdHidEvent::Key {
+                    key: KvmdKeyCode::from_usb_usage(4).unwrap(),
+                    pressed: false,
+                }]
+            } else {
+                vec![]
+            };
+            ledger.store(&events).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            let engine = HidTransitionEngine::new_with_executor(
+                HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                    hidg_dir: directory.path().join("absent-devices"),
+                    keyboard_function: "hid.usb0".into(),
+                    absolute_mouse_function: "hid.usb1".into(),
+                    relative_mouse_function: "hid.usb2".into(),
+                })),
+                ledger,
+            )
+            .unwrap();
+            let mut state = ControlV2State::with_hid_policy(HidControlPolicy::new(engine));
+            assert_eq!(
+                state
+                    .handle(
+                        &PlatformControlRequestV2::HidReconciliationState {},
+                        Instant::now()
+                    )
+                    .await,
+                ControlResponse::HidReconciliationState {
+                    pending_releases: u64::from(pending)
+                }
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        let mut disabled = ControlV2State::disabled();
+        assert_eq!(
+            disabled
+                .handle(
+                    &PlatformControlRequestV2::HidReconciliationState {},
+                    Instant::now()
+                )
+                .await,
+            reject(ControlRejectionCode::CapabilityDisabled)
+        );
+    }
     use bli_kvm_core::{
         AtxConfirmation, AtxControlAction, HidLeaseRequest, HidReport, TargetAttestation,
     };
@@ -1212,6 +1337,32 @@ mod tests {
     const TARGET: [u8; 32] = [0x11; 32];
     const FOCUS: [u8; 16] = [0x22; 16];
     const LEASE: [u8; 16] = [0x33; 16];
+
+    #[tokio::test]
+    async fn firewall_modes_require_an_attached_runtime() {
+        let mut state = ControlV2State::enabled_for_test();
+        let change = PlatformControlRequestV2::FirewallModeChange {
+            request: bli_kvm_core::FirewallChangeRequest {
+                operation_id: [1; 16],
+                session_binding: [2; 32],
+                mode: bli_kvm_core::FirewallMode::Restricted,
+                issued_at_unix_ms: 100,
+            },
+        };
+        let confirm = PlatformControlRequestV2::FirewallModeConfirm {
+            request: bli_kvm_core::FirewallConfirmRequest {
+                operation_id: [1; 16],
+                session_binding: [2; 32],
+                issued_at_unix_ms: 101,
+            },
+        };
+        for request in [change, confirm] {
+            assert_eq!(
+                state.handle(&request, Instant::now()).await,
+                reject(ControlRejectionCode::CapabilityDisabled)
+            );
+        }
+    }
 
     fn attestation(ttl_seconds: u16) -> TargetAttestation {
         TargetAttestation {
@@ -1491,6 +1642,192 @@ mod tests {
         };
         assert!(lease_id.iter().any(|byte| *byte != 0));
         assert!(!socket.exists());
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    async fn serve_hid_statuses(
+        socket: &std::path::Path,
+        count: usize,
+    ) -> tokio::task::JoinHandle<Vec<String>> {
+        serve_hid_outcomes(socket, vec![true; count]).await
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    async fn serve_hid_outcomes(
+        socket: &std::path::Path,
+        outcomes: Vec<bool>,
+    ) -> tokio::task::JoinHandle<Vec<String>> {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::UnixListener,
+        };
+
+        let listener = UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for success in outcomes {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let body = if success {
+                    r#"{"ok":true}"#
+                } else {
+                    r#"{"ok":false}"#
+                };
+                let status = if success { "200 OK" } else { "503 Unavailable" };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                requests.push(String::from_utf8(request).unwrap());
+            }
+            requests
+        })
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
+    async fn hid_expiry_tick_releases_held_state_without_client_traffic() {
+        check_hid_safety_release(false, false).await;
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
+    async fn quiescence_releases_held_state_and_rejects_late_input() {
+        check_hid_safety_release(true, false).await;
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    #[tokio::test]
+    async fn quiescence_failure_keeps_admission_closed_and_retries_release() {
+        check_hid_safety_release(true, true).await;
+    }
+
+    #[cfg(feature = "hid-transition-profile")]
+    async fn check_hid_safety_release(quiesce: bool, fail_release: bool) {
+        use std::time::Duration;
+
+        use bli_kvm_hid_transition::HidReleaseLedger;
+        use bli_kvm_kvmd_client::KvmdCredentials;
+        use bli_kvm_kvmd_hid_client::KvmdHidClient;
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("kvmd.sock");
+        let server = if fail_release {
+            serve_hid_outcomes(&socket, vec![true, false, false, true]).await
+        } else {
+            serve_hid_statuses(&socket, 2).await
+        };
+        let policy = HidControlPolicy::new(
+            bli_kvm_hid_transition::HidTransitionEngine::new(
+                KvmdHidClient::new(&socket).unwrap(),
+                KvmdCredentials::new("test-user", "not-a-real-password").unwrap(),
+                HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap(),
+            )
+            .unwrap(),
+        );
+        let now = Instant::now();
+        let mut state = ControlV2State::with_hid_policy(policy);
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAttest {
+                        attestation: attestation(30),
+                    },
+                    now,
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        let ControlResponse::LeaseGranted { lease_id } = state
+            .handle(
+                &PlatformControlRequestV2::HidLease {
+                    lease: HidLeaseRequest::Acquire {
+                        session_binding: 9,
+                        target_binding: TARGET,
+                        ttl_seconds: 30,
+                    },
+                },
+                now,
+            )
+            .await
+        else {
+            panic!("expected a lease grant");
+        };
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::HidLease {
+                        lease: HidLeaseRequest::Report {
+                            lease_id,
+                            session_binding: 9,
+                            target_binding: TARGET,
+                            report: HidReport::Keyboard {
+                                data: [0, 0, 4, 0, 0, 0, 0, 0],
+                            },
+                        },
+                    },
+                    now,
+                )
+                .await,
+            ControlResponse::Applied
+        );
+
+        if quiesce {
+            if fail_release {
+                assert!(state.begin_quiescence().await.is_err());
+                assert!(!state.is_enabled());
+                assert!(state.hid.as_ref().unwrap().pending_release_count() > 0);
+            }
+            state.begin_quiescence().await.unwrap();
+            state.begin_quiescence().await.unwrap();
+            assert!(!state.is_enabled());
+            assert_eq!(
+                state
+                    .handle(
+                        &PlatformControlRequestV2::HidLease {
+                            lease: HidLeaseRequest::Report {
+                                lease_id,
+                                session_binding: 9,
+                                target_binding: TARGET,
+                                report: HidReport::Keyboard {
+                                    data: [0, 0, 5, 0, 0, 0, 0, 0]
+                                },
+                            },
+                        },
+                        now
+                    )
+                    .await,
+                reject(ControlRejectionCode::CapabilityDisabled)
+            );
+        } else {
+            state
+                .hid_expiry_tick(now + Duration::from_secs(31))
+                .await
+                .unwrap();
+        }
+        // Further ticks are no-ops and do not need a backend connection.
+        state
+            .hid_expiry_tick(now + Duration::from_secs(32))
+            .await
+            .unwrap();
+
+        let requests = server.await.unwrap();
+        assert!(requests[0].contains("key=KeyA&state=1"));
+        assert!(requests[1].contains("key=KeyA&state=0"));
+        if fail_release {
+            assert!(requests[2].contains("key=KeyA&state=0"));
+            assert!(requests[3].contains("key=KeyA&state=0"));
+            assert_eq!(state.hid.as_ref().unwrap().pending_release_count(), 0);
+        }
     }
 
     #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]

@@ -8,19 +8,31 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
+bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-update-manager = { path = "../bli-kvm-update-manager" }
+bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
+bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+httparse.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 libc.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+socket2 = "=0.6.5"
 subtle.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
-bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
+bli-kvm-boardd = { path = "../bli-kvm-boardd" }
+bli-kvm-video-proxy = { path = "../bli-kvm-video-proxy" }
 ed25519-dalek = { workspace = true, features = ["signature"] }
 tar.workspace = true

@@ -41,6 +41,7 @@ export function defaultManifest(overrides = {}) {
       maxWidth: null,
       maxHeight: null,
       audio: status("unavailable"),
+      settings: ["fps", "quality"],
     },
     hid: {
       status: status("read_write"),
@@ -62,9 +63,16 @@ export function defaultManifest(overrides = {}) {
       status: status("read_only"),
       readOnlyRootfs: true,
       maintenanceWriteMode: false,
+      actions: status("unavailable"),
       signedApplicationUpdates: status("unavailable"),
       signedSystemUpdates: status("unavailable"),
       automaticRollback: status("unavailable"),
+    },
+    network: {
+      status: status("read_only"),
+      dns: status("read_only"),
+      ipv6: status("read_only"),
+      wol: status("unavailable"),
     },
     ...overrides,
   };
@@ -74,9 +82,14 @@ export function defaultManifest(overrides = {}) {
  * Serve `web/dist` and the routes the probes need. Records every API request as
  * `METHOD /path` in `requests` and returns the base URL.
  */
-export async function startApp({ dist, manifest = defaultManifest() } = {}) {
+export async function startApp({
+  dist,
+  manifest = defaultManifest(),
+  hidLeaseApplied = true,
+} = {}) {
   const root = dist ?? path.resolve("web/dist");
   const requests = [];
+  const requestDetails = [];
   const server = http.createServer((request, response) => {
     const route = new URL(request.url, "http://127.0.0.1").pathname;
     const json = (value, status = 200, headers = {}) => {
@@ -88,6 +101,19 @@ export async function startApp({ dist, manifest = defaultManifest() } = {}) {
     };
     if (route.startsWith("/api/")) {
       requests.push(`${request.method} ${route}`);
+      const detail = { method: request.method, route, body: null };
+      requestDetails.push(detail);
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        if (chunks.length === 0) return;
+        const body = Buffer.concat(chunks).toString("utf8");
+        try {
+          detail.body = JSON.parse(body);
+        } catch {
+          detail.body = body;
+        }
+      });
       if (route === "/api/auth/setup" && request.method === "GET") {
         json({ code: 0, data: { required: false } });
         return;
@@ -119,10 +145,21 @@ export async function startApp({ dist, manifest = defaultManifest() } = {}) {
         return;
       }
       if (route === "/api/hid/lease" && request.method === "POST") {
-        json({
-          code: 0,
-          data: { applied: true, leaseId: "b".repeat(32), ttlSeconds: 20 },
-        });
+        json(
+          hidLeaseApplied
+            ? {
+                code: 0,
+                data: {
+                  applied: true,
+                  leaseId: "b".repeat(32),
+                  ttlSeconds: 20,
+                },
+              }
+            : {
+                code: 0,
+                data: { applied: false, rejection: "backend_unavailable" },
+              },
+        );
         return;
       }
       if (route === "/api/application-power" && request.method === "POST") {
@@ -180,6 +217,7 @@ export async function startApp({ dist, manifest = defaultManifest() } = {}) {
   return {
     server,
     requests,
+    requestDetails,
     baseUrl: `http://127.0.0.1:${server.address().port}`,
   };
 }

@@ -149,6 +149,7 @@ pub async fn logout(
     Extension(CurrentSession(session)): Extension<CurrentSession>,
 ) -> AppResult<impl IntoResponse> {
     state.sessions.revoke(&session.token).await;
+    crate::hid::release_session_hid(&state, &session.token).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
@@ -179,7 +180,10 @@ pub async fn change_password(
     state
         .accounts
         .replace(&request.username, &request.password)?;
-    state.sessions.revoke_user(&request.username).await;
+    let revoked = state.sessions.revoke_user(&request.username).await;
+    for token in revoked {
+        crate::hid::release_session_hid(&state, &token).await;
+    }
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,

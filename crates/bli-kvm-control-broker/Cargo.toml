@@ -67,6 +67,8 @@ gadget-media-profile = [
 ]
 
 [dependencies]
+libc.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 bli-kvm-system-action-policy = { path = "../bli-kvm-system-action-policy", optional = true }
 bli-kvm-system-action-store = { path = "../bli-kvm-system-action-store", optional = true }
@@ -90,9 +92,8 @@ bli-kvm-media-transition = { path = "../bli-kvm-media-transition", optional = tr
 bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli", optional = true }
 bli-kvm-usb-gadget = { path = "../bli-kvm-usb-gadget", optional = true }
 rand_core = { workspace = true, optional = true }
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 
 [dev-dependencies]
-libc.workspace = true
 bli-kvm-control-client = { path = "../bli-kvm-control-client" }
 tempfile.workspace = true

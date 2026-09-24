@@ -16,6 +16,7 @@ use bli_kvm_update_runtime::{HealthChallengeStore, UpdateRuntimeError, UpdateSup
 use bli_kvm_update_stager::ApplicationStageError;
 use std::{
     io::{Read, Write},
+    net::Shutdown,
     os::unix::net::UnixStream,
     path::Path,
     time::{Duration, Instant},
@@ -73,11 +74,15 @@ pub(crate) fn serve_stdin(config: &Path, peer_user: &str) -> Result<(), Supervis
     // Authenticate and fully close the bounded request before taking any
     // journal/slot locks. A slow sender cannot block watchdog or status.
     let request = receive(&mut stream)?;
-    let ActivationRequest::Activate {
-        slot_id,
-        expected_generation,
-    } = request.request;
-    let result = activate(config, &slot_id, expected_generation);
+    let result = match request.request {
+        ActivationRequest::Activate {
+            slot_id,
+            expected_generation,
+        } => activate(config, &slot_id, expected_generation),
+        // Admission requires the complete native executor. Never silently run
+        // legacy activation for a client asking only for Prepared admission.
+        ActivationRequest::Admit { .. } => Err(SupervisorCliError::ActivationNotDispatched),
+    };
     let dispatch = result.is_ok();
     let response = ActivationResponseEnvelope {
         schema_version: UPDATE_SCHEMA_VERSION,
@@ -91,12 +96,11 @@ pub(crate) fn serve_stdin(config: &Path, peer_user: &str) -> Result<(), Supervis
     };
     // Manager and its locks have been dropped before response delivery and
     // before the service manager dispatches the two fixed apply services.
-    let delivery = (|| -> Result<(), StatusSocketError> {
-        let bytes = encode_frame(&activation::encode_response(&response)?)?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-        stream.write_all(&bytes)?;
-        Ok(())
-    })();
+    let delivery = deliver_response_before(
+        &mut stream,
+        &response,
+        Instant::now() + Duration::from_secs(2),
+    );
     if dispatch {
         // Exit success authorizes the unit's fixed OnSuccess apply dispatch.
         // A lost response after AwaitingHealth must not suppress that dispatch.
@@ -107,6 +111,35 @@ pub(crate) fn serve_stdin(config: &Path, peer_user: &str) -> Result<(), Supervis
         delivery?;
         Err(SupervisorCliError::ActivationNotDispatched)
     }
+}
+
+/// Complete one bounded frame and publish EOF even when stdin/stdout retain
+/// duplicate descriptors. Native admission may quiesce only after this succeeds.
+fn deliver_response_before(
+    stream: &mut UnixStream,
+    response: &ActivationResponseEnvelope,
+    deadline: Instant,
+) -> Result<(), StatusSocketError> {
+    let bytes = encode_frame(&activation::encode_response(response)?)?;
+    let mut remaining_bytes = bytes.as_slice();
+    while !remaining_bytes.is_empty() {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::TimedOut))?;
+        stream.set_write_timeout(Some(remaining))?;
+        match stream.write(remaining_bytes) {
+            Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::WriteZero).into()),
+            Ok(count) => remaining_bytes = &remaining_bytes[count..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if Instant::now() >= deadline {
+        return Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into());
+    }
+    stream.shutdown(Shutdown::Both)?;
+    Ok(())
 }
 
 fn activate(
@@ -144,6 +177,7 @@ fn activate(
 
 fn error_code(error: &SupervisorCliError) -> ActivationErrorCode {
     match error {
+        SupervisorCliError::Runtime(UpdateRuntimeError::RuntimeBusy) => ActivationErrorCode::Busy,
         SupervisorCliError::Runtime(UpdateRuntimeError::StaleActivationGeneration) => {
             ActivationErrorCode::StaleGeneration
         }
@@ -163,5 +197,99 @@ fn error_code(error: &SupervisorCliError) -> ActivationErrorCode {
             _ => ActivationErrorCode::InvalidState,
         },
         _ => ActivationErrorCode::Unavailable,
+    }
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_contention_is_retryable_busy_not_unavailable() {
+        let error = SupervisorCliError::Runtime(UpdateRuntimeError::RuntimeBusy);
+        assert_eq!(error_code(&error), ActivationErrorCode::Busy);
+        assert_eq!(error.exit_code(), 66);
+    }
+
+    fn prepared() -> ActivationResponseEnvelope {
+        ActivationResponseEnvelope {
+            schema_version: UPDATE_SCHEMA_VERSION,
+            request_id: 7,
+            response: ActivationResponse::Prepared {
+                receipt: activation::PreparedActivationReceipt {
+                    operation_id: "1".repeat(32),
+                    target_slot_id: format!("app-00000000000000000002-{}", "a".repeat(64)),
+                    prepared_generation: 42,
+                    deadline_monotonic_ms: 60_000,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn complete_receipt_publishes_eof_while_duplicate_descriptors_remain_open() {
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        let mut duplicate = writer.try_clone().unwrap();
+        let response = prepared();
+        deliver_response_before(
+            &mut writer,
+            &response,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        reader
+            .take((MAX_UPDATE_MESSAGE_BYTES + 5) as u64)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(
+            u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize,
+            bytes.len() - 4
+        );
+        assert_eq!(activation::decode_response(&bytes[4..]).unwrap(), response);
+        assert!(duplicate.write_all(b"late reply").is_err());
+    }
+
+    #[test]
+    fn closed_peer_and_expired_deadline_do_not_report_delivery() {
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        assert!(deliver_response_before(&mut writer, &prepared(), Instant::now()).is_err());
+        drop(reader);
+        assert!(
+            deliver_response_before(
+                &mut writer,
+                &prepared(),
+                Instant::now() + Duration::from_secs(1)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn nonreading_peer_is_bounded_by_the_total_delivery_deadline() {
+        let (mut writer, _reader) = UnixStream::pair().unwrap();
+        writer.set_nonblocking(true).unwrap();
+        let mut blocked = false;
+        for _ in 0..1024 {
+            match writer.write(&[0_u8; 8192]) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    blocked = true;
+                    break;
+                }
+                Err(error) => panic!("socket prefill failed: {error}"),
+            }
+        }
+        assert!(blocked, "fixture socket did not reach backpressure");
+        writer.set_nonblocking(false).unwrap();
+        let start = Instant::now();
+        assert!(
+            deliver_response_before(&mut writer, &prepared(), start + Duration::from_millis(50))
+                .is_err()
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
     }
 }

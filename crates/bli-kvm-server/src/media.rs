@@ -126,6 +126,7 @@ pub(crate) async fn virtual_media(
                 rejection: Some(rejection_name(code)),
             },
             ControlResponse::MediaState { .. }
+            | ControlResponse::HidReconciliationState { .. }
             | ControlResponse::BoardStatus { .. }
             | ControlResponse::VideoState { .. }
             | ControlResponse::MdnsState { .. }
@@ -133,6 +134,7 @@ pub(crate) async fn virtual_media(
             | ControlResponse::HidOnlyState { .. }
             | ControlResponse::WifiState { .. }
             | ControlResponse::TlsState { .. }
+            | ControlResponse::FirewallModeState { .. }
             | ControlResponse::FirewallState { .. }
             | ControlResponse::TailscaleState { .. } => VirtualMediaOutcome {
                 applied: false,

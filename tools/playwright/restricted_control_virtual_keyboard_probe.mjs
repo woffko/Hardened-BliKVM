@@ -73,6 +73,14 @@ try {
     () => document.title === "Remote Desktop - Hardened BliKVM",
   );
 
+  phase = "enable-control";
+  await page.getByRole("button", { name: "Enable remote control" }).click();
+  const confirm = page.getByRole("button", { name: "Confirm and control" });
+  await confirm.waitFor({ state: "visible", timeout: 5000 });
+  await confirm.click();
+  await confirm.waitFor({ state: "hidden", timeout: 5000 });
+  await page.waitForTimeout(300);
+
   phase = "open-menu";
   await page.locator("svg.lucide-keyboard").first().click({ force: true });
   await page.getByText("On-screen keyboard", { exact: true }).click();
@@ -83,11 +91,6 @@ try {
     .first()
     .waitFor({ state: "visible", timeout: 5000 });
   await page.locator(".hg-button").first().click();
-
-  phase = "confirm";
-  const confirm = page.getByRole("button", { name: "Confirm and control" });
-  await confirm.waitFor({ state: "visible", timeout: 5000 });
-  await confirm.click();
 
   phase = "settle";
   await page.waitForTimeout(1500);

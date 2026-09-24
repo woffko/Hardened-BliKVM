@@ -356,11 +356,37 @@ async fn board_state(
         true,
     ));
     // The reviewed firewall baseline stays refused while no backend is installed.
-    state.with_firewall(crate::firewall_settings::FirewallState::open(
+    let mut firewall = crate::firewall_settings::FirewallState::open(
         Box::new(crate::firewall_settings::SystemFirewallRunner),
         crate::firewall_settings::FIREWALL_STATE_DIR,
         true,
-    ));
+    );
+    if let Some(path) = std::env::var_os("BLI_KVM_FIREWALL_MODE_CONFIG") {
+        let boot_id = crate::boot_binding_from_system()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let runtime = crate::firewall_runtime::ModeRuntime::open_configured(
+            std::path::PathBuf::from(crate::firewall_settings::FIREWALL_STATE_DIR),
+            std::path::Path::new(&path),
+            boot_id,
+        )
+        .map_err(io::Error::other)?;
+        firewall.attach_mode_runtime(Arc::new(std::sync::Mutex::new(runtime)));
+    } else {
+        let directory = std::path::PathBuf::from(crate::firewall_settings::FIREWALL_STATE_DIR);
+        let mut store = crate::firewall_confirmation::PendingFileStore::new(&directory)
+            .map_err(io::Error::other)?;
+        if crate::firewall_confirmation::PendingStore::load(&mut store)
+            .map_err(io::Error::other)?
+            .is_some()
+        {
+            let boot_id = crate::boot_binding_from_system()
+                .map_err(|error| io::Error::other(error.to_string()))?;
+            let runtime = crate::firewall_runtime::ModeRuntime::open_recovery(directory, boot_id)
+                .map_err(io::Error::other)?;
+            firewall.attach_mode_runtime(Arc::new(std::sync::Mutex::new(runtime)));
+        }
+    }
+    state.with_firewall(firewall);
     // The reviewed HTTPS surface edits the front's own configuration.
     state.with_tls(crate::tls_settings::TlsState::open(
         crate::tls_settings::NGINX_CONF,
@@ -856,6 +882,27 @@ async fn serve<D>(
 where
     D: DiagnosticSubmitter,
 {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    serve_until(config, diagnostics, v2_state, async move {
+        tokio::select! {
+            _ = terminate.recv() => {},
+            _ = interrupt.recv() => {},
+        }
+    })
+    .await
+}
+
+async fn serve_until<D>(
+    config: ControlBrokerConfig,
+    diagnostics: D,
+    v2_state: ControlV2State,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> Result<(), ControlBrokerError>
+where
+    D: DiagnosticSubmitter,
+{
     config.validate()?;
     validate_runtime_directory(&config)?;
     if fs::symlink_metadata(&config.socket_path).is_ok() {
@@ -865,16 +912,51 @@ where
     let _cleanup = SocketCleanup(config.socket_path.clone());
     fs::set_permissions(&config.socket_path, Permissions::from_mode(0o660))?;
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
+    let firewall = v2_state.firewall_mode_runtime();
     let v2 = Arc::new(TokioMutex::new(v2_state));
+    let (stop, _) = tokio::sync::watch::channel(false);
+    let mut workers = tokio::task::JoinSet::new();
+    if let Some(firewall) = firewall {
+        let mut stopping = stop.subscribe();
+        workers.spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = stopping.changed() => break,
+                    _ = ticker.tick() => {},
+                }
+                let firewall = firewall.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let mut runtime = firewall
+                        .lock()
+                        .map_err(|_| "firewall runtime poisoned".to_string())?;
+                    runtime
+                        .tick(crate::firewall_runtime::unix_millis())
+                        .map_err(|error| format!("{error:?}"))
+                })
+                .await;
+                if !matches!(result, Ok(Ok(()))) {
+                    eprintln!("firewall recovery tick failed; pending work retained");
+                }
+            }
+        });
+    }
     // The mouse jiggler, when attached, nudges the target on a fixed interval.
     {
         let v2 = v2.clone();
-        tokio::spawn(async move {
+        let mut stopping = stop.subscribe();
+        workers.spawn(async move {
             let interval = std::time::Duration::from_secs(bli_kvm_core::JIGGLE_INTERVAL_SECONDS);
             let mut ticker = tokio::time::interval(interval);
             ticker.tick().await;
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    biased;
+                    _ = stopping.changed() => break,
+                    _ = ticker.tick() => {},
+                }
                 let mut state = v2.lock().await;
                 if let Err(reason) = state.jiggle_tick() {
                     eprintln!("mouse jiggler: {reason}");
@@ -882,22 +964,102 @@ where
             }
         });
     }
+    // Browser cleanup is best-effort. Expire idle leases independently so a
+    // disconnected client cannot leave a key or mouse button held indefinitely.
+    {
+        let v2 = v2.clone();
+        let mut stopping = stop.subscribe();
+        workers.spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = stopping.changed() => break,
+                    _ = ticker.tick() => {},
+                }
+                let mut state = v2.lock().await;
+                if let Err(code) = state.hid_expiry_tick(std::time::Instant::now()).await {
+                    eprintln!("HID expiry release failed: {code:?}");
+                }
+            }
+        });
+    }
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| io::Error::other("control broker semaphore closed"))?;
+    tokio::pin!(shutdown);
+    let serving = loop {
+        let accepted = tokio::select! {
+            biased;
+            _ = &mut shutdown => break Ok(()),
+            result = workers.join_next(), if !workers.is_empty() => {
+                if matches!(result, Some(Err(_))) {
+                    break Err(ControlBrokerError::Io(io::Error::other("control worker failed")));
+                }
+                continue;
+            },
+            result = async {
+                let permit = semaphore.clone().acquire_owned().await
+                    .map_err(|_| io::Error::other("control broker semaphore closed"))?;
+                let (stream, _) = listener.accept().await?;
+                Ok::<_, io::Error>((stream, permit))
+            } => result,
+        };
+        let (stream, permit) = match accepted {
+            Ok(value) => value,
+            Err(error) => break Err(ControlBrokerError::Io(error)),
+        };
         let request_timeout = config.request_timeout;
         let diagnostics = diagnostics.clone();
         let v2 = v2.clone();
-        tokio::spawn(async move {
+        workers.spawn(async move {
             let _permit = permit;
             let _ = handle_connection(stream, request_timeout, diagnostics, v2).await;
         });
-    }
+    };
+    drop(listener);
+    let _ = stop.send(true);
+    // Pending native workers must finish before a clean stop is reported.
+    // A timeout preserves failure status; dropping JoinSet cancels async work,
+    // not already executing spawn_blocking jobs. The process must still exit
+    // before another owner may start.
+    let drained = drain_owner(&v2, &mut workers).await;
+    serving?;
+    drained
+}
+
+async fn drain_owner(
+    v2: &TokioMutex<ControlV2State>,
+    workers: &mut tokio::task::JoinSet<()>,
+) -> Result<(), ControlBrokerError> {
+    timeout(std::time::Duration::from_secs(20), async {
+        let mut released = false;
+        for attempt in 0..3 {
+            if v2.lock().await.begin_quiescence().await.is_ok() {
+                released = true;
+                break;
+            }
+            if attempt < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+        let mut joined = true;
+        while let Some(result) = workers.join_next().await {
+            joined &= result.is_ok();
+        }
+        if released && joined {
+            Ok(())
+        } else {
+            Err(ControlBrokerError::TransitionUnavailable)
+        }
+    })
+    .await
+    .map_err(|_| {
+        ControlBrokerError::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "control owner shutdown timed out",
+        ))
+    })?
 }
 
 fn validate_runtime_directory(config: &ControlBrokerConfig) -> Result<(), ControlBrokerError> {
@@ -942,12 +1104,14 @@ where
         | ControlResponse::LeaseGranted { .. }
         | ControlResponse::MediaState { .. }
         | ControlResponse::BoardStatus { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }
         | ControlResponse::TailscaleState { .. } => None,
     };
@@ -993,11 +1157,40 @@ async fn respond(
             if version == CONTROL_SCHEMA_VERSION_V2 =>
         {
             let request = decode_request_v2(payload).map_err(|_| invalid_request())?;
-            let response = v2
-                .lock()
-                .await
-                .handle_request(&request.operation_id, &request.request, Instant::now())
-                .await;
+            let firewall_request = matches!(
+                &request.request,
+                bli_kvm_core::PlatformControlRequestV2::FirewallModeChange { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::FirewallModeStatus {}
+                    | bli_kvm_core::PlatformControlRequestV2::FirewallModeConfirm { .. }
+            );
+            let response = if firewall_request {
+                let runtime = v2.lock().await.firewall_mode_runtime();
+                if let Some(runtime) = runtime {
+                    let payload = request.request.clone();
+                    tokio::task::spawn_blocking(move || {
+                        runtime
+                            .lock()
+                            .map(|mut state| {
+                                state.dispatch(&payload, crate::firewall_runtime::unix_millis())
+                            })
+                            .unwrap_or(ControlResponse::Rejected {
+                                code:
+                                    bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                            })
+                    })
+                    .await
+                    .map_err(|_| io::Error::other("firewall worker failed"))?
+                } else {
+                    ControlResponse::Rejected {
+                        code: bli_kvm_control_protocol::ControlRejectionCode::CapabilityDisabled,
+                    }
+                }
+            } else {
+                v2.lock()
+                    .await
+                    .handle_request(&request.operation_id, &request.request, Instant::now())
+                    .await
+            };
             Ok(ControlResponseEnvelope {
                 schema_version: CONTROL_SCHEMA_VERSION_V2,
                 request_id: request.request_id,
@@ -1096,6 +1289,48 @@ mod tests {
 
     const TEST_WAIT: Duration = Duration::from_millis(500);
     const TEST_START_WAIT: Duration = Duration::from_secs(2);
+
+    #[tokio::test]
+    async fn graceful_shutdown_waits_for_in_flight_worker_and_rejects_worker_panic() {
+        for panic_after_release in [false, true] {
+            let state = TokioMutex::new(ControlV2State::disabled());
+            let mut workers = tokio::task::JoinSet::new();
+            let (release, waiting) = tokio::sync::oneshot::channel();
+            workers.spawn(async move {
+                waiting.await.unwrap();
+                assert!(!panic_after_release, "injected worker failure");
+            });
+            let draining = drain_owner(&state, &mut workers);
+            tokio::pin!(draining);
+            assert!(
+                timeout(Duration::from_millis(20), &mut draining)
+                    .await
+                    .is_err()
+            );
+            release.send(()).unwrap();
+            let result = timeout(TEST_START_WAIT, draining).await.unwrap();
+            assert_eq!(result.is_err(), panic_after_release);
+        }
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_removes_socket_and_drains_periodic_workers() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        timeout(
+            TEST_START_WAIT,
+            serve_until(
+                ControlBrokerConfig::new(&socket).unwrap(),
+                ControlDiagnostics::Disabled,
+                ControlV2State::disabled(),
+                async {},
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(!socket.exists());
+    }
 
     async fn wait_for_socket(
         socket: &std::path::Path,
@@ -1594,16 +1829,37 @@ mod tests {
 
     #[cfg(feature = "gadget-hid-profile")]
     #[tokio::test]
-    async fn gadget_hid_profile_writes_keyboard_reports_to_the_device() {
+    async fn gadget_hid_profile_writes_reports_and_releases_on_graceful_shutdown() {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("control.sock");
         let hidg = directory.path().join("hidg");
         std::fs::create_dir_all(&hidg).unwrap();
         std::fs::write(hidg.join("hidg0"), b"").unwrap();
-        let mut broker = tokio::spawn(run_with_gadget_hid_profile(
+        let engine = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
+            bli_kvm_hid_transition::HidExecutor::Gadget(
+                bli_kvm_hid_transition::GadgetHidExecutor::new(
+                    bli_kvm_hid_transition::GadgetHidConfig {
+                        hidg_dir: hidg.clone(),
+                        keyboard_function: "hid.usb0".into(),
+                        absolute_mouse_function: "hid.usb1".into(),
+                        relative_mouse_function: "hid.usb2".into(),
+                    },
+                ),
+            ),
+            bli_kvm_hid_transition::HidReleaseLedger::new(directory.path().join("ledger.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        let state =
+            ControlV2State::with_hid_policy(bli_kvm_hid_policy::HidControlPolicy::new(engine));
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let mut broker = tokio::spawn(serve_until(
             ControlBrokerConfig::new(&socket).unwrap(),
-            directory.path().join("ledger.json"),
-            hidg.clone(),
+            ControlDiagnostics::Disabled,
+            state,
+            async {
+                let _ = stopped.await;
+            },
         ));
         wait_for_socket(&socket, &mut broker).await;
         let client = ControlClient::new(&socket).unwrap();
@@ -1665,7 +1921,14 @@ mod tests {
             std::fs::read(hidg.join("hidg0")).unwrap(),
             vec![0, 0, 4, 0, 0, 0, 0, 0]
         );
-        stop_broker(broker).await;
+        stop.send(()).unwrap();
+        timeout(TEST_START_WAIT, broker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read(hidg.join("hidg0")).unwrap(), vec![0; 8]);
+        assert!(!socket.exists());
     }
 
     #[cfg(feature = "hid-transition-profile")]

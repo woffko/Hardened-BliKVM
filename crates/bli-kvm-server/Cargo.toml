@@ -32,10 +32,11 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tower-http.workspace = true
 
 [dev-dependencies]
+libc.workspace = true
 bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
 http-body-util.workspace = true
 tower.workspace = true

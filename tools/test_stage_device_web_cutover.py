@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -48,7 +49,16 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             self.baseline(), config, self.paths().validation_root
         )
         unit = cutover.render_unit(self.baseline())
-        self.assertEqual(config.count("proxy_pass http://127.0.0.1:18080;"), 1)
+        for rendered in (config, validation):
+            self.assertEqual(
+                re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE),
+                ["http://127.0.0.1:18080"] * 3,
+            )
+            self.assertIn("location = /api/application-update/upload {", rendered)
+            self.assertIn("location = /api/download/file {", rendered)
+            self.assertIn("client_max_body_size 128m;", rendered)
+            self.assertIn("client_max_body_size 4097m;", rendered)
+            self.assertEqual(rendered.count("proxy_request_buffering off;"), 2)
         self.assertIn("listen 80 default_server;", config)
         self.assertIn("listen 443 ssl default_server;", config)
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)

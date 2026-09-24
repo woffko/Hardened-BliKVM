@@ -251,12 +251,15 @@ mod tests {
     const TEST_WAIT: Duration = Duration::from_millis(500);
 
     fn test_client(path: PathBuf) -> DiagnosticProducerClient {
+        // Real socket fixtures verify framing, reuse and cancellation, not
+        // scheduler latency under parallel workspace load. Dedicated stalled
+        // transport tests below retain TEST_LIMIT to exercise timeout semantics.
         DiagnosticProducerClient::with_parts(
             path,
             ClientLimits {
-                connect_timeout: TEST_LIMIT,
-                write_timeout: TEST_LIMIT,
-                response_timeout: TEST_LIMIT,
+                connect_timeout: TEST_WAIT,
+                write_timeout: TEST_WAIT,
+                response_timeout: TEST_WAIT,
             },
         )
     }

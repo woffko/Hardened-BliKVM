@@ -3,11 +3,31 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, executablePath, targetUrl, outputValue, usernameFile] =
-  process.argv.slice(2);
+const [
+  modulePath,
+  executablePath,
+  targetUrl,
+  outputValue,
+  usernameFile,
+  targetRole,
+  contextValue,
+  targetSourceRevision,
+] = process.argv.slice(2);
 assert.ok(
-  modulePath && executablePath && targetUrl && outputValue,
+  modulePath &&
+    executablePath &&
+    targetUrl &&
+    outputValue &&
+    targetRole &&
+    contextValue &&
+    targetSourceRevision,
   "missing arguments",
+);
+assert.ok(["ours", "reference"].includes(targetRole), "invalid target role");
+assert.match(
+  targetSourceRevision,
+  /^[A-Za-z0-9][A-Za-z0-9._:@/-]{6,119}$/,
+  "invalid target source revision",
 );
 
 const url = new URL(targetUrl);
@@ -17,11 +37,33 @@ assert.ok(
 );
 
 const outputPath = path.resolve(outputValue);
+const privateRoot = path.resolve("evidence/private");
 assert.equal(
   path.dirname(outputPath),
-  path.resolve("evidence/private"),
+  privateRoot,
   "output must be under evidence/private",
 );
+const contextInputStat = fs.lstatSync(contextValue);
+assert.ok(contextInputStat.isFile() && !contextInputStat.isSymbolicLink());
+const contextPath = path.resolve(contextValue);
+assert.equal(
+  path.dirname(contextPath),
+  privateRoot,
+  "release context must be under evidence/private",
+);
+const contextStat = fs.statSync(contextPath);
+assert.equal(contextStat.mode & 0o077, 0, "release context must be private");
+assert.ok(contextStat.size > 0 && contextStat.size <= 4096);
+const evidenceContext = JSON.parse(fs.readFileSync(contextPath, "utf8"));
+assert.deepEqual(Object.keys(evidenceContext).sort(), [
+  "acceptanceRunId",
+  "reviewedSourceCommit",
+]);
+assert.match(
+  evidenceContext.acceptanceRunId,
+  /^[A-Za-z0-9][A-Za-z0-9._-]{7,79}$/,
+);
+assert.match(evidenceContext.reviewedSourceCommit, /^[a-f0-9]{40}$/);
 
 const { chromium } = await import(pathToFileURL(modulePath).href);
 const browser = await chromium.launch({ executablePath, headless: true });
@@ -33,8 +75,8 @@ try {
   });
   const page = await context.newPage();
   const failedRequests = [];
+  let failedRequestsTruncated = false;
   page.on("response", (response) => {
-    if (failedRequests.length >= 20) return;
     const status = response.status();
     if (status < 400) return;
     const request = response.request();
@@ -45,6 +87,10 @@ try {
         request.resourceType() === "font"
       )
         return;
+    }
+    if (failedRequests.length >= 20) {
+      failedRequestsTruncated = true;
+      return;
     }
     failedRequests.push({
       method: request.method(),
@@ -82,7 +128,7 @@ try {
 
   // The JSON login gives the browser context a session before the first
   // navigation; the DOM login below stays as the fallback.
-  let apiLogin = "";
+  let apiLogin = url.protocol === "file:" ? "not_required" : "not_attempted";
   if (username && password && url.protocol !== "file:") {
     try {
       const response = await context.request.post(
@@ -201,11 +247,23 @@ try {
 
   let capabilitiesAvailable = false;
   const capabilities = {};
-  try {
-    if (url.protocol === "http:" || url.protocol === "https:") {
+  let capabilitiesRequest = {
+    method: "GET",
+    route: "/api/capabilities",
+    outcome: "not_applicable",
+    status: 0,
+  };
+  if (url.protocol === "http:" || url.protocol === "https:") {
+    try {
       const capabilityResponse = await context.request.get(
         new URL("/api/capabilities", url).href,
       );
+      capabilitiesRequest = {
+        method: "GET",
+        route: "/api/capabilities",
+        outcome: "http",
+        status: capabilityResponse.status(),
+      };
       if (capabilityResponse.ok()) {
         capabilitiesAvailable = true;
         const body = await capabilityResponse.json();
@@ -235,9 +293,14 @@ try {
         };
         walk(data, "");
       }
+    } catch {
+      capabilitiesRequest = {
+        method: "GET",
+        route: "/api/capabilities",
+        outcome: "error",
+        status: 0,
+      };
     }
-  } catch {
-    capabilitiesAvailable = false;
   }
 
   const settingsTabs = [];
@@ -300,15 +363,42 @@ try {
     videoElements: document.querySelectorAll("img, canvas").length,
   }));
 
+  const capabilityCoverageComplete =
+    capabilitiesRequest.outcome === "not_applicable" ||
+    (capabilitiesRequest.outcome === "http" &&
+      ((targetRole === "ours" && capabilitiesRequest.status === 200) ||
+        (targetRole === "reference" &&
+          [200, 404].includes(capabilitiesRequest.status))));
+  const coverage = {
+    menuLabels: mergedLabels.length > 0 ? "complete" : "failed",
+    tagCounts: Object.keys(dom.tagCounts).length > 0 ? "complete" : "failed",
+    settingsTabs:
+      settingsTabs.length > 0 && !settingsCaptureError ? "complete" : "failed",
+    failedRequests: failedRequestsTruncated ? "truncated" : "complete",
+    markers: "complete",
+    capabilitiesRequest: capabilityCoverageComplete ? "complete" : "failed",
+  };
+  const loginComplete = url.protocol === "file:" || apiLogin === "accepted";
+  const captureComplete =
+    loginComplete &&
+    Object.values(coverage).every((value) => value === "complete");
+
   const receipt = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     probe: "hardened-blikvm-gui-parity",
+    result: captureComplete ? "passed" : "failed",
+    capturedAt: new Date().toISOString(),
+    targetRole,
+    targetSourceRevision,
+    evidenceContext,
     target: { scheme: url.protocol.replace(":", ""), route: dom.route },
     title: dom.title,
     menuLabels: mergedLabels.slice(0, 100),
     tagCounts: dom.tagCounts,
     capabilitiesAvailable,
+    capabilitiesRequest,
     capabilities,
+    coverage,
     settingsTabs,
     settingsCaptureError,
     apiLogin,
@@ -316,6 +406,7 @@ try {
     consoleErrors,
     consoleErrorSamples,
     failedRequests,
+    failedRequestsTruncated,
     cookiesRead: false,
     storageRead: false,
     mutationsPerformed: false,
@@ -325,8 +416,9 @@ try {
     mode: 0o600,
   });
   console.log(
-    `gui-parity target=${url.protocol}//${url.host} route=${dom.route} labels=${receipt.menuLabels.length} consoleErrors=${consoleErrors}`,
+    `gui-parity target=${url.protocol}//${url.host} route=${dom.route} labels=${receipt.menuLabels.length} consoleErrors=${consoleErrors} result=${receipt.result}`,
   );
+  if (!captureComplete) process.exitCode = 1;
 } finally {
   await browser.close();
 }

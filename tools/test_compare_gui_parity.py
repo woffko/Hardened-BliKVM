@@ -8,6 +8,12 @@ from pathlib import Path
 import tools.compare_gui_parity as comparator
 
 
+CONTEXT = {
+    "acceptanceRunId": "gui-parity-test-0001",
+    "reviewedSourceCommit": "a" * 40,
+}
+
+
 def receipt(
     labels: list[str],
     tags: dict[str, int],
@@ -16,10 +22,22 @@ def receipt(
     markers: dict[str, int] | None = None,
     failed_requests: list[dict[str, object]] | None = None,
     settings_tabs: list[str] | None = None,
-) -> dict:
+    role: str = "ours",
+    capability_status: int = 200,
+) -> dict[str, object]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "probe": comparator.PROBE,
+        "result": "passed",
+        "targetRole": role,
+        "evidenceContext": CONTEXT,
+        "coverage": {name: "complete" for name in comparator.COVERAGE_FIELDS},
+        "capabilitiesRequest": {
+            "method": "GET",
+            "route": "/api/capabilities",
+            "outcome": "http",
+            "status": capability_status,
+        },
         "route": "/#/desktop",
         "title": "Hardened BLi-KVM",
         "menuLabels": labels,
@@ -32,16 +50,27 @@ def receipt(
     }
 
 
-def write(directory: Path, name: str, value: dict) -> Path:
+def write(directory: Path, name: str, value: dict[str, object]) -> Path:
     path = directory / name
     path.write_text(json.dumps(value), encoding="utf-8")
     return path
 
 
 class CompareGuiParityTests(unittest.TestCase):
+    def test_malformed_root_and_non_string_enums_are_controlled_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            malformed: list[object] = [None, [], 1, {**receipt([], {}), "targetRole": []},
+                         {**receipt([], {}), "result": {}}]
+            for value in malformed:
+                with self.subTest(value=value):
+                    path.write_text(json.dumps(value), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        comparator.load_receipt(path)
+
     def test_identical_receipts_have_no_differences(self) -> None:
         value = receipt(["Images", "Power"], {"div": 10, "nav": 1}, 0)
-        result = comparator.compare(value, value)
+        result = comparator.compare(value, {**value, "targetRole": "reference"})
         self.assertEqual(result["labelsOnlyInOurs"], [])
         self.assertEqual(result["labelsOnlyInReference"], [])
         self.assertEqual(result["tagCountDeltas"], {})
@@ -69,6 +98,7 @@ class CompareGuiParityTests(unittest.TestCase):
             {"div": 1},
             capabilities={"hid.status.availability": "read_write"},
             markers={"mobileKeyboardInput": 1},
+            role="reference",
         )
         result = comparator.compare(ours, reference)
         self.assertEqual(
@@ -103,12 +133,15 @@ class CompareGuiParityTests(unittest.TestCase):
         self.assertEqual(result["unexplainedLabelsOnlyInOurs"], [])
         self.assertEqual(result["unexplainedLabelsOnlyInReference"], [])
 
-    def test_markers_are_compared_only_when_both_receipts_carry_them(self) -> None:
+    def test_empty_marker_set_is_still_compared(self) -> None:
         ours = receipt(["Images"], {"div": 1}, markers={"mobileKeyboardInput": 1})
         reference = receipt(["Images"], {"div": 1})
         result = comparator.compare(ours, reference)
-        self.assertIs(result["markersCompared"], False)
-        self.assertEqual(result["markerDiffs"], {})
+        self.assertIs(result["markersCompared"], True)
+        self.assertEqual(
+            result["markerDiffs"],
+            {"mobileKeyboardInput": {"ours": 1, "reference": None}},
+        )
 
         reference = receipt(["Images"], {"div": 1}, markers={"mobileKeyboardInput": 0})
         result = comparator.compare(ours, reference)
@@ -118,14 +151,20 @@ class CompareGuiParityTests(unittest.TestCase):
             {"mobileKeyboardInput": {"ours": 1, "reference": 0}},
         )
 
-    def test_capabilities_are_compared_only_when_both_receipts_carry_them(self) -> None:
+    def test_reference_capability_404_is_an_explicit_asymmetry(self) -> None:
         ours = receipt(
             ["Images"], {"div": 1}, capabilities={"hid.status.availability": "read_write"}
         )
-        reference = receipt(["Images"], {"div": 1})
+        reference = receipt(
+            ["Images"], {"div": 1}, role="reference", capability_status=404
+        )
         result = comparator.compare(ours, reference)
         self.assertIs(result["capabilitiesCompared"], False)
         self.assertEqual(result["capabilityDiffs"], {})
+        self.assertEqual(result["expectedAsymmetries"], [{
+            "side": "reference", "method": "GET", "route": "/api/capabilities",
+            "oursStatus": 200, "referenceStatus": 404,
+        }])
 
     def test_failed_requests_are_reported_per_side(self) -> None:
         ours = receipt(
@@ -151,7 +190,7 @@ class CompareGuiParityTests(unittest.TestCase):
         )
         self.assertEqual(result["failedRequestsOnlyInReference"], [])
 
-    def test_failed_requests_are_not_compared_when_one_side_lacks_them(self) -> None:
+    def test_empty_failed_request_set_is_still_compared(self) -> None:
         ours = receipt(
             ["Images"],
             {"div": 1},
@@ -161,8 +200,11 @@ class CompareGuiParityTests(unittest.TestCase):
         )
         reference = receipt(["Images"], {"div": 1})
         result = comparator.compare(ours, reference)
-        self.assertIs(result["failedRequestsCompared"], False)
-        self.assertEqual(result["failedRequestsOnlyInOurs"], [])
+        self.assertIs(result["failedRequestsCompared"], True)
+        self.assertEqual(
+            result["failedRequestsOnlyInOurs"],
+            ["GET /api/download/image/status:404"],
+        )
         self.assertEqual(result["failedRequestsOnlyInReference"], [])
 
     def test_invalid_failed_requests_are_rejected(self) -> None:
@@ -174,7 +216,7 @@ class CompareGuiParityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             comparator.compare(ours, ours)
 
-    def test_settings_tabs_are_compared_only_when_both_receipts_have_them(self) -> None:
+    def test_settings_tabs_are_compared_even_when_one_side_is_empty(self) -> None:
         ours = receipt(
             ["Images"], {"div": 1}, settings_tabs=["About", "Device", "System"]
         )
@@ -185,8 +227,21 @@ class CompareGuiParityTests(unittest.TestCase):
         self.assertEqual(result["settingsTabsOnlyInReference"], [])
 
         result = comparator.compare(ours, receipt(["Images"], {"div": 1}))
-        self.assertIs(result["settingsTabsCompared"], False)
-        self.assertEqual(result["settingsTabsOnlyInOurs"], [])
+        self.assertIs(result["settingsTabsCompared"], True)
+        self.assertEqual(
+            result["settingsTabsOnlyInOurs"], ["About", "Device", "System"]
+        )
+
+    def test_incomplete_coverage_fails_the_comparison(self) -> None:
+        ours = receipt(["Images"], {"div": 1})
+        ours["coverage"] = {
+            **{name: "complete" for name in comparator.COVERAGE_FIELDS},
+            "settingsTabs": "failed",
+        }
+        reference = receipt(["Images"], {"div": 1}, role="reference")
+        result = comparator.compare(ours, reference)
+        self.assertEqual(result["result"], "failed")
+        self.assertEqual(result["coverageGaps"], ["ours.coverage.settingsTabs"])
 
     def test_invalid_receipts_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -199,16 +254,33 @@ class CompareGuiParityTests(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 comparator.load_receipt(bad_labels)
-            bad_tags = receipt([], [])  # type: ignore[arg-type]
+            bad_tags = receipt([], {})
             bad_tags["tagCounts"] = {"div": "many"}
             with self.assertRaises(ValueError):
-                comparator._tag_counts(bad_tags)
+                comparator.compare(bad_tags, receipt([], {}))
+
+            bad_coverage = receipt([], {})
+            bad_coverage["coverage"] = {
+                **{name: "complete" for name in comparator.COVERAGE_FIELDS},
+                "settingsTabs": [],
+            }
+            with self.assertRaises(ValueError):
+                comparator.load_receipt(write(path, "bad-coverage.json", bad_coverage))
+
+            bad_errors = receipt([], {})
+            bad_errors["consoleErrors"] = True
+            with self.assertRaises(ValueError):
+                comparator.load_receipt(write(path, "bad-errors.json", bad_errors))
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             ours = write(path, "ours.json", receipt(["A"], {"div": 1}))
-            reference = write(path, "reference.json", receipt(["A"], {"div": 1}))
+            reference = write(
+                path,
+                "reference.json",
+                receipt(["A"], {"div": 1}, role="reference"),
+            )
             output = Path("evidence/private/parity-compare-selftest.json").resolve()
             result = subprocess.run(
                 [

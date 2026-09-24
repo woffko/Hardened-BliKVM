@@ -10,7 +10,7 @@
 //! Text frames are rejected with a bounded error message. Nothing is buffered:
 //! a report without a live lease is dropped with an error and no backend call.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{
     Extension,
@@ -25,7 +25,10 @@ use bli_kvm_control_protocol::ControlResponse;
 use bli_kvm_core::{HidLeaseRequest, HidReport, PlatformControlRequestV2};
 use rand_core::{OsRng, RngCore};
 
-use crate::{AppState, auth::middleware::CurrentSession};
+use crate::{
+    AppState,
+    auth::{middleware::CurrentSession, session::Session},
+};
 
 /// Bounded frame size: tag plus the largest HID report (8 bytes).
 pub(crate) const MAX_FRAME_BYTES: usize = 16;
@@ -121,11 +124,34 @@ pub(crate) async fn hid_socket(
     if !origin_allowed(&headers, state.options.allow_missing_origin) {
         return (StatusCode::FORBIDDEN, "websocket origin is not allowed").into_response();
     }
-    ws.on_upgrade(move |socket| handle_socket(state, session.token, socket))
+    let Some(guard) = state.options.shutdown.register_upgrade() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "server is stopping").into_response();
+    };
+    ws.on_upgrade(move |socket| async move {
+        let _guard = guard;
+        handle_socket(state, session, socket).await;
+    })
 }
 
-async fn handle_socket(state: AppState, session_token: String, mut socket: WebSocket) {
-    while let Some(Ok(message)) = socket.recv().await {
+async fn handle_socket(state: AppState, session: Session, mut socket: WebSocket) {
+    loop {
+        let message = tokio::select! {
+            biased;
+            () = state.options.shutdown.cancelled() => break,
+            message = socket.recv() => message,
+            () = tokio::time::sleep(Duration::from_millis(250)) => {
+                if !session.is_active() {
+                    break;
+                }
+                continue;
+            }
+        };
+        let Some(Ok(message)) = message else {
+            break;
+        };
+        if state.options.shutdown.is_stopping() || !session.is_active() {
+            break;
+        }
         match message {
             Message::Binary(data) => {
                 let report = match parse_frame(&data) {
@@ -143,7 +169,7 @@ async fn handle_socket(state: AppState, session_token: String, mut socket: WebSo
                     .hid_ws_leases
                     .lock()
                     .await
-                    .live(&session_token, Instant::now());
+                    .live(&session.token, Instant::now());
                 let Some((lease_id, bindings)) = live else {
                     let _ = socket.send(error_message("no_active_lease")).await;
                     continue;
@@ -178,6 +204,7 @@ async fn handle_socket(state: AppState, session_token: String, mut socket: WebSo
             _ => {}
         }
     }
+    crate::hid::release_session_hid(&state, &session.token).await;
 }
 
 #[cfg(test)]

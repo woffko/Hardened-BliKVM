@@ -34,6 +34,8 @@ cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hi
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
+cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
+python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
@@ -53,9 +55,9 @@ cargo clippy -p bli-kvm-atx-gpio-executor --all-targets --locked --features char
 cargo clippy -p bli-kvm-server --all-targets --locked --features restricted-control-surface -- -D warnings
 
 sh -n scripts/build-aarch64.sh
-sh -n scripts/build-board-profile.sh
+bash -n scripts/build-board-profile.sh
 sh -n scripts/build-hid-transition-profile.sh
-sh -n scripts/build-prototype-bundle.sh
+bash -n scripts/build-prototype-bundle.sh
 sh -n scripts/check-source-boundary.sh
 sh -n scripts/check.sh
 sh -n scripts/rust-lld-linker.sh
@@ -64,6 +66,7 @@ sh -n scripts/verify-systemd-units.sh
 sh -n scripts/verify-aarch64-elf.sh
 
 scripts/check-source-boundary.sh
+python3 -B -m unittest tools.test_source_boundary
 scripts/verify-systemd-units.sh
 python3 -B tools/verify_persistent_status_ordering.py
 python3 -B tools/verify_persistent_write_ordering.py
@@ -95,6 +98,8 @@ node --test tools/test_gui_parity_probe.mjs
 node --test tools/test_gui_parity_app.mjs
 node --test tools/test_restricted_power_probe.mjs
 node --test tools/test_restricted_keyboard_probe.mjs
+node --test tools/test_hid_report_queue.mjs
+node --test tools/test_network_outcome.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs
@@ -103,6 +108,12 @@ node --check tools/playwright/device_application_upload_failures.mjs
 node --check tools/playwright/gui_parity_probe.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
 node --check tools/playwright/restricted_power_probe.mjs
+node --check tools/playwright/restricted_control_gui_probe.mjs
+node --check tools/playwright/restricted_control_virtual_keyboard_probe.mjs
+node --check tools/playwright/restricted_control_lifecycle.mjs
+node --check tools/playwright/network_contract.mjs
+node --check tools/playwright/firewall_modes_contract.mjs
+node --check tools/playwright/video_settings_contract.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
@@ -174,6 +185,7 @@ python3 -m unittest \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
+  tools/test_prototype_archive.py \
   tools/test_build_debian_update_runtime_package.py \
   tools/test_stage_device_update_runtime_package.py \
   tools/test_stage_device_update_trust_config.py \
@@ -349,6 +361,7 @@ python3 -m py_compile \
   tools/plan_board_profile_handoff.py \
   tools/stage_device_board_profile_gate.py \
   tools/compare_gui_parity.py \
+  tools/test_compare_gui_parity.py \
   tools/capture_device_kvm_topology.py \
   tools/check_device_log_health.py \
   tools/license_inventory.py \
@@ -399,6 +412,7 @@ python3 -m py_compile \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
+  tools/test_prototype_archive.py \
   tools/test_build_debian_update_runtime_package.py \
   tools/test_stage_device_update_runtime_package.py \
   tools/test_stage_device_update_trust_config.py \
@@ -667,6 +681,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_debian_runtime_retain_preflight.py \
     tools/test_capture_debian_runtime_retained.py \
     tools/test_build_debian_runtime_package.py \
+    tools/test_prototype_archive.py \
     tools/test_build_debian_update_runtime_package.py \
     tools/test_stage_device_update_runtime_package.py \
     tools/test_stage_device_update_trust_config.py \
@@ -721,11 +736,16 @@ node tools/playwright/local_application_upload.mjs
 node tools/playwright/local_upload_logout.mjs
 pnpm_web build
 pnpm_web lint
+node tools/playwright/restricted_control_lifecycle.mjs
+node tools/playwright/network_contract.mjs
+node tools/playwright/firewall_modes_contract.mjs
+node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
 pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_gui_parity_app.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'

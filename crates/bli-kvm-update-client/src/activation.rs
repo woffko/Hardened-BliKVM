@@ -8,7 +8,7 @@ use bli_kvm_update_protocol::{
     MAX_UPDATE_MESSAGE_BYTES, UPDATE_SCHEMA_VERSION, UpdateProtocolError,
     activation::{
         self, ActivationErrorCode, ActivationReceipt, ActivationRequest, ActivationRequestEnvelope,
-        ActivationResponse,
+        ActivationResponse, PreparedActivationReceipt,
     },
     encode_frame,
 };
@@ -46,6 +46,105 @@ mod tests {
 
     fn slot() -> String {
         format!("app-00000000000000000002-{}", "a".repeat(64))
+    }
+
+    #[tokio::test]
+    async fn prepared_admission_is_generation_bound_distinct_and_requires_eof() {
+        for mode in [
+            "prepared",
+            "legacy-client",
+            "wrong-generation",
+            "wrong-target",
+            "held-eof",
+            "legacy-reply",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("admit.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let worker = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut input = Vec::new();
+                stream.read_to_end(&mut input).await.unwrap();
+                let request = activation::decode_request(&input[4..]).unwrap();
+                assert_eq!(
+                    request.request,
+                    if mode == "legacy-client" {
+                        ActivationRequest::Activate {
+                            slot_id: slot(),
+                            expected_generation: 41,
+                        }
+                    } else {
+                        ActivationRequest::Admit {
+                            slot_id: slot(),
+                            expected_generation: 41,
+                        }
+                    }
+                );
+                let response = ActivationResponseEnvelope {
+                    schema_version: 1,
+                    request_id: request.request_id,
+                    response: if mode == "legacy-reply" {
+                        ActivationResponse::AwaitingHealth {
+                            receipt: ActivationReceipt {
+                                operation_id: "1".repeat(32),
+                                target_slot_id: slot(),
+                            },
+                        }
+                    } else {
+                        ActivationResponse::Prepared {
+                            receipt: PreparedActivationReceipt {
+                                operation_id: "1".repeat(32),
+                                target_slot_id: if mode == "wrong-target" {
+                                    format!("app-00000000000000000003-{}", "b".repeat(64))
+                                } else {
+                                    slot()
+                                },
+                                prepared_generation: if mode == "wrong-generation" {
+                                    41
+                                } else {
+                                    42
+                                },
+                                deadline_monotonic_ms: u64::MAX,
+                            },
+                        }
+                    },
+                };
+                stream
+                    .write_all(
+                        &encode_frame(&activation::encode_response(&response).unwrap()).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                if mode == "held-eof" {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                }
+                drop(stream);
+                assert!(
+                    timeout(Duration::from_millis(20), listener.accept())
+                        .await
+                        .is_err()
+                );
+            });
+            let mut client = UpdateActivationClient::new(path).unwrap();
+            client.deadline = Duration::from_millis(100);
+            let result = if mode == "legacy-client" {
+                client.activate(&slot(), 41).await.map(|_| ())
+            } else {
+                client.admit(&slot(), 41).await.map(|receipt| {
+                    assert_eq!(receipt.prepared_generation, 42);
+                    assert_eq!(receipt.deadline_monotonic_ms, u64::MAX);
+                })
+            };
+            match mode {
+                "prepared" => result.unwrap(),
+                "held-eof" => assert!(matches!(result, Err(ActivationClientError::Timeout))),
+                _ => assert!(matches!(
+                    result,
+                    Err(ActivationClientError::MismatchedResponse)
+                )),
+            }
+            worker.await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -212,16 +311,47 @@ impl UpdateActivationClient {
             .concurrency
             .try_acquire()
             .map_err(|_| ActivationClientError::Busy)?;
-        timeout(self.deadline, self.execute(slot_id, expected_generation))
-            .await
-            .map_err(|_| ActivationClientError::Timeout)?
+        match timeout(
+            self.deadline,
+            self.execute(slot_id, expected_generation, false),
+        )
+        .await
+        .map_err(|_| ActivationClientError::Timeout)??
+        {
+            ActivationResponse::AwaitingHealth { receipt } => Ok(receipt),
+            _ => Err(ActivationClientError::MismatchedResponse),
+        }
+    }
+
+    /// Prepared admission is not candidate selection or health confirmation.
+    /// The exchange still requires response EOF and never retries on ambiguity.
+    pub async fn admit(
+        &self,
+        slot_id: &str,
+        expected_generation: u64,
+    ) -> Result<PreparedActivationReceipt, ActivationClientError> {
+        let _permit = self
+            .concurrency
+            .try_acquire()
+            .map_err(|_| ActivationClientError::Busy)?;
+        match timeout(
+            self.deadline,
+            self.execute(slot_id, expected_generation, true),
+        )
+        .await
+        .map_err(|_| ActivationClientError::Timeout)??
+        {
+            ActivationResponse::Prepared { receipt } => Ok(receipt),
+            _ => Err(ActivationClientError::MismatchedResponse),
+        }
     }
 
     async fn execute(
         &self,
         slot_id: &str,
         expected_generation: u64,
-    ) -> Result<ActivationReceipt, ActivationClientError> {
+        admission: bool,
+    ) -> Result<ActivationResponse, ActivationClientError> {
         let id = self
             .next_id
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -231,9 +361,16 @@ impl UpdateActivationClient {
         let request = ActivationRequestEnvelope {
             schema_version: UPDATE_SCHEMA_VERSION,
             request_id: id,
-            request: ActivationRequest::Activate {
-                slot_id: slot_id.into(),
-                expected_generation,
+            request: if admission {
+                ActivationRequest::Admit {
+                    slot_id: slot_id.into(),
+                    expected_generation,
+                }
+            } else {
+                ActivationRequest::Activate {
+                    slot_id: slot_id.into(),
+                    expected_generation,
+                }
             },
         };
         let frame = encode_frame(&activation::encode_request(&request)?)?;
@@ -253,14 +390,22 @@ impl UpdateActivationClient {
         if response.request_id != id {
             return Err(ActivationClientError::MismatchedResponse);
         }
-        match response.response {
+        match &response.response {
             ActivationResponse::AwaitingHealth { receipt } => {
                 if receipt.target_slot_id != slot_id {
                     return Err(ActivationClientError::MismatchedResponse);
                 }
-                Ok(receipt)
+                Ok(response.response)
             }
-            ActivationResponse::Error { code } => Err(ActivationClientError::Rejected(code)),
+            ActivationResponse::Prepared { receipt } => {
+                if receipt.target_slot_id != slot_id
+                    || Some(receipt.prepared_generation) != expected_generation.checked_add(1)
+                {
+                    return Err(ActivationClientError::MismatchedResponse);
+                }
+                Ok(response.response)
+            }
+            ActivationResponse::Error { code } => Err(ActivationClientError::Rejected(*code)),
         }
     }
 }

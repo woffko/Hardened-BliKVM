@@ -136,26 +136,34 @@ impl SessionStore {
         }
     }
 
-    pub async fn revoke_user(&self, username: &str) {
+    pub async fn revoke_user(&self, username: &str) -> Vec<String> {
+        let mut revoked = Vec::new();
         self.sessions.write().await.retain(|_, session| {
             if session.username == username {
                 session.revoke();
+                revoked.push(session.token.clone());
                 false
             } else {
                 true
             }
         });
+        let revoked_tokens = &revoked;
+        self.last_seen
+            .write()
+            .await
+            .retain(|token, _| !revoked_tokens.contains(token));
+        revoked
     }
 
     /// Revoke every session except the caller's, used by a forced lock.
-    pub async fn revoke_others(&self, token: &str) -> u64 {
-        let mut revoked = 0_u64;
+    pub async fn revoke_others(&self, token: &str) -> Vec<String> {
+        let mut revoked = Vec::new();
         self.sessions.write().await.retain(|other, session| {
             if other == token {
                 true
             } else {
                 session.revoke();
-                revoked = revoked.saturating_add(1);
+                revoked.push(other.clone());
                 false
             }
         });
@@ -191,10 +199,14 @@ mod tests {
         let second = store.issue("operator", 60).await;
         let other = store.issue("other", 60).await;
 
-        store.revoke_user("operator").await;
+        let mut revoked = store.revoke_user("operator").await;
+        revoked.sort();
 
         assert!(!first.is_active());
         assert!(!second.is_active());
         assert!(other.is_active());
+        let mut expected = vec![first.token, second.token];
+        expected.sort();
+        assert_eq!(revoked, expected);
     }
 }

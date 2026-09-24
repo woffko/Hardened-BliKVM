@@ -11,7 +11,31 @@ from tools import upload_proxy_streaming as proxy
 
 class TransformTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.original = Path("packaging/nginx/hardened-blikvm.conf").read_bytes()
+        # This migration targets the legacy single-location recipe, not the
+        # current package that already includes bounded streaming locations.
+        self.original = b"""http {
+    server {
+        listen 443 ssl;
+        client_max_body_size 16m;
+        location / {
+            proxy_pass http://127.0.0.1:18080;
+            proxy_http_version 1.1;
+            proxy_set_header Host $hardened_blikvm_forwarded_host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $hardened_blikvm_connection_upgrade;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+        }
+    }
+}
+"""
+
+    def test_current_packaged_streaming_config_is_not_migrated_again(self) -> None:
+        current = Path("packaging/nginx/hardened-blikvm.conf").read_bytes()
+        with self.assertRaisesRegex(ValueError, "upload streaming configuration already exists"):
+            proxy.transform(current)
     def test_only_exact_upload_location_is_added(self) -> None:
         changed = proxy.transform(self.original)
         start = changed.index(b"        location = /api/application-update/upload {")

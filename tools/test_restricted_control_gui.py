@@ -32,6 +32,9 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertRegex(lease, r"Math\.max\(1, Math\.floor\(ttlSeconds \* 1000 \* RENEW_FRACTION\)\)")
         operation_id = re.search(r"OPERATION_ID_BYTES = (\d+)", lease)
         self.assertEqual(operation_id.group(1) if operation_id else "", "16")
+        self.assertIn("if (!response.data.applied)", lease)
+        self.assertIn("request.abort()", lease)
+        self.assertIn("requireGeneration", lease)
 
     def test_controls_are_capability_gated(self) -> None:
         capabilities = CAPABILITIES.read_text()
@@ -60,6 +63,10 @@ class RestrictedControlGuiTests(unittest.TestCase):
         hook = (ROOT / "web/src/hooks/useRestrictedPower.ts").read_text()
         self.assertIn("supportsPowerControl", hook)
         self.assertIn("performPowerAction", hook)
+        self.assertNotIn("useFocusConfirmation", hook)
+        for name in expectations:
+            text = (power / name).read_text()
+            self.assertIn("showConfirm || restricted", text)
         helper = (ROOT / "web/src/lib/restricted-power.ts").read_text()
         self.assertIn("crypto.subtle.digest('SHA-256'", helper)
         self.assertIn("ensureFocus", helper)
@@ -99,15 +106,28 @@ class RestrictedControlGuiTests(unittest.TestCase):
         focus = (ROOT / "web/src/lib/restricted-power.ts").read_text()
         self.assertIn("FOCUS_TTL_MS = 15_000", focus)
 
-    def test_mouse_movement_is_coalesced_to_the_latest_report(self) -> None:
+    def test_mouse_coalescing_preserves_relative_wheel_and_button_semantics(self) -> None:
         hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
-        # A burst of pointer events must not build an HTTP backlog; only the
-        # latest pointer position is flushed, while keyboard reports stay ordered.
-        self.assertIn("let latestMouse: HidReport | null = null;", hook)
+        queue = (ROOT / "web/src/lib/hid-report-queue.ts").read_text()
+        # Absolute positions may collapse to the latest point. Relative deltas
+        # are summed, while wheel and button transitions flush in order.
+        self.assertIn("let pendingMouse: MouseReport | null = null;", hook)
         self.assertIn("function scheduleMouseFlush()", hook)
         self.assertIn("MOUSE_FLUSH_MS", hook)
         self.assertIn("if (report.mode === 'keyboard') {", hook)
-        self.assertIn("latestMouse = report;", hook)
+        self.assertIn("signedByte(current.data[1]) + signedByte(next.data[1])", queue)
+        self.assertIn("current.data[0] !== next.data[0]", queue)
+        self.assertIn("hasWheel(report)", hook)
+
+    def test_stop_cancels_stale_queued_and_inflight_reports(self) -> None:
+        hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
+        self.assertIn("let queueGeneration = 0;", hook)
+        self.assertIn("queueGeneration += 1;", hook)
+        self.assertIn("generation !== queueGeneration", hook)
+        self.assertIn("startingSession", hook)
+        self.assertIn("!confirmedRef.current", hook)
+        self.assertIn("window.addEventListener('blur', stopControl)", hook)
+        self.assertIn("document.visibilityState === 'hidden'", hook)
 
     def test_mouse_uses_the_lease_path_when_advertised(self) -> None:
         mouse = ROOT / "web/src/pages/desktop/mouse"
@@ -170,10 +190,14 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("setConfirmed(true)", confirmation)
         self.assertIn("pendingConfirmation", confirmation)
         self.assertIn("confirmedGlobal", confirmation)
-        for hook in ("useRestrictedPower.ts", "useHidLease.ts"):
-            text = (ROOT / "web/src/hooks" / hook).read_text()
-            self.assertIn("useFocusConfirmation", text)
-            self.assertIn("ensureConfirmed", text)
+        self.assertIn("requestConfirmation", confirmation)
+        self.assertIn("const ensureConfirmed = useCallback(async () => confirmedGlobal, [])", confirmation)
+        hid_hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
+        self.assertIn("useFocusConfirmation", hid_hook)
+        self.assertIn("ensureConfirmed", hid_hook)
+        control = (ROOT / "web/src/pages/desktop/menu/remote-control.tsx").read_text()
+        self.assertIn("Enable remote control", control)
+        self.assertIn("disableControl", control)
 
 
 if __name__ == "__main__":

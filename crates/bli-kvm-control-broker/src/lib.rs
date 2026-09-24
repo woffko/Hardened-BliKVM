@@ -2,7 +2,15 @@ mod attestation;
 pub mod board_status;
 mod config;
 mod device_settings;
+pub mod firewall_confirmation;
+pub mod firewall_executor;
+pub mod firewall_health;
+pub mod firewall_observation;
+mod firewall_process;
+pub mod firewall_rules;
+pub mod firewall_runtime;
 pub mod firewall_settings;
+pub mod firewall_transaction;
 pub mod mouse_jiggler;
 pub mod network_settings;
 #[cfg(feature = "network-write-profile")]
@@ -43,7 +51,6 @@ pub use config::{ControlBrokerConfig, ControlBrokerConfigError};
 
 /// Origin boot binding for the system-action policy: the running boot's
 /// identity, so a request prepared before a reboot cannot be replayed after it.
-#[cfg(feature = "system-action-profile")]
 pub fn boot_binding_from_system() -> Result<[u8; 16], Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
     let hex: String = raw

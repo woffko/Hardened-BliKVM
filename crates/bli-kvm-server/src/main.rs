@@ -1,4 +1,4 @@
-use std::{env, error::Error, net::SocketAddr, path::PathBuf};
+use std::{env, error::Error, future::IntoFuture, net::SocketAddr, path::PathBuf, time::Duration};
 
 use bli_kvm_server::{ServerOptions, app_with_options};
 use tokio::net::TcpListener;
@@ -7,6 +7,8 @@ const DEFAULT_BIND: &str = "127.0.0.1:18080";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let address: SocketAddr = env::var("BLI_KVM_BIND")
         .unwrap_or_else(|_| DEFAULT_BIND.to_string())
         .parse()?;
@@ -47,6 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         media_controls_enabled: env::var("BLI_KVM_MEDIA_CONTROLS").as_deref() == Ok("1"),
         system_actions_enabled: env::var("BLI_KVM_SYSTEM_ACTIONS").as_deref() == Ok("1"),
         network_writes_enabled: env::var("BLI_KVM_NETWORK_WRITES").as_deref() == Ok("1"),
+        firewall_modes_enabled: env::var("BLI_KVM_FIREWALL_MODES").as_deref() == Ok("1"),
         video_controls_enabled: env::var("BLI_KVM_VIDEO_CONTROLS").as_deref() == Ok("1"),
         engine_socket: env::var_os("BLI_KVM_USTREAMER_SOCKET").map(PathBuf::from),
         media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),
@@ -55,10 +58,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let listener = TcpListener::bind(address).await?;
     eprintln!("BLi-KVM development server listening on {address}");
-    axum::serve(
+    let shutdown = options.shutdown.clone();
+    let graceful = shutdown.clone();
+    let server = axum::serve(
         listener,
         app_with_options(options).into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await?;
+    .with_graceful_shutdown(async move { graceful.cancelled().await })
+    .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => { result?; return Ok(()); },
+        _ = terminate.recv() => {},
+        _ = interrupt.recv() => {},
+    }
+    shutdown.stop();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        server.await?;
+        shutdown.drained().await;
+        Ok::<(), std::io::Error>(())
+    })
+    .await
+    .map_err(|_| "server shutdown deadline exceeded")??;
     Ok(())
 }

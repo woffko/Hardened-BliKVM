@@ -72,6 +72,16 @@ impl VideoSettingsState {
         self.current.clone()
     }
 
+    pub fn readback(&self) -> Result<VideoSettings, ControlRejectionCode> {
+        if !self.capability_enabled {
+            return Err(ControlRejectionCode::CapabilityDisabled);
+        }
+        if !self.backend_ready {
+            return Err(ControlRejectionCode::BackendUnavailable);
+        }
+        Ok(self.current())
+    }
+
     pub fn handle(&mut self, change: &VideoSettingsChange) -> ControlResponse {
         if !self.capability_enabled {
             return reject(ControlRejectionCode::CapabilityDisabled);
@@ -96,9 +106,15 @@ impl VideoSettingsState {
         }
         if let Err(reason) = self.runner.restart(&self.unit) {
             eprintln!("video settings: unit restart failed: {reason}");
-            // Reversibility: the engine keeps running the previous settings.
+            // Restart may already have stopped the previous engine. Restoring
+            // the file alone does not restore service availability.
+            self.backend_ready = false;
             if let Err(restore) = self.write_env_file(&self.current) {
                 eprintln!("video settings: environment file restore failed: {restore}");
+            } else if let Err(restore) = self.runner.restart(&self.unit) {
+                eprintln!("video settings: previous configuration restart failed: {restore}");
+            } else {
+                self.backend_ready = true;
             }
             return reject(ControlRejectionCode::BackendRejected);
         }
@@ -107,38 +123,57 @@ impl VideoSettingsState {
     }
 
     fn write_env_file(&self, settings: &VideoSettings) -> Result<(), String> {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::sync::atomic::{AtomicU64, Ordering};
         let parent = self
             .env_path
             .parent()
             .ok_or_else(|| "the environment file has no parent directory".to_string())?;
         let metadata = std::fs::symlink_metadata(parent)
             .map_err(|error| format!("the environment directory is unavailable: {error}"))?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        if !metadata.is_dir() || metadata.permissions().mode() & 0o022 != 0 {
             return Err("the environment directory must be a real directory".into());
         }
-        let temporary = self.env_path.with_extension("env.new");
+        for ancestor in parent.ancestors() {
+            if !std::fs::symlink_metadata(ancestor)
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                return Err("the environment directory cannot traverse symlinks".into());
+            }
+        }
+        match std::fs::symlink_metadata(&self.env_path) {
+            Ok(metadata) if !metadata.is_file() => {
+                return Err("the environment file must be regular".into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+        let temporary = parent.join(format!(
+            ".video-env-{}-{}.tmp",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
+            .mode(0o644)
             .open(&temporary)
             .map_err(|error| format!("the temporary environment file is unavailable: {error}"))?;
-        file.write_all(settings.to_env_file().as_bytes())
-            .map_err(|error| {
-                format!("the temporary environment file could not be written: {error}")
-            })?;
-        file.sync_all().map_err(|error| {
-            format!("the temporary environment file could not be synced: {error}")
-        })?;
-        // The mode is fixed so the engine user can only read it.
-        std::fs::set_permissions(
-            &temporary,
-            std::os::unix::fs::PermissionsExt::from_mode(0o644),
-        )
-        .map_err(|error| format!("the environment file mode could not be set: {error}"))?;
-        drop(file);
-        std::fs::rename(&temporary, &self.env_path)
-            .map_err(|error| format!("the environment file could not be replaced: {error}"))
+        let result = (|| {
+            // Settings contain no secrets and must remain readable by the engine.
+            file.set_permissions(std::fs::Permissions::from_mode(0o644))?;
+            file.write_all(settings.to_env_file().as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&temporary, &self.env_path)?;
+            std::fs::File::open(parent)?.sync_all()
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result.map_err(|error: std::io::Error| format!("environment update failed: {error}"))
     }
 
     /// The path the owner writes and the unit reads, for tests and diagnostics.
@@ -259,6 +294,36 @@ mod tests {
     }
 
     #[test]
+    fn failed_change_restarts_the_restored_configuration() {
+        struct FailOnce(Arc<std::sync::atomic::AtomicUsize>);
+        impl VideoRestartRunner for FailOnce {
+            fn restart(&mut self, _: &str) -> Result<(), String> {
+                if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    Err("candidate failed".into())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut state = VideoSettingsState::open(
+            directory.path().join("ustreamer.env"),
+            "streamer.service",
+            Box::new(FailOnce(calls.clone())),
+            true,
+            true,
+        );
+        assert_eq!(
+            state.handle(&VideoSettingsChange::new(Some(24), None)),
+            reject(ControlRejectionCode::BackendRejected)
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(state.current(), VideoSettings::default());
+        assert_eq!(state.readback(), Ok(VideoSettings::default()));
+    }
+
+    #[test]
     fn restores_the_previous_file_when_the_restart_fails() {
         let directory = tempfile::tempdir().unwrap();
         let env_path = directory.path().join("ustreamer.env");
@@ -270,12 +335,44 @@ mod tests {
             }
         );
         assert!(restarts.lock().unwrap().is_empty());
-        // The engine still runs the reviewed default and the file says so.
+        // The file is restored, but failed recovery is not a live engine.
         assert_eq!(state.current(), VideoSettings::default());
+        assert_eq!(
+            state.readback(),
+            Err(ControlRejectionCode::BackendUnavailable)
+        );
+        assert_eq!(
+            state.handle(&VideoSettingsChange::new(Some(24), None)),
+            reject(ControlRejectionCode::BackendUnavailable)
+        );
         let written = std::fs::read_to_string(&env_path).unwrap();
         assert_eq!(
             VideoSettings::from_env_file(&written),
             VideoSettings::default()
+        );
+    }
+
+    #[test]
+    fn environment_update_never_follows_the_legacy_temporary_symlink() {
+        let directory = tempfile::tempdir().unwrap();
+        let env_path = directory.path().join("ustreamer.env");
+        let victim = directory.path().join("unrelated");
+        std::fs::write(&victim, "preserve unrelated content").unwrap();
+        std::os::unix::fs::symlink(&victim, env_path.with_extension("env.new")).unwrap();
+        let (mut state, _) = state(&env_path, false, true);
+        assert_eq!(
+            state.handle(&VideoSettingsChange::new(Some(24), None)),
+            ControlResponse::Applied
+        );
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "preserve unrelated content"
+        );
+        assert!(
+            !std::fs::symlink_metadata(env_path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
         );
     }
 

@@ -1,11 +1,22 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import type { ReactNode } from 'react';
 import { Button, Input, Segmented } from 'antd';
+import { useAtomValue } from 'jotai';
 import { CheckIcon, PlusIcon, XIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/network.ts';
 import type { DNSMode } from '@/api/network.ts';
+import { dnsWriteVerified, resolverServers } from '@/lib/network-outcome.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import type { NetworkSectionHandle, NetworkSectionResult, NetworkSectionStatus } from './types.ts';
 
@@ -37,6 +48,7 @@ const maxServers = 6;
 type DNSProps = {
   showFooter?: boolean;
   disabled?: boolean;
+  readOnly?: boolean;
   onStatusChange?: (status: NetworkSectionStatus) => void;
 };
 
@@ -294,8 +306,11 @@ const EditableServerRow = ({
 };
 
 export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
-  ({ showFooter = true, disabled = false, onStatusChange }, ref) => {
+  ({ showFooter = true, disabled = false, readOnly = false, onStatusChange }, ref) => {
     const { t } = useTranslation();
+    const capabilities = useAtomValue(capabilitiesAtom);
+    const isBli = capabilities?.platform.id === 'bli-h616-pikvm';
+    const [loaded, setLoaded] = useState(false);
 
     const [mode, setMode] = useState<DNSMode>('dhcp');
     const [originalMode, setOriginalMode] = useState<DNSMode>('dhcp');
@@ -316,49 +331,65 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
     const [error, setError] = useState('');
     const [focusNewRow, setFocusNewRow] = useState(false);
 
-    useEffect(() => {
-      getDNS();
-    }, []);
+    const getDNS = useCallback(
+      async (showLoading = true) => {
+        if (showLoading) setIsLoading(true);
 
-    async function getDNS(showLoading = true) {
-      if (showLoading) setIsLoading(true);
+        try {
+          const rsp = await api.getDNS();
+          if (rsp.code !== 0) {
+            setError(rsp.msg);
+            return;
+          }
 
-      try {
-        const rsp = await api.getDNS();
-        if (rsp.code !== 0) {
-          setError(rsp.msg);
-          return;
+          if (isBli) {
+            const fetchedServers = resolverServers(rsp.data?.resolver);
+            if (fetchedServers.some((server) => !isValidIP(server)))
+              throw new Error('Invalid DNS server');
+            setMode('manual');
+            setOriginalMode('manual');
+            setServers(fetchedServers);
+            setOriginalServers(fetchedServers);
+            setLoaded(true);
+            return;
+          }
+
+          const data = rsp.data as DNSState;
+          const fetchedMode = data.mode || 'dhcp';
+          setMode(fetchedMode);
+          setOriginalMode(fetchedMode);
+
+          const fetchedServers = data.servers?.filter(Boolean) || [];
+          setServers(fetchedServers);
+          setOriginalServers(fetchedServers);
+          setDHCP(data.dhcp || []);
+          setInfo(data.info || {});
+
+          const config = data.config || {};
+          const fetchedAddress = normalizeIPv4(config.address || data.info?.address || '');
+          const fetchedSubnetMask = config.subnetMask || data.info?.subnetMask || '';
+          const fetchedGateway = config.gateway || data.info?.gateway || '';
+          setAddress(fetchedAddress);
+          setSubnetMask(fetchedSubnetMask);
+          setGateway(fetchedGateway);
+          setOriginalAddress(fetchedAddress);
+          setOriginalSubnetMask(fetchedSubnetMask);
+          setOriginalGateway(fetchedGateway);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : t('settings.network.dns.saveFailed'));
+        } finally {
+          if (showLoading) setIsLoading(false);
         }
+      },
+      [isBli, t]
+    );
 
-        const data = rsp.data as DNSState;
-        const fetchedMode = data.mode || 'dhcp';
-        setMode(fetchedMode);
-        setOriginalMode(fetchedMode);
-
-        const fetchedServers = data.servers?.filter(Boolean) || [];
-        setServers(fetchedServers);
-        setOriginalServers(fetchedServers);
-        setDHCP(data.dhcp || []);
-        setInfo(data.info || {});
-
-        const config = data.config || {};
-        const fetchedAddress = normalizeIPv4(config.address || data.info?.address || '');
-        const fetchedSubnetMask = config.subnetMask || data.info?.subnetMask || '';
-        const fetchedGateway = config.gateway || data.info?.gateway || '';
-        setAddress(fetchedAddress);
-        setSubnetMask(fetchedSubnetMask);
-        setGateway(fetchedGateway);
-        setOriginalAddress(fetchedAddress);
-        setOriginalSubnetMask(fetchedSubnetMask);
-        setOriginalGateway(fetchedGateway);
-      } catch (err) {
-        console.log(err);
-      } finally {
-        if (showLoading) setIsLoading(false);
-      }
-    }
+    useEffect(() => {
+      void getDNS();
+    }, [getDNS]);
 
     async function save(): Promise<NetworkSectionResult> {
+      if (readOnly) return { changed: false, error: true };
       if (isSaving) return { changed: false };
       if (!hasChanges) return { changed: false };
 
@@ -366,6 +397,34 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
       setError('');
 
       const normalized = normalizeServers(servers);
+      if (isBli) {
+        if (
+          !loaded ||
+          normalized.length === 0 ||
+          normalized.length > maxServers ||
+          normalized.some((server) => !isValidIP(server))
+        ) {
+          setError(t('settings.network.dns.invalid'));
+          return { changed: false, error: true };
+        }
+        setIsSaving(true);
+        try {
+          const rsp = await api.setBliDNS(normalized);
+          if (rsp.code !== 0 || !dnsWriteVerified(rsp.data, normalized)) {
+            setError(rsp.msg || rsp.data?.rejection || t('settings.network.dns.saveFailed'));
+            return { changed: true, error: true };
+          }
+          setServers(normalized);
+          setOriginalServers(normalized);
+          setMessage(t('settings.network.dns.saved'));
+          return { changed: true };
+        } catch {
+          setError(t('settings.network.dns.saveFailed'));
+          return { changed: true, error: true };
+        } finally {
+          setIsSaving(false);
+        }
+      }
       if (mode === 'manual' && normalized.length === 0) {
         setError(t('settings.network.dns.invalid'));
         return { changed: false, error: true };
@@ -486,6 +545,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
         return val !== '' && !isValidIP(val);
       });
     const hasInvalidNetwork =
+      !isBli &&
       mode === 'manual' &&
       (!isValidIPv4(normalizedAddress) ||
         !isValidSubnetMask(trimmedSubnetMask) ||
@@ -509,6 +569,8 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
         : t('settings.network.dns.manualServersDescription');
 
     const canApply =
+      !readOnly &&
+      (!isBli || loaded) &&
       hasChanges &&
       !isLoading &&
       !isSaving &&
@@ -546,82 +608,86 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
     }, [onStatusChange, status]);
 
     return (
-      <div className="flex flex-col space-y-8">
-        <div className="flex flex-col space-y-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col space-y-1">
-              <span>{t('settings.network.dns.ipv4Title')}</span>
-              <span className="text-xs text-neutral-500">
-                {t('settings.network.dns.ipv4Description')}
-              </span>
+      <fieldset disabled={readOnly} className="flex min-w-0 flex-col space-y-8">
+        {!isBli && (
+          <div className="flex flex-col space-y-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col space-y-1">
+                <span>{t('settings.network.dns.ipv4Title')}</span>
+                <span className="text-xs text-neutral-500">
+                  {t('settings.network.dns.ipv4Description')}
+                </span>
+              </div>
+
+              <Segmented
+                className="max-w-full overflow-x-auto"
+                disabled={readOnly || disabled || isLoading || isSaving}
+                value={mode}
+                onChange={(val) => {
+                  setMode(val as DNSMode);
+                  setMessage('');
+                  setError('');
+                }}
+                options={[
+                  { label: t('settings.network.dns.dhcp'), value: 'dhcp' },
+                  { label: t('settings.network.dns.manual'), value: 'manual' }
+                ]}
+              />
             </div>
 
-            <Segmented
-              className="max-w-full overflow-x-auto"
-              disabled={disabled || isLoading || isSaving}
-              value={mode}
-              onChange={(val) => {
-                setMode(val as DNSMode);
-                setMessage('');
-                setError('');
-              }}
-              options={[
-                { label: t('settings.network.dns.dhcp'), value: 'dhcp' },
-                { label: t('settings.network.dns.manual'), value: 'manual' }
-              ]}
-            />
+            <Panel title={t('settings.network.dns.networkDetails')}>
+              <InfoRow label={t('settings.network.dns.interface')} value={formatInterface(info)} />
+              {mode === 'manual' ? (
+                <>
+                  <EditableInfoRow
+                    label={t('settings.network.dns.ipAddress')}
+                    value={address}
+                    placeholder="192.0.2.53"
+                    status={address.trim() && !isValidIPv4(normalizedAddress) ? 'error' : undefined}
+                    onChange={(value) => {
+                      setAddress(value);
+                      setMessage('');
+                      setError('');
+                    }}
+                  />
+                  <EditableInfoRow
+                    label={t('settings.network.dns.subnetMask')}
+                    value={subnetMask}
+                    placeholder="255.255.255.0"
+                    status={
+                      subnetMask.trim() && !isValidSubnetMask(trimmedSubnetMask)
+                        ? 'error'
+                        : undefined
+                    }
+                    onChange={(value) => {
+                      setSubnetMask(value);
+                      setMessage('');
+                      setError('');
+                    }}
+                  />
+                  <EditableInfoRow
+                    label={t('settings.network.dns.router')}
+                    value={gateway}
+                    placeholder="192.0.2.1"
+                    status={gateway.trim() && !isValidIPv4(normalizedGateway) ? 'error' : undefined}
+                    isLast
+                    onChange={(value) => {
+                      setGateway(value);
+                      setMessage('');
+                      setError('');
+                    }}
+                  />
+                </>
+              ) : (
+                <>
+                  <InfoRow label={t('settings.network.dns.ipAddress')} value={info.address} />
+                  <InfoRow label={t('settings.network.dns.subnetMask')} value={info.subnetMask} />
+                  <InfoRow label={t('settings.network.dns.router')} value={info.gateway} isLast />
+                </>
+              )}
+            </Panel>
           </div>
-
-          <Panel title={t('settings.network.dns.networkDetails')}>
-            <InfoRow label={t('settings.network.dns.interface')} value={formatInterface(info)} />
-            {mode === 'manual' ? (
-              <>
-                <EditableInfoRow
-                  label={t('settings.network.dns.ipAddress')}
-                  value={address}
-                  placeholder="192.0.2.53"
-                  status={address.trim() && !isValidIPv4(normalizedAddress) ? 'error' : undefined}
-                  onChange={(value) => {
-                    setAddress(value);
-                    setMessage('');
-                    setError('');
-                  }}
-                />
-                <EditableInfoRow
-                  label={t('settings.network.dns.subnetMask')}
-                  value={subnetMask}
-                  placeholder="255.255.255.0"
-                  status={
-                    subnetMask.trim() && !isValidSubnetMask(trimmedSubnetMask) ? 'error' : undefined
-                  }
-                  onChange={(value) => {
-                    setSubnetMask(value);
-                    setMessage('');
-                    setError('');
-                  }}
-                />
-                <EditableInfoRow
-                  label={t('settings.network.dns.router')}
-                  value={gateway}
-                  placeholder="192.0.2.1"
-                  status={gateway.trim() && !isValidIPv4(normalizedGateway) ? 'error' : undefined}
-                  isLast
-                  onChange={(value) => {
-                    setGateway(value);
-                    setMessage('');
-                    setError('');
-                  }}
-                />
-              </>
-            ) : (
-              <>
-                <InfoRow label={t('settings.network.dns.ipAddress')} value={info.address} />
-                <InfoRow label={t('settings.network.dns.subnetMask')} value={info.subnetMask} />
-                <InfoRow label={t('settings.network.dns.router')} value={info.gateway} isLast />
-              </>
-            )}
-          </Panel>
-        </div>
+        )}
 
         <div className="flex flex-col space-y-5">
           <div className="flex flex-col space-y-1">
@@ -710,6 +776,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
               icon={message ? <CheckIcon size={14} /> : undefined}
               loading={isSaving}
               disabled={
+                readOnly ||
                 isLoading ||
                 (!hasChanges && !hasInvalidServer && !hasInvalidNetwork) ||
                 hasInvalidServer ||
@@ -722,7 +789,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
             </Button>
           </div>
         )}
-      </div>
+      </fieldset>
     );
   }
 );

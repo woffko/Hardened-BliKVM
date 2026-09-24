@@ -12,19 +12,19 @@ use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,
     path::Path,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const IO_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_RESPONSE: u64 = 64 * 1024;
 
 /// The reviewed subset of the engine's `/state` the interface reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct EngineState {
-    pub captured_fps: Option<u16>,
+    pub captured_fps: Option<f64>,
     pub width: Option<u16>,
     pub height: Option<u16>,
-    pub queued_fps: Option<u16>,
+    pub queued_fps: Option<f64>,
 }
 
 /// Reads the reviewed state subset from the engine. Returns `None` only when
@@ -41,40 +41,61 @@ fn fetch_state(socket: &Path) -> Option<String> {
     let request = "GET /state HTTP/1.0\r\nHost: ustreamer\r\nConnection: close\r\n\r\n";
     stream.write_all(request.as_bytes()).ok()?;
     let mut raw = Vec::new();
-    stream.take(MAX_RESPONSE).read_to_end(&mut raw).ok()?;
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    let (_, body) = text.split_once("\r\n\r\n")?;
+    let started = Instant::now();
+    let mut buffer = [0; 4096];
+    loop {
+        let remaining = IO_TIMEOUT.checked_sub(started.elapsed())?;
+        if remaining.is_zero() {
+            return None;
+        }
+        stream.set_read_timeout(Some(remaining)).ok()?;
+        let count = stream.read(&mut buffer).ok()?;
+        if count == 0 {
+            break;
+        }
+        if raw.len() + count > MAX_RESPONSE as usize {
+            return None;
+        }
+        raw.extend_from_slice(&buffer[..count]);
+    }
+    if raw.len() as u64 > MAX_RESPONSE {
+        return None;
+    }
+    let text = String::from_utf8(raw).ok()?;
+    let (headers, body) = text.split_once("\r\n\r\n")?;
+    let mut status = headers.lines().next()?.split_whitespace();
+    if !matches!(status.next(), Some("HTTP/1.0" | "HTTP/1.1")) || status.next() != Some("200") {
+        return None;
+    }
     Some(body.to_string())
 }
 
-/// The engine wraps its fields in `result` and nests them differently between
-/// releases, so each reviewed number is read wherever its key appears.
-fn parse_number(body: &str, key: &str) -> Option<u16> {
-    let needle = format!("\"{key}\"");
-    let start = body.find(&needle)?;
-    let rest = &body[start + needle.len()..];
-    let colon = rest.find(':')?;
-    let rest = rest[colon + 1..].trim_start();
-    let digits: String = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
-        .collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let value: f64 = digits.parse().ok()?;
-    if !value.is_finite() || value < 0.0 {
-        return None;
-    }
-    Some(value.round() as u16)
+fn rate(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+fn dimension(value: &serde_json::Value) -> Option<u16> {
+    value
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
 }
 
 fn parse_state(body: &str) -> EngineState {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return EngineState::default();
+    };
+    if value["ok"] != true {
+        return EngineState::default();
+    }
+    let source = &value["result"]["source"];
     EngineState {
-        captured_fps: parse_number(body, "captured_fps"),
-        width: parse_number(body, "width"),
-        height: parse_number(body, "height"),
-        queued_fps: parse_number(body, "queued_fps"),
+        captured_fps: rate(&source["captured_fps"]),
+        width: dimension(&source["resolution"]["width"]),
+        height: dimension(&source["resolution"]["height"]),
+        queued_fps: rate(&value["result"]["stream"]["queued_fps"]),
     }
 }
 
@@ -87,23 +108,27 @@ mod tests {
         // Exact shape returned by ustreamer 6.11 on the board (2026-09-19):
         // captured_fps and desired_fps live under result.source.
         let body = r#"{"ok":true,"result":{"instance_id":"","encoder":{"type":"HW","quality":0},"source":{"resolution":{"width":1280,"height":720},"online":true,"desired_fps":60,"captured_fps":10},"stream":{"queued_fps":0,"clients":0,"clients_stat":{}}}}"#;
-        assert_eq!(parse_number(body, "captured_fps"), Some(10));
+        assert_eq!(parse_state(body).captured_fps, Some(10.0));
     }
 
     #[test]
     fn accepts_a_float_rate_and_ignores_unrelated_text() {
-        let body = r#"{"result":{"streamed_fps":9.8,"captured_fps":9.97}}"#;
-        assert_eq!(parse_number(body, "captured_fps"), Some(10));
+        let body = r#"{"ok":true,"captured_fps":999,"result":{"source":{"captured_fps":9.97},"stream":{"queued_fps":1e1}}}"#;
+        assert_eq!(parse_state(body).captured_fps, Some(9.97));
+        assert_eq!(parse_state(body).queued_fps, Some(10.0));
     }
 
     #[test]
     fn a_missing_or_invalid_field_reports_nothing() {
-        assert_eq!(parse_number("{}", "captured_fps"), None);
-        assert_eq!(parse_number(r#"{"result":{}}"#, "captured_fps"), None);
-        assert_eq!(
-            parse_number(r#"{"captured_fps":"fast"}"#, "captured_fps"),
-            None
-        );
+        for body in [
+            "{}",
+            r#"{"result":{}}"#,
+            r#"{"ok":true,"result":{"source":{"captured_fps":"fast"}}}"#,
+            r#"{"ok":false,"result":{"source":{"captured_fps":30}}}"#,
+            "not json",
+        ] {
+            assert_eq!(parse_state(body).captured_fps, None);
+        }
     }
 
     #[test]
@@ -115,9 +140,66 @@ mod tests {
     fn reads_the_reviewed_state_subset() {
         let body = r#"{"ok":true,"result":{"encoder":{"type":"HW","quality":0},"source":{"resolution":{"width":1280,"height":720},"online":true,"desired_fps":60,"captured_fps":10},"stream":{"queued_fps":9,"clients":0}}}"#;
         let state = parse_state(body);
-        assert_eq!(state.captured_fps, Some(10));
+        assert_eq!(state.captured_fps, Some(10.0));
         assert_eq!((state.width, state.height), (Some(1280), Some(720)));
-        assert_eq!(state.queued_fps, Some(9));
+        assert_eq!(state.queued_fps, Some(9.0));
+    }
+
+    #[test]
+    fn dimensions_do_not_saturate_round_or_come_from_unrelated_fields() {
+        let body = r#"{"ok":true,"width":1920,"height":1080,"result":{"source":{"resolution":{"width":65536,"height":720.5}}}}"#;
+        assert_eq!(
+            (parse_state(body).width, parse_state(body).height),
+            (None, None)
+        );
+        let body =
+            r#"{"ok":true,"result":{"source":{"captured_fps":-1},"stream":{"queued_fps":null}}}"#;
+        assert_eq!(
+            (parse_state(body).captured_fps, parse_state(body).queued_fps),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn slow_response_cannot_extend_the_total_read_deadline() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("engine.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 256];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            for chunk in [
+                "HTTP/1.0 200 OK\r\n\r\n",
+                "{\"ok\":true,",
+                "\"result\":{",
+                "\"source\":{",
+                "\"captured_fps\":10",
+                "}}}",
+            ] {
+                std::thread::sleep(Duration::from_millis(200));
+                if stream.write_all(chunk.as_bytes()).is_err() {
+                    break;
+                }
+            }
+        });
+        assert!(read_state(&socket).is_none());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn non_successful_http_cannot_supply_measured_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("engine.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 256];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            stream.write_all(b"HTTP/1.0 503 Unavailable\r\n\r\n{\"ok\":true,\"result\":{\"source\":{\"captured_fps\":60}}}").unwrap();
+        });
+        assert!(read_state(&socket).is_none());
+        server.join().unwrap();
     }
 
     #[test]
@@ -146,7 +228,7 @@ mod tests {
 
         assert_eq!(
             read_state(&socket).and_then(|state| state.captured_fps),
-            Some(10)
+            Some(10.0)
         );
         server.join().unwrap();
         let _ = std::fs::remove_dir_all(&directory);

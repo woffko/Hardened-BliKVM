@@ -91,6 +91,10 @@ export function getDNS() {
   return http.get('/api/network/dns');
 }
 
+export function setBliDNS(servers: string[]) {
+  return http.post('/api/network/dns', { servers, confirm: true });
+}
+
 export function setDNS(mode: DNSMode, servers: string[], config?: NetworkConfig) {
   return http.post('/api/network/dns', { mode, servers, ...(config || {}) });
 }
@@ -101,4 +105,12 @@ export function getIPv6() {
 
 export function setIPv6(mode: IPv6Mode, config?: IPv6Config) {
   return http.post('/api/network/ipv6', { mode, ...(config || {}) });
+}
+
+export function setBliIPv6(interfaceName: string, disabled: boolean) {
+  return http.post('/api/network/ipv6', {
+    interface: interfaceName,
+    disabled,
+    confirm: true
+  });
 }

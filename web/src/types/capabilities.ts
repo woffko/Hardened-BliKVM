@@ -37,7 +37,7 @@ export type CapabilityManifest = {
     maxWidth: number | null;
     maxHeight: number | null;
     audio: FeatureStatus;
-    settings: ('fps' | 'quality')[];
+    settings: ('fps' | 'quality' | 'resolution')[];
   };
   hid: {
     status: FeatureStatus;
@@ -61,8 +61,15 @@ export type CapabilityManifest = {
     status: FeatureStatus;
     readOnlyRootfs: boolean;
     maintenanceWriteMode: boolean;
+    actions: FeatureStatus;
     signedApplicationUpdates: FeatureStatus;
     signedSystemUpdates: FeatureStatus;
     automaticRollback: FeatureStatus;
+  };
+  network: {
+    status: FeatureStatus;
+    dns: FeatureStatus;
+    ipv6: FeatureStatus;
+    wol: FeatureStatus;
   };
 };

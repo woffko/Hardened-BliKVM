@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useAtom } from 'jotai';
+import { useAtom, useAtomValue } from 'jotai';
 
 import * as api from '@/api/hid.ts';
+import { supportsBoardFeature } from '@/lib/capabilities.ts';
 import { isModifier } from '@/lib/keymap';
+import { capabilitiesAtom, capabilitiesLoadingAtom } from '@/jotai/capabilities.ts';
 import { leaderKeyAtom } from '@/jotai/keyboard.ts';
 
 interface LeaderKeyState {
@@ -27,6 +29,8 @@ export function useLeaderKey(
   sendKeyEvent: (type: 'keydown' | 'keyup', code: string) => void
 ): LeaderKeyHandlers {
   const [leaderKeyCode, setLeaderKeyCode] = useAtom(leaderKeyAtom);
+  const capabilities = useAtomValue(capabilitiesAtom);
+  const capabilitiesLoading = useAtomValue(capabilitiesLoadingAtom);
 
   const [recordMode, setRecordMode] = useState(false);
   const [recordedKeys, setRecordedKeys] = useState<string[]>([]);
@@ -40,12 +44,22 @@ export function useLeaderKey(
 
   // Get leader key
   useEffect(() => {
-    api.getLeaderKey().then((rsp: any) => {
-      if (rsp.code === 0 && rsp.data?.key !== undefined) {
-        setLeaderKeyCode(rsp.data.key);
-      }
-    });
-  }, [setLeaderKeyCode]);
+    if (capabilitiesLoading) return;
+    if (
+      capabilities?.platform.id === 'bli-h616-pikvm' &&
+      !supportsBoardFeature(capabilities, 'hid_shortcut')
+    ) {
+      return;
+    }
+    api
+      .getLeaderKey()
+      .then((rsp: any) => {
+        if (rsp.code === 0 && rsp.data?.key !== undefined) {
+          setLeaderKeyCode(rsp.data.key);
+        }
+      })
+      .catch(() => undefined);
+  }, [capabilities, capabilitiesLoading, setLeaderKeyCode]);
 
   // Update leader key
   useEffect(() => {

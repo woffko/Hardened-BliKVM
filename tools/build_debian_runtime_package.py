@@ -52,6 +52,10 @@ FILE_MAP = {
         "lib/systemd/system/hardened-blikvm-boardd.service",
     "share/systemd/hardened-blikvm-ustreamer.service":
         "lib/systemd/system/hardened-blikvm-ustreamer.service",
+    "share/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf":
+        "lib/systemd/system/hardened-blikvm-board-owner.service.d/90-socket-group.conf",
+    "share/tmpfiles.d/hardened-blikvm-video.conf":
+        "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-video-tmpfiles.conf",
     "share/systemd/hardened-blikvm-nginx.service":
         "lib/systemd/system/hardened-blikvm-nginx.service",
     "share/sysusers.d/hardened-blikvm.conf":

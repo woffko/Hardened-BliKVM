@@ -35,6 +35,7 @@ mod autostart;
 mod device_settings;
 mod download;
 mod error;
+mod firewall_modes;
 mod hid;
 mod leader_key;
 mod media;
@@ -42,6 +43,7 @@ mod network;
 mod network_write;
 mod session_lock;
 mod shortcuts;
+pub mod shutdown;
 mod system_action;
 mod system_log;
 mod system_time;
@@ -75,6 +77,7 @@ pub(crate) struct AppState {
 
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
+    pub shutdown: shutdown::Shutdown,
     pub web_root: Option<PathBuf>,
     pub state_dir: PathBuf,
     pub secure_cookies: bool,
@@ -118,6 +121,7 @@ pub struct ServerOptions {
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
+    pub firewall_modes_enabled: bool,
     /// Image directory an operator upload writes into. Must be the same
     /// directory the board owner serves, and is required for uploads.
     pub media_directory: Option<PathBuf>,
@@ -126,6 +130,7 @@ pub struct ServerOptions {
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
+            shutdown: shutdown::Shutdown::default(),
             web_root: None,
             state_dir: PathBuf::from("state"),
             secure_cookies: false,
@@ -147,6 +152,7 @@ impl Default for ServerOptions {
             video_controls_enabled: false,
             engine_socket: None,
             network_writes_enabled: false,
+            firewall_modes_enabled: false,
             media_directory: None,
         }
     }
@@ -218,6 +224,19 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     if options.restricted_controls_enabled && options.control_socket.is_some() {
         manifest.hid.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        for feature in [
+            "device_mdns",
+            "device_hid_only",
+            "device_mouse_jiggler",
+            "network_tls",
+            "network_wifi",
+            "system_firewall",
+        ] {
+            manifest.board.features.insert(
+                feature.into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
         if options.media_controls_enabled {
             manifest.virtual_media.status =
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -225,12 +244,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
-        // The reference can install and control Tailscale. The package is
-        // optional, so the surface is advertised as writable and every action
-        // is refused by the owner while the package is absent.
+        // The native owner exposes observations but refuses every action.
         manifest.board.features.insert(
             "tailscale".into(),
-            FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified),
         );
         if options.video_controls_enabled {
             manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -248,6 +265,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             manifest.network.dns = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.ipv6 = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.wol = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
+        if options.firewall_modes_enabled {
+            manifest.board.features.insert(
+                "system_firewall_modes".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
         }
     }
     manifest
@@ -370,6 +393,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/extensions/tailscale/login", post(tailscale::login))
         .route("/extensions/tailscale/logout", post(tailscale::logout))
         .route(
+            "/system/firewall/mode",
+            get(firewall_modes::status).post(firewall_modes::change),
+        )
+        .route(
+            "/system/firewall/mode/confirm",
+            post(firewall_modes::confirm),
+        )
+        .route(
             "/system/firewall",
             get(device_settings::firewall_state).post(device_settings::firewall_set),
         )
@@ -459,7 +490,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         router
     };
 
-    router.layer(from_fn(security_headers))
+    router
+        .layer(from_fn_with_state(
+            state.options.shutdown.clone(),
+            shutdown::admit,
+        ))
+        .layer(from_fn(security_headers))
 }
 
 async fn health(State(state): State<AppState>) -> Json<ApiResponse<Health>> {
@@ -1586,6 +1622,7 @@ mod tests {
                     }
                     bli_kvm_core::PlatformControlRequestV2::VideoSettingsState {} => {
                         bli_kvm_control_protocol::ControlResponse::VideoState {
+                            resolution: Some("1280x720".into()),
                             fps: 24,
                             quality: 80,
                         }
@@ -1891,16 +1928,35 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        let availability = if cfg!(feature = "restricted-control-surface") {
-            "read_write"
-        } else {
-            "unavailable"
-        };
         for component in ["dns", "ipv6", "wol"] {
+            let availability = if cfg!(feature = "restricted-control-surface") {
+                "read_write"
+            } else if component == "wol" {
+                "unavailable"
+            } else {
+                // Native DNS/IPv6 observations remain available without the
+                // separately compiled and opted-in mutation surface.
+                "read_only"
+            };
             assert_eq!(
                 capabilities["data"]["network"][component]["availability"],
                 availability
             );
+        }
+        for route in ["/api/network/dns", "/api/network/ipv6"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(route)
+                        .header(header::HOST, "kvm.test")
+                        .header(header::COOKIE, &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{route}");
         }
     }
 
@@ -2459,6 +2515,143 @@ mod tests {
             value["data"]["virtualMedia"]["remoteDownload"]["availability"],
             "unavailable"
         );
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn firewall_modes_bind_identity_and_preserve_refusals() {
+        let root = tempdir().unwrap();
+        let socket = root.path().join("firewall.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut identity = None;
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let envelope = bli_kvm_control_protocol::decode_request_v2(&bytes).unwrap();
+                match envelope.request {
+                    bli_kvm_core::PlatformControlRequestV2::FirewallModeChange { request } => {
+                        assert_eq!(index, 0);
+                        assert_eq!(request.mode, bli_kvm_core::FirewallMode::Restricted);
+                        assert_ne!(request.operation_id, [0; 16]);
+                        assert_ne!(request.session_binding, [0; 32]);
+                        identity = Some((request.operation_id, request.session_binding));
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::FirewallModeConfirm { request } => {
+                        assert_eq!(index, 1);
+                        assert_eq!(
+                            Some((request.operation_id, request.session_binding)),
+                            identity
+                        );
+                    }
+                    _ => panic!("unexpected firewall request"),
+                }
+                let response = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: 2,
+                    request_id: envelope.request_id,
+                    operation_id: envelope.operation_id,
+                    response: if index == 0 {
+                        bli_kvm_control_protocol::ControlResponse::Applied
+                    } else {
+                        bli_kvm_control_protocol::ControlResponse::Rejected {
+                            code:
+                                bli_kvm_control_protocol::ControlRejectionCode::PendingUnreconciled,
+                        }
+                    },
+                };
+                let bytes = bli_kvm_control_protocol::encode_response_v2(&response).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&bytes).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(socket),
+            firewall_modes_enabled: true,
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let anonymous = app
+            .clone()
+            .oneshot(json_request(
+                Method::GET,
+                "/api/system/firewall/mode",
+                Value::Null,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+        let manifest = json_body(
+            app.clone()
+                .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["board"]["features"]["system_firewall_modes"]["availability"],
+            "read_write"
+        );
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let post = |path, body| {
+            let mut request = json_request(Method::POST, path, body);
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            request
+        };
+        let denied = app
+            .clone()
+            .oneshot(post(
+                "/api/system/firewall/mode",
+                serde_json::json!({"mode":"restricted"}),
+            ))
+            .await
+            .unwrap();
+        assert_ne!(json_body(denied).await["code"], 0);
+        let mut missing_csrf = post(
+            "/api/system/firewall/mode",
+            serde_json::json!({"mode":"restricted","confirm":true}),
+        );
+        missing_csrf.headers_mut().remove("x-csrf-token");
+        assert_eq!(
+            app.clone().oneshot(missing_csrf).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        let changed = json_body(
+            app.clone()
+                .oneshot(post(
+                    "/api/system/firewall/mode",
+                    serde_json::json!({"mode":"restricted","confirm":true}),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(changed["data"]["applied"], true);
+        let confirmed = json_body(
+            app.oneshot(post(
+                "/api/system/firewall/mode/confirm",
+                serde_json::json!({"operationId":changed["data"]["operationId"]}),
+            ))
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(confirmed["data"]["applied"], false);
+        assert!(confirmed["data"]["rejection"].is_string());
+        tokio::time::timeout(std::time::Duration::from_secs(2), broker)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -3269,23 +3462,70 @@ mod tests {
 
     #[tokio::test]
     async fn hid_lease_acquire_returns_a_broker_lease_id() {
+        exercise_hid_lease_teardown(false).await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_live_websocket_hid_release() {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exercise_hid_lease_teardown(true),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn exercise_hid_lease_teardown(websocket_shutdown: bool) {
         let root = tempdir().unwrap();
         let control_socket = root.path().join("control.sock");
         let listener = UnixListener::bind(&control_socket).unwrap();
+        let report_seen = Arc::new(tokio::sync::Notify::new());
+        let release_seen = Arc::new(tokio::sync::Notify::new());
+        let allow_release = Arc::new(tokio::sync::Notify::new());
+        let broker_report = report_seen.clone();
+        let broker_release = release_seen.clone();
+        let broker_allow = allow_release.clone();
         let broker = tokio::spawn(async move {
-            for _ in 0..2 {
+            let release_index = if websocket_shutdown { 3 } else { 2 };
+            for index in 0..=release_index {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut prefix = [0_u8; 4];
                 stream.read_exact(&mut prefix).await.unwrap();
                 let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
                 stream.read_exact(&mut payload).await.unwrap();
                 let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
-                let response = match request.request {
-                    bli_kvm_core::PlatformControlRequestV2::HidLease { .. } => {
-                        bli_kvm_control_protocol::ControlResponse::LeaseGranted {
-                            lease_id: [0x55; 16],
-                        }
+                if index == release_index {
+                    assert!(matches!(
+                        request.request,
+                        bli_kvm_core::PlatformControlRequestV2::HidLease {
+                            lease: bli_kvm_core::HidLeaseRequest::Release {
+                                lease_id,
+                                ..
+                            }
+                        } if lease_id == [0x55; 16]
+                    ));
+                    if websocket_shutdown {
+                        broker_release.notify_one();
+                        broker_allow.notified().await;
                     }
+                }
+                if websocket_shutdown && index == 2 {
+                    assert!(matches!(request.request,
+                        bli_kvm_core::PlatformControlRequestV2::HidLease {
+                            lease: bli_kvm_core::HidLeaseRequest::Report {
+                                lease_id,
+                                report: bli_kvm_core::HidReport::Keyboard { data }, ..
+                            }
+                        } if lease_id == [0x55; 16] && data == [0, 0, 4, 0, 0, 0, 0, 0]
+                    ));
+                    broker_report.notify_one();
+                }
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::HidLease {
+                        lease: bli_kvm_core::HidLeaseRequest::Acquire { .. },
+                    } => bli_kvm_control_protocol::ControlResponse::LeaseGranted {
+                        lease_id: [0x55; 16],
+                    },
                     _ => bli_kvm_control_protocol::ControlResponse::Applied,
                 };
                 let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
@@ -3301,7 +3541,9 @@ mod tests {
                     .unwrap();
             }
         });
+        let shutdown = shutdown::Shutdown::default();
         let app = app_with_options(ServerOptions {
+            shutdown: shutdown.clone(),
             state_dir: root.path().join("account"),
             secure_cookies: true,
             control_socket: Some(control_socket),
@@ -3364,6 +3606,67 @@ mod tests {
         assert_eq!(lease_body["data"]["applied"], true);
         assert_eq!(lease_body["data"]["leaseId"], "55".repeat(16));
         assert_eq!(lease_body["data"]["ttlSeconds"], 30);
+
+        if websocket_shutdown {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let signal = shutdown.clone();
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(async move { signal.cancelled().await })
+                .await
+                .unwrap();
+            });
+            let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+            socket.write_all(format!(
+                "GET /api/ws HTTP/1.1\r\nHost: kvm.test\r\nOrigin: https://kvm.test\r\nCookie: {cookie}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            ).as_bytes()).await.unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                assert!(headers.len() < 4096);
+                headers.push(socket.read_u8().await.unwrap());
+            }
+            assert!(headers.starts_with(b"HTTP/1.1 101"));
+            // One masked binary frame: keyboard tag followed by a held key.
+            let mask = [1_u8, 2, 3, 4];
+            let mut frame = vec![0x82, 0x89];
+            frame.extend_from_slice(&mask);
+            frame.extend(
+                [1_u8, 0, 0, 4, 0, 0, 0, 0, 0]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, byte)| byte ^ mask[index % 4]),
+            );
+            socket.write_all(&frame).await.unwrap();
+            report_seen.notified().await;
+            shutdown.stop();
+            release_seen.notified().await;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), shutdown.drained())
+                    .await
+                    .is_err()
+            );
+            allow_release.notify_one();
+            shutdown.drained().await;
+            server.await.unwrap();
+            broker.await.unwrap();
+            return;
+        }
+
+        let mut logout = json_request(Method::POST, "/api/auth/logout", Value::Null);
+        logout
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        logout
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        assert_eq!(
+            json_body(app.clone().oneshot(logout).await.unwrap()).await["code"],
+            0
+        );
         broker.await.unwrap();
     }
 
@@ -3477,9 +3780,20 @@ mod tests {
             .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
             .await
             .unwrap();
-        let text = serde_json::to_string(&json_body(response).await).unwrap();
-        assert!(text.contains(r#""availability":"unavailable""#));
-        assert!(!text.contains("read_write"));
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["hid"]["status"]["availability"], "unavailable");
+        assert_eq!(
+            body["data"]["power"]["status"]["availability"],
+            "unavailable"
+        );
+        assert_eq!(
+            body["data"]["system"]["actions"]["availability"],
+            "unavailable"
+        );
+        assert_ne!(
+            body["data"]["board"]["features"]["device_mdns"]["availability"],
+            "read_write"
+        );
     }
 
     #[cfg(feature = "restricted-control-surface")]
@@ -3494,8 +3808,35 @@ mod tests {
             .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
             .await
             .unwrap();
-        let text = serde_json::to_string(&json_body(response).await).unwrap();
-        assert!(text.contains("read_write"));
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["hid"]["status"]["availability"], "read_write");
+        assert_eq!(
+            body["data"]["power"]["status"]["availability"],
+            "read_write"
+        );
+        assert_eq!(
+            body["data"]["board"]["features"]["tailscale"]["availability"],
+            "read_only"
+        );
+        for feature in [
+            "device_mdns",
+            "device_hid_only",
+            "device_mouse_jiggler",
+            "network_tls",
+            "network_wifi",
+            "system_firewall",
+        ] {
+            assert_eq!(
+                body["data"]["board"]["features"][feature]["availability"], "read_write",
+                "{feature}"
+            );
+        }
+        for feature in ["dns", "ipv6"] {
+            assert_eq!(
+                body["data"]["network"][feature]["availability"],
+                "read_only"
+            );
+        }
 
         let disabled = app_with_options(ServerOptions {
             restricted_controls_enabled: true,
@@ -3505,8 +3846,26 @@ mod tests {
             .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
             .await
             .unwrap();
-        let text = serde_json::to_string(&json_body(response).await).unwrap();
-        assert!(!text.contains("read_write"));
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["hid"]["status"]["availability"], "unavailable");
+        assert_eq!(
+            body["data"]["power"]["status"]["availability"],
+            "unavailable"
+        );
+        for feature in [
+            "device_mdns",
+            "device_hid_only",
+            "device_mouse_jiggler",
+            "network_tls",
+            "network_wifi",
+            "system_firewall",
+            "tailscale",
+        ] {
+            assert_ne!(
+                body["data"]["board"]["features"][feature]["availability"], "read_write",
+                "{feature}"
+            );
+        }
     }
 
     #[cfg(feature = "restricted-control-surface")]

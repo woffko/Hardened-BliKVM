@@ -4,15 +4,15 @@ Status: supersedes the E0-E5 ordering for the remaining work. The reference is
 the stand at `https://<reference-address>`; its interface surface was extracted from the
 served JavaScript bundle and is the source of truth for what parity means.
 
-> **Current status: complete (2026-09-19, late).** The authoritative, final
-> state is the "Completion addendum (2026-09-19, late)" at the end of this
-> document. The phase sections and the "Status snapshot" above/below are the
-> historical plan and interim snapshots written while the work was in progress;
-> where they disagree with the addendum, the addendum wins:
-> `phase8_acceptance_report.py` = `overall=complete`, `deviceUnrun=0`, the
-> device update cycle ran end to end (seq13 -> seq14, generation 4, floor 14),
-> serving is `hardened-blikvm-server-current.service`, and `/api/diagnostics`
-> returns 200.
+> **Current status: reopened after corrective audit (2026-09-20).** The
+> "Completion addendum (2026-09-19, late)" is retained as historical evidence
+> of the checks that ran, but it is not proof of current reference parity. The
+> corrective audit found gaps in HID lease continuity, confirmation handling,
+> firewall contracts and restore semantics, video controls and H.264 delivery,
+> release reproducibility, full-card image production, RAW system update, and
+> the acceptance harness itself. The current evidence and required gates are
+> tracked in `docs/baselines/corrective-parity-audit-20260920.md`; completion
+> must be established by fresh receipts after those gates are repaired.
 
 ## Reference surface (evidence)
 
@@ -611,11 +611,13 @@ weakened; one owner per gadget, ATX and video line; every change reversible.
 
 ## Completion addendum (2026-09-19, late)
 
-> Chronological checkpoints from the final work session. Some middle paragraphs
+> Historical chronological checkpoints from the prior work session. This
+> addendum records what was observed by the old acceptance harness; it was
+> superseded by the corrective audit on 2026-09-20 and no longer defines the
+> product completion state. Some middle paragraphs
 > state problems that later paragraphs resolved (for example `/api/diagnostics`
 > was 503 and the upload was quota/503-limited before the upload fix and the
-> activation). The **final state is the last paragraph**, and the top-of-document
-> status note points here.
+> activation).
 
 Panel: the operator confirmed the status screen content on the device and asked
 for a single font size, between the small address size and the double numeric

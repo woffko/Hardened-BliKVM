@@ -8,6 +8,7 @@ mod capabilities;
 mod control;
 mod control_v2;
 mod diagnostics;
+mod firewall;
 mod inventory;
 mod platform;
 mod video_settings;
@@ -34,6 +35,9 @@ pub use diagnostics::{
     DiagnosticComponents, DiagnosticHistory, DiagnosticHistoryReason, DiagnosticHistoryState,
     DiagnosticMetricState, DiagnosticRtc, DiagnosticTemperature, DiagnosticsAvailability,
     DiagnosticsCurrent, DiagnosticsView, DiagnosticsViewError,
+};
+pub use firewall::{
+    FirewallChangeRequest, FirewallConfirmRequest, FirewallMode, FirewallModeStatus,
 };
 pub use inventory::{
     ComponentObservation, InventoryBackend, InventoryError, RUNTIME_INVENTORY_SCHEMA_VERSION,

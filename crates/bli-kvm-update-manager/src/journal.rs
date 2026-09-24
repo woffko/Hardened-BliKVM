@@ -17,6 +17,16 @@ const MAX_JOURNAL_BYTES: u64 = 64 * 1024;
 const LOCK_ACQUIRE_ATTEMPTS: usize = 40;
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 
+/// Check the exact prospective document before any external cleanup or admission.
+pub(crate) fn encode_document(document: &JournalDocument) -> Result<Vec<u8>, UpdateManagerError> {
+    document.validate()?;
+    let bytes = serde_json::to_vec(document).map_err(|_| UpdateManagerError::InvalidJournal)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_JOURNAL_BYTES {
+        return Err(UpdateManagerError::JournalTooLarge);
+    }
+    Ok(bytes)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DirectoryIdentity {
     pub(crate) device: u64,
@@ -119,10 +129,7 @@ impl StateStore {
             (Some(expected), Some(current)) if current.generation == expected => {}
             _ => return Err(UpdateManagerError::ConcurrentStateChange),
         }
-        let bytes = serde_json::to_vec(document).map_err(|_| UpdateManagerError::InvalidJournal)?;
-        if bytes.is_empty() || bytes.len() as u64 > MAX_JOURNAL_BYTES {
-            return Err(UpdateManagerError::JournalTooLarge);
-        }
+        let bytes = encode_document(document)?;
         let mut temporary = tempfile::NamedTempFile::new_in(&self.root)?;
         fs::set_permissions(temporary.path(), Permissions::from_mode(0o600))?;
         let temporary_metadata = temporary.as_file().metadata()?;

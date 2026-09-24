@@ -14,13 +14,17 @@ pub mod fan;
 pub mod led;
 pub mod panel_font;
 pub mod panel_status;
+mod sampler;
 pub mod server;
 pub mod spi;
 
 use std::{
     error::Error,
     path::Path,
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -237,7 +241,19 @@ pub fn run_once(config_path: &Path) -> Result<(), Box<dyn Error>> {
 
 /// Serve the control surface and sample the temperature until interrupted.
 pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
+    run_serve_until(config_path, Arc::new(AtomicBool::new(false)))
+}
+
+/// Stop admission and join sampling before the final fan failsafe write.
+/// Device I/O and mutex acquisition still require the external service deadline.
+pub fn run_serve_until(
+    config_path: &Path,
+    stopping: Arc<AtomicBool>,
+) -> Result<(), Box<dyn Error>> {
     let config = BoarddConfig::from_path(config_path)?;
+    if stopping.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     let state = Arc::new(Mutex::new(build_state(&config, true)?));
     if let Ok(mut board) = state.lock() {
         // Draw a defined frame immediately: an ST7789 keeps undefined GRAM
@@ -246,25 +262,112 @@ pub fn run_serve(config_path: &Path) -> Result<(), Box<dyn Error>> {
     }
     let interval = std::time::Duration::from_millis(config.sample_interval_ms);
     let sampler_state = Arc::clone(&state);
-    std::thread::spawn(move || {
-        loop {
+    let sample_stop = Arc::clone(&stopping);
+    let serving = (|| -> Result<(), Box<dyn Error>> {
+        let sampler = sampler::Sampler::spawn(Arc::clone(&stopping), interval, move || {
             let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees();
             let rtc = bli_kvm_platform_bli::read_h616_external_rtc();
-            if let Ok(mut state) = sampler_state.lock() {
+            {
+                let mut state = sampler_state
+                    .lock()
+                    .map_err(|_| std::io::Error::other("boardd state poisoned"))?;
+                if sample_stop.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
                 state.note_thermal(thermal.map_err(|error| error.class()));
                 state.note_external_rtc(
                     rtc.map(|readout| (readout.unix_seconds, readout.offset_from_system_seconds))
                         .map_err(|error| error.class()),
                 );
                 let _ = state.sample(unix_millis());
+                // A failed background actuator is fatal in either fan mode.
+                // Stop admission rather than serving stale supervisor health.
+                state
+                    .ensure_fan_runtime()
+                    .map_err(|_| std::io::Error::other("boardd fan runtime failed"))?;
                 state.tick_led();
                 state.tick_button();
                 state.tick_atx_leds();
                 state.tick_display(unix_millis());
             }
-            std::thread::sleep(interval);
-        }
+            Ok(())
+        })?;
+        let listener =
+            server::serve_until(&config.socket, &state, || stopping.load(Ordering::SeqCst));
+        let joined = sampler.finish();
+        // Evaluate both outcomes: a listener error must still stop/join sampling.
+        listener?;
+        joined?;
+        Ok(())
+    })();
+    let cleanup = cleanup_state(&state, |board| {
+        board.prepare_shutdown()?.quiesce_at_failsafe()?;
+        Ok(())
     });
-    server::serve(&config.socket, &state)?;
-    Ok(())
+    match (serving, cleanup) {
+        (Ok(()), result) | (result, Ok(())) => result,
+        (Err(serving), Err(cleanup)) => {
+            Err(std::io::Error::other(format!("{serving}; shutdown failed: {cleanup}")).into())
+        }
+    }
+}
+
+/// Poisoning invalidates normal control, but must not skip the failsafe attempt.
+/// Even successful cleanup cannot turn a poisoned runtime into a clean stop.
+fn cleanup_state<S>(
+    state: &Mutex<S>,
+    cleanup: impl FnOnce(&mut S) -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    let (mut state, poisoned) = match state.lock() {
+        Ok(state) => (state, false),
+        Err(error) => (error.into_inner(), true),
+    };
+    let result = cleanup(&mut state);
+    if poisoned {
+        let message = match result {
+            Ok(()) => "boardd state poisoned during shutdown; failsafe cleanup succeeded".into(),
+            Err(error) => {
+                format!("boardd state poisoned during shutdown; failsafe cleanup failed: {error}")
+            }
+        };
+        Err(std::io::Error::other(message).into())
+    } else {
+        result
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_state_still_attempts_cleanup_and_never_reports_clean() {
+        for fail_cleanup in [false, true] {
+            let state = Arc::new(Mutex::new(false));
+            let worker_state = state.clone();
+            assert!(
+                std::thread::spawn(move || {
+                    let _state = worker_state.lock().unwrap();
+                    panic!("fixture state mutation panic");
+                })
+                .join()
+                .is_err()
+            );
+            let error = cleanup_state(&state, |attempted| {
+                *attempted = true;
+                if fail_cleanup {
+                    Err(std::io::Error::other("fixture GPIO failure").into())
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+            assert!(*state.lock().unwrap_err().into_inner());
+            assert!(error.to_string().contains("state poisoned"));
+            assert_eq!(
+                error.to_string().contains("fixture GPIO failure"),
+                fail_cleanup
+            );
+        }
+    }
 }

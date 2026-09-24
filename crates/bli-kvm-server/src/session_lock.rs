@@ -52,7 +52,10 @@ pub(crate) async fn set_session_lock(
     }
     state.sessions.set_lock_after_seconds(body.duration).await;
     if body.lock_now {
-        let _revoked = state.sessions.revoke_others(&session.token).await;
+        let revoked = state.sessions.revoke_others(&session.token).await;
+        for token in revoked {
+            crate::hid::release_session_hid(&state, &token).await;
+        }
     }
     Ok(Json(ApiResponse::ok(SessionLockView {
         duration: state.sessions.lock_after_seconds().await,

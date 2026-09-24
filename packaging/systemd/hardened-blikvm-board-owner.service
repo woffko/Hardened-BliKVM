@@ -40,7 +40,8 @@ ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-control-broker
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=15s
-TimeoutStopSec=10s
+# The owner has a 20-second graceful drain budget before reporting failure.
+TimeoutStopSec=30s
 
 NoNewPrivileges=yes
 PrivateNetwork=yes

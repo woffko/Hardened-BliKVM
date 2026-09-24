@@ -1,5 +1,5 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -euo pipefail
 umask 022
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -10,7 +10,7 @@ bundle_name=hardened-blikvm-prototype-0.1.0-dev-aarch64
 # The shipped build carries the board profile: the Rust gadget (media + HID),
 # the reviewed native ATX GPIO executor and the privileged system-action
 # profile, so the signed slot serves our board arrangement.
-cargo_features=${BLI_KVM_CARGO_FEATURES:-restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile,system-action-profile}
+cargo_features=${BLI_KVM_CARGO_FEATURES:-restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile,system-action-profile,network-write-profile}
 
 for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
   case "$directory" in
@@ -40,10 +40,11 @@ update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
-temp_root=$(mktemp -d /tmp/hardened-blikvm-bundle.XXXXXX)
+mkdir -p -- "$output_dir"
+temp_root=$(mktemp -d "$output_dir/.hardened-blikvm-bundle.XXXXXX")
 cleanup() {
   case "$temp_root" in
-    /tmp/hardened-blikvm-bundle.*) rm -rf -- "$temp_root" ;;
+    "$output_dir"/.hardened-blikvm-bundle.*) rm -rf -- "$temp_root" ;;
     *) echo "refusing unsafe temporary cleanup" >&2 ;;
   esac
 }
@@ -109,12 +110,18 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-update-watchdog.timer \
   packaging/systemd/hardened-blikvm-update-confirm.socket \
   "$stage/share/systemd/"
+install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-owner.service.d"
+install -m 0644 \
+  packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf \
+  "$stage/share/systemd/hardened-blikvm-board-owner.service.d/"
+bash "$project_root/scripts/stage-application-update-profile.sh" "$stage"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \
   packaging/tmpfiles.d/hardened-blikvm-gadget.conf \
+  packaging/tmpfiles.d/hardened-blikvm-video.conf \
   "$stage/share/tmpfiles.d/"
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \
@@ -264,7 +271,7 @@ test "$(stat -c '%a' "$stage/share/web/index.html")" = 644
 
 mkdir -p "$output_dir"
 archive="$output_dir/$bundle_name.tar.gz"
-temporary_archive=$(mktemp "$output_dir/.${bundle_name}.XXXXXX.tar.gz")
+temporary_archive=$(mktemp "$temp_root/.${bundle_name}.XXXXXX.tar.gz")
 tar \
   --sort=name \
   --mtime=@0 \

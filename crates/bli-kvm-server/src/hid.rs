@@ -77,6 +77,11 @@ impl FocusChallengeStore {
         }
     }
 
+    pub(crate) fn clear(&mut self, session_token: &str) {
+        self.entries.retain(|(token, _)| token != session_token);
+        self.bindings.retain(|(token, _, _)| token != session_token);
+    }
+
     fn sweep_bindings(&mut self, now: Instant) {
         self.bindings.retain(|(_, _, expires_at)| now < *expires_at);
     }
@@ -239,6 +244,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::LeaseGranted { .. }
         | ControlResponse::MediaState { .. } => true,
         ControlResponse::Rejected { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
@@ -247,6 +253,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => false,
     };
     if attested {
@@ -264,6 +271,7 @@ pub(crate) async fn confirm_focus(
             rejection: None,
         },
         ControlResponse::BoardStatus { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
@@ -271,6 +279,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => FocusConfirmResponse {
             attested: false,
             rejection: Some("internal"),
@@ -366,12 +375,48 @@ impl WsLeaseStore {
         self.entries.retain(|(token, _)| token != session_token);
     }
 
+    fn take(&mut self, session_token: &str) -> Option<WsLease> {
+        let index = self
+            .entries
+            .iter()
+            .position(|(token, _)| token == session_token)?;
+        Some(self.entries.remove(index).1)
+    }
+
     pub fn live(&mut self, session_token: &str, now: Instant) -> Option<([u8; 16], FocusBindings)> {
         self.entries.retain(|(_, lease)| now < lease.expires_at);
         self.entries
             .iter()
             .find(|(token, _)| token == session_token)
             .map(|(_, lease)| (lease.lease_id, lease.bindings))
+    }
+}
+
+/// Revoke one session's locally tracked HID lease. This is used by both auth
+/// revocation and websocket teardown so browser cleanup is not trusted for
+/// releasing held input state.
+pub(crate) async fn release_session_hid(state: &AppState, session_token: &str) {
+    state.focus.lock().await.clear(session_token);
+    let lease = state.hid_ws_leases.lock().await.take(session_token);
+    let (Some(control), Some(lease)) = (state.control.as_ref(), lease) else {
+        return;
+    };
+    let mut operation = [0_u8; 16];
+    OsRng.fill_bytes(&mut operation);
+    let response = control
+        .execute_v2(
+            to_hex(&operation),
+            PlatformControlRequestV2::HidLease {
+                lease: HidLeaseRequest::Release {
+                    lease_id: lease.lease_id,
+                    session_binding: lease.bindings.session_binding,
+                    target_binding: lease.bindings.target_binding,
+                },
+            },
+        )
+        .await;
+    if !matches!(response, Ok(ControlResponse::Applied)) {
+        eprintln!("HID session release was not applied: {response:?}");
     }
 }
 
@@ -486,6 +531,7 @@ pub(crate) async fn hid_lease(
             }
         }
         ControlResponse::Rejected { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::BoardStatus { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
@@ -494,6 +540,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => {}
     }
     Ok(Json(ApiResponse::ok(match response {
@@ -516,6 +563,7 @@ pub(crate) async fn hid_lease(
             rejection: Some(rejection_name(code)),
         },
         ControlResponse::BoardStatus { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
@@ -523,6 +571,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => HidLeaseResponse {
             applied: false,
             lease_id: None,
@@ -740,7 +789,9 @@ mod tests {
         );
         store.remember("token-a", [9; 16], bindings, now + Duration::from_secs(5));
         assert_eq!(store.live("token-a", now), Some(([9; 16], bindings)));
-        store.clear("token-a");
+        let taken = store.take("token-a").unwrap();
+        assert_eq!(taken.lease_id, [9; 16]);
+        assert_eq!(taken.bindings, bindings);
         assert_eq!(store.live("token-a", now), None);
     }
 }

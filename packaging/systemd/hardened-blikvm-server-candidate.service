@@ -34,7 +34,8 @@ ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
 ExecStartPost=/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter --health-endpoint 127.0.0.1:18080 --confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock --credential-directory /run/hardened-blikvm-candidate-credentials/%n
 Restart=no
 TimeoutStartSec=15s
-TimeoutStopSec=10s
+# Allow the server's 20-second HTTP/WebSocket drain to report its result.
+TimeoutStopSec=30s
 
 NoNewPrivileges=yes
 PrivateDevices=yes

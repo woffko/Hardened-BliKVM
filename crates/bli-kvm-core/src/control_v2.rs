@@ -228,6 +228,13 @@ pub enum PlatformControlRequestV2 {
     FirewallBaseline {
         enabled: bool,
     },
+    FirewallModeChange {
+        request: crate::FirewallChangeRequest,
+    },
+    FirewallModeConfirm {
+        request: crate::FirewallConfirmRequest,
+    },
+    FirewallModeStatus {},
     /// Write one reviewed test line through the system log.
     SystemLogTest {},
     /// Read the Tailscale surface state.
@@ -238,6 +245,8 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
+    /// Read pending HID release obligations without actuating or acquiring a lease.
+    HidReconciliationState {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
     /// operator attests the guards and the owner closes the pending record.
     AcceptPostBoot {
@@ -247,6 +256,8 @@ pub enum PlatformControlRequestV2 {
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ControlV2ValidationError {
+    #[error("firewall operation identity or timestamp is invalid")]
+    InvalidFirewallOperation,
     #[error("session binding is invalid")]
     InvalidSessionBinding,
     #[error("target binding is invalid")]
@@ -301,10 +312,14 @@ impl PlatformControlRequestV2 {
             Self::TlsSet { .. } => Ok(()),
             Self::FirewallState {} => Ok(()),
             Self::FirewallBaseline { .. } => Ok(()),
+            Self::FirewallModeChange { request } => request.validate(),
+            Self::FirewallModeConfirm { request } => request.validate(),
+            Self::FirewallModeStatus {} => Ok(()),
             Self::SystemLogTest {} => Ok(()),
             Self::TailscaleStatus {} => Ok(()),
             Self::TailscaleAction { .. } => Ok(()),
             Self::BoardStatus {} => Ok(()),
+            Self::HidReconciliationState {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }
     }

@@ -5,40 +5,60 @@ import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/vm.ts';
 
-export const Mdns = () => {
+export const Mdns = ({ readOnly = false }: { readOnly?: boolean }) => {
   const { t } = useTranslation();
 
   const [isEnabled, setIsEnabled] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     setIsLoading(true);
 
     api
       .getMdnsState()
       .then((rsp) => {
-        if (rsp.data?.enabled) {
-          setIsEnabled(true);
-        }
+        if (cancelled) return;
+        if (rsp.code !== 0 || typeof rsp.data?.enabled !== 'boolean')
+          throw new Error(rsp.msg || 'Failed to read mDNS state');
+        setIsEnabled(rsp.data.enabled);
+        setLoaded(true);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to read mDNS state');
       })
       .finally(() => {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function update() {
-    if (isLoading) return;
+    if (readOnly || isLoading || !loaded) return;
     setIsLoading(true);
-
-    const rsp = isEnabled ? await api.disableMdns() : await api.enableMdns();
-    setIsLoading(false);
-
-    if (rsp.code !== 0) {
-      console.log(rsp.msg);
-      return;
+    setError('');
+    const requested = !isEnabled;
+    try {
+      const rsp = requested ? await api.enableMdns() : await api.disableMdns();
+      if (rsp.code !== 0 || rsp.data?.applied !== true || rsp.data?.rejection != null)
+        throw new Error(rsp.data?.rejection || rsp.msg || 'Failed to update mDNS');
+      const observed = await api.getMdnsState();
+      if (observed.code !== 0 || typeof observed.data?.enabled !== 'boolean') {
+        setLoaded(false);
+        throw new Error('Failed to read mDNS state after update');
+      }
+      setIsEnabled(observed.data.enabled);
+      if (observed.data.enabled !== requested)
+        throw new Error('mDNS read-back did not match the requested state');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update mDNS');
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsEnabled(!isEnabled);
   }
 
   return (
@@ -58,9 +78,20 @@ export const Mdns = () => {
         </div>
 
         <span className="text-xs text-neutral-500">{t('settings.device.mdns.description')}</span>
+        {error && (
+          <span role="alert" className="text-xs text-red-400">
+            {error}
+          </span>
+        )}
       </div>
 
-      <Switch checked={isEnabled} loading={isLoading} onChange={update} />
+      <Switch
+        aria-label="mDNS"
+        checked={isEnabled}
+        loading={isLoading}
+        disabled={readOnly || !loaded}
+        onChange={update}
+      />
     </div>
   );
 };

@@ -298,6 +298,43 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     assert!(initialized.status.success(), "{:?}", initialized.stderr);
     assert_eq!(json_output(&initialized)["result"], "initialized");
 
+    // Inspection must work without opening or initializing the credential root.
+    fs::remove_dir(&runtime).unwrap();
+    let journal_path = state.join("application-state.json");
+    let initial_journal = fs::read(&journal_path).unwrap();
+    let inspected = command(binary, &config, &["inspect-recovery"])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{:?}", inspected.stderr);
+    assert_eq!(json_output(&inspected)["selection"], "confirmed");
+    assert_eq!(json_output(&inspected)["schemaVersion"], 1);
+    assert_eq!(json_output(&inspected)["confirmedSlotId"], slot1);
+    assert!(!runtime.exists());
+    assert_eq!(fs::read(&journal_path).unwrap(), initial_journal);
+    fs::create_dir(&runtime).unwrap();
+    fs::set_permissions(&runtime, Permissions::from_mode(0o700)).unwrap();
+
+    // A different process holding only the runtime lock must fence activation,
+    // even though this worker can acquire its manager's slot/state locks.
+    let runtime_owner = bli_kvm_update_runtime::HealthChallengeStore::open(&runtime).unwrap();
+    let selected_before = fs::read_link(slots.join("current")).unwrap();
+    let busy = command(binary, &config, &["activate", &slot2])
+        .output()
+        .unwrap();
+    assert_eq!(busy.status.code(), Some(66));
+    assert!(busy.stdout.is_empty());
+    assert_eq!(fs::read(&journal_path).unwrap(), initial_journal);
+    assert_eq!(
+        fs::read_link(slots.join("current")).unwrap(),
+        selected_before
+    );
+    assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
+    let inspected = command(binary, &config, &["inspect-recovery"])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{:?}", inspected.stderr);
+    drop(runtime_owner);
+
     let activated = command(binary, &config, &["activate", &slot2])
         .output()
         .unwrap();
@@ -308,6 +345,40 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let token_path = root.path().join("runtime/health-token");
     let token = fs::read(&token_path).unwrap();
     assert_eq!(token.len(), 32);
+
+    // A damaged candidate must not prevent inspection of the confirmed anchor.
+    let candidate_binary = slots.join(&slot2).join("bin/bli-kvm-server");
+    let candidate_bytes = fs::read(&candidate_binary).unwrap();
+    let candidate_mode = fs::metadata(&candidate_binary).unwrap().permissions();
+    fs::set_permissions(&candidate_binary, Permissions::from_mode(0o700)).unwrap();
+    fs::write(&candidate_binary, b"damaged").unwrap();
+    fs::set_permissions(&candidate_binary, candidate_mode.clone()).unwrap();
+    let pending_journal = fs::read(&journal_path).unwrap();
+    let challenge_path = runtime.join("health-challenge.json");
+    let challenge = fs::read(&challenge_path).unwrap();
+    let selected = fs::read_link(slots.join("current")).unwrap();
+    let inspected = command(binary, &config, &["inspect-recovery"])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{:?}", inspected.stderr);
+    let receipt = json_output(&inspected);
+    assert_eq!(receipt["selection"], "pending_target");
+    assert_eq!(receipt["pending"]["targetSlotId"], slot2);
+    assert_eq!(receipt["confirmedSlotId"], slot1);
+    assert!(
+        !command(binary, &config, &["status"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(&journal_path).unwrap(), pending_journal);
+    assert_eq!(fs::read(&token_path).unwrap(), token);
+    assert_eq!(fs::read(&challenge_path).unwrap(), challenge);
+    assert_eq!(fs::read_link(slots.join("current")).unwrap(), selected);
+    fs::set_permissions(&candidate_binary, Permissions::from_mode(0o700)).unwrap();
+    fs::write(&candidate_binary, candidate_bytes).unwrap();
+    fs::set_permissions(&candidate_binary, candidate_mode).unwrap();
 
     let mut confirm = command(binary, &config, &["confirm-stdin"]);
     confirm.stdin(Stdio::piped());

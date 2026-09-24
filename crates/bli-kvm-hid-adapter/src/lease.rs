@@ -364,6 +364,30 @@ mod tests {
     }
 
     #[test]
+    fn expired_renew_returns_release_events_and_clears_the_lease() {
+        let mut manager = HidLeaseManager::new();
+        let now = Instant::now();
+        let owner = identity(1, 7);
+        manager.acquire(owner, now, Duration::from_secs(2)).unwrap();
+        let pressed = manager.translate(
+            owner,
+            now,
+            &HidReport::Keyboard {
+                data: [0, 0, 4, 0, 0, 0, 0, 0],
+            },
+        );
+        assert_eq!(pressed.events, vec![key("KeyA", true)]);
+
+        let expired = manager.renew(owner, now + Duration::from_secs(2), Duration::from_secs(2));
+        assert_eq!(expired.error, Some(HidLeaseError::Expired));
+        assert_eq!(expired.events, vec![key("KeyA", false)]);
+        assert_eq!(
+            manager.renew(owner, now, Duration::from_secs(2)).error,
+            Some(HidLeaseError::NotActive)
+        );
+    }
+
+    #[test]
     fn translation_failure_revokes_lease_after_release_all() {
         let mut manager = HidLeaseManager::new();
         let now = Instant::now();

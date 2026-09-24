@@ -36,7 +36,8 @@ ExecStartPre=/bin/sh -c 'i=0; while [ ! -S "$BLI_KVM_CONTROL_SOCKET" ]; do i=$((
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=15s
-TimeoutStopSec=10s
+# Allow the server's 20-second HTTP/WebSocket drain to report its result.
+TimeoutStopSec=30s
 
 NoNewPrivileges=yes
 PrivateDevices=yes

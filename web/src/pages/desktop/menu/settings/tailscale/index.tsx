@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Divider } from 'antd';
+import { useAtomValue } from 'jotai';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/extensions/tailscale.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import { Device } from './device.tsx';
 import { Header } from './header.tsx';
 import { Install } from './install.tsx';
 import { Login } from './login.tsx';
+import { NativeTailscale } from './native.tsx';
 import { Run } from './run.tsx';
 import type { Status } from './types.ts';
 
@@ -16,7 +19,16 @@ type TailscaleProps = {
   setIsLocked: (isLocked: boolean) => void;
 };
 
-export const Tailscale = ({ setIsLocked }: TailscaleProps) => {
+export const Tailscale = (props: TailscaleProps) => {
+  const capabilities = useAtomValue(capabilitiesAtom);
+  return capabilities?.platform.id === 'bli-h616-pikvm' ? (
+    <NativeTailscale />
+  ) : (
+    <ReferenceTailscale {...props} />
+  );
+};
+
+const ReferenceTailscale = ({ setIsLocked }: TailscaleProps) => {
   const { t } = useTranslation();
 
   const [isLoading, setIsLoading] = useState(false);

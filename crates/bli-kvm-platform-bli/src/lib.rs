@@ -56,6 +56,18 @@ impl CapabilityProvider for BliH616PikvmPlatform {
         board_features.insert("thermal".into(), FeatureStatus::read_only(runtime_verified));
         board_features.insert("rtc".into(), FeatureStatus::read_only(runtime_verified));
         board_features.insert(
+            "device_settings".into(),
+            FeatureStatus::read_write(source_verified),
+        );
+        board_features.insert(
+            "device_autostart".into(),
+            FeatureStatus::read_only(source_verified),
+        );
+        board_features.insert(
+            "device_session_lock".into(),
+            FeatureStatus::read_write(source_verified),
+        );
+        board_features.insert(
             "system_settings".into(),
             FeatureStatus::read_only(runtime_verified),
         );
@@ -69,7 +81,7 @@ impl CapabilityProvider for BliH616PikvmPlatform {
         );
         board_features.insert(
             "system_network".into(),
-            FeatureStatus::not_exposed(source_verified),
+            FeatureStatus::read_only(runtime_verified),
         );
         board_features.insert(
             "system_firewall".into(),
@@ -122,9 +134,9 @@ impl CapabilityProvider for BliH616PikvmPlatform {
                 remote_download: FeatureStatus::unavailable(),
             },
             network: NetworkCapabilities {
-                status: FeatureStatus::not_exposed(runtime_verified),
-                dns: FeatureStatus::not_exposed(runtime_verified),
-                ipv6: FeatureStatus::not_exposed(runtime_verified),
+                status: FeatureStatus::read_only(runtime_verified),
+                dns: FeatureStatus::read_only(runtime_verified),
+                ipv6: FeatureStatus::read_only(runtime_verified),
                 wol: FeatureStatus::not_exposed(runtime_verified),
             },
             board: BoardCapabilities {
@@ -211,8 +223,39 @@ mod tests {
         );
         assert_eq!(
             manifest.board.features["system_network"],
-            FeatureStatus::not_exposed(EvidenceLevel::SourceVerified)
+            FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
         );
+        for status in [
+            manifest.network.status,
+            manifest.network.dns,
+            manifest.network.ipv6,
+        ] {
+            assert_eq!(
+                status,
+                FeatureStatus::read_only(EvidenceLevel::RuntimeVerified)
+            );
+        }
+        assert_eq!(
+            manifest.network.wol.availability,
+            bli_kvm_core::Availability::Unavailable
+        );
+        assert_eq!(
+            manifest.board.features["device_autostart"],
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified)
+        );
+        assert_eq!(
+            manifest.board.features["device_session_lock"],
+            FeatureStatus::read_write(EvidenceLevel::SourceVerified)
+        );
+        for feature in [
+            "device_ssh",
+            "device_oled",
+            "device_advanced",
+            "device_virtual_devices",
+            "device_reboot",
+        ] {
+            assert!(!manifest.board.features.contains_key(feature), "{feature}");
+        }
         assert_eq!(
             manifest.board.features["system_firewall"],
             FeatureStatus::not_exposed(EvidenceLevel::SourceVerified)

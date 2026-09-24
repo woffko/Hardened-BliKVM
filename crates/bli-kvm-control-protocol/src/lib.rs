@@ -42,6 +42,10 @@ pub enum ControlRejectionCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    /// Ledger observation only; zero does not prove physical endpoint health.
+    HidReconciliationState {
+        pending_releases: u64,
+    },
     Applied,
     LeaseGranted {
         lease_id: [u8; 16],
@@ -62,6 +66,8 @@ pub enum ControlResponse {
     VideoState {
         fps: u16,
         quality: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolution: Option<String>,
     },
     /// Whether the device name is published over mDNS.
     MdnsState {
@@ -103,6 +109,9 @@ pub enum ControlResponse {
         message: String,
     },
     /// The reviewed firewall baseline state.
+    FirewallModeState {
+        status: bli_kvm_core::FirewallModeStatus,
+    },
     FirewallState {
         backend_available: bool,
         baseline_active: bool,
@@ -305,6 +314,24 @@ pub fn encode_response_v2(
 }
 
 fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolError> {
+    if let ControlResponse::VideoState {
+        resolution: Some(resolution),
+        ..
+    } = response
+        && !bli_kvm_core::reviewed_resolution(resolution)
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::FirewallModeState { status } = response {
+        match (
+            status.pending_operation_id,
+            status.confirmation_deadline_unix_ms,
+        ) {
+            (None, None) if !status.recovery_required => {}
+            (Some(operation), Some(deadline)) if operation != [0; 16] && deadline > 0 => {}
+            _ => return Err(ControlProtocolError::InvalidControlResponse),
+        }
+    }
     if let ControlResponse::LeaseGranted { lease_id } = response
         && lease_id.iter().all(|byte| *byte == 0)
     {
@@ -429,6 +456,39 @@ mod tests {
                 Err(ControlProtocolError::InvalidOperationId)
             );
         }
+    }
+
+    #[test]
+    fn firewall_status_rejects_inconsistent_pending_metadata() {
+        let mut status = bli_kvm_core::FirewallModeStatus {
+            mode: bli_kvm_core::FirewallMode::Restricted,
+            pending_operation_id: Some([1; 16]),
+            confirmation_deadline_unix_ms: Some(60_100),
+            recovery_required: false,
+            configuration_ready: true,
+        };
+        assert!(
+            validate_response(&ControlResponse::FirewallModeState {
+                status: status.clone()
+            })
+            .is_ok()
+        );
+        status.confirmation_deadline_unix_ms = None;
+        assert!(
+            validate_response(&ControlResponse::FirewallModeState {
+                status: status.clone()
+            })
+            .is_err()
+        );
+        status.pending_operation_id = None;
+        assert!(
+            validate_response(&ControlResponse::FirewallModeState {
+                status: status.clone()
+            })
+            .is_ok()
+        );
+        status.recovery_required = true;
+        assert!(validate_response(&ControlResponse::FirewallModeState { status }).is_err());
     }
 
     #[test]

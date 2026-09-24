@@ -12,6 +12,13 @@ pub trait FanActuator {
     type Error: Error + Send + Sync + 'static;
 
     fn apply(&mut self, command: FanCommand) -> Result<(), Self::Error>;
+
+    /// Report known asynchronous runtime failures without issuing a command.
+    /// Synchronous actuators report their errors through apply. Background
+    /// actuators must override this; success is not electrical/RPM readback.
+    fn check_runtime(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

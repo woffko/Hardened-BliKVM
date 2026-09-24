@@ -34,7 +34,7 @@ export const PowerLong = ({ showConfirm, isLoading, setIsLoading }: PowerLongPro
 
   return (
     <>
-      {showConfirm ? (
+      {showConfirm || restricted ? (
         <Popconfirm
           placement="bottomLeft"
           title={t('power.powerConfirm')}

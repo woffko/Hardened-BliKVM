@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Divider, message, Modal, Segmented, Spin, Tag } from 'antd';
 import type { TFunction } from 'i18next';
+import { useAtomValue } from 'jotai';
 import {
   LockKeyholeIcon,
   RefreshCwIcon,
@@ -13,6 +14,9 @@ import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/system-firewall.ts';
 import type { FirewallMode, FirewallStatus } from '@/api/system-firewall.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
+
+import { NativeFirewall } from './firewall-native.tsx';
 
 type RulesTab = 'ipv4' | 'ipv6' | 'nft';
 
@@ -27,6 +31,11 @@ type ModeOption = {
 };
 
 export const FirewallSettings = () => {
+  const manifest = useAtomValue(capabilitiesAtom);
+  return manifest?.platform.id === 'bli-h616-pikvm' ? <NativeFirewall /> : <ReferenceFirewall />;
+};
+
+const ReferenceFirewall = () => {
   const { t } = useTranslation();
 
   const [status, setStatus] = useState<FirewallStatus | null>(null);

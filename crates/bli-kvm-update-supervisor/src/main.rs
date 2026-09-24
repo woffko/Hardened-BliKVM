@@ -56,6 +56,7 @@ enum CliCommand {
     AckConfirmedApply,
     AckConfirmedApplyCredential,
     ValidateConfig,
+    InspectRecovery,
     Status,
     StatusSocket(String),
     UploadSocket(String, PathBuf),
@@ -89,6 +90,7 @@ impl SupervisorCliError {
             Self::InvalidConfig => 12,
             Self::Manager(error) => manager_runtime_exit_code(error),
             Self::Runtime(UpdateRuntimeError::Manager(error)) => manager_runtime_exit_code(error),
+            Self::Runtime(UpdateRuntimeError::RuntimeBusy) => 66,
             Self::Runtime(UpdateRuntimeError::InvalidHealthResponseLength) => 32,
             Self::Runtime(UpdateRuntimeError::ChallengeMissing) => 33,
             Self::Runtime(UpdateRuntimeError::OperationMismatch) => 34,
@@ -181,6 +183,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                 config.health_timeout_ms,
             )?;
             match command {
+                CliCommand::InspectRecovery => {
+                    recovery_inspection_receipt(&manager.inspect_recovery()?)
+                }
                 CliCommand::GarbageCollect(retain) => {
                     let collected = manager.garbage_collect(retain)?;
                     json!({
@@ -232,6 +237,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                         | CliCommand::UploadSocket(_, _)
                         | CliCommand::ActivationSocket(_)
                         | CliCommand::GarbageCollect(_)
+                        | CliCommand::InspectRecovery
                         | CliCommand::ValidateConfig => {
                             unreachable!("command handled before supervisor creation")
                         }
@@ -271,6 +277,7 @@ fn parse_arguments(
         "ack-confirmed-apply" => CliCommand::AckConfirmedApply,
         "ack-confirmed-apply-credential" => CliCommand::AckConfirmedApplyCredential,
         "validate-config" => CliCommand::ValidateConfig,
+        "inspect-recovery" => CliCommand::InspectRecovery,
         "status" => CliCommand::Status,
         "status-socket" | "upload-socket" | "activation-socket" => {
             if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--peer-user")) {
@@ -334,6 +341,48 @@ fn parse_arguments(
         return Err(SupervisorCliError::InvalidArguments);
     }
     Ok((config, command))
+}
+
+// Explicit allowlist: inspection is not current health, startup authority or a
+// credential export. In particular, never serialize a completion health binding.
+fn recovery_inspection_receipt(inspection: &bli_kvm_update_manager::RecoveryInspection) -> Value {
+    use bli_kvm_update_manager::RecoverySelection;
+    let intent = |value: &bli_kvm_update_manager::NativeRollbackIntent| {
+        json!({
+            "operationId": value.operation_id,
+            "intentGeneration": value.intent_generation,
+            "reason": rollback_reason(value.reason),
+            "phase": value.phase,
+        })
+    };
+    json!({
+        "command": "inspect_recovery",
+        "schemaVersion": inspection.schema_version,
+        "generation": inspection.generation,
+        "confirmedSlotId": inspection.confirmed_slot_id,
+        "selection": match inspection.selection {
+            RecoverySelection::Confirmed => "confirmed",
+            RecoverySelection::PendingTarget => "pending_target",
+            RecoverySelection::Other => "other",
+            RecoverySelection::Missing => "missing",
+            RecoverySelection::Unsafe => "unsafe",
+        },
+        "pending": inspection.pending.as_ref().map(|pending| json!({
+            "operationId": pending.operation_id,
+            "targetSlotId": pending.target_slot_id,
+            "previousSlotId": pending.previous_slot_id,
+            "bootId": pending.boot_id,
+            "deadlineMonotonicMs": pending.deadline_monotonic_ms,
+            "phase": pending_phase(pending.phase),
+        })),
+        "rollbackIntent": inspection.rollback_intent.as_ref().map(intent),
+        "completion": inspection.completion.as_ref().map(|completion| json!({
+            "intent": intent(&completion.intent),
+            "completionGeneration": completion.completion_generation,
+            "failedTargetSlotId": completion.failed_target_slot_id,
+            "confirmedSlotId": completion.confirmed_slot_id,
+        })),
+    })
 }
 
 fn status_receipt(status: &ManagerStatus) -> Value {
@@ -484,6 +533,48 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_receipt_omits_completion_binding_and_is_not_health() {
+        use bli_kvm_update_manager::{
+            NativeRecoveryCompletion, NativeRollbackIntent, NativeRollbackPhase,
+            RecoveryInspection, RecoverySelection,
+        };
+        let intent = NativeRollbackIntent {
+            operation_id: "11".repeat(16),
+            intent_generation: 4,
+            reason: RollbackReason::HealthTimeout,
+            phase: NativeRollbackPhase::Restoring,
+        };
+        let inspection = RecoveryInspection {
+            schema_version: 3,
+            generation: 6,
+            confirmed_slot_id: "confirmed-slot".into(),
+            pending: None,
+            selection: RecoverySelection::Confirmed,
+            rollback_intent: None,
+            completion: Some(NativeRecoveryCompletion {
+                intent,
+                completion_generation: 6,
+                failed_target_slot_id: "failed-slot".into(),
+                confirmed_slot_id: "confirmed-slot".into(),
+                health_binding: "42".repeat(32),
+            }),
+        };
+        let receipt = recovery_inspection_receipt(&inspection);
+        assert_eq!(receipt["command"], "inspect_recovery");
+        assert_eq!(receipt["schemaVersion"], 3);
+        assert_eq!(receipt["completion"]["intent"]["phase"], "restoring");
+        assert_eq!(receipt["completion"].as_object().unwrap().len(), 4);
+        assert!(receipt.get("healthy").is_none());
+        assert!(!receipt.to_string().contains(&"42".repeat(32)));
+        let args = ["supervisor", "--config", "/config.json", "inspect-recovery"];
+        assert_eq!(
+            parse_arguments(args.map(OsString::from)).unwrap().1,
+            CliCommand::InspectRecovery
+        );
+        assert!(parse_arguments(args.into_iter().chain(["extra"]).map(OsString::from)).is_err());
+    }
 
     #[test]
     fn accepts_only_fixed_commands_and_nonsecret_positional_values() {

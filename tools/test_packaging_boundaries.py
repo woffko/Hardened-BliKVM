@@ -2143,7 +2143,23 @@ class PackagingBoundaryTests(unittest.TestCase):
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
-        self.assertEqual(config.count("proxy_pass http://127.0.0.1:18080;"), 1)
+        destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
+        self.assertEqual(destinations, ["http://127.0.0.1:18080"] * 3)
+        locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
+        self.assertEqual(
+            set(locations), {"/", "= /api/application-update/upload", "= /api/download/file"}
+        )
+        self.assertIn("client_max_body_size 16m;", config)
+        for route, limit in [
+            ("= /api/application-update/upload", "128m"),
+            ("= /api/download/file", "4097m"),
+        ]:
+            block = locations[route]
+            self.assertIn(f"client_max_body_size {limit};", block)
+            self.assertIn("proxy_pass http://127.0.0.1:18080;", block)
+            self.assertIn("proxy_request_buffering off;", block)
+            self.assertIn("proxy_buffering off;", block)
+            self.assertIn("proxy_http_version 1.1;", block)
         self.assertIn(
             "proxy_set_header Host $hardened_blikvm_forwarded_host;", config
         )

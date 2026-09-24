@@ -86,6 +86,12 @@ private_ip_matches=$(
 )
 private_ip_matches=$(printf '%s\n' "$private_ip_matches" \
   | rg -v '^\./tools/test_capture_pikvm_baseline\.py:' || true)
+# These complete, path-bound lines define the public RFC1918 ranges, not a
+# device address. Anchor the entire line so another literal cannot hide beside
+# an allowed definition. Do not exempt either firewall source file as a whole.
+private_ip_matches=$(printf '%s\n' "$private_ip_matches" \
+  | rg -v '^\./crates/bli-kvm-control-broker/src/firewall_rules\.rs:[0-9]+:const LOCAL_V4: &str = "\{ 10[.]0[.]0[.]0/8, 172[.]16[.]0[.]0/12, 192[.]168[.]0[.]0/16, 169[.]254[.]0[.]0/16 \}";$' \
+  | rg -v '^\./crates/bli-kvm-control-broker/src/firewall_observation\.rs:[0-9]+:        let v4 = json!\(\{"set":\[\{"prefix":\{"addr":"10[.]0[.]0[.]0","len":8\}\}, \{"prefix":\{"addr":"172[.]16[.]0[.]0","len":12\}\}, \{"prefix":\{"addr":"192[.]168[.]0[.]0","len":16\}\}, \{"prefix":\{"addr":"169[.]254[.]0[.]0","len":16\}\}\]\}\);$' || true)
 if [ -n "$private_ip_matches" ]; then
   printf '%s\n' "$private_ip_matches" >&2
   echo "private IPv4 literal in Git-visible source" >&2

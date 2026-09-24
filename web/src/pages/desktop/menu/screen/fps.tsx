@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
-import { Button, InputNumber } from 'antd';
+import { Button, InputNumber, message } from 'antd';
 import { CheckIcon, ScanBarcodeIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -18,7 +18,7 @@ const defaultFps = [60, 30, 24];
 
 type FpsProps = {
   fps: number;
-  setFps: (fps: number) => void;
+  refresh: () => Promise<{ fps: number }>;
   // The measured rate the capture bridge delivers; undefined when unknown.
   capturedFps?: number;
   deliveredWidth?: number;
@@ -28,7 +28,7 @@ type FpsProps = {
 
 export const Fps = ({
   fps,
-  setFps,
+  refresh,
   capturedFps,
   deliveredWidth,
   deliveredHeight,
@@ -37,34 +37,40 @@ export const Fps = ({
   const { t } = useTranslation();
   const [isCustomize, setIsCustomize] = useState(false);
   const customizeRef = useRef(0);
+  const updating = useRef(false);
 
   function showCustomize() {
     customizeRef.current = fps;
     setIsCustomize(true);
   }
 
-  function onChange(value: any) {
+  function onChange(value: number | null) {
     const num = Number(value);
-    if (num > 0 && num <= 60) {
+    if (Number.isInteger(num) && num > 0 && num <= 60) {
       customizeRef.current = num;
     }
   }
 
   async function update(value: number) {
+    if (updating.current || !Number.isInteger(value) || value < 1 || value > 60) return;
     if (isCustomize && customizeRef.current === fps) {
       setIsCustomize(false);
       return;
     }
 
-    const rsp = await updateScreen('fps', value);
-    if (rsp.code !== 0) {
-      return;
-    }
-
-    setFps(value);
-    setCookie(value);
-    if (isCustomize) {
+    updating.current = true;
+    try {
+      const rsp = await updateScreen('fps', value);
+      if (rsp.code !== 0 || rsp.data?.applied !== true || rsp.data?.rejection != null)
+        throw new Error(rsp.data?.rejection || 'FPS update was refused');
+      if ((await refresh()).fps !== value)
+        throw new Error('FPS read-back did not match the request');
+      setCookie(value);
       setIsCustomize(false);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Unable to update FPS');
+    } finally {
+      updating.current = false;
     }
   }
 

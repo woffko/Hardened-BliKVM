@@ -60,20 +60,22 @@ export const Information = () => {
           label="Inventory backend"
           value={inventory?.backend ? inventory.backend.replace(/_/g, ' ') : '-'}
         />
-        <InfoRow label="KVMD" value={inventory?.versions.kvmd || '-'} />
-        <InfoRow label="Streamer" value={inventory?.versions.streamer || '-'} />
+        {inventory?.backend === 'kvmd_transition' && (
+          <InfoRow label="KVMD" value={inventory.versions?.kvmd || '-'} />
+        )}
+        <InfoRow label="Streamer" value={inventory?.versions?.streamer || '-'} />
         <InfoRow
           label="Video source"
-          value={inventory?.video.online === true ? 'online' : inventory ? 'not online' : '-'}
+          value={inventory?.video?.online === true ? 'online' : inventory ? 'not online' : '-'}
         />
         <InfoRow
           label="SoC temperature"
-          value={formatTemperatureMillidegrees(inventory?.thermal.temperatureMillidegreesCelsius)}
+          value={formatTemperatureMillidegrees(inventory?.thermal?.temperatureMillidegreesCelsius)}
         />
-        <InfoRow label="External RTC" value={formatRtcUnixSeconds(inventory?.rtc.unixSeconds)} />
+        <InfoRow label="External RTC" value={formatRtcUnixSeconds(inventory?.rtc?.unixSeconds)} />
         <InfoRow
           label="RTC offset"
-          value={formatRtcOffsetSeconds(inventory?.rtc.offsetFromSystemSeconds)}
+          value={formatRtcOffsetSeconds(inventory?.rtc?.offsetFromSystemSeconds)}
         />
         <InfoRow
           label={t('settings.about.application')}

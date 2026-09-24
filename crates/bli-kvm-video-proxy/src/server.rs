@@ -1,7 +1,7 @@
 use std::{
     fs::{self, Permissions},
     io,
-    os::unix::fs::{FileTypeExt, PermissionsExt},
+    os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     sync::Arc,
 };
 
@@ -10,6 +10,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
     sync::Semaphore,
+    task::JoinSet,
     time::timeout,
 };
 
@@ -32,29 +33,90 @@ pub enum VideoProxyError {
 }
 
 pub async fn run(config: VideoProxyConfig) -> Result<(), VideoProxyError> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    serve_until(config, async move {
+        tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
+    })
+    .await
+}
+
+async fn serve_until(
+    config: VideoProxyConfig,
+    stopping: impl std::future::Future<Output = ()>,
+) -> Result<(), VideoProxyError> {
     config.validate()?;
     validate_runtime_directory(&config)?;
     if fs::symlink_metadata(&config.proxy_socket).is_ok() {
         return Err(VideoProxyError::SocketAlreadyExists);
     }
     let listener = UnixListener::bind(&config.proxy_socket)?;
-    let _cleanup = SocketCleanup(config.proxy_socket.clone());
+    let cleanup = SocketCleanup::new(config.proxy_socket.clone())?;
     fs::set_permissions(&config.proxy_socket, Permissions::from_mode(0o660))?;
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| io::Error::other("video proxy semaphore closed"))?;
+    tokio::pin!(stopping);
+    let mut connections = JoinSet::new();
+    let serving = loop {
+        let permit = tokio::select! {
+            biased;
+            _ = &mut stopping => break Ok(()),
+            result = connections.join_next(), if !connections.is_empty() => {
+                if let Some(Err(error)) = result {
+                    break Err(io::Error::other(format!("video proxy connection task failed: {error}")));
+                }
+                continue;
+            }
+            permit = semaphore.clone().acquire_owned() => match permit {
+                Ok(permit) => permit,
+                Err(_) => break Err(io::Error::other("video proxy semaphore closed")),
+            },
+        };
+        let accepted = tokio::select! {
+            biased;
+            _ = &mut stopping => break Ok(()),
+            accepted = listener.accept() => accepted,
+        };
+        let (stream, _) = match accepted {
+            Ok(accepted) => accepted,
+            Err(error) => break Err(error),
+        };
         let config = config.clone();
-        tokio::spawn(async move {
+        connections.spawn(async move {
             let _permit = permit;
-            let _ = handle_connection(stream, &config).await;
+            handle_connection(stream, &config).await
         });
-    }
+    };
+    drop(listener);
+    // Proxy tasks are read-only: cancellation closes both socket halves and
+    // upstream capture clients. Join before claiming a clean owner transition.
+    connections.abort_all();
+    let drained = timeout(std::time::Duration::from_secs(2), async {
+        let mut failure = None;
+        while let Some(result) = connections.join_next().await {
+            if let Err(error) = result
+                && !error.is_cancelled()
+            {
+                failure = Some(io::Error::other(format!(
+                    "video proxy drain failed: {error}"
+                )));
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    })
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "video proxy drain deadline expired",
+        )
+    })?;
+    let cleaned = cleanup.finish();
+    serving?;
+    drained?;
+    cleaned?;
+    Ok(())
 }
 
 fn validate_runtime_directory(config: &VideoProxyConfig) -> Result<(), VideoProxyError> {
@@ -184,11 +246,54 @@ async fn read_fixed_request(stream: &mut UnixStream) -> Result<(), io::Error> {
     Ok(())
 }
 
-struct SocketCleanup(std::path::PathBuf);
+struct SocketCleanup {
+    path: std::path::PathBuf,
+    device: u64,
+    inode: u64,
+    armed: bool,
+}
+
+impl SocketCleanup {
+    fn new(path: std::path::PathBuf) -> io::Result<Self> {
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_socket() {
+            return Err(io::Error::other("video proxy socket identity unavailable"));
+        }
+        Ok(Self {
+            path,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            armed: true,
+        })
+    }
+
+    fn remove_owned(&self) -> io::Result<()> {
+        let metadata = fs::symlink_metadata(&self.path)?;
+        if !metadata.file_type().is_socket()
+            || metadata.dev() != self.device
+            || metadata.ino() != self.inode
+        {
+            return Err(io::Error::other("video proxy socket identity changed"));
+        }
+        // The reviewed runtime directory excludes untrusted writers. This
+        // check protects accidental replacement, not a privileged rename race.
+        fs::remove_file(&self.path)
+    }
+
+    fn finish(mut self) -> io::Result<()> {
+        self.armed = false;
+        self.remove_owned()
+    }
+}
 
 impl Drop for SocketCleanup {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        if self.armed
+            && let Err(error) = self.remove_owned()
+        {
+            // Early-error/abort fallback only; normal shutdown checks finish.
+            eprintln!("video proxy socket cleanup failed: {error}");
+        }
     }
 }
 
@@ -197,6 +302,101 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     use super::*;
+
+    #[tokio::test]
+    async fn socket_cleanup_requires_its_original_inode_and_reports_failure() {
+        for replacement in ["file", "socket", "symlink", "missing"] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("proxy.sock");
+            let _listener = UnixListener::bind(&path).unwrap();
+            let guard = SocketCleanup::new(path.clone()).unwrap();
+            // Retain the old inode so reuse cannot make the fixture ambiguous.
+            fs::rename(&path, directory.path().join("original.sock")).unwrap();
+            let replacement_socket = match replacement {
+                "file" => {
+                    fs::write(&path, b"preserve").unwrap();
+                    None
+                }
+                "socket" => Some(UnixListener::bind(&path).unwrap()),
+                "symlink" => {
+                    std::os::unix::fs::symlink(directory.path().join("original.sock"), &path)
+                        .unwrap();
+                    None
+                }
+                _ => None,
+            };
+            assert!(
+                guard.finish().is_err(),
+                "{replacement} replacement reported clean"
+            );
+            if replacement != "missing" {
+                assert!(fs::symlink_metadata(&path).is_ok());
+            }
+            assert!(directory.path().join("original.sock").exists());
+            drop(replacement_socket);
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("proxy.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        SocketCleanup::new(path.clone()).unwrap().finish().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn shutdown_joins_silent_stream_and_waiting_admission() {
+        let directory = tempfile::tempdir().unwrap();
+        let upstream_path = directory.path().join("upstream.sock");
+        let proxy_path = directory.path().join("proxy.sock");
+        let upstream_listener = UnixListener::bind(&upstream_path).unwrap();
+        let mut config = VideoProxyConfig::new(&proxy_path, &upstream_path).unwrap();
+        config.max_connections = 1;
+        let (stop, stopping) = tokio::sync::oneshot::channel();
+        let proxy = tokio::spawn(serve_until(config, async {
+            let _ = stopping.await;
+        }));
+        for _ in 0..50 {
+            if proxy_path.exists() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        let mut client = UnixStream::connect(&proxy_path).await.unwrap();
+        client
+            .write_all(b"GET /mjpeg HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let (mut upstream, _) = timeout(Duration::from_secs(1), upstream_listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut request = vec![0; UPSTREAM_REQUEST.len()];
+        upstream.read_exact(&mut request).await.unwrap();
+        assert_eq!(request, UPSTREAM_REQUEST);
+        // The active stream owns the sole permit. Stop must interrupt permit
+        // acquisition instead of waiting for another upstream byte or client.
+        stop.send(()).unwrap();
+        timeout(Duration::from_secs(3), proxy)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(!proxy_path.exists());
+        let mut byte = [0_u8; 1];
+        assert_eq!(
+            timeout(Duration::from_secs(1), upstream.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            timeout(Duration::from_secs(1), client.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+    }
 
     #[tokio::test]
     async fn proxies_only_the_fixed_mjpeg_route_to_fixed_upstream() {

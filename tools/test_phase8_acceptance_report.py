@@ -6,6 +6,12 @@ from pathlib import Path
 import tools.phase8_acceptance_report as report
 
 
+CONTEXT = {
+    "acceptanceRunId": "acceptance-test-run-0001",
+    "reviewedSourceCommit": "a" * 40,
+}
+
+
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value), encoding="utf-8")
@@ -28,7 +34,7 @@ class Phase8AcceptanceReportTests(unittest.TestCase):
 
     def test_missing_receipts_are_unrun_and_never_inferred(self) -> None:
         root, evidence = self.fixture()
-        built = report.build_report(root, evidence)
+        built = report.build_report(root, evidence, CONTEXT)
         self.assertEqual(built["overall"], "incomplete")
         for phase in built["phases"]:
             for item in phase["device"]:
@@ -47,10 +53,10 @@ class Phase8AcceptanceReportTests(unittest.TestCase):
             evidence / "storage-acceptance-20260916-x.json",
             {"probe": "hardened-blikvm-storage-acceptance", "result": "passed"},
         )
-        built = report.build_report(root, evidence)
+        built = report.build_report(root, evidence, CONTEXT)
         phase = self.phase(built, "E1")
         gate = next(item for item in phase["device"] if item["name"] == "storage gate")
-        self.assertEqual(gate["status"], "recorded")
+        self.assertEqual(gate["status"], "unbound")
         self.assertEqual(gate["receipt"], "storage-acceptance-20260916-x.json")
         gui = next(
             item for item in phase["device"] if item["name"] == "virtual media GUI acceptance"
@@ -68,14 +74,14 @@ class Phase8AcceptanceReportTests(unittest.TestCase):
             evidence / "video-two-client-probe-20260916-x.json",
             {"result": "passed"},
         )
-        built = report.build_report(root, evidence)
+        built = report.build_report(root, evidence, CONTEXT)
         phase = self.phase(built, "E0")
         timing = next(item for item in phase["device"] if item["name"] == "frame timing")
-        self.assertEqual(timing["status"], "unrun")
+        self.assertEqual(timing["status"], "invalid")
         two_client = next(
             item for item in phase["device"] if item["name"] == "two-client video"
         )
-        self.assertEqual(two_client["status"], "unrun")
+        self.assertEqual(two_client["status"], "invalid")
         self.assertIn("streamCount", two_client["detail"])
 
     def test_markerless_receipts_need_their_required_fields(self) -> None:
@@ -84,21 +90,69 @@ class Phase8AcceptanceReportTests(unittest.TestCase):
             evidence / "video-two-client-probe-20260916-x.json",
             {"result": "passed", "streamCount": 2},
         )
-        built = report.build_report(root, evidence)
+        built = report.build_report(root, evidence, CONTEXT)
         phase = self.phase(built, "E0")
         two_client = next(
             item for item in phase["device"] if item["name"] == "two-client video"
         )
-        self.assertEqual(two_client["status"], "recorded")
+        self.assertEqual(two_client["status"], "unbound")
         soak = next(item for item in phase["device"] if item["name"] == "video soak")
         self.assertEqual(soak["status"], "unrun")
 
     def test_missing_host_artifact_is_reported(self) -> None:
         root, evidence = self.fixture()
         (root / "crates/bli-kvm-boardd/src/fan.rs").unlink()
-        built = report.build_report(root, evidence)
+        built = report.build_report(root, evidence, CONTEXT)
         phase = self.phase(built, "E2")
         self.assertIn("crates/bli-kvm-boardd/src/fan.rs", phase["host"]["missing"])
+
+    def test_bound_passing_receipt_is_accepted(self) -> None:
+        root, evidence = self.fixture()
+        write_json(
+            evidence / "storage-acceptance-20260916-x.json",
+            {
+                "probe": "hardened-blikvm-storage-acceptance",
+                "result": "passed",
+                "evidenceContext": CONTEXT,
+            },
+        )
+        built = report.build_report(root, evidence, CONTEXT)
+        gate = next(
+            item
+            for item in self.phase(built, "E1")["device"]
+            if item["name"] == "storage gate"
+        )
+        self.assertEqual(gate["status"], "passed")
+
+    def test_newer_failure_blocks_older_passing_receipt(self) -> None:
+        root, evidence = self.fixture()
+        base = {
+            "probe": "hardened-blikvm-storage-acceptance",
+            "evidenceContext": CONTEXT,
+        }
+        write_json(
+            evidence / "storage-acceptance-20260916-a.json",
+            {**base, "result": "passed"},
+        )
+        write_json(
+            evidence / "storage-acceptance-20260916-b.json",
+            {**base, "result": "failed"},
+        )
+        built = report.build_report(root, evidence, CONTEXT)
+        gate = next(
+            item
+            for item in self.phase(built, "E1")["device"]
+            if item["name"] == "storage gate"
+        )
+        self.assertEqual(gate["status"], "failed")
+        self.assertEqual(gate["receipt"], "storage-acceptance-20260916-b.json")
+
+    def test_release_context_is_strict(self) -> None:
+        self.assertEqual(report.validate_release_context(CONTEXT), CONTEXT)
+        with self.assertRaises(ValueError):
+            report.validate_release_context(
+                {**CONTEXT, "reviewedSourceCommit": "not-a-commit"}
+            )
 
 
 if __name__ == "__main__":

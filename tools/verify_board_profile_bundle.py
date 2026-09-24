@@ -12,7 +12,6 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 import stat
 import sys
 import tarfile
@@ -94,12 +93,15 @@ def verify_bundle(bundle_path: Path, expected_sha256: str) -> dict[str, object]:
     members: dict[str, str] = {}
     total = 0
     with tarfile.open(bundle_path, "r:gz") as archive:
-        names = archive.getnames()
-        if len(names) > MAX_MEMBERS:
-            raise ValueError("bundle has too many members")
         files: dict[str, bytes] = {}
-        for member in archive.getmembers():
+        seen: set[str] = set()
+        for count, member in enumerate(archive, start=1):
+            if count > MAX_MEMBERS:
+                raise ValueError("bundle has too many members")
             name = _member_name(member.name)
+            if name in seen:
+                raise ValueError("duplicate bundle member")
+            seen.add(name)
             if member.isdir():
                 continue
             if not member.isfile():
@@ -131,12 +133,19 @@ def verify_bundle(bundle_path: Path, expected_sha256: str) -> dict[str, object]:
         if match is None:
             raise ValueError("malformed SHA256SUMS entry")
         recorded, name = match.groups()
-        name = name.lstrip("./")
+        name = name.removeprefix("./")
+        if name != _member_name(f"{EXPECTED_ROOT}/{name}"):
+            raise ValueError("non-canonical SHA256SUMS path")
+        if name in members:
+            raise ValueError("duplicate SHA256SUMS entry")
         if name not in files:
             raise ValueError("SHA256SUMS references an unknown member")
         if hashlib.sha256(files[name]).hexdigest() != recorded:
             raise ValueError("SHA256SUMS does not match a member")
         members[name] = recorded
+
+    if set(members) != set(files) - {"SHA256SUMS"}:
+        raise ValueError("SHA256SUMS must cover every payload member exactly once")
 
     return {
         "schemaVersion": 1,

@@ -100,12 +100,14 @@ pub(crate) async fn application_power(
             rejection: Some(rejection_name(code)),
         },
         ControlResponse::BoardStatus { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }
         | ControlResponse::TailscaleState { .. } => AtxResponse {
             applied: false,

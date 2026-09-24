@@ -191,6 +191,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -244,6 +245,7 @@ dependencies = [
  "bli-kvm-usb-gadget",
  "libc",
  "rand_core 0.6.4",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -737,6 +739,7 @@ dependencies = [
  "bytes",
  "http-body",
  "http-body-util",
+ "libc",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
@@ -866,19 +869,31 @@ dependencies = [
 name = "bli-kvm-update-runtime"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-boardd",
+ "bli-kvm-control-protocol",
+ "bli-kvm-core",
  "bli-kvm-update-manager",
  "bli-kvm-update-stager",
  "bli-kvm-update-verifier",
+ "bli-kvm-video-proxy",
+ "bytes",
  "ed25519-dalek",
+ "http",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-util",
  "libc",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "subtle",
  "tar",
  "tempfile",
  "thiserror",
+ "tokio",
  "zeroize",
 ]
 
@@ -1889,6 +1904,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys",

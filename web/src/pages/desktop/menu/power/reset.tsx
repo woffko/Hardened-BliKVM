@@ -29,7 +29,7 @@ export const Reset = ({ showConfirm, isLoading, setIsLoading }: ResetProps) => {
 
   return (
     <>
-      {showConfirm ? (
+      {showConfirm || restricted ? (
         <Popconfirm
           placement="bottomLeft"
           title={t('power.resetConfirm')}
