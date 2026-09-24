@@ -1,0 +1,68 @@
+#!/bin/sh
+# Install or remove the VP8 WebRTC video path on the device. Runs as root
+# from a staging directory containing:
+#   bli-kvm-video-encoder                  aarch64 binary (feature vp8)
+#   janus/*.jcfg                           packaging/janus
+#   hardened-blikvm-janus.service          packaging/systemd
+#   hardened-blikvm-video-encoder.service  packaging/systemd
+# Usage: deploy_vp8.sh install|remove STAGING_DIR
+#
+# The server advertises VP8 only when BLI_KVM_JANUS_WS is set, which this
+# script adds as a drop-in for the serving units; the server restarts once.
+set -eu
+
+action=${1:-}
+staging=${2:-}
+case "$action" in install|remove) ;; *) echo "usage: $0 install|remove DIR" >&2; exit 2 ;; esac
+[ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 2; }
+units=/etc/systemd/system
+serving="hardened-blikvm-server-current hardened-blikvm-server-candidate"
+
+install_vp8() {
+  case "$staging" in /*) ;; *) echo "staging directory must be absolute" >&2; exit 2 ;; esac
+  command -v janus >/dev/null || { echo "the distribution janus package is required" >&2; exit 1; }
+  install -m 0755 -o root -g root "$staging/bli-kvm-video-encoder" /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+  install -d -m 0755 -o root -g root /etc/hardened-blikvm/janus
+  for file in "$staging"/janus/*.jcfg; do
+    install -m 0644 -o root -g root "$file" /etc/hardened-blikvm/janus/
+  done
+  install -m 0644 "$staging/hardened-blikvm-janus.service" "$units/"
+  install -m 0644 "$staging/hardened-blikvm-video-encoder.service" "$units/"
+  for unit in $serving; do
+    install -d -m 0755 "$units/$unit.service.d"
+    printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.1:8188' \
+      > "$units/$unit.service.d/60-webrtc.conf"
+  done
+  systemctl daemon-reload
+  systemctl enable --now hardened-blikvm-janus.service hardened-blikvm-video-encoder.service
+  for unit in $serving; do
+    if systemctl is-active --quiet "$unit"; then
+      systemctl restart "$unit"
+    fi
+  done
+  sleep 3
+  for unit in hardened-blikvm-janus hardened-blikvm-video-encoder $serving; do
+    printf '%s %s\n' "$unit" "$(systemctl is-active "$unit" || true)"
+  done
+}
+
+remove_vp8() {
+  systemctl disable --now hardened-blikvm-video-encoder.service hardened-blikvm-janus.service 2>/dev/null || true
+  rm -f "$units/hardened-blikvm-video-encoder.service" "$units/hardened-blikvm-janus.service"
+  for unit in $serving; do
+    rm -f "$units/$unit.service.d/60-webrtc.conf"
+  done
+  rm -rf /etc/hardened-blikvm/janus
+  rm -f /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+  systemctl daemon-reload
+  for unit in $serving; do
+    if systemctl is-active --quiet "$unit"; then
+      systemctl restart "$unit"
+    fi
+  done
+}
+
+case "$action" in
+  install) install_vp8 ;;
+  remove) remove_vp8 ;;
+esac
