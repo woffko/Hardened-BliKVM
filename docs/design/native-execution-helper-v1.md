@@ -175,3 +175,20 @@ Hashing the updater file stays a consistency check, as explained above.
 5. Supervisor/helper CLI, native profile units and effective-unit checks.
 6. Device installation and recovery rehearsal. This needs separate operator
    authorization.
+
+### Implementation status
+
+- Slice 1: `bli-kvm-update-protocol::execution` defines the closed request and
+  response envelopes with a 1 KiB bound (three tests: closed variants, rejected
+  path/unit/command/floor fields, slot and envelope validation, identity digest
+  binding). Peer authentication belongs to the helper server in slice 3.
+- Slice 2: `update-runtime::slot_archive::open_slot_archive` streams the
+  canonical archive from an updater slot; the rebuilt stream is byte-identical
+  to the builder output in the test fixture. Tests cover same-inode payload
+  modification, truncation, symbolic links, foreign slot identifiers and
+  signature verification before any payload file is opened.
+  `NativeExecutionStore::prepare_from_slot` publishes distinct protected inodes;
+  `NativeExecutionStore::select` applies the policy and the one-step
+  `SelectionLedgerStore`, writes the ledger before the protected `current`
+  link and replays idempotently after a crash between the two. Tests use
+  unprivileged fixtures; a root-owned deployment is not yet tested.

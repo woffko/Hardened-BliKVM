@@ -11,6 +11,7 @@ repository.workspace = true
 bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
 bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-update-manager = { path = "../bli-kvm-update-manager" }
+bli-kvm-update-protocol = { path = "../bli-kvm-update-protocol" }
 bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
 bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
 bytes.workspace = true
@@ -26,6 +27,7 @@ serde_json.workspace = true
 sha2.workspace = true
 socket2 = "=0.6.5"
 subtle.workspace = true
+tar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -35,4 +37,3 @@ zeroize.workspace = true
 bli-kvm-boardd = { path = "../bli-kvm-boardd" }
 bli-kvm-video-proxy = { path = "../bli-kvm-video-proxy" }
 ed25519-dalek = { workspace = true, features = ["signature"] }
-tar.workspace = true

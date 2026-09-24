@@ -27,6 +27,12 @@ use thiserror::Error;
 
 mod protected_root;
 
+/// Require a root-to-leaf chain of directories owned by UID 0 and not
+/// writable by group or others, with no symbolic links.
+pub fn validate_protected_directory(path: &Path) -> Result<(), ApplicationStageError> {
+    protected_root::validate(path)
+}
+
 pub const SLOT_METADATA_DIRECTORY: &str = ".hardened-blikvm";
 pub const SLOT_RECEIPT_PATH: &str = ".hardened-blikvm/receipt.json";
 pub const SLOT_MANIFEST_PATH: &str = ".hardened-blikvm/manifest.json";

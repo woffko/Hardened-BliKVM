@@ -873,6 +873,7 @@ dependencies = [
  "bli-kvm-control-protocol",
  "bli-kvm-core",
  "bli-kvm-update-manager",
+ "bli-kvm-update-protocol",
  "bli-kvm-update-stager",
  "bli-kvm-update-verifier",
  "bli-kvm-video-proxy",

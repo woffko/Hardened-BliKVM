@@ -28,6 +28,15 @@ open gate.
 
 ## Corrective requirement matrix
 
+Native execution helper slices 1 and 2 are implemented on the host, as recorded
+in `docs/design/native-execution-helper-v1.md`: the closed execution protocol,
+canonical archive rebuilding from an untrusted updater slot, protected
+preparation from that slot, and protected selection under a one-step rollback
+ledger. Runtime (84), manager (39), stager (25), supervisor (31) and protocol
+(14) tests and their all-target Clippy with warnings denied pass. The helper
+server, coordinator client, native profile units and any device deployment are
+still open.
+
 Aggregate failure `26f5c70ff0c44f569ea902d975e9c58c` (exit 101, RuntimeBusy in
 `exact_cleanup_replays_each_partial_file_state_after_reopen`) is diagnosed and
 fixed. flock belongs to the open file description. A child forked by another

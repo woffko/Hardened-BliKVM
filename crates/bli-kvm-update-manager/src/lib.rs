@@ -19,7 +19,7 @@ use journal::StateStore;
 use model::{
     JournalDocument, OperationOutcome, PendingActivation, PendingPhase, SlotReference, encode_hex,
 };
-use pointer::PointerStore;
+pub use pointer::PointerStore;
 
 pub const DEFAULT_HEALTH_TIMEOUT_MS: u64 = 60_000;
 pub const MINIMUM_HEALTH_TIMEOUT_MS: u64 = 10_000;

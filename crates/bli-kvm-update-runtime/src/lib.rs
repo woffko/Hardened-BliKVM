@@ -6,9 +6,11 @@ mod kernel;
 pub mod native_execution;
 pub mod native_identity;
 pub mod native_ipc;
+pub mod native_selection;
 pub mod owner_readiness;
 pub mod process_identity;
 pub mod proxy_readiness;
+pub mod slot_archive;
 mod supervisor;
 pub mod web_probe;
 
