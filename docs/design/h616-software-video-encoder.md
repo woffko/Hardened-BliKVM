@@ -85,5 +85,25 @@ Per-frame stage times at 720p: JPEG decode 14 ms, conversion 9 ms, VP8 encode
 23 ms. Peak SoC temperature during the runs was 69 C. Defaults: 720p capture at
 full size, or 1080p capture halved. Full 1080p VP8 is not offered.
 
-Open: Janus streaming mount and authenticated signaling through the server,
-browser player, systemd unit with CPU quota, and acceptance with real capture.
+Signaling and deployment (host-complete, not yet deployed):
+
+- `/api/stream/webrtc` is an authenticated, origin-checked WebSocket with a
+  closed offer/answer/candidate protocol. The server alone talks to the
+  distribution Janus 0.11 over its loopback WebSocket (one session and
+  streaming handle per viewer, mountpoint 1, keepalive, destroy on exit, two
+  viewers at most). The route answers only with `BLI_KVM_JANUS_WS` set to a
+  loopback address, and only then is `web_rtc_janus` advertised; MJPEG stays
+  preferred. The GUI offers "VP8 (WebRTC)".
+- `packaging/janus/` enables only the streaming plugin and the loopback
+  WebSocket transport, no admin API, host candidates only, RTP ports
+  20000-20099 for media.
+- `hardened-blikvm-janus.service` and `hardened-blikvm-video-encoder.service`
+  run as dynamic users; the encoder has loopback-only networking and
+  `CPUQuota=250%`.
+- `tools/device/deploy_vp8.sh install|remove` installs the encoder binary,
+  Janus configuration, units and the server drop-in.
+
+Open: deployment needs the application slot built from current source (the
+installed server predates the signaling route); LAN firewall allowance for the
+WebRTC media ports; acceptance with real capture on desktop and mobile
+browsers, glass-to-glass latency and MJPEG/VP8 switching.
