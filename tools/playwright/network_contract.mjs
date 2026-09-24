@@ -400,6 +400,9 @@ try {
           .waitFor();
         await page.getByRole("button", { name: "Cancel", exact: true }).click();
       }
+      // The joined network appears after the follow-up status refresh.
+      if (applied)
+        await page.getByText("fixture-network", { exact: true }).waitFor();
       assert.equal(
         await page.getByText("fixture-network", { exact: true }).count(),
         applied ? 1 : 0,

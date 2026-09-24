@@ -63,6 +63,7 @@ sh -n scripts/check.sh
 sh -n scripts/rust-lld-linker.sh
 sh -n scripts/rustc-remap-wrapper.sh
 sh -n scripts/verify-systemd-units.sh
+python3 tools/render_native_profile.py --check
 sh -n scripts/verify-aarch64-elf.sh
 
 scripts/check-source-boundary.sh
