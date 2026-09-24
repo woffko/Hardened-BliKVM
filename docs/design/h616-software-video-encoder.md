@@ -112,8 +112,7 @@ configuration file and restricts binds to the signaling port and media range.
 
 Open: deployment needs the application slot built from current source (the
 installed server predates the signaling route); the Restricted and Paranoid
-firewall modes accept only TCP 22/HTTPS from local networks, so the rule
-generator and the nft observation verifier need an opt-in local-network UDP
-allowance for the Janus media range (20000-20099) before VP8 works in those
-modes; acceptance with real capture on desktop and mobile
+firewall modes need `webrtcMedia: [20000, 20099]` in the reviewed firewall
+configuration (host-implemented and checked against the device's nft) before
+VP8 works in those modes; acceptance with real capture on desktop and mobile
 browsers, glass-to-glass latency and MJPEG/VP8 switching.
