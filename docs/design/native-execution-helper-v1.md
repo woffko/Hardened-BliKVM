@@ -192,3 +192,32 @@ Hashing the updater file stays a consistency check, as explained above.
   `SelectionLedgerStore`, writes the ledger before the protected `current`
   link and replays idempotently after a crash between the two. Tests use
   unprivileged fixtures; a root-owned deployment is not yet tested.
+- Slice 3: `update-runtime::native_exec_server` implements the bounded session
+  (quiescence before `Select`, selection before `Start`, identities with the
+  signed role digest, request budget and deadline) and `serve_connection`
+  with peer UID authentication. `SystemdExecutionBackend` runs the closed unit
+  operations and the existing readiness probes as root; the next session
+  cancels and re-observes jobs queued by a disconnected coordinator.
+- Slice 4: `update-runtime::native_exec_client::ExecutionClient` implements the
+  native controller traits over one session and never replays an unanswered
+  request. Native flows call `prepare` before disruption and `select` after
+  observed quiescence.
+- Slice 5: `bli-kvm-update-exec-helper` loads a protected root-owned
+  configuration and refuses foreign peers before opening the store.
+  Supervisor commands `migrate-native-idle` and `boot-native`, and
+  `activation-socket --native-profile` for end-to-end admission and
+  confirmation, use the helper at its fixed socket. The server requests
+  admission only with `BLI_KVM_UPDATE_NATIVE_ADMISSION=1`. Native units are
+  rendered by `tools/render_native_profile.py` and verified in their own
+  synthetic systemd root; the update package 0.1.0~dev11 installs the helper
+  units disabled and ships the replacements as examples.
+
+### Deployment prerequisites (not done)
+
+- Root-owned `/etc/hardened-blikvm/exec-helper.json` with the trust key, the
+  coordinator UID, the updater slot root actually used on the device
+  (`slots-v2`), static sequences and reviewed board requirements.
+- Explicit `migrate-native-idle` on the device journal, which is a durable
+  schema change; installing the native replacements and disabling the legacy
+  recover/watchdog/confirm/apply units; a rollback plan to the legacy profile.
+- These steps change the running device and need separate operator approval.
