@@ -94,6 +94,28 @@ assemble() {
     rm -f "$staging/var/lib/dbus/machine-id"
     find "$staging/var/log" -type f -exec truncate -s 0 {} +
     rm -rf "$staging/var/lib/hardened-blikvm-exec"/* "$staging/var/lib/hardened-blikvm-exec-ledger"/*
+    # Device state that identifies or authenticates this board: web account
+    # and backups, Tailscale node keys, NetworkManager secret and leases, the
+    # entropy seed and old deployment copies. First Setup recreates the account.
+    rm -rf "$staging/var/lib/hardened-blikvm"/* "$staging/var/lib/tailscale"/* \
+      "$staging/var/lib/NetworkManager/secret_key" "$staging"/var/lib/NetworkManager/*.lease \
+      "$staging/var/lib/NetworkManager/seen-bssids" "$staging/var/lib/NetworkManager/timestamps" \
+      "$staging/var/lib/systemd/random-seed" "$staging/var/lib/systemd/credential.secret" \
+      "$staging"/var/lib/hardened-blikvm-gadget/deploy-* "$staging/var/lib/hardened-blikvm-gadget/gate"
+    # Refuse to build an image that still carries a private key or known
+    # per-device state anywhere outside documentation.
+    if grep -rlI --exclude-dir=doc --exclude-dir=man "BEGIN [A-Z ]*PRIVATE KEY" \
+        "$staging/etc" "$staging/var" "$staging/root" "$staging/home" 2>/dev/null | grep -q .; then
+      echo "a private key remains in the root filesystem" >&2
+      exit 1
+    fi
+    for leaked in var/lib/tailscale/tailscaled.state var/lib/hardened-blikvm/account.json \
+      etc/hardened-blikvm/tls.key etc/kvmd/htpasswd var/lib/NetworkManager/secret_key; do
+      if [ -e "$staging/$leaked" ]; then
+        echo "per-device secret remains: $leaked" >&2
+        exit 1
+      fi
+    done
     install -d -m 0700 -o 0 -g 0 "$staging/root"
     install -d -m 0755 "$staging/var/log/journal"
     # Default credentials follow the Armbian convention: root/1234, expired, so
