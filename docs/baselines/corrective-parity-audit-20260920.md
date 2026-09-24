@@ -28,6 +28,26 @@ open gate.
 
 ## Corrective requirement matrix
 
+Checkpoint 2026-09-24 (late). Native admission now runs end to end through
+`activation-socket --native-profile` and the root helper; the server requests
+admission only in the rendered native units and the GUI accepts the
+`prepared` phase. Update package 0.1.0~dev11 ships the helper units disabled.
+Two independent cold aarch64 builds of the prototype bundle from committed
+source `8a43cfa` produced byte-identical archives
+(`f3ba8b839d33a196170cbdb05453cb5e64fd182d6f1cd1af726b883ab992f8fe`, 116
+members); an earlier pair from `ff0bc68` was also identical. The `/mnt/d`
+volume is currently mounted without Unix permission metadata, so bundle
+outputs were staged on the WSL filesystem while build caches stayed on D:.
+Full `scripts/check.sh` passed on `8b57b00` (exit 0, 177 test result groups).
+
+P4: the vendor LIBX264-VIDEO source remains unavailable. Read-only device
+inspection found the cedrus driver decode-only. A bounded synthetic encoder
+benchmark on the device selected VP8 at 720p as the royalty-free software
+path and rejected AV1 and VP9 (`docs/design/h616-software-video-encoder.md`).
+The codec-independent pipeline core (frame gate, latest-frame slot, RFC 7741
+packetizer) is implemented; the libvpx-based encoder stage is not built yet
+because compiling downloaded third-party C sources awaits operator approval.
+
 Native execution helper slices 3 to 5 are implemented on the host: the bounded
 helper session server with peer UID authentication and a production systemd
 backend (queued jobs of a disconnected coordinator are cancelled and
