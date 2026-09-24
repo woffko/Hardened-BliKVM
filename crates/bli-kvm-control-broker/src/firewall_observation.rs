@@ -35,6 +35,13 @@ fn normalize(value: &mut Value) {
     }
 }
 
+fn v4_local() -> Value {
+    json!({"set":[{"prefix":{"addr":"10.0.0.0","len":8}}, {"prefix":{"addr":"172.16.0.0","len":12}}, {"prefix":{"addr":"192.168.0.0","len":16}}, {"prefix":{"addr":"169.254.0.0","len":16}}]})
+}
+fn v6_local() -> Value {
+    json!({"set":[{"prefix":{"addr":"fc00::","len":7}}, {"prefix":{"addr":"fe80::","len":10}}]})
+}
+
 fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Vec<Value> {
     let restricted = mode.requires_confirmation();
     let mut input = vec![
@@ -75,9 +82,7 @@ fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Vec<Value> {
             }
             rules.push(rule(chain, vec![payload("icmpv6", "type", json!({"set":["destination-unreachable", "packet-too-big", "time-exceeded", "parameter-problem", "nd-router-solicit", "nd-router-advert", "nd-neighbor-solicit", "nd-neighbor-advert"]}))], "accept"));
         }
-        let v4 = json!({"set":[{"prefix":{"addr":"10.0.0.0","len":8}}, {"prefix":{"addr":"172.16.0.0","len":12}}, {"prefix":{"addr":"192.168.0.0","len":16}}, {"prefix":{"addr":"169.254.0.0","len":16}}]});
-        let v6 = json!({"set":[{"prefix":{"addr":"fc00::","len":7}}, {"prefix":{"addr":"fe80::","len":10}}]});
-        for (protocol, addresses) in [("ip", v4), ("ip6", v6)] {
+        for (protocol, addresses) in [("ip", v4_local()), ("ip6", v6_local())] {
             let mut expr = vec![payload(protocol, "saddr", addresses)];
             if mode == FirewallMode::Restricted {
                 expr.push(payload(
@@ -91,6 +96,20 @@ fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Vec<Value> {
             }
             expr.push(state(json!("new")));
             input.push(rule("input", expr, "accept"));
+        }
+        if restricted {
+            if let Some((first, last)) = ports.webrtc_media {
+                for (protocol, addresses) in [("ip", v4_local()), ("ip6", v6_local())] {
+                    input.push(rule(
+                        "input",
+                        vec![
+                            payload(protocol, "saddr", addresses),
+                            payload("udp", "dport", json!({"range": [first, last]})),
+                        ],
+                        "accept",
+                    ));
+                }
+            }
         }
     }
     if mode == FirewallMode::Restricted {
@@ -130,10 +149,46 @@ fn expected_rules(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Vec<Value> {
     input
 }
 
+/// Where the owned table's mode marker was read. nft 1.0.2 (Ubuntu 22.04)
+/// stores table comments but omits them from `-j` output; the marker is then
+/// read from the text listing and the JSON table must carry no comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentSource {
+    Json,
+    Text,
+}
+
+/// Owned-table comment from `nft list table inet hardened-blikvm`, bounded
+/// and exact: the header line must be followed directly by the comment.
+pub fn text_table_comment(listing: &str) -> Option<&str> {
+    if listing.len() > 64 * 1024 {
+        return None;
+    }
+    let mut lines = listing.lines();
+    if lines.next()? != "table inet hardened-blikvm {" {
+        return None;
+    }
+    let comment = lines
+        .next()?
+        .trim()
+        .strip_prefix("comment \"")?
+        .strip_suffix('"')?;
+    (!comment.contains('"') && !comment.contains('\\')).then_some(comment)
+}
+
 pub fn verify(
     document: &str,
     mode: FirewallMode,
     ports: &FirewallPorts<'_>,
+) -> Result<u64, &'static str> {
+    verify_with(document, mode, ports, CommentSource::Json)
+}
+
+pub fn verify_with(
+    document: &str,
+    mode: FirewallMode,
+    ports: &FirewallPorts<'_>,
+    source: CommentSource,
 ) -> Result<u64, &'static str> {
     render(mode, ports)?;
     if document.len() > 64 * 1024 {
@@ -167,10 +222,13 @@ pub fn verify(
                 .ok_or("invalid nft handle")?;
             match kind.as_str() {
                 "table" => {
-                    if handle.is_some()
-                        || Value::Object(body)
-                            != json!({"family":"inet","name":"hardened-blikvm","comment":format!("hardened-blikvm-owner-v2:{}",mode.as_str())})
-                    {
+                    let expected = match source {
+                        CommentSource::Json => {
+                            json!({"family":"inet","name":"hardened-blikvm","comment":format!("hardened-blikvm-owner-v2:{}",mode.as_str())})
+                        }
+                        CommentSource::Text => json!({"family":"inet","name":"hardened-blikvm"}),
+                    };
+                    if handle.is_some() || Value::Object(body) != expected {
                         return Err("wrong nft table");
                     }
                     handle = Some(observed_handle);
@@ -193,4 +251,99 @@ pub fn verify(
         return Err("nft rule content mismatch");
     }
     handle.ok_or("missing owned table")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn observed(mode: FirewallMode, ports: &FirewallPorts<'_>) -> String {
+        let mut nftables = vec![
+            json!({"metainfo": {"json_schema_version": 1}}),
+            json!({"table": {"family": "inet", "name": "hardened-blikvm", "handle": 7, "comment": format!("hardened-blikvm-owner-v2:{}", mode.as_str())}}),
+        ];
+        for chain in ["input", "forward", "output"] {
+            let policy = if mode == FirewallMode::Baseline
+                || (chain == "output" && !mode.requires_confirmation())
+            {
+                "accept"
+            } else {
+                "drop"
+            };
+            nftables.push(json!({"chain": {"family": "inet", "table": "hardened-blikvm", "name": chain, "handle": 1, "type": "filter", "hook": chain, "prio": 0, "policy": policy}}));
+        }
+        for (index, mut rule) in expected_rules(mode, ports).into_iter().enumerate() {
+            rule["handle"] = json!(index + 10);
+            nftables.push(json!({ "rule": rule }));
+        }
+        json!({ "nftables": nftables }).to_string()
+    }
+
+    fn ports(webrtc_media: Option<(u16, u16)>) -> FirewallPorts<'static> {
+        FirewallPorts {
+            https_enabled: true,
+            https_port: 8443,
+            syslog_port: 1514,
+            backend_isolation: None,
+            webrtc_media,
+        }
+    }
+
+    #[test]
+    fn text_listing_comment_is_parsed_exactly() {
+        let listing = "table inet hardened-blikvm {\n\tcomment \"hardened-blikvm-owner-v2:paranoid\"\n\tchain input {\n";
+        assert_eq!(
+            text_table_comment(listing),
+            Some("hardened-blikvm-owner-v2:paranoid")
+        );
+        for invalid in [
+            "table inet other {\n\tcomment \"x\"\n",
+            "table inet hardened-blikvm {\n\tchain input {\n",
+            "table inet hardened-blikvm {\n\tcomment \"a\"b\"\n",
+            "table inet hardened-blikvm {\n\tcomment \"unterminated\n",
+            "",
+        ] {
+            assert_eq!(text_table_comment(invalid), None, "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn nft_1_0_2_json_without_table_comment_needs_the_text_source() {
+        // nft 1.0.2 omits the table comment from JSON; emulate that output.
+        let config = ports(None);
+        let mode = FirewallMode::Restricted;
+        let mut document: Value = serde_json::from_str(&observed(mode, &config)).unwrap();
+        document["nftables"][1]["table"]
+            .as_object_mut()
+            .unwrap()
+            .remove("comment");
+        let document = document.to_string();
+        assert!(verify(&document, mode, &config).is_err());
+        assert_eq!(
+            verify_with(&document, mode, &config, CommentSource::Text),
+            Ok(7)
+        );
+        // A JSON comment must not be present when the text source is used.
+        assert!(verify_with(&observed(mode, &config), mode, &config, CommentSource::Text).is_err());
+    }
+
+    #[test]
+    fn webrtc_media_is_verified_exactly_in_restrictive_modes_only() {
+        let media = ports(Some((20000, 20099)));
+        for mode in [FirewallMode::Restricted, FirewallMode::Paranoid] {
+            let document = observed(mode, &media);
+            assert!(document.contains("\"range\":[20000,20099]"));
+            assert_eq!(verify(&document, mode, &media), Ok(7));
+            // The same ruleset without the allowance, or with another range,
+            // does not match the configured policy.
+            assert!(verify(&document, mode, &ports(None)).is_err());
+            assert!(verify(&document, mode, &ports(Some((20000, 20100)))).is_err());
+            assert!(verify(&observed(mode, &ports(None)), mode, &media).is_err());
+        }
+        for mode in [FirewallMode::Baseline, FirewallMode::Moderate] {
+            let document = observed(mode, &media);
+            assert!(!document.contains("range"));
+            assert_eq!(verify(&document, mode, &media), Ok(7));
+        }
+    }
 }

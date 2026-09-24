@@ -14,6 +14,9 @@ pub struct FirewallPorts<'a> {
     pub https_port: u16,
     pub syslog_port: u16,
     pub backend_isolation: Option<BackendIsolation<'a>>,
+    /// Inclusive UDP range for WebRTC media (Janus), accepted only from local
+    /// networks in the restrictive modes; `None` keeps the reference policy.
+    pub webrtc_media: Option<(u16, u16)>,
 }
 
 const LOCAL_V4: &str = "{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }";
@@ -26,6 +29,12 @@ pub fn render(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Result<String, &
     }
     if mode.requires_confirmation() && !ports.https_enabled {
         return Err("HTTPS is required for restrictive firewall modes");
+    }
+    if ports
+        .webrtc_media
+        .is_some_and(|(first, last)| first < 1024 || first > last || last - first > 1000)
+    {
+        return Err("invalid WebRTC media range");
     }
     if let Some(isolation) = &ports.backend_isolation {
         if isolation.source_port == 0
@@ -59,6 +68,11 @@ pub fn render(mode: FirewallMode, ports: &FirewallPorts<'_>) -> Result<String, &
             String::new()
         };
         input.push_str(&format!("ip saddr {LOCAL_V4} {accepted_ports}ct state new accept\nip6 saddr {LOCAL_V6} {accepted_ports}ct state new accept\n"));
+        if restricted {
+            if let Some((first, last)) = ports.webrtc_media {
+                input.push_str(&format!("ip saddr {LOCAL_V4} udp dport {first}-{last} accept\nip6 saddr {LOCAL_V6} udp dport {first}-{last} accept\n"));
+            }
+        }
     }
     if mode == FirewallMode::Restricted {
         output.push_str(&format!(
@@ -92,6 +106,27 @@ mod tests {
             https_port: 8443,
             syslog_port: 1514,
             backend_isolation: None,
+            webrtc_media: None,
+        }
+    }
+
+    #[test]
+    fn webrtc_media_is_local_only_restrictive_only_and_bounded() {
+        let mut config = ports();
+        config.webrtc_media = Some((20000, 20099));
+        for mode in [FirewallMode::Restricted, FirewallMode::Paranoid] {
+            let rules = render(mode, &config).unwrap();
+            assert!(rules.contains(&format!("ip saddr {LOCAL_V4} udp dport 20000-20099 accept")));
+            assert!(rules.contains(&format!(
+                "ip6 saddr {LOCAL_V6} udp dport 20000-20099 accept"
+            )));
+        }
+        for mode in [FirewallMode::Baseline, FirewallMode::Moderate] {
+            assert!(!render(mode, &config).unwrap().contains("20000-20099"));
+        }
+        for invalid in [(1000, 1100), (20100, 20000), (20000, 21001)] {
+            config.webrtc_media = Some(invalid);
+            assert!(render(FirewallMode::Restricted, &config).is_err());
         }
     }
 

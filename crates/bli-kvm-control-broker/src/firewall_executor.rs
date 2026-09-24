@@ -19,6 +19,8 @@ pub struct ModeConfiguration {
     pub https_port: u16,
     pub syslog_port: u16,
     pub backend_isolation: Option<(String, u16)>,
+    #[serde(default)]
+    pub webrtc_media: Option<(u16, u16)>,
 }
 
 impl ModeConfiguration {
@@ -69,6 +71,7 @@ impl ModeConfiguration {
                     interface,
                     source_port: *source_port,
                 }),
+            webrtc_media: self.webrtc_media,
         }
     }
 }
@@ -208,7 +211,22 @@ impl NftModeExecutor {
                 if observed.is_some() {
                     return Err("duplicate owned table".into());
                 }
-                let mode = match table["comment"].as_str() {
+                let (comment, source) = match table.get("comment") {
+                    Some(comment) => (
+                        comment.as_str().map(str::to_owned),
+                        firewall_observation::CommentSource::Json,
+                    ),
+                    None => {
+                        let listing = self
+                            .runner
+                            .run(NFT, &["list", "table", "inet", "hardened-blikvm"])?;
+                        (
+                            firewall_observation::text_table_comment(&listing).map(str::to_owned),
+                            firewall_observation::CommentSource::Text,
+                        )
+                    }
+                };
+                let mode = match comment.as_deref() {
                     Some("hardened-blikvm-owner-v2:baseline") => FirewallMode::Baseline,
                     Some("hardened-blikvm-owner-v2:moderate") => FirewallMode::Moderate,
                     Some("hardened-blikvm-owner-v2:restricted") => FirewallMode::Restricted,
@@ -219,19 +237,24 @@ impl NftModeExecutor {
                     .as_u64()
                     .filter(|handle| *handle > 0)
                     .ok_or("invalid table handle")?;
-                observed = Some((mode, handle));
+                observed = Some((mode, handle, source));
             }
         }
-        if let Some((mode, handle)) = observed {
+        if let Some((mode, handle, source)) = observed {
             let document = self
                 .runner
                 .run(NFT, &["-j", "list", "table", "inet", "hardened-blikvm"])?;
-            if firewall_observation::verify(&document, mode, &self.configuration.ports())? != handle
+            if firewall_observation::verify_with(
+                &document,
+                mode,
+                &self.configuration.ports(),
+                source,
+            )? != handle
             {
                 return Err("firewall changed during observation".into());
             }
         }
-        Ok(observed)
+        Ok(observed.map(|(mode, handle, _)| (mode, handle)))
     }
 }
 
@@ -299,6 +322,7 @@ mod tests {
             https_port: 8443,
             syslog_port: 1514,
             backend_isolation: None,
+            webrtc_media: None,
             https_probe: None,
         }
     }

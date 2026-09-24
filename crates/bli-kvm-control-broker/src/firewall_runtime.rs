@@ -136,6 +136,7 @@ mod tests {
             https_port: 8443,
             syslog_port: 1514,
             backend_isolation: None,
+            webrtc_media: None,
         };
         ModeRuntime::open(directory.path().into(), configuration, [3; 16]).unwrap();
         let pending = PendingChange::prepare(
@@ -168,6 +169,7 @@ mod tests {
             https_port: 8443,
             syslog_port: 1514,
             backend_isolation: None,
+            webrtc_media: None,
         };
         let mut runtime =
             ModeRuntime::open(directory.path().into(), configuration, [3; 16]).unwrap();

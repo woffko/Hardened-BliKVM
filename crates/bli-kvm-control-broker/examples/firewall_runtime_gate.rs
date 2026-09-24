@@ -61,6 +61,7 @@ fn main() -> Result<(), String> {
         https_port: 8443,
         syslog_port: 1514,
         backend_isolation: None,
+        webrtc_media: None,
     };
     let executor = NftModeExecutor::open_frozen(
         Box::new(DirectRunner(args[1].clone())),

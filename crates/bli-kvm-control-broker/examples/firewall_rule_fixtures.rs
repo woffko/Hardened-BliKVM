@@ -3,6 +3,7 @@ use bli_kvm_control_broker::firewall_rules::{FirewallMode, FirewallPorts, render
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let verify = std::env::args().nth(2).as_deref() == Some("--verify");
+    // Usage: firewall_rule_fixtures DIR [--verify|--render] [WEBRTC_RANGE]
     let directory = std::path::PathBuf::from(
         std::env::args()
             .nth(1)
@@ -16,6 +17,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         https_port: 8443,
         syslog_port: 1514,
         backend_isolation: None,
+        // Optional third argument: an inclusive WebRTC media range such as
+        // 20000-20099, to exercise that allowance against the real nft.
+        webrtc_media: match std::env::args().nth(3) {
+            None => None,
+            Some(range) => {
+                let (first, last) = range.split_once('-').ok_or("range must be FIRST-LAST")?;
+                Some((first.parse()?, last.parse()?))
+            }
+        },
     };
     for mode in [
         FirewallMode::Baseline,
@@ -26,7 +36,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if verify {
             let observed =
                 std::fs::read_to_string(directory.join(format!("{}.json", mode.as_str())))?;
-            bli_kvm_control_broker::firewall_observation::verify(&observed, mode, &ports)?;
+            // nft 1.0.2 omits the table comment from JSON; the mode then comes
+            // from the fixture name, as the executor reads it from the listing.
+            let source = if observed.contains("\"comment\"") {
+                bli_kvm_control_broker::firewall_observation::CommentSource::Json
+            } else {
+                bli_kvm_control_broker::firewall_observation::CommentSource::Text
+            };
+            bli_kvm_control_broker::firewall_observation::verify_with(
+                &observed, mode, &ports, source,
+            )?;
             let mut altered: serde_json::Value = serde_json::from_str(&observed)?;
             let rule = altered["nftables"]
                 .as_array_mut()
@@ -35,10 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .find(|entry| entry.get("rule").is_some())
                 .ok_or("missing rule")?;
             rule["rule"]["expr"] = serde_json::json!([{"accept": null}]);
-            if bli_kvm_control_broker::firewall_observation::verify(
+            if bli_kvm_control_broker::firewall_observation::verify_with(
                 &altered.to_string(),
                 mode,
                 &ports,
+                source,
             )
             .is_ok()
             {

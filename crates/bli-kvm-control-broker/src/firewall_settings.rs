@@ -345,9 +345,17 @@ impl FirewallState {
             {
                 continue;
             }
-            if owned.is_some()
-                || table.get("comment").and_then(serde_json::Value::as_str) != Some(OWNER_COMMENT)
-            {
+            let comment = match table.get("comment") {
+                Some(comment) => comment.as_str().map(str::to_owned),
+                // nft 1.0.2 omits table comments from JSON; read the listing.
+                None => {
+                    let listing = self
+                        .runner
+                        .run(NFT, &["list", "table", "inet", "hardened-blikvm"])?;
+                    crate::firewall_observation::text_table_comment(&listing).map(str::to_owned)
+                }
+            };
+            if owned.is_some() || comment.as_deref() != Some(OWNER_COMMENT) {
                 return Err("conflicting firewall table".into());
             }
             owned = Some(

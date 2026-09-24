@@ -28,6 +28,18 @@ open gate.
 
 ## Corrective requirement matrix
 
+P3 firewall finding 2026-09-24. Loading the generated rules into the board's
+real nft 1.0.2 inside a fresh network namespace (the device firewall was not
+touched) showed that this nft stores the owned table's mode comment but omits
+it from `-j` JSON. Both the mode executor and the owner check would therefore
+have rejected their own table on the target. They now read the marker from the
+text listing when JSON lacks it and then require a comment-free JSON table;
+the device JSON for all four modes verifies, and an over-permissive rule is
+still rejected. The restrictive modes gained an opt-in, local-network-only UDP
+allowance for the Janus WebRTC media range; the device nft accepted it and
+reports it as `{"range": [20000, 20099]}`, which the verifier now requires
+exactly. Deployment and reachability tests of the firewall modes remain open.
+
 P6 image checkpoint 2026-09-24. `tools/image/build_sd_image.sh` builds a
 development SD image from the running test board: one read-only SSH session
 streams the raw SPL/U-Boot area (sectors 1-2047, `eGON.BT0` verified at 8 KiB)
