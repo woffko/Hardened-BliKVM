@@ -33,7 +33,7 @@ class SourceBoundaryTest(unittest.TestCase):
             RULES: next(line for line in (ROOT / RULES).read_text().splitlines()
                         if line.startswith("const LOCAL_V4:")),
             OBSERVATION: next(line for line in (ROOT / OBSERVATION).read_text().splitlines()
-                              if "let v4 = json!" in line),
+                              if line.startswith("    json!({\"set\":[{\"prefix\":{\"addr\":\"10.")),
         }
 
     def test_normative_definitions_pass(self) -> None:
