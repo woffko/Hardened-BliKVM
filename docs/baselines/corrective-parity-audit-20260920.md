@@ -28,6 +28,23 @@ open gate.
 
 ## Corrective requirement matrix
 
+P6 image checkpoint 2026-09-24. `tools/image/build_sd_image.sh` builds a
+development SD image from the running test board: one read-only SSH session
+streams the raw SPL/U-Boot area (sectors 1-2047, `eGON.BT0` verified at 8 KiB)
+and a root archive without known secrets; assembly under fakeroot removes
+per-device state, fails on any leftover private key, and writes a 28 GiB MBR
+image (12 GiB root, 14 GiB data at /mnt, MSD remainder) plus the p1 root
+filesystem as the RAW system payload. A first-boot unit regenerates SSH host
+keys, TLS and snakeoil keys, the USB gadget serial and the machine id; root
+uses the expired Armbian default and First Setup recreates the web account.
+The first assembly was discarded after inspection found the web account,
+its backups (including a KVMD-era TLS key), Tailscale node state and the
+NetworkManager secret still present; the builder now removes and checks them.
+The image is not reproducible from source (it is derived from the board) and
+is not release-accepted; boot and RAW recovery need the separate card.
+
+Full `scripts/check.sh` passed on `315ec75` (exit 0, 179 test result groups).
+
 Device checkpoint 2026-09-24 (native profile, prepare phase). With operator
 approval, `tools/device/deploy_native_profile.sh prepare` ran on the H616 test
 board: state, units and configuration were backed up to
