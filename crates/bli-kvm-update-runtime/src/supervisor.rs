@@ -376,6 +376,7 @@ impl UpdateSupervisor {
             }
             controller.validate_start(unit)?;
         }
+        controller.prepare(target_slot_id)?;
         if std::time::Instant::now() >= deadline {
             return Err(CompositionError::Deadline.into());
         }
@@ -608,6 +609,7 @@ impl UpdateSupervisor {
             }
             controller.validate_start(unit)?;
         }
+        controller.prepare(context.slot_id())?;
         let mut stop_error = None;
         let restored = self
             .manager
@@ -746,6 +748,7 @@ impl UpdateSupervisor {
             }
             controller.validate_start(unit)?;
         }
+        controller.prepare(context.slot_id())?;
         if std::time::Instant::now() >= deadline {
             return Err(CompositionError::Deadline.into());
         }
@@ -809,6 +812,7 @@ impl UpdateSupervisor {
             }
             controller.validate_start(unit)?;
         }
+        controller.prepare(context.slot_id())?;
         if std::time::Instant::now() >= deadline {
             return Err(CompositionError::Deadline.into());
         }

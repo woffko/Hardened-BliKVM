@@ -55,6 +55,19 @@ pub trait NativeStartController: NativeIdentityController {
     /// Bound dispatch by the original transaction deadline. Success is not
     /// readiness; failed dispatch may still have queued a systemd job.
     fn start(&mut self, unit: NativeStartUnit) -> Result<(), CompositionError>;
+    /// Make `slot_id` executable before any service is disrupted. A privileged
+    /// execution boundary copies and verifies it here; a controller that runs
+    /// the durable selection in place has nothing to do.
+    fn prepare(&mut self, slot_id: &str) -> Result<(), CompositionError> {
+        let _ = slot_id;
+        Ok(())
+    }
+    /// Bind execution to `slot_id` after every managed unit was observed
+    /// stopped and before the first start of this attempt.
+    fn select(&mut self, slot_id: &str) -> Result<(), CompositionError> {
+        let _ = slot_id;
+        Ok(())
+    }
 }
 
 impl NativeStartController for SystemdController {
@@ -258,6 +271,8 @@ impl<'manager> NativeSlotIdentity<'manager> {
                 return Err(CompositionError::NotStopped(unit));
             }
         }
+        check_deadline()?;
+        controller.select(self.slot_id())?;
         for (unit, path) in [
             NativeStartUnit::Owner,
             NativeStartUnit::VideoProxy,

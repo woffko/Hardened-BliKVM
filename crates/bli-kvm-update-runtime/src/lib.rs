@@ -3,6 +3,7 @@ mod challenge;
 pub mod composition;
 pub mod composition_systemd;
 mod kernel;
+pub mod native_exec_client;
 pub mod native_exec_server;
 pub mod native_execution;
 pub mod native_identity;

@@ -537,19 +537,18 @@ pub fn serve_connection<'store, B: ExecutionBackend>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod testing {
     use std::{cell::RefCell, os::unix::fs::MetadataExt, rc::Rc};
 
-    use bli_kvm_update_protocol::execution::{decode_response, encode_request};
     use bli_kvm_update_stager::{ApplicationSlotStager, StageQuota};
 
     use super::*;
     use crate::native_execution::{ExecutionPolicy, NativeExecutionStore};
 
     #[derive(Clone, Default)]
-    struct Fake {
-        calls: Rc<RefCell<Vec<String>>>,
-        refuse_reconcile: bool,
+    pub(crate) struct Fake {
+        pub(crate) calls: Rc<RefCell<Vec<String>>>,
+        pub(crate) refuse_reconcile: bool,
     }
 
     impl ExecutionBackend for Fake {
@@ -605,16 +604,16 @@ mod tests {
         }
     }
 
-    struct Fixture {
-        updater: tempfile::TempDir,
-        _protected: tempfile::TempDir,
-        _ledger_root: tempfile::TempDir,
-        store: NativeExecutionStore,
-        ledger: SelectionLedgerStore,
-        slot_id: String,
+    pub(crate) struct Fixture {
+        pub(crate) updater: tempfile::TempDir,
+        pub(crate) _protected: tempfile::TempDir,
+        pub(crate) _ledger_root: tempfile::TempDir,
+        pub(crate) store: NativeExecutionStore,
+        pub(crate) ledger: SelectionLedgerStore,
+        pub(crate) slot_id: String,
     }
 
-    fn fixture() -> Fixture {
+    pub(crate) fn fixture() -> Fixture {
         let updater = tempfile::tempdir().unwrap();
         let (trust, _, archive) = crate::slot_archive::fixture::signed_archive(15, 1);
         let slot_id = ApplicationSlotStager::open(updater.path())
@@ -646,6 +645,18 @@ mod tests {
             slot_id,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::MetadataExt;
+
+    use bli_kvm_update_protocol::execution::{decode_response, encode_request};
+
+    use super::{
+        testing::{Fake, Fixture, fixture},
+        *,
+    };
 
     fn deadline() -> Instant {
         Instant::now() + Duration::from_secs(30)
