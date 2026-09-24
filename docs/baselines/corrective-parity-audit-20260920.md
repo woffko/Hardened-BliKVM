@@ -28,6 +28,21 @@ open gate.
 
 ## Corrective requirement matrix
 
+Native execution helper slices 3 to 5 are implemented on the host: the bounded
+helper session server with peer UID authentication and a production systemd
+backend (queued jobs of a disconnected coordinator are cancelled and
+re-observed by the next session), the `bli-kvm-update-exec-helper` binary with
+a protected root-owned configuration, the coordinator `ExecutionClient` that
+binds reported identities to the signed digest of its own verified slot file,
+explicit `migrate-native-idle` and helper-driven `boot-native` supervisor
+commands, and native-profile units. The managed native units are rendered from
+the base units by `tools/render_native_profile.py`; they execute the protected
+copy, drop legacy recover/confirm dependencies, the candidate health reporter
+and install links, and verify in their own synthetic systemd root. Full
+`scripts/check.sh` passed on commit `072a3be` (exit 0, 176 test result groups).
+No package, device installation or native activation-socket path exists yet;
+these are host foundations, not device or release evidence.
+
 Native execution helper slices 1 and 2 are implemented on the host, as recorded
 in `docs/design/native-execution-helper-v1.md`: the closed execution protocol,
 canonical archive rebuilding from an untrusted updater slot, protected
