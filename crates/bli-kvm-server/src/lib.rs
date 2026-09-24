@@ -65,6 +65,9 @@ pub(crate) struct AppState {
     pub update_upload: Option<Arc<UpdateUploadClient>>,
     pub update_http_upload: Arc<tokio::sync::Semaphore>,
     pub update_activation: Option<Arc<UpdateActivationClient>>,
+    /// Native profile: activation is a Prepared admission followed by the
+    /// coordinator's full composition transition, not a legacy apply.
+    pub update_native_admission: bool,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -96,6 +99,8 @@ pub struct ServerOptions {
     /// Explicit operator opt-in for both write clients and the GUI capability.
     /// Requires all three separate IPC paths; does not prove worker liveness.
     pub update_writes_enabled: bool,
+    /// Native update profile; selected by the reviewed native server unit.
+    pub update_native_admission: bool,
     /// Privileged control broker used only for safe-target/focus attestation.
     /// No value keeps the HID focus endpoint unavailable.
     pub control_socket: Option<PathBuf>,
@@ -144,6 +149,7 @@ impl Default for ServerOptions {
             update_upload_socket: None,
             update_activation_socket: None,
             update_writes_enabled: false,
+            update_native_admission: false,
             control_socket: None,
             restricted_controls_enabled: false,
             media_catalog: None,
@@ -279,6 +285,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     let state = AppState {
         capabilities: Arc::new(manifest),
         update_http_upload: Arc::new(tokio::sync::Semaphore::new(1)),
+        update_native_admission: options.update_native_admission,
         update_activation: options
             .update_activation_socket
             .as_ref()
@@ -1003,6 +1010,77 @@ mod tests {
             manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
             "read_write"
         );
+    }
+
+    #[tokio::test]
+    async fn native_profile_activation_sends_admission_and_reports_prepared() {
+        use bli_kvm_update_protocol::{self as protocol, activation as ipc};
+        let root = tempdir().unwrap();
+        let socket = root.path().join("activate.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(root.path().join("upload.sock")),
+            update_activation_socket: Some(socket),
+            update_writes_enabled: true,
+            update_native_admission: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let slot = format!("app-00000000000000000002-{}", "a".repeat(64));
+        let worker = {
+            let slot = slot.clone();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                stream.read_to_end(&mut bytes).await.unwrap();
+                let request = ipc::decode_request(&bytes[4..]).unwrap();
+                assert_eq!(
+                    request.request,
+                    ipc::ActivationRequest::Admit {
+                        slot_id: slot.clone(),
+                        expected_generation: 7
+                    }
+                );
+                let response = ipc::ActivationResponseEnvelope {
+                    schema_version: 1,
+                    request_id: request.request_id,
+                    response: ipc::ActivationResponse::Prepared {
+                        receipt: ipc::PreparedActivationReceipt {
+                            operation_id: "2".repeat(32),
+                            target_slot_id: slot,
+                            prepared_generation: 8,
+                            deadline_monotonic_ms: 90_000,
+                        },
+                    },
+                };
+                stream
+                    .write_all(
+                        &protocol::encode_frame(&ipc::encode_response(&response).unwrap()).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            })
+        };
+        let mut request = json_request(
+            Method::POST,
+            "/api/application-update/activate",
+            serde_json::json!({"slotId": slot, "expectedGeneration": "7"}),
+        );
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let result = json_body(response).await;
+        assert_eq!(result["data"]["phase"], "prepared");
+        assert_eq!(result["data"]["receipt"]["operationId"], "2".repeat(32));
+        assert_eq!(result["data"]["receipt"]["targetSlotId"], slot);
+        worker.await.unwrap();
     }
 
     #[tokio::test]

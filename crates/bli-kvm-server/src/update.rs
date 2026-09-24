@@ -200,39 +200,48 @@ pub(crate) async fn activate(
         return Err(AppError::Unauthorized);
     }
     // No cancellation implies rollback, and no failure authorizes a replay.
-    let receipt = client
-        .activate(&slot_id, generation)
-        .await
-        .map_err(|error| match error {
-            ActivationClientError::Busy
-            | ActivationClientError::Rejected(ActivationErrorCode::Busy) => {
-                AppError::Conflict("another activation is in progress".into())
-            }
-            ActivationClientError::Rejected(ActivationErrorCode::StaleGeneration) => {
-                AppError::Conflict("update state changed; refresh and confirm again".into())
-            }
-            ActivationClientError::Rejected(ActivationErrorCode::AlreadyActive) => {
-                AppError::Conflict("target is already active".into())
-            }
-            ActivationClientError::Rejected(ActivationErrorCode::PendingActivation) => {
-                AppError::Conflict("an activation is awaiting health".into())
-            }
-            ActivationClientError::Rejected(ActivationErrorCode::InvalidTarget) => {
-                AppError::BadRequest("activation target is not eligible".into())
-            }
-            _ => {
-                AppError::ServiceUnavailable("activation outcome unknown; reconcile status".into())
-            }
-        })?;
+    // A native admission receipt precedes quiescence of this very server.
+    let (phase, receipt) = if state.update_native_admission {
+        client.admit(&slot_id, generation).await.map(|receipt| {
+            (
+                "prepared",
+                ActivationReceipt {
+                    operation_id: receipt.operation_id,
+                    target_slot_id: receipt.target_slot_id,
+                },
+            )
+        })
+    } else {
+        client
+            .activate(&slot_id, generation)
+            .await
+            .map(|receipt| ("awaiting_health", receipt))
+    }
+    .map_err(|error| match error {
+        ActivationClientError::Busy
+        | ActivationClientError::Rejected(ActivationErrorCode::Busy) => {
+            AppError::Conflict("another activation is in progress".into())
+        }
+        ActivationClientError::Rejected(ActivationErrorCode::StaleGeneration) => {
+            AppError::Conflict("update state changed; refresh and confirm again".into())
+        }
+        ActivationClientError::Rejected(ActivationErrorCode::AlreadyActive) => {
+            AppError::Conflict("target is already active".into())
+        }
+        ActivationClientError::Rejected(ActivationErrorCode::PendingActivation) => {
+            AppError::Conflict("an activation is awaiting health".into())
+        }
+        ActivationClientError::Rejected(ActivationErrorCode::InvalidTarget) => {
+            AppError::BadRequest("activation target is not eligible".into())
+        }
+        _ => AppError::ServiceUnavailable("activation outcome unknown; reconcile status".into()),
+    })?;
     if !session.is_active() {
         return Err(AppError::Unauthorized);
     }
     Ok((
         axum::http::StatusCode::ACCEPTED,
-        Json(ApiResponse::ok(ActivationView {
-            phase: "awaiting_health",
-            receipt,
-        })),
+        Json(ApiResponse::ok(ActivationView { phase, receipt })),
     ))
 }
 

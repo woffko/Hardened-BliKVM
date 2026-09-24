@@ -147,6 +147,8 @@ systemd-analyze verify --root="$native_root" \
   hardened-blikvm-boardd.service \
   hardened-blikvm-server-current.service \
   hardened-blikvm-server-candidate.service \
+  hardened-blikvm-update-activation.socket \
+  hardened-blikvm-update-activation@.service \
   hardened-blikvm-update-exec.socket \
   hardened-blikvm-update-exec@.service \
   hardened-blikvm-update-native-boot.service

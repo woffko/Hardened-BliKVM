@@ -60,7 +60,7 @@ enum CliCommand {
     Status,
     StatusSocket(String),
     UploadSocket(String, PathBuf),
-    ActivationSocket(String),
+    ActivationSocket(String, bool),
     Stage(PathBuf),
     GarbageCollect(usize),
     Initialize(String),
@@ -152,8 +152,8 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
         upload_socket::serve_stdin(&config_path, peer_user, spool)?;
         return Ok(());
     }
-    if let CliCommand::ActivationSocket(peer_user) = &command {
-        return activation_socket::serve_stdin(&config_path, peer_user);
+    if let CliCommand::ActivationSocket(peer_user, native) = &command {
+        return activation_socket::serve_stdin(&config_path, peer_user, *native);
     }
     let config = load_config(&config_path)?;
     let receipt = match command {
@@ -247,7 +247,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                         CliCommand::Stage(_)
                         | CliCommand::StatusSocket(_)
                         | CliCommand::UploadSocket(_, _)
-                        | CliCommand::ActivationSocket(_)
+                        | CliCommand::ActivationSocket(_, _)
                         | CliCommand::GarbageCollect(_)
                         | CliCommand::InspectRecovery
                         | CliCommand::ValidateConfig => {
@@ -305,7 +305,14 @@ fn parse_arguments(
             if command == "status-socket" {
                 CliCommand::StatusSocket(user)
             } else if command == "activation-socket" {
-                CliCommand::ActivationSocket(user)
+                // Only the native profile unit passes this flag; it has no
+                // legacy OnSuccess apply dispatch and a composition-sized timeout.
+                let native = match arguments.next() {
+                    None => false,
+                    Some(flag) if flag == "--native-profile" => true,
+                    Some(_) => return Err(SupervisorCliError::InvalidArguments),
+                };
+                CliCommand::ActivationSocket(user, native)
             } else {
                 if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--spool-root")) {
                     return Err(SupervisorCliError::InvalidArguments);

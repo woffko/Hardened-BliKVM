@@ -103,6 +103,7 @@ def render() -> dict[str, str]:
         dependency_edits("Requires=", unit_line(text, "Requires="), (RECOVER,)),
         dependency_edits("After=", unit_line(text, "After="), (RECOVER,)),
     ]
+    edits.append(native_admission(text))
     text = apply(name, text, edits)
     rendered[name] = replace_slots(name, text, 4)
 
@@ -119,10 +120,34 @@ def render() -> dict[str, str]:
         ),
         # Native confirmation belongs to the coordinator after full composition health.
         Edit(post + "\n", ""),
+        native_admission(text),
     ]
     text = apply(name, text, edits, keep_install="\n[Install]\n" not in text)
     rendered[name] = replace_slots(name, text, 4)
+
+    name = "hardened-blikvm-update-activation@.service"
+    text = (BASE / name).read_text()
+    rendered[name] = apply(
+        name,
+        text,
+        [
+            # Native success is already a confirmed composition; never
+            # dispatch the legacy apply services after it.
+            Edit(unit_line(text, "OnSuccess=") + "\n", ""),
+            Edit("TimeoutStartSec=15s\n", "TimeoutStartSec=100s\n"),
+            Edit(
+                " activation-socket --peer-user hardened-blikvm-server\n",
+                " activation-socket --peer-user hardened-blikvm-server --native-profile\n",
+            ),
+        ],
+        keep_install=True,
+    )
     return rendered
+
+
+def native_admission(text: str) -> Edit:
+    anchor = unit_line(text, "Environment=BLI_KVM_BIND=")
+    return Edit(anchor + "\n", anchor + "\nEnvironment=BLI_KVM_UPDATE_NATIVE_ADMISSION=1\n")
 
 
 def replace_slots(name: str, text: str, expected: int) -> str:

@@ -69,11 +69,18 @@ fn receive(
     Ok(request)
 }
 
-pub(crate) fn serve_stdin(config: &Path, peer_user: &str) -> Result<(), SupervisorCliError> {
+pub(crate) fn serve_stdin(
+    config: &Path,
+    peer_user: &str,
+    native: bool,
+) -> Result<(), SupervisorCliError> {
     let (mut stream, _) = status_socket::authorized_stdin(peer_user)?;
     // Authenticate and fully close the bounded request before taking any
     // journal/slot locks. A slow sender cannot block watchdog or status.
     let request = receive(&mut stream)?;
+    if native {
+        return serve_native(config, stream, request);
+    }
     let result = match request.request {
         ActivationRequest::Activate {
             slot_id,
@@ -140,6 +147,120 @@ fn deliver_response_before(
     }
     stream.shutdown(Shutdown::Both)?;
     Ok(())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Native profile: admission, Prepared delivery with EOF, full composition
+/// quiescence and startup through the root execution helper, identity-fenced
+/// readiness and confirmation, all under the same manager locks. The legacy
+/// `Activate` request is refused; failures after admission leave the pending
+/// operation to native recovery and never dispatch legacy apply services.
+fn serve_native(
+    config: &Path,
+    mut stream: UnixStream,
+    request: activation::ActivationRequestEnvelope,
+) -> Result<(), SupervisorCliError> {
+    use bli_kvm_update_runtime::native_exec_client::{EXECUTION_SOCKET, ExecutionClient};
+    let request_id = request.request_id;
+    let refuse = |stream: &mut UnixStream, error: SupervisorCliError| {
+        let response = ActivationResponseEnvelope {
+            schema_version: UPDATE_SCHEMA_VERSION,
+            request_id,
+            response: ActivationResponse::Error {
+                code: error_code(&error),
+            },
+        };
+        let _ = deliver_response_before(stream, &response, Instant::now() + Duration::from_secs(2));
+        Err(error)
+    };
+    let ActivationRequest::Admit {
+        slot_id,
+        expected_generation,
+    } = request.request
+    else {
+        return refuse(&mut stream, SupervisorCliError::ActivationNotDispatched);
+    };
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let supervisor = match open_supervisor(config) {
+        Ok(supervisor) => supervisor,
+        Err(error) => return refuse(&mut stream, error),
+    };
+    let mut client = match ExecutionClient::connect(Path::new(EXECUTION_SOCKET), deadline) {
+        Ok(client) => client,
+        Err(error) => return refuse(&mut stream, error.into()),
+    };
+    let probes = client.clone();
+    let mut delivered = false;
+    let admitted = supervisor.activate_native_candidate(
+        &slot_id,
+        expected_generation,
+        &mut client,
+        deadline,
+        |admission| {
+            let response = ActivationResponseEnvelope {
+                schema_version: UPDATE_SCHEMA_VERSION,
+                request_id,
+                response: ActivationResponse::Prepared {
+                    receipt: activation::PreparedActivationReceipt {
+                        operation_id: hex(&admission.operation_id),
+                        target_slot_id: admission.target_slot_id.clone(),
+                        prepared_generation: admission.prepared_generation,
+                        deadline_monotonic_ms: admission.deadline_monotonic_ms,
+                    },
+                },
+            };
+            // Quiescence stops the requesting server; it must hold the
+            // complete receipt and EOF first, or admission is not delivered.
+            deliver_response_before(
+                &mut stream,
+                &response,
+                Instant::now() + Duration::from_secs(2),
+            )
+            .map_err(|_| UpdateManagerError::RecoveryRequired)?;
+            delivered = true;
+            Ok(())
+        },
+        |unit, _, _| probes.probe(unit),
+    );
+    let (activation, started) = match admitted {
+        Ok(value) => value,
+        Err(error) if !delivered => return refuse(&mut stream, error.into()),
+        Err(error) => return Err(error.into()),
+    };
+    let ActivationOutcome::AwaitingHealth { operation_id, .. } = activation.outcome else {
+        return Err(SupervisorCliError::ActivationNotDispatched);
+    };
+    let generation = supervisor.native_status()?.generation;
+    let outcome = supervisor.confirm_native_candidate(
+        generation,
+        operation_id,
+        &started,
+        &mut client,
+        deadline,
+        |unit, _, _| probes.probe(unit),
+    )?;
+    if outcome != bli_kvm_update_manager::NativeConfirmationOutcome::Confirmed {
+        return Err(SupervisorCliError::ActivationNotDispatched);
+    }
+    Ok(())
+}
+
+fn open_supervisor(config: &Path) -> Result<UpdateSupervisor, SupervisorCliError> {
+    let config = load_config(config)?;
+    let manager = ApplicationUpdateManager::open(
+        config.slot_root,
+        config.state_root,
+        config.trust_root,
+        config.system_sequence,
+        config.health_timeout_ms,
+    )?;
+    Ok(UpdateSupervisor::new(
+        manager,
+        HealthChallengeStore::open(config.runtime_root)?,
+    ))
 }
 
 fn activate(

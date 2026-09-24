@@ -117,6 +117,7 @@ FILE_MAP.update({
 })
 NATIVE_PROFILE_UNITS = (
     "board-owner", "board-video-proxy", "boardd", "server-current", "server-candidate",
+    "update-activation@",
 )
 FILE_MAP.update({
     f"share/systemd/native/hardened-blikvm-{unit}.service":

@@ -97,7 +97,11 @@ export function isApplicationActivationReceipt(
   value: unknown,
   target: string
 ): value is ApplicationActivationReceipt {
-  if (!object(value) || !keys(value, ['phase', 'receipt']) || value.phase !== 'awaiting_health')
+  if (
+    !object(value) ||
+    !keys(value, ['phase', 'receipt']) ||
+    (value.phase !== 'prepared' && value.phase !== 'awaiting_health')
+  )
     return false;
   const receipt = value.receipt;
   return (
