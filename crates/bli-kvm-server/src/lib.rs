@@ -54,6 +54,7 @@ mod video;
 mod video_engine;
 mod video_settings;
 mod vm_info;
+mod webrtc;
 mod ws;
 
 #[derive(Clone)]
@@ -68,6 +69,7 @@ pub(crate) struct AppState {
     /// Native profile: activation is a Prepared admission followed by the
     /// coordinator's full composition transition, not a legacy apply.
     pub update_native_admission: bool,
+    pub webrtc: Option<Arc<webrtc::WebRtcGateway>>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -101,6 +103,8 @@ pub struct ServerOptions {
     pub update_writes_enabled: bool,
     /// Native update profile; selected by the reviewed native server unit.
     pub update_native_admission: bool,
+    /// Loopback Janus WebSocket for VP8 WebRTC signaling; absent disables it.
+    pub webrtc_janus: Option<std::net::SocketAddr>,
     /// Privileged control broker used only for safe-target/focus attestation.
     /// No value keeps the HID focus endpoint unavailable.
     pub control_socket: Option<PathBuf>,
@@ -150,6 +154,7 @@ impl Default for ServerOptions {
             update_activation_socket: None,
             update_writes_enabled: false,
             update_native_admission: false,
+            webrtc_janus: None,
             control_socket: None,
             restricted_controls_enabled: false,
             media_catalog: None,
@@ -286,6 +291,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         capabilities: Arc::new(manifest),
         update_http_upload: Arc::new(tokio::sync::Semaphore::new(1)),
         update_native_admission: options.update_native_admission,
+        webrtc: options.webrtc_janus.and_then(webrtc::WebRtcGateway::new),
         update_activation: options
             .update_activation_socket
             .as_ref()
@@ -472,6 +478,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/system/reboot", post(system_action::reboot))
         .route("/vm/system/shutdown", post(system_action::shutdown))
         .route("/stream/mjpeg", get(video::mjpeg))
+        .route("/stream/webrtc", get(webrtc::webrtc_socket))
         .route(
             "/vm/screen",
             get(video_settings::screen_state).post(video_settings::update_screen),
@@ -1010,6 +1017,189 @@ mod tests {
             manifest["data"]["system"]["signedApplicationUpdates"]["availability"],
             "read_write"
         );
+    }
+
+    async fn next_text(
+        browser: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) -> Value {
+        use futures_util::StreamExt;
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), browser.next())
+            .await
+            .unwrap();
+        let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = frame else {
+            panic!("expected a text frame, got {frame:?}");
+        };
+        serde_json::from_str(&text).unwrap()
+    }
+
+    #[tokio::test]
+    #[allow(clippy::result_large_err)] // The tungstenite handshake callback type is fixed.
+    async fn webrtc_signaling_relays_only_the_closed_protocol_and_destroys_the_session() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{
+            Message as WsMessage,
+            client::IntoClientRequest,
+            handshake::server::{Request as HsRequest, Response as HsResponse},
+            http::HeaderValue,
+        };
+
+        let janus_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let janus_address = janus_listener.local_addr().unwrap();
+        let janus = tokio::spawn(async move {
+            let (stream, _) = janus_listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                |request: &HsRequest, mut response: HsResponse| {
+                    assert_eq!(
+                        request.headers().get("sec-websocket-protocol").unwrap(),
+                        "janus-protocol"
+                    );
+                    response.headers_mut().insert(
+                        "sec-websocket-protocol",
+                        HeaderValue::from_static("janus-protocol"),
+                    );
+                    Ok(response)
+                },
+            )
+            .await
+            .unwrap();
+            let mut seen = Vec::new();
+            loop {
+                let Some(Ok(WsMessage::Text(text))) = socket.next().await else {
+                    break;
+                };
+                let request: Value = serde_json::from_str(&text).unwrap();
+                let transaction = request["transaction"].clone();
+                let kind = request["janus"].as_str().unwrap().to_string();
+                seen.push(request.clone());
+                let reply = match kind.as_str() {
+                    "create" => Some(
+                        serde_json::json!({"janus": "success", "transaction": transaction, "data": {"id": 11}}),
+                    ),
+                    "attach" => {
+                        assert_eq!(request["plugin"], "janus.plugin.streaming");
+                        assert_eq!(request["session_id"], 11);
+                        Some(
+                            serde_json::json!({"janus": "success", "transaction": transaction, "data": {"id": 22}}),
+                        )
+                    }
+                    "message" if request["body"]["request"] == "watch" => {
+                        assert_eq!(request["body"]["id"], 1);
+                        assert_eq!(request["handle_id"], 22);
+                        socket
+                            .send(WsMessage::Text(
+                                serde_json::json!({"janus": "ack", "transaction": transaction})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .unwrap();
+                        Some(
+                            serde_json::json!({"janus": "event", "transaction": transaction, "jsep": {"type": "offer", "sdp": "v=0 offer"}}),
+                        )
+                    }
+                    "message" => {
+                        assert_eq!(request["body"]["request"], "start");
+                        assert_eq!(request["jsep"]["sdp"], "v=0 answer");
+                        None
+                    }
+                    "trickle" if request["candidate"]["completed"] == true => {
+                        Some(serde_json::json!({"janus": "webrtcup", "session_id": 11}))
+                    }
+                    "destroy" => break,
+                    _ => None,
+                };
+                if let Some(reply) = reply {
+                    socket
+                        .send(WsMessage::Text(reply.to_string().into()))
+                        .await
+                        .unwrap();
+                }
+            }
+            seen
+        });
+
+        let root = tempdir().unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            webrtc_janus: Some(janus_address),
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&app).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let mut request = format!("ws://{address}/api/stream/webrtc")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("origin", HeaderValue::from_static("http://kvm.test"));
+        request
+            .headers_mut()
+            .insert("host", HeaderValue::from_static("kvm.test"));
+        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (mut browser, _) = tokio_tungstenite::client_async(request, stream)
+            .await
+            .unwrap();
+        let offer = next_text(&mut browser).await;
+        assert_eq!(
+            offer,
+            serde_json::json!({"type": "offer", "sdp": "v=0 offer"})
+        );
+        for message in [
+            serde_json::json!({"type": "answer", "sdp": "v=0 answer"}),
+            serde_json::json!({"type": "candidate", "candidate": {"candidate": "candidate:1 1 udp 1 192.0.2.1 5000 typ host", "sdpMid": "0", "sdpMLineIndex": 0}}),
+            serde_json::json!({"type": "candidate", "candidate": null}),
+        ] {
+            browser
+                .send(WsMessage::Text(message.to_string().into()))
+                .await
+                .unwrap();
+        }
+        assert_eq!(next_text(&mut browser).await["type"], "started");
+        // Anything outside the closed protocol ends the session with an error.
+        browser
+            .send(WsMessage::Text(
+                serde_json::json!({"type": "janus", "janus": "detach"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_text(&mut browser).await,
+            serde_json::json!({"type": "error", "code": "invalid_message"})
+        );
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(5), janus)
+            .await
+            .unwrap()
+            .unwrap();
+        let kinds: Vec<_> = seen
+            .iter()
+            .map(|request| request["janus"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "create", "attach", "message", "message", "trickle", "trickle", "destroy"
+            ]
+        );
+        assert!(
+            seen.iter()
+                .all(|request| request["janus"] == "create" || request["session_id"] == 11)
+        );
+        server.abort();
     }
 
     #[tokio::test]

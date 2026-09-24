@@ -44,6 +44,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .map(PathBuf::from),
         update_writes_enabled: env::var("BLI_KVM_UPDATE_WRITES_ENABLED").as_deref() == Ok("1"),
         update_native_admission: env::var("BLI_KVM_UPDATE_NATIVE_ADMISSION").as_deref() == Ok("1"),
+        webrtc_janus: env::var("BLI_KVM_JANUS_WS")
+            .ok()
+            .and_then(|value| value.parse().ok()),
         control_socket: env::var_os("BLI_KVM_CONTROL_SOCKET").map(PathBuf::from),
         restricted_controls_enabled: env::var("BLI_KVM_RESTRICTED_CONTROLS").as_deref() == Ok("1"),
         media_catalog: env::var_os("BLI_KVM_MEDIA_CATALOG").map(PathBuf::from),

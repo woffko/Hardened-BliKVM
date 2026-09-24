@@ -737,6 +737,7 @@ dependencies = [
  "bli-kvm-update-protocol",
  "bli-kvm-video-client",
  "bytes",
+ "futures-util",
  "http-body",
  "http-body-util",
  "libc",
@@ -747,6 +748,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-http",
 ]

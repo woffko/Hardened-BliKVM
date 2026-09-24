@@ -25,6 +25,7 @@ bli-kvm-update-client = { path = "../bli-kvm-update-client" }
 bli-kvm-update-protocol = { path = "../bli-kvm-update-protocol" }
 bli-kvm-video-client = { path = "../bli-kvm-video-client" }
 bytes.workspace = true
+futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 http-body.workspace = true
 rand_core.workspace = true
 serde.workspace = true
@@ -33,6 +34,7 @@ sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
+tokio-tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
 tower-http.workspace = true
 
 [dev-dependencies]

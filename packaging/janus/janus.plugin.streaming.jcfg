@@ -1,0 +1,19 @@
+# One VP8 mountpoint fed over loopback RTP by bli-kvm-video-encoder.
+general: {
+	events = false
+	string_ids = false
+}
+
+bli-kvm-vp8: {
+	type = "rtp"
+	id = 1
+	description = "Hardened BliKVM VP8"
+	audio = false
+	video = true
+	videoport = 5004
+	videoiface = "127.0.0.1"
+	videopt = 96
+	videortpmap = "VP8/90000"
+	# New viewers start from the last key frame.
+	videobufferkf = true
+}
