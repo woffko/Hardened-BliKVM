@@ -191,6 +191,21 @@ mod tests {
     }
 
     #[test]
+    fn observed_h616_status_without_external_rtc_is_ready_only_when_rtc_is_optional() {
+        // Status captured read-only from the H616 test board on 2026-09-24.
+        let observed = br#"{"code":0,"data":{"fanMode":"auto","fanStatus":"active","fanDutyPercent":30,"fanPwm":true,"fanPwmPeriodMs":40,"fanLine":269,"thermalMillidegrees":50606,"displayPresent":true,"displayInitialized":true,"displayBacklightOn":true,"ledPresent":true,"ledEnabled":true,"ledLevel":true,"buttonPresent":true,"buttonWakeups":0,"atxPowerLedPresent":true,"atxPowerLedOn":false,"atxHddLedPresent":true,"atxHddLedOn":false,"externalRtcError":"unavailable"}}"#;
+        assert!(validate(observed, requirements()).is_err());
+        validate(
+            observed,
+            BoardRequirements {
+                external_rtc: false,
+                ..requirements()
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn real_board_serializer_contract_rejects_unhealthy_or_incompatible_states() {
         let bytes = response();
         validate(&bytes, requirements()).unwrap();
