@@ -24,8 +24,22 @@ class Phase4VideoBoundaryTests(unittest.TestCase):
             'video_socket: PathBuf::from("/run/hardened-blikvm-video/mjpeg.sock")', server
         )
         self.assertIn("VideoReadClient::new(&options.video_socket)", server)
-        for forbidden in ("webrtc", "WebRTC", "janus_route", "RTCPeer"):
+        for forbidden in ("janus_route", "RTCPeer"):
             self.assertNotIn(forbidden, server)
+
+    def test_webrtc_signaling_is_default_off_loopback_and_closed(self) -> None:
+        # Reviewed 2026-09-24: VP8 WebRTC signaling goes only through the
+        # server's own module to a loopback Janus; it is off unless configured.
+        server = SERVER.read_text()
+        webrtc = (ROOT / "crates/bli-kvm-server/src/webrtc.rs").read_text()
+        self.assertIn("webrtc_janus: None", server)
+        self.assertIn(".is_some_and(|address| address.ip().is_loopback())", server)
+        self.assertIn("janus.ip().is_loopback()", webrtc)
+        self.assertIn('"plugin": "janus.plugin.streaming"', webrtc)
+        self.assertIn("deny_unknown_fields", webrtc)
+        self.assertIn("const MOUNTPOINT_ID: u64 = 1;", webrtc)
+        for forbidden in ("\"admin", "janus.plugin.videoroom", "janus.plugin.sip", "rtp_forward"):
+            self.assertNotIn(forbidden, webrtc)
 
     def test_janus_inventory_remains_disabled(self) -> None:
         for source in (

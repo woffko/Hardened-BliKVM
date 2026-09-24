@@ -86,7 +86,9 @@ assemble() {
   root_hash=$(openssl passwd -6 1234)
   fakeroot -s "$work/fakeroot.state" -- sh -eu -c '
     staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7
-    tar --numeric-owner --xattrs --acls -C "$staging" -xpf "$tarball"
+    # ACLs (journal directories) and xattrs are not reproduced; systemd
+    # recreates the journal ACLs on the device.
+    tar --numeric-owner --no-acls --no-xattrs -C "$staging" -xpf "$tarball"
     # Machine identity is regenerated on the first boot.
     : > "$staging/etc/machine-id"
     rm -f "$staging/var/lib/dbus/machine-id"
