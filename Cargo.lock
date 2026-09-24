@@ -1001,6 +1001,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-video-encoder"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-video-proxy"
 version = "0.1.0"
 dependencies = [
