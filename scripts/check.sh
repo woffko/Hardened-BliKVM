@@ -8,6 +8,15 @@ pnpm_web() {
 }
 
 cargo fmt --all -- --check
+# The VP8 encoder links a pinned static libvpx; build the host copy once per
+# target directory so all-feature checks and encoder tests can link it.
+target_root=${CARGO_TARGET_DIR:-$PWD/target}
+case "$target_root" in /*) ;; *) target_root=$PWD/$target_root ;; esac
+BLI_KVM_LIBVPX_DIR="$target_root/libvpx-1.15.2-host"
+if [ ! -f "$BLI_KVM_LIBVPX_DIR/lib/libvpx.a" ]; then
+  scripts/build-libvpx.sh host "$BLI_KVM_LIBVPX_DIR"
+fi
+export BLI_KVM_LIBVPX_DIR
 cargo check --workspace --all-targets --locked
 cargo check --workspace --all-targets --all-features --locked
 cargo check -p bli-kvm-media-transition --lib --locked --no-default-features --features gadget-media-profile
@@ -33,10 +42,17 @@ cargo test -p bli-kvm-media-transition --all-targets --locked --features gadget-
 cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hid-profile
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver
+cargo test -p bli-kvm-video-encoder --all-targets --locked --features vp8
+sh -n scripts/build-libvpx.sh
+sh -n tools/device/deploy_native_profile.sh
+sh -n tools/device/deploy_vp8.sh
+sh -n tools/image/build_sd_image.sh
+sh -n tools/image/hardened-blikvm-firstboot.sh
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
 python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features vp8 -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export -- -D warnings

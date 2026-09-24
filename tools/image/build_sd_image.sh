@@ -38,7 +38,10 @@ fetch() {
   mkdir -p "$work"
   exec 3<&0
   # Secrets and machine state never leave the board.
-  ssh_device 'tar --one-file-system --numeric-owner --xattrs --acls -C / -cpf - \
+  # One SSH session (the password can be read only once): exactly 2047 raw
+  # sectors after the MBR, then the root filesystem archive.
+  ssh_device 'dd if=/dev/mmcblk0 bs=512 skip=1 count=2047 status=none &&
+    tar --one-file-system --numeric-owner --xattrs --acls -C / -cpf - \
       --exclude=./root --exclude=./home/*/* --exclude=./var/cache/apt/archives \
       --exclude=./var/log/journal --exclude=./var/backups/hardened-blikvm-native \
       --exclude="./var/lib/hardened-blikvm-write-*" --exclude="./var/lib/hardened-blikvm-state-quarantine-*" \
@@ -52,13 +55,13 @@ fetch() {
       --exclude=./etc/ssl/private/ssl-cert-snakeoil.key --exclude=./etc/hardened-blikvm-gadget/serial \
       --exclude=./var/lib/hardened-blikvm/accounts --exclude=./var/lib/hardened-blikvm/sessions \
       --exclude="./home/*/.bash_history" .; status=$?; [ "$status" -le 1 ] || exit "$status"' \
-    > "$work/rootfs.tar"
+    | { dd of="$work/boot-area.bin" bs=512 count=2047 iflag=fullblock status=none && cat > "$work/rootfs.tar"; }
+  [ "$(stat -c %s "$work/boot-area.bin")" = $((2047 * 512)) ]
   # GNU tar exits 1 when a live file changed while it was read; the archive
   # must still list completely.
   tar -tf "$work/rootfs.tar" > /dev/null
-  ssh_device 'dd if=/dev/mmcblk0 bs=512 skip=1 count=2047 status=none' > "$work/boot-area.bin"
-  ssh_device 'cat /etc/armbian-release /etc/os-release 2>/dev/null | grep -E "^(VERSION|BOARD|PRETTY_NAME)="; uname -r' \
-    > "$work/source-system.txt"
+  tar -xOf "$work/rootfs.tar" ./etc/os-release ./etc/armbian-release 2>/dev/null \
+    | grep -E "^(VERSION|BOARD|PRETTY_NAME)=" > "$work/source-system.txt" || true
   sha256sum "$work/rootfs.tar" "$work/boot-area.bin" > "$work/fetch.sha256"
   # The raw boot area must carry the sunxi SPL magic at 8 KiB (offset 7680 here).
   dd if="$work/boot-area.bin" bs=1 skip=$((8192 - 512 + 4)) count=8 status=none | grep -q 'eGON.BT0'
