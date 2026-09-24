@@ -103,6 +103,13 @@ Signaling and deployment (host-complete, not yet deployed):
 - `tools/device/deploy_vp8.sh install|remove` installs the encoder binary,
   Janus configuration, units and the server drop-in.
 
+A transient run of the distribution Janus on the test board with this
+configuration loaded only the streaming plugin and the WebSocket transport
+(port 8188); the HTTP transport and all other plugins stayed disabled. The
+same run also showed that Janus silently falls back to all plugins and an
+HTTP listener when its configuration cannot be read, so the unit requires the
+configuration file and restricts binds to the signaling port and media range.
+
 Open: deployment needs the application slot built from current source (the
 installed server predates the signaling route); LAN firewall allowance for the
 WebRTC media ports; acceptance with real capture on desktop and mobile

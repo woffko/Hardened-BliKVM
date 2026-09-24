@@ -3,6 +3,9 @@ Description=Hardened BliKVM WebRTC media gateway (Janus streaming only)
 Documentation=https://github.com/woffko/Hardened-BliKVM
 After=network-online.target
 Wants=network-online.target
+# Janus falls back to built-in defaults (all plugins, HTTP on every address)
+# when its configuration is missing; never start without the reviewed one.
+ConditionPathExists=/etc/hardened-blikvm/janus/janus.jcfg
 
 [Service]
 Type=simple
@@ -28,6 +31,12 @@ ProtectProc=invisible
 ProcSubset=pid
 ProtectSystem=strict
 RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+# Only the loopback signaling port and the WebRTC media range may be bound,
+# even if a configuration regression enabled another transport.
+SocketBindDeny=any
+SocketBindAllow=tcp:8188
+SocketBindAllow=udp:20000-20099
+SocketBindAllow=udp:5004
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
