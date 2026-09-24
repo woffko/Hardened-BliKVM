@@ -93,6 +93,9 @@ FORBIDDEN_PACKAGE_NAMES = {
 }
 
 
+RFC1918_TEN_NETWORK = b"10." + b"0.0.0/8"
+
+
 class BuildError(Exception):
     pass
 
@@ -246,7 +249,9 @@ def audit_package_tree(root: Path) -> None:
     }
     for path in root.rglob("*"):
         if path.is_file() and path.stat().st_size <= 8 * 1024 * 1024:
-            payload = path.read_bytes()
+            # The firewall's local-network set names the RFC 1918 block itself;
+            # that exact network literal is not a lab address.
+            payload = path.read_bytes().replace(RFC1918_TEN_NETWORK, b"")
             for marker_class, marker in forbidden_bytes.items():
                 if marker in payload:
                     relative = path.relative_to(root)
