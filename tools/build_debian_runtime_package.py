@@ -81,6 +81,8 @@ EXECUTABLE_DESTINATIONS = {
 FORBIDDEN_PACKAGE_NAMES = {
     "bli-kvm-update-supervisor",
     "bli-kvm-update-health-reporter",
+    "bli-kvm-update-exec-helper",
+    "hardened-blikvm-update-exec@.service",
     "hardened-blikvm-update-watchdog.service",
     "hardened-blikvm-update-watchdog.timer",
     "hardened-blikvm-update-confirm.socket",

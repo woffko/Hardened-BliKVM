@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev10"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev11"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -98,6 +98,31 @@ FILE_MAP = {
         "usr/share/doc/hardened-blikvm-update-runtime/application-activation-v1.md"
     ),
 }
+# Native profile (dev11): the root helper and native boot units are installed
+# but not enabled; managed-unit replacements are examples only, because they
+# would otherwise shadow the runtime package's base units.
+FILE_MAP.update({
+    "libexec/bli-kvm-update-exec-helper": (
+        "usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper"
+    ),
+    "share/systemd/hardened-blikvm-update-exec.socket": (
+        "lib/systemd/system/hardened-blikvm-update-exec.socket"
+    ),
+    "share/systemd/hardened-blikvm-update-exec@.service": (
+        "lib/systemd/system/hardened-blikvm-update-exec@.service"
+    ),
+    "share/systemd/hardened-blikvm-update-native-boot.service": (
+        "lib/systemd/system/hardened-blikvm-update-native-boot.service"
+    ),
+})
+NATIVE_PROFILE_UNITS = (
+    "board-owner", "board-video-proxy", "boardd", "server-current", "server-candidate",
+)
+FILE_MAP.update({
+    f"share/systemd/native/hardened-blikvm-{unit}.service":
+    f"usr/share/doc/{PACKAGE_NAME}/examples/native/hardened-blikvm-{unit}.service"
+    for unit in NATIVE_PROFILE_UNITS
+})
 FILE_MAP.update({
     f"share/systemd/hardened-blikvm-{role}.service.d/94-application-update.conf":
     f"usr/share/doc/{PACKAGE_NAME}/examples/hardened-blikvm-{role}.service.d/94-application-update.conf"
@@ -106,6 +131,7 @@ FILE_MAP.update({
 EXECUTABLE_DESTINATIONS = {
     "usr/libexec/hardened-blikvm/bli-kvm-update-supervisor",
     "usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter",
+    "usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper",
 }
 ACTIVE_CONFIGURATION_PREFIXES = (
     "etc/",
@@ -124,6 +150,10 @@ def file_map(version: str) -> dict[str, str]:
         raise BuildError("unsupported update package version")
     revision = SUPPORTED_PACKAGE_VERSIONS.index(version) + 1
     introduced = {
+        "bli-kvm-update-exec-helper": 11,
+        "hardened-blikvm-update-exec.socket": 11,
+        "hardened-blikvm-update-exec@.service": 11,
+        "hardened-blikvm-update-native-boot.service": 11,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,
@@ -133,8 +163,14 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-update-status.socket": 6,
         "hardened-blikvm-update-status@.service": 6,
     }
+    def since(source: str) -> int:
+        # Native examples share base-unit names, so they are keyed by directory.
+        if source.startswith("share/systemd/native/"):
+            return 11
+        return introduced.get(source.rsplit("/", 1)[-1], 1)
+
     return {source: destination for source, destination in FILE_MAP.items()
-            if revision >= introduced.get(source.rsplit("/", 1)[-1], 1)}
+            if revision >= since(source)}
 
 
 def parse_args() -> tuple[str, str, str]:

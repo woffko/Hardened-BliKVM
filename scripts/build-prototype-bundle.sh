@@ -38,6 +38,8 @@ atx_live_gate_binary="$release_dir/bli-kvm-atx-live-gate"
 media_isolated_gate_binary="$release_dir/bli-kvm-media-isolated-gate"
 update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
+update_exec_helper_binary="$release_dir/bli-kvm-update-exec-helper"
+scripts/verify-aarch64-elf.sh "$update_exec_helper_binary"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 mkdir -p -- "$output_dir"
@@ -72,6 +74,7 @@ install -m 0755 "$atx_live_gate_binary" "$stage/libexec/bli-kvm-atx-live-gate"
 install -m 0755 "$media_isolated_gate_binary" "$stage/libexec/bli-kvm-media-isolated-gate"
 install -m 0755 "$update_supervisor_binary" "$stage/libexec/bli-kvm-update-supervisor"
 install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-health-reporter"
+install -m 0755 "$update_exec_helper_binary" "$stage/libexec/bli-kvm-update-exec-helper"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
@@ -105,7 +108,12 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-update-apply-confirmed.service \
   packaging/systemd/hardened-blikvm-server-current.service \
   packaging/systemd/hardened-blikvm-server-candidate.service \
+  packaging/systemd/hardened-blikvm-update-exec.socket \
+  packaging/systemd/hardened-blikvm-update-exec@.service \
+  packaging/systemd/hardened-blikvm-update-native-boot.service \
   "$stage/share/systemd/"
+install -d -m 0755 "$stage/share/systemd/native"
+install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-update-watchdog.timer \
   packaging/systemd/hardened-blikvm-update-confirm.socket \
@@ -168,6 +176,7 @@ atx_live_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-atx-live-gate" | cut -d ' 
 media_isolated_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-media-isolated-gate" | cut -d ' ' -f 1)
 update_supervisor_sha=$(sha256sum "$stage/libexec/bli-kvm-update-supervisor" | cut -d ' ' -f 1)
 update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-reporter" | cut -d ' ' -f 1)
+update_exec_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-update-exec-helper" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
 pnpm_lock_sha=$(sha256sum web/pnpm-lock.yaml | cut -d ' ' -f 1)
 web_tree_sha=$(
@@ -184,6 +193,7 @@ atx_live_gate_size=$(wc -c < "$stage/libexec/bli-kvm-atx-live-gate" | tr -d ' ')
 media_isolated_gate_size=$(wc -c < "$stage/libexec/bli-kvm-media-isolated-gate" | tr -d ' ')
 update_supervisor_size=$(wc -c < "$stage/libexec/bli-kvm-update-supervisor" | tr -d ' ')
 update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-reporter" | tr -d ' ')
+update_exec_helper_size=$(wc -c < "$stage/libexec/bli-kvm-update-exec-helper" | tr -d ' ')
 
 source_state=uncommitted-development-checkpoint
 source_commit=
@@ -205,6 +215,7 @@ jq -n \
   --arg media_isolated_gate_sha "$media_isolated_gate_sha" \
   --arg update_supervisor_sha "$update_supervisor_sha" \
   --arg update_health_reporter_sha "$update_health_reporter_sha" \
+  --arg update_exec_helper_sha "$update_exec_helper_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
@@ -220,6 +231,7 @@ jq -n \
   --argjson media_isolated_gate_size "$media_isolated_gate_size" \
   --argjson update_supervisor_size "$update_supervisor_size" \
   --argjson update_health_reporter_size "$update_health_reporter_size" \
+  --argjson update_exec_helper_size "$update_exec_helper_size" \
   '{
     schemaVersion: 1,
     product: "Hardened BliKVM",
@@ -240,6 +252,7 @@ jq -n \
       mediaIsolatedGate: {path: "libexec/bli-kvm-media-isolated-gate", sha256: $media_isolated_gate_sha, size: $media_isolated_gate_size},
       updateSupervisor: {path: "libexec/bli-kvm-update-supervisor", sha256: $update_supervisor_sha, size: $update_supervisor_size},
       updateHealthReporter: {path: "libexec/bli-kvm-update-health-reporter", sha256: $update_health_reporter_sha, size: $update_health_reporter_size},
+      updateExecHelper: {path: "libexec/bli-kvm-update-exec-helper", sha256: $update_exec_helper_sha, size: $update_exec_helper_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
     },
     locks: {cargo: $cargo_lock_sha, pnpm: $pnpm_lock_sha}
@@ -264,6 +277,7 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-atx-live-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-media-isolated-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-supervisor")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-exec-helper")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755
