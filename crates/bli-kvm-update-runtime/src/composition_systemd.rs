@@ -17,6 +17,7 @@ const PROPERTIES: &str = "LoadState,ActiveState,SubState,MainPID,ControlPID,Job,
 const MAX_OUTPUT: usize = 4096;
 const RUNNING_PROPERTIES: &str = "Id,LoadState,ActiveState,SubState,MainPID,ControlPID,Job,Result";
 const START_PROPERTIES: &str = "Id,LoadState,Type,ExecCondition,ExecStartPre,ExecStartPost,After,Requires,Wants,Requisite,BindsTo";
+const JOB_PROPERTIES: &str = "Id,Job";
 const START_DEPENDENCIES: [&str; 5] = ["After", "Requires", "Wants", "Requisite", "BindsTo"];
 const LEGACY_UPDATE_UNITS: [&str; 4] = [
     "hardened-blikvm-update-recover.service",
@@ -96,6 +97,32 @@ impl SystemdController {
             return Err(CompositionError::Deadline);
         }
         Ok(after)
+    }
+
+    /// Cancel a queued job of a closed unit and re-observe until none remains.
+    /// A disconnected coordinator can leave accepted jobs behind; the next
+    /// session reconciles them here instead of refusing forever. The cancel
+    /// client's own result is not trusted: only the re-observation counts.
+    pub fn cancel_queued_job(&self, unit: ApplicationUnit) -> Result<(), CompositionError> {
+        loop {
+            let output = self.run(&[
+                "show",
+                "--all",
+                "--property",
+                JOB_PROPERTIES,
+                "--",
+                unit.name(),
+            ])?;
+            let Some(job) = queued_job(&output, unit)? else {
+                return Ok(());
+            };
+            let _ = self.run(&["cancel", "--", &job.to_string()]);
+            let remaining = self
+                .deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(CompositionError::Deadline)?;
+            thread::sleep(remaining.min(Duration::from_millis(50)));
+        }
     }
 
     /// One deadline covers both stop phases and all observations. Callers must
@@ -277,6 +304,36 @@ fn validate_start_contract(output: &[u8], unit: ApplicationUnit) -> Result<(), C
         }
     }
     Ok(())
+}
+
+fn queued_job(output: &[u8], unit: ApplicationUnit) -> Result<Option<u32>, CompositionError> {
+    if output.len() > MAX_OUTPUT {
+        return Err(CompositionError::Controller);
+    }
+    let text = std::str::from_utf8(output).map_err(|_| CompositionError::Controller)?;
+    let mut fields = BTreeMap::new();
+    for line in text.lines() {
+        let (key, value) = line.split_once('=').ok_or(CompositionError::Controller)?;
+        if !JOB_PROPERTIES.split(',').any(|expected| expected == key)
+            || fields.insert(key, value).is_some()
+        {
+            return Err(CompositionError::Controller);
+        }
+    }
+    if fields.len() != JOB_PROPERTIES.split(',').count() || fields["Id"] != unit.name() {
+        return Err(CompositionError::Controller);
+    }
+    let job = fields["Job"];
+    if job.is_empty() {
+        return Ok(None);
+    }
+    let id = job
+        .parse::<u32>()
+        .map_err(|_| CompositionError::Controller)?;
+    if id == 0 || id.to_string() != job {
+        return Err(CompositionError::Controller);
+    }
+    Ok(Some(id))
 }
 
 fn running_pid(output: &[u8], unit: ApplicationUnit) -> Result<u32, CompositionError> {
@@ -683,6 +740,61 @@ esac
             controller.observe_stop(ApplicationUnit::Owner).unwrap(),
             StopObservation::Clean
         );
+    }
+
+    #[test]
+    fn queued_jobs_are_cancelled_and_reobserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("cancelled");
+        let script = format!(
+            r#"
+shift 3
+case "$1" in
+  show)
+    test "$4" = '{JOB_PROPERTIES}'
+    test "$6" = hardened-blikvm-board-owner.service
+    if test -e '{marker}'; then
+      printf 'Id=hardened-blikvm-board-owner.service\nJob=\n'
+    else
+      printf 'Id=hardened-blikvm-board-owner.service\nJob=12\n'
+    fi
+    ;;
+  cancel)
+    test "$#" = 3
+    test "$3" = 12
+    : > '{marker}'
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+            marker = marker.display()
+        );
+        let (_fixture, controller) = fixture(&script, Duration::from_secs(2));
+        controller
+            .cancel_queued_job(ApplicationUnit::Owner)
+            .unwrap();
+        assert!(marker.exists());
+
+        // A job that never leaves is reported at the deadline, not ignored.
+        let stuck = "shift 3\ncase \"$1\" in show) printf 'Id=hardened-blikvm-board-owner.service\\nJob=12\\n' ;; *) exit 5 ;; esac";
+        let (_fixture, controller) = fixture(stuck, Duration::from_millis(300));
+        assert!(matches!(
+            controller.cancel_queued_job(ApplicationUnit::Owner),
+            Err(CompositionError::Deadline)
+        ));
+
+        for output in [
+            "Id=hardened-blikvm-board-owner.service\nJob=012\n",
+            "Id=hardened-blikvm-board-owner.service\nJob=0\n",
+            "Id=ssh.service\nJob=\n",
+            "Id=hardened-blikvm-board-owner.service\n",
+            "Id=hardened-blikvm-board-owner.service\nJob=\nJob=\n",
+        ] {
+            assert!(
+                queued_job(output.as_bytes(), ApplicationUnit::Owner).is_err(),
+                "{output}"
+            );
+        }
     }
 
     #[test]

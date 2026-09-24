@@ -7,8 +7,9 @@
 use std::{
     fs::File,
     io::{self, Read, Write},
+    net::SocketAddr,
     os::{fd::AsRawFd, unix::net::UnixStream},
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -21,7 +22,9 @@ use bli_kvm_update_protocol::execution::{
 use bli_kvm_update_stager::{ApplicationStageError, VerifiedSlotFiles};
 
 use crate::{
-    composition::{ApplicationUnit, CompositionError, StopObservation},
+    board_readiness::BoardRequirements,
+    composition::{ApplicationUnit, CompositionError, ServiceController, StopObservation},
+    composition_systemd::SystemdController,
     native_execution::NativeExecutionStore,
     native_identity::{FILES, NativeStartUnit, SlotServer},
     native_selection::SelectionLedgerStore,
@@ -60,6 +63,123 @@ pub trait ExecutionBackend {
         probe: ExecutionProbe,
         selected: &VerifiedSlotFiles,
     ) -> Result<(), CompositionError>;
+}
+
+/// Probe endpoints and requirements from the helper's protected configuration.
+#[derive(Debug, Clone)]
+pub struct ExecutionProbeConfig {
+    pub owner_socket: PathBuf,
+    pub video_socket: PathBuf,
+    pub board_socket: PathBuf,
+    pub web_endpoint: SocketAddr,
+    pub board: BoardRequirements,
+}
+
+/// Production backend: root systemctl on the closed units plus the existing
+/// read-only readiness probes. Each operation gets a fresh controller bounded
+/// by the session deadline and the adapter's 45-second ceiling.
+pub struct SystemdExecutionBackend {
+    probes: ExecutionProbeConfig,
+    deadline: Instant,
+}
+
+impl SystemdExecutionBackend {
+    pub fn new(probes: ExecutionProbeConfig, deadline: Instant) -> Self {
+        Self { probes, deadline }
+    }
+
+    fn controller(&self) -> Result<SystemdController, CompositionError> {
+        let now = Instant::now();
+        if now >= self.deadline {
+            return Err(CompositionError::Deadline);
+        }
+        SystemdController::new(self.deadline.min(now + Duration::from_secs(45)))
+    }
+}
+
+impl ExecutionBackend for SystemdExecutionBackend {
+    fn reconcile(&mut self) -> Result<(), CompositionError> {
+        let controller = self.controller()?;
+        for unit in MANAGED_UNITS {
+            controller.cancel_queued_job(unit)?;
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self, unit: ApplicationUnit) -> Result<(), CompositionError> {
+        self.controller()?.stop(unit)
+    }
+
+    fn observe_stop(&mut self, unit: ApplicationUnit) -> Result<StopObservation, CompositionError> {
+        self.controller()?.observe_stop(unit)
+    }
+
+    fn validate_start(&self, unit: NativeStartUnit) -> Result<(), CompositionError> {
+        self.controller()?.validate_native_start(unit)
+    }
+
+    fn start(&mut self, unit: NativeStartUnit) -> Result<(), CompositionError> {
+        self.controller()?.start_native_unit(unit)
+    }
+
+    fn observe_identity(
+        &self,
+        unit: ApplicationUnit,
+        expected: &File,
+    ) -> Result<ProcessIdentity, CompositionError> {
+        self.controller()?.observe_unit_identity(unit, expected)
+    }
+
+    fn probe(
+        &mut self,
+        probe: ExecutionProbe,
+        selected: &VerifiedSlotFiles,
+    ) -> Result<(), CompositionError> {
+        let failed = |_| CompositionError::Controller;
+        let pid = |unit: NativeStartUnit| -> Result<u32, CompositionError> {
+            let file = selected
+                .files()
+                .get(executable_path(unit))
+                .ok_or(CompositionError::IncompletePayload)?;
+            Ok(self.observe_identity(unit.unit(), file)?.pid)
+        };
+        let deadline = self.deadline;
+        match probe {
+            ExecutionProbe::Owner => crate::owner_readiness::probe_readbacks(
+                &self.probes.owner_socket,
+                pid(NativeStartUnit::Owner)?,
+                self.probes.board,
+                deadline,
+            )
+            .map(drop)
+            .map_err(failed),
+            ExecutionProbe::VideoProxy => crate::proxy_readiness::probe_first_part(
+                &self.probes.video_socket,
+                pid(NativeStartUnit::VideoProxy)?,
+                deadline,
+            )
+            .map(drop)
+            .map_err(failed),
+            ExecutionProbe::BoardDaemon => crate::board_readiness::probe(
+                &self.probes.board_socket,
+                pid(NativeStartUnit::BoardDaemon)?,
+                self.probes.board,
+                deadline,
+            )
+            .map_err(failed),
+            ExecutionProbe::Web => tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| CompositionError::Controller)?
+                .block_on(crate::web_probe::verify_tree(
+                    &selected.slot().manifest,
+                    self.probes.web_endpoint,
+                    deadline,
+                ))
+                .map(drop)
+                .map_err(failed),
+        }
+    }
 }
 
 pub(crate) const fn application_unit(unit: ExecutionUnit) -> ApplicationUnit {

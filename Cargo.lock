@@ -829,6 +829,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-update-exec-helper"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-update-runtime",
+ "bli-kvm-update-stager",
+ "bli-kvm-update-verifier",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-update-health-reporter"
 version = "0.1.0"
 dependencies = [

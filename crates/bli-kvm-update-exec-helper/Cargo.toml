@@ -1,0 +1,20 @@
+[package]
+name = "bli-kvm-update-exec-helper"
+description = "Root execution helper for native Hardened BliKVM application compositions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-update-runtime = { path = "../bli-kvm-update-runtime" }
+bli-kvm-update-stager = { path = "../bli-kvm-update-stager" }
+bli-kvm-update-verifier = { path = "../bli-kvm-update-verifier" }
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
