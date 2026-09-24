@@ -14,6 +14,7 @@ import { MenuSubmenu } from '@/components/menu-submenu.tsx';
 const videoModes = [
   { key: 'direct', name: 'H.264 (Direct)' },
   { key: 'h264', name: 'H.264 (WebRTC)' },
+  { key: 'vp8', name: 'VP8 (WebRTC)' },
   { key: 'mjpeg', name: 'MJPEG' }
 ];
 

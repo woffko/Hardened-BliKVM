@@ -7,6 +7,7 @@ import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
 import { H264Direct } from './h264-direct.tsx';
 import { H264Webrtc } from './h264-webrtc.tsx';
 import { Mjpeg } from './mjpeg.tsx';
+import { Vp8Webrtc } from './vp8-webrtc.tsx';
 
 export const Screen = () => {
   const requestedVideoMode = useAtomValue(videoModeAtom);
@@ -17,6 +18,10 @@ export const Screen = () => {
 
   if (videoMode === 'mjpeg') {
     return <Mjpeg />;
+  }
+
+  if (videoMode === 'vp8') {
+    return <Vp8Webrtc key={streamKey} />;
   }
 
   if (videoMode === 'direct') {

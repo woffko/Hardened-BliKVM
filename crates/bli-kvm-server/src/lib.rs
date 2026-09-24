@@ -11,7 +11,7 @@ use axum::{
 use bli_kvm_broker_client::BrokerReadClient;
 use bli_kvm_core::{
     CapabilityManifest, CapabilityProvider, DiagnosticsView, EvidenceLevel, FeatureStatus,
-    RuntimeInventory,
+    RuntimeInventory, VideoTransport,
 };
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
 use bli_kvm_update_client::{UpdateActivationClient, UpdateStatusClient, UpdateUploadClient};
@@ -224,6 +224,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         );
     }
     let mut manifest = BliH616PikvmPlatform.capabilities();
+    // VP8 over WebRTC is offered only when the loopback gateway is configured;
+    // MJPEG stays the preferred transport.
+    if options
+        .webrtc_janus
+        .is_some_and(|address| address.ip().is_loopback())
+    {
+        manifest.video.transports.push(VideoTransport::WebRtcJanus);
+    }
     if options.update_status_socket.is_some() {
         manifest.system.signed_application_updates = if options.update_writes_enabled {
             FeatureStatus::read_write(EvidenceLevel::SourceVerified)
@@ -1126,6 +1134,18 @@ mod tests {
             ..ServerOptions::default()
         });
         let (cookie, _) = setup_and_login(&app).await;
+        let manifest = json_body(
+            app.clone()
+                .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["video"]["transports"],
+            serde_json::json!(["mjpeg", "web_rtc_janus"])
+        );
+        assert_eq!(manifest["data"]["video"]["preferredTransport"], "mjpeg");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {

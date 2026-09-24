@@ -1,6 +1,6 @@
 import type { CapabilityManifest, FeatureStatus, VideoTransport } from '@/types/capabilities.ts';
 
-export type UiVideoMode = 'mjpeg' | 'direct' | 'h264';
+export type UiVideoMode = 'mjpeg' | 'direct' | 'h264' | 'vp8';
 export type CapabilityMenuItem =
   | 'image'
   | 'download'
@@ -167,6 +167,7 @@ export function supportedUiVideoModes(manifest: CapabilityManifest | null): UiVi
   if (supportsVideoTransport(manifest, 'mjpeg')) modes.push('mjpeg');
   if (supportsVideoTransport(manifest, 'h264_direct')) modes.push('direct');
   if (supportsVideoTransport(manifest, 'web_rtc_native')) modes.push('h264');
+  if (supportsVideoTransport(manifest, 'web_rtc_janus')) modes.push('vp8');
   return modes.length ? modes : ['mjpeg'];
 }
 
