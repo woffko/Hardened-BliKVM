@@ -474,9 +474,12 @@ mod tests {
 
     const TEST_LIMIT: Duration = Duration::from_millis(30);
     const TEST_WAIT: Duration = Duration::from_millis(500);
+    // Outcomes other than a timeout must not depend on scheduler latency.
+    const RELAXED_LIMIT: Duration = Duration::from_secs(5);
     const ONE_RECORD_BUNDLE: &[u8] = b"schema=1 record_count=1\n\
 offset_ms=9 severity=info component=control_broker event=ready\n";
 
+    /// Only for asserting a timeout stage against a deliberately silent peer.
     fn limits() -> ClientLimits {
         ClientLimits {
             connect_timeout: TEST_LIMIT,
@@ -485,8 +488,16 @@ offset_ms=9 severity=info component=control_broker event=ready\n";
         }
     }
 
+    fn relaxed_limits() -> ClientLimits {
+        ClientLimits {
+            connect_timeout: RELAXED_LIMIT,
+            write_timeout: RELAXED_LIMIT,
+            response_timeout: RELAXED_LIMIT,
+        }
+    }
+
     fn test_client(path: PathBuf) -> DiagnosticExportClient {
-        DiagnosticExportClient::with_parts(path, limits())
+        DiagnosticExportClient::with_parts(path, relaxed_limits())
     }
 
     fn encoded(response: DiagnosticExportResponse<'_>) -> Vec<u8> {
@@ -696,7 +707,7 @@ offset_ms=9 severity=info component=control_broker event=ready\n";
         let (mut client, server) = duplex(64);
         drop(server);
         assert!(matches!(
-            exchange(&mut client, &request, limits()).await,
+            exchange(&mut client, &request, relaxed_limits()).await,
             Err(DiagnosticExportExchangeStage::WriteFailed)
         ));
     }
@@ -722,13 +733,13 @@ offset_ms=9 severity=info component=control_broker event=ready\n";
             server.read_exact(&mut received).await.unwrap();
         });
         assert!(matches!(
-            exchange(&mut client, &request, limits()).await,
+            exchange(&mut client, &request, relaxed_limits()).await,
             Err(DiagnosticExportExchangeStage::ResponseClosed)
         ));
         closed.await.unwrap();
 
         assert!(matches!(
-            exchange(&mut ReadFailureIo, &request, limits()).await,
+            exchange(&mut ReadFailureIo, &request, relaxed_limits()).await,
             Err(DiagnosticExportExchangeStage::ResponseReadFailed)
         ));
 
@@ -742,7 +753,7 @@ offset_ms=9 severity=info component=control_broker event=ready\n";
                 .unwrap();
         });
         assert!(matches!(
-            exchange(&mut client, &request, limits()).await,
+            exchange(&mut client, &request, relaxed_limits()).await,
             Err(DiagnosticExportExchangeStage::ResponseTooLarge)
         ));
         oversized.await.unwrap();

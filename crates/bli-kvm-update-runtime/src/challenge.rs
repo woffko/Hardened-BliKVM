@@ -109,6 +109,19 @@ pub struct HealthChallengeStore {
     identity: RuntimeIdentity,
 }
 
+impl Drop for HealthChallengeStore {
+    fn drop(&mut self) {
+        // flock belongs to the open file description. A child forked by any
+        // thread before its exec shares that description, so closing only our
+        // descriptor can leave the runtime locked after the store is gone.
+        // Unlock the description explicitly; the descriptor closes afterwards.
+        // SAFETY: the descriptor belongs to a live File; flock takes no pointers.
+        unsafe {
+            libc::flock(self.root_directory.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
 /// Validated file presence for one exact journal-bound challenge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChallengePresence {

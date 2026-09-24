@@ -28,6 +28,38 @@ open gate.
 
 ## Corrective requirement matrix
 
+Aggregate failure `26f5c70ff0c44f569ea902d975e9c58c` (exit 101, RuntimeBusy in
+`exact_cleanup_replays_each_partial_file_state_after_reopen`) is diagnosed and
+fixed. flock belongs to the open file description. A child forked by another
+test thread (the `process_identity` and `composition_systemd` tests spawn
+`/bin/sleep` and `/bin/sh`) shares that description until its exec, so closing
+only the store's descriptor could leave the runtime locked after the store was
+dropped. Reproduction: the runtime library suite failed 8 of 26 parallel runs,
+the challenge tests alone 0 of 40, and the challenge plus spawning tests 4 of 40.
+`HealthChallengeStore` now unlocks the description explicitly on drop, as does
+`UploadStorage`, the other directory lock without an acquisition retry. Runtime
+exclusion is unchanged: contention still returns RuntimeBusy while a store is
+alive. After the fix: 0 of 80 spawning-set runs and 0 of 25 full-suite runs
+failed. The manager, stager, diagnostic and system-action stores already retry
+lock acquisition, which bounds this window for them.
+
+Two further load-dependent test failures surfaced in reruns and were corrected
+in the tests only. The diagnostic export client tests used a 30 ms response
+limit for every exchange, so a delayed peer could turn an expected
+closed/invalid response into a timeout; strict limits are now used only for the
+timeout assertions. The control broker test that checks response ordering
+before diagnostic submission wrote its request after starting a 500 ms read
+timeout on another worker thread; the request is now buffered before the handler
+starts. Under an artificial 8-process CPU load, the broker, server, update
+runtime, supervisor, video proxy and peer adapter library suites passed 15 of 15
+runs each.
+
+Full `scripts/check.sh` with the D: target cache and offline Cargo then passed
+(exit 0, 2026-09-24, 175 test result groups). That source state also contains
+the closed execution-helper protocol in `bli-kvm-update-protocol::execution`
+(three new tests). This is host evidence; it does not change any device or
+release gate.
+
 Native protected artifact preparation is now implemented as
 `update-runtime::native_execution::NativeExecutionStore`: independently verified
 archives pass local version/system/native-inventory policy before protected

@@ -16,6 +16,17 @@ pub struct UploadStorage {
     directory: File,
 }
 
+impl Drop for UploadStorage {
+    fn drop(&mut self) {
+        // flock belongs to the open file description, which a child forked
+        // before its exec may still share. Unlock it explicitly on release.
+        // SAFETY: the descriptor belongs to a live File; flock takes no pointers.
+        unsafe {
+            libc::flock(self.directory.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
 impl UploadStorage {
     /// The administrator must provision an updater-owned directory with 0700.
     /// Every component is opened without following symlinks and pinned by FD.

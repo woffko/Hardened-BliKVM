@@ -2,6 +2,7 @@
 //! Status requests contain no mutation, path, command, URL or credential.
 
 pub mod activation;
+pub mod execution;
 pub mod upload;
 
 use serde::{Deserialize, Serialize};

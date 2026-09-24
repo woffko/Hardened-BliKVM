@@ -3030,18 +3030,20 @@ mod tests {
             },
         );
         let (server, mut client) = tokio::io::duplex(2 * MAX_CONTROL_MESSAGE_BYTES);
+        // Buffer the request before the handler's read timeout starts, so a
+        // delayed test thread cannot turn scheduling latency into a timeout.
+        write_request(&mut client, &request).await;
         let handler = tokio::spawn(handle_connection(
             server,
             TEST_WAIT,
             diagnostics.clone(),
             Arc::new(TokioMutex::new(ControlV2State::disabled())),
         ));
-        write_request(&mut client, &request).await;
 
-        for _ in 0..100 {
-            if diagnostics.entered.load(Ordering::Acquire) {
-                break;
-            }
+        let entered_deadline = tokio::time::Instant::now() + TEST_START_WAIT;
+        while !diagnostics.entered.load(Ordering::Acquire)
+            && tokio::time::Instant::now() < entered_deadline
+        {
             sleep(Duration::from_millis(5)).await;
         }
         assert!(diagnostics.entered.load(Ordering::Acquire));
