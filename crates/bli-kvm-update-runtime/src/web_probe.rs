@@ -1,7 +1,8 @@
 //! Bounded loopback fetching of exact signed web assets.
 //! Endpoint/process binding and authenticated API health remain caller gates.
 
-use crate::native_identity::NativeSlotIdentity;
+use crate::composition::CompositionError;
+use bli_kvm_update_verifier::ApplicationManifest;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::TokioIo;
@@ -17,6 +18,55 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "web asset response rejected")
 }
 
+pub(crate) fn asset_paths(manifest: &ApplicationManifest) -> impl Iterator<Item = &str> {
+    manifest
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .filter(|path| path.starts_with("share/web/"))
+}
+
+pub(crate) fn asset_metadata<'manifest>(
+    manifest: &'manifest ApplicationManifest,
+    manifest_path: &str,
+) -> Result<(u64, &'manifest str), CompositionError> {
+    if !manifest_path.starts_with("share/web/") {
+        return Err(CompositionError::WebAssetMismatch);
+    }
+    let expected = manifest
+        .files
+        .iter()
+        .find(|file| file.path == manifest_path)
+        .ok_or(CompositionError::WebAssetMismatch)?;
+    if expected.mode != 0o644 {
+        return Err(CompositionError::WebAssetMismatch);
+    }
+    Ok((expected.size, &expected.sha256))
+}
+
+/// Check an HTTP-decoded web body against the signed manifest. The HTTP caller
+/// must separately require success, bound transport/body decoding, and prove
+/// server identity. A manifest match is not API health.
+pub fn verify_body(
+    manifest: &ApplicationManifest,
+    manifest_path: &str,
+    body: &[u8],
+) -> Result<(), CompositionError> {
+    use sha2::{Digest, Sha256};
+    let (size, digest) = asset_metadata(manifest, manifest_path)?;
+    if size != body.len() as u64 {
+        return Err(CompositionError::WebAssetMismatch);
+    }
+    let actual: String = Sha256::digest(body)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if actual != digest {
+        return Err(CompositionError::WebAssetMismatch);
+    }
+    Ok(())
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct WebTreeObservation {
     /// Each signed web entry is fetched, including lazy-loaded assets.
@@ -30,7 +80,7 @@ pub struct WebTreeObservation {
 /// content delivery and core browser asset MIME types, not browser execution or
 /// authenticated API health.
 pub async fn verify_tree(
-    context: &NativeSlotIdentity<'_>,
+    context: &ApplicationManifest,
     endpoint: SocketAddr,
     deadline: Instant,
 ) -> io::Result<WebTreeObservation> {
@@ -40,11 +90,11 @@ pub async fn verify_tree(
     };
     // Preflight all entries before any network request. A wrong-mode or oversized
     // secondary asset must not silently disappear from readiness coverage.
-    for path in context.web_asset_paths() {
+    for path in asset_paths(context) {
         if Instant::now() >= deadline {
             return Err(io::ErrorKind::TimedOut.into());
         }
-        let (size, _) = context.web_asset_metadata(path).map_err(|_| invalid())?;
+        let (size, _) = asset_metadata(context, path).map_err(|_| invalid())?;
         if size > MAX_ASSET_BYTES {
             return Err(io::ErrorKind::InvalidInput.into());
         }
@@ -55,7 +105,7 @@ pub async fn verify_tree(
             .ok_or_else(invalid)?;
     }
     verify_route(context, endpoint, "share/web/index.html", "/", deadline).await?;
-    for path in context.web_asset_paths() {
+    for path in asset_paths(context) {
         verify_asset(context, endpoint, path, deadline).await?;
     }
     Ok(observation)
@@ -65,15 +115,13 @@ pub async fn verify_tree(
 /// signed size/hash. No DNS, proxy configuration, cookies, redirects or content
 /// decompression are used. The server's TCP identity is not established here.
 pub async fn verify_asset(
-    context: &NativeSlotIdentity<'_>,
+    context: &ApplicationManifest,
     endpoint: SocketAddr,
     manifest_path: &str,
     deadline: Instant,
 ) -> io::Result<()> {
     // Validate membership before allocating an encoded path from caller input.
-    context
-        .web_asset_metadata(manifest_path)
-        .map_err(|_| invalid())?;
+    asset_metadata(context, manifest_path).map_err(|_| invalid())?;
     let relative = manifest_path
         .strip_prefix("share/web/")
         .ok_or_else(invalid)?;
@@ -89,19 +137,15 @@ pub async fn verify_asset(
 }
 
 async fn verify_route(
-    context: &NativeSlotIdentity<'_>,
+    context: &ApplicationManifest,
     endpoint: SocketAddr,
     manifest_path: &str,
     route: &str,
     deadline: Instant,
 ) -> io::Result<()> {
-    let (size, _) = context
-        .web_asset_metadata(manifest_path)
-        .map_err(|_| invalid())?;
+    let (size, _) = asset_metadata(context, manifest_path).map_err(|_| invalid())?;
     let body = fetch_body(endpoint, route, size, deadline).await?;
-    context
-        .verify_web_asset(manifest_path, &body)
-        .map_err(|_| invalid())?;
+    verify_body(context, manifest_path, &body).map_err(|_| invalid())?;
     if Instant::now() >= deadline {
         return Err(io::ErrorKind::TimedOut.into());
     }

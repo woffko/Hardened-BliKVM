@@ -284,57 +284,18 @@ impl<'manager> NativeSlotIdentity<'manager> {
     }
 
     /// Check an HTTP-decoded web body against the signed immutable inventory.
-    /// The HTTP caller must separately require success, bound transport/body
-    /// decoding, and prove server identity. A manifest match is not API health.
+    /// See `web_probe::verify_body` for the transport obligations.
     pub fn verify_web_asset(
         &self,
         manifest_path: &str,
         body: &[u8],
     ) -> Result<(), CompositionError> {
-        use sha2::{Digest, Sha256};
-        let (size, digest) = self.web_asset_metadata(manifest_path)?;
-        if size != body.len() as u64 {
-            return Err(CompositionError::WebAssetMismatch);
-        }
-        let actual: String = Sha256::digest(body)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        if actual != digest {
-            return Err(CompositionError::WebAssetMismatch);
-        }
-        Ok(())
+        crate::web_probe::verify_body(self.manifest(), manifest_path, body)
     }
 
-    pub(crate) fn web_asset_paths(&self) -> impl Iterator<Item = &str> {
-        self.verified
-            .slot()
-            .manifest
-            .files
-            .iter()
-            .map(|file| file.path.as_str())
-            .filter(|path| path.starts_with("share/web/"))
-    }
-
-    pub(crate) fn web_asset_metadata(
-        &self,
-        manifest_path: &str,
-    ) -> Result<(u64, &str), CompositionError> {
-        if !manifest_path.starts_with("share/web/") {
-            return Err(CompositionError::WebAssetMismatch);
-        }
-        let expected = self
-            .verified
-            .slot()
-            .manifest
-            .files
-            .iter()
-            .find(|file| file.path == manifest_path)
-            .ok_or(CompositionError::WebAssetMismatch)?;
-        if expected.mode != 0o644 {
-            return Err(CompositionError::WebAssetMismatch);
-        }
-        Ok((expected.size, &expected.sha256))
+    /// The signed manifest of the held slot inventory.
+    pub fn manifest(&self) -> &bli_kvm_update_verifier::ApplicationManifest {
+        &self.verified.slot().manifest
     }
 
     /// Fence read-only native readiness probes with the same held slot files and

@@ -3232,7 +3232,7 @@ mod tests {
                 }).await.unwrap()
             });
             let result = crate::web_probe::verify_tree(
-                &context,
+                context.manifest(),
                 address,
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )
@@ -3279,7 +3279,7 @@ mod tests {
                 socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 14\r\nConnection: close\r\n\r\n<html>{version}</html>").as_bytes()).await.unwrap();
             });
             let result = crate::web_probe::verify_asset(
-                &context,
+                context.manifest(),
                 address,
                 "share/web/index.html",
                 std::time::Instant::now() + std::time::Duration::from_secs(1),

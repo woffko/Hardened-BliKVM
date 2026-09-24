@@ -66,6 +66,12 @@ impl PreparedNativeExecution<'_> {
     pub fn inventory(&self) -> &VerifiedSlotFiles {
         &self.inventory
     }
+
+    /// For a caller that keeps the store borrowed for the inventory's use,
+    /// such as one helper session, which holds the store lock throughout.
+    pub fn into_inventory(self) -> VerifiedSlotFiles {
+        self.inventory
+    }
 }
 
 impl NativeExecutionStore {
@@ -110,6 +116,20 @@ impl NativeExecutionStore {
             _store: self,
             inventory,
         })
+    }
+
+    /// Unprivileged fixture without the protected ancestry requirement.
+    #[cfg(test)]
+    pub(crate) fn fixture(
+        root: &Path,
+        trust: ApplicationTrustRoot,
+        policy: ExecutionPolicy,
+    ) -> Self {
+        Self {
+            stager: ApplicationSlotStager::open(root).unwrap(),
+            trust,
+            policy,
+        }
     }
 
     /// Prepare from an updater-owned slot. `updater_root` must come from
