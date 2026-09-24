@@ -41,6 +41,16 @@ while IFS= read -r path; do
         exit 1
       fi
       ;;
+    image/jpeg)
+      # Synthetic ffmpeg testsrc2 frames for the VP8 pipeline's decoder tests.
+      case "$path" in
+        crates/bli-kvm-video-encoder/tests/fixtures/testsrc-64x48-420.jpg|crates/bli-kvm-video-encoder/tests/fixtures/testsrc-64x48-422.jpg) ;;
+        *)
+          echo "unexpected JPEG source asset: $path" >&2
+          exit 1
+          ;;
+      esac
+      ;;
     image/svg+xml)
       case "$path" in
         *.svg) ;;

@@ -17,7 +17,8 @@
 # first-boot provisioning unit and writes the images.
 set -eu
 
-ENDPOINT_HOST=${BLI_KVM_DEVICE_HOST:-10.0.77.118}
+# The device address comes from the operator environment, never from Git.
+ENDPOINT_HOST=${BLI_KVM_DEVICE_HOST:?set BLI_KVM_DEVICE_HOST to the board address}
 KNOWN_HOSTS=${BLI_KVM_KNOWN_HOSTS:-evidence/private/ssh-known-hosts}
 IMAGE_BYTES=$((28 * 1024 * 1024 * 1024))
 ROOT_START=8192

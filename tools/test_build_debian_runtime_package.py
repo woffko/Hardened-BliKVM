@@ -119,10 +119,10 @@ class DebianRuntimePackageTests(unittest.TestCase):
             (web / "index.html").write_text("Hardened BliKVM")
             binary = root / "usr/libexec/hardened-blikvm/bli-kvm-control-broker"
             binary.parent.mkdir(parents=True)
-            binary.write_bytes(b"{ " + b"10." + b"0.0.0/8, 172.16.0.0/12 }")
+            binary.write_bytes(b"{ " + package.RFC1918_TEN_NETWORK + b" }")
             package.audit_package_tree(root)
-            for leaked in (b"10." + b"0.77.118", b"10." + b"0.0.0/16", b"10." + b"0.87.1"):
-                binary.write_bytes(b"{ " + b"10." + b"0.0.0/8 } " + leaked)
+            for leaked in (b"10." + b"0.1.2", b"10." + b"0.0.0/16", b"10." + b"0.9.1"):
+                binary.write_bytes(b"{ " + package.RFC1918_TEN_NETWORK + b" } " + leaked)
                 with self.assertRaises(package.BuildError):
                     package.audit_package_tree(root)
 
