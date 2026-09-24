@@ -28,6 +28,24 @@ open gate.
 
 ## Corrective requirement matrix
 
+Device checkpoint 2026-09-24 (native profile, prepare phase). With operator
+approval, `tools/device/deploy_native_profile.sh prepare` ran on the H616 test
+board: state, units and configuration were backed up to
+`/var/backups/hardened-blikvm-native`, update-runtime 0.1.0~dev11 replaced
+dev9, the root-owned helper configuration and protected roots were created and
+`hardened-blikvm-update-exec.socket` was enabled. Serving units stayed active.
+A helper session from the coordinator UID then: prepared a protected root-owned
+copy of confirmed slot 14; reported the board-server unit clean; refused
+`ValidateStart` for the current server because its installed unit still has
+legacy recover dependencies; refused identity observation and `Select` before
+observed quiescence. A foreign UID could not connect to the helper socket.
+Observing a running unit waits for a stop until the deadline, as designed.
+
+The cutover is deliberately pending: the live board-owner binary differs from
+slot 14's, so the native composition must run a slot built from current
+source. Signing slot 15 with the production key needs the operator (the
+prepared command is `release-seq15/sign-seq15.sh` on the D: build volume).
+
 Checkpoint 2026-09-24 (late). Native admission now runs end to end through
 `activation-socket --native-profile` and the root helper; the server requests
 admission only in the rendered native units and the GUI accepts the

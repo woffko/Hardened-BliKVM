@@ -1,0 +1,15 @@
+[Unit]
+Description=Hardened BliKVM first-boot machine identity provisioning
+Documentation=https://github.com/woffko/Hardened-BliKVM
+DefaultDependencies=no
+After=local-fs.target systemd-machine-id-commit.service
+Before=ssh.service sshd.service hardened-blikvm-nginx.service hardened-blikvm-board-owner.service multi-user.target
+ConditionPathExists=/etc/hardened-blikvm/.firstboot-pending
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/hardened-blikvm/hardened-blikvm-firstboot
+
+[Install]
+WantedBy=multi-user.target
