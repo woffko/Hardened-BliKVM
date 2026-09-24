@@ -51,7 +51,11 @@ fetch() {
       --exclude=./etc/hardened-blikvm/tls.key --exclude=./etc/hardened-blikvm/tls.crt \
       --exclude=./etc/ssl/private/ssl-cert-snakeoil.key --exclude=./etc/hardened-blikvm-gadget/serial \
       --exclude=./var/lib/hardened-blikvm/accounts --exclude=./var/lib/hardened-blikvm/sessions \
-      --exclude="./home/*/.bash_history" .' > "$work/rootfs.tar"
+      --exclude="./home/*/.bash_history" .; status=$?; [ "$status" -le 1 ] || exit "$status"' \
+    > "$work/rootfs.tar"
+  # GNU tar exits 1 when a live file changed while it was read; the archive
+  # must still list completely.
+  tar -tf "$work/rootfs.tar" > /dev/null
   ssh_device 'dd if=/dev/mmcblk0 bs=512 skip=1 count=2047 status=none' > "$work/boot-area.bin"
   ssh_device 'cat /etc/armbian-release /etc/os-release 2>/dev/null | grep -E "^(VERSION|BOARD|PRETTY_NAME)="; uname -r' \
     > "$work/source-system.txt"
