@@ -30,6 +30,10 @@ use crate::{
     process_identity::ProcessIdentity,
 };
 
+/// Fixed helper socket; the directory is root-owned and not writable by the
+/// coordinator. Never taken from configuration supplied by the coordinator.
+pub const EXECUTION_SOCKET: &str = "/run/hardened-blikvm-exec-api/exec.sock";
+
 struct Session {
     stream: UnixStream,
     deadline: Instant,

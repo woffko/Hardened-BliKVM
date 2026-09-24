@@ -201,6 +201,13 @@ impl UpdateSupervisor {
         Ok(self.manager.status()?)
     }
 
+    /// Read-only recovery inspection under the held manager locks.
+    pub fn inspect_recovery(
+        &self,
+    ) -> Result<bli_kvm_update_manager::RecoveryInspection, UpdateRuntimeError> {
+        Ok(self.manager.inspect_recovery()?)
+    }
+
     pub fn native_status(&self) -> Result<ManagerStatus, UpdateRuntimeError> {
         Ok(self.manager.native_status()?)
     }

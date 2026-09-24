@@ -67,6 +67,8 @@ enum CliCommand {
     Activate(String),
     WatchdogOnce,
     ConfirmStdin,
+    MigrateNativeIdle,
+    BootNative,
 }
 
 fn main() -> ExitCode {
@@ -218,6 +220,16 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                             )
                         }
                         CliCommand::WatchdogOnce => watchdog_receipt(supervisor.watchdog_once()?),
+                        CliCommand::MigrateNativeIdle => {
+                            // Explicit operator opt-in; no service is started.
+                            let generation = supervisor.inspect_recovery()?.generation;
+                            json!({
+                                "command": "migrate_native_idle",
+                                "result": "native_idle",
+                                "generation": supervisor.migrate_native_idle(generation)?,
+                            })
+                        }
+                        CliCommand::BootNative => boot_native_receipt(&supervisor)?,
                         CliCommand::ConfirmStdin => {
                             let stdin = io::stdin();
                             let mut locked = stdin.lock();
@@ -310,6 +322,8 @@ fn parse_arguments(
             }
         }
         "watchdog-once" => CliCommand::WatchdogOnce,
+        "migrate-native-idle" => CliCommand::MigrateNativeIdle,
+        "boot-native" => CliCommand::BootNative,
         "confirm-stdin" => CliCommand::ConfirmStdin,
         "gc" => {
             let retain = arguments
@@ -345,6 +359,37 @@ fn parse_arguments(
 
 // Explicit allowlist: inspection is not current health, startup authority or a
 // credential export. In particular, never serialize a completion health binding.
+/// Start or recover the native composition through the root execution helper.
+/// The generation is read under the manager locks this process holds.
+fn boot_native_receipt(supervisor: &UpdateSupervisor) -> Result<Value, SupervisorCliError> {
+    use bli_kvm_update_runtime::{
+        NativeBootOutcome,
+        native_exec_client::{EXECUTION_SOCKET, ExecutionClient},
+    };
+    let generation = supervisor.inspect_recovery()?.generation;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let mut client = ExecutionClient::connect(std::path::Path::new(EXECUTION_SOCKET), deadline)?;
+    let probes = client.clone();
+    let outcome =
+        supervisor.boot_native_composition(generation, &mut client, deadline, |unit, _, _| {
+            probes.probe(unit)
+        })?;
+    Ok(match outcome {
+        NativeBootOutcome::Ready(observation) => json!({
+            "command": "boot_native",
+            "result": "ready",
+            "generation": generation,
+            "slotId": observation.slot_id,
+        }),
+        NativeBootOutcome::AwaitingHealth(pending) => json!({
+            "command": "boot_native",
+            "result": "awaiting_health",
+            "generation": generation,
+            "targetSlotId": pending.target_slot_id,
+        }),
+    })
+}
+
 fn recovery_inspection_receipt(inspection: &bli_kvm_update_manager::RecoveryInspection) -> Value {
     use bli_kvm_update_manager::RecoverySelection;
     let intent = |value: &bli_kvm_update_manager::NativeRollbackIntent| {

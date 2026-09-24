@@ -440,6 +440,70 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     assert!(!slots.join(slot3).exists());
 }
 
+#[test]
+fn native_migration_is_explicit_and_boot_without_the_helper_changes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let slots = create_private_directory(root.path(), "slots");
+    let state = create_private_directory(root.path(), "state");
+    let runtime = create_private_directory(root.path(), "runtime");
+    let sources = create_private_directory(root.path(), "sources");
+    let signing = SigningKey::from_bytes(&[58; 32]);
+    let mut native = payload(1);
+    native.insert("libexec/bli-kvm-boardd", (0o755, b"boardd-1".to_vec()));
+    let source = sources.join("native-1.tar");
+    fs::write(&source, bundle(&signing, &manifest(1, &native), &native)).unwrap();
+    fs::set_permissions(&source, Permissions::from_mode(0o600)).unwrap();
+    let config = root.path().join("supervisor.json");
+    fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "schemaVersion": 1,
+            "product": APPLICATION_PRODUCT,
+            "target": APPLICATION_TARGET,
+            "keyId": KEY_ID,
+            "publicKeyHex": hex(&signing.verifying_key().to_bytes()),
+            "slotRoot": slots,
+            "stateRoot": state,
+            "runtimeRoot": runtime,
+            "systemSequence": 1,
+            "healthTimeoutMs": 60_000,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&config, Permissions::from_mode(0o600)).unwrap();
+    let binary = env!("CARGO_BIN_EXE_bli-kvm-update-supervisor");
+    let run = |arguments: &[&str]| command(binary, &config, arguments).output().unwrap();
+
+    let staged = run(&["stage", source.to_str().unwrap()]);
+    assert!(staged.status.success(), "{:?}", staged.stderr);
+    let slot = json_output(&staged)["slotId"].as_str().unwrap().to_string();
+    assert!(run(&["initialize", &slot]).status.success());
+    let journal_path = state.join("application-state.json");
+    let schema = || json_output(&run(&["inspect-recovery"]))["schemaVersion"].clone();
+    assert_eq!(schema(), 1);
+
+    // Migration is a separate explicit command and starts no service.
+    let migrated = run(&["migrate-native-idle"]);
+    assert!(migrated.status.success(), "{:?}", migrated.stderr);
+    assert_eq!(json_output(&migrated)["result"], "native_idle");
+    assert_eq!(schema(), 3);
+    let migrated_journal = fs::read(&journal_path).unwrap();
+    let replay = run(&["migrate-native-idle"]);
+    assert!(replay.status.success(), "{:?}", replay.stderr);
+    assert_eq!(fs::read(&journal_path).unwrap(), migrated_journal);
+
+    // Without the root helper socket, native boot fails before any mutation.
+    let selected = fs::read_link(slots.join("current")).unwrap();
+    let booted = run(&["boot-native"]);
+    assert!(!booted.status.success());
+    assert_eq!(booted.status.code(), Some(50));
+    assert!(booted.stdout.is_empty());
+    assert_eq!(fs::read(&journal_path).unwrap(), migrated_journal);
+    assert_eq!(fs::read_link(slots.join("current")).unwrap(), selected);
+    assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
+}
+
 fn command(binary: &str, config: &Path, arguments: &[&str]) -> Command {
     let mut command = Command::new(binary);
     command.env_clear();
