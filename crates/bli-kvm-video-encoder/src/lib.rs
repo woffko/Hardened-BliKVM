@@ -6,8 +6,12 @@
 //! JPEG decoding and VP8 encoding are separate, replaceable stages.
 
 pub mod gate;
+pub mod mjpeg;
 pub mod rtp;
 pub mod slot;
+#[cfg(feature = "vp8")]
+pub mod vp8;
+pub mod yuv;
 
 pub use gate::{FrameDecision, FrameGate, GatePolicy};
 pub use rtp::{RtpError, Vp8Packetizer};

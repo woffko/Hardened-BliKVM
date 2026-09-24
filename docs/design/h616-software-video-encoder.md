@@ -58,3 +58,32 @@ is not included above.
 Measured fps, bitrate, CPU, memory, temperature and glass-to-glass latency on
 the device with real capture, desktop and mobile browsers, MJPEG/VP8 switching,
 and failure isolation (encoder crash does not affect MJPEG or HID).
+
+## Implementation status (2026-09-24)
+
+- `scripts/build-libvpx.sh` builds a static VP8-encoder-only libvpx 1.15.2 from
+  a pinned SHA-256, cross-compiled with clang against pinned musl 1.2.5 headers.
+  ARMv8.2+ extensions (dotprod, i8mm, SVE) are disabled because runtime CPU
+  detection is off and the Cortex-A53 faults on them (observed as SIGILL
+  before this was fixed). Two aarch64 builds produced identical archives.
+- `bli-kvm-video-encoder` (feature `vp8`): bounded uStreamer MJPEG reader,
+  frame gate, JPEG to I420 (pure-Rust zune-jpeg with NEON, optional 2x
+  downscale), a narrow C shim around libvpx, RFC 7741 RTP to loopback, and a
+  three-stage pipeline (read, decode/convert, encode) with newest-frame slots.
+
+Device measurement with pre-generated full-motion testsrc2 JPEG at 30 fps fed
+through a local fake uStreamer socket (worst case; the live desktop was static
+and produced about 11 frames in 25 s through uStreamer's drop-same-frames):
+
+| Input | Output | fps | Encoder cores | RSS | Bitrate |
+| --- | --- | --- | --- | --- | --- |
+| 1280x720 | 1280x720 | 22.0 | 1.57 | 37 MiB | 3.6 Mbit/s |
+| 1920x1080 | 960x540 (halved) | 20.1 | 1.98 | 25 MiB | 3.3 Mbit/s |
+| 1920x1080 | 1920x1080 | 12.8 | 2.88 | 80 MiB | 2.8 Mbit/s |
+
+Per-frame stage times at 720p: JPEG decode 14 ms, conversion 9 ms, VP8 encode
+23 ms. Peak SoC temperature during the runs was 69 C. Defaults: 720p capture at
+full size, or 1080p capture halved. Full 1080p VP8 is not offered.
+
+Open: Janus streaming mount and authenticated signaling through the server,
+browser player, systemd unit with CPU quota, and acceptance with real capture.
