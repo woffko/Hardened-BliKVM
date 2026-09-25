@@ -232,6 +232,12 @@ Hashing the updater file stays a consistency check, as explained above.
     `migrate-native-idle` archives it; the status API reports the rolled-back
     confirmed state in the meantime, and new activations require the
     archive step.
+- Update package 0.1.0~dev15: a failure after admission (start or
+  confirmation) left the rejected candidate running, or no server at all,
+  until the next native boot. The activation worker now records an explicit
+  rejection when the journal still awaits health, restores the confirmed
+  composition in a fresh helper session, and logs the readiness error that
+  the journal reduces to `explicit_health_failure`.
 
 ### Deployment prerequisites (not done)
 

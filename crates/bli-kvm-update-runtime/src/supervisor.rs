@@ -508,7 +508,11 @@ impl UpdateSupervisor {
                             Ok(())
                         }
                     })
-                    .map_err(|_| UpdateManagerError::RecoveryRequired)
+                    .map_err(|error| {
+                        // The journal records only the rollback reason.
+                        eprintln!("native candidate readiness failed: {error:?}");
+                        UpdateManagerError::RecoveryRequired
+                    })
             },
             || {
                 self.kernel
@@ -525,6 +529,19 @@ impl UpdateSupervisor {
 
     /// Cleanup-only replay after successful native confirmation, including partial
     /// credential deletion. Historical startup identity does not authorize cleanup.
+    /// Record an explicit native rejection of the exact pending candidate, so
+    /// that the next native boot restores the confirmed composition at once
+    /// instead of waiting for the health deadline. Services are not touched.
+    pub fn reject_native_candidate(
+        &self,
+        operation_id: [u8; 16],
+    ) -> Result<(), UpdateRuntimeError> {
+        let generation = self.manager.inspect_recovery()?.generation;
+        self.manager
+            .begin_native_rejection(generation, operation_id)?;
+        Ok(())
+    }
+
     pub fn cleanup_native_confirmation(
         &self,
         expected_generation: u64,
@@ -1382,6 +1399,65 @@ mod tests {
         assert_eq!(apply.slot_id, previous.slot_id);
         assert_eq!(reopened.status().unwrap().floor_sequence, 1);
         assert!(reopened.challenges.status().unwrap().is_none());
+    }
+
+    #[test]
+    fn rejecting_a_native_candidate_records_intent_for_immediate_restoration() {
+        let fixture = Fixture::new();
+        let previous = fixture.stage(1);
+        let candidate = fixture.stage(2);
+        let supervisor = fixture.supervisor();
+        supervisor.initialize(&previous.slot_id).unwrap();
+        let idle = supervisor
+            .manager
+            .migrate_native_idle(1, |_| Ok(()))
+            .unwrap();
+        let clock = supervisor.kernel.snapshot().unwrap();
+        let issued = supervisor
+            .challenges
+            .issue(
+                &candidate.slot_id,
+                clock,
+                clock.monotonic_ms + DEFAULT_HEALTH_TIMEOUT_MS,
+            )
+            .unwrap();
+        let request = ActivationRequest {
+            operation_id: issued.operation_id,
+            health_binding: issued.health_binding,
+            target_slot_id: candidate.slot_id.clone(),
+            clock,
+        };
+        supervisor
+            .manager
+            .admit_native_activation(idle, &request)
+            .unwrap();
+        let prepared = supervisor.manager.inspect_recovery().unwrap();
+        supervisor
+            .manager
+            .execute_native_prepared_activation(
+                prepared.generation,
+                request,
+                || Ok(()),
+                || Ok(clock),
+            )
+            .unwrap();
+        // A foreign operation is refused without changing the journal.
+        let before = supervisor.manager.inspect_recovery().unwrap();
+        assert!(supervisor.reject_native_candidate([7; 16]).is_err());
+        assert_eq!(supervisor.manager.inspect_recovery().unwrap(), before);
+        supervisor
+            .reject_native_candidate(issued.operation_id)
+            .unwrap();
+        let rejected = supervisor.manager.inspect_recovery().unwrap();
+        let intent = rejected.rollback_intent.unwrap();
+        assert_eq!(intent.reason, RollbackReason::ExplicitHealthFailure);
+        assert_eq!(rejected.confirmed_slot_id, previous.slot_id);
+        // An existing intent is kept, never relabeled.
+        assert!(
+            supervisor
+                .reject_native_candidate(issued.operation_id)
+                .is_err()
+        );
     }
 
     #[test]

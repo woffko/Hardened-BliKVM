@@ -194,6 +194,7 @@ fn serve_native(
     };
     let probes = client.clone();
     let mut delivered = false;
+    let mut admitted_operation = None;
     let admitted = supervisor.activate_native_candidate(
         &slot_id,
         expected_generation,
@@ -221,6 +222,7 @@ fn serve_native(
             )
             .map_err(|_| UpdateManagerError::RecoveryRequired)?;
             delivered = true;
+            admitted_operation = Some(admission.operation_id);
             Ok(())
         },
         |unit, _, _| probes.probe(unit),
@@ -228,7 +230,14 @@ fn serve_native(
     let (activation, started) = match admitted {
         Ok(value) => value,
         Err(error) if !delivered => return refuse(&mut stream, error.into()),
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+            // The requesting server is already stopped: restore the confirmed
+            // composition now rather than leaving the board without a server.
+            eprintln!("native activation failed after admission: {error:?}");
+            drop((client, probes));
+            restore_after_failure(&supervisor, admitted_operation);
+            return Err(error.into());
+        }
     };
     let ActivationOutcome::AwaitingHealth { operation_id, .. } = activation.outcome else {
         return Err(SupervisorCliError::ActivationNotDispatched);
@@ -241,11 +250,49 @@ fn serve_native(
         &mut client,
         deadline,
         |unit, _, _| probes.probe(unit),
-    )?;
-    if outcome != bli_kvm_update_manager::NativeConfirmationOutcome::Confirmed {
-        return Err(SupervisorCliError::ActivationNotDispatched);
+    );
+    drop((client, probes));
+    match outcome {
+        Ok(bli_kvm_update_manager::NativeConfirmationOutcome::Confirmed) => Ok(()),
+        Ok(_) => {
+            // A rejected candidate keeps running until the confirmed
+            // composition is restored; do that now instead of at next boot.
+            restore_after_failure(&supervisor, None);
+            Err(SupervisorCliError::ActivationNotDispatched)
+        }
+        Err(error) => {
+            eprintln!("native confirmation failed: {error:?}");
+            restore_after_failure(&supervisor, Some(operation_id));
+            Err(error.into())
+        }
     }
-    Ok(())
+}
+
+/// Best-effort restoration of the confirmed native composition in a fresh
+/// helper session after a failure past admission. `operation` is rejected
+/// first when the journal still awaits its health; an existing rollback intent
+/// is kept. Failures are logged; native boot remains the fallback.
+fn restore_after_failure(supervisor: &UpdateSupervisor, operation: Option<[u8; 16]>) {
+    use bli_kvm_update_runtime::native_exec_client::{EXECUTION_SOCKET, ExecutionClient};
+    if let Some(operation_id) = operation
+        && let Err(error) = supervisor.reject_native_candidate(operation_id)
+    {
+        eprintln!("native rejection not recorded: {error:?}");
+    }
+    let result = (|| -> Result<(), SupervisorCliError> {
+        let generation = supervisor.inspect_recovery()?.generation;
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let mut client = ExecutionClient::connect(Path::new(EXECUTION_SOCKET), deadline)?;
+        let probes = client.clone();
+        supervisor.boot_native_composition(generation, &mut client, deadline, |unit, _, _| {
+            probes.probe(unit)
+        })?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => eprintln!("native composition restored after a failed activation"),
+        Err(error) => eprintln!("native restoration after a failed activation failed: {error:?}"),
+    }
 }
 
 fn open_supervisor(config: &Path) -> Result<UpdateSupervisor, SupervisorCliError> {
