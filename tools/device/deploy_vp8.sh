@@ -22,9 +22,12 @@ install_vp8() {
   case "$staging" in /*) ;; *) echo "staging directory must be absolute" >&2; exit 2 ;; esac
   command -v janus >/dev/null || { echo "the distribution janus package is required" >&2; exit 1; }
   install -m 0755 -o root -g root "$staging/bli-kvm-video-encoder" /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
-  install -d -m 0755 -o root -g root /etc/hardened-blikvm/janus
+  # Its own world-readable directory: /etc/hardened-blikvm is root-only and
+  # the dynamic Janus user could not read its configuration there.
+  rm -rf /etc/hardened-blikvm/janus
+  install -d -m 0755 -o root -g root /etc/hardened-blikvm-janus
   for file in "$staging"/janus/*.jcfg; do
-    install -m 0644 -o root -g root "$file" /etc/hardened-blikvm/janus/
+    install -m 0644 -o root -g root "$file" /etc/hardened-blikvm-janus/
   done
   install -m 0644 "$staging/hardened-blikvm-janus.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-video-encoder.service" "$units/"
@@ -52,6 +55,8 @@ remove_vp8() {
   for unit in $serving; do
     rm -f "$units/$unit.service.d/60-webrtc.conf"
   done
+  rm -rf /etc/hardened-blikvm-janus
+  # Configuration from an earlier layout, unreadable for the dynamic user.
   rm -rf /etc/hardened-blikvm/janus
   rm -f /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
   systemctl daemon-reload

@@ -28,6 +28,28 @@ open gate.
 
 ## Corrective requirement matrix
 
+Device checkpoint 2026-09-25 (native profile and VP8 live). Application slot
+15 (source `ec04bc5`, bundle `f4934252…`, two identical signed builds, host
+verification passed) was uploaded and activated through the API; the legacy
+candidate path confirmed it (generation 7, floor 15). The native cutover then
+migrated the journal to schema 3 and `boot-native` reported `ready`: owner,
+video proxy, board daemon and current server all run from the root-owned
+protected copy of slot 15, readiness probes passed and HTTPS answered 200
+(`evidence/private/native-profile-cutover-20260925-a.json`). Four earlier
+attempts failed on board-specific behaviour and were rolled back from the
+backup each time: systemd 249 omits empty exec hook lists, the unmasked
+legacy recover unit's Before= edge, SIGTERM exits reported as CLD_KILLED/15,
+and identity observation racing the exec of a just-started unit; a rollback
+also removed the helper configuration. All are fixed with regressions.
+
+The VP8 path is deployed: the encoder reads the uStreamer stream, Janus runs
+streaming-only with its WebSocket on loopback (it needed its own readable
+configuration directory and AF_INET6 for libwebsockets), and headless
+Chromium on the host negotiated through `/api/stream/webrtc`: ICE connected,
+`video/VP8` 1280x720 frames decoded
+(`evidence/private/vp8-webrtc-device-20260925-a.json`). Latency, full-motion
+load with real capture and desktop/mobile GUI acceptance remain open.
+
 P3 firewall finding 2026-09-24. Loading the generated rules into the board's
 real nft 1.0.2 inside a fresh network namespace (the device firewall was not
 touched) showed that this nft stores the owned table's mode comment but omits

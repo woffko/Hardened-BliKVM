@@ -1,6 +1,6 @@
 # Hardened BliKVM Janus core: streaming plugin and loopback WebSocket only.
 general: {
-	configs_folder = "/etc/hardened-blikvm/janus"
+	configs_folder = "/etc/hardened-blikvm-janus"
 	plugins_folder = "/usr/lib/aarch64-linux-gnu/janus/plugins"
 	transports_folder = "/usr/lib/aarch64-linux-gnu/janus/transports"
 	events_folder = "/usr/lib/aarch64-linux-gnu/janus/events"

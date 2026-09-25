@@ -5,13 +5,13 @@ After=network-online.target
 Wants=network-online.target
 # Janus falls back to built-in defaults (all plugins, HTTP on every address)
 # when its configuration is missing; never start without the reviewed one.
-ConditionPathExists=/etc/hardened-blikvm/janus/janus.jcfg
+ConditionPathExists=/etc/hardened-blikvm-janus/janus.jcfg
 
 [Service]
 Type=simple
 DynamicUser=yes
 UMask=0077
-ExecStart=/usr/bin/janus --configs-folder=/etc/hardened-blikvm/janus --disable-colors
+ExecStart=/usr/bin/janus --configs-folder=/etc/hardened-blikvm-janus --disable-colors
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=10s
@@ -30,7 +30,8 @@ ProtectKernelTunables=yes
 ProtectProc=invisible
 ProcSubset=pid
 ProtectSystem=strict
-RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+# libwebsockets opens an IPv6 socket for its loopback listener.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # Only the loopback signaling port and the WebRTC media range may be bound,
 # even if a configuration regression enabled another transport.
 SocketBindDeny=any

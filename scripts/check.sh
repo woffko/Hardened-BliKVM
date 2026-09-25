@@ -130,6 +130,7 @@ node --check tools/playwright/restricted_control_virtual_keyboard_probe.mjs
 node --check tools/playwright/restricted_control_lifecycle.mjs
 node --check tools/playwright/network_contract.mjs
 node --check tools/playwright/firewall_modes_contract.mjs
+node --check tools/playwright/vp8_webrtc_probe.mjs
 node --check tools/playwright/video_settings_contract.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
