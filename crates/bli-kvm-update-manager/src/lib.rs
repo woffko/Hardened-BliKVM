@@ -443,18 +443,28 @@ impl ApplicationUpdateManager {
         Ok(status_from_document(&document))
     }
 
-    /// Read-only status for either profile: the legacy journal, or an idle or
-    /// pending native journal. Native recovery states remain RecoveryRequired.
+    /// Read-only status for either profile: the legacy journal, or a native
+    /// journal that is idle, pending, or has completed a restoration that is
+    /// not yet archived (the confirmed slot runs). A native rollback intent in
+    /// progress remains RecoveryRequired.
     pub fn observed_status(&self) -> Result<ManagerStatus, UpdateManagerError> {
         let document = self
             .state
             .load()?
             .ok_or(UpdateManagerError::NotInitialized)?;
-        if document.schema_version == model::NATIVE_LIFECYCLE_SCHEMA_VERSION {
-            self.native_status()
-        } else {
-            self.status()
+        if document.schema_version != model::NATIVE_LIFECYCLE_SCHEMA_VERSION {
+            return self.status();
         }
+        if document.native_rollback.is_some()
+            || (document.native_completion.is_some() && document.pending.is_some())
+        {
+            return Err(UpdateManagerError::RecoveryRequired);
+        }
+        self.validate_referenced_slots(&document)?;
+        if self.pointer.read()?.as_deref() != Some(document.active.slot_id.as_str()) {
+            return Err(UpdateManagerError::RecoveryRequired);
+        }
+        Ok(status_from_document(&document))
     }
 
     /// Inspect recovery without repairing the pointer or requiring a possibly

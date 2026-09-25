@@ -43,8 +43,21 @@ pub enum StopObservation {
     /// A never-started, loaded inactive unit may also satisfy this condition.
     Clean,
     RunningOrQueued,
+    /// Process-free and terminal, but the last run failed (a crash or a failed
+    /// start). Counts as stopped, so recovery is not blocked by the failure it
+    /// is meant to repair; the incoming units reinitialize their devices.
+    StoppedAfterFailure,
+    /// Failed while a main/control process, job or control group remains.
     Failed,
     Unknown,
+}
+
+impl StopObservation {
+    /// No process, job or control group remains, whether or not the last
+    /// run exited cleanly.
+    pub fn is_stopped(self) -> bool {
+        matches!(self, Self::Clean | Self::StoppedAfterFailure)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -127,7 +140,7 @@ pub fn quiesce(controller: &mut impl ServiceController) -> Result<(), Compositio
             controller.stop(unit)?;
         }
         for &unit in phase {
-            if controller.observe_stop(unit)? != StopObservation::Clean {
+            if !controller.observe_stop(unit)?.is_stopped() {
                 return Err(CompositionError::NotStopped(unit));
             }
         }
@@ -200,6 +213,18 @@ mod tests {
         quiesce(&mut controller).unwrap();
         assert_eq!(controller.stopped, [PRODUCERS, BACKENDS].concat());
         assert_eq!(controller.observed, controller.stopped);
+    }
+
+    #[test]
+    fn a_unit_stopped_after_failure_does_not_block_quiescence() {
+        for &unit in PRODUCERS.iter().chain(BACKENDS) {
+            let mut controller = Controller {
+                fault: Some((unit, StopObservation::StoppedAfterFailure)),
+                ..Controller::default()
+            };
+            quiesce(&mut controller).unwrap();
+            assert_eq!(controller.stopped, [PRODUCERS, BACKENDS].concat());
+        }
     }
 
     #[test]

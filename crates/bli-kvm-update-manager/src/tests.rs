@@ -385,6 +385,11 @@ fn native_admission_executes_after_reopen_and_supports_next_operation_after_reco
             .admit_native_activation(rejected.generation, &request)
             .is_err()
     );
+    // Status is not reported while a rollback intent is in progress.
+    assert!(matches!(
+        manager.observed_status(),
+        Err(UpdateManagerError::RecoveryRequired)
+    ));
     let restored = manager
         .restore_native_selection(rejected.generation, &intent, || Ok(()))
         .unwrap();
@@ -396,6 +401,13 @@ fn native_admission_executes_after_reopen_and_supports_next_operation_after_reco
         )
         .unwrap();
     let completed = manager.inspect_recovery().unwrap();
+    // A completed, not yet archived restoration reports the confirmed slot.
+    let observed = manager.observed_status().unwrap();
+    assert_eq!(observed.generation, completed.generation);
+    assert_eq!(observed.active_slot_id, completed.confirmed_slot_id);
+    assert!(observed.pending.is_none());
+    assert!(observed.last_rollback.is_some());
+    assert!(manager.native_status().is_err());
     assert!(
         manager
             .admit_native_activation(completed.generation, &request)

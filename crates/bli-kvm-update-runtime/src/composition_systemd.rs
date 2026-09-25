@@ -425,13 +425,24 @@ fn parse_stop_observation(output: &[u8]) -> StopObservation {
             return StopObservation::Unknown;
         }
     }
+    let process_free = fields["MainPID"] == "0"
+        && fields["ControlPID"] == "0"
+        && fields["Job"].is_empty()
+        && fields["ControlGroup"].is_empty();
+    let terminal = matches!(
+        (fields["ActiveState"], fields["SubState"]),
+        ("inactive", "dead") | ("failed", "failed")
+    );
     if fields["ActiveState"] == "failed" || fields["Result"] != "success" {
-        return StopObservation::Failed;
+        // A failed start or crash leaves a stopped unit whose last run did not
+        // exit cleanly; it is stopped, but never reported as a clean stop.
+        return if process_free && terminal {
+            StopObservation::StoppedAfterFailure
+        } else {
+            StopObservation::Failed
+        };
     }
-    if fields["MainPID"] != "0"
-        || fields["ControlPID"] != "0"
-        || !fields["Job"].is_empty()
-        || !fields["ControlGroup"].is_empty()
+    if !process_free
         || matches!(
             fields["ActiveState"],
             "active" | "activating" | "deactivating" | "reloading"
@@ -450,7 +461,7 @@ fn parse_stop_observation(output: &[u8]) -> StopObservation {
         ("0" | "1", "0") | ("2", "1" | "2" | "13" | "15")
     );
     if !clean_exit {
-        return StopObservation::Failed;
+        return StopObservation::StoppedAfterFailure;
     }
     StopObservation::Clean
 }
@@ -711,8 +722,44 @@ mod tests {
                 .replace("ExecMainStatus=0", &format!("ExecMainStatus={status}"));
             assert_eq!(
                 parse_stop_observation(observed.as_bytes()),
-                StopObservation::Failed,
+                StopObservation::StoppedAfterFailure,
                 "{code}/{status}"
+            );
+        }
+        // Observed on the H616 board: a candidate that failed at exec setup
+        // stays failed/226 after reset-failed and must not block recovery.
+        let exec_failure = CLEAN
+            .replace("ActiveState=inactive", "ActiveState=failed")
+            .replace("SubState=dead", "SubState=failed")
+            .replace("Result=success", "Result=exit-code")
+            .replace("ExecMainStatus=0", "ExecMainStatus=226");
+        assert_eq!(
+            parse_stop_observation(exec_failure.as_bytes()),
+            StopObservation::StoppedAfterFailure
+        );
+        let reset = exec_failure
+            .replace("ActiveState=failed", "ActiveState=inactive")
+            .replace("SubState=failed", "SubState=dead")
+            .replace("Result=exit-code", "Result=success");
+        assert_eq!(
+            parse_stop_observation(reset.as_bytes()),
+            StopObservation::StoppedAfterFailure
+        );
+        // A failed unit that still has a process, job or cgroup is not stopped.
+        for (from, to) in [
+            ("MainPID=0", "MainPID=123"),
+            ("ControlPID=0", "ControlPID=123"),
+            ("Job=", "Job=123"),
+            (
+                "ControlGroup=",
+                "ControlGroup=/system.slice/remaining.service",
+            ),
+            ("SubState=failed", "SubState=stop-sigterm"),
+        ] {
+            assert_eq!(
+                parse_stop_observation(exec_failure.replace(from, to).as_bytes()),
+                StopObservation::Failed,
+                "{to}"
             );
         }
         for (from, to, expected) in [
@@ -728,13 +775,21 @@ mod tests {
                 "ActiveState=deactivating",
                 StopObservation::RunningOrQueued,
             ),
-            ("Result=success", "Result=timeout", StopObservation::Failed),
+            (
+                "Result=success",
+                "Result=timeout",
+                StopObservation::StoppedAfterFailure,
+            ),
             (
                 "ExecMainStatus=0",
                 "ExecMainStatus=1",
-                StopObservation::Failed,
+                StopObservation::StoppedAfterFailure,
             ),
-            ("ExecMainCode=1", "ExecMainCode=2", StopObservation::Failed),
+            (
+                "ExecMainCode=1",
+                "ExecMainCode=2",
+                StopObservation::StoppedAfterFailure,
+            ),
             (
                 "LoadState=loaded",
                 "LoadState=not-found",

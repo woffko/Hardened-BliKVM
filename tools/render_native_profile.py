@@ -120,6 +120,12 @@ def render() -> dict[str, str]:
         ),
         # Native confirmation belongs to the coordinator after full composition health.
         Edit(post + "\n", ""),
+        # Without LoadCredential there is no credential directory to bind, and
+        # systemd refuses to start the unit (status 226/NAMESPACE).
+        Edit(
+            "BindReadOnlyPaths=/run/credentials/%n:/run/hardened-blikvm-candidate-credentials/%n\n",
+            "",
+        ),
         native_admission(text),
     ]
     text = apply(name, text, edits, keep_install="\n[Install]\n" not in text)
@@ -163,6 +169,14 @@ def main() -> int:
         print(__doc__, file=sys.stderr)
         return 2
     rendered = render()
+    for name, text in rendered.items():
+        # systemd creates /run/credentials/<unit> only for a unit that loads a
+        # credential; a reference without one makes the unit fail to start.
+        if "/run/credentials/" in text and not any(
+            key in text for key in ("LoadCredential=", "SetCredential=")
+        ):
+            print(f"{name}: credential path without a credential", file=sys.stderr)
+            return 1
     stale = []
     for name, text in sorted(rendered.items()):
         path = NATIVE / name

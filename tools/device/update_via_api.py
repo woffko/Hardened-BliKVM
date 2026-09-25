@@ -68,9 +68,10 @@ def main() -> int:
             request.add_header("Content-Type", kind)
         try:
             with opener.open(request, timeout=timeout) as response:
-                return response.status, json.loads(response.read() or b"{}")
+                return response.status, parse(response.read())
         except urllib.error.HTTPError as error:
-            return error.code, json.loads(error.read() or b"{}")
+            # The proxy answers with an HTML page while the server restarts.
+            return error.code, parse(error.read())
 
     receipt: dict[str, object] = {
         "schemaVersion": 1,
@@ -133,6 +134,14 @@ def main() -> int:
     steps.append({"step": "status_after", "data": last})
     confirmed = (last.get("confirmed") or {}).get("slotId")
     return finish(output, receipt, "confirmed" if confirmed == slot else "not_confirmed")
+
+
+def parse(body: bytes) -> dict:
+    try:
+        value = json.loads(body or b"{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def finish(output: Path, receipt: dict, result: str) -> int:

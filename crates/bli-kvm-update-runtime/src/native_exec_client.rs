@@ -236,6 +236,9 @@ impl ServiceController for ExecutionClient {
             ExecutionResponse::Stop { observation } => Ok(match observation {
                 ExecutionStopObservation::Clean => StopObservation::Clean,
                 ExecutionStopObservation::RunningOrQueued => StopObservation::RunningOrQueued,
+                ExecutionStopObservation::StoppedAfterFailure => {
+                    StopObservation::StoppedAfterFailure
+                }
                 ExecutionStopObservation::Failed => StopObservation::Failed,
                 ExecutionStopObservation::Unknown => StopObservation::Unknown,
             }),

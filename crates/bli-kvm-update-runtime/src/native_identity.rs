@@ -7,10 +7,7 @@ use bli_kvm_update_manager::{
 
 use crate::{
     UpdateRuntimeError,
-    composition::{
-        ApplicationUnit, CompositionError, ServiceController, StopObservation,
-        validate_native_payload,
-    },
+    composition::{ApplicationUnit, CompositionError, ServiceController, validate_native_payload},
     composition_systemd::SystemdController,
     process_identity::ProcessIdentity,
 };
@@ -267,7 +264,7 @@ impl<'manager> NativeSlotIdentity<'manager> {
             ApplicationUnit::Owner,
         ] {
             check_deadline()?;
-            if controller.observe_stop(unit)? != StopObservation::Clean {
+            if !controller.observe_stop(unit)?.is_stopped() {
                 return Err(CompositionError::NotStopped(unit));
             }
         }
@@ -391,7 +388,7 @@ impl<'manager> NativeSlotIdentity<'manager> {
             ApplicationUnit::CandidateServer,
             ApplicationUnit::CurrentServer,
         ] {
-            if unit != server.unit() && controller.observe_stop(unit)? != StopObservation::Clean {
+            if unit != server.unit() && !controller.observe_stop(unit)?.is_stopped() {
                 return Err(CompositionError::NotStopped(unit));
             }
         }

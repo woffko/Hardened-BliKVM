@@ -214,6 +214,23 @@ Hashing the updater file stays a consistency check, as explained above.
 - Update package 0.1.0~dev12: the status worker reads the journal through
   `observed_status`, so the GUI and API report status on a native (schema 3)
   journal instead of failing with RecoveryRequired.
+- Update package 0.1.0~dev13, from the first native activation on the board
+  (slot 16), which failed and left the board without a web server:
+  - The native candidate unit kept `BindReadOnlyPaths=/run/credentials/%n:...`
+    after its credential was removed, so systemd refused to start it
+    (226/NAMESPACE). The renderer drops the bind and now rejects any unit that
+    references `/run/credentials/` without loading a credential.
+  - A unit whose last run failed was never observed as stopped, and
+    `reset-failed` does not clear the exit status, so recovery was refused with
+    `NotStopped(CandidateServer)` until an operator intervened. Stop
+    observation now reports `StoppedAfterFailure` for a process-free terminal
+    unit whose last run failed; quiescence, native start and identity
+    observation accept it as stopped. A failed unit with a remaining process,
+    job or control group is still refused.
+  - After a native rollback the completion record remains until
+    `migrate-native-idle` archives it; the status API reports the rolled-back
+    confirmed state in the meantime, and new activations require the
+    archive step.
 
 ### Deployment prerequisites (not done)
 

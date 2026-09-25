@@ -50,7 +50,6 @@ ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
 ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
-BindReadOnlyPaths=/run/credentials/%n:/run/hardened-blikvm-candidate-credentials/%n
 RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictNamespaces=yes
 RestrictRealtime=yes

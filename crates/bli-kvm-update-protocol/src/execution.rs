@@ -98,6 +98,7 @@ pub struct ExecutionRequestEnvelope {
 pub enum ExecutionStopObservation {
     Clean,
     RunningOrQueued,
+    StoppedAfterFailure,
     Failed,
     Unknown,
 }

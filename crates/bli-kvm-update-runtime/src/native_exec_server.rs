@@ -327,12 +327,15 @@ impl<'store, B: ExecutionBackend> ExecutionSession<'store, B> {
                 let unit = application_unit(unit);
                 match self.backend.observe_stop(unit) {
                     Ok(observation) => {
-                        self.stopped[unit_index(unit)] = observation == StopObservation::Clean;
+                        self.stopped[unit_index(unit)] = observation.is_stopped();
                         ExecutionResponse::Stop {
                             observation: match observation {
                                 StopObservation::Clean => ExecutionStopObservation::Clean,
                                 StopObservation::RunningOrQueued => {
                                     ExecutionStopObservation::RunningOrQueued
+                                }
+                                StopObservation::StoppedAfterFailure => {
+                                    ExecutionStopObservation::StoppedAfterFailure
                                 }
                                 StopObservation::Failed => ExecutionStopObservation::Failed,
                                 StopObservation::Unknown => ExecutionStopObservation::Unknown,
