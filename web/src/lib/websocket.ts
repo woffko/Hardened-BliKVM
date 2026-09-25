@@ -1,6 +1,7 @@
 import { IMessageEvent, w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import { getBaseUrl } from '@/lib/service.ts';
+import { checkSession } from '@/lib/session-check.ts';
 
 type MessageHandler = (message: IMessageEvent) => void;
 type SendData = number[] | ArrayBuffer | Uint8Array;
@@ -15,14 +16,16 @@ interface WsClientOptions {
   url?: string;
   heartbeatInterval?: number;
   reconnectInterval?: number;
-  maxReconnectAttempts?: number;
+  maxReconnectInterval?: number;
 }
 
 const DEFAULT_OPTIONS: Required<WsClientOptions> = {
   url: `${getBaseUrl('ws')}/api/ws`,
   heartbeatInterval: 10 * 1000,
   reconnectInterval: 3 * 1000,
-  maxReconnectAttempts: 1
+  // Keep retrying: after a server or owner restart the socket must come back
+  // on its own. An expired session is sent to login by the session check.
+  maxReconnectInterval: 15 * 1000
 };
 
 export class WsClient {
@@ -34,6 +37,8 @@ export class WsClient {
   private shouldReconnect = true;
 
   private readonly eventHandlers = new Map<string, Set<MessageHandler>>();
+  private readonly reconnectHandlers = new Set<() => void>();
+  private disconnected = false;
 
   constructor(options: WsClientOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -121,9 +126,20 @@ export class WsClient {
   private handleOpen(): void {
     this.reconnectAttempts = 0;
     this.startHeartbeat();
+    if (this.disconnected) {
+      this.disconnected = false;
+      this.reconnectHandlers.forEach((handler) => handler());
+    }
+  }
+
+  /** Called after the socket comes back, e.g. after a server restart. */
+  public onReconnect(handler: () => void): () => void {
+    this.reconnectHandlers.add(handler);
+    return () => this.reconnectHandlers.delete(handler);
   }
 
   private handleClose(): void {
+    this.disconnected = true;
     this.stopHeartbeat();
     this.scheduleReconnect();
   }
@@ -164,17 +180,17 @@ export class WsClient {
       return;
     }
 
-    if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
-      console.error('[WebSocket] Max reconnect attempts reached');
-      return;
-    }
-
     this.reconnectAttempts++;
-    console.log(`[WebSocket] Reconnecting... (attempt ${this.reconnectAttempts})`);
+    const delay = Math.min(
+      this.options.reconnectInterval * 2 ** Math.min(this.reconnectAttempts - 1, 4),
+      this.options.maxReconnectInterval
+    );
 
     this.reconnectTimer = setTimeout(() => {
-      this.createConnection();
-    }, this.options.reconnectInterval);
+      void checkSession().then((valid) => {
+        if (valid && this.shouldReconnect) this.createConnection();
+      });
+    }, delay);
   }
 
   private cleanup(): void {

@@ -86,12 +86,19 @@ def main() -> int:
         steps.append({"step": name, "http": status, "code": body.get("code"), "data": data})
         return data or {}
 
-    login = json.dumps({"username": args.username, "password": password}).encode()
-    status, body = call("POST", "/api/auth/login", login, "application/json")
-    del password, login
-    csrf = (body.get("data") or {}).get("csrfToken", "")
-    steps.append({"step": "login", "http": status, "code": body.get("code")})
-    if status != 200 or not csrf:
+    def login() -> bool:
+        nonlocal csrf
+        csrf = ""
+        payload = json.dumps({"username": args.username, "password": password}).encode()
+        try:
+            status, body = call("POST", "/api/auth/login", payload, "application/json", 10)
+        except OSError:
+            return False
+        csrf = (body.get("data") or {}).get("csrfToken", "")
+        steps.append({"step": "login", "http": status, "code": body.get("code")})
+        return status == 200 and bool(csrf)
+
+    if not login():
         return finish(output, receipt, "login_failed")
     before = record("status_before", *call("GET", "/api/application-update/status"))
     status, body = call("POST", "/api/application-update/upload", bundle, "application/octet-stream", 300)
@@ -102,7 +109,8 @@ def main() -> int:
     generation = before.get("generation")
     activation = json.dumps({"slotId": slot, "expectedGeneration": generation}).encode()
     status, body = call("POST", "/api/application-update/activate", activation, "application/json")
-    record("activate", status, body)
+    activated = record("activate", status, body)
+    receipt["activationPhase"] = activated.get("phase")
     if status >= 300:
         return finish(output, receipt, "activation_refused")
     deadline = time.monotonic() + args.timeout
@@ -112,6 +120,10 @@ def main() -> int:
         try:
             status, body = call("GET", "/api/application-update/status", timeout=10)
         except OSError:
+            continue
+        if status == 401:
+            # The activation restarts the server, which drops its sessions.
+            login()
             continue
         if status != 200:
             continue

@@ -6,6 +6,8 @@ import { stopFrameDetect } from '@/api/stream.ts';
 import { getFrameDetect } from '@/lib/localstorage.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { getBaseUrl } from '@/lib/service.ts';
+import { checkSession } from '@/lib/session-check.ts';
+import { client } from '@/lib/websocket.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
@@ -20,6 +22,7 @@ export const Mjpeg = () => {
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const [hasError, setHasError] = useState(false);
   const [streamNonce, setStreamNonce] = useState(0);
+  const [retries, setRetries] = useState(0);
   const streamInputs = useRef({ isWritable, resolution });
   const streamURL = `${getBaseUrl('http')}/api/stream/mjpeg`;
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
@@ -47,6 +50,33 @@ export const Mjpeg = () => {
     }
   }, [isWritable, resolution]);
 
+  // A stream that ended without an error event keeps showing its last frame;
+  // request it again whenever the control socket had to reconnect.
+  useEffect(
+    () =>
+      client.onReconnect(() => {
+        setHasError(false);
+        setStreamNonce((current) => current + 1);
+      }),
+    []
+  );
+
+  // A broken stream (server or proxy restart) is requested again after a
+  // growing pause instead of staying hidden until the page is reloaded.
+  useEffect(() => {
+    if (!hasError) return;
+    const delay = Math.min(2000 * 2 ** Math.min(retries, 3), 10000);
+    const timer = setTimeout(() => {
+      void checkSession().then((valid) => {
+        if (!valid) return;
+        setRetries((current) => current + 1);
+        setStreamNonce((current) => current + 1);
+        setHasError(false);
+      });
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [hasError, retries]);
+
   useEffect(() => {
     const scale = storage.getVideoScale();
     if (scale) {
@@ -68,6 +98,7 @@ export const Mjpeg = () => {
           visibility: hasError ? 'hidden' : 'visible'
         }}
         src={streamSrc}
+        onLoad={() => setRetries(0)}
         onError={() => setHasError(true)}
         alt="screen"
       />

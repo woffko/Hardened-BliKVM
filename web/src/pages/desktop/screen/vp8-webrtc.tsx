@@ -4,6 +4,8 @@ import clsx from 'clsx';
 import { useAtom, useAtomValue } from 'jotai';
 
 import { getBaseUrl } from '@/lib/service.ts';
+import { checkSession } from '@/lib/session-check.ts';
+import { client } from '@/lib/websocket.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
 
@@ -39,6 +41,8 @@ export const Vp8Webrtc = () => {
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const [isLoading, setIsLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retries = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
@@ -49,16 +53,37 @@ export const Vp8Webrtc = () => {
   useEffect(() => {
     const socket = new WebSocket(`${getBaseUrl('ws')}/api/stream/webrtc`);
     const peer = new RTCPeerConnection({ iceServers: [] });
-    const videoElement = videoRef.current;
     let answered = false;
+    let attached: HTMLVideoElement | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // A lost session (server, gateway or network restart) is negotiated again
+    // after a growing pause instead of staying broken until a page reload.
+    const scheduleRetry = () => {
+      if (retryTimer) return;
+      const delay = Math.min(2000 * 2 ** Math.min(retries.current, 3), 10000);
+      retryTimer = setTimeout(() => {
+        void checkSession().then((valid) => {
+          if (!valid) return;
+          retries.current += 1;
+          setAttempt((current) => current + 1);
+        });
+      }, delay);
+    };
+    setFailure(null);
+    setIsLoading(true);
 
     const send = (message: object) => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     };
 
     peer.ontrack = (event) => {
-      if (videoElement && event.track.kind === 'video') {
-        videoElement.srcObject = new MediaStream([event.track]);
+      // Read the ref here: a failure view may have unmounted the element when
+      // this attempt started.
+      const target = videoRef.current;
+      if (target && event.track.kind === 'video') {
+        target.srcObject = new MediaStream([event.track]);
+        attached = target;
       }
     };
     peer.onicecandidate = (event) => {
@@ -84,9 +109,11 @@ export const Vp8Webrtc = () => {
       }
       if (message.type === 'error') {
         setFailure(message.code);
+        scheduleRetry();
         return;
       }
       if (message.type === 'started') {
+        retries.current = 0;
         setIsLoading(false);
         return;
       }
@@ -104,16 +131,34 @@ export const Vp8Webrtc = () => {
     };
     socket.onclose = () => {
       setIsLoading(false);
+      scheduleRetry();
+    };
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === 'failed') {
+        setFailure('connection_failed');
+        socket.close();
+      }
     };
 
     return () => {
+      clearTimeout(retryTimer);
       socket.onmessage = null;
       socket.onclose = null;
+      peer.onconnectionstatechange = null;
       socket.close();
       peer.close();
-      if (videoElement) videoElement.srcObject = null;
+      if (attached) attached.srcObject = null;
     };
-  }, []);
+  }, [attempt]);
+
+  useEffect(
+    () =>
+      client.onReconnect(() => {
+        retries.current = 0;
+        setAttempt((current) => current + 1);
+      }),
+    []
+  );
 
   useEffect(() => {
     setVideoScale(videoScale);
