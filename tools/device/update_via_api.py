@@ -83,7 +83,7 @@ def main() -> int:
 
     def record(name: str, status: int, body: dict) -> dict:
         data = body.get("data") if isinstance(body, dict) else None
-        steps.append({"step": name, "http": status, "code": body.get("code"), "data": data})
+        steps.append({"step": name, "http": status, "code": body.get("code"), "msg": body.get("msg"), "data": data})
         return data or {}
 
     def login() -> bool:

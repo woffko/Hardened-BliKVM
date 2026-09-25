@@ -1530,8 +1530,16 @@ mod tests {
         let supervisor = fixture.supervisor();
         supervisor.initialize(&confirmed.slot_id).unwrap();
         let before = supervisor.status().unwrap();
+        assert_eq!(supervisor.manager.observed_status().unwrap(), before);
         let generation = supervisor.migrate_native_idle(before.generation).unwrap();
         assert_eq!(generation, before.generation + 1);
+        // The update status socket reads a native journal through the same
+        // observed status that serves the legacy one.
+        assert!(supervisor.status().is_err());
+        assert_eq!(
+            supervisor.manager.observed_status().unwrap(),
+            supervisor.native_status().unwrap()
+        );
         drop(supervisor);
         let supervisor = fixture.supervisor();
         assert_eq!(

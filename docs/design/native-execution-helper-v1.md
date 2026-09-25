@@ -211,6 +211,9 @@ Hashing the updater file stays a consistency check, as explained above.
   rendered by `tools/render_native_profile.py` and verified in their own
   synthetic systemd root; the update package 0.1.0~dev11 installs the helper
   units disabled and ships the replacements as examples.
+- Update package 0.1.0~dev12: the status worker reads the journal through
+  `observed_status`, so the GUI and API report status on a native (schema 3)
+  journal instead of failing with RecoveryRequired.
 
 ### Deployment prerequisites (not done)
 

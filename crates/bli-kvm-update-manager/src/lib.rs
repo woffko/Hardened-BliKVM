@@ -443,6 +443,20 @@ impl ApplicationUpdateManager {
         Ok(status_from_document(&document))
     }
 
+    /// Read-only status for either profile: the legacy journal, or an idle or
+    /// pending native journal. Native recovery states remain RecoveryRequired.
+    pub fn observed_status(&self) -> Result<ManagerStatus, UpdateManagerError> {
+        let document = self
+            .state
+            .load()?
+            .ok_or(UpdateManagerError::NotInitialized)?;
+        if document.schema_version == model::NATIVE_LIFECYCLE_SCHEMA_VERSION {
+            self.native_status()
+        } else {
+            self.status()
+        }
+    }
+
     /// Inspect recovery without repairing the pointer or requiring a possibly
     /// corrupt candidate/retired slot to pass verification. Journal validation
     /// binds pending.previous to confirmed. The confirmed proof and system

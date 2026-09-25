@@ -2,7 +2,7 @@
 # Switch an installed BliKVM from the legacy update profile to the native
 # execution-helper profile. Runs on the device as root, from a staging
 # directory that contains:
-#   update.deb                  hardened-blikvm-update-runtime 0.1.0~dev11
+#   update.deb                  hardened-blikvm-update-runtime 0.1.0~dev12
 #   native/*.service            rendered native unit replacements
 #   exec-helper.board.json      reviewed board requirements for readiness
 # Usage: deploy_native_profile.sh prepare|cutover|rollback STAGING_DIR
