@@ -75,7 +75,9 @@ fn main() -> ExitCode {
     match run(env::args_os()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Hardened BliKVM update supervisor failed: {error}");
+            // The debug form names the failing stage (for example a composition
+            // error variant); it carries no credentials or payload bytes.
+            eprintln!("Hardened BliKVM update supervisor failed: {error} ({error:?})");
             ExitCode::from(error.exit_code())
         }
     }

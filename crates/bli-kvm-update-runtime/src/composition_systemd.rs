@@ -429,7 +429,15 @@ fn parse_stop_observation(output: &[u8]) -> StopObservation {
     if fields["ActiveState"] != "inactive" || fields["SubState"] != "dead" {
         return StopObservation::Unknown;
     }
-    if !matches!(fields["ExecMainCode"], "0" | "1") || fields["ExecMainStatus"] != "0" {
+    // systemd treats SIGHUP, SIGINT, SIGTERM and SIGPIPE as a clean exit by
+    // default (Result=success above); a service killed by SIGTERM reports
+    // CLD_KILLED (2) with the signal number. SIGKILL and core dumps are not clean.
+    let clean_exit = match (fields["ExecMainCode"], fields["ExecMainStatus"]) {
+        ("0" | "1", "0") => true,
+        ("2", "1" | "2" | "13" | "15") => true,
+        _ => false,
+    };
+    if !clean_exit {
         return StopObservation::Failed;
     }
     StopObservation::Clean
@@ -654,6 +662,25 @@ mod tests {
             parse_stop_observation(CLEAN.replace("ExecMainCode=1", "ExecMainCode=0").as_bytes()),
             StopObservation::Clean
         );
+        // Observed on the H616 board: the owner and video proxy exit on
+        // SIGTERM, which systemd reports as CLD_KILLED/15 with Result=success.
+        let sigterm = CLEAN
+            .replace("ExecMainCode=1", "ExecMainCode=2")
+            .replace("ExecMainStatus=0", "ExecMainStatus=15");
+        assert_eq!(
+            parse_stop_observation(sigterm.as_bytes()),
+            StopObservation::Clean
+        );
+        for (code, status) in [("2", "9"), ("3", "15"), ("3", "6"), ("2", "0")] {
+            let observed = CLEAN
+                .replace("ExecMainCode=1", &format!("ExecMainCode={code}"))
+                .replace("ExecMainStatus=0", &format!("ExecMainStatus={status}"));
+            assert_eq!(
+                parse_stop_observation(observed.as_bytes()),
+                StopObservation::Failed,
+                "{code}/{status}"
+            );
+        }
         for (from, to, expected) in [
             ("MainPID=0", "MainPID=123", StopObservation::RunningOrQueued),
             (
