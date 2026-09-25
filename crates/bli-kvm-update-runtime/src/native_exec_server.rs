@@ -295,6 +295,11 @@ impl<'store, B: ExecutionBackend> ExecutionSession<'store, B> {
         }
         match request {
             ExecutionRequest::Prepare { slot_id } => {
+                // Make room within the protected quota; the selected slot, the
+                // one-step rollback slot and the target are always kept.
+                if let Err(failure) = self.store.collect_garbage(self.ledger, &slot_id) {
+                    return error(refusal(&failure));
+                }
                 match self.store.prepare_from_slot(self.updater_root, &slot_id) {
                     Ok(prepared) => ExecutionResponse::Prepared {
                         slot_id: prepared.inventory().slot().slot_id.clone(),

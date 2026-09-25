@@ -136,9 +136,10 @@ accept a floor from IPC and does not confirm health.
 ## Crash space and cleanup
 
 The helper adds one protected copy per prepared slot. Its quota is separate from
-the updater quota. Protected slots that are neither selected nor the most recent
-prepared slot are removed by the helper's own garbage collection under the store
-lock. Abandoned snapshots are cleaned by the stager's existing recovery.
+the updater quota. Before each `Prepare`, the helper removes protected slots that
+are neither the prepare target, the selection ledger's current or previous slot,
+nor the target of the `current` link (update package 0.1.0~dev14; before that the
+collection was not implemented and a full store refused every new activation). Abandoned snapshots are cleaned by the stager's existing recovery.
 
 ## Required negative tests
 

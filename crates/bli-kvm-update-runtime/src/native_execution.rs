@@ -2,6 +2,7 @@
 //! This layer never opens manager state or authorizes service startup.
 
 use std::{
+    collections::BTreeSet,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -146,6 +147,33 @@ impl NativeExecutionStore {
             return Err(ApplicationStageError::SlotConflict);
         }
         Ok(prepared)
+    }
+
+    /// Remove protected copies that are neither `keep`, the ledger's current
+    /// or previous slot, nor the target of the `current` link (which the
+    /// stager always protects), so a new preparation fits the slot quota.
+    /// The one-step rollback slot is kept. Returns the removed slot IDs.
+    pub fn collect_garbage(
+        &self,
+        ledger: &SelectionLedgerStore,
+        keep: &str,
+    ) -> Result<Vec<String>, ApplicationStageError> {
+        let selection = ledger.load()?;
+        let protected = [Some(keep), selection.current(), selection.previous()]
+            .into_iter()
+            .flatten()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let mut removed = Vec::new();
+        for slot in self.stager.list_slots(&self.trust)? {
+            if !protected.contains(&slot.slot_id) {
+                let deleted =
+                    self.stager
+                        .delete_unreferenced_slot(&slot.slot_id, &protected, &self.trust)?;
+                removed.push(deleted.slot_id);
+            }
+        }
+        Ok(removed)
     }
 
     /// Point the protected `current` link at an already prepared slot.
@@ -511,5 +539,38 @@ mod tests {
         store.select(&ledger, &slots[2]).unwrap();
         assert_eq!(current().as_deref(), Some(slots[2].as_str()));
         assert_eq!(ledger.load().unwrap().previous(), Some(slots[1].as_str()));
+    }
+
+    #[test]
+    fn garbage_collection_keeps_selection_rollback_and_target_within_quota() {
+        let (updater, trust, slots) = updater_with(&[14, 15, 16, 17]);
+        let protected = tempfile::tempdir().unwrap();
+        let ledger_root = tempfile::tempdir().unwrap();
+        let ledger = SelectionLedgerStore::fixture(ledger_root.path());
+        let mut store = execution_store(protected.path(), trust);
+        store.policy.quota.max_slots = 3;
+        for slot in &slots[..3] {
+            store.prepare_from_slot(updater.path(), slot).unwrap();
+        }
+        store.select(&ledger, &slots[1]).unwrap();
+        // Observed on the board: a full store refused every new preparation.
+        assert!(store.prepare_from_slot(updater.path(), &slots[3]).is_err());
+        let mut removed = store.collect_garbage(&ledger, &slots[3]).unwrap();
+        removed.sort();
+        assert_eq!(removed, [slots[0].clone(), slots[2].clone()]);
+        store.prepare_from_slot(updater.path(), &slots[3]).unwrap();
+        store.select(&ledger, &slots[3]).unwrap();
+        // The rollback slot and the selected slot survive the next collection.
+        assert!(
+            store
+                .collect_garbage(&ledger, &slots[3])
+                .unwrap()
+                .is_empty()
+        );
+        store.select(&ledger, &slots[1]).unwrap();
+        assert_eq!(
+            std::fs::read_link(protected.path().join("current")).unwrap(),
+            Path::new(&slots[1])
+        );
     }
 }
