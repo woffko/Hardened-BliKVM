@@ -1,4 +1,11 @@
-import { ClipboardEvent, FormEvent, KeyboardEvent, useEffect, useRef } from 'react';
+import {
+  ClipboardEvent,
+  CompositionEvent,
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useRef
+} from 'react';
 import { useAtom, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
@@ -25,6 +32,9 @@ export const MobileLocalKeyboard = () => {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keyboardRef = useRef(new KeyboardReport());
   const queueRef = useRef(Promise.resolve());
+  // Text of the active IME composition that has already been sent.
+  const composingRef = useRef(false);
+  const composedRef = useRef('');
   const { restricted, reportHid } = useHidLease();
 
   useEffect(() => {
@@ -86,8 +96,44 @@ export const MobileLocalKeyboard = () => {
     }
   }
 
+  // Android keyboards compose words: every update carries the whole word so
+  // far. Send only the difference to what was already typed (backspaces for
+  // removed characters, then the new ones) and leave the field alone until the
+  // composition ends; clearing it mid-composition breaks the IME.
+  function applyComposition(next: string) {
+    const previous = composedRef.current;
+    let common = 0;
+    while (common < previous.length && common < next.length && previous[common] === next[common]) {
+      common += 1;
+    }
+    for (let index = common; index < previous.length; index += 1) {
+      sendKey('Backspace');
+    }
+    const added = next.slice(common);
+    if (added) sendText(added.replace(/\r\n/g, '\n'));
+    composedRef.current = next;
+  }
+
+  function handleCompositionStart() {
+    composingRef.current = true;
+    composedRef.current = '';
+  }
+
+  function handleCompositionUpdate(event: CompositionEvent<HTMLTextAreaElement>) {
+    applyComposition(event.data ?? '');
+  }
+
+  function handleCompositionEnd(event: CompositionEvent<HTMLTextAreaElement>) {
+    applyComposition(event.data ?? '');
+    composingRef.current = false;
+    composedRef.current = '';
+    // Clear after the browser has committed the composition into the field.
+    setTimeout(resetInputValue, 0);
+  }
+
   function handleBeforeInput(event: FormEvent<HTMLTextAreaElement>) {
     const nativeEvent = event.nativeEvent as InputEvent;
+    if (composingRef.current || nativeEvent.isComposing) return;
     if (nativeEvent.inputType === 'deleteContentBackward') {
       event.preventDefault();
       sendKey('Backspace');
@@ -105,7 +151,9 @@ export const MobileLocalKeyboard = () => {
     }
   }
 
-  function handleInput() {
+  function handleInput(event: FormEvent<HTMLTextAreaElement>) {
+    // Composed text is sent by the composition handlers.
+    if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
     const value = inputRef.current?.value || '';
     if (!value) return;
 
@@ -123,6 +171,7 @@ export const MobileLocalKeyboard = () => {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (composingRef.current || event.nativeEvent.isComposing) return;
     if (event.key === 'Backspace') {
       event.preventDefault();
       sendKey('Backspace');
@@ -142,6 +191,8 @@ export const MobileLocalKeyboard = () => {
   }
 
   function handleBlur() {
+    composingRef.current = false;
+    composedRef.current = '';
     setIsLocalKeyboardOpen(false);
     setIsKeyboardEnable(true);
     resetInputValue();
@@ -161,6 +212,9 @@ export const MobileLocalKeyboard = () => {
       spellCheck={false}
       tabIndex={-1}
       onBeforeInput={handleBeforeInput}
+      onCompositionStart={handleCompositionStart}
+      onCompositionUpdate={handleCompositionUpdate}
+      onCompositionEnd={handleCompositionEnd}
       onFocus={handleFocus}
       onInput={handleInput}
       onKeyDown={handleKeyDown}
