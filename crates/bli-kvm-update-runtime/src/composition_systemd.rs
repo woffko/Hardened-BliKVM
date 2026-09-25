@@ -432,11 +432,10 @@ fn parse_stop_observation(output: &[u8]) -> StopObservation {
     // systemd treats SIGHUP, SIGINT, SIGTERM and SIGPIPE as a clean exit by
     // default (Result=success above); a service killed by SIGTERM reports
     // CLD_KILLED (2) with the signal number. SIGKILL and core dumps are not clean.
-    let clean_exit = match (fields["ExecMainCode"], fields["ExecMainStatus"]) {
-        ("0" | "1", "0") => true,
-        ("2", "1" | "2" | "13" | "15") => true,
-        _ => false,
-    };
+    let clean_exit = matches!(
+        (fields["ExecMainCode"], fields["ExecMainStatus"]),
+        ("0" | "1", "0") | ("2", "1" | "2" | "13" | "15")
+    );
     if !clean_exit {
         return StopObservation::Failed;
     }
