@@ -135,7 +135,13 @@ impl ExecutionBackend for SystemdExecutionBackend {
         probe: ExecutionProbe,
         selected: &VerifiedSlotFiles,
     ) -> Result<(), CompositionError> {
-        let failed = |_| CompositionError::Controller;
+        // The coordinator only sees a coarse code; keep the cause in the journal.
+        fn failed<E: std::fmt::Debug>(probe: ExecutionProbe) -> impl FnOnce(E) -> CompositionError {
+            move |error| {
+                eprintln!("readiness probe {probe:?} failed: {error:?}");
+                CompositionError::Controller
+            }
+        }
         let pid = |unit: NativeStartUnit| -> Result<u32, CompositionError> {
             let file = selected
                 .files()
@@ -152,21 +158,21 @@ impl ExecutionBackend for SystemdExecutionBackend {
                 deadline,
             )
             .map(drop)
-            .map_err(failed),
+            .map_err(failed(probe)),
             ExecutionProbe::VideoProxy => crate::proxy_readiness::probe_first_part(
                 &self.probes.video_socket,
                 pid(NativeStartUnit::VideoProxy)?,
                 deadline,
             )
             .map(drop)
-            .map_err(failed),
+            .map_err(failed(probe)),
             ExecutionProbe::BoardDaemon => crate::board_readiness::probe(
                 &self.probes.board_socket,
                 pid(NativeStartUnit::BoardDaemon)?,
                 self.probes.board,
                 deadline,
             )
-            .map_err(failed),
+            .map_err(failed(probe)),
             ExecutionProbe::Web => tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -177,7 +183,7 @@ impl ExecutionBackend for SystemdExecutionBackend {
                     deadline,
                 ))
                 .map(drop)
-                .map_err(failed),
+                .map_err(failed(probe)),
         }
     }
 }

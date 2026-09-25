@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev15"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev16"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (

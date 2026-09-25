@@ -348,6 +348,7 @@ impl<'manager> NativeSlotIdentity<'manager> {
         let after = self.observe(controller, server)?;
         check_deadline()?;
         if before != after {
+            eprintln!("identity changed during readiness: {before:?} -> {after:?}");
             return Err(CompositionError::Controller);
         }
         Ok(after)
