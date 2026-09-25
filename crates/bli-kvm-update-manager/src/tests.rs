@@ -1729,6 +1729,30 @@ fn garbage_collection_protects_journal_references_and_retains_newest_candidates(
 }
 
 #[test]
+fn garbage_collection_runs_on_a_native_journal_at_rest() {
+    let fixture = Fixture::new();
+    let slot1 = fixture.stage(1, 1, 1);
+    let slot2 = fixture.stage(2, 1, 1);
+    let slot3 = fixture.stage(3, 1, 1);
+    let manager = fixture.manager(1);
+    manager.initialize(&slot2.slot_id).unwrap();
+    let before = manager.status().unwrap();
+    manager
+        .migrate_native_idle(before.generation, |_| Ok(()))
+        .unwrap();
+    // Observed on the board: the legacy-only read refused every collection.
+    assert!(manager.status().is_err());
+    let collected = manager.garbage_collect(0).unwrap();
+    let mut deleted = collected.deleted_slot_ids;
+    deleted.sort();
+    assert_eq!(deleted, vec![slot1.slot_id, slot3.slot_id]);
+    assert_eq!(
+        manager.observed_status().unwrap().active_slot_id,
+        slot2.slot_id
+    );
+}
+
+#[test]
 fn native_completion_requires_fresh_readiness_and_survives_reopen() {
     for prepared_only in [true, false] {
         let fixture = Fixture::new();

@@ -354,7 +354,7 @@ impl ApplicationUpdateManager {
     }
 
     pub fn recover_update_storage(&self) -> Result<StorageRecovery, UpdateManagerError> {
-        let document = self.load_required()?;
+        let document = self.load_collectable()?;
         self.validate_referenced_slots(&document)?;
         let protected = protected_slot_ids(&document);
         let abandoned_staging_removed = self.stager.cleanup_abandoned_staging()?.removed;
@@ -375,9 +375,9 @@ impl ApplicationUpdateManager {
         if retain_unreferenced > MAX_UNREFERENCED_SLOT_RETENTION {
             return Err(UpdateManagerError::InvalidRetention);
         }
-        let _ = self.status()?;
+        let _ = self.observed_status()?;
         let recovery = self.recover_update_storage()?;
-        let document = self.load_required()?;
+        let document = self.load_collectable()?;
         let protected = protected_slot_ids(&document);
         let slots = self.stager.list_slots(&self.trust_root)?;
         let mut unreferenced = slots
@@ -1453,6 +1453,24 @@ impl ApplicationUpdateManager {
             .load()?
             .ok_or(UpdateManagerError::NotInitialized)?;
         if document.schema_version != model::JOURNAL_SCHEMA_VERSION {
+            return Err(UpdateManagerError::RecoveryRequired);
+        }
+        Ok(document)
+    }
+
+    /// The journal for storage maintenance: legacy, or a native journal at
+    /// rest (no pending operation, rollback intent or unarchived completion).
+    /// Its references are then exactly the slots that must be kept.
+    fn load_collectable(&self) -> Result<JournalDocument, UpdateManagerError> {
+        let document = self
+            .state
+            .load()?
+            .ok_or(UpdateManagerError::NotInitialized)?;
+        let native_at_rest = document.schema_version == model::NATIVE_LIFECYCLE_SCHEMA_VERSION
+            && document.pending.is_none()
+            && document.native_rollback.is_none()
+            && document.native_completion.is_none();
+        if document.schema_version != model::JOURNAL_SCHEMA_VERSION && !native_at_rest {
             return Err(UpdateManagerError::RecoveryRequired);
         }
         Ok(document)
