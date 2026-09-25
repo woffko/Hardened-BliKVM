@@ -28,6 +28,41 @@ open gate.
 
 ## Corrective requirement matrix
 
+Device checkpoint 2026-09-25 (first native API update). A board reboot under
+the native profile came up by itself (`boot-native` ready on slot 15, VP8
+decoded). The first application updates through the API on the native profile
+then exposed six defects, each fixed with a regression test and redeployed as
+update runtime 0.1.0~dev12 to dev17:
+
+1. The update status worker read only the legacy journal; the status API
+   answered 503 on schema 3 (`observed_status`, dev12).
+2. The rendered native candidate unit bound `/run/credentials/%n` without a
+   credential, so systemd refused to start it (226/NAMESPACE); slot 16 left
+   the board without a web server for several minutes (renderer fix and a
+   render guard, dev13).
+3. A unit whose last run failed never counted as stopped, so recovery was
+   refused until an operator intervened (`StoppedAfterFailure`, dev13; the
+   approach was cross-checked with a second model).
+4. The helper's protected store was never garbage collected; after three
+   slots every activation was refused (dev14).
+5. A failure after admission left the rejected candidate running, or no
+   server, until the next native boot; the activation worker now restores the
+   confirmed composition itself and logs the readiness error (dev15, dev16).
+6. A complete activation with confirmation needs 78 helper requests but the
+   session budget was 64, so every confirmation failed (budget 160, dev17).
+
+Slot 20 (source `d684001`, signed with the production key) was then uploaded,
+activated and confirmed through the API: generation 35, floor 20, previous
+slot 15 kept as the one-step rollback; all components run from the protected
+copy, VP8 decoded 1920x1080
+(`evidence/private/update-seq15-to-seq20-native-20260925.json`,
+`evidence/private/vp8-webrtc-device-20260925-seq20.json`), and a reboot
+brought slot 20 up as the current server. Open items: after a native rollback,
+`migrate-native-idle` must archive the completion before the next GUI update
+(an operator step today); the root filesystem is 96% full (about 200 MB free
+after `apt-get clean`), close to the upload staging reserve; the web
+auto-reconnect in slot 20 still needs a check by the operator on a phone.
+
 Device checkpoint 2026-09-25 (native profile and VP8 live). Application slot
 15 (source `ec04bc5`, bundle `f4934252…`, two identical signed builds, host
 verification passed) was uploaded and activated through the API; the legacy
