@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { MonitorIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { getScreen } from '@/api/vm';
+import { supportedUiVideoModes } from '@/lib/capabilities.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
+import { videoStreamGenerationAtom } from '@/jotai/screen.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
 import { QualityMap, ResolutionList } from './constants.ts';
@@ -12,6 +14,7 @@ import { Fps } from './fps';
 import { Quality } from './quality';
 import { Resolution } from './resolution';
 import { Scale } from './scale';
+import { VideoMode } from './video-mode';
 
 export const Screen = () => {
   const { t } = useTranslation();
@@ -88,20 +91,33 @@ export const Screen = () => {
     };
   }, [isWritable, refresh]);
 
+  // Children call this only after an applied change, which restarts the
+  // streamer; the player then requests a fresh stream.
+  const bumpStream = useSetAtom(videoStreamGenerationAtom);
+  const refreshAfterChange = useCallback(async () => {
+    const observed = await refresh();
+    bumpStream((current) => current + 1);
+    return observed;
+  }, [refresh, bumpStream]);
+
+  // The mode switch is offered only when the server exposes more than MJPEG.
+  const hasVideoModes = supportedUiVideoModes(capabilities).length > 1;
+
   const content = (
     <div className="flex flex-col space-y-1">
+      {hasVideoModes && <VideoMode />}
       {error && (
         <span role="alert" className="text-xs text-red-400">
           {error}
         </span>
       )}
       {isWritable && loaded && quality > 0 && videoSettings.includes('quality') && (
-        <Quality quality={quality} refresh={refresh} />
+        <Quality quality={quality} refresh={refreshAfterChange} />
       )}
       {isWritable && loaded && videoSettings.includes('fps') && (
         <Fps
           fps={fps}
-          refresh={refresh}
+          refresh={refreshAfterChange}
           capturedFps={capturedFps}
           deliveredWidth={delivered.width}
           deliveredHeight={delivered.height}
@@ -109,7 +125,7 @@ export const Screen = () => {
         />
       )}
       {isWritable && loaded && videoSettings.includes('resolution') && requestedResolution && (
-        <Resolution resolution={requestedResolution} refresh={refresh} />
+        <Resolution resolution={requestedResolution} refresh={refreshAfterChange} />
       )}
       <Scale />
     </div>

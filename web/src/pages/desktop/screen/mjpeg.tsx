@@ -10,7 +10,7 @@ import { checkSession } from '@/lib/session-check.ts';
 import { client } from '@/lib/websocket.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
 
 import { useScreenFit } from './use-screen-fit.ts';
 
@@ -20,6 +20,7 @@ export const Mjpeg = () => {
   const isWritable = capabilities?.video.status.availability === 'read_write';
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
+  const streamGeneration = useAtomValue(videoStreamGenerationAtom);
   const [hasError, setHasError] = useState(false);
   const [streamNonce, setStreamNonce] = useState(0);
   const [retries, setRetries] = useState(0);
@@ -49,6 +50,18 @@ export const Mjpeg = () => {
       setStreamNonce((current) => current + 1);
     }
   }, [isWritable, resolution]);
+
+  // An applied capture change restarts the streamer and silently ends this
+  // response; request a new stream once the streamer is back.
+  useEffect(() => {
+    if (streamGeneration === 0) return;
+    const timer = setTimeout(() => {
+      setHasError(false);
+      setRetries(0);
+      setStreamNonce((current) => current + 1);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [streamGeneration]);
 
   // A stream that ended without an error event keeps showing its last frame;
   // request it again whenever the control socket had to reconnect.

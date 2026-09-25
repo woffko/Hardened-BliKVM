@@ -7,7 +7,7 @@ import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
 import { client } from '@/lib/websocket.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
 
 import { useScreenFit } from './use-screen-fit.ts';
 
@@ -39,6 +39,7 @@ export const Vp8Webrtc = () => {
   const resolution = useAtomValue(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
+  const streamGeneration = useAtomValue(videoStreamGenerationAtom);
   const [isLoading, setIsLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -150,6 +151,17 @@ export const Vp8Webrtc = () => {
       if (attached) attached.srcObject = null;
     };
   }, [attempt]);
+
+  // An applied capture change restarts the encoder; negotiate again once the
+  // new stream is flowing instead of keeping a frozen track.
+  useEffect(() => {
+    if (streamGeneration === 0) return;
+    const timer = setTimeout(() => {
+      retries.current = 0;
+      setAttempt((current) => current + 1);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [streamGeneration]);
 
   useEffect(
     () =>
