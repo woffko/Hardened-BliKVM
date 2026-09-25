@@ -18,7 +18,7 @@ set -eu
 
 action=${1:-}
 staging=${2:-}
-case "$action" in prepare|cutover|rollback) ;; *) echo "usage: $0 prepare|cutover|rollback DIR" >&2; exit 2 ;; esac
+case "$action" in prepare|cutover|boot|rollback) ;; *) echo "usage: $0 prepare|cutover|boot|rollback DIR" >&2; exit 2 ;; esac
 case "$staging" in /*) ;; *) echo "staging directory must be absolute" >&2; exit 2 ;; esac
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 2; }
 
@@ -27,6 +27,9 @@ config=/etc/hardened-blikvm/update-supervisor.json
 helper_config=/etc/hardened-blikvm/exec-helper.json
 units=/etc/systemd/system
 managed="hardened-blikvm-board-owner hardened-blikvm-board-video-proxy hardened-blikvm-boardd hardened-blikvm-server-current"
+# Legacy update authority. Masking also removes their Before= edges, which
+# systemd otherwise reports as After= on the managed units.
+legacy="hardened-blikvm-update-recover.service hardened-blikvm-update-confirm.socket hardened-blikvm-update-confirm@.service hardened-blikvm-update-apply-candidate.service hardened-blikvm-update-apply-confirmed.service hardened-blikvm-update-watchdog.timer hardened-blikvm-update-watchdog.service hardened-blikvm-update-activate@.service"
 state_root=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stateRoot"])' "$config")
 slot_root=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["slotRoot"])' "$config")
 
@@ -134,10 +137,16 @@ cutover() {
     > "$units/hardened-blikvm-update-native-boot.service.d/10-rotated.conf"
   systemctl disable hardened-blikvm-update-confirm.socket $managed 2>/dev/null || true
   systemctl stop hardened-blikvm-update-confirm.socket || true
+  systemctl mask $legacy
   systemctl daemon-reload
   supervisor migrate-native-idle
   systemctl enable hardened-blikvm-update-native-boot.service
-  systemctl start hardened-blikvm-update-native-boot.service
+  boot
+}
+
+boot() {
+  systemctl reset-failed hardened-blikvm-update-native-boot.service 2>/dev/null || true
+  systemctl start hardened-blikvm-update-native-boot.service || true
   systemctl --no-pager status hardened-blikvm-update-native-boot.service | head -20
   for unit in $managed; do
     printf '%s %s\n' "$unit" "$(systemctl is-active "$unit")"
@@ -147,6 +156,7 @@ cutover() {
 rollback() {
   [ -e "$backup/complete" ] || { echo "no backup at $backup" >&2; exit 1; }
   systemctl disable --now hardened-blikvm-update-native-boot.service hardened-blikvm-update-exec.socket 2>/dev/null || true
+  systemctl unmask $legacy 2>/dev/null || true
   systemctl stop $managed 2>/dev/null || true
   for file in "$staging"/native/*.service; do
     rm -f "$units/$(basename "$file")"

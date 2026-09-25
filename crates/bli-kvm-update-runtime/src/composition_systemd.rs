@@ -281,6 +281,11 @@ fn validate_start_contract(output: &[u8], unit: ApplicationUnit) -> Result<(), C
             return Err(invalid());
         }
     }
+    // systemd 249 omits empty exec hook lists even with --all; absent means
+    // no hook. Every other property must be reported exactly once.
+    for hook in ["ExecCondition", "ExecStartPre", "ExecStartPost"] {
+        fields.entry(hook).or_insert("");
+    }
     if fields.len() != START_PROPERTIES.split(',').count()
         || fields["Id"] != unit.name()
         || fields["LoadState"] != "loaded"
@@ -543,7 +548,12 @@ mod tests {
                 &format!("{key}=\n"),
                 &format!("{key}={{ path=/legacy/health-reporter ; }}\n"),
             ));
-            invalid.push(clean.replace(&format!("{key}=\n"), ""));
+            // systemd 249 omits empty exec hook lists entirely.
+            validate_start_contract(
+                clean.replace(&format!("{key}=\n"), "").as_bytes(),
+                unit.unit(),
+            )
+            .unwrap();
         }
         for property in START_DEPENDENCIES {
             invalid.push(clean.replace(&format!("{property}=\n"), ""));
@@ -576,6 +586,20 @@ mod tests {
             );
         }
         assert!(validate_start_contract(&[255], unit.unit()).is_err());
+    }
+
+    #[test]
+    fn systemd_249_start_contract_output_is_accepted_and_reverse_legacy_edges_rejected() {
+        // Captured from the H616 test board (systemd 249) for the board daemon.
+        let observed = "Type=simple\nId=hardened-blikvm-boardd.service\nRequires=sysinit.target -.mount system.slice\nRequisite=\nWants=tmp.mount\nBindsTo=\nAfter=systemd-tmpfiles-setup.service basic.target tmp.mount sysinit.target system.slice -.mount systemd-journald.socket local-fs.target\nLoadState=loaded\n";
+        validate_start_contract(observed.as_bytes(), ApplicationUnit::BoardDaemon).unwrap();
+        // An unmasked legacy recover unit adds itself to After= through its
+        // own Before=; the native profile must mask it.
+        let reverse = observed.replace(
+            "After=systemd-tmpfiles-setup.service",
+            "After=hardened-blikvm-update-recover.service systemd-tmpfiles-setup.service",
+        );
+        assert!(validate_start_contract(reverse.as_bytes(), ApplicationUnit::BoardDaemon).is_err());
     }
 
     #[test]
