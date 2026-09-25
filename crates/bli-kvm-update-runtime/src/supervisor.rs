@@ -1846,6 +1846,10 @@ mod tests {
             process_identity::ProcessIdentity,
         };
         use std::{cell::RefCell, os::unix::fs::MetadataExt, rc::Rc};
+        // Every controller call is one helper request in production.
+        thread_local! {
+            static REQUESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
         struct Controller {
             fault: &'static str,
             events: Rc<RefCell<Vec<&'static str>>>,
@@ -1854,6 +1858,7 @@ mod tests {
         }
         impl ServiceController for Controller {
             fn stop(&mut self, _: ApplicationUnit) -> Result<(), CompositionError> {
+                REQUESTS.with(|count| count.set(count.get() + 1));
                 assert!(matches!(
                     self.events.borrow().first(),
                     Some(&"admission" | &"rollback-intent" | &"completed")
@@ -1869,11 +1874,13 @@ mod tests {
                 &mut self,
                 _: ApplicationUnit,
             ) -> Result<StopObservation, CompositionError> {
+                REQUESTS.with(|count| count.set(count.get() + 1));
                 Ok(StopObservation::Clean)
             }
         }
         impl NativeStartController for Controller {
             fn validate_start(&self, unit: NativeStartUnit) -> Result<(), CompositionError> {
+                REQUESTS.with(|count| count.set(count.get() + 1));
                 self.preflight.borrow_mut().push(unit);
                 if self.fault == "preflight" && matches!(unit, NativeStartUnit::Server(_)) {
                     Err(CompositionError::IncompatibleStartup(unit.unit()))
@@ -1882,6 +1889,7 @@ mod tests {
                 }
             }
             fn start(&mut self, _: NativeStartUnit) -> Result<(), CompositionError> {
+                REQUESTS.with(|count| count.set(count.get() + 1));
                 assert_eq!(
                     self.events
                         .borrow()
@@ -1904,6 +1912,7 @@ mod tests {
                 _: ApplicationUnit,
                 file: &std::fs::File,
             ) -> Result<ProcessIdentity, CompositionError> {
+                REQUESTS.with(|count| count.set(count.get() + 1));
                 let meta = file.metadata().unwrap();
                 let count = self.identity_observations.get() + 1;
                 self.identity_observations.set(count);
@@ -1933,6 +1942,7 @@ mod tests {
             "preflight",
         ] {
             let fixture = Fixture::new();
+            REQUESTS.with(|count| count.set(0));
             let previous = fixture.stage(1);
             let candidate = fixture.stage(2);
             let supervisor = fixture.supervisor();
@@ -1985,6 +1995,7 @@ mod tests {
                         candidate.slot_id
                     );
                     events.borrow_mut().push("probe");
+                    REQUESTS.with(|count| count.set(count.get() + 1));
                     if fault == "probe" {
                         Err(CompositionError::Controller)
                     } else {
@@ -2069,6 +2080,7 @@ mod tests {
                         &mut controller,
                         deadline,
                         |_, _, _| {
+                            REQUESTS.with(|count| count.set(count.get() + 1));
                             if fault == "confirm-refusal" {
                                 Err(CompositionError::Controller)
                             } else {
@@ -2088,6 +2100,17 @@ mod tests {
                     assert_eq!(
                         outcome,
                         bli_kvm_update_manager::NativeConfirmationOutcome::Confirmed
+                    );
+                    // Prepare and select are two further helper requests. The
+                    // whole attempt must fit one helper session (64 did not).
+                    let requests = REQUESTS.with(std::cell::Cell::get) + 2;
+                    assert!(requests > 64, "{requests}");
+                    assert!(
+                        requests
+                            <= usize::from(
+                                bli_kvm_update_protocol::execution::MAX_EXECUTION_SESSION_REQUESTS
+                            ),
+                        "{requests}"
                     );
                     let confirmed = supervisor.native_status().unwrap();
                     assert_eq!(confirmed.floor_sequence, 2);

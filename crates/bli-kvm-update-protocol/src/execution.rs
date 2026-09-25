@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 /// Execution messages are much smaller than status documents.
 pub const MAX_EXECUTION_MESSAGE_BYTES: usize = 1024;
 /// A session cannot issue more requests than a complete composition attempt.
-pub const MAX_EXECUTION_SESSION_REQUESTS: u16 = 64;
+/// An activation with confirmation uses 78 (counted by the native pipeline
+/// test in bli-kvm-update-runtime); 64 ended the session during confirmation
+/// on the H616 board.
+pub const MAX_EXECUTION_SESSION_REQUESTS: u16 = 160;
 
 /// Every unit the coordinator may stop or observe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

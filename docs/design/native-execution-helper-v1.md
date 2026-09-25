@@ -238,6 +238,11 @@ Hashing the updater file stays a consistency check, as explained above.
   rejection when the journal still awaits health, restores the confirmed
   composition in a fresh helper session, and logs the readiness error that
   the journal reduces to `explicit_health_failure`.
+- Update package 0.1.0~dev17: the helper session budget of 64 requests ended
+  the session during confirmation (a full activation with confirmation uses
+  78), so every native activation was rejected with a bare `Controller`
+  readiness error. The budget is 160, and the pipeline test asserts that a
+  complete attempt fits it.
 
 ### Deployment prerequisites (not done)
 
