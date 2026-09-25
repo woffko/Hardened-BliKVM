@@ -43,28 +43,7 @@ supervisor() {
     --config /run/credentials/hardened-blikvm-native-cli.service/update-supervisor-config "$@"
 }
 
-prepare() {
-  if [ -e "$backup/complete" ]; then
-    echo "backup already exists at $backup; refusing to overwrite it" >&2
-    exit 1
-  fi
-  rm -rf "$backup.partial"
-  install -d -m 0700 "$backup.partial"
-  tar -C / -cpf "$backup.partial/etc-systemd.tar" \
-    $(cd / && ls -d etc/systemd/system/hardened-blikvm* etc/systemd/system/*.wants/hardened-blikvm* 2>/dev/null)
-  tar -C / -cpf "$backup.partial/state.tar" "${state_root#/}"
-  tar -C / -cpf "$backup.partial/etc-hardened.tar" etc/hardened-blikvm
-  dpkg-query -W 'hardened-blikvm*' > "$backup.partial/packages.txt"
-  cp -p /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor "$backup.partial/"
-  for unit in $managed hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover; do
-    printf '%s %s\n' "$unit" "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
-  done > "$backup.partial/enablement.txt"
-  mv "$backup.partial" "$backup"
-  touch "$backup/complete"
-
-  dpkg -i "$staging/update.deb"
-  install -d -m 0755 -o root -g root /var/lib/hardened-blikvm-exec
-  install -d -m 0700 -o root -g root /var/lib/hardened-blikvm-exec-ledger
+write_helper_config() {
   python3 - "$config" "$staging/exec-helper.board.json" "$helper_config" <<'PY'
 import json, os, pwd, sys
 supervisor = json.load(open(sys.argv[1]))
@@ -95,6 +74,31 @@ with open(temporary, "w") as handle:
 os.chmod(temporary, 0o600)
 os.rename(temporary, path)
 PY
+}
+
+prepare() {
+  if [ -e "$backup/complete" ]; then
+    echo "backup already exists at $backup; refusing to overwrite it" >&2
+    exit 1
+  fi
+  rm -rf "$backup.partial"
+  install -d -m 0700 "$backup.partial"
+  tar -C / -cpf "$backup.partial/etc-systemd.tar" \
+    $(cd / && ls -d etc/systemd/system/hardened-blikvm* etc/systemd/system/*.wants/hardened-blikvm* 2>/dev/null)
+  tar -C / -cpf "$backup.partial/state.tar" "${state_root#/}"
+  tar -C / -cpf "$backup.partial/etc-hardened.tar" etc/hardened-blikvm
+  dpkg-query -W 'hardened-blikvm*' > "$backup.partial/packages.txt"
+  cp -p /usr/libexec/hardened-blikvm/bli-kvm-update-supervisor "$backup.partial/"
+  for unit in $managed hardened-blikvm-update-confirm.socket hardened-blikvm-update-recover; do
+    printf '%s %s\n' "$unit" "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  done > "$backup.partial/enablement.txt"
+  mv "$backup.partial" "$backup"
+  touch "$backup/complete"
+
+  dpkg -i "$staging/update.deb"
+  install -d -m 0755 -o root -g root /var/lib/hardened-blikvm-exec
+  install -d -m 0700 -o root -g root /var/lib/hardened-blikvm-exec-ledger
+  write_helper_config
   systemctl daemon-reload
   systemctl enable --now hardened-blikvm-update-exec.socket
   echo "prepared; backup at $backup"
@@ -102,6 +106,9 @@ PY
 
 cutover() {
   [ -e "$backup/complete" ] || { echo "run prepare first" >&2; exit 1; }
+  # A rollback removes the helper configuration; recreate it from the
+  # reviewed sources rather than failing inside the helper.
+  [ -s "$helper_config" ] || write_helper_config
   for file in "$staging"/native/*.service; do
     install -m 0644 "$file" "$units/$(basename "$file")"
   done

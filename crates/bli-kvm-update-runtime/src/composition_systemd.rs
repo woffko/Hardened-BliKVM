@@ -15,6 +15,8 @@ use crate::composition::{ApplicationUnit, CompositionError, ServiceController, S
 
 const PROPERTIES: &str = "LoadState,ActiveState,SubState,MainPID,ControlPID,Job,Result,ExecMainCode,ExecMainStatus,KillMode,SendSIGKILL,ControlGroup";
 const MAX_OUTPUT: usize = 4096;
+/// Longest wait for a just-started simple service to finish its exec.
+const EXEC_SETTLE: Duration = Duration::from_secs(2);
 const RUNNING_PROPERTIES: &str = "Id,LoadState,ActiveState,SubState,MainPID,ControlPID,Job,Result";
 const START_PROPERTIES: &str = "Id,LoadState,Type,ExecCondition,ExecStartPre,ExecStartPost,After,Requires,Wants,Requisite,BindsTo";
 const JOB_PROPERTIES: &str = "Id,Job";
@@ -82,9 +84,20 @@ impl SystemdController {
             ])?;
             running_pid(&output, unit)
         };
-        let pid = observe_pid()?;
-        let before = crate::process_identity::observe_process_identity(pid, expected)
-            .map_err(|_| CompositionError::Controller)?;
+        // `systemctl start` returns once a simple service has forked; until
+        // its exec completes, /proc/<pid>/exe still names systemd. Retry a
+        // mismatch for a short bounded window, never beyond the deadline.
+        let settle = Instant::now() + EXEC_SETTLE;
+        let (pid, before) = loop {
+            let pid = observe_pid()?;
+            match crate::process_identity::observe_process_identity(pid, expected) {
+                Ok(identity) => break (pid, identity),
+                Err(_) if Instant::now() < settle.min(self.deadline) => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(_) => return Err(CompositionError::Controller),
+            }
+        };
         if observe_pid()? != pid {
             return Err(CompositionError::Controller);
         }
@@ -631,6 +644,28 @@ mod tests {
                 .observe_unit_identity(ApplicationUnit::Owner, &tempfile::tempfile().unwrap())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_just_started_unit_is_observed_after_its_exec_settles() {
+        // Before exec the unit's MainPID still runs another executable.
+        let mut other = std::process::Command::new("/bin/sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let script = format!(
+            "count=$(cat \"$0.count\" 2>/dev/null || echo 0)\necho $((count + 1)) > \"$0.count\"\nif test \"$count\" -lt 3; then\n  printf '%s' '{}'\nelse\n  printf '%s' '{}'\nfi",
+            running(other.id()),
+            running(std::process::id()),
+        );
+        let (_directory, controller) = fixture(&script, Duration::from_secs(5));
+        let expected = fs::File::open(std::env::current_exe().unwrap()).unwrap();
+        let identity = controller
+            .observe_unit_identity(ApplicationUnit::Owner, &expected)
+            .unwrap();
+        let _ = other.kill();
+        let _ = other.wait();
+        assert_eq!(identity.pid, std::process::id());
     }
 
     #[test]
