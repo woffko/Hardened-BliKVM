@@ -15,7 +15,7 @@ import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jot
 import { useScreenFit } from './use-screen-fit.ts';
 
 export const Mjpeg = () => {
-  const resolution = useAtomValue(resolutionAtom);
+  const [resolution, setResolution] = useAtom(resolutionAtom);
   const capabilities = useAtomValue(capabilitiesAtom);
   const isWritable = capabilities?.video.status.availability === 'read_write';
   const mouseStyle = useAtomValue(mouseStyleAtom);
@@ -24,7 +24,7 @@ export const Mjpeg = () => {
   const [hasError, setHasError] = useState(false);
   const [streamNonce, setStreamNonce] = useState(0);
   const [retries, setRetries] = useState(0);
-  const streamInputs = useRef({ isWritable, resolution });
+  const streamInputs = useRef({ isWritable });
   const streamURL = `${getBaseUrl('http')}/api/stream/mjpeg`;
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
@@ -42,14 +42,15 @@ export const Mjpeg = () => {
     setHasError(false);
     // The initial src already starts the stream. Replacing it on mount can
     // deadlock a full proxy: Chromium retains the old multipart image until
-    // the replacement receives its first frame. Only changed inputs require
-    // a new request (including a newly selected resolution object).
+    // the replacement receives its first frame. Only a changed control mode
+    // requires a new request; the resolution now follows the stream itself
+    // and capture changes reload through the stream generation.
     const previous = streamInputs.current;
-    streamInputs.current = { isWritable, resolution };
-    if (previous.isWritable !== isWritable || previous.resolution !== resolution) {
+    streamInputs.current = { isWritable };
+    if (previous.isWritable !== isWritable) {
       setStreamNonce((current) => current + 1);
     }
-  }, [isWritable, resolution]);
+  }, [isWritable]);
 
   // An applied capture change restarts the streamer and silently ends this
   // response; request a new stream once the streamer is back.
@@ -111,7 +112,20 @@ export const Mjpeg = () => {
           visibility: hasError ? 'hidden' : 'visible'
         }}
         src={streamSrc}
-        onLoad={() => setRetries(0)}
+        onLoad={(event) => {
+          setRetries(0);
+          const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+          // The frame size is the target's real resolution: the fit and the
+          // pointer mapping must use it, not a stale stored value.
+          if (
+            width > 0 &&
+            height > 0 &&
+            (width !== resolution?.width || height !== resolution?.height)
+          ) {
+            setResolution({ width, height });
+            storage.setResolution({ width, height });
+          }
+        }}
         onError={() => setHasError(true)}
         alt="screen"
       />

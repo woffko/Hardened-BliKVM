@@ -3,6 +3,7 @@ import { Spin } from 'antd';
 import clsx from 'clsx';
 import { useAtom, useAtomValue } from 'jotai';
 
+import * as storage from '@/lib/localstorage.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
 import { client } from '@/lib/websocket.ts';
@@ -36,7 +37,7 @@ function parseServerMessage(data: unknown): ServerMessage | null {
 // VP8 over WebRTC through the server's closed signaling protocol. The server
 // owns the gateway session; this client only answers the offer it receives.
 export const Vp8Webrtc = () => {
-  const resolution = useAtomValue(resolutionAtom);
+  const [resolution, setResolution] = useAtom(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const streamGeneration = useAtomValue(videoStreamGenerationAtom);
@@ -173,29 +174,63 @@ export const Vp8Webrtc = () => {
   );
 
   useEffect(() => {
-    setVideoScale(videoScale);
-  }, [videoScale, setVideoScale]);
+    const scale = storage.getVideoScale();
+    if (scale) {
+      setVideoScale(scale);
+    }
+  }, [setVideoScale]);
 
+  // Same arrangement as the reference WebRTC player: the scroll container
+  // carries the scale and touch pan/pinch, the status sits above the video.
   return (
-    <div ref={containerRef} className="flex h-full w-full items-center justify-center">
-      <Spin spinning={isLoading && !failure} tip="Loading" size="large">
-        {failure ? (
-          <div className="text-sm text-neutral-400" role="alert">
-            VP8 stream unavailable ({failure})
+    <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden">
+      <div
+        ref={containerRef}
+        data-kvm-screen-scroll
+        className="flex h-full min-h-0 w-full min-w-0 items-start justify-start overflow-auto overscroll-contain bg-black"
+      >
+        <video
+          id="screen"
+          ref={videoRef}
+          className={clsx('m-auto block select-none', mouseStyle)}
+          style={mediaStyle}
+          muted
+          autoPlay
+          playsInline
+          controls={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+          onResize={(event) => {
+            const { videoWidth: width, videoHeight: height } = event.currentTarget;
+            // The decoded frame size is the target's real resolution.
+            if (
+              width > 0 &&
+              height > 0 &&
+              (width !== resolution?.width || height !== resolution?.height)
+            ) {
+              setResolution({ width, height });
+              storage.setResolution({ width, height });
+            }
+          }}
+        />
+      </div>
+
+      {failure ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center text-sm text-neutral-400"
+          role="alert"
+        >
+          VP8 stream unavailable ({failure})
+        </div>
+      ) : (
+        isLoading && (
+          <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-all duration-300">
+            <Spin size="large" />
           </div>
-        ) : (
-          <video
-            id="screen"
-            ref={videoRef}
-            className={clsx('block min-h-[480px] min-w-[640px] select-none', mouseStyle)}
-            style={mediaStyle}
-            muted
-            autoPlay
-            playsInline
-            controls={false}
-          />
-        )}
-      </Spin>
+        )
+      )}
     </div>
   );
 };

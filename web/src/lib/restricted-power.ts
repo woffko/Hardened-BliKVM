@@ -22,10 +22,24 @@ export async function targetIdFor(platformId: string): Promise<string> {
 }
 
 /** Ensures a recent safe-target/focus confirmation for the current platform. */
-export async function ensureFocus(platformId: string): Promise<void> {
+// The server keeps one outstanding challenge per session, so concurrent
+// refreshes (a lease renewal and a queued report) must share one round trip:
+// a second challenge supersedes the first and its confirmation is refused.
+let pendingFocus: Promise<void> | null = null;
+
+export function ensureFocus(platformId: string): Promise<void> {
   if (Date.now() - confirmedAtMs < FOCUS_TTL_MS) {
-    return;
+    return Promise.resolve();
   }
+  if (!pendingFocus) {
+    pendingFocus = confirmFocusOnce(platformId).finally(() => {
+      pendingFocus = null;
+    });
+  }
+  return pendingFocus;
+}
+
+async function confirmFocusOnce(platformId: string): Promise<void> {
   const challenge = await api.getFocusChallenge();
   const confirmation = await api.confirmFocus(
     newOperationId(),
