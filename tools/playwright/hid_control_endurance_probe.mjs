@@ -31,7 +31,11 @@ const browser = await chromium.launch({
 });
 const started = Date.now();
 const at = () => Math.round((Date.now() - started) / 100) / 10;
-const receipt = { schemaVersion: 1, probe: "hid-control-endurance", events: [] };
+const receipt = {
+  schemaVersion: 1,
+  probe: "hid-control-endurance",
+  events: [],
+};
 const event = (value) => receipt.events.push({ t: at(), ...value });
 try {
   const context = await browser.newContext({
@@ -66,11 +70,14 @@ try {
     });
   });
   page.on("console", (message) => {
-    if (message.type() === "error") event({ console: message.text().slice(0, 200) });
+    if (message.type() === "error")
+      event({ console: message.text().slice(0, 200) });
   });
   page.on("websocket", (socket) => {
     event({ websocket: new URL(socket.url()).pathname });
-    socket.on("close", () => event({ websocketClosed: new URL(socket.url()).pathname }));
+    socket.on("close", () =>
+      event({ websocketClosed: new URL(socket.url()).pathname }),
+    );
   });
   await page.goto(`${url.origin}/`);
   await page.waitForSelector("#screen", { timeout: 20000 });
@@ -98,5 +105,7 @@ try {
 } finally {
   await browser.close();
   fs.writeFileSync(output, JSON.stringify(receipt, null, 1), { mode: 0o600 });
-  console.log(JSON.stringify({ result: receipt.result, events: receipt.events.length }));
+  console.log(
+    JSON.stringify({ result: receipt.result, events: receipt.events.length }),
+  );
 }
