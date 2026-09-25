@@ -53,6 +53,8 @@ ALLOWED_UNIT_FILES = {
     PurePosixPath("lib/systemd/system/hardened-blikvm-boardd.service"),
     PurePosixPath("lib/systemd/system/hardened-blikvm-ustreamer.service"),
     PurePosixPath("lib/systemd/system/hardened-blikvm-msd-writable.service"),
+    # Reviewed owner drop-in: shared service group for the control socket.
+    PurePosixPath("lib/systemd/system/hardened-blikvm-board-owner.service.d/90-socket-group.conf"),
 }
 ALLOWED_DATA_PARENT_DIRECTORIES = {
     PurePosixPath("usr"),
@@ -63,6 +65,7 @@ ALLOWED_DATA_PARENT_DIRECTORIES = {
     PurePosixPath("lib"),
     PurePosixPath("lib/systemd"),
     PurePosixPath("lib/systemd/system"),
+    PurePosixPath("lib/systemd/system/hardened-blikvm-board-owner.service.d"),
 }
 PREFLIGHT_KEYS = {
     "accounts_absent_before",
