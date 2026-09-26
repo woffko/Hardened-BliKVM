@@ -120,7 +120,8 @@ export function supportsMenuItem(
       // The server advertises Wake-on-LAN as a network write.
       return Boolean(
         manifest &&
-        (isWritable(manifest.network.wol) || boardFeatureWritable(manifest, 'wake_on_lan'))
+        ((manifest.network?.wol !== undefined && isWritable(manifest.network.wol)) ||
+          boardFeatureWritable(manifest, 'wake_on_lan'))
       );
     case 'picoclaw':
       return boardFeatureWritable(manifest, 'picoclaw');
