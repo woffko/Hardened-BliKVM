@@ -28,6 +28,30 @@ open gate.
 
 ## Corrective requirement matrix
 
+Final GUI comparison 2026-09-26 (reference Hardened NanoKVM 2.0.42 against
+slot 26, desktop). The generic parity probe could not capture the
+reference's settings or icon-only menus, so both GUIs were walked with a text
+probe (every toolbar menu, every settings tab). Fixed and re-verified on the
+board: Wake-on-LAN (menu gate, confirmation, address history routes),
+keyboard shortcuts and leader key, HID-only labels, mouse jiggler read,
+session lock default (one hour), video-source state, About (running slot,
+mDNS, uptime), menu order and the System default section.
+
+Remaining differences:
+
+- Intentional: terminal, scripts, PicoClaw and remote ISO download stay off
+  (exec features); SSH has no surface; the JPEG quality control is hidden
+  (the capture encoder ignores it); HID-only and Reset HID are not in the
+  mouse menu (HID-only is a Device setting); Tailscale is read-only; the
+  update page offers signed application updates.
+- Gaps: USB gadget reconnect and local image upload in the virtual media
+  panel; MJPEG frame detect; USB wakeup; KVM self-reboot in Device settings;
+  IP addresses and image version on About (the unprivileged server cannot
+  enumerate interfaces); IPv4 DHCP/manual and interface details in System >
+  Network; the session lock is not persisted across server restarts; the
+  Diagnostics component states (HID, power, virtual media) are not observed;
+  RAW system update; a detailed mobile-layout comparison.
+
 Device checkpoint 2026-09-26 (operator testing on desktop and Android).
 Slots 21-25 were installed through the API on the native profile; update
 runtime 0.1.0~dev19. Fixed after operator reports, each with a regression:
