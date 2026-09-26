@@ -9,6 +9,11 @@ use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
 use crate::tailscale::{SYSTEMCTL, TailscaleRunner};
 
 pub const SSH_UNIT: &str = "ssh.service";
+/// `systemctl enable/disable` would also run the SysV compatibility step,
+/// which writes `/etc/rc*.d` outside the owner's sandbox; the native unit is
+/// what systemd starts, so that step is skipped.
+const ENV: &str = "/usr/bin/env";
+const SKIP_SYSV: &str = "SYSTEMCTL_SKIP_SYSV=1";
 
 pub struct SshSettings {
     runner: Box<dyn TailscaleRunner>,
@@ -39,7 +44,10 @@ impl SshSettings {
 
     pub fn handle(&mut self, enabled: bool) -> ControlResponse {
         let verb = if enabled { "enable" } else { "disable" };
-        match self.runner.run(SYSTEMCTL, &[verb, "--now", &self.unit]) {
+        match self
+            .runner
+            .run(ENV, &[SKIP_SYSV, SYSTEMCTL, verb, "--now", &self.unit])
+        {
             Ok(_) => {
                 eprintln!(
                     "ssh: the OpenSSH server was switched {}",
@@ -75,8 +83,8 @@ mod tests {
                 .push(format!("{program} {}", args.join(" ")));
             let mut enabled = self.enabled.lock().unwrap();
             match args {
-                ["enable", "--now", _] => *enabled = true,
-                ["disable", "--now", _] => *enabled = false,
+                [SKIP_SYSV, SYSTEMCTL, "enable", "--now", _] => *enabled = true,
+                [SKIP_SYSV, SYSTEMCTL, "disable", "--now", _] => *enabled = false,
                 ["is-enabled", _] => {
                     return Ok(if *enabled { "enabled\n" } else { "disabled\n" }.into());
                 }
@@ -116,10 +124,10 @@ mod tests {
             }
         );
         assert!(
-            calls
-                .lock()
-                .unwrap()
-                .contains(&"/usr/bin/systemctl disable --now ssh.service".to_string())
+            calls.lock().unwrap().contains(
+                &"/usr/bin/env SYSTEMCTL_SKIP_SYSV=1 /usr/bin/systemctl disable --now ssh.service"
+                    .to_string()
+            )
         );
     }
 }

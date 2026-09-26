@@ -15,6 +15,11 @@ pub(crate) struct SshView {
     active: bool,
 }
 
+/// Enabling or disabling a unit reloads the service manager, which takes a
+/// few seconds on this board.
+#[cfg(feature = "restricted-control-surface")]
+const SWITCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[cfg(feature = "restricted-control-surface")]
 async fn request(
     state: &AppState,
@@ -22,11 +27,13 @@ async fn request(
     request: bli_kvm_core::PlatformControlRequestV2,
 ) -> AppResult<bli_kvm_control_protocol::ControlResponse> {
     use sha2::{Digest, Sha256};
-    let Some(control) = state.control.as_ref() else {
+    let Some(socket) = state.options.control_socket.as_ref() else {
         return Err(AppError::ServiceUnavailable(
             "the SSH switch is not configured".into(),
         ));
     };
+    let control = bli_kvm_control_client::ControlClient::with_timeout(socket, SWITCH_TIMEOUT)
+        .map_err(|_| AppError::ServiceUnavailable("the SSH switch is unavailable".into()))?;
     let mut hasher = Sha256::new();
     hasher.update(b"hardened-blikvm-ssh-v1");
     hasher.update(session_token.as_bytes());
