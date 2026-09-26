@@ -147,7 +147,8 @@ approval:
   256 MB board, shown there under Device > Advanced and Tailscale).
 - Declined by the operator: USB wakeup.
 - Placed differently: HID-only is a Device setting, not in the mouse menu;
-  Reset HID is not offered (the owner restores HID state itself).
+  Reset HID is not offered; USB reconnect in the image dialog re-enumerates
+  the whole gadget, HID included.
 - Updates: signed application updates instead of the reference's preview
   channels and offline packages; RAW system updates are plan phase E.
 
