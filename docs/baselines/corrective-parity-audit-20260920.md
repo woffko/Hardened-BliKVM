@@ -173,9 +173,22 @@ the recovery path, so phase D starts after that check.
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
 board and assembled `hardened-blikvm-h616-sd.img` (28 GiB, layout p1 root
-12 GiB, p2 data 14 GiB at `/mnt`, p3 virtual media; `.img.zst` SHA-256
-`63eda31f4a7b2baf8f1642c19e352578b91334f09795e1c5186f0feff468b373`) in the
-development image directory outside the repository. Checked in the image's
+12 GiB, p2 data 14 GiB at `/mnt`, p3 virtual media) in the development
+image directory outside the repository.
+
+The operator's first card (image `.img.zst` SHA-256 `63eda31f...`) booted
+Linux but the panel stayed dark and the web interface did not answer. Read
+back from the card (the boot area matched the image byte for byte; first
+boot had generated the keys): the board owner failed at the NAMESPACE step
+because the image excluded `/etc/NetworkManager/system-connections`, which
+is in its ReadWritePaths, so native boot stopped and neither the panel
+daemon nor the server started; the rendered nginx unit was skipped because
+its conditions named the board's excluded certificate. The builder now
+keeps an empty, root-only `system-connections` directory, points the nginx
+conditions at the first-boot TLS pair, and fails when a unit that starts
+needs a path the image lacks. Rebuilt image: `h616-sd-20260926-f`
+(`.img.zst` SHA-256
+`882e4726d2c3ba35c31da427de520ecfdfbddd2ad03e446910d863d5667c15d3`). Checked in the image's
 root file system: nginx uses the TLS pair the first boot generates; the
 `/boot` initramfs (built on the board into `/var/tmp`, never `/boot`)
 carries the RAW system update step; the first-boot provisioning and the
@@ -222,11 +235,13 @@ slot 38, update runtime 0.1.0~dev26):
   `/root/backups`); HTTPS answered with the same certificate. The image
   builder now points the card's nginx at the TLS pair the first boot
   generates, instead of the board's excluded certificate.
-- A bundle from the same build as the E1 image is ready for that test:
-  `hardened-blikvm-system-0.1.0-dev34-seq1.tar` next to the image (SHA-256
-  `bc62b35037c8b1ed78b9264501745b4dcec6287f47df63edf902045cf3f42aaa`; root
-  image shrunk to 4.65 GB, 1.16 GB compressed; signature checked against
-  the shipped trust root).
+- A bundle from the same build as the rebuilt E1 image is ready for that
+  test: `hardened-blikvm-system-0.1.0-dev34-seq1.tar` in
+  `h616-sd-20260926-f` (SHA-256
+  `bd26e77399a2b835d17afcbb117ab6f2f1c3a0eec058f773d6e8d2372c18c289`;
+  root image shrunk to 4.65 GB, 1.16 GB compressed; signature checked
+  against the shipped trust root). The bundle built from the faulty first
+  image is superseded.
 - Waiting for the operator: the device test needs a spare card written from
   the new image (install that bundle and check that the
   account, TLS certificate, SSH host keys, root password, slot and switches
