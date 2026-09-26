@@ -108,6 +108,18 @@ and are socket-activated per connection.
     gateway (`ws://127.0.0.1:18790/pico/ws`) with the gateway token, one
     assistant session at a time (30-minute lock renewed by traffic).
 
+## Other helper duties (plan phase B)
+
+- **Tailscale** (admin helper, root, no switch as in the reference): the
+  package is installed from Tailscale's apt repository through a private
+  source list and list directory, signed-by the repository key we ship
+  (fingerprint 2596A99EAAB33821893C0A79458CA832957F5868), so the system's apt
+  configuration is untouched; start and stop enable or disable
+  `tailscaled`, up passes `--accept-dns=false`, and the login URL is read
+  from the daemon's status while a detached `tailscale login` waits for the
+  operator. The memory limit and swap settings of the reference are not
+  offered: they exist for its 256 MB board.
+
 ## Reference contract kept
 
 - Terminal: `POST /api/vm/terminal/unlock` (password re-entry, rate limited,

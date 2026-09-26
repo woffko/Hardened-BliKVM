@@ -84,6 +84,43 @@ leaving its switch off:
 After the phase A probes every administration switch is off on the board,
 PicoClaw is uninstalled and no test fixture is left running.
 
+Plan phase B 2026-09-26 (slots 34-35, update runtime 0.1.0~dev25), verified
+on the board through the API (`tools/playwright/device_settings_probe.mjs`,
+`evidence/private/device-settings-20260926-b.json`, passed):
+
+- About lists the board's address (from the owner, read through
+  NetworkManager) and the system image version (the image builder now
+  records it in `/etc/hardened-blikvm-image`; this hand-built board falls
+  back to the OS release: Armbian 26.8.3 jammy, Ubuntu 22.04.5 LTS).
+- Diagnostics observes the HID gadget (USB controller bound and
+  enumerated), the ATX surface and the virtual-media surface.
+- SSH switch: off stopped and disabled the OpenSSH unit and port 22 closed;
+  on restored both. The owner skips the SysV compatibility step, which
+  cannot write outside its sandbox (found by the first probe run).
+- Network: the reference DNS page with DHCP or manual IPv4. Manual with the
+  current address, mask and router reported a pending revert (119 s), was
+  kept, then DHCP again, kept; the address stayed reachable throughout. An
+  unconfirmed addressing change reverts after two minutes (unit test).
+- The session lock duration is persisted (set, read back, restored) and was
+  still in force after the reboot.
+- USB gadget reconnect applied and the target host enumerated the gadget
+  again; frame detect off/on and the reference pause call answered; the
+  streamer takes the setting from its environment (`--drop-same-frames`).
+- Tailscale as in the reference (`tools/playwright/tailscale_probe.mjs`,
+  `evidence/private/tailscale-20260926-a.json`, passed): stop, start,
+  restart, a login URL from Tailscale, uninstall (apt, 52 s) and install
+  from Tailscale's repository with our pinned key (47 s); the board ended
+  installed and running, not logged in. Completing the login needs the
+  operator's Tailscale account.
+- KVM reboot from Device settings (`tools/playwright/kvm_reboot_probe.mjs`,
+  `evidence/private/kvm-reboot-20260926-a.json`, passed): refused without
+  the operator's confirmation, rebooted with it and served the GUI again
+  after 61 s; every unit active, HID gadget configured, all administration
+  switches still off.
+- USB wakeup: declined by the operator on 2026-09-26; not implemented.
+- The board's streamer unit in `/etc/systemd/system` was replaced by the
+  packaged one (backup in `/root/backups`); new images carry it.
+
 Observed while testing: the media catalog still lists `kubuntu.img` although
 the file is no longer in the image store; the catalog entry is stale and is
 left for the operator to delete from the image list.
