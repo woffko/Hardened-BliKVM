@@ -9,7 +9,7 @@ import {
 import { useAtom, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
-import { textToKeyReports } from '@/lib/hid-text.ts';
+import { textToKeyReports, type TextLayoutState } from '@/lib/hid-text.ts';
 import { KeyboardReport } from '@/lib/keyboard.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
@@ -35,6 +35,8 @@ export const MobileLocalKeyboard = () => {
   // Text of the active IME composition that has already been sent.
   const composingRef = useRef(false);
   const composedRef = useRef('');
+  // Punctuation after a Russian word is sent at Russian layout positions.
+  const layoutRef = useRef<TextLayoutState>({ script: 'latin' });
   const { restricted, reportHid } = useHidLease();
 
   useEffect(() => {
@@ -75,7 +77,7 @@ export const MobileLocalKeyboard = () => {
     if (!text) return;
     if (restricted) {
       enqueue(() => {
-        for (const step of textToKeyReports(text)) {
+        for (const step of textToKeyReports(text, layoutRef.current)) {
           reportHid({
             mode: 'keyboard',
             data: [step.modifier, 0, step.usage, 0, 0, 0, 0, 0]
