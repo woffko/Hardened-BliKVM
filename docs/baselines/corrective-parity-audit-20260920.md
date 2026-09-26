@@ -150,9 +150,13 @@ approval:
   Reset HID is not offered; USB reconnect in the image dialog re-enumerates
   the whole gadget, HID included.
 - Updates: signed application updates instead of the reference's preview
-  channels and offline packages; RAW system updates are plan phase E.
+  channels and offline packages; RAW system updates are plan phase E
+  (implemented later the same day as a signed upload with its own default-off
+  switch).
 
-Waiting for the operator: approval of this list and a check on the phone.
+The operator approved this list on 2026-09-26, together with RAW system
+updates being off by default and uploaded rather than fetched from a feed.
+Still waiting for the operator: a check on the phone.
 
 Observed while testing: the media catalog still lists `kubuntu.img` although
 the file is no longer in the image store; the catalog entry is stale and is
@@ -163,7 +167,8 @@ requires. Migrating the legacy iptables rules and enabling the owned nft
 table can cut the board off the network, so it needs a recovery path first:
 a UART console, physical access to the board, or a card with the current
 image that the operator has checked boots. Nothing on the board's firewall
-was changed.
+was changed. The operator chose the card from the phase E1 boot check as
+the recovery path, so phase D starts after that check.
 
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
