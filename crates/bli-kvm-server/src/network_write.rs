@@ -35,17 +35,6 @@ pub(crate) const NETWORK_WRITE_OP_DOMAIN: &[u8] = b"hardened-blikvm-network-writ
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-pub(crate) struct NetworkDnsBody {
-    pub servers: Vec<String>,
-    /// The operator confirms the write explicitly; a missing or false value is
-    /// refused before the owner is asked.
-    #[serde(default)]
-    pub confirm: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) struct NetworkIpv6Body {
     /// Either the reviewed `{interface, disabled}` shape or the reference
     /// `{mode}` shape; exactly one of the two must carry the intent.
@@ -100,7 +89,7 @@ pub(crate) struct NetworkWriteOutcome {
 /// Operation id for one forwarded request: 32 lowercase hex characters that
 /// are unique per session and call.
 #[cfg(feature = "restricted-control-surface")]
-fn operation_id(session_token: &str) -> String {
+pub(crate) fn operation_id(session_token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(NETWORK_WRITE_OP_DOMAIN);
     hasher.update(session_token.as_bytes());
@@ -133,19 +122,6 @@ fn unix_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
-}
-
-#[cfg(feature = "restricted-control-surface")]
-pub(crate) async fn dns(
-    State(state): State<AppState>,
-    Extension(CurrentSession(session)): Extension<CurrentSession>,
-    Json(body): Json<NetworkDnsBody>,
-) -> AppResult<Json<ApiResponse<NetworkWriteOutcome>>> {
-    let target = NetworkWriteTarget::Dns {
-        servers: body.servers.clone(),
-    };
-    let outcome = request_write(&state, &session, target, body.confirm, "dns").await?;
-    Ok(Json(ApiResponse::ok(outcome)))
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -186,17 +162,6 @@ pub(crate) async fn ipv6(
     };
     let outcome = request_write(&state, &session, target, body.confirm, "ipv6").await?;
     Ok(Json(ApiResponse::ok(outcome)))
-}
-
-#[cfg(not(feature = "restricted-control-surface"))]
-pub(crate) async fn dns(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-    Json(_body): Json<NetworkDnsBody>,
-) -> AppResult<Json<ApiResponse<NetworkWriteOutcome>>> {
-    Err(AppError::ServiceUnavailable(
-        "network writes are not configured".into(),
-    ))
 }
 
 #[cfg(not(feature = "restricted-control-surface"))]

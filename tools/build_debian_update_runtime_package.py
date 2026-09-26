@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev24"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev25"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -143,6 +143,10 @@ FILE_MAP.update({
     ),
     "share/picoclaw/AGENT.md": "usr/share/hardened-blikvm/picoclaw/AGENT.md",
     "share/picoclaw/AGENT_KVM.md": "usr/share/hardened-blikvm/picoclaw/AGENT_KVM.md",
+    # dev25: Tailscale's apt repository key for the admin helper's install.
+    "share/tailscale/tailscale-archive-keyring.asc": (
+        "usr/share/hardened-blikvm/tailscale/tailscale-archive-keyring.asc"
+    ),
     # dev19: HID gadget functions before the owner (cold-boot HID access).
     "share/systemd/hardened-blikvm-hid-gadget.service": (
         "lib/systemd/system/hardened-blikvm-hid-gadget.service"
@@ -200,6 +204,7 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-picoclaw-api@.service": 24,
         "AGENT.md": 24,
         "AGENT_KVM.md": 24,
+        "tailscale-archive-keyring.asc": 25,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,

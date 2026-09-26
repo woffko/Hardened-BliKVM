@@ -493,6 +493,8 @@ const en = {
           noDhcp: 'No DHCP DNS is currently available',
           saved: 'DNS settings saved',
           redirecting: 'Network settings saved. Opening the new address...',
+          pendingConfirm: 'The new network settings revert in {{seconds}} s unless you keep them.',
+          keep: 'Keep settings',
           saveFailed: 'Failed to save DNS settings',
           unsaved: 'Unsaved changes',
           maxServers: 'Maximum {{count}} DNS servers allowed',

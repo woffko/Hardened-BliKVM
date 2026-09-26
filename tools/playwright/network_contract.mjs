@@ -124,15 +124,7 @@ try {
       route.fulfill({
         json: {
           code: 0,
-          data: {
-            installed: false,
-            running: false,
-            enabled: false,
-            loginName: "",
-            deviceIp: "",
-            deviceName: "",
-            message: "No reviewed package installed",
-          },
+          data: { state: "notInstall", ip: "", name: "", account: "" },
         },
       }),
     );
@@ -257,6 +249,34 @@ try {
           },
         });
       }
+      const dnsState = () => ({
+        mode: "manual",
+        servers,
+        effective: servers,
+        dhcp: [],
+        info: {
+          interface: "enp1s0",
+          type: "Ethernet",
+          address: "192.0.2.10",
+          subnetMask: "255.255.255.0",
+          gateway: "192.0.2.1",
+          searchDomains: [],
+        },
+        config: {
+          address: "192.0.2.10",
+          subnetMask: "255.255.255.0",
+          gateway: "192.0.2.1",
+        },
+        pending: 0,
+      });
+      if (request.method() === "POST" && request.url().endsWith("/dns")) {
+        if (!applied)
+          return route.fulfill({
+            json: { code: -1, msg: "fixture_refused", data: null },
+          });
+        servers = request.postDataJSON().servers;
+        return route.fulfill({ json: { code: 0, data: dnsState() } });
+      }
       if (request.method() === "POST" && applied) {
         const body = request.postDataJSON();
         const dns = request.url().endsWith("/dns");
@@ -278,13 +298,7 @@ try {
         request.method() === "POST"
           ? { applied: false, rejection: "fixture_refused" }
           : request.url().endsWith("/dns")
-            ? {
-                resolver: {
-                  source: "/etc/resolv.conf",
-                  servers,
-                  searchDomains: [],
-                },
-              }
+            ? dnsState()
             : {
                 interface: "enp1s0",
                 mode: "slaac",
@@ -333,9 +347,14 @@ try {
         .waitFor();
       const writes = requests.filter((request) => request.method() === "POST");
       assert.equal(writes.length, 1);
+      // The reference body; the address is unchanged, so no redirect.
       assert.deepEqual(writes[0].postDataJSON(), {
+        mode: "manual",
         servers: ["9.9.9.9"],
-        confirm: true,
+        interface: "enp1s0",
+        address: "192.0.2.10",
+        subnetMask: "255.255.255.0",
+        gateway: "192.0.2.1",
       });
       assert.equal(
         await page.getByText("DNS settings saved", { exact: true }).count(),
@@ -585,7 +604,7 @@ try {
     const beforeTailscale = requests.length;
     await page.locator('[data-settings-tab="tailscale"]').click();
     await page
-      .getByText("No reviewed package installed", { exact: true })
+      .getByText("Tailscale not found! Please install.", { exact: true })
       .waitFor();
     assert.deepEqual(
       requests
@@ -596,10 +615,15 @@ try {
         ),
       ["GET /api/extensions/tailscale/status"],
     );
+    // The reference view: installing is offered, nothing else yet.
+    assert.equal(
+      await page.getByRole("button", { name: "Install", exact: true }).count(),
+      1,
+    );
     assert.equal(
       await page
         .getByRole("button", {
-          name: /Install|Start|Login|Logout|Uninstall/,
+          name: /Start|Login|Logout|Uninstall/,
           exact: true,
         })
         .count(),

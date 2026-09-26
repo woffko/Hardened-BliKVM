@@ -56,6 +56,8 @@ pub struct ControlV2State {
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
     hid_only: Option<crate::device_settings::HidOnlyState>,
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
+    ssh: Option<crate::ssh_settings::SshSettings>,
+    ipv4: Option<crate::ipv4_settings::Ipv4Settings>,
     wifi: Option<crate::network_settings::WifiState>,
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::FirewallState>,
@@ -87,6 +89,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -157,6 +161,14 @@ impl ControlV2State {
     }
 
     /// Attach the administration feature switches to the board state.
+    pub fn with_ipv4(&mut self, ipv4: crate::ipv4_settings::Ipv4Settings) {
+        self.ipv4 = Some(ipv4);
+    }
+
+    pub fn with_ssh(&mut self, ssh: crate::ssh_settings::SshSettings) {
+        self.ssh = Some(ssh);
+    }
+
     pub fn with_admin_features(&mut self, features: crate::admin_features::AdminFeaturesState) {
         self.admin_features = Some(features);
     }
@@ -232,6 +244,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -263,6 +277,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -294,6 +310,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -339,6 +357,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -372,6 +392,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -411,6 +433,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -709,6 +733,8 @@ impl ControlV2State {
             mouse_jiggler: None,
             hid_only: None,
             admin_features: None,
+            ssh: None,
+            ipv4: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -818,6 +844,26 @@ impl ControlV2State {
                     None => reject(ControlRejectionCode::CapabilityDisabled),
                 }
             }
+            PlatformControlRequestV2::Ssh { enabled } => match self.ssh.as_mut() {
+                Some(ssh) => ssh.handle(*enabled),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::NetworkInfo {} => match self.ipv4.as_mut() {
+                Some(ipv4) => ipv4.info(),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::Ipv4Set { change } => match self.ipv4.as_mut() {
+                Some(ipv4) => ipv4.set(change),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::Ipv4Confirm {} => match self.ipv4.as_mut() {
+                Some(ipv4) => ipv4.confirm(),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::SshState {} => match self.ssh.as_mut() {
+                Some(ssh) => ssh.state(),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
             PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {
                 Some(features) => features.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),

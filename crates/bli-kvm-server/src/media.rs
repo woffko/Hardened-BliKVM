@@ -133,6 +133,8 @@ pub(crate) async fn virtual_media(
             | ControlResponse::MouseJigglerState { .. }
             | ControlResponse::HidOnlyState { .. }
             | ControlResponse::AdminFeatureState { .. }
+            | ControlResponse::SshState { .. }
+            | ControlResponse::NetworkInfo { .. }
             | ControlResponse::WifiState { .. }
             | ControlResponse::TlsState { .. }
             | ControlResponse::FirewallModeState { .. }
@@ -253,6 +255,15 @@ fn storage_operation_id(session_token: &str, domain: &[u8]) -> String {
         .take(16)
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// For the inventory: whether an image is attached, if the owner answers.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn observe(state: &AppState, session_token: &str) -> Option<bool> {
+    observe_media(state, session_token)
+        .await
+        .ok()
+        .map(|observed| observed.file.is_some())
 }
 
 #[cfg(feature = "restricted-control-surface")]

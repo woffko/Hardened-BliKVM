@@ -333,3 +333,74 @@ mod tests {
         assert_eq!(rejected.rejection, Some("capability_disabled"));
     }
 }
+
+/// The reference's frame detect switch (`POST /api/stream/mjpeg/detect`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct FrameDetectBody {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+/// The reference pauses frame detect around a resolution change.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrameDetectStopBody {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub duration: i64,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn update_frame_detect(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<FrameDetectBody>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "video settings are not configured".into(),
+        ));
+    };
+    let change = VideoSettingsChange::new(None, None).with_frame_detect(body.enabled);
+    match control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::VideoSettings { change },
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?
+    {
+        ControlResponse::Applied | ControlResponse::VideoState { .. } => {
+            Ok(Json(ApiResponse::ok(())))
+        }
+        ControlResponse::Rejected { code } => Err(AppError::BadRequest(format!(
+            "frame detect was refused: {}",
+            rejection_name(code)
+        ))),
+        _ => Err(AppError::ServiceUnavailable(
+            "video settings are unavailable".into(),
+        )),
+    }
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn update_frame_detect(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<FrameDetectBody>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    Err(AppError::ServiceUnavailable(
+        "video settings are not configured".into(),
+    ))
+}
+
+/// The streamer only drops frames identical to the previous one, so a new
+/// resolution is sent at once; pausing the detection is not needed and would
+/// cost two streamer restarts. Answered as done, as the reference does.
+pub(crate) async fn stop_frame_detect(
+    Json(_body): Json<FrameDetectStopBody>,
+) -> Json<ApiResponse<()>> {
+    Json(ApiResponse::ok(()))
+}

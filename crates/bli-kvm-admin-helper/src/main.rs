@@ -14,6 +14,7 @@
 mod download;
 mod picoclaw;
 mod scripts;
+mod tailscale;
 
 use std::ffi::CString;
 use std::fs::File;
@@ -121,6 +122,13 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             });
             write_line(stream, &reply)
         }
+        AdminRequest::Tailscale { action } => {
+            eprintln!("admin helper: tailscale {action}");
+            let reply = tailscale_action(&action).unwrap_or_else(|error| AdminReply::Refused {
+                reason: error.to_string(),
+            });
+            write_line(stream, &reply)
+        }
         request @ (AdminRequest::ScriptList {}
         | AdminRequest::ScriptUpload { .. }
         | AdminRequest::ScriptDelete { .. }
@@ -134,6 +142,26 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             write_line(stream, &reply)
         }
         _ => refuse(stream, "not an administration request"),
+    }
+}
+
+/// The reference's Tailscale actions; no switch, as in the reference.
+fn tailscale_action(action: &str) -> io::Result<AdminReply> {
+    let done = |result: io::Result<()>| result.map(|()| AdminReply::Done);
+    match action {
+        "status" => Ok(AdminReply::Tailscale {
+            tailscale: tailscale::status(),
+        }),
+        "login" => tailscale::login().map(|url| AdminReply::TailscaleLogin { url }),
+        "install" => done(tailscale::install()),
+        "uninstall" => done(tailscale::uninstall()),
+        "start" => done(tailscale::start()),
+        "stop" => done(tailscale::stop()),
+        "restart" => done(tailscale::restart()),
+        "up" => done(tailscale::up()),
+        "down" => done(tailscale::down()),
+        "logout" => done(tailscale::logout()),
+        _ => Err(io::Error::other("unknown tailscale action")),
     }
 }
 

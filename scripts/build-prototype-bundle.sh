@@ -65,6 +65,7 @@ install -d -m 0755 \
   "$stage/share/tmpfiles.d" \
   "$stage/share/udev" \
   "$stage/share/picoclaw" \
+  "$stage/share/tailscale" \
   "$stage/share/docs"
 install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
@@ -150,6 +151,11 @@ install -m 0644 \
   packaging/picoclaw/AGENT.md \
   packaging/picoclaw/AGENT_KVM.md \
   "$stage/share/picoclaw/"
+# Tailscale's apt repository key (fingerprint
+# 2596A99EAAB33821893C0A79458CA832957F5868), for the admin helper's install.
+install -m 0644 \
+  packaging/tailscale/tailscale-archive-keyring.asc \
+  "$stage/share/tailscale/"
 install -m 0644 LICENSE "$stage/LICENSE"
 install -m 0644 packaging/PROTOTYPE-README.md "$stage/README.md"
 install -m 0644 docs/architecture.md "$stage/share/docs/architecture.md"

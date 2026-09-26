@@ -27,10 +27,11 @@ pub use control::{
 };
 pub use control_v2::{
     AcceptPostBootRequest, AdminFeature, AtxConfirmation, ControlV2ValidationError,
-    HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest, MediaObserveRequest, MediaRequest,
-    NetworkWriteRequest, NetworkWriteTarget, PlatformControlRequestV2, SystemActionKind,
-    SystemActionWireRequest, TARGET_ATTESTATION_MAX_TTL_SECONDS,
-    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease,
+    HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest, Ipv4Change, MAX_IPV4_DNS_SERVERS,
+    MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
+    PlatformControlRequestV2, SystemActionKind, SystemActionWireRequest,
+    TARGET_ATTESTATION_MAX_TTL_SECONDS, TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation,
+    TargetRelease,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,

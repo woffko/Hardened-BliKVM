@@ -243,6 +243,21 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the administration feature switches.
     AdminFeatureState {},
+    /// Enable and start, or stop and disable, the OpenSSH server.
+    Ssh {
+        enabled: bool,
+    },
+    /// Read back the OpenSSH server state.
+    SshState {},
+    /// The connected interfaces' IPv4 addressing and DNS.
+    NetworkInfo {},
+    /// Set one interface to DHCP, or to manual DNS with an optional static
+    /// address; an addressing change reverts unless confirmed.
+    Ipv4Set {
+        change: Ipv4Change,
+    },
+    /// Keep the addressing change that is waiting for confirmation.
+    Ipv4Confirm {},
     /// Read the WiFi device state.
     WifiState {},
     /// Connect to a WiFi network through NetworkManager.
@@ -318,6 +333,79 @@ pub enum ControlV2ValidationError {
     InvalidMediaTimestamp,
     #[error("video-settings change is invalid")]
     InvalidVideoSettings,
+    #[error("IPv4 change is invalid")]
+    InvalidIpv4Change,
+}
+
+/// One IPv4 change: DHCP, or manual DNS servers with an optional static
+/// address, prefix and router.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ipv4Change {
+    pub interface: String,
+    pub dhcp: bool,
+    pub dns: Vec<String>,
+    pub address: Option<String>,
+    pub prefix: Option<u8>,
+    pub gateway: Option<String>,
+}
+
+pub const MAX_IPV4_DNS_SERVERS: usize = 3;
+
+impl Ipv4Change {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        use std::net::{IpAddr, Ipv4Addr};
+        let invalid = ControlV2ValidationError::InvalidIpv4Change;
+        let interface_ok = (1..=15).contains(&self.interface.len())
+            && self
+                .interface
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+        if !interface_ok || self.dns.len() > MAX_IPV4_DNS_SERVERS {
+            return Err(invalid);
+        }
+        if self
+            .dns
+            .iter()
+            .any(|server| server.parse::<IpAddr>().is_err())
+        {
+            return Err(invalid);
+        }
+        let address = self.address.as_deref().map(str::parse::<Ipv4Addr>);
+        let gateway = self.gateway.as_deref().map(str::parse::<Ipv4Addr>);
+        if self.dhcp {
+            return if self.dns.is_empty()
+                && self.address.is_none()
+                && self.prefix.is_none()
+                && self.gateway.is_none()
+            {
+                Ok(())
+            } else {
+                Err(invalid)
+            };
+        }
+        if self.dns.is_empty() {
+            return Err(invalid);
+        }
+        match (address, self.prefix, gateway) {
+            (None, None, None) => Ok(()),
+            (Some(Ok(address)), Some(prefix @ 1..=30), Some(Ok(gateway))) => {
+                let mask = u32::MAX << (32 - u32::from(prefix));
+                let (address, gateway) = (u32::from(address), u32::from(gateway));
+                let host = address & !mask;
+                if address & mask == gateway & mask
+                    && address != gateway
+                    && host != 0
+                    && host != !mask
+                {
+                    Ok(())
+                } else {
+                    Err(invalid)
+                }
+            }
+            _ => Err(invalid),
+        }
+    }
 }
 
 impl PlatformControlRequestV2 {
@@ -343,6 +431,11 @@ impl PlatformControlRequestV2 {
             Self::HidOnlyState {} => Ok(()),
             Self::AdminFeature { .. } => Ok(()),
             Self::AdminFeatureState {} => Ok(()),
+            Self::Ssh { .. } => Ok(()),
+            Self::SshState {} => Ok(()),
+            Self::NetworkInfo {} => Ok(()),
+            Self::Ipv4Set { change } => change.validate(),
+            Self::Ipv4Confirm {} => Ok(()),
             Self::WifiState {} => Ok(()),
             Self::WifiConnect { .. } => Ok(()),
             Self::WifiDisconnect {} => Ok(()),

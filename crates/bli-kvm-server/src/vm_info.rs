@@ -2,9 +2,9 @@
 //!
 //! Ported from the Hardened NanoKVM `InfoRsp`/`HardwareRsp` response shapes.
 //! The hardened server keeps this read-only and does not expose unique device
-//! identifiers or enumerate addresses from the unprivileged network process:
-//! `ips` is empty and `deviceKey` is empty by design. The uptime, mDNS name,
-//! image and application values are real.
+//! identifiers: `deviceKey` is empty by design. The unprivileged network
+//! process does not enumerate links itself; the addresses come from the board
+//! owner. The uptime, mDNS name, image and application values are real.
 
 use axum::Json;
 use serde::Serialize;
@@ -12,7 +12,9 @@ use serde::Serialize;
 use crate::error::{ApiResponse, AppResult};
 
 const PROC_UPTIME_FILE: &str = "/proc/uptime";
-const IMAGE_VERSION_FILE: &str = "/etc/hardened-blikvm/image";
+/// Written by the SD image builder; world-readable.
+const IMAGE_VERSION_FILE: &str = "/etc/hardened-blikvm-image";
+const OS_RELEASE_FILE: &str = "/etc/os-release";
 
 #[derive(Debug, Serialize)]
 pub struct IpInfo {
@@ -51,8 +53,13 @@ pub fn info(hostname: &str) -> InfoResponse {
         mdns: mdns_name(hostname),
         image: std::fs::read_to_string(IMAGE_VERSION_FILE)
             .ok()
-            .map(|value| value.trim().to_string())
+            .map(|value| value.trim().chars().take(128).collect::<String>())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                std::fs::read_to_string(OS_RELEASE_FILE)
+                    .ok()
+                    .and_then(|text| system_release(&text))
+            })
             .unwrap_or_default(),
         application: env!("CARGO_PKG_VERSION").to_string(),
         uptime: std::fs::read_to_string(PROC_UPTIME_FILE)
@@ -63,9 +70,33 @@ pub fn info(hostname: &str) -> InfoResponse {
     }
 }
 
-pub async fn vm_info() -> AppResult<Json<ApiResponse<InfoResponse>>> {
+pub async fn vm_info(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+    axum::Extension(crate::auth::middleware::CurrentSession(session)): axum::Extension<
+        crate::auth::middleware::CurrentSession,
+    >,
+) -> AppResult<Json<ApiResponse<InfoResponse>>> {
     let hostname = crate::system_hostname()?;
-    Ok(Json(ApiResponse::ok(info(&hostname))))
+    let mut response = info(&hostname);
+    // The owner reads the addresses from NetworkManager; the unprivileged
+    // server cannot enumerate links itself.
+    if let Some((interfaces, _)) = crate::network_ipv4::interfaces(&state, &session.token).await {
+        response.ips = interfaces
+            .into_iter()
+            .filter(|interface| !interface.address.is_empty())
+            .map(|interface| IpInfo {
+                name: interface.name,
+                addr: interface.address,
+                version: "IPv4".into(),
+                kind: if interface.kind == "wifi" {
+                    "Wireless".into()
+                } else {
+                    "Wired".into()
+                },
+            })
+            .collect();
+    }
+    Ok(Json(ApiResponse::ok(response)))
 }
 
 pub async fn vm_hardware(
@@ -74,6 +105,27 @@ pub async fn vm_hardware(
     Json(ApiResponse::ok(HardwareResponse {
         version: state.capabilities.platform.board.clone(),
     }))
+}
+
+/// The system release when no image version was recorded, e.g.
+/// `Armbian 26.8.3 jammy (Ubuntu 22.04.5 LTS)`.
+fn system_release(os_release: &str) -> Option<String> {
+    let field = |key: &str| {
+        os_release
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .map(|value| value.trim().trim_matches('"').to_string())
+            .filter(|value| !value.is_empty())
+    };
+    let pretty = field("PRETTY_NAME")?;
+    let release = match (field("NAME"), field("VERSION")) {
+        (Some(name), Some(version)) if !pretty.contains(&version) => {
+            let short = version.split(" (").next().unwrap_or(&version).to_string();
+            format!("{pretty} ({name} {short})")
+        }
+        _ => pretty,
+    };
+    Some(release.chars().take(128).collect())
 }
 
 fn mdns_name(hostname: &str) -> String {
@@ -95,6 +147,20 @@ fn parse_uptime(content: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_system_release_names_the_base_and_the_distribution() {
+        let text = "PRETTY_NAME=\"Armbian 26.8.3 jammy\"\nNAME=\"Ubuntu\"\nVERSION=\"22.04.5 LTS (Jammy Jellyfish)\"\n";
+        assert_eq!(
+            system_release(text).as_deref(),
+            Some("Armbian 26.8.3 jammy (Ubuntu 22.04.5 LTS)")
+        );
+        assert_eq!(
+            system_release("PRETTY_NAME=\"Debian GNU/Linux 12\"\n").as_deref(),
+            Some("Debian GNU/Linux 12")
+        );
+        assert_eq!(system_release(""), None);
+    }
 
     #[test]
     fn mdns_name_appends_the_local_suffix() {

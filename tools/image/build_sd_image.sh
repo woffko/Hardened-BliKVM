@@ -140,6 +140,9 @@ assemble() {
     install -m 0644 -o 0 -g 0 "$script_dir/hardened-blikvm-firstboot.service" "$staging/etc/systemd/system/hardened-blikvm-firstboot.service"
     ln -sf ../hardened-blikvm-firstboot.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-firstboot.service"
     : > "$staging/etc/hardened-blikvm/.firstboot-pending"
+    # The About page shows this as the system image version.
+    printf "Hardened BliKVM H616 SD image %s\n" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
+    chmod 0644 "$staging/etc/hardened-blikvm-image"
   ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash"
 
   root_img="$work/root.ext4"

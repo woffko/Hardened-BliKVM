@@ -115,6 +115,8 @@ pub enum VideoSetting {
     Fps,
     Quality,
     Resolution,
+    /// The reference's MJPEG frame detect: identical frames are not sent.
+    FrameDetect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

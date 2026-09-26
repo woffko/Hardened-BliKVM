@@ -15,6 +15,42 @@ use crate::{
 
 /// Largest accepted idle duration: one day.
 pub const MAX_LOCK_SECONDS: u64 = 86_400;
+/// The operator's choice survives server restarts and updates.
+pub const SESSION_LOCK_FILE: &str = "session-lock.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Persisted {
+    duration: u64,
+}
+
+/// The persisted idle duration, or the reference default.
+pub fn load(state_dir: &std::path::Path) -> u64 {
+    std::fs::read(state_dir.join(SESSION_LOCK_FILE))
+        .ok()
+        .filter(|bytes| bytes.len() <= 256)
+        .and_then(|bytes| serde_json::from_slice::<Persisted>(&bytes).ok())
+        .map(|persisted| persisted.duration)
+        .filter(|duration| *duration <= MAX_LOCK_SECONDS)
+        .unwrap_or(crate::auth::session::DEFAULT_LOCK_AFTER_SECONDS)
+}
+
+fn store(state_dir: &std::path::Path, duration: u64) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::create_dir_all(state_dir)?;
+    let path = state_dir.join(SESSION_LOCK_FILE);
+    let temporary = path.with_extension("new");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    file.write_all(&serde_json::to_vec(&Persisted { duration }).map_err(std::io::Error::other)?)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(temporary, path)
+}
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +87,12 @@ pub(crate) async fn set_session_lock(
         ));
     }
     state.sessions.set_lock_after_seconds(body.duration).await;
+    if let Err(error) = store(&state.options.state_dir, body.duration) {
+        eprintln!("session lock: the setting could not be saved: {error}");
+        return Err(AppError::ServiceUnavailable(
+            "the session lock setting could not be saved".into(),
+        ));
+    }
     if body.lock_now {
         let revoked = state.sessions.revoke_others(&session.token).await;
         for token in revoked {
@@ -60,4 +102,23 @@ pub(crate) async fn set_session_lock(
     Ok(Json(ApiResponse::ok(SessionLockView {
         duration: state.sessions.lock_after_seconds().await,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_duration_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(super::load(dir.path()), 3600);
+        super::store(&dir.path().join("state"), 0).unwrap();
+        assert_eq!(super::load(&dir.path().join("state")), 0);
+        super::store(&dir.path().join("state"), 900).unwrap();
+        assert_eq!(super::load(&dir.path().join("state")), 900);
+        std::fs::write(
+            dir.path().join("state/session-lock.json"),
+            b"{\"duration\":999999}",
+        )
+        .unwrap();
+        assert_eq!(super::load(&dir.path().join("state")), 3600);
+    }
 }

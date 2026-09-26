@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{DefaultBodyLimit, Request, State},
     http::{HeaderName, HeaderValue, StatusCode},
     middleware::{Next, from_fn, from_fn_with_state},
@@ -41,6 +41,7 @@ mod hid;
 mod leader_key;
 mod media;
 mod network;
+mod network_ipv4;
 mod network_write;
 mod picoclaw;
 mod remote_download;
@@ -48,6 +49,7 @@ mod scripts;
 mod session_lock;
 mod shortcuts;
 pub mod shutdown;
+mod ssh;
 mod system_action;
 mod system_log;
 mod system_time;
@@ -275,6 +277,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         manifest.hid.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         for feature in [
+            "device_ssh",
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
@@ -299,6 +302,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            // The reference's KVM reboot in Device settings.
+            manifest.board.features.insert(
+                "device_reboot".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
         }
         // Administration features exist when the root helper is configured;
         // each stays switched off until the operator enables it.
@@ -316,10 +324,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified),
             );
         }
-        // The native owner exposes observations but refuses every action.
+        // Tailscale as in the reference, through the administration helper.
         manifest.board.features.insert(
             "tailscale".into(),
-            FeatureStatus::read_only(EvidenceLevel::SourceVerified),
+            if options.admin_socket.is_some() {
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified)
+            } else {
+                FeatureStatus::unavailable()
+            },
         );
         if options.video_controls_enabled {
             manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -330,6 +342,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             manifest.video.settings = vec![
                 bli_kvm_core::VideoSetting::Fps,
                 bli_kvm_core::VideoSetting::Resolution,
+                bli_kvm_core::VideoSetting::FrameDetect,
             ];
         }
         if options.network_writes_enabled {
@@ -388,7 +401,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 .expect("video proxy socket path must be absolute"),
         ),
         accounts: Arc::new(AccountStore::new(options.state_dir.join("account.json"))),
-        sessions: Arc::new(SessionStore::new()),
+        sessions: Arc::new(SessionStore::with_lock_after_seconds(session_lock::load(
+            &options.state_dir,
+        ))),
         login_limiter: Arc::new(Mutex::new(LoginRateLimiter::new(
             options.login_max_failures,
             options.login_lockout_secs,
@@ -441,6 +456,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/mdns", get(device_settings::mdns_state))
         .route("/vm/mdns/enable", post(device_settings::mdns_enable))
         .route("/vm/mdns/disable", post(device_settings::mdns_disable))
+        .route("/vm/ssh", get(ssh::state))
+        .route("/vm/ssh/enable", post(ssh::enable))
+        .route("/vm/ssh/disable", post(ssh::disable))
         .route(
             "/vm/tls",
             get(device_settings::tls_state).post(device_settings::tls_update),
@@ -456,8 +474,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/system/time", get(system_time::get_config))
         .route(
             "/network/dns",
-            get(network::network_dns).post(network_write::dns),
+            get(network_ipv4::get_dns).post(network_ipv4::set_dns),
         )
+        .route("/network/dns/confirm", post(network_ipv4::confirm))
         .route(
             "/network/ipv6",
             get(network::network_ipv6).post(network_write::ipv6),
@@ -565,6 +584,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/system/reboot", post(system_action::reboot))
         .route("/vm/system/shutdown", post(system_action::shutdown))
         .route("/stream/mjpeg", get(video::mjpeg))
+        .route(
+            "/stream/mjpeg/detect",
+            post(video_settings::update_frame_detect),
+        )
+        .route(
+            "/stream/mjpeg/detect/stop",
+            post(video_settings::stop_frame_detect),
+        )
         .route("/stream/webrtc", get(webrtc::webrtc_socket))
         .route("/vm/terminal", get(terminal::connect))
         .route("/vm/terminal/unlock", post(terminal::unlock))
@@ -647,11 +674,11 @@ async fn capability_manifest(
 /// Resolve the runtime inventory the same way for every view: the vendor
 /// broker when it answers, otherwise (board profile) the facts our own
 /// arrangement observes instead of failing the whole view.
-async fn resolve_inventory(state: &AppState) -> AppResult<RuntimeInventory> {
+async fn resolve_inventory(state: &AppState, session_token: &str) -> AppResult<RuntimeInventory> {
     match state.inventory.inventory().await {
         Ok(inventory) => Ok(inventory),
         Err(_) if state.options.restricted_controls_enabled && state.control.is_some() => {
-            Ok(native_inventory(state).await)
+            Ok(native_inventory(state, session_token).await)
         }
         Err(_) => Err(AppError::ServiceUnavailable(
             "platform broker unavailable".into(),
@@ -661,14 +688,33 @@ async fn resolve_inventory(state: &AppState) -> AppResult<RuntimeInventory> {
 
 async fn runtime_inventory(
     State(state): State<AppState>,
+    Extension(auth::middleware::CurrentSession(session)): Extension<
+        auth::middleware::CurrentSession,
+    >,
 ) -> AppResult<Json<ApiResponse<RuntimeInventory>>> {
-    let inventory = resolve_inventory(&state).await?;
+    let inventory = resolve_inventory(&state, &session.token).await?;
     Ok(Json(ApiResponse::ok(inventory)))
 }
 
+/// The USB device controller: bound (online) and enumerated by the target
+/// host (`configured`).
+fn usb_device_controller() -> (Option<bool>, Option<bool>) {
+    let Ok(mut entries) = std::fs::read_dir("/sys/class/udc") else {
+        return (None, None);
+    };
+    let Some(Ok(entry)) = entries.next() else {
+        return (Some(false), Some(false));
+    };
+    match std::fs::read_to_string(entry.path().join("state")) {
+        Ok(state) => (Some(true), Some(state.trim() == "configured")),
+        Err(_) => (Some(true), None),
+    }
+}
+
 /// Assemble the native board inventory: thermal and RTC from the kernel views,
-/// the host power LED from the board owner, and nothing that we do not observe.
-async fn native_inventory(state: &AppState) -> RuntimeInventory {
+/// the host power LED and the component states from the board owner and the
+/// USB controller, and nothing that we do not observe.
+async fn native_inventory(state: &AppState, session_token: &str) -> RuntimeInventory {
     let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees().ok();
     let rtc = bli_kvm_platform_bli::read_h616_external_rtc().ok();
     let power_led = match state.control.as_ref() {
@@ -689,11 +735,27 @@ async fn native_inventory(state: &AppState) -> RuntimeInventory {
                     power_led_present,
                     power_led_on,
                     ..
-                }) => power_led_present.then_some(power_led_on),
-                _ => None,
+                }) => (Some(true), power_led_present.then_some(power_led_on)),
+                _ => (Some(false), None),
             }
         }
-        None => None,
+        None => (None, None),
+    };
+    let (power_online, power_led) = power_led;
+    let (hid_online, hid_connected) = usb_device_controller();
+    #[cfg(feature = "restricted-control-surface")]
+    let (media_enabled, media_online, media_connected) = if state.options.media_controls_enabled {
+        match media::observe(state, session_token).await {
+            Some(mounted) => (Some(true), Some(true), Some(mounted)),
+            None => (Some(true), Some(false), None),
+        }
+    } else {
+        (Some(false), None, None)
+    };
+    #[cfg(not(feature = "restricted-control-surface"))]
+    let (media_enabled, media_online, media_connected) = {
+        let _ = session_token;
+        (None, None, None)
     };
     // The capture engine's own state tells whether the source has a signal.
     #[cfg(feature = "restricted-control-surface")]
@@ -713,13 +775,22 @@ async fn native_inventory(state: &AppState) -> RuntimeInventory {
         external_rtc_offset_seconds: rtc.map(|readout| readout.offset_from_system_seconds),
         power_led,
         video_online,
+        hid_online,
+        hid_connected,
+        power_online,
+        media_enabled,
+        media_online,
+        media_connected,
     })
 }
 
 async fn diagnostics_view(
     State(state): State<AppState>,
+    Extension(auth::middleware::CurrentSession(session)): Extension<
+        auth::middleware::CurrentSession,
+    >,
 ) -> AppResult<Json<ApiResponse<DiagnosticsView>>> {
-    let inventory = resolve_inventory(&state).await?;
+    let inventory = resolve_inventory(&state, &session.token).await?;
     let diagnostics = DiagnosticsView::from_inventory(&inventory)
         .map_err(|_| AppError::ServiceUnavailable("diagnostics view unavailable".into()))?;
     Ok(Json(ApiResponse::ok(diagnostics)))
@@ -4342,11 +4413,13 @@ mod tests {
             body["data"]["power"]["status"]["availability"],
             "read_write"
         );
+        // Tailscale needs the administration helper, not configured here.
         assert_eq!(
             body["data"]["board"]["features"]["tailscale"]["availability"],
-            "read_only"
+            "unavailable"
         );
         for feature in [
+            "device_ssh",
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
@@ -4381,6 +4454,7 @@ mod tests {
             "unavailable"
         );
         for feature in [
+            "device_ssh",
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",

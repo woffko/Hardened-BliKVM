@@ -51,6 +51,17 @@ while IFS= read -r path; do
           ;;
       esac
       ;;
+    application/pgp-keys)
+      # Tailscale's public apt repository key, fingerprint
+      # 2596A99EAAB33821893C0A79458CA832957F5868.
+      case "$path" in
+        packaging/tailscale/tailscale-archive-keyring.asc) ;;
+        *)
+          echo "unexpected key file: $path" >&2
+          exit 1
+          ;;
+      esac
+      ;;
     image/svg+xml)
       case "$path" in
         *.svg) ;;

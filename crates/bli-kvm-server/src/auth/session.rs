@@ -46,9 +46,15 @@ pub struct SessionStore {
 
 impl SessionStore {
     /// Starts with the reference default idle auto-lock of one hour.
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_lock_after_seconds(DEFAULT_LOCK_AFTER_SECONDS)
+    }
+
+    /// A store whose idle auto-lock starts at `seconds` (zero: off).
+    pub fn with_lock_after_seconds(seconds: u64) -> Self {
         Self {
-            lock_after_seconds: RwLock::new(Some(DEFAULT_LOCK_AFTER_SECONDS)),
+            lock_after_seconds: RwLock::new((seconds != 0).then_some(seconds)),
             ..Self::default()
         }
     }

@@ -35,12 +35,6 @@ pub struct ResolverConfig {
     pub search_domains: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkDnsResponse {
-    pub resolver: ResolverConfig,
-}
-
 fn valid_ip(value: &str) -> bool {
     value
         .parse::<IpAddr>()
@@ -294,12 +288,6 @@ pub(crate) async fn network_ipv6() -> AppResult<Json<ApiResponse<NetworkIpv6Resp
     })))
 }
 
-pub(crate) async fn network_dns() -> AppResult<Json<ApiResponse<NetworkDnsResponse>>> {
-    Ok(Json(ApiResponse::ok(NetworkDnsResponse {
-        resolver: read_resolver_config(Path::new(RESOLV_CONF_FILE)),
-    })))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,17 +435,15 @@ domain ignored.example
     }
 
     #[test]
-    fn the_response_is_camel_case() {
-        let response = NetworkDnsResponse {
-            resolver: ResolverConfig {
-                source: RESOLV_CONF_FILE.to_string(),
-                servers: vec!["192.0.2.1".to_string()],
-                search_domains: vec!["lan".to_string()],
-            },
+    fn the_resolver_is_camel_case() {
+        let resolver = ResolverConfig {
+            source: RESOLV_CONF_FILE.to_string(),
+            servers: vec!["192.0.2.1".to_string()],
+            search_domains: vec!["lan".to_string()],
         };
-        let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["resolver"]["searchDomains"][0], "lan");
-        assert_eq!(json["resolver"]["servers"][0], "192.0.2.1");
+        let json = serde_json::to_value(&resolver).unwrap();
+        assert_eq!(json["searchDomains"][0], "lan");
+        assert_eq!(json["servers"][0], "192.0.2.1");
     }
 }
 

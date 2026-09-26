@@ -106,6 +106,8 @@ pub(crate) async fn application_power(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }

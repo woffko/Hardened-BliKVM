@@ -37,7 +37,7 @@ export type CapabilityManifest = {
     maxWidth: number | null;
     maxHeight: number | null;
     audio: FeatureStatus;
-    settings: ('fps' | 'quality' | 'resolution')[];
+    settings: ('fps' | 'quality' | 'resolution' | 'frame_detect')[];
   };
   hid: {
     status: FeatureStatus;

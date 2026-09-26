@@ -79,9 +79,18 @@ pub(crate) async fn call(
     request: &AdminRequest,
     upload: Option<&[u8]>,
 ) -> AppResult<AdminReply> {
+    call_with_timeout(socket, request, upload, CALL_TIMEOUT).await
+}
+
+pub(crate) async fn call_with_timeout(
+    socket: &Path,
+    request: &AdminRequest,
+    upload: Option<&[u8]>,
+    timeout: Duration,
+) -> AppResult<AdminReply> {
     let unavailable =
         || AppError::ServiceUnavailable("the administration helper is unavailable".into());
-    tokio::time::timeout(CALL_TIMEOUT, async {
+    tokio::time::timeout(timeout, async {
         let mut stream = tokio::net::UnixStream::connect(socket)
             .await
             .map_err(|_| unavailable())?;

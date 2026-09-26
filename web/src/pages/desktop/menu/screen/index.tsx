@@ -6,11 +6,12 @@ import { useTranslation } from 'react-i18next';
 import { getScreen } from '@/api/vm';
 import { supportedUiVideoModes } from '@/lib/capabilities.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
-import { videoStreamGenerationAtom } from '@/jotai/screen.ts';
+import { videoModeAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
 import { QualityMap, ResolutionList } from './constants.ts';
 import { Fps } from './fps';
+import { FrameDetect } from './frame-detect';
 import { Quality } from './quality';
 import { Resolution } from './resolution';
 import { Scale } from './scale';
@@ -23,6 +24,7 @@ export const Screen = () => {
   const isWritable = capabilities?.video.status.availability === 'read_write';
   // Offer only settings explicitly backed by this server/owner configuration.
   const videoSettings = capabilities?.video.settings ?? [];
+  const videoMode = useAtomValue(videoModeAtom);
   const [fps, setFps] = useState(30);
   const [quality, setQuality] = useState(2);
   const [requestedResolution, setRequestedResolution] = useState<
@@ -128,6 +130,9 @@ export const Screen = () => {
         />
       )}
       <Scale />
+      {isWritable && videoMode === 'mjpeg' && videoSettings.includes('frame_detect') && (
+        <FrameDetect />
+      )}
     </div>
   );
 

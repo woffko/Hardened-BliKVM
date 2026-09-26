@@ -251,6 +251,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
@@ -278,6 +280,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
@@ -555,6 +559,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
@@ -587,6 +593,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }

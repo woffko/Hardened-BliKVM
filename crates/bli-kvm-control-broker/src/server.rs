@@ -401,6 +401,15 @@ async fn board_state(
         )),
         true,
     ));
+    // IPv4 addressing and DNS through NetworkManager, with a revert unless
+    // an addressing change is confirmed.
+    state.with_ipv4(crate::ipv4_settings::Ipv4Settings::open(Box::new(
+        crate::network_settings::NmcliRunner::new(crate::network_settings::NM_CONNECTIONS_DIR),
+    )));
+    // The reference's SSH switch: enable/disable the OpenSSH server unit.
+    state.with_ssh(crate::ssh_settings::SshSettings::open(Box::new(
+        crate::tailscale::SystemTailscaleRunner,
+    )));
     // Administration features stay off until the operator switches them on.
     state.with_admin_features(crate::admin_features::AdminFeaturesState::open(
         bli_kvm_core::ADMIN_FEATURES_PATH,
@@ -1114,6 +1123,8 @@ where
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }

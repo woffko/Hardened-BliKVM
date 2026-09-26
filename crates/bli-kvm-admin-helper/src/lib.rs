@@ -114,6 +114,33 @@ pub enum AdminRequest {
     },
     /// PicoClaw helper: remove the runtime's configuration and history.
     PicoclawReset {},
+    /// Admin helper: one of the reference's Tailscale actions (`status`,
+    /// `install`, `uninstall`, `start`, `stop`, `restart`, `up`, `down`,
+    /// `login`, `logout`).
+    Tailscale {
+        action: String,
+    },
+}
+
+/// The reference's Tailscale view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TailscaleStatus {
+    pub state: String,
+    pub ip: String,
+    pub name: String,
+    pub account: String,
+}
+
+impl TailscaleStatus {
+    pub fn state(state: &str) -> Self {
+        Self {
+            state: state.into(),
+            ip: String::new(),
+            name: String::new(),
+            account: String::new(),
+        }
+    }
 }
 
 /// What the PicoClaw helper reports about the runtime's configuration.
@@ -250,6 +277,8 @@ pub enum AdminReply {
     PicoclawModelSaved { model_name: String },
     PicoclawSessions { items: Vec<PicoclawSessionItem> },
     PicoclawSession { detail: PicoclawSessionDetail },
+    Tailscale { tailscale: TailscaleStatus },
+    TailscaleLogin { url: String },
 }
 
 /// Script names as the reference accepts them: `[A-Za-z0-9._-]`, ending in

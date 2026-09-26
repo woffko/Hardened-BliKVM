@@ -449,7 +449,16 @@ mod tests {
         assert!(first.is_some());
         assert!(DownloadLock::acquire(&path).unwrap().is_none());
         drop(first);
-        assert!(DownloadLock::acquire(&path).unwrap().is_some());
+        // A child forked by a parallel test may hold the descriptor until
+        // its exec closes it, so allow a moment for the release.
+        let released = (0..50).any(|_| {
+            let taken = DownloadLock::acquire(&path).unwrap().is_some();
+            if !taken {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            taken
+        });
+        assert!(released);
     }
 
     fn catalog(dir: &Path) -> PathBuf {

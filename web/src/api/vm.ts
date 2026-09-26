@@ -191,5 +191,7 @@ export function setTLS(enabled: boolean) {
 
 // reboot
 export function reboot() {
-  return http.post('/api/vm/system/reboot');
+  // The confirmation dialog in Device settings is the operator's explicit
+  // confirmation, which the server requires.
+  return http.post('/api/vm/system/reboot', { confirm: true });
 }

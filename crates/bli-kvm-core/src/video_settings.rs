@@ -32,6 +32,10 @@ pub const VIDEO_RESOLUTIONS: [(&str, u16); 4] = [
 ];
 pub const VIDEO_RESOLUTION_DEFAULT: &str = "1280x720";
 pub const VIDEO_QUALITY_ENV: &str = "BLI_KVM_USTREAMER_QUALITY";
+/// The streamer's `--drop-same-frames`: the reference's frame detect.
+pub const VIDEO_DROP_SAME_FRAMES_ENV: &str = "BLI_KVM_USTREAMER_DROP_SAME_FRAMES";
+/// How many identical frames the streamer may drop in a row while detecting.
+pub const VIDEO_DROP_SAME_FRAMES: u16 = 30;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum VideoSettingsError {
@@ -71,6 +75,8 @@ pub struct VideoSettingsChange {
     pub quality: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_detect: Option<bool>,
 }
 
 impl VideoSettingsChange {
@@ -79,7 +85,13 @@ impl VideoSettingsChange {
             fps,
             quality,
             resolution: None,
+            frame_detect: None,
         }
+    }
+
+    pub fn with_frame_detect(mut self, enabled: bool) -> Self {
+        self.frame_detect = Some(enabled);
+        self
     }
 
     pub fn with_resolution(mut self, resolution: impl Into<String>) -> Self {
@@ -88,7 +100,11 @@ impl VideoSettingsChange {
     }
 
     pub fn validate(&self) -> Result<(), VideoSettingsError> {
-        if self.fps.is_none() && self.quality.is_none() && self.resolution.is_none() {
+        if self.fps.is_none()
+            && self.quality.is_none()
+            && self.resolution.is_none()
+            && self.frame_detect.is_none()
+        {
             return Err(VideoSettingsError::Empty);
         }
         if let Some(fps) = self.fps {
@@ -116,6 +132,7 @@ pub struct VideoSettings {
     pub fps: u16,
     pub quality: u8,
     pub resolution: String,
+    pub frame_detect: bool,
 }
 
 impl Default for VideoSettings {
@@ -124,6 +141,8 @@ impl Default for VideoSettings {
             fps: VIDEO_FPS_DEFAULT,
             quality: VIDEO_QUALITY_DEFAULT,
             resolution: VIDEO_RESOLUTION_DEFAULT.to_string(),
+            // The unit's own default, as before frame detect was offered.
+            frame_detect: true,
         }
     }
 }
@@ -135,6 +154,7 @@ impl VideoSettings {
             fps,
             quality,
             resolution: VIDEO_RESOLUTION_DEFAULT.to_string(),
+            frame_detect: true,
         })
     }
 
@@ -155,6 +175,9 @@ impl VideoSettings {
                 if reviewed_resolution(value) {
                     settings.resolution = value.to_string();
                 }
+            } else if let Some(value) = line.strip_prefix(&format!("{VIDEO_DROP_SAME_FRAMES_ENV}="))
+            {
+                settings.frame_detect = value.trim() != "0";
             } else if let Some(value) = line.strip_prefix(&format!("{VIDEO_QUALITY_ENV}=")) {
                 if let Ok(quality) = value.trim().parse::<u8>() {
                     if (VIDEO_QUALITY_MIN..=VIDEO_QUALITY_MAX).contains(&quality) {
@@ -176,6 +199,7 @@ impl VideoSettings {
                 .resolution
                 .clone()
                 .unwrap_or_else(|| self.resolution.clone()),
+            frame_detect: change.frame_detect.unwrap_or(self.frame_detect),
         })
     }
 
@@ -184,8 +208,15 @@ impl VideoSettings {
         format!(
             "# Written by the Hardened BliKVM board owner from the reviewed \
              video-settings request.\n{VIDEO_FPS_ENV}={}\n{VIDEO_QUALITY_ENV}={}\n\
-             {VIDEO_RESOLUTION_ENV}={}\n",
-            self.fps, self.quality, self.resolution
+             {VIDEO_RESOLUTION_ENV}={}\n{VIDEO_DROP_SAME_FRAMES_ENV}={}\n",
+            self.fps,
+            self.quality,
+            self.resolution,
+            if self.frame_detect {
+                VIDEO_DROP_SAME_FRAMES
+            } else {
+                0
+            }
         )
     }
 }
@@ -234,7 +265,8 @@ mod tests {
             VideoSettings {
                 fps: 24,
                 quality: 80,
-                resolution: VIDEO_RESOLUTION_DEFAULT.to_string()
+                resolution: VIDEO_RESOLUTION_DEFAULT.to_string(),
+                frame_detect: true,
             }
         );
         let next = current
@@ -245,8 +277,31 @@ mod tests {
             VideoSettings {
                 fps: 40,
                 quality: 100,
-                resolution: VIDEO_RESOLUTION_DEFAULT.to_string()
+                resolution: VIDEO_RESOLUTION_DEFAULT.to_string(),
+                frame_detect: true,
             }
+        );
+    }
+
+    #[test]
+    fn frame_detect_maps_to_the_streamer_drop_setting() {
+        let current = VideoSettings::default();
+        assert!(current.frame_detect);
+        let off = current
+            .apply(&VideoSettingsChange::new(None, None).with_frame_detect(false))
+            .unwrap();
+        let text = off.to_env_file();
+        assert!(
+            text.contains("BLI_KVM_USTREAMER_DROP_SAME_FRAMES=0\n"),
+            "{text}"
+        );
+        assert_eq!(VideoSettings::from_env_file(&text), off);
+        let on = off
+            .apply(&VideoSettingsChange::new(None, None).with_frame_detect(true))
+            .unwrap();
+        assert!(
+            on.to_env_file()
+                .contains("BLI_KVM_USTREAMER_DROP_SAME_FRAMES=30\n")
         );
     }
 

@@ -12,6 +12,7 @@ pub mod firewall_rules;
 pub mod firewall_runtime;
 pub mod firewall_settings;
 pub mod firewall_transaction;
+mod ipv4_settings;
 pub mod mouse_jiggler;
 pub mod network_settings;
 #[cfg(feature = "network-write-profile")]
@@ -27,6 +28,7 @@ pub mod network_write;
 ))]
 mod profile;
 mod server;
+mod ssh_settings;
 #[cfg(feature = "system-action-profile")]
 pub mod system_action;
 pub mod system_log_settings;

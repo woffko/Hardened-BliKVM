@@ -39,6 +39,27 @@ pub enum ControlRejectionCode {
     Internal,
 }
 
+/// One connected interface as NetworkManager reports it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkInterfaceInfo {
+    pub name: String,
+    /// `ethernet` or `wifi`.
+    pub kind: String,
+    /// `auto` (DHCP) or `manual`.
+    pub method: String,
+    pub address: String,
+    pub prefix: u8,
+    pub gateway: String,
+    /// The resolvers in use.
+    pub dns: Vec<String>,
+    /// The resolvers DHCP offered.
+    pub dhcp_dns: Vec<String>,
+    /// Whether the configured resolvers replace the DHCP ones.
+    pub manual_dns: bool,
+    pub search: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
@@ -81,6 +102,16 @@ pub enum ControlResponse {
     /// Whether the gadget presents HID only.
     HidOnlyState {
         enabled: bool,
+    },
+    /// The connected interfaces and a pending addressing revert, if any.
+    NetworkInfo {
+        interfaces: Vec<NetworkInterfaceInfo>,
+        revert_in_seconds: u32,
+    },
+    /// The OpenSSH server: enabled at boot and running now.
+    SshState {
+        enabled: bool,
+        active: bool,
     },
     /// The persisted administration feature switches.
     AdminFeatureState {

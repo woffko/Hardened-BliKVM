@@ -94,12 +94,13 @@ export function getDNS() {
   return http.get('/api/network/dns');
 }
 
-export function setBliDNS(servers: string[]) {
-  return http.post('/api/network/dns', { servers, confirm: true });
-}
-
 export function setDNS(mode: DNSMode, servers: string[], config?: NetworkConfig) {
   return http.post('/api/network/dns', { mode, servers, ...(config || {}) });
+}
+
+// keep an addressing change that would otherwise revert
+export function confirmNetwork() {
+  return http.post('/api/network/dns/confirm');
 }
 
 export function getIPv6() {
