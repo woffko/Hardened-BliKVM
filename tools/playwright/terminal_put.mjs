@@ -12,7 +12,10 @@ import { pathToFileURL } from "node:url";
 const [baseUrl, username, source, destination] = process.argv.slice(2);
 const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
-assert.ok(/^\/[A-Za-z0-9._/-]+$/.test(destination), "the destination must be a plain absolute path");
+assert.ok(
+  /^\/[A-Za-z0-9._/-]+$/.test(destination),
+  "the destination must be a plain absolute path",
+);
 const content = fs.readFileSync(source);
 const digest = crypto.createHash("sha256").update(content).digest("hex");
 let password = "";
@@ -51,8 +54,14 @@ try {
     });
     return (await response.json().catch(() => ({}))) ?? {};
   };
-  assert.equal((await api("POST", "/api/vm/terminal/enabled", { enabled: true })).data?.enabled, true);
-  const ticket = (await api("POST", "/api/vm/terminal/unlock", { username, password })).data?.ticket;
+  assert.equal(
+    (await api("POST", "/api/vm/terminal/enabled", { enabled: true })).data
+      ?.enabled,
+    true,
+  );
+  const ticket = (
+    await api("POST", "/api/vm/terminal/unlock", { username, password })
+  ).data?.ticket;
   password = "";
   assert.ok(ticket, "the terminal did not unlock");
   await page.evaluate(async (ticket) => {
@@ -96,11 +105,19 @@ try {
   await run(`rm -f '${part}'`, "start");
   const encoded = content.toString("base64");
   const chunk = 3000;
-  for (let offset = 0, index = 0; offset < encoded.length; offset += chunk, index += 1) {
+  for (
+    let offset = 0, index = 0;
+    offset < encoded.length;
+    offset += chunk, index += 1
+  ) {
     const piece = encoded.slice(offset, offset + chunk);
-    const reply = await run(`printf '%s' '${piece}' | base64 -d >> '${part}'`, `c${index}`);
+    const reply = await run(
+      `printf '%s' '${piece}' | base64 -d >> '${part}'`,
+      `c${index}`,
+    );
     if (reply === "TIMEOUT") throw new Error(`chunk ${index} timed out`);
-    if (index % 200 === 0) process.stderr.write(`sent ${offset + piece.length}/${encoded.length}\n`);
+    if (index % 200 === 0)
+      process.stderr.write(`sent ${offset + piece.length}/${encoded.length}\n`);
   }
   const check = await run(`sha256sum '${part}' | cut -c1-64`, "sum");
   if (!check.includes(digest)) throw new Error("the copy does not match");
@@ -110,8 +127,11 @@ try {
 } finally {
   password = "";
   if (api) {
-    const off = await api("POST", "/api/vm/terminal/enabled", { enabled: false }).catch(() => null);
-    if (off?.data?.enabled !== false) console.error("terminal_put: the terminal may still be on");
+    const off = await api("POST", "/api/vm/terminal/enabled", {
+      enabled: false,
+    }).catch(() => null);
+    if (off?.data?.enabled !== false)
+      console.error("terminal_put: the terminal may still be on");
   }
   await browser.close();
 }

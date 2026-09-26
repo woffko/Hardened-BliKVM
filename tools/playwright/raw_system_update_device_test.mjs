@@ -22,8 +22,12 @@ import path from "node:path";
 import tls from "node:tls";
 import { execFileSync } from "node:child_process";
 
-const [baseUrl, username, action, outputValue, bundlePath] = process.argv.slice(2);
-assert.ok(["install", "rollback", "reboot", "confirm", "off"].includes(action), "unknown action");
+const [baseUrl, username, action, outputValue, bundlePath] =
+  process.argv.slice(2);
+assert.ok(
+  ["install", "rollback", "reboot", "confirm", "off"].includes(action),
+  "unknown action",
+);
 const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
 const output = path.resolve(outputValue);
@@ -34,7 +38,12 @@ for await (const chunk of process.stdin) password += chunk.toString("utf8");
 password = password.replace(/[\r\n]+$/, "");
 assert.ok(password.length >= 8);
 
-const receipt = { schemaVersion: 1, probe: "raw-system-update-device", action, steps: [] };
+const receipt = {
+  schemaVersion: 1,
+  probe: "raw-system-update-device",
+  action,
+  steps: [],
+};
 const step = (name, value) => {
   receipt.steps.push({ step: name, at: new Date().toISOString(), ...value });
   console.log(JSON.stringify({ step: name, ...value }).slice(0, 400));
@@ -42,7 +51,11 @@ const step = (name, value) => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const agent = new https.Agent({ rejectUnauthorized: false, keepAlive: false });
 
-function send(method, route, { body, headers = {}, stream, timeoutMs = 60000 } = {}) {
+function send(
+  method,
+  route,
+  { body, headers = {}, stream, timeoutMs = 60000 } = {},
+) {
   return new Promise((resolve, reject) => {
     const request = https.request(
       {
@@ -65,7 +78,11 @@ function send(method, route, { body, headers = {}, stream, timeoutMs = 60000 } =
           } catch {
             json = null;
           }
-          resolve({ http: response.statusCode, headers: response.headers, json });
+          resolve({
+            http: response.statusCode,
+            headers: response.headers,
+            json,
+          });
         });
       },
     );
@@ -87,7 +104,9 @@ async function login() {
     body: JSON.stringify({ username, password }),
     headers: { "Content-Type": "application/json" },
   });
-  cookie = (response.headers["set-cookie"] ?? []).map((value) => value.split(";")[0]).join("; ");
+  cookie = (response.headers["set-cookie"] ?? [])
+    .map((value) => value.split(";")[0])
+    .join("; ");
   csrf = response.json?.data?.csrfToken ?? "";
   return response.json?.code === 0;
 }
@@ -101,15 +120,23 @@ async function api(method, route, data, extra = {}) {
     },
     ...extra,
   });
-  return { http: response.http, code: response.json?.code, msg: response.json?.msg, data: response.json?.data };
+  return {
+    http: response.http,
+    code: response.json?.code,
+    msg: response.json?.msg,
+    data: response.json?.data,
+  };
 }
 function certificateFingerprint() {
   return new Promise((resolve) => {
-    const socket = tls.connect({ host: url.hostname, port: 443, rejectUnauthorized: false }, () => {
-      const certificate = socket.getPeerCertificate();
-      socket.end();
-      resolve(certificate?.fingerprint256 ?? null);
-    });
+    const socket = tls.connect(
+      { host: url.hostname, port: 443, rejectUnauthorized: false },
+      () => {
+        const certificate = socket.getPeerCertificate();
+        socket.end();
+        resolve(certificate?.fingerprint256 ?? null);
+      },
+    );
     socket.on("error", () => resolve(null));
     socket.setTimeout(8000, () => {
       socket.destroy();
@@ -126,7 +153,9 @@ function hostKeys() {
       .split("\n")
       .filter((line) => line && !line.startsWith("#"))
       .map((line) => line.split(" ").slice(1).join(" "))
-      .map((key) => crypto.createHash("sha256").update(key).digest("hex").slice(0, 16))
+      .map((key) =>
+        crypto.createHash("sha256").update(key).digest("hex").slice(0, 16),
+      )
       .sort();
   } catch {
     return [];
@@ -156,13 +185,17 @@ async function waitForBoard(label, limitMs) {
     await sleep(15000);
     let healthy = false;
     try {
-      healthy = (await send("GET", "/api/health", { timeoutMs: 8000 })).http === 200;
+      healthy =
+        (await send("GET", "/api/health", { timeoutMs: 8000 })).http === 200;
     } catch {
       healthy = false;
     }
     if (!healthy) down = true;
     if (healthy && down) {
-      step(label, { wentDown: true, backAfterSeconds: Math.round((Date.now() - started) / 1000) });
+      step(label, {
+        wentDown: true,
+        backAfterSeconds: Math.round((Date.now() - started) / 1000),
+      });
       return true;
     }
   }
@@ -190,12 +223,24 @@ async function rebootAndCompare(label, trigger, expected) {
   assert.ok(back, "the board did not come back");
   await sleep(20000);
   assert.ok(await login(), "login after the reboot failed");
-  const status = expected === "booted" ? await statusAfterBoot() : await api("GET", "/api/system-update/status");
+  const status =
+    expected === "booted"
+      ? await statusAfterBoot()
+      : await api("GET", "/api/system-update/status");
   step(`status_after_${label}`, status);
   const after = await snapshot("after");
-  const same = (key) => JSON.stringify(before[key]) === JSON.stringify(after[key]);
+  const same = (key) =>
+    JSON.stringify(before[key]) === JSON.stringify(after[key]);
   const carried = Object.fromEntries(
-    ["certificate", "hostKeys", "account", "slot", "hostname", "sessionLock", "ssh"].map((key) => [key, same(key)]),
+    [
+      "certificate",
+      "hostKeys",
+      "account",
+      "slot",
+      "hostname",
+      "sessionLock",
+      "ssh",
+    ].map((key) => [key, same(key)]),
   );
   step("carried", carried);
   return (
@@ -209,7 +254,10 @@ try {
   assert.ok(await login(), "login failed");
   let passed = false;
   if (action === "install") {
-    step("switch_on", await api("POST", "/api/system-update/raw-enabled", { enabled: true }));
+    step(
+      "switch_on",
+      await api("POST", "/api/system-update/raw-enabled", { enabled: true }),
+    );
     let status = await api("GET", "/api/system-update/status");
     step("status_before_install", status);
     if (status.data?.phase !== "staged") {
@@ -248,11 +296,16 @@ try {
     step("confirm", await api("POST", "/api/system-update/confirm"));
     const status = await api("GET", "/api/system-update/status");
     step("status_confirmed", status);
-    passed = status.data?.phase === "confirmed" && status.data?.minimum_sequence >= 2;
+    passed =
+      status.data?.phase === "confirmed" && status.data?.minimum_sequence >= 2;
   } else if (action === "off") {
-    const off = await api("POST", "/api/system-update/raw-enabled", { enabled: false });
+    const off = await api("POST", "/api/system-update/raw-enabled", {
+      enabled: false,
+    });
     step("switch_off", off);
-    const refused = await api("POST", "/api/system-update/install", { confirm: true });
+    const refused = await api("POST", "/api/system-update/install", {
+      confirm: true,
+    });
     step("install_refused", refused);
     passed = off.data?.enabled === false && refused.http === 403;
   }

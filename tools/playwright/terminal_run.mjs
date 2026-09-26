@@ -14,7 +14,10 @@ const url = new URL(baseUrl);
 assert.equal(url.protocol, "https:");
 const script = fs.readFileSync(scriptPath);
 const encoded = script.toString("base64");
-assert.ok(encoded.length < 3000, "the script is too large for one terminal line");
+assert.ok(
+  encoded.length < 3000,
+  "the script is too large for one terminal line",
+);
 let password = "";
 for await (const chunk of process.stdin) password += chunk.toString("utf8");
 password = password.replace(/[\r\n]+$/, "");
@@ -51,9 +54,18 @@ try {
     });
     return (await response.json().catch(() => ({}))) ?? {};
   };
-  const switched = await api("POST", "/api/vm/terminal/enabled", { enabled: true });
-  assert.equal(switched.data?.enabled, true, "the terminal could not be switched on");
-  const unlocked = await api("POST", "/api/vm/terminal/unlock", { username, password });
+  const switched = await api("POST", "/api/vm/terminal/enabled", {
+    enabled: true,
+  });
+  assert.equal(
+    switched.data?.enabled,
+    true,
+    "the terminal could not be switched on",
+  );
+  const unlocked = await api("POST", "/api/vm/terminal/unlock", {
+    username,
+    password,
+  });
   password = "";
   const ticket = unlocked.data?.ticket;
   assert.ok(ticket, "the terminal did not unlock");
@@ -88,7 +100,8 @@ try {
   );
   const begin = result.text.indexOf("BEGIN-42");
   const end = result.text.search(/END-42-\d+/);
-  const body = begin >= 0 && end > begin ? result.text.slice(begin + 9, end) : result.text;
+  const body =
+    begin >= 0 && end > begin ? result.text.slice(begin + 9, end) : result.text;
   process.stdout.write(body.replace(/\r/g, ""));
   const status = result.text.match(/END-42-(\d+)/);
   exitCode = status ? Number(status[1]) : 124;
@@ -96,8 +109,11 @@ try {
 } finally {
   password = "";
   if (api) {
-    const off = await api("POST", "/api/vm/terminal/enabled", { enabled: false }).catch(() => null);
-    if (off?.data?.enabled !== false) console.error("terminal_run: the terminal may still be on");
+    const off = await api("POST", "/api/vm/terminal/enabled", {
+      enabled: false,
+    }).catch(() => null);
+    if (off?.data?.enabled !== false)
+      console.error("terminal_run: the terminal may still be on");
   }
   await browser.close();
 }

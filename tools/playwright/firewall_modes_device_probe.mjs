@@ -61,20 +61,28 @@ function tcpBanner(host, port) {
     });
     socket.on("timeout", () => socket.destroy());
     socket.on("error", () => {});
-    socket.on("close", () => resolve(data.startsWith("SSH-") ? "open" : "closed"));
+    socket.on("close", () =>
+      resolve(data.startsWith("SSH-") ? "open" : "closed"),
+    );
   });
 }
 function windows(command) {
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
-    encoding: "utf8",
-    timeout: 40000,
-  });
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-Command", command],
+    {
+      encoding: "utf8",
+      timeout: 40000,
+    },
+  );
   return (result.stdout ?? "").replace(/\r/g, "").trim();
 }
 async function hostChecks() {
   let https4 = "closed";
   try {
-    const response = await fetch(`${url.origin}/api/health`, { signal: AbortSignal.timeout(6000) });
+    const response = await fetch(`${url.origin}/api/health`, {
+      signal: AbortSignal.timeout(6000),
+    });
     https4 = response.status === 200 ? "open" : `http_${response.status}`;
   } catch {
     https4 = "closed";
@@ -111,12 +119,24 @@ try {
       timeout: 60000,
     });
     const body = await response.json().catch(() => null);
-    return { http: response.status(), code: body?.code, msg: body?.msg, data: body?.data };
+    return {
+      http: response.status(),
+      code: body?.code,
+      msg: body?.msg,
+      data: body?.data,
+    };
   };
 
   // One root shell for the whole probe.
-  assert.equal((await api("POST", "/api/vm/terminal/enabled", { enabled: true })).data?.enabled, true);
-  const unlocked = await api("POST", "/api/vm/terminal/unlock", { username, password });
+  assert.equal(
+    (await api("POST", "/api/vm/terminal/enabled", { enabled: true })).data
+      ?.enabled,
+    true,
+  );
+  const unlocked = await api("POST", "/api/vm/terminal/unlock", {
+    username,
+    password,
+  });
   const ticket = unlocked.data?.ticket;
   assert.ok(ticket, "the terminal did not unlock");
   await page.evaluate(async (ticket) => {
@@ -131,7 +151,9 @@ try {
       };
       socket.onopen = () => {
         socket.send(new Blob([JSON.stringify({ rows: 50, cols: 250 })]));
-        socket.send("stty -echo; export TERM=dumb PAGER=cat SYSTEMD_PAGER=cat\r");
+        socket.send(
+          "stty -echo; export TERM=dumb PAGER=cat SYSTEMD_PAGER=cat\r",
+        );
         window.__socket = socket;
         setTimeout(resolve, 1500);
       };
@@ -156,7 +178,11 @@ try {
           const text = window.__text.slice(start);
           const from = text.indexOf(begin);
           const to = text.indexOf(end);
-          if (from >= 0 && to > from) return text.slice(from + begin.length, to).replace(/\r/g, "").trim();
+          if (from >= 0 && to > from)
+            return text
+              .slice(from + begin.length, to)
+              .replace(/\r/g, "")
+              .trim();
           await new Promise((resolve) => setTimeout(resolve, 200));
         }
         return "TIMEOUT";
@@ -167,7 +193,9 @@ try {
   // The password stays in memory only for the WebRTC child probe below.
 
   async function boardChecks() {
-    const table = await shell("nft list table inet hardened-blikvm 2>/dev/null || echo NO-TABLE");
+    const table = await shell(
+      "nft list table inet hardened-blikvm 2>/dev/null || echo NO-TABLE",
+    );
     const router = await shell(
       "r=$(ip -6 route show default | awk '{print $3; exit}'); echo router=$r; [ -n \"$r\" ] && ip -6 neigh show $r dev eth0 | awk '{print $NF}'",
     );
@@ -178,9 +206,14 @@ try {
       "printf 'xtables=%s nft_filter_drops=%s' $(iptables-legacy-save 2>/dev/null | grep -c '^-A') $(nft list ruleset 2>/dev/null | grep -v 'hardened-blikvm' | grep -c 'drop')",
     );
     return {
-      table: table.includes("NO-TABLE") ? "absent" : (table.match(/hardened-blikvm-owner-v2:([a-z]+)/)?.[1] ?? "unknown"),
-      dhcp: /udp sport 67 udp dport 68/.test(table) && /udp sport 547 udp dport 546/.test(table),
-      icmpv6: /nd-neighbor-solicit/.test(table) && /nd-router-advert/.test(table),
+      table: table.includes("NO-TABLE")
+        ? "absent"
+        : (table.match(/hardened-blikvm-owner-v2:([a-z]+)/)?.[1] ?? "unknown"),
+      dhcp:
+        /udp sport 67 udp dport 68/.test(table) &&
+        /udp sport 547 udp dport 546/.test(table),
+      icmpv6:
+        /nd-neighbor-solicit/.test(table) && /nd-router-advert/.test(table),
       router: router.replace(/\n/g, " "),
       tailscale,
       legacy,
@@ -190,24 +223,40 @@ try {
     const receiptPath = output.replace(/\.json$/, `-webrtc-${label}.json`);
     const child = spawnSync(
       "node",
-      ["tools/playwright/vp8_webrtc_probe.mjs", baseUrl, username, receiptPath, "10"],
+      [
+        "tools/playwright/vp8_webrtc_probe.mjs",
+        baseUrl,
+        username,
+        receiptPath,
+        "10",
+      ],
       { input: `${password}\n`, encoding: "utf8", timeout: 120000 },
     );
     try {
-      return JSON.parse(fs.readFileSync(receiptPath, "utf8")).result ?? "unknown";
+      return (
+        JSON.parse(fs.readFileSync(receiptPath, "utf8")).result ?? "unknown"
+      );
     } catch {
       return `error:${(child.stderr ?? "").slice(-120)}`;
     }
   }
   async function modeStep(mode, confirm) {
-    const change = await api("POST", "/api/system/firewall/mode", { mode, confirm: true });
+    const change = await api("POST", "/api/system/firewall/mode", {
+      mode,
+      confirm: true,
+    });
     record(`change_${mode}`, change);
     await sleep(3000);
     const status = await api("GET", "/api/system/firewall/mode");
     const host = await hostChecks();
     const board = await boardChecks();
     const media = webrtc(mode);
-    record(`checks_${mode}`, { status: status.data, host, board, webrtc: media });
+    record(`checks_${mode}`, {
+      status: status.data,
+      host,
+      board,
+      webrtc: media,
+    });
     if (confirm && status.data?.pendingOperationId) {
       record(
         `confirm_${mode}`,
@@ -222,12 +271,22 @@ try {
   record("initial", await api("GET", "/api/system/firewall/mode"));
   for (const step of steps) {
     if (step === "status") {
-      record("status", { status: (await api("GET", "/api/system/firewall/mode")).data, host: await hostChecks(), board: await boardChecks() });
+      record("status", {
+        status: (await api("GET", "/api/system/firewall/mode")).data,
+        host: await hostChecks(),
+        board: await boardChecks(),
+      });
     } else if (step.startsWith("timeout:")) {
       const mode = step.slice("timeout:".length);
       const before = await api("GET", "/api/system/firewall/mode");
-      record(`timeout_change_${mode}`, await api("POST", "/api/system/firewall/mode", { mode, confirm: true }));
-      record(`timeout_pending_${mode}`, await api("GET", "/api/system/firewall/mode"));
+      record(
+        `timeout_change_${mode}`,
+        await api("POST", "/api/system/firewall/mode", { mode, confirm: true }),
+      );
+      record(
+        `timeout_pending_${mode}`,
+        await api("GET", "/api/system/firewall/mode"),
+      );
       await sleep(80000);
       const after = await api("GET", "/api/system/firewall/mode");
       record(`timeout_after_${mode}`, {
@@ -247,7 +306,9 @@ try {
 } finally {
   password = "";
   if (api) {
-    const off = await api("POST", "/api/vm/terminal/enabled", { enabled: false }).catch(() => null);
+    const off = await api("POST", "/api/vm/terminal/enabled", {
+      enabled: false,
+    }).catch(() => null);
     record("terminal_off", { enabled: off?.data?.enabled });
   }
   await browser.close();
