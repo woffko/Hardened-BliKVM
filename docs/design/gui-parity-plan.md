@@ -76,7 +76,7 @@ disagree.
 
 ## API parity status
 
-Our hardened server exposes, as of 2026-09-24: 75 routes. The 75th, `/api/stream/webrtc`, is the authenticated VP8 WebRTC signaling socket; it answers only when a loopback Janus gateway is configured. The read-only
+Our hardened server exposes, as of 2026-09-26: 77 routes. `/api/stream/webrtc` is the authenticated VP8 WebRTC signaling socket; it answers only when a loopback Janus gateway is configured. `/api/network/wol/mac` (list, delete) and `/api/network/wol/mac/name` keep the bounded Wake-on-LAN address history the reference menu uses. The read-only
 management surface is implemented and capability-visible: `/api/system/time`
 (`time` read-only), `/api/system-log/{config,messages}`
 (`config`,`messages` read-only), `/api/application/{version,preview}`
