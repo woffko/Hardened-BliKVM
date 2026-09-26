@@ -28,6 +28,38 @@ open gate.
 
 ## Corrective requirement matrix
 
+Device checkpoint 2026-09-26 (operator testing on desktop and Android).
+Slots 21-25 were installed through the API on the native profile; update
+runtime 0.1.0~dev19. Fixed after operator reports, each with a regression:
+
+- HID after a cold boot: the owner's `DeviceAllow=/dev/hidgN` entries were
+  resolved before the owner created the nodes, so HID stayed denied until a
+  restart. `hardened-blikvm-hid-gadget.service` binds the pinned functions
+  first; after a cold boot 179/179 reports applied without intervention
+  (`evidence/private/hid-control-after-coldboot-20260926.json`).
+- Remote control dropped after about 17 s: concurrent focus refreshes each
+  took a new challenge and one confirmation was refused; the refresh is
+  single-flight (`tools/playwright/hid_control_endurance_probe.mjs`, 120 s
+  held).
+- Android text input: IME compositions were retyped per prefix, Cyrillic was
+  dropped, and the soft keyboard pushed the image out of reach. Compositions
+  send differences, Cyrillic uses JCUKEN positions (`tools/test_hid_text.mjs`),
+  and the viewport resizes the content. The target's layout must match the
+  typed script; automatic layout switching was deferred by the operator.
+- VP8: the mode switch was unreachable, scale and touch pan/pinch did not
+  apply, and capture changes left a frozen stream; all fixed. Touch dragging
+  follows the cursor like the RustAdmin mouse mode.
+- Updates: updater slot garbage collection now runs on a native journal, and a
+  completed rollback is archived automatically.
+- Board storage: the root partition was grown from 5 to 12 GiB (the data
+  partition was recreated at 4.8 GiB and its contents restored); the unused
+  journal bind shadowed by armbian-ramlog was disabled in fstab.
+
+Open: firewall deployment on the device, the final GUI comparison with a fresh
+authenticated reference capture (reference credentials are not enrolled), SD
+card boot verification, RAW system update and automatic keyboard layout
+switching.
+
 Device checkpoint 2026-09-25 (first native API update). A board reboot under
 the native profile came up by itself (`boot-native` ready on slot 15, VP8
 decoded). The first application updates through the API on the native profile
