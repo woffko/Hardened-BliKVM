@@ -60,7 +60,10 @@ try {
 
   step("initial", await api("GET", "/api/admin/features"));
   step("unlock_while_off", await unlock());
-  step("switch_on", await api("POST", "/api/vm/terminal/enabled", { enabled: true }));
+  step(
+    "switch_on",
+    await api("POST", "/api/vm/terminal/enabled", { enabled: true }),
+  );
   const unlocked = await unlock();
   step("unlock_while_on", { http: unlocked.http, code: unlocked.code });
   const ticket = unlocked.data?.ticket;
@@ -82,11 +85,24 @@ try {
       socket.onmessage = (event) => {
         text += new TextDecoder().decode(event.data);
         if (/term-42/.test(text) && /\n0\r?\n/.test(text)) {
-          done({ opened: true, marker: true, root: true, size: /30 100/.test(text) });
+          done({
+            opened: true,
+            marker: true,
+            root: true,
+            size: /30 100/.test(text),
+          });
         }
       };
       socket.onclose = () => resolve({ opened: false, text: text.slice(-200) });
-      setTimeout(() => done({ opened: true, marker: /term-42/.test(text), text: text.slice(-300) }), 15000);
+      setTimeout(
+        () =>
+          done({
+            opened: true,
+            marker: /term-42/.test(text),
+            text: text.slice(-300),
+          }),
+        15000,
+      );
     });
   }, ticket);
   step("shell", shell);
@@ -100,11 +116,16 @@ try {
     });
   }, ticket);
   step("ticket_reuse", { result: reuse });
-  step("switch_off", await api("POST", "/api/vm/terminal/enabled", { enabled: false }));
+  step(
+    "switch_off",
+    await api("POST", "/api/vm/terminal/enabled", { enabled: false }),
+  );
   step("unlock_after_off", await unlock());
   step("final", await api("GET", "/api/admin/features"));
   password = "";
-  const byName = Object.fromEntries(receipt.steps.map((entry) => [entry.step, entry]));
+  const byName = Object.fromEntries(
+    receipt.steps.map((entry) => [entry.step, entry]),
+  );
   receipt.result =
     byName.initial.data?.terminal === false &&
     byName.unlock_while_off.http === 403 &&
