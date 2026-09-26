@@ -158,6 +158,76 @@ Observed while testing: the media catalog still lists `kubuntu.img` although
 the file is no longer in the image store; the catalog entry is stale and is
 left for the operator to delete from the image list.
 
+Plan phase D 2026-09-26 (firewall on the device): not started, as the plan
+requires. Migrating the legacy iptables rules and enabling the owned nft
+table can cut the board off the network, so it needs a recovery path first:
+a UART console, physical access to the board, or a card with the current
+image that the operator has checked boots. Nothing on the board's firewall
+was changed.
+
+Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
+update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
+board and assembled `hardened-blikvm-h616-sd.img` (28 GiB, layout p1 root
+12 GiB, p2 data 14 GiB at `/mnt`, p3 virtual media; `.img.zst` SHA-256
+`63eda31f4a7b2baf8f1642c19e352578b91334f09795e1c5186f0feff468b373`) in the
+development image directory outside the repository. Checked in the image's
+root file system: nginx uses the TLS pair the first boot generates; the
+`/boot` initramfs (built on the board into `/var/tmp`, never `/boot`)
+carries the RAW system update step; the first-boot provisioning and the
+boot report units are enabled; every administration switch is off; `fstab`
+names the new partitions by UUID. Waiting for the operator: write the image
+to a card and check that it boots (first boot regenerates the machine
+secrets, the web UI starts at First Setup, root's password is `1234` and
+must be changed at the first SSH login).
+
+Plan phase E2 2026-09-26 (RAW system update, `docs/design/system-raw-update-v1.md`;
+slot 38, update runtime 0.1.0~dev26):
+
+- Implemented: signed bundles built from the image builder's root image
+  (`tools/build_system_raw_bundle.py`, system key kept outside the
+  repository), a default-off "Allow raw system updates" switch persisted
+  by the board owner and enforced by the server and again by the root
+  administration helper, staging on the data partition, the boot-time write
+  from the initramfs with a verified backup, read-back, automatic restore
+  (failed or interrupted write, no boot report within two boots, operator
+  rollback), carried device state and merged password hashes, and the
+  System Update card on the update page (desktop and mobile).
+- Host tests: the crate's tests (including real zstd, e2fsprogs and tar on
+  image files, and the builder's bundle staged and written by the real
+  verifier), the builder's tests and the server's upload rules;
+  `scripts/check.sh` green.
+- On the board (`tools/playwright/raw_system_update_probe.mjs`,
+  `evidence/private/raw-system-update-20260926-a.json`, passed): off by
+  default; upload, install, confirm and rollback refused with 403 while
+  off; switched on, the upload was refused before any byte was kept because
+  this hand-built board's 5 GB data partition cannot hold the update and
+  its backup (by design; the new card layout has 14 GiB), and nothing
+  staged could be installed, confirmed, rolled back or discarded; switched
+  off again and refused. The card renders on desktop and mobile with the
+  switch off (`evidence/private/raw-system-update-ui-20260926-*.json`).
+- The initramfs step is packaged but the board's own `/boot` initramfs was
+  not rebuilt. An initramfs built into `/tmp` on the board carries the step,
+  GNU tar, zstd and e2fsprogs, and the step's binary runs in it
+  (`evidence/private/raw-system-update-device-20260926.txt`); `/boot` was
+  unchanged afterwards.
+- Found and fixed on the board: its nginx configuration had been rendered
+  before the upload locations and the `/internal/` block existed, so large
+  image uploads were capped at 16 MiB. It was rendered again from the
+  packaged configuration with the board's certificate paths (backup in
+  `/root/backups`); HTTPS answered with the same certificate. The image
+  builder now points the card's nginx at the TLS pair the first boot
+  generates, instead of the board's excluded certificate.
+- A bundle from the same build as the E1 image is ready for that test:
+  `hardened-blikvm-system-0.1.0-dev34-seq1.tar` next to the image (SHA-256
+  `bc62b35037c8b1ed78b9264501745b4dcec6287f47df63edf902045cf3f42aaa`; root
+  image shrunk to 4.65 GB, 1.16 GB compressed; signature checked against
+  the shipped trust root).
+- Waiting for the operator: the device test needs a spare card written from
+  the new image (install that bundle and check that the
+  account, TLS certificate, SSH host keys, root password, slot and switches
+  survive, then confirm; then check that a new root that never reports
+  itself booted is replaced by the backup on the third boot).
+
 Final GUI comparison 2026-09-26 (reference Hardened NanoKVM 2.0.42 against
 slot 26, desktop). The generic parity probe could not capture the
 reference's settings or icon-only menus, so both GUIs were walked with a text
