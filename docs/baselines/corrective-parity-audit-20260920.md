@@ -28,6 +28,42 @@ open gate.
 
 ## Corrective requirement matrix
 
+Plan phase A 2026-09-26 (`docs/baselines/work-plan-20260926.md`, design
+`docs/design/admin-features-v1.md`). Administration features are offered but
+switched off by default; the board owner persists the switches in
+`/var/lib/hardened-blikvm-gadget/admin-features.json`, the web server refuses a
+switched-off feature (403) and the helper doing the work re-reads the switch
+and refuses on its own. Verified on the board through the API, each probe
+leaving its switch off:
+
+- Terminal (slot 28): refused while off; with the switch on, a password
+  unlock issues a one-time ticket and the WebSocket opens a root shell on a
+  PTY with window resize; a reused ticket is refused
+  (`evidence/private/terminal-switch-20260926-b.json`,
+  `tools/playwright/terminal_switch_probe.mjs`). The serial terminal page
+  types `picocom` into the same shell; `picocom` is installed on the board.
+- Scripts (slot 29): refused while off; upload, list, foreground run (root,
+  bounded output), background run, invalid names refused, delete
+  (`evidence/private/scripts-switch-20260926-a.json`,
+  `tools/playwright/scripts_switch_probe.mjs`).
+- Remote ISO download (slot 30, update runtime 0.1.0~dev23): an unprivileged
+  helper unit that is the only one with outbound network access. Refused
+  while off; invalid schemes and non-ISO names refused; a second download
+  while one runs is refused; a 64 MiB ISO fixture served on the board's LAN
+  address downloaded with progress (24.9 % to 94 % observed), appeared in the
+  image list and was deleted; a file without the ISO 9660 magic reported
+  `failed` and left no file (`evidence/private/remote-download-switch-20260926-a.json`,
+  `tools/playwright/remote_download_probe.mjs`). A URL on the board's own
+  loopback failed under the unit's IP policy and published nothing.
+  Switching the feature off stops a running download (unit test); the
+  reference has no separate cancel control. The Download menu, which also
+  carries the local upload, is now offered whenever the image store is
+  configured.
+
+Observed while testing: the media catalog still lists `kubuntu.img` although
+the file is no longer in the image store; the catalog entry is stale and is
+left for the operator to delete from the image list.
+
 Final GUI comparison 2026-09-26 (reference Hardened NanoKVM 2.0.42 against
 slot 26, desktop). The generic parity probe could not capture the
 reference's settings or icon-only menus, so both GUIs were walked with a text

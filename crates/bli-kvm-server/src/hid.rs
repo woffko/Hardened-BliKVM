@@ -448,6 +448,16 @@ pub(crate) async fn hid_lease(
     if !valid_operation_id(operation_id) {
         return Err(AppError::BadRequest("lease operation ID is invalid".into()));
     }
+    if matches!(request, HidLeaseBody::Report { .. })
+        && state
+            .picoclaw
+            .as_deref()
+            .is_some_and(crate::picoclaw::Picoclaw::blocks_manual_input)
+    {
+        return Err(AppError::Conflict(
+            "the assistant is operating the keyboard and mouse".into(),
+        ));
+    }
     let now = Instant::now();
     let confirmed = { state.focus.lock().await.bindings(&session.token, now) };
     let bindings = match confirmed {

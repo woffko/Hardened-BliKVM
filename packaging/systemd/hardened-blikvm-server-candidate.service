@@ -20,6 +20,7 @@ StateDirectoryMode=0700
 Environment=BLI_KVM_BIND=127.0.0.1:18080
 Environment=BLI_KVM_ADMIN_SOCKET=/run/hardened-blikvm-admin/admin.sock
 Environment=BLI_KVM_DOWNLOAD_SOCKET=/run/hardened-blikvm-download-api/download.sock
+Environment=BLI_KVM_PICOCLAW_SOCKET=/run/hardened-blikvm-picoclaw-api/picoclaw.sock
 Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots/current/share/web
 Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock

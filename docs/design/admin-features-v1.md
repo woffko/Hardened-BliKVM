@@ -69,10 +69,44 @@ and are socket-activated per connection.
   Local image upload stays in the web server (`POST /api/download/file`) and
   needs no switch; the Download menu that carries both is shown whenever the
   image store is configured.
-- **PicoClaw**: the reference downloads and runs an agent runtime. On this
-  board the runtime runs as its own unprivileged unit, reaches the KVM only
-  through the web API with an operator-issued token, and its model API key is
-  stored by the owner and never returned to the GUI. It is ported last.
+- **PicoClaw** (the reference's AI assistant, runtime v0.2.8):
+  - install: the download helper fetches the pinned upstream release archive
+    (`picoclaw_Linux_arm64.tar.gz` of sipeed/picoclaw v0.2.8) and accepts it
+    only when its SHA-256 matches the digest pinned in the source (the
+    reference fetches its checksum from the same CDN as the archive); only
+    the `picoclaw` member is unpacked into
+    `/var/lib/hardened-blikvm-picoclaw-runtime` (web-server account, 0755),
+    so the runtime cannot modify its own binary. Uninstall removes the binary
+    and the runtime's home;
+  - runtime: `hardened-blikvm-picoclaw.service` runs `picoclaw gateway` as
+    the dedicated `hardened-blikvm-picoclaw` user with a sandbox in which only
+    its home (`/var/lib/hardened-blikvm-picoclaw`) is writable. It has network
+    access for the model API but not to link-local or multicast addresses. Its
+    agent tools (shell, files) act inside that sandbox, not as root. A root
+    pre-start check refuses to start while the switch is off, and the admin
+    helper starts and stops the unit (and stops it when the switch is turned
+    off);
+  - configuration: a helper running as the runtime's user
+    (`hardened-blikvm-picoclaw-api@.service`, no network) writes the
+    runtime's `config.json` with the reference defaults, the model entry and
+    the agent profile, and owns `.security.yml` (the model API key and the
+    gateway token), which it renders from its own 0600 store. The API key is
+    written only there, because the runtime reads it; it is never returned to
+    the web server or the GUI. The same helper lists, reads and deletes chat
+    sessions with bounded sizes;
+  - KVM access: the runtime's MCP client calls
+    `http://127.0.0.1:18080/internal/picoclaw/mcp` (screenshot and HID
+    actions) with an internal token the server generates and keeps in its
+    state directory. The server accepts those calls only directly on
+    loopback (not through the TLS proxy, which always adds
+    `X-Forwarded-For`), with the token and the switch on. Actions are sent as
+    HID reports through the HID lease of the operator session that opened the
+    assistant, so the assistant can only act while that operator's KVM page
+    holds the keyboard and mouse. While the assistant session holds its lock
+    the server drops manual HID input, as the reference does;
+  - chat: the browser's `/api/picoclaw/gateway/ws` is relayed to the local
+    gateway (`ws://127.0.0.1:18790/pico/ws`) with the gateway token, one
+    assistant session at a time (30-minute lock renewed by traffic).
 
 ## Reference contract kept
 

@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderName, HeaderValue, StatusCode},
     middleware::{Next, from_fn, from_fn_with_state},
     response::Response,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use bli_kvm_broker_client::BrokerReadClient;
 use bli_kvm_core::{
@@ -42,6 +42,7 @@ mod leader_key;
 mod media;
 mod network;
 mod network_write;
+mod picoclaw;
 mod remote_download;
 mod scripts;
 mod session_lock;
@@ -83,6 +84,7 @@ pub(crate) struct AppState {
     pub focus: Arc<Mutex<hid::FocusChallengeStore>>,
     pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
     pub terminal_tickets: Arc<Mutex<terminal::TicketStore>>,
+    pub picoclaw: Option<Arc<picoclaw::Picoclaw>>,
     pub options: Arc<ServerOptions>,
 }
 
@@ -139,6 +141,11 @@ pub struct ServerOptions {
     /// Unprivileged remote image download helper. No value keeps remote
     /// download unavailable even when switched on.
     pub download_socket: Option<PathBuf>,
+    /// PicoClaw configuration helper (runs as the runtime's user). With the
+    /// admin and download helpers it makes the assistant available.
+    pub picoclaw_socket: Option<PathBuf>,
+    /// The loopback address the runtime's MCP client calls.
+    pub picoclaw_mcp_url: Option<String>,
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
@@ -176,6 +183,8 @@ impl Default for ServerOptions {
             engine_socket: None,
             admin_socket: None,
             download_socket: None,
+            picoclaw_socket: None,
+            picoclaw_mcp_url: None,
             network_writes_enabled: false,
             firewall_modes_enabled: false,
             media_directory: None,
@@ -205,6 +214,14 @@ pub fn app_with_web_root(web_root: Option<PathBuf>) -> Router {
         web_root,
         ..ServerOptions::default()
     })
+}
+
+/// The assistant needs its configuration helper plus the admin helper (start
+/// and stop) and the download helper (install).
+fn picoclaw_available(options: &ServerOptions) -> bool {
+    options.picoclaw_socket.is_some()
+        && options.admin_socket.is_some()
+        && options.download_socket.is_some()
 }
 
 pub fn app_with_options(options: ServerOptions) -> Router {
@@ -293,6 +310,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 );
             }
         }
+        if picoclaw_available(&options) {
+            manifest.board.features.insert(
+                "picoclaw".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
         // The native owner exposes observations but refuses every action.
         manifest.board.features.insert(
             "tailscale".into(),
@@ -380,6 +403,15 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         focus: Arc::new(Mutex::new(hid::FocusChallengeStore::new())),
         hid_ws_leases: Arc::new(Mutex::new(hid::WsLeaseStore::new())),
         terminal_tickets: Arc::new(Mutex::new(terminal::TicketStore::new())),
+        picoclaw: picoclaw_available(&options).then(|| {
+            Arc::new(picoclaw::Picoclaw::new(
+                &options.state_dir,
+                options
+                    .picoclaw_mcp_url
+                    .clone()
+                    .unwrap_or_else(|| "http://127.0.0.1:18080/internal/picoclaw/mcp".into()),
+            ))
+        }),
         options: Arc::new(options.clone()),
     };
 
@@ -543,6 +575,26 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/vm/screen",
             get(video_settings::screen_state).post(video_settings::update_screen),
         )
+        .route("/picoclaw/model/config", post(picoclaw::model_config))
+        .route("/picoclaw/agent/profile", post(picoclaw::agent_profile))
+        .route("/picoclaw/sessions", get(picoclaw::list_sessions))
+        .route(
+            "/picoclaw/sessions/{id}",
+            get(picoclaw::get_session).delete(picoclaw::delete_session),
+        )
+        .route(
+            "/picoclaw/runtime/status",
+            get(picoclaw::get_runtime_status),
+        )
+        .route(
+            "/picoclaw/runtime/session",
+            delete(picoclaw::release_session),
+        )
+        .route("/picoclaw/runtime/install", post(picoclaw::install))
+        .route("/picoclaw/runtime/uninstall", post(picoclaw::uninstall))
+        .route("/picoclaw/runtime/start", post(picoclaw::start))
+        .route("/picoclaw/runtime/stop", post(picoclaw::stop))
+        .route("/picoclaw/gateway/ws", get(picoclaw::connect_gateway))
         .route_layer(from_fn_with_state(state.clone(), protected));
     // The media upload takes a large body, so it keeps its own bound, but it
     // must still pass the session, CSRF and origin checks before the body is
@@ -556,7 +608,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route_layer(from_fn_with_state(state.clone(), protected));
     let protected_routes = protected_routes.merge(upload);
     let api = public.merge(protected_routes).fallback(api_not_found);
-    let router = Router::new().nest("/api", api).with_state(state.clone());
+    let router = Router::new()
+        .nest("/api", api)
+        .nest(
+            "/internal/picoclaw",
+            picoclaw::internal_router(state.clone()),
+        )
+        .with_state(state.clone());
     let router = if let Some(root) = options.web_root {
         let index = root.join("index.html");
         router.fallback_service(ServeDir::new(root).fallback(ServeFile::new(index)))
@@ -1558,6 +1616,42 @@ mod tests {
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/picoclaw/runtime/status")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // The runtime's internal route answers nothing without its token,
+        // and nothing that came through the TLS proxy.
+        for forwarded in [false, true] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/internal/picoclaw/mcp")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-blikvm-internal-token", "0".repeat(64));
+            if forwarded {
+                request = request.header("x-forwarded-for", "192.0.2.1");
+            }
+            let mut request = request
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+                ))
+                .unwrap();
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(SocketAddr::from((
+                    [127, 0, 0, 1],
+                    1,
+                ))));
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
 
         let request = Request::builder()
             .method(Method::GET)

@@ -165,6 +165,15 @@ async fn handle_socket(state: AppState, session: Session, mut socket: WebSocket)
                 let Some(control) = state.control.as_ref().cloned() else {
                     break;
                 };
+                // The assistant has the keyboard and mouse, as in the reference.
+                if state
+                    .picoclaw
+                    .as_deref()
+                    .is_some_and(crate::picoclaw::Picoclaw::blocks_manual_input)
+                {
+                    let _ = socket.send(error_message("assistant_active")).await;
+                    continue;
+                }
                 let live = state
                     .hid_ws_leases
                     .lock()

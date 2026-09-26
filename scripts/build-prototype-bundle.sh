@@ -64,6 +64,7 @@ install -d -m 0755 \
   "$stage/share/sysusers.d" \
   "$stage/share/tmpfiles.d" \
   "$stage/share/udev" \
+  "$stage/share/picoclaw" \
   "$stage/share/docs"
 install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
@@ -119,6 +120,9 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-admin@.service \
   packaging/systemd/hardened-blikvm-image-download.socket \
   packaging/systemd/hardened-blikvm-image-download@.service \
+  packaging/systemd/hardened-blikvm-picoclaw.service \
+  packaging/systemd/hardened-blikvm-picoclaw-api.socket \
+  packaging/systemd/hardened-blikvm-picoclaw-api@.service \
   "$stage/share/systemd/"
 install -d -m 0755 "$stage/share/systemd/native"
 install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"
@@ -142,6 +146,10 @@ install -m 0644 \
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \
   "$stage/share/udev/"
+install -m 0644 \
+  packaging/picoclaw/AGENT.md \
+  packaging/picoclaw/AGENT_KVM.md \
+  "$stage/share/picoclaw/"
 install -m 0644 LICENSE "$stage/LICENSE"
 install -m 0644 packaging/PROTOTYPE-README.md "$stage/README.md"
 install -m 0644 docs/architecture.md "$stage/share/docs/architecture.md"

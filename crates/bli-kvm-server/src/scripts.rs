@@ -11,7 +11,7 @@ use axum::{
     extract::{Multipart, State},
 };
 use bli_kvm_admin_helper::{
-    AdminReply, AdminRequest, FRAME_DATA, MAX_FRAME_BYTES, MAX_LINE_BYTES, MAX_SCRIPT_BYTES,
+    AdminReply, AdminRequest, FRAME_DATA, MAX_FRAME_BYTES, MAX_REPLY_BYTES, MAX_SCRIPT_BYTES,
     encode_frame, valid_script_name,
 };
 use bli_kvm_core::AdminFeature;
@@ -96,7 +96,7 @@ pub(crate) async fn call(
         }
         let mut reply = Vec::new();
         stream
-            .take(MAX_LINE_BYTES as u64 * 32)
+            .take(MAX_REPLY_BYTES as u64)
             .read_to_end(&mut reply)
             .await
             .map_err(|_| unavailable())?;

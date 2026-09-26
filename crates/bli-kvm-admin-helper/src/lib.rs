@@ -18,7 +18,28 @@ pub const DOWNLOAD_SOCKET: &str = "/run/hardened-blikvm-download-api/download.so
 pub const DOWNLOAD_STATUS: &str = "/run/hardened-blikvm-download/status.json";
 /// Largest image a download may produce, as in the reference.
 pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// The PicoClaw configuration helper, running as the runtime's own user.
+pub const PICOCLAW_SOCKET: &str = "/run/hardened-blikvm-picoclaw-api/picoclaw.sock";
+/// Home of the PicoClaw runtime user; `PICOCLAW_HOME` is `.picoclaw` in it.
+pub const PICOCLAW_STATE: &str = "/var/lib/hardened-blikvm-picoclaw";
+/// Installed runtime binary, owned by the web-server account.
+pub const PICOCLAW_RUNTIME_DIR: &str = "/var/lib/hardened-blikvm-picoclaw-runtime";
+pub const PICOCLAW_BINARY: &str = "/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw";
+/// Install progress, written by the download helper.
+pub const PICOCLAW_INSTALL_STATUS: &str = "/run/hardened-blikvm-download/picoclaw-install.json";
+/// The upstream release the reference also runs, pinned by digest.
+pub const PICOCLAW_RELEASE_URL: &str =
+    "https://github.com/sipeed/picoclaw/releases/download/v0.2.8/picoclaw_Linux_arm64.tar.gz";
+pub const PICOCLAW_RELEASE_SHA256: &str =
+    "9ce9fbf76da9c967baffb18c4b502dec2055b3ad050fc2381b6260429e1acf70";
+pub const PICOCLAW_RELEASE_BYTES: u64 = 19_999_445;
+pub const PICOCLAW_SERVICE: &str = "hardened-blikvm-picoclaw.service";
+pub const PICOCLAW_GATEWAY_PORT: u16 = 18790;
+/// Header carrying the internal token on the runtime's KVM calls.
+pub const INTERNAL_TOKEN_HEADER: &str = "X-BliKVM-Internal-Token";
 pub const MAX_LINE_BYTES: usize = 4096;
+/// Replies may carry a chat history.
+pub const MAX_REPLY_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// Script limits, as in the reference.
 pub const MAX_SCRIPT_BYTES: usize = 256 * 1024;
@@ -57,6 +78,104 @@ pub enum AdminRequest {
     ImageDownload {
         url: String,
     },
+    /// Download helper: fetch and unpack the pinned PicoClaw release.
+    PicoclawInstall {},
+    /// Download helper: remove the installed PicoClaw binary.
+    PicoclawRemove {},
+    /// Admin helper: start or stop the PicoClaw runtime unit.
+    PicoclawService {
+        start: bool,
+    },
+    /// PicoClaw helper: configuration and gateway facts, never the API key.
+    PicoclawState {},
+    /// PicoClaw helper: create the configuration if needed and apply the
+    /// defaults, the gateway token and the KVM MCP server entry.
+    PicoclawPrepare {
+        internal_token: String,
+        mcp_url: String,
+    },
+    PicoclawModel {
+        model: String,
+        api_base: String,
+        api_key: String,
+    },
+    PicoclawProfile {
+        profile: String,
+    },
+    PicoclawSessions {
+        offset: u32,
+        limit: u32,
+    },
+    PicoclawSession {
+        id: String,
+    },
+    PicoclawSessionDelete {
+        id: String,
+    },
+    /// PicoClaw helper: remove the runtime's configuration and history.
+    PicoclawReset {},
+}
+
+/// What the PicoClaw helper reports about the runtime's configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PicoclawFacts {
+    pub config_present: bool,
+    pub model_configured: bool,
+    pub model_name: String,
+    pub gateway_token: String,
+    pub agent_profile: String,
+    pub ping_interval_ms: u32,
+    pub read_timeout_ms: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PicoclawSessionItem {
+    pub id: String,
+    pub title: String,
+    pub preview: String,
+    pub message_count: u32,
+    pub created: String,
+    pub updated: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PicoclawMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PicoclawSessionDetail {
+    pub id: String,
+    pub messages: Vec<PicoclawMessage>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    pub created: String,
+    pub updated: String,
+}
+
+/// Install progress in the reference's runtime-status terms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PicoclawInstallStatus {
+    pub stage: String,
+    pub progress: u8,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
+}
+
+/// PicoClaw session IDs as the runtime names them: the browser's UUID or an
+/// opaque `sk_v1_` key, never a path.
+pub fn valid_picoclaw_session_id(id: &str) -> bool {
+    (1..=128).contains(&id.len())
+        && !id.starts_with('.')
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 /// The reference download status shape.
@@ -127,6 +246,10 @@ pub enum AdminReply {
     Scripts { files: Vec<String> },
     Output { log: String, success: bool },
     Done,
+    Picoclaw { facts: PicoclawFacts },
+    PicoclawModelSaved { model_name: String },
+    PicoclawSessions { items: Vec<PicoclawSessionItem> },
+    PicoclawSession { detail: PicoclawSessionDetail },
 }
 
 /// Script names as the reference accepts them: `[A-Za-z0-9._-]`, ending in
@@ -145,6 +268,17 @@ pub fn valid_script_name(name: &str) -> bool {
 pub fn write_line<T: Serialize>(writer: &mut impl Write, value: &T) -> io::Result<()> {
     let mut line = serde_json::to_vec(value).map_err(io::Error::other)?;
     if line.len() >= MAX_LINE_BYTES {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    line.push(b'\n');
+    writer.write_all(&line)?;
+    writer.flush()
+}
+
+/// Writes one reply line, which may be larger than a request.
+pub fn write_reply(writer: &mut impl Write, reply: &AdminReply) -> io::Result<()> {
+    let mut line = serde_json::to_vec(reply).map_err(io::Error::other)?;
+    if line.len() >= MAX_REPLY_BYTES {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     line.push(b'\n');
@@ -258,6 +392,22 @@ mod tests {
         ] {
             assert!(validate_remote_iso(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn picoclaw_session_ids_are_names_not_paths() {
+        for good in ["3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b", "sk_v1_abc123"] {
+            assert!(valid_picoclaw_session_id(good), "{good}");
+        }
+        for bad in ["", "../x", "a/b", ".hidden", "a b", "a:b"] {
+            assert!(!valid_picoclaw_session_id(bad), "{bad}");
+        }
+        let reply = AdminReply::PicoclawModelSaved {
+            model_name: "gpt".into(),
+        };
+        let mut buffer = Vec::new();
+        write_reply(&mut buffer, &reply).unwrap();
+        assert_eq!(buffer.last(), Some(&b'\n'));
     }
 
     #[test]

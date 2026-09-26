@@ -2147,8 +2147,15 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertEqual(destinations, ["http://127.0.0.1:18080"] * 3)
         locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
         self.assertEqual(
-            set(locations), {"/", "= /api/application-update/upload", "= /api/download/file"}
+            set(locations),
+            {
+                "/",
+                "= /api/application-update/upload",
+                "= /api/download/file",
+                "^~ /internal/",
+            },
         )
+        self.assertEqual(locations["^~ /internal/"].strip(), "return 404;")
         self.assertIn("client_max_body_size 16m;", config)
         for route, limit in [
             ("= /api/application-update/upload", "128m"),

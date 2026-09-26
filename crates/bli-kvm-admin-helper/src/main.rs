@@ -5,10 +5,14 @@
 //! switch file for every request and refuses a switched-off feature on its
 //! own, whatever the web server decided.
 //!
-//! With `--download` the same binary serves remote image downloads from a
-//! separate unprivileged unit that has network access.
+//! With `--download` the same binary serves remote image downloads and the
+//! PicoClaw install from a separate unprivileged unit that has network
+//! access; with `--picoclaw` it manages the PicoClaw configuration as the
+//! runtime's own user; `--require-feature NAME` exits non-zero while that
+//! switch is off (a pre-start check for the PicoClaw runtime).
 
 mod download;
+mod picoclaw;
 mod scripts;
 
 use std::ffi::CString;
@@ -24,22 +28,51 @@ use std::time::Duration;
 
 use bli_kvm_admin_helper::{
     AdminReply, AdminRequest, DOWNLOAD_STATUS, DownloadStatus, FRAME_DATA, FRAME_RESIZE,
-    decode_resize, encode_frame, read_frame, read_line, validate_remote_iso, write_line,
+    PICOCLAW_BINARY, PICOCLAW_INSTALL_STATUS, PICOCLAW_RELEASE_BYTES, PICOCLAW_RELEASE_SHA256,
+    PICOCLAW_RELEASE_URL, PICOCLAW_RUNTIME_DIR, PICOCLAW_SERVICE, PICOCLAW_STATE, decode_resize,
+    encode_frame, read_frame, read_line, validate_remote_iso, write_line, write_reply,
 };
 use bli_kvm_core::{ADMIN_FEATURES_PATH, AdminFeature, AdminFeatureSwitches};
 
 fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
-    let mut downloads = false;
+    let mut mode = "admin";
     let mut first = arguments.next();
-    if first.as_deref() == Some("--download") {
-        downloads = true;
-        first = arguments.next();
+    match first.as_deref() {
+        Some("--download") => {
+            mode = "download";
+            first = arguments.next();
+        }
+        Some("--picoclaw") => {
+            mode = "picoclaw";
+            first = arguments.next();
+        }
+        Some("--require-feature") => {
+            let feature = arguments.next();
+            let enabled = AdminFeature::ALL.into_iter().find(|candidate| {
+                Some(candidate.key()) == feature.as_deref() && arguments.next().is_none()
+            });
+            return match enabled {
+                Some(feature)
+                    if AdminFeatureSwitches::load(Path::new(ADMIN_FEATURES_PATH)).get(feature) =>
+                {
+                    ExitCode::SUCCESS
+                }
+                Some(feature) => {
+                    eprintln!("admin helper: {} is switched off", feature.key());
+                    ExitCode::from(1)
+                }
+                None => ExitCode::from(2),
+            };
+        }
+        _ => {}
     }
     let peer_user = match (first.as_deref(), arguments.next(), arguments.next()) {
         (Some("--peer-user"), Some(user), None) => user,
         _ => {
-            eprintln!("usage: bli-kvm-admin-helper [--download] --peer-user USER");
+            eprintln!(
+                "usage: bli-kvm-admin-helper [--download | --picoclaw] --peer-user USER\n       bli-kvm-admin-helper --require-feature NAME"
+            );
             return ExitCode::from(2);
         }
     };
@@ -50,10 +83,10 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    let served = if downloads {
-        serve_download(&mut stream)
-    } else {
-        serve(&mut stream)
+    let served = match mode {
+        "download" => serve_download(&mut stream),
+        "picoclaw" => serve_picoclaw(&mut stream),
+        _ => serve(&mut stream),
     };
     match served {
         Ok(()) => ExitCode::SUCCESS,
@@ -79,8 +112,19 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             eprintln!("admin helper: terminal session closed");
             result
         }
-        AdminRequest::ImageDownload { .. } => refuse(stream, "downloads use their own helper"),
-        request => {
+        AdminRequest::PicoclawService { start } => {
+            if start && !switches.get(AdminFeature::Picoclaw) {
+                return refuse(stream, "picoclaw is switched off");
+            }
+            let reply = picoclaw_service(start).unwrap_or_else(|error| AdminReply::Refused {
+                reason: error.to_string(),
+            });
+            write_line(stream, &reply)
+        }
+        request @ (AdminRequest::ScriptList {}
+        | AdminRequest::ScriptUpload { .. }
+        | AdminRequest::ScriptDelete { .. }
+        | AdminRequest::ScriptRun { .. }) => {
             if !switches.get(AdminFeature::Scripts) {
                 return refuse(stream, "scripts are switched off");
             }
@@ -89,6 +133,43 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             });
             write_line(stream, &reply)
         }
+        _ => refuse(stream, "not an administration request"),
+    }
+}
+
+/// Starts or stops the PicoClaw runtime unit; its own pre-start check
+/// refuses again while the switch is off.
+fn picoclaw_service(start: bool) -> io::Result<AdminReply> {
+    let mut child = std::process::Command::new("/usr/bin/systemctl")
+        .args([if start { "start" } else { "stop" }, PICOCLAW_SERVICE])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("the PicoClaw runtime did not respond"));
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    eprintln!(
+        "admin helper: picoclaw runtime {}",
+        if start { "started" } else { "stopped" }
+    );
+    if status.success() {
+        Ok(AdminReply::Done)
+    } else {
+        Err(io::Error::other(if start {
+            "the PicoClaw runtime did not start"
+        } else {
+            "the PicoClaw runtime did not stop"
+        }))
     }
 }
 
@@ -125,9 +206,7 @@ fn script(stream: &mut UnixStream, request: AdminRequest) -> io::Result<AdminRep
                 store.run_foreground(&name)
             }
         }
-        AdminRequest::Terminal { .. } | AdminRequest::ImageDownload { .. } => {
-            Err(io::Error::other("not a script request"))
-        }
+        _ => Err(io::Error::other("not a script request")),
     }
 }
 
@@ -140,8 +219,11 @@ fn remote_download_enabled() -> bool {
 fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let request: AdminRequest = read_line(stream)?;
-    let AdminRequest::ImageDownload { url } = request else {
-        return refuse(stream, "not a download request");
+    let url = match request {
+        AdminRequest::ImageDownload { url } => url,
+        AdminRequest::PicoclawInstall {} => return install_picoclaw(stream),
+        AdminRequest::PicoclawRemove {} => return remove_picoclaw(stream),
+        _ => return refuse(stream, "not a download request"),
     };
     if !remote_download_enabled() {
         return refuse(stream, "remote download is switched off");
@@ -180,6 +262,104 @@ fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
             download::write_status(status, &failed)
         }
     }
+}
+
+fn picoclaw_enabled() -> bool {
+    AdminFeatureSwitches::load(Path::new(ADMIN_FEATURES_PATH)).get(AdminFeature::Picoclaw)
+}
+
+/// Installs the pinned PicoClaw release; one network job at a time.
+fn install_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
+    if !picoclaw_enabled() {
+        return refuse(stream, "picoclaw is switched off");
+    }
+    let status = Path::new(DOWNLOAD_STATUS);
+    let lock_path = status.with_file_name("download.lock");
+    let Some(_lock) = download::DownloadLock::acquire(&lock_path)? else {
+        return refuse(stream, "a download is in progress");
+    };
+    let install_status = Path::new(PICOCLAW_INSTALL_STATUS);
+    download::write_install_status(install_status, "downloading", 0, "");
+    write_line(stream, &AdminReply::Ready)?;
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    eprintln!("admin helper: picoclaw install started");
+    let install = download::RuntimeInstall {
+        curl: Path::new(download::CURL),
+        tar: Path::new("/bin/tar"),
+        url: PICOCLAW_RELEASE_URL,
+        sha256: PICOCLAW_RELEASE_SHA256,
+        bytes: PICOCLAW_RELEASE_BYTES,
+        directory: Path::new(PICOCLAW_RUNTIME_DIR),
+        status: install_status,
+    };
+    match install.run(picoclaw_enabled) {
+        Ok(()) => eprintln!("admin helper: picoclaw installed"),
+        Err(error) => eprintln!("admin helper: picoclaw install failed: {error}"),
+    }
+    Ok(())
+}
+
+fn remove_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
+    let status = Path::new(DOWNLOAD_STATUS);
+    let Some(_lock) = download::DownloadLock::acquire(&status.with_file_name("download.lock"))?
+    else {
+        return refuse(stream, "a download is in progress");
+    };
+    match std::fs::remove_file(PICOCLAW_BINARY) {
+        Ok(()) => eprintln!("admin helper: picoclaw removed"),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return refuse(stream, &error.to_string()),
+    }
+    let _ = std::fs::remove_file(PICOCLAW_INSTALL_STATUS);
+    write_line(stream, &AdminReply::Done)
+}
+
+/// The PicoClaw configuration helper, as the runtime's own user. It only
+/// touches that user's files and starts nothing, so the web server's switch
+/// check covers it; the runtime start and its KVM access are re-checked.
+fn serve_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let request: AdminRequest = read_line(stream)?;
+    let store =
+        picoclaw::Picoclaw::new(PICOCLAW_STATE, PICOCLAW_BINARY, picoclaw::PROFILE_DIRECTORY);
+    let reply = match request {
+        AdminRequest::PicoclawState {} => store.facts().map(|facts| AdminReply::Picoclaw { facts }),
+        AdminRequest::PicoclawPrepare {
+            internal_token,
+            mcp_url,
+        } => store
+            .prepare(&internal_token, &mcp_url)
+            .map(|()| AdminReply::Done),
+        AdminRequest::PicoclawModel {
+            model,
+            api_base,
+            api_key,
+        } => store.model(&model, &api_base, &api_key).map(|model_name| {
+            eprintln!("admin helper: picoclaw model set to {model_name}");
+            AdminReply::PicoclawModelSaved { model_name }
+        }),
+        AdminRequest::PicoclawProfile { profile } => {
+            store.profile(&profile).map(|()| AdminReply::Done)
+        }
+        AdminRequest::PicoclawSessions { offset, limit } => store
+            .sessions(offset, limit)
+            .map(|items| AdminReply::PicoclawSessions { items }),
+        AdminRequest::PicoclawSession { id } => store
+            .session(&id)
+            .map(|detail| AdminReply::PicoclawSession { detail }),
+        AdminRequest::PicoclawSessionDelete { id } => {
+            store.delete_session(&id).map(|()| AdminReply::Done)
+        }
+        AdminRequest::PicoclawReset {} => store.reset().map(|()| {
+            eprintln!("admin helper: picoclaw configuration removed");
+            AdminReply::Done
+        }),
+        _ => Err(io::Error::other("not a picoclaw request")),
+    };
+    let reply = reply.unwrap_or_else(|error| AdminReply::Refused {
+        reason: error.to_string(),
+    });
+    write_reply(stream, &reply)
 }
 
 fn refuse(stream: &mut UnixStream, reason: &str) -> io::Result<()> {

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bli_kvm_admin_helper::{DownloadStatus, MAX_IMAGE_BYTES, RemoteIso};
+use bli_kvm_admin_helper::{DownloadStatus, MAX_IMAGE_BYTES, PicoclawInstallStatus, RemoteIso};
 use bli_kvm_media_catalog::{CatalogImage, MediaCatalog};
 use sha2::{Digest, Sha256};
 
@@ -84,6 +84,16 @@ pub fn parse_progress(output: &str) -> Option<String> {
         })
 }
 
+/// curl's own error message; it may follow a progress bar on the same line.
+pub fn curl_error(output: &str) -> String {
+    output
+        .rfind("curl: (")
+        .map(|start| output[start..].lines().next().unwrap_or_default().trim())
+        .filter(|message| !message.is_empty())
+        .unwrap_or("curl failed")
+        .to_string()
+}
+
 pub fn is_iso9660(path: &Path) -> io::Result<bool> {
     let mut file = File::open(path)?;
     let mut magic = [0_u8; 5];
@@ -95,7 +105,7 @@ pub fn is_iso9660(path: &Path) -> io::Result<bool> {
     }
 }
 
-fn sha256_file(path: &Path) -> io::Result<String> {
+pub fn sha256_file(path: &Path) -> io::Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
@@ -113,34 +123,22 @@ fn sha256_file(path: &Path) -> io::Result<String> {
         .collect())
 }
 
-pub struct Download<'a> {
-    pub iso: &'a RemoteIso,
-    pub images: &'a Path,
-    pub catalog: &'a Path,
-    pub status: &'a Path,
+/// One curl transfer with the reference limits, reporting progress and
+/// stopping when `still_enabled` turns false.
+pub struct Fetch<'a> {
     pub curl: &'a Path,
+    pub url: &'a str,
+    pub output: &'a Path,
+    pub max_bytes: u64,
+    pub max_seconds: u32,
 }
 
-impl Download<'_> {
-    fn temporary(&self) -> PathBuf {
-        self.images.join(format!(".{}.download", self.iso.filename))
-    }
-
-    /// Fetches, checks and publishes the image; the temporary file never
-    /// survives a failure.
-    pub fn run(&self, still_enabled: impl Fn() -> bool) -> io::Result<()> {
-        let temporary = self.temporary();
-        let _ = fs::remove_file(&temporary);
-        let result = self
-            .fetch(&temporary, still_enabled)
-            .and_then(|()| self.publish(&temporary));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
-    }
-
-    fn fetch(&self, temporary: &Path, still_enabled: impl Fn() -> bool) -> io::Result<()> {
+impl Fetch<'_> {
+    pub fn run(
+        &self,
+        still_enabled: impl Fn() -> bool,
+        mut on_progress: impl FnMut(&str),
+    ) -> io::Result<()> {
         let mut child = Command::new(self.curl)
             .env_clear()
             .args([
@@ -156,19 +154,19 @@ impl Download<'_> {
                 "--connect-timeout",
                 "20",
                 "--max-time",
-                "7200",
+                &self.max_seconds.to_string(),
                 "--speed-limit",
                 "1024",
                 "--speed-time",
                 "120",
                 "--max-filesize",
-                &MAX_IMAGE_BYTES.to_string(),
+                &self.max_bytes.to_string(),
                 "--progress-bar",
                 "--output",
             ])
-            .arg(temporary)
+            .arg(self.output)
             .arg("--")
-            .arg(&self.iso.url)
+            .arg(self.url)
             .current_dir("/")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -214,7 +212,7 @@ impl Download<'_> {
                     let _ = child.kill();
                     let _ = child.wait();
                     let _ = reader.join();
-                    return Err(io::Error::other("remote download was switched off"));
+                    return Err(io::Error::other("the download was switched off"));
                 }
             }
             if last_report.elapsed() >= PROGRESS_INTERVAL {
@@ -224,7 +222,7 @@ impl Download<'_> {
                     .map(|value| value.clone())
                     .unwrap_or_default();
                 if current != reported {
-                    let _ = write_status(self.status, &in_progress(&self.iso.url, &current));
+                    on_progress(&current);
                     reported = current;
                 }
             }
@@ -232,15 +230,50 @@ impl Download<'_> {
         };
         let tail = reader.join().unwrap_or_default();
         if !status.success() {
-            let reason = tail
-                .lines()
-                .rev()
-                .find(|line| line.starts_with("curl:"))
-                .unwrap_or("curl failed")
-                .to_string();
-            return Err(io::Error::other(reason));
+            return Err(io::Error::other(curl_error(&tail)));
         }
         Ok(())
+    }
+}
+
+pub struct Download<'a> {
+    pub iso: &'a RemoteIso,
+    pub images: &'a Path,
+    pub catalog: &'a Path,
+    pub status: &'a Path,
+    pub curl: &'a Path,
+}
+
+impl Download<'_> {
+    fn temporary(&self) -> PathBuf {
+        self.images.join(format!(".{}.download", self.iso.filename))
+    }
+
+    /// Fetches, checks and publishes the image; the temporary file never
+    /// survives a failure.
+    pub fn run(&self, still_enabled: impl Fn() -> bool) -> io::Result<()> {
+        let temporary = self.temporary();
+        let _ = fs::remove_file(&temporary);
+        let result = self
+            .fetch(&temporary, still_enabled)
+            .and_then(|()| self.publish(&temporary));
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    fn fetch(&self, temporary: &Path, still_enabled: impl Fn() -> bool) -> io::Result<()> {
+        let request = Fetch {
+            curl: self.curl,
+            url: &self.iso.url,
+            output: temporary,
+            max_bytes: MAX_IMAGE_BYTES,
+            max_seconds: 7200,
+        };
+        request.run(still_enabled, |current| {
+            let _ = write_status(self.status, &in_progress(&self.iso.url, current));
+        })
     }
 
     fn publish(&self, temporary: &Path) -> io::Result<()> {
@@ -270,6 +303,120 @@ impl Download<'_> {
     }
 }
 
+/// Fetches the pinned PicoClaw release, checks its size and digest, and
+/// installs only its `picoclaw` executable.
+pub struct RuntimeInstall<'a> {
+    pub curl: &'a Path,
+    pub tar: &'a Path,
+    pub url: &'a str,
+    pub sha256: &'a str,
+    pub bytes: u64,
+    /// Directory that receives `picoclaw`; the archive is staged in it.
+    pub directory: &'a Path,
+    pub status: &'a Path,
+}
+
+pub fn write_install_status(path: &Path, stage: &str, progress: u8, error: &str) {
+    let status = PicoclawInstallStatus {
+        stage: stage.into(),
+        progress,
+        error: error.into(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&status) {
+        let temporary = path.with_extension("new");
+        if fs::write(&temporary, bytes).is_ok() {
+            let _ = fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644));
+            let _ = fs::rename(&temporary, path);
+        }
+    }
+}
+
+impl RuntimeInstall<'_> {
+    pub fn run(&self, still_enabled: impl Fn() -> bool) -> io::Result<()> {
+        let archive = self.directory.join(".picoclaw.tar.gz.download");
+        let unpack = self.directory.join(".picoclaw.unpack");
+        let cleanup = || {
+            let _ = fs::remove_file(&archive);
+            let _ = fs::remove_dir_all(&unpack);
+        };
+        cleanup();
+        let result = self.install(&archive, &unpack, still_enabled);
+        cleanup();
+        match &result {
+            Ok(()) => write_install_status(self.status, "installed", 100, ""),
+            Err(error) => {
+                write_install_status(self.status, "install_failed", 0, &error.to_string())
+            }
+        }
+        result
+    }
+
+    fn install(
+        &self,
+        archive: &Path,
+        unpack: &Path,
+        still_enabled: impl Fn() -> bool,
+    ) -> io::Result<()> {
+        write_install_status(self.status, "downloading", 5, "");
+        Fetch {
+            curl: self.curl,
+            url: self.url,
+            output: archive,
+            max_bytes: self.bytes,
+            max_seconds: 600,
+        }
+        .run(still_enabled, |current| {
+            let percent: f64 = current.trim_end_matches('%').parse().unwrap_or(0.0);
+            let progress = (10.0 + percent * 0.7).clamp(10.0, 80.0) as u8;
+            write_install_status(self.status, "downloading", progress, "");
+        })?;
+        write_install_status(self.status, "verifying", 82, "");
+        if fs::symlink_metadata(archive)?.len() != self.bytes
+            || sha256_file(archive)? != self.sha256
+        {
+            return Err(io::Error::other(
+                "the PicoClaw archive does not match the pinned digest",
+            ));
+        }
+        write_install_status(self.status, "extracting", 85, "");
+        fs::create_dir(unpack)?;
+        let status = Command::new(self.tar)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .args(["--no-same-owner", "--no-same-permissions", "-xzf"])
+            .arg(archive)
+            .arg("-C")
+            .arg(unpack)
+            .current_dir("/")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other(
+                "the PicoClaw archive could not be unpacked",
+            ));
+        }
+        let binary = [unpack.join("picoclaw")]
+            .into_iter()
+            .chain(
+                fs::read_dir(unpack)?
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path().join("picoclaw")),
+            )
+            .find(|path| {
+                fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+            })
+            .ok_or_else(|| io::Error::other("picoclaw binary not found in archive"))?;
+        write_install_status(self.status, "installing", 95, "");
+        let target = self.directory.join("picoclaw");
+        let staged = self.directory.join(".picoclaw.new");
+        fs::copy(&binary, &staged)?;
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
+        fs::rename(&staged, &target)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +434,11 @@ mod tests {
         );
         assert_eq!(parse_progress("\r#=#=#  ##O#- "), None);
         assert_eq!(parse_progress("curl: (22) 404"), None);
+        assert_eq!(
+            curl_error("\r###   1.0%\r##  curl: (7) Failed to connect\n"),
+            "curl: (7) Failed to connect"
+        );
+        assert_eq!(curl_error(""), "curl failed");
     }
 
     #[test]
@@ -384,5 +536,80 @@ printf 'hello' > "$2""#;
             .collect();
         names.sort();
         assert_eq!(names, ["rescue.iso"]);
+    }
+
+    #[test]
+    fn the_runtime_is_installed_only_from_the_pinned_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = dir.path().join("runtime");
+        fs::create_dir(&runtime).unwrap();
+        let source = dir.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("picoclaw"), "#!/bin/sh\necho pico\n").unwrap();
+        fs::write(source.join("README.md"), "readme").unwrap();
+        let archive = dir.path().join("release.tar.gz");
+        assert!(
+            Command::new("tar")
+                .arg("-czf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&source)
+                .args(["picoclaw", "README.md"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let digest = sha256_file(&archive).unwrap();
+        let bytes = fs::metadata(&archive).unwrap().len();
+        let curl = fake_curl(
+            dir.path(),
+            &format!(
+                "while [ \"$1\" != \"--output\" ]; do shift; done\ncp '{}' \"$2\"",
+                archive.display()
+            ),
+        );
+        let status = dir.path().join("install.json");
+        let install = RuntimeInstall {
+            curl: &curl,
+            tar: Path::new("/bin/tar"),
+            url: "https://example.org/picoclaw.tar.gz",
+            sha256: &digest,
+            bytes,
+            directory: &runtime,
+            status: &status,
+        };
+        install.run(|| true).unwrap();
+        let binary = runtime.join("picoclaw");
+        assert_eq!(
+            fs::read_to_string(&binary).unwrap(),
+            "#!/bin/sh\necho pico\n"
+        );
+        assert_eq!(
+            fs::metadata(&binary).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        let reported: PicoclawInstallStatus =
+            serde_json::from_slice(&fs::read(&status).unwrap()).unwrap();
+        assert_eq!(
+            (reported.stage.as_str(), reported.progress),
+            ("installed", 100)
+        );
+        let names: Vec<_> = fs::read_dir(&runtime)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, ["picoclaw"]);
+
+        fs::remove_file(&binary).unwrap();
+        let wrong = RuntimeInstall {
+            sha256: "00",
+            ..install
+        };
+        let error = wrong.run(|| true).unwrap_err();
+        assert!(error.to_string().contains("pinned digest"), "{error}");
+        assert!(!binary.exists());
+        let reported: PicoclawInstallStatus =
+            serde_json::from_slice(&fs::read(&status).unwrap()).unwrap();
+        assert_eq!(reported.stage, "install_failed");
     }
 }

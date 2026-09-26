@@ -63,8 +63,14 @@ pub(crate) async fn status() -> Json<ApiResponse<DownloadStatus>> {
     Json(ApiResponse::ok(read_status(Path::new(DOWNLOAD_STATUS))))
 }
 
+/// True while the download helper runs a job (an image or the PicoClaw
+/// runtime).
+pub(crate) fn download_running() -> bool {
+    lock_held(Path::new(DOWNLOAD_STATUS))
+}
+
 /// True while the helper holds the download lock next to the status file.
-fn download_running(status_path: &Path) -> bool {
+fn lock_held(status_path: &Path) -> bool {
     let Ok(file) = File::open(status_path.with_file_name("download.lock")) else {
         return false;
     };
@@ -94,7 +100,7 @@ pub(crate) fn read_status(path: &Path) -> DownloadStatus {
         .and_then(|modified| SystemTime::now().duration_since(modified).ok())
         .unwrap_or_default();
     match status.status.as_str() {
-        "in_progress" if download_running(path) => status,
+        "in_progress" if lock_held(path) => status,
         "failed" if age < FAILED_STATUS_TTL => status,
         _ => DownloadStatus::idle(),
     }

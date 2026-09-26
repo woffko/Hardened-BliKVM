@@ -158,6 +158,9 @@ async fn set(
     }
     // Read back what the owner persisted.
     let enabled = switches().get(feature);
+    if feature == AdminFeature::Picoclaw && !enabled {
+        crate::picoclaw::switched_off(state).await;
+    }
     Ok(Json(ApiResponse::ok(EnabledView { enabled })))
 }
 
