@@ -9,10 +9,12 @@ repository.workspace = true
 
 [dependencies]
 bli-kvm-core = { path = "../bli-kvm-core" }
+bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog" }
 libc.workspace = true
 nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

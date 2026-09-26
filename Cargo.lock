@@ -122,10 +122,12 @@ name = "bli-kvm-admin-helper"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-core",
+ "bli-kvm-media-catalog",
  "libc",
  "nix",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 

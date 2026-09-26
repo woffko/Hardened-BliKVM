@@ -42,6 +42,7 @@ mod leader_key;
 mod media;
 mod network;
 mod network_write;
+mod remote_download;
 mod scripts;
 mod session_lock;
 mod shortcuts;
@@ -135,6 +136,9 @@ pub struct ServerOptions {
     /// Root administration helper (terminal, scripts). No value keeps those
     /// features unavailable even when switched on.
     pub admin_socket: Option<PathBuf>,
+    /// Unprivileged remote image download helper. No value keeps remote
+    /// download unavailable even when switched on.
+    pub download_socket: Option<PathBuf>,
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
@@ -171,6 +175,7 @@ impl Default for ServerOptions {
             video_controls_enabled: false,
             engine_socket: None,
             admin_socket: None,
+            download_socket: None,
             network_writes_enabled: false,
             firewall_modes_enabled: false,
             media_directory: None,
@@ -268,6 +273,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         if options.media_controls_enabled {
             manifest.virtual_media.status =
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            // The reference Download menu carries the local upload and the
+            // remote download; the latter stays switched off until enabled.
+            if options.media_directory.is_some() && options.media_catalog.is_some() {
+                manifest.virtual_media.remote_download =
+                    FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            }
         }
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -468,6 +479,8 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/autostart", get(autostart::list))
         .route("/vm/autostart/{name}", get(autostart::content))
         .route("/download/image/enabled", get(download::image_enabled))
+        .route("/download/image", post(remote_download::start))
+        .route("/download/image/status", get(remote_download::status))
         .route(
             "/download/image/remote/enabled",
             get(admin_features::remote_download_enabled)
@@ -1527,6 +1540,21 @@ mod tests {
             .header(header::HOST, "kvm.test")
             .header(header::COOKIE, &cookie)
             .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/download/image")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, &cookie)
+            .header("x-csrf-token", &csrf)
+            .body(Body::from(
+                serde_json::json!({"file": "https://mirror.example/a.iso"}).to_string(),
+            ))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);

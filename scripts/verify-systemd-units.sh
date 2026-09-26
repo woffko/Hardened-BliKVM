@@ -125,14 +125,18 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-update-exec@.service \
   hardened-blikvm-update-native-boot.service \
   hardened-blikvm-admin.socket \
-  hardened-blikvm-admin@.service
+  hardened-blikvm-admin@.service \
+  hardened-blikvm-image-download.socket \
+  hardened-blikvm-image-download@.service
 
 # Native profile: the rendered replacements override the managed base units
 # and must verify on their own, with no legacy recover/confirm dependency.
 native_root="$test_root/native"
 install -d -m 0755 "$native_root"
-cp -a "$test_root/." "$native_root/" 2>/dev/null || true
-rm -rf "$native_root/native"
+# Copy every entry but the native root itself; copying the whole tree into
+# its own subdirectory aborts when readdir happens to return it first.
+find "$test_root" -mindepth 1 -maxdepth 1 ! -name native \
+  -exec cp -a {} "$native_root/" \; 2>/dev/null
 install -m 0644 "$project_root"/packaging/systemd/native/*.service \
   "$native_root/usr/lib/systemd/system/"
 install -d -m 0755 \

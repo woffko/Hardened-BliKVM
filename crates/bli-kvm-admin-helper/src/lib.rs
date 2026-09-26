@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 
 /// Socket-activated helper endpoint (one service instance per connection).
 pub const ADMIN_SOCKET: &str = "/run/hardened-blikvm-admin/admin.sock";
+/// The unprivileged image download helper (network access, image store only).
+pub const DOWNLOAD_SOCKET: &str = "/run/hardened-blikvm-download-api/download.sock";
+/// Progress of the current or last download, read by the web server.
+pub const DOWNLOAD_STATUS: &str = "/run/hardened-blikvm-download/status.json";
+/// Largest image a download may produce, as in the reference.
+pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub const MAX_LINE_BYTES: usize = 4096;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// Script limits, as in the reference.
@@ -47,6 +53,70 @@ pub enum AdminRequest {
         name: String,
         background: bool,
     },
+    /// Download an ISO image into the virtual media store.
+    ImageDownload {
+        url: String,
+    },
+}
+
+/// The reference download status shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DownloadStatus {
+    pub status: String,
+    pub file: String,
+    pub percentage: String,
+}
+
+impl DownloadStatus {
+    pub fn idle() -> Self {
+        Self {
+            status: "idle".into(),
+            file: String::new(),
+            percentage: String::new(),
+        }
+    }
+}
+
+/// A validated remote ISO: the URL and the image name it ends with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteIso {
+    pub url: String,
+    pub filename: String,
+}
+
+/// HTTP(S) URLs without credentials whose last path segment is an `.iso`
+/// image name the store accepts, as in the reference.
+pub fn validate_remote_iso(raw: &str) -> Option<RemoteIso> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > 2048 || raw.chars().any(|ch| ch.is_control() || ch == ' ') {
+        return None;
+    }
+    let (scheme, rest) = raw.split_once("://")?;
+    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
+        return None;
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let path = rest[authority_end..]
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default();
+    let filename = path.rsplit('/').find(|segment| !segment.is_empty())?;
+    let lower = filename.to_ascii_lowercase();
+    let valid = (5..=128).contains(&filename.len())
+        && lower.ends_with(".iso")
+        && !filename.starts_with('.')
+        && filename
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    valid.then(|| RemoteIso {
+        url: raw.to_string(),
+        filename: filename.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +239,25 @@ mod tests {
         assert_eq!(kind, FRAME_RESIZE);
         assert_eq!(decode_resize(&payload), Some((40, 120)));
         assert_eq!(read_frame(&mut reader).unwrap(), None);
+    }
+
+    #[test]
+    fn remote_iso_urls_are_validated() {
+        let iso = validate_remote_iso("https://mirror.example/dist/ubuntu-24.04.iso?x=1").unwrap();
+        assert_eq!(iso.filename, "ubuntu-24.04.iso");
+        assert!(validate_remote_iso("http://example.org/a/b/Debian_12.ISO").is_some());
+        for bad in [
+            "ftp://example.org/a.iso",
+            "https://someone@example.org/a.iso",
+            "https://example.org/a.img",
+            "https://example.org/",
+            "https:///a.iso",
+            "https://example.org/a b.iso",
+            "https://example.org/..%2f.iso",
+            "file:///etc/passwd.iso",
+        ] {
+            assert!(validate_remote_iso(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

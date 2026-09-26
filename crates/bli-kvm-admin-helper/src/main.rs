@@ -4,7 +4,11 @@
 //! helper serves only the configured web-server user, re-reads the owner's
 //! switch file for every request and refuses a switched-off feature on its
 //! own, whatever the web server decided.
+//!
+//! With `--download` the same binary serves remote image downloads from a
+//! separate unprivileged unit that has network access.
 
+mod download;
 mod scripts;
 
 use std::ffi::CString;
@@ -19,21 +23,23 @@ use std::thread;
 use std::time::Duration;
 
 use bli_kvm_admin_helper::{
-    AdminReply, AdminRequest, FRAME_DATA, FRAME_RESIZE, decode_resize, encode_frame, read_frame,
-    read_line, write_line,
+    AdminReply, AdminRequest, DOWNLOAD_STATUS, DownloadStatus, FRAME_DATA, FRAME_RESIZE,
+    decode_resize, encode_frame, read_frame, read_line, validate_remote_iso, write_line,
 };
 use bli_kvm_core::{ADMIN_FEATURES_PATH, AdminFeature, AdminFeatureSwitches};
 
 fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
-    let peer_user = match (
-        arguments.next().as_deref(),
-        arguments.next(),
-        arguments.next(),
-    ) {
+    let mut downloads = false;
+    let mut first = arguments.next();
+    if first.as_deref() == Some("--download") {
+        downloads = true;
+        first = arguments.next();
+    }
+    let peer_user = match (first.as_deref(), arguments.next(), arguments.next()) {
         (Some("--peer-user"), Some(user), None) => user,
         _ => {
-            eprintln!("usage: bli-kvm-admin-helper --peer-user USER");
+            eprintln!("usage: bli-kvm-admin-helper [--download] --peer-user USER");
             return ExitCode::from(2);
         }
     };
@@ -44,7 +50,12 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    match serve(&mut stream) {
+    let served = if downloads {
+        serve_download(&mut stream)
+    } else {
+        serve(&mut stream)
+    };
+    match served {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("admin helper: {error}");
@@ -68,6 +79,7 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             eprintln!("admin helper: terminal session closed");
             result
         }
+        AdminRequest::ImageDownload { .. } => refuse(stream, "downloads use their own helper"),
         request => {
             if !switches.get(AdminFeature::Scripts) {
                 return refuse(stream, "scripts are switched off");
@@ -113,7 +125,60 @@ fn script(stream: &mut UnixStream, request: AdminRequest) -> io::Result<AdminRep
                 store.run_foreground(&name)
             }
         }
-        AdminRequest::Terminal { .. } => Err(io::Error::other("not a script request")),
+        AdminRequest::Terminal { .. } | AdminRequest::ImageDownload { .. } => {
+            Err(io::Error::other("not a script request"))
+        }
+    }
+}
+
+fn remote_download_enabled() -> bool {
+    AdminFeatureSwitches::load(Path::new(ADMIN_FEATURES_PATH)).get(AdminFeature::RemoteDownload)
+}
+
+/// Accepts one download, answers at once and keeps the image transfer going
+/// after the web server has hung up; progress goes to the status file.
+fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let request: AdminRequest = read_line(stream)?;
+    let AdminRequest::ImageDownload { url } = request else {
+        return refuse(stream, "not a download request");
+    };
+    if !remote_download_enabled() {
+        return refuse(stream, "remote download is switched off");
+    }
+    let Some(iso) = validate_remote_iso(&url) else {
+        return refuse(stream, "invalid url");
+    };
+    let status = Path::new(DOWNLOAD_STATUS);
+    let lock_path = status.with_file_name("download.lock");
+    let Some(_lock) = download::DownloadLock::acquire(&lock_path)? else {
+        return refuse(stream, "download in progress");
+    };
+    download::write_status(status, &download::in_progress(&iso.url, ""))?;
+    write_line(stream, &AdminReply::Ready)?;
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    eprintln!("admin helper: download of {} started", iso.filename);
+    let job = download::Download {
+        iso: &iso,
+        images: Path::new(download::IMAGE_DIRECTORY),
+        catalog: Path::new(download::MEDIA_CATALOG),
+        status,
+        curl: Path::new(download::CURL),
+    };
+    match job.run(remote_download_enabled) {
+        Ok(()) => {
+            eprintln!("admin helper: download of {} finished", iso.filename);
+            download::write_status(status, &DownloadStatus::idle())
+        }
+        Err(error) => {
+            eprintln!("admin helper: download of {} failed: {error}", iso.filename);
+            let failed = DownloadStatus {
+                status: "failed".into(),
+                file: iso.url.clone(),
+                percentage: String::new(),
+            };
+            download::write_status(status, &failed)
+        }
     }
 }
 

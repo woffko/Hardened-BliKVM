@@ -1,0 +1,54 @@
+[Unit]
+Description=Hardened BliKVM remote image download
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=local-fs.target network-online.target
+
+[Service]
+Type=simple
+# The only unit with outbound network access; the web server itself may
+# reach localhost alone. It runs as the web-server account and can write only
+# the image store and the media catalog (docs/design/admin-features-v1.md).
+User=hardened-blikvm-server
+Group=hardened-blikvm
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --download --peer-user hardened-blikvm-server
+RuntimeDirectory=hardened-blikvm-download
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+UMask=0022
+KillMode=control-group
+TimeoutStopSec=10
+TasksMax=32
+LimitNOFILE=256
+MemoryMax=256M
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hardened-blikvm-gadget/images /etc/hardened-blikvm-gadget
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# The board's own services are not download sources.
+IPAddressDeny=localhost link-local multicast
+IPAddressAllow=127.0.0.53

@@ -33,13 +33,13 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+libc.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
 tower-http.workspace = true
 
 [dev-dependencies]
-libc.workspace = true
 bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
 http-body-util.workspace = true
 tower.workspace = true

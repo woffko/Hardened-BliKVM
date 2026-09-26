@@ -48,12 +48,27 @@ and are socket-activated per connection.
     lists, deletes, and runs one with a bounded runtime and output
     (foreground: 60 s, 256 KiB captured; background: detached transient
     unit with a 1-hour limit).
-- **Image download helper** (`hardened-blikvm-image-download@.service`, a
-  dedicated user in the media group, network allowed, no other privileges):
-  downloads an HTTP(S) URL with `curl` into a temporary file on the virtual
-  media partition, enforces the free-space and size limits, verifies the
-  image type and publishes it atomically; progress is read back by the
-  server. Local image upload goes through the same helper without the switch.
+- **Image download helper** (`hardened-blikvm-image-download@.service`, the
+  same binary with `--download`, running as the web-server account with no
+  capabilities, write access only to the image store and the media catalog):
+  - it is the only unit with outbound network access (the web server may
+    reach localhost alone); it may not reach the board's own loopback,
+    link-local or multicast addresses, except a local DNS stub;
+  - it accepts only `http`/`https` URLs without credentials whose last path
+    segment is an `.iso` name the store accepts, one download at a time
+    (a lock next to the status file);
+  - `curl` runs with a cleared environment and the reference limits (HTTP(S)
+    redirects only, 5 redirects, 2 h, a stall limit and an 8 GiB file limit)
+    into a hidden temporary file; progress goes to
+    `/run/hardened-blikvm-download/status.json` in the reference shape;
+  - a finished file must carry the ISO 9660 magic, then it is hashed,
+    published atomically (0644) and recorded in the media catalog as a
+    CD-ROM or read-only removable image; any failure removes the temporary
+    file and reports `failed` for 30 seconds;
+  - it re-reads the switch while downloading and stops when it is turned off.
+  Local image upload stays in the web server (`POST /api/download/file`) and
+  needs no switch; the Download menu that carries both is shown whenever the
+  image store is configured.
 - **PicoClaw**: the reference downloads and runs an agent runtime. On this
   board the runtime runs as its own unprivileged unit, reaches the KVM only
   through the web API with an operator-issued token, and its model API key is
