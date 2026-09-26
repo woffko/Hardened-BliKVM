@@ -42,6 +42,7 @@ mod leader_key;
 mod media;
 mod network;
 mod network_write;
+mod scripts;
 mod session_lock;
 mod shortcuts;
 pub mod shutdown;
@@ -274,10 +275,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         // Administration features exist when the root helper is configured;
         // each stays switched off until the operator enables it.
         if options.admin_socket.is_some() {
-            manifest.board.features.insert(
-                "terminal".into(),
-                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
-            );
+            for feature in ["terminal", "scripts"] {
+                manifest.board.features.insert(
+                    feature.into(),
+                    FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+                );
+            }
         }
         // The native owner exposes observations but refuses every action.
         manifest.board.features.insert(
@@ -520,6 +523,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/stream/webrtc", get(webrtc::webrtc_socket))
         .route("/vm/terminal", get(terminal::connect))
         .route("/vm/terminal/unlock", post(terminal::unlock))
+        .route("/vm/script", get(scripts::list).delete(scripts::delete))
+        .route("/vm/script/upload", post(scripts::upload))
+        .route("/vm/script/run", post(scripts::run))
         .route(
             "/vm/screen",
             get(video_settings::screen_state).post(video_settings::update_screen),
@@ -1514,6 +1520,16 @@ mod tests {
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
         ));
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/vm/script")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
         let request = Request::builder()
             .method(Method::GET)

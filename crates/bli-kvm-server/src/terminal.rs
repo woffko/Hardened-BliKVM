@@ -265,6 +265,7 @@ async fn open_terminal(socket: &std::path::Path) -> Result<tokio::net::UnixStrea
     match serde_json::from_slice::<AdminReply>(&line) {
         Ok(AdminReply::Ready) => Ok(stream),
         Ok(AdminReply::Refused { .. }) => Err("terminal refused by the helper"),
+        Ok(_) => Err("terminal helper answer invalid"),
         Err(_) => Err("terminal helper answer invalid"),
     }
 }

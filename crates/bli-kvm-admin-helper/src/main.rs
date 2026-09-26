@@ -5,6 +5,8 @@
 //! switch file for every request and refuses a switched-off feature on its
 //! own, whatever the web server decided.
 
+mod scripts;
+
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -66,6 +68,52 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             eprintln!("admin helper: terminal session closed");
             result
         }
+        request => {
+            if !switches.get(AdminFeature::Scripts) {
+                return refuse(stream, "scripts are switched off");
+            }
+            let reply = script(stream, request).unwrap_or_else(|error| AdminReply::Refused {
+                reason: error.to_string(),
+            });
+            write_line(stream, &reply)
+        }
+    }
+}
+
+fn script(stream: &mut UnixStream, request: AdminRequest) -> io::Result<AdminReply> {
+    let store = scripts::ScriptStore::open(scripts::SCRIPT_DIRECTORY)?;
+    match request {
+        AdminRequest::ScriptList {} => Ok(AdminReply::Scripts {
+            files: store.list()?,
+        }),
+        AdminRequest::ScriptUpload { name, size } => {
+            stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+            let content = scripts::read_upload(stream, size)?;
+            store.store(&name, &content)?;
+            eprintln!("admin helper: script {name} stored ({size} bytes)");
+            Ok(AdminReply::Done)
+        }
+        AdminRequest::ScriptDelete { name } => {
+            store.delete(&name)?;
+            eprintln!("admin helper: script {name} deleted");
+            Ok(AdminReply::Done)
+        }
+        AdminRequest::ScriptRun { name, background } => {
+            eprintln!(
+                "admin helper: script {name} run in the {}",
+                if background {
+                    "background"
+                } else {
+                    "foreground"
+                }
+            );
+            if background {
+                store.run_background(&name)
+            } else {
+                store.run_foreground(&name)
+            }
+        }
+        AdminRequest::Terminal { .. } => Err(io::Error::other("not a script request")),
     }
 }
 

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import * as adminApi from '@/api/admin.ts';
 import * as downloadApi from '@/api/download.ts';
 import * as vmApi from '@/api/vm.ts';
 import { isAvailable, supportsMenuItem, type CapabilityMenuItem } from '@/lib/capabilities.ts';
@@ -71,6 +72,31 @@ export const MenuIcons = () => {
     [setMenuDisabledItems]
   );
 
+  // Scripts are switched on the server as well: the owner persists the switch
+  // and the server refuses the feature while it is off.
+  const [serverSwitchLoading, setServerSwitchLoading] = useState('');
+  const scriptsSupported = supportsMenuItem(capabilities, 'script');
+
+  useEffect(() => {
+    if (!scriptsSupported) return;
+    adminApi.getAdminFeatures().then((rsp) => {
+      if (rsp.code !== 0 || typeof rsp.data?.scripts !== 'boolean') return;
+      setItemVisible('script', rsp.data.scripts);
+    });
+  }, [scriptsSupported, setItemVisible]);
+
+  function updateServerSwitch(key: string, feature: adminApi.AdminFeature, enabled: boolean) {
+    if (serverSwitchLoading) return;
+    setServerSwitchLoading(key);
+    adminApi
+      .setAdminFeature(feature, enabled)
+      .then((rsp) => {
+        if (rsp.code !== 0 || typeof rsp.data?.enabled !== 'boolean') return;
+        setItemVisible(key, rsp.data.enabled);
+      })
+      .finally(() => setServerSwitchLoading(''));
+  }
+
   useEffect(() => {
     if (terminalSupported) {
       vmApi.getTerminalEnabled().then((rsp) => {
@@ -96,6 +122,11 @@ export const MenuIcons = () => {
       } else {
         updateTerminal(false);
       }
+      return;
+    }
+
+    if (key === 'script' && scriptsSupported) {
+      updateServerSwitch(key, 'scripts', nextEnabled);
       return;
     }
 
@@ -147,6 +178,9 @@ export const MenuIcons = () => {
   }
 
   function itemLoading(key: string) {
+    if (serverSwitchLoading === key) {
+      return true;
+    }
     if (key === 'terminal') {
       return isTerminalLoading;
     }

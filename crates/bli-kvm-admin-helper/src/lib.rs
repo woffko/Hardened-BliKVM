@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 pub const ADMIN_SOCKET: &str = "/run/hardened-blikvm-admin/admin.sock";
 pub const MAX_LINE_BYTES: usize = 4096;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// Script limits, as in the reference.
+pub const MAX_SCRIPT_BYTES: usize = 256 * 1024;
+pub const MAX_SCRIPT_OUTPUT_BYTES: usize = 64 * 1024;
+pub const MAX_SCRIPTS: usize = 64;
 
 /// Terminal bytes in either direction.
 pub const FRAME_DATA: u8 = 0;
@@ -24,7 +28,25 @@ pub const FRAME_RESIZE: u8 = 1;
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AdminRequest {
     /// A root login shell on a pseudo-terminal.
-    Terminal { rows: u16, cols: u16 },
+    Terminal {
+        rows: u16,
+        cols: u16,
+    },
+    /// Names of the stored scripts.
+    ScriptList {},
+    /// Store a script; `size` bytes follow as data frames.
+    ScriptUpload {
+        name: String,
+        size: u32,
+    },
+    ScriptDelete {
+        name: String,
+    },
+    /// Run a stored script, in the foreground (bounded output) or detached.
+    ScriptRun {
+        name: String,
+        background: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +54,21 @@ pub enum AdminRequest {
 pub enum AdminReply {
     Ready,
     Refused { reason: String },
+    Scripts { files: Vec<String> },
+    Output { log: String, success: bool },
+    Done,
+}
+
+/// Script names as the reference accepts them: `[A-Za-z0-9._-]`, ending in
+/// `.sh` or `.py`, 4 to 128 characters.
+pub fn valid_script_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    (4..=128).contains(&name.len())
+        && (lower.ends_with(".sh") || lower.ends_with(".py"))
+        && !name.starts_with('.')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 /// Writes one JSON line.
@@ -132,6 +169,25 @@ mod tests {
         assert_eq!(kind, FRAME_RESIZE);
         assert_eq!(decode_resize(&payload), Some((40, 120)));
         assert_eq!(read_frame(&mut reader).unwrap(), None);
+    }
+
+    #[test]
+    fn script_names_follow_the_reference_rules() {
+        for good in ["backup.sh", "Report_1.py", "a-b.c.sh"] {
+            assert!(valid_script_name(good), "{good}");
+        }
+        for bad in [
+            "x.sh.txt",
+            ".hidden.sh",
+            "../a.sh",
+            "a b.sh",
+            "sh",
+            "a/b.sh",
+            "",
+        ] {
+            assert!(!valid_script_name(bad), "{bad}");
+        }
+        assert!(!valid_script_name(&format!("{}.sh", "a".repeat(126))));
     }
 
     #[test]
