@@ -188,15 +188,19 @@ keeps an empty, root-only `system-connections` directory, points the nginx
 conditions at the first-boot TLS pair, and fails when a unit that starts
 needs a path the image lacks. Rebuilt image: `h616-sd-20260926-f`
 (`.img.zst` SHA-256
-`882e4726d2c3ba35c31da427de520ecfdfbddd2ad03e446910d863d5667c15d3`). Checked in the image's
+`882e4726d2c3ba35c31da427de520ecfdfbddd2ad03e446910d863d5667c15d3`). The
+operator wrote it to the card and reported on 2026-09-26 that the board
+booted and was reachable. Checked from the network without logging in: the
+web server answered `/api/health` and the capability manifest (so native
+boot started the application), HTTPS served a new certificate generated on
+the first boot (`CN=blikvm`), and SSH asked for the root password. The
+first boot ran before the clock was set, so the certificate starts on
+2026-07-29; the board has no battery-backed clock. Checked in the image's
 root file system: nginx uses the TLS pair the first boot generates; the
 `/boot` initramfs (built on the board into `/var/tmp`, never `/boot`)
 carries the RAW system update step; the first-boot provisioning and the
 boot report units are enabled; every administration switch is off; `fstab`
-names the new partitions by UUID. Waiting for the operator: write the image
-to a card and check that it boots (first boot regenerates the machine
-secrets, the web UI starts at First Setup, root's password is `1234` and
-must be changed at the first SSH login).
+names the new partitions by UUID.
 
 Plan phase E2 2026-09-26 (RAW system update, `docs/design/system-raw-update-v1.md`;
 slot 38, update runtime 0.1.0~dev26):
