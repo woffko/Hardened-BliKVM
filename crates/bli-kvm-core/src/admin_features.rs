@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::control_v2::AdminFeature;
 
-/// Owner-written switch file (root, 0644).
-pub const ADMIN_FEATURES_PATH: &str = "/etc/hardened-blikvm/admin-features.json";
+/// Owner-written switch file (root, 0644) in the owner's state directory,
+/// which the web server can read through the `hardened-blikvm` group.
+pub const ADMIN_FEATURES_PATH: &str = "/var/lib/hardened-blikvm-gadget/admin-features.json";
 const MAX_FILE_BYTES: u64 = 4096;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -16,8 +16,10 @@ privilege boundary of every feature and the reference contract we keep.
 | Remote ISO download | `remote_download` | off | `GET/POST /api/download/image/remote/enabled` |
 | PicoClaw assistant | `picoclaw` | off | runtime install/start in the reference |
 
-- The board owner persists the switches in `/etc/hardened-blikvm/admin-features.json`
-  (root, 0644, atomic replace, unknown keys refused). A missing or unreadable
+- The board owner persists the switches in
+  `/var/lib/hardened-blikvm-gadget/admin-features.json` (root, 0644, atomic
+  replace, unknown keys refused); the directory is readable only by root and
+  the `hardened-blikvm` group, which includes the web server. A missing or unreadable
   file means every switch is off.
 - The owner exposes them through the control protocol v2
   (`AdminFeatureState`, `AdminFeatureUpdate`); only an authenticated session

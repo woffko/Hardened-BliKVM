@@ -253,7 +253,18 @@ fn serve_native(
     );
     drop((client, probes));
     match outcome {
-        Ok(bli_kvm_update_manager::NativeConfirmationOutcome::Confirmed) => Ok(()),
+        Ok(bli_kvm_update_manager::NativeConfirmationOutcome::Confirmed) => {
+            // Keep the updater slot root within its quota: a confirmed update
+            // leaves the previous slot referenced and older ones unreferenced.
+            match supervisor.collect_unreferenced_slots(2) {
+                Ok(collected) => eprintln!(
+                    "updater slots collected after confirmation: {}",
+                    collected.deleted_slot_ids.len()
+                ),
+                Err(error) => eprintln!("updater slot collection failed: {error:?}"),
+            }
+            Ok(())
+        }
         Ok(_) => {
             // A rejected candidate keeps running until the confirmed
             // composition is restored; do that now instead of at next boot.

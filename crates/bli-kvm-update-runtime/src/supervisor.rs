@@ -250,6 +250,15 @@ impl UpdateSupervisor {
         Ok(result?)
     }
 
+    /// Removes updater slots that the journal no longer references, keeping the
+    /// newest `retain` of them for a manual rollback.
+    pub fn collect_unreferenced_slots(
+        &self,
+        retain: usize,
+    ) -> Result<bli_kvm_update_manager::GarbageCollection, UpdateRuntimeError> {
+        Ok(self.manager.garbage_collect(retain)?)
+    }
+
     /// After the confirmed composition has been restored and is running,
     /// archive the restoration so the next activation is admitted without an
     /// operator step. The completion stays in the journal history. Returns the
