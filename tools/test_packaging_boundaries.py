@@ -2141,6 +2141,30 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("hardened-blikvm-system-action-accept", builder)
         self.assertNotIn("hardened-blikvm-system-actions.conf", builder)
 
+    def test_native_application_units_have_no_start_hooks(self) -> None:
+        # The update supervisor starts these units itself and refuses any with
+        # a start hook or a non-simple type (composition_systemd.rs); a hook
+        # here would stop native boot on the next start.
+        for name in (
+            "board-owner",
+            "board-video-proxy",
+            "boardd",
+            "server-current",
+            "server-candidate",
+        ):
+            unit = ROOT / f"packaging/systemd/native/hardened-blikvm-{name}.service"
+            text = unit.read_text()
+            for hook in ("ExecCondition=", "ExecStartPre=", "ExecStartPost="):
+                self.assertNotIn(f"\n{hook}", text, f"{unit.name}: {hook}")
+            self.assertIn("\nType=simple\n", text, unit.name)
+
+    def test_firewall_state_directory_comes_from_tmpfiles(self) -> None:
+        owner = (ROOT / "packaging/systemd/hardened-blikvm-board-owner.service").read_text()
+        self.assertIn("EnvironmentFile=-/etc/hardened-blikvm/firewall.env", owner)
+        self.assertIn("-/run/hardened-blikvm-firewall", owner)
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-firewall.conf").read_text()
+        self.assertIn("d /run/hardened-blikvm-firewall 0700 root root - -", tmpfiles)
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)

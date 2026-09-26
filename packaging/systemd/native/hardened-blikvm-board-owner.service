@@ -25,9 +25,11 @@ EnvironmentFile=-/etc/hardened-blikvm-gadget/atx.env
 EnvironmentFile=-/etc/hardened-blikvm-gadget/system-action.env
 # Reviewed firewall mode configuration (BLI_KVM_FIREWALL_MODE_CONFIG), supplied
 # by the operator; the firewall modes stay off while the file is absent. Their
-# pending journal lives in /run: it survives an owner restart, not a reboot.
+# pending journal lives in /run/hardened-blikvm-firewall, created by the
+# operator's tmpfiles entry (packaging/tmpfiles.d/hardened-blikvm-firewall.conf):
+# it survives an owner restart, not a reboot. No start hook: the update
+# supervisor refuses application units that have one.
 EnvironmentFile=-/etc/hardened-blikvm/firewall.env
-ExecStartPre=+/usr/bin/install -d -o root -g root -m 0700 /run/hardened-blikvm-firewall
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
 Environment=BLI_KVM_BOARD_PROFILE=1
 Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json

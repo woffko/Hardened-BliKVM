@@ -68,7 +68,10 @@ do not claim Tailscale preservation from these rules alone.
   HTTPS port and probe (server name and the device certificate as its CA),
   the syslog port and the local-only WebRTC media range.
 - The pending journal and frozen configuration live in
-  `/run/hardened-blikvm-firewall` (created by the owner unit, 0700): they
+  `/run/hardened-blikvm-firewall` (0700, created by the operator's tmpfiles
+  entry `packaging/tmpfiles.d/hardened-blikvm-firewall.conf`; the owner unit
+  cannot create it with a start hook, because the update supervisor refuses
+  application units with one): they
   survive an owner restart but not a reboot, and neither do the kernel rules.
   The reference re-applies its saved mode at boot; the owner therefore keeps
   the last confirmed mode in `/var/lib/hardened-blikvm-gadget/firewall-mode.json`
