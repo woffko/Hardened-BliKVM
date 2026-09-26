@@ -190,7 +190,8 @@ needs a path the image lacks. Rebuilt image: `h616-sd-20260926-f`
 (`.img.zst` SHA-256
 `882e4726d2c3ba35c31da427de520ecfdfbddd2ad03e446910d863d5667c15d3`). The
 operator wrote it to the card and reported on 2026-09-26 that the board
-booted and was reachable. Checked from the network without logging in: the
+booted and was reachable, completed First Setup, and confirmed that the
+built-in status panel works. Checked from the network without logging in: the
 web server answered `/api/health` and the capability manifest (so native
 boot started the application), HTTPS served a new certificate generated on
 the first boot (`CN=blikvm`), and SSH asked for the root password. The
