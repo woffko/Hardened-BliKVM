@@ -364,13 +364,23 @@ async fn board_state(
     if let Some(path) = std::env::var_os("BLI_KVM_FIREWALL_MODE_CONFIG") {
         let boot_id = crate::boot_binding_from_system()
             .map_err(|error| io::Error::other(error.to_string()))?;
-        let runtime = crate::firewall_runtime::ModeRuntime::open_configured(
+        // An unusable configuration keeps the firewall modes off instead of
+        // stopping the owner, which the whole board depends on.
+        match crate::firewall_runtime::ModeRuntime::open_configured(
             std::path::PathBuf::from(crate::firewall_settings::FIREWALL_STATE_DIR),
             std::path::Path::new(&path),
             boot_id,
-        )
-        .map_err(io::Error::other)?;
-        firewall.attach_mode_runtime(Arc::new(std::sync::Mutex::new(runtime)));
+        ) {
+            Ok(mut runtime) => {
+                // Kernel rules do not survive a reboot; the confirmed mode does.
+                runtime.persist_to(
+                    std::path::PathBuf::from(crate::firewall_runtime::PERSISTED_MODE_PATH),
+                    crate::firewall_runtime::unix_millis(),
+                );
+                firewall.attach_mode_runtime(Arc::new(std::sync::Mutex::new(runtime)));
+            }
+            Err(error) => eprintln!("firewall modes are off: {error}"),
+        }
     } else {
         let directory = std::path::PathBuf::from(crate::firewall_settings::FIREWALL_STATE_DIR);
         let mut store = crate::firewall_confirmation::PendingFileStore::new(&directory)

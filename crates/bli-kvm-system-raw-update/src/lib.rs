@@ -44,6 +44,8 @@ const BUFFER: usize = 1024 * 1024;
 pub const CARRIED_STATE: &[&str] = &[
     "etc/hardened-blikvm",
     "etc/hardened-blikvm-gadget",
+    "etc/ssh/ssh_host_dsa_key",
+    "etc/ssh/ssh_host_dsa_key.pub",
     "etc/ssh/ssh_host_ecdsa_key",
     "etc/ssh/ssh_host_ecdsa_key.pub",
     "etc/ssh/ssh_host_ed25519_key",

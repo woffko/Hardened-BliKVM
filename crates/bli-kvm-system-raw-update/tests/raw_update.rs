@@ -830,3 +830,18 @@ fn the_bundle_builder_output_stages_and_writes() {
     ));
     assert!(read_record(&staging2).unwrap().is_none());
 }
+
+#[test]
+fn every_ssh_host_key_type_is_carried() {
+    // The image's first-boot provisioning creates any missing host key, so a
+    // type left out would be replaced silently by the update.
+    for kind in ["dsa", "ecdsa", "ed25519", "rsa"] {
+        for suffix in ["", ".pub"] {
+            let path = format!("etc/ssh/ssh_host_{kind}_key{suffix}");
+            assert!(
+                bli_kvm_system_raw_update::CARRIED_STATE.contains(&path.as_str()),
+                "{path}"
+            );
+        }
+    }
+}

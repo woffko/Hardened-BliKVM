@@ -21,6 +21,11 @@ EnvironmentFile=-/etc/hardened-blikvm-gadget/atx.env
 # BLI_KVM_SYSTEM_ACTION_REBOOT_COMMAND, BLI_KVM_SYSTEM_ACTION_SHUTDOWN_COMMAND).
 # Nothing is executed while the file is absent.
 EnvironmentFile=-/etc/hardened-blikvm-gadget/system-action.env
+# Reviewed firewall mode configuration (BLI_KVM_FIREWALL_MODE_CONFIG), supplied
+# by the operator; the firewall modes stay off while the file is absent. Their
+# pending journal lives in /run: it survives an owner restart, not a reboot.
+EnvironmentFile=-/etc/hardened-blikvm/firewall.env
+ExecStartPre=+/usr/bin/install -d -o root -g root -m 0700 /run/hardened-blikvm-firewall
 Environment=BLI_KVM_CONTROL_SOCKET=/run/hardened-blikvm-gadget/control.sock
 Environment=BLI_KVM_BOARD_PROFILE=1
 Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json
@@ -80,7 +85,7 @@ IPAddressDeny=any
 # The owner holds the privileged system-action journal, and the armed profile
 # must persist a record before the reboot it triggers, so the store
 # directory is writable together with the gadget and network surfaces.
-ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /var/lib/hardened-blikvm-video /etc/resolv.conf /etc/hosts /etc/systemd/resolved.conf /etc/NetworkManager/system-connections /etc/hardened-blikvm
+ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /var/lib/hardened-blikvm-video /etc/resolv.conf /etc/hosts /etc/systemd/resolved.conf /etc/NetworkManager/system-connections /etc/hardened-blikvm -/run/hardened-blikvm-firewall
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

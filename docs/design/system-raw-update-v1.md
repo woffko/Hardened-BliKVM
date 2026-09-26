@@ -109,7 +109,9 @@ about 30 minutes; the web page says so and asks to keep power connected.
 
 ## Carried state
 
-`/etc/hardened-blikvm`, `/etc/hardened-blikvm-gadget`, the SSH host keys,
+`/etc/hardened-blikvm`, `/etc/hardened-blikvm-gadget`, the SSH host keys
+(DSA, ECDSA, Ed25519 and RSA: the image's first-boot provisioning creates any
+that is missing, so a key left out is silently replaced),
 `/etc/machine-id`, `/etc/hostname`, `/etc/hosts`,
 `/etc/NetworkManager/system-connections`, `/root/.ssh`, the
 `/var/lib/hardened-blikvm*` state (accounts, slots, exec store, switches,

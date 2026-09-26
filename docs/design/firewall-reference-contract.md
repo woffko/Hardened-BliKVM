@@ -56,6 +56,28 @@ do not claim Tailscale preservation from these rules alone.
 - Reference shell commands that suppress errors or reset global filter policies
   are not safe implementation templates for the native owner.
 
+## Device deployment (plan phase D)
+
+- Activation is one operator-supplied file, `/etc/hardened-blikvm/firewall.env`
+  (root, directory 0700), read by the board owner and both native server
+  units through `EnvironmentFile=-`: `BLI_KVM_FIREWALL_MODE_CONFIG` names the
+  reviewed mode configuration and `BLI_KVM_FIREWALL_MODES=1` enables the API.
+  Without the file the modes stay off; an unusable configuration is logged
+  and also leaves them off instead of stopping the owner.
+- The mode configuration (`/etc/hardened-blikvm/firewall-mode.json`) holds the
+  HTTPS port and probe (server name and the device certificate as its CA),
+  the syslog port and the local-only WebRTC media range.
+- The pending journal and frozen configuration live in
+  `/run/hardened-blikvm-firewall` (created by the owner unit, 0700): they
+  survive an owner restart but not a reboot, and neither do the kernel rules.
+  The reference re-applies its saved mode at boot; the owner therefore keeps
+  the last confirmed mode in `/var/lib/hardened-blikvm-gadget/firewall-mode.json`
+  (a mode needing no confirmation is kept at once, a restrictive one when the
+  operator confirms it) and, on start with no owned table and no pending
+  change, re-applies it as a journaled change without the HTTPS preflight
+  (the front may still be starting; the mode was confirmed with it running).
+  A failed restore rolls back to the open baseline.
+
 ## Remaining implementation and acceptance gates
 
 1. Typed four-mode control request/status, explicit confirmation identity and

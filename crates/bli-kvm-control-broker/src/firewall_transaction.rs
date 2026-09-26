@@ -163,6 +163,44 @@ impl<S: PendingStore, E: ModeExecutor> FirewallTransaction<S, E> {
         Ok(())
     }
 
+    /// Re-applies a mode the operator confirmed before a reboot, when the
+    /// kernel holds no owned table (rules do not survive a reboot). The change
+    /// is journaled like any other, so a crash during the restore rolls back to
+    /// the open baseline; the HTTPS preflight is skipped because the web front
+    /// may still be starting and the mode was confirmed with it running.
+    /// Returns whether a restore happened.
+    pub fn restore(&mut self, mode: FirewallMode, now_ms: u64) -> Result<bool, TransactionError> {
+        if self.recovering || self.journal.pending().is_some() || mode == FirewallMode::Baseline {
+            return Ok(false);
+        }
+        self.executor
+            .admit_change()
+            .map_err(|_| TransactionError::ConfigurationUnavailable)?;
+        if self.current_mode()? != FirewallMode::Baseline {
+            return Ok(false);
+        }
+        let mut operation_id = self.boot_id;
+        operation_id[0] ^= 0x5a;
+        let session_binding = [0xa5; 32];
+        let pending = PendingChange::prepare(
+            operation_id,
+            session_binding,
+            self.boot_id,
+            FirewallMode::Baseline,
+            mode,
+            now_ms,
+        )?;
+        self.journal.stage(pending)?;
+        if let Err(error) = self.apply_verified(mode) {
+            let _ = self.rollback(operation_id);
+            return Err(error);
+        }
+        self.journal.mark_applied(operation_id)?;
+        self.journal
+            .confirm(operation_id, session_binding, self.boot_id, now_ms)?;
+        Ok(true)
+    }
+
     /// Invoke on the owner's independent timer, not from browser traffic only.
     pub fn tick(&mut self, now_ms: u64) -> Result<(), TransactionError> {
         let Some(pending) = self.journal.pending() else {
@@ -265,6 +303,37 @@ mod tests {
             calls: vec![],
         };
         FirewallTransaction::open(store, executor, [3; 16]).unwrap()
+    }
+
+    #[test]
+    fn a_confirmed_mode_is_restored_only_over_an_empty_kernel_state() {
+        let mut tx = fixture();
+        tx.executor.current = FirewallMode::Baseline;
+        tx.executor.fail_preflight = true;
+        assert_eq!(tx.restore(FirewallMode::Restricted, 100), Ok(true));
+        assert_eq!(tx.executor.current, FirewallMode::Restricted);
+        assert!(tx.pending().is_none());
+        // Nothing to do over an owned table, a pending change or for baseline.
+        assert_eq!(tx.restore(FirewallMode::Paranoid, 200), Ok(false));
+        let mut tx = fixture();
+        tx.executor.current = FirewallMode::Baseline;
+        assert_eq!(tx.restore(FirewallMode::Baseline, 100), Ok(false));
+        assert!(tx.executor.calls.is_empty());
+        tx.request([1; 16], [2; 32], FirewallMode::Paranoid, 100)
+            .unwrap();
+        assert_eq!(tx.restore(FirewallMode::Moderate, 200), Ok(false));
+    }
+
+    #[test]
+    fn a_failed_restore_returns_to_the_open_baseline() {
+        let mut tx = fixture();
+        tx.executor.current = FirewallMode::Baseline;
+        tx.executor.mismatch = true;
+        assert_eq!(
+            tx.restore(FirewallMode::Paranoid, 100),
+            Err(TransactionError::ReadBackMismatch)
+        );
+        assert!(tx.pending().is_none());
     }
 
     #[test]

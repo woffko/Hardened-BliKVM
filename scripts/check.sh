@@ -126,6 +126,10 @@ node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
 node --check tools/playwright/gui_parity_probe.mjs
 node --check tools/playwright/raw_system_update_probe.mjs
+node --check tools/playwright/raw_system_update_device_test.mjs
+node --check tools/playwright/firewall_modes_device_probe.mjs
+node --check tools/playwright/terminal_run.mjs
+node --check tools/playwright/terminal_put.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
 node --check tools/playwright/restricted_power_probe.mjs
 node --check tools/playwright/restricted_control_gui_probe.mjs

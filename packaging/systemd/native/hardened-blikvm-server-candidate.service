@@ -18,6 +18,9 @@ Group=hardened-blikvm
 UMask=0077
 StateDirectory=hardened-blikvm
 StateDirectoryMode=0700
+# The firewall mode surface (BLI_KVM_FIREWALL_MODES=1) follows the owner's
+# reviewed configuration in the same operator-supplied file.
+EnvironmentFile=-/etc/hardened-blikvm/firewall.env
 Environment=BLI_KVM_BIND=127.0.0.1:18080
 Environment=BLI_KVM_UPDATE_NATIVE_ADMISSION=1
 Environment=BLI_KVM_ADMIN_SOCKET=/run/hardened-blikvm-admin/admin.sock

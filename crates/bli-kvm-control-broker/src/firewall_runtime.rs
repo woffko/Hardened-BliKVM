@@ -12,9 +12,54 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// The mode the operator last confirmed, kept across reboots in the owner's
+/// state directory; the kernel rules and the pending journal under /run are not.
+pub const PERSISTED_MODE_PATH: &str = "/var/lib/hardened-blikvm-gadget/firewall-mode.json";
+
 pub type SharedModeRuntime = Arc<Mutex<ModeRuntime>>;
 pub struct ModeRuntime {
     transaction: FirewallTransaction<PendingFileStore, NftModeExecutor>,
+    persisted: Option<PathBuf>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedMode {
+    mode: bli_kvm_core::FirewallMode,
+}
+
+/// Reads the persisted mode; anything but a small, well-formed file is none.
+pub fn read_persisted_mode(path: &std::path::Path) -> Option<bli_kvm_core::FirewallMode> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > 256 {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<PersistedMode>(&text)
+        .ok()
+        .map(|stored| stored.mode)
+}
+
+fn write_persisted_mode(
+    path: &std::path::Path,
+    mode: bli_kvm_core::FirewallMode,
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let text = serde_json::to_string(&PersistedMode { mode }).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.new");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(&temporary)
+        .map_err(|error| error.to_string())?;
+    file.write_all(text.as_bytes())
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all())
+        .map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, path).map_err(|error| error.to_string())
 }
 
 impl ModeRuntime {
@@ -43,7 +88,10 @@ impl ModeRuntime {
         let transaction =
             FirewallTransaction::open(PendingFileStore::new(&directory)?, executor, boot_id)
                 .map_err(|error| format!("{error:?}"))?;
-        Ok(Self { transaction })
+        Ok(Self {
+            transaction,
+            persisted: None,
+        })
     }
     pub fn open(
         directory: PathBuf,
@@ -58,7 +106,33 @@ impl ModeRuntime {
         let transaction =
             FirewallTransaction::open(PendingFileStore::new(&directory)?, executor, boot_id)
                 .map_err(|error| format!("{error:?}"))?;
-        Ok(Self { transaction })
+        Ok(Self {
+            transaction,
+            persisted: None,
+        })
+    }
+
+    /// Keeps confirmed modes in `path` and, when the kernel holds no owned
+    /// table (after a reboot), re-applies the mode stored there.
+    pub fn persist_to(&mut self, path: PathBuf, now_ms: u64) {
+        if let Some(mode) = read_persisted_mode(&path) {
+            match self.transaction.restore(mode, now_ms) {
+                Ok(true) => eprintln!("firewall: restored the confirmed {mode:?} mode"),
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("firewall: restoring the confirmed {mode:?} mode failed: {error:?}")
+                }
+            }
+        }
+        self.persisted = Some(path);
+    }
+
+    fn remember(&self, mode: bli_kvm_core::FirewallMode) {
+        if let Some(path) = &self.persisted
+            && let Err(error) = write_persisted_mode(path, mode)
+        {
+            eprintln!("firewall: the confirmed mode was not persisted: {error}");
+        }
     }
 
     pub fn tick(&mut self, now_ms: u64) -> Result<(), TransactionError> {
@@ -81,21 +155,38 @@ impl ModeRuntime {
         {
             return reject(ControlRejectionCode::InvalidState);
         }
-        let result = match request {
-            PlatformControlRequestV2::FirewallModeChange { request } => self.transaction.request(
-                request.operation_id,
-                request.session_binding,
-                request.mode,
-                now_ms,
+        // A mode is remembered once confirmed: at once when it needs no
+        // confirmation, otherwise when the operator confirms it.
+        let (result, confirmed) = match request {
+            PlatformControlRequestV2::FirewallModeChange { request } => (
+                self.transaction.request(
+                    request.operation_id,
+                    request.session_binding,
+                    request.mode,
+                    now_ms,
+                ),
+                (!request.mode.requires_confirmation()).then_some(request.mode),
             ),
             PlatformControlRequestV2::FirewallModeConfirm { request } => {
-                self.transaction
-                    .confirm(request.operation_id, request.session_binding, now_ms)
+                let requested = self
+                    .transaction
+                    .pending()
+                    .map(crate::firewall_confirmation::PendingChange::requested_mode);
+                (
+                    self.transaction
+                        .confirm(request.operation_id, request.session_binding, now_ms),
+                    requested,
+                )
             }
             _ => unreachable!(),
         };
         match result {
-            Ok(()) => ControlResponse::Applied,
+            Ok(()) => {
+                if let Some(mode) = confirmed {
+                    self.remember(mode);
+                }
+                ControlResponse::Applied
+            }
             Err(
                 TransactionError::RecoveryRequired
                 | TransactionError::Journal(
@@ -126,6 +217,28 @@ pub fn unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn confirmed_modes_persist_and_malformed_files_read_as_none() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("firewall-mode.json");
+        assert_eq!(read_persisted_mode(&path), None);
+        write_persisted_mode(&path, bli_kvm_core::FirewallMode::Restricted).unwrap();
+        assert_eq!(
+            read_persisted_mode(&path),
+            Some(bli_kvm_core::FirewallMode::Restricted)
+        );
+        for bad in [
+            "{\"mode\":\"open\"}",
+            "{\"mode\":\"moderate\",\"x\":1}",
+            "junk",
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            assert_eq!(read_persisted_mode(&path), None);
+        }
+        std::fs::write(&path, " ".repeat(300)).unwrap();
+        assert_eq!(read_persisted_mode(&path), None);
+    }
+
     #[test]
     fn missing_launch_configuration_keeps_pending_recovery_available() {
         use crate::firewall_confirmation::{PendingChange, PendingStore};
