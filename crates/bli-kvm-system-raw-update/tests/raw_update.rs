@@ -294,6 +294,16 @@ fn a_new_root_that_never_reports_itself_is_replaced_by_the_backup() {
     let record = read_record(&fixture.staging).unwrap().unwrap();
     assert_eq!(record.phase, Phase::RolledBack);
     assert!(record.message.contains("did not come up"));
+    // Nothing staged is left once the backup is the root again.
+    for file in [
+        BACKUP_FILE,
+        "payload.img.zst",
+        "state.tar",
+        "fstab",
+        "shadow",
+    ] {
+        assert!(!fixture.staging.join(file).exists(), "{file}");
+    }
 }
 
 #[test]
@@ -859,4 +869,28 @@ fn the_network_identity_is_carried() {
             "{path}"
         );
     }
+}
+
+#[test]
+fn leftovers_of_a_finished_update_can_be_discarded() {
+    let fixture = fixture(3);
+    let mut tools = FakeTools::default();
+    stage_it(&fixture, &mut tools).unwrap();
+    // Files an older boot step left behind after a rollback.
+    let mut record = read_record(&fixture.staging).unwrap().unwrap();
+    record.phase = Phase::RolledBack;
+    bli_kvm_system_raw_update::write_record(&fixture.staging, &record).unwrap();
+    fs::write(fixture.staging.join(BACKUP_FILE), b"old root").unwrap();
+    cancel(&fixture.staging).unwrap();
+    for file in [
+        BACKUP_FILE,
+        "payload.img.zst",
+        "state.tar",
+        "fstab",
+        "shadow",
+    ] {
+        assert!(!fixture.staging.join(file).exists(), "{file}");
+    }
+    let record = read_record(&fixture.staging).unwrap().unwrap();
+    assert_eq!(record.phase, Phase::RolledBack);
 }

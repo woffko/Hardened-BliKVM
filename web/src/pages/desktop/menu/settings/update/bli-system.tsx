@@ -233,6 +233,14 @@ export const BliSystemUpdate = () => {
               </Button>
             </div>
           )}
+          {['rolled_back', 'failed'].includes(phase) && (
+            <Button
+              loading={busy}
+              onClick={() => void run(api.cancelSystemUpdate, text('rawDiscarded'))}
+            >
+              {text('rawCancel')}
+            </Button>
+          )}
           {phase === 'booted' && (
             <div className="flex flex-wrap gap-2">
               <Button

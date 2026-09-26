@@ -470,6 +470,7 @@ fn apply(
         record.phase = Phase::Failed;
         record.message = format!("not written: {error}");
         write_record(staging, record)?;
+        discard(staging);
         return Ok(BootAction::Continue);
     }
     // Back up the whole partition and prove the backup before touching it.
@@ -492,10 +493,10 @@ fn apply(
     let (backup_size, backup_sha256) = match backup {
         Ok(backup) => backup,
         Err(error) => {
-            let _ = fs::remove_file(staging.join(BACKUP_FILE));
             record.phase = Phase::Failed;
             record.message = format!("not written: the backup failed: {error}");
             write_record(staging, record)?;
+            discard(staging);
             return Ok(BootAction::Continue);
         }
     };
@@ -537,7 +538,23 @@ fn restore_backup(
     write_backup(tools, record, staging, device)?;
     record.phase = Phase::RolledBack;
     write_record(staging, record)?;
+    // The backup is the root again; nothing staged can be used any more.
+    discard(staging);
     Ok(BootAction::Reboot)
+}
+
+/// Removes the staged payload, the backup, the carried state and the copies
+/// of the device's fstab and shadow once no step can use them.
+fn discard(staging: &Path) {
+    for file in [
+        BACKUP_FILE,
+        PAYLOAD_FILE,
+        STATE_FILE,
+        FSTAB_FILE,
+        SHADOW_FILE,
+    ] {
+        let _ = fs::remove_file(staging.join(file));
+    }
 }
 
 /// The new root came up healthy.
@@ -608,18 +625,24 @@ pub fn minimum_sequence(staging: &Path) -> u64 {
 }
 
 /// Drops a staged update that has not been written yet.
+/// Also removes what a finished update left behind (rolled back or failed,
+/// for example by an older boot step that did not clean up).
 pub fn cancel(staging: &Path) -> Result<()> {
     let mut record = read_record(staging)?.ok_or(UpdateError::NothingToDo)?;
-    if record.phase != Phase::Staged {
-        return Err(UpdateError::NothingToDo);
+    match record.phase {
+        Phase::Staged => {
+            discard(staging);
+            record.phase = Phase::Failed;
+            record.message = "the staged update was cancelled".into();
+            write_record(staging, &record)?;
+            Ok(())
+        }
+        Phase::RolledBack | Phase::Failed => {
+            discard(staging);
+            Ok(())
+        }
+        _ => Err(UpdateError::NothingToDo),
     }
-    for file in [PAYLOAD_FILE, STATE_FILE, FSTAB_FILE, SHADOW_FILE] {
-        let _ = fs::remove_file(staging.join(file));
-    }
-    record.phase = Phase::Failed;
-    record.message = "the staged update was cancelled".into();
-    write_record(staging, &record)?;
-    Ok(())
 }
 
 /// Rewrites the data and media lines of `new_fstab` with the device's own

@@ -93,7 +93,11 @@ the repository.
    loader reads the new kernel and configuration. Any failure before the
    write leaves the old root untouched (`failed`); a failure during or after
    the write, or power lost while `writing`, restores the backup the same
-   verified way (`rolled_back`).
+   verified way (`rolled_back`). Once the backup is the root again, or
+   nothing was written, the step removes the payload, the backup, the carried
+   state and the copies of `fstab` and `shadow`; "Discard"
+   (`POST /api/system-update/cancel`, allowed while the switch is off) also
+   removes what an older boot step left behind.
 6. First boots: every boot of the new root counts an attempt in the
    initramfs; `hardened-blikvm-system-update-booted.service` marks the record
    `booted` once `https://127.0.0.1/api/health` answers. A new root that is

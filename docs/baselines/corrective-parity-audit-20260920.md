@@ -340,6 +340,12 @@ slot 38, update runtime 0.1.0~dev26):
     leaves out and the carried-state list did not name. It is carried from
     this commit on (update runtime 0.1.0~dev29); the next raw update on a
     board shows it on hardware.
+  - Also found at the end: after a rollback the staged payload, the backup,
+    the carried state and the copy of `/etc/shadow` stayed on the data
+    partition (2.8 GB), because only a confirmation removed them. The boot
+    step now removes them after a rollback or a failure, and "Discard" also
+    removes what an older boot step left behind (update runtime
+    0.1.0~dev30).
   - Found on the way: a reboot through the system action stays pending until
     the post-boot acceptance closes it, and the record from the phase B KVM
     reboot had never been accepted, so the image carried it and every further

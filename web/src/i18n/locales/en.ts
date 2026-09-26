@@ -895,7 +895,7 @@ const en = {
           rawUploading: 'Uploading the system bundle...',
           rawVerifying: 'Verifying the bundle and saving the device settings...',
           rawCancel: 'Discard',
-          rawDiscarded: 'The staged system update was discarded.',
+          rawDiscarded: 'The system update files were removed from the data partition.',
           rawInstallDesc:
             'The board reboots and writes the new system before it starts. This can take up to 30 minutes; keep power connected. Accounts, keys, network settings and switches are carried over.',
           rawRollbackDesc:
