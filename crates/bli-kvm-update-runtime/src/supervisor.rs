@@ -250,6 +250,21 @@ impl UpdateSupervisor {
         Ok(result?)
     }
 
+    /// After the confirmed composition has been restored and is running,
+    /// archive the restoration so the next activation is admitted without an
+    /// operator step. The completion stays in the journal history. Returns the
+    /// new generation, or None when there was nothing to archive.
+    pub fn archive_native_completion(&self) -> Result<Option<u64>, UpdateRuntimeError> {
+        let inspection = self.manager.inspect_recovery()?;
+        if inspection.completion.is_none()
+            || inspection.pending.is_some()
+            || inspection.rollback_intent.is_some()
+        {
+            return Ok(None);
+        }
+        self.migrate_native_idle(inspection.generation).map(Some)
+    }
+
     fn request_confirmed_apply(&self) -> Result<(), UpdateRuntimeError> {
         let status = self.manager.status()?;
         if status.pending.is_some() || status.active_slot_id != status.confirmed_slot_id {
@@ -1747,9 +1762,10 @@ mod tests {
             )
             .unwrap();
         assert!(supervisor.challenges.status().unwrap().is_some());
-        let generation = supervisor
-            .migrate_native_idle(completion.completion_generation)
-            .unwrap();
+        // The restored composition is archived without an operator step, and
+        // only once.
+        let generation = supervisor.archive_native_completion().unwrap().unwrap();
+        assert_eq!(supervisor.archive_native_completion().unwrap(), None);
         assert!(supervisor.challenges.status().unwrap().is_none());
         let after = supervisor.manager.inspect_recovery().unwrap();
         assert_eq!(after.generation, generation);

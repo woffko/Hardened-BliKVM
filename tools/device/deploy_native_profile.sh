@@ -2,7 +2,7 @@
 # Switch an installed BliKVM from the legacy update profile to the native
 # execution-helper profile. Runs on the device as root, from a staging
 # directory that contains:
-#   update.deb                  hardened-blikvm-update-runtime 0.1.0~dev18
+#   update.deb                  hardened-blikvm-update-runtime 0.1.0~dev19
 #   native/*.service            rendered native unit replacements
 #   exec-helper.board.json      reviewed board requirements for readiness
 # Usage: deploy_native_profile.sh prepare|cutover|rollback STAGING_DIR
@@ -148,6 +148,7 @@ cutover() {
   systemctl daemon-reload
   supervisor migrate-native-idle
   systemctl enable hardened-blikvm-update-native-boot.service
+  systemctl enable hardened-blikvm-hid-gadget.service
   boot
 }
 
@@ -162,7 +163,7 @@ boot() {
 
 rollback() {
   [ -e "$backup/complete" ] || { echo "no backup at $backup" >&2; exit 1; }
-  systemctl disable --now hardened-blikvm-update-native-boot.service hardened-blikvm-update-exec.socket 2>/dev/null || true
+  systemctl disable --now hardened-blikvm-update-native-boot.service hardened-blikvm-update-exec.socket hardened-blikvm-hid-gadget.service 2>/dev/null || true
   systemctl unmask $legacy 2>/dev/null || true
   systemctl stop $managed 2>/dev/null || true
   for file in "$staging"/native/*.service; do

@@ -389,6 +389,9 @@ fn boot_native_receipt(supervisor: &UpdateSupervisor) -> Result<Value, Superviso
             "result": "ready",
             "generation": generation,
             "slotId": observation.slot_id,
+            // A restored composition is archived once it runs, so a GUI update
+            // is admitted again without an operator step.
+            "archivedGeneration": supervisor.archive_native_completion()?,
         }),
         NativeBootOutcome::AwaitingHealth(pending) => json!({
             "command": "boot_native",

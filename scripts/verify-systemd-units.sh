@@ -151,7 +151,8 @@ systemd-analyze verify --root="$native_root" \
   hardened-blikvm-update-activation@.service \
   hardened-blikvm-update-exec.socket \
   hardened-blikvm-update-exec@.service \
-  hardened-blikvm-update-native-boot.service
+  hardened-blikvm-update-native-boot.service \
+  hardened-blikvm-hid-gadget.service
 for unit in "$project_root"/packaging/systemd/native/*.service; do
   if grep -Eq 'update-(recover|confirm)|health-reporter|^\[Install\]' "$unit"; then
     echo "native unit keeps legacy update authority or install links: $unit" >&2
@@ -190,6 +191,7 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
   "$project_root/packaging/systemd/hardened-blikvm-update-native-boot.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-hid-gadget.service" \
   >/dev/null
 # Root boundaries with required capabilities: public TLS termination and the
 # native execution helper (systemd control, DAC and ptrace identity reads).

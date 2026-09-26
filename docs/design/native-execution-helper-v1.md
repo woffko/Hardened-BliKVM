@@ -243,6 +243,17 @@ Hashing the updater file stays a consistency check, as explained above.
   78), so every native activation was rejected with a bare `Controller`
   readiness error. The budget is 160, and the pipeline test asserts that a
   complete attempt fits it.
+- Update package 0.1.0~dev19:
+  - `hardened-blikvm-hid-gadget.service` runs the protected broker with
+    `--prepare-hid-gadget` before the owner and native boot. systemd resolves
+    the owner's `DeviceAllow=/dev/hidgN` paths when the owner starts, and after
+    a cold boot the nodes did not exist yet, so HID stayed denied until the
+    owner was restarted. A slot whose broker predates the flag fails the
+    oneshot harmlessly (missing owner configuration) and HID behaves as before.
+  - Native boot and the activation worker archive a completed restoration once
+    the confirmed composition runs (`archive_native_completion`), so a GUI
+    update is admitted again without a manual `migrate-native-idle`. The
+    completion remains in the journal history.
 
 ### Deployment prerequisites (not done)
 

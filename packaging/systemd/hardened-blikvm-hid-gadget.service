@@ -1,0 +1,56 @@
+[Unit]
+Description=Hardened BliKVM USB HID gadget functions before the board owner
+Documentation=https://github.com/woffko/Hardened-BliKVM
+# The owner's DeviceAllow=/dev/hidgN entries are resolved when the owner unit
+# starts; after a cold boot the nodes must already exist or HID stays denied
+# until the owner restarts. Native profile only: the binary is the owner's own
+# protected copy.
+After=sys-kernel-config.mount
+Before=hardened-blikvm-board-owner.service hardened-blikvm-update-native-boot.service
+ConditionPathExists=/sys/kernel/config/usb_gadget
+ConditionPathExists=/var/lib/hardened-blikvm-exec/current/libexec/bli-kvm-control-broker
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+UMask=0077
+Environment=BLI_KVM_GADGET_MEDIA_JOURNAL=/var/lib/hardened-blikvm-gadget/journal.json
+Environment=BLI_KVM_GADGET_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
+Environment=BLI_KVM_GADGET_CONFIGFS=/sys/kernel/config/usb_gadget
+Environment=BLI_KVM_GADGET_IMAGES=/var/lib/hardened-blikvm-gadget/images
+Environment=BLI_KVM_GADGET_UDC=musb-hdrc.2.auto
+Environment=BLI_KVM_GADGET_SERIAL_FILE=/etc/hardened-blikvm-gadget/serial
+ExecStart=/var/lib/hardened-blikvm-exec/current/libexec/bli-kvm-control-broker --prepare-hid-gadget
+TimeoutStartSec=15s
+
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=no
+ProtectProc=invisible
+ProtectSystem=strict
+ReadWritePaths=/sys/kernel/config/usb_gadget
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

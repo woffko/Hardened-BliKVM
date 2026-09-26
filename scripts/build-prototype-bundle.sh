@@ -111,6 +111,7 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-update-exec.socket \
   packaging/systemd/hardened-blikvm-update-exec@.service \
   packaging/systemd/hardened-blikvm-update-native-boot.service \
+  packaging/systemd/hardened-blikvm-hid-gadget.service \
   "$stage/share/systemd/"
 install -d -m 0755 "$stage/share/systemd/native"
 install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"

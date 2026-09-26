@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev18"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev19"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -114,6 +114,10 @@ FILE_MAP.update({
     "share/systemd/hardened-blikvm-update-native-boot.service": (
         "lib/systemd/system/hardened-blikvm-update-native-boot.service"
     ),
+    # dev19: HID gadget functions before the owner (cold-boot HID access).
+    "share/systemd/hardened-blikvm-hid-gadget.service": (
+        "lib/systemd/system/hardened-blikvm-hid-gadget.service"
+    ),
 })
 NATIVE_PROFILE_UNITS = (
     "board-owner", "board-video-proxy", "boardd", "server-current", "server-candidate",
@@ -155,6 +159,7 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-update-exec.socket": 11,
         "hardened-blikvm-update-exec@.service": 11,
         "hardened-blikvm-update-native-boot.service": 11,
+        "hardened-blikvm-hid-gadget.service": 19,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,

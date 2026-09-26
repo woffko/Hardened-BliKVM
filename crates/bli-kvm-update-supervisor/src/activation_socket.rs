@@ -284,9 +284,16 @@ fn restore_after_failure(supervisor: &UpdateSupervisor, operation: Option<[u8; 1
         let deadline = Instant::now() + Duration::from_secs(45);
         let mut client = ExecutionClient::connect(Path::new(EXECUTION_SOCKET), deadline)?;
         let probes = client.clone();
-        supervisor.boot_native_composition(generation, &mut client, deadline, |unit, _, _| {
-            probes.probe(unit)
-        })?;
+        let outcome = supervisor.boot_native_composition(
+            generation,
+            &mut client,
+            deadline,
+            |unit, _, _| probes.probe(unit),
+        )?;
+        drop((client, probes));
+        if matches!(outcome, bli_kvm_update_runtime::NativeBootOutcome::Ready(_)) {
+            supervisor.archive_native_completion()?;
+        }
         Ok(())
     })();
     match result {
