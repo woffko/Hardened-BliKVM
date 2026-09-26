@@ -31,6 +31,9 @@ impl Session {
     }
 }
 
+/// Idle auto-lock the reference applies until the operator changes it.
+pub const DEFAULT_LOCK_AFTER_SECONDS: u64 = 3600;
+
 #[derive(Debug, Default)]
 pub struct SessionStore {
     sessions: RwLock<HashMap<String, Session>>,
@@ -42,8 +45,12 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
+    /// Starts with the reference default idle auto-lock of one hour.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            lock_after_seconds: RwLock::new(Some(DEFAULT_LOCK_AFTER_SECONDS)),
+            ..Self::default()
+        }
     }
 
     pub async fn issue(&self, username: &str, ttl_secs: u64) -> Session {

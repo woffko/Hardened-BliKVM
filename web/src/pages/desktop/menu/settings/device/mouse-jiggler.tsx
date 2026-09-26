@@ -19,14 +19,16 @@ export const MouseJiggler = ({ readOnly = false }: { readOnly?: boolean }) => {
       .getMouseJiggler()
       .then((rsp) => {
         if (cancelled) return;
+        // The owner reports `disable` while off; `relative` is the only mode
+        // it can run, so that is what a switch-on requests.
         if (
           rsp.code !== 0 ||
           typeof rsp.data?.enabled !== 'boolean' ||
-          rsp.data?.mode !== 'relative'
+          (rsp.data?.mode !== 'relative' && rsp.data?.mode !== 'disable')
         )
           throw new Error('Failed to read supported mouse jiggler state');
         setEnabled(rsp.data.enabled);
-        setMode(rsp.data.mode);
+        setMode('relative');
         setLoaded(true);
       })
       .catch((err: unknown) => {
@@ -61,13 +63,13 @@ export const MouseJiggler = ({ readOnly = false }: { readOnly?: boolean }) => {
       if (
         observed.code !== 0 ||
         typeof observed.data?.enabled !== 'boolean' ||
-        observed.data?.mode !== 'relative'
+        (observed.data?.mode !== 'relative' && observed.data?.mode !== 'disable')
       ) {
         setLoaded(false);
         throw new Error('Failed to read mouse jiggler state after update');
       }
       setEnabled(observed.data.enabled);
-      setMode(observed.data.mode);
+      setMode('relative');
       if (observed.data.enabled !== requested)
         throw new Error('Mouse jiggler read-back did not match the requested state');
     } catch (err) {

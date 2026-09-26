@@ -25,6 +25,8 @@ pub(crate) struct EngineState {
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub queued_fps: Option<f64>,
+    /// Whether the capture source reports a signal.
+    pub online: Option<bool>,
 }
 
 /// Reads the reviewed state subset from the engine. Returns `None` only when
@@ -96,6 +98,7 @@ fn parse_state(body: &str) -> EngineState {
         width: dimension(&source["resolution"]["width"]),
         height: dimension(&source["resolution"]["height"]),
         queued_fps: rate(&value["result"]["stream"]["queued_fps"]),
+        online: source["online"].as_bool(),
     }
 }
 
@@ -109,6 +112,7 @@ mod tests {
         // captured_fps and desired_fps live under result.source.
         let body = r#"{"ok":true,"result":{"instance_id":"","encoder":{"type":"HW","quality":0},"source":{"resolution":{"width":1280,"height":720},"online":true,"desired_fps":60,"captured_fps":10},"stream":{"queued_fps":0,"clients":0,"clients_stat":{}}}}"#;
         assert_eq!(parse_state(body).captured_fps, Some(10.0));
+        assert_eq!(parse_state(body).online, Some(true));
     }
 
     #[test]

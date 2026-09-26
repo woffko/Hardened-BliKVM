@@ -176,10 +176,15 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("{!restricted && <ResetHid />}", mouse)
         self.assertIn("supportsRestrictedControls(manifest)", mouse)
         menu = (ROOT / "web/src/pages/desktop/menu/keyboard/index.tsx").read_text()
-        # Shortcuts and the leader key rely on legacy endpoints that the
-        # hardened server does not expose, so they must be hidden.
-        self.assertIn("{!restricted && <Shortcuts />}", menu)
-        self.assertIn("{!restricted && <LeaderKey />}", menu)
+        # The hardened server stores shortcuts and the leader key itself, and
+        # a shortcut is sent through the HID lease like every other report.
+        self.assertIn("<Shortcuts />", menu)
+        self.assertIn("<LeaderKey />", menu)
+        self.assertNotIn("{!restricted && <Shortcuts />}", menu)
+        shortcut = (
+            ROOT / "web/src/pages/desktop/menu/keyboard/shortcuts/shortcut.tsx"
+        ).read_text()
+        self.assertIn("reportHid({ mode: 'keyboard', data: Array.from(report) })", shortcut)
 
     def test_explicit_operator_confirmation_is_required(self) -> None:
         atom = (ROOT / "web/src/jotai/restricted-control.ts").read_text()

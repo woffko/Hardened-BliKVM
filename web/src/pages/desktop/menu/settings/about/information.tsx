@@ -4,8 +4,10 @@ import type { RuntimeInventory } from '@/types/inventory.ts';
 import { useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
+import { getApplicationUpdateStatus } from '@/api/application-update.ts';
 import { getCurrentVersion } from '@/api/application.ts';
 import { getRuntimeInventory } from '@/api/inventory.ts';
+import { getInfo } from '@/api/vm.ts';
 import { formatHardenedVersion } from '@/lib/hardened.ts';
 import { formatRtcOffsetSeconds, formatRtcUnixSeconds } from '@/lib/rtc.ts';
 import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
@@ -28,6 +30,9 @@ export const Information = () => {
   const capabilities = useAtomValue(capabilitiesAtom);
   const [inventory, setInventory] = useState<RuntimeInventory | null>(null);
   const [applicationVersion, setApplicationVersion] = useState('');
+  const [runningSlot, setRunningSlot] = useState('');
+  const [mdns, setMdns] = useState('');
+  const [uptime, setUptime] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +41,23 @@ export const Information = () => {
         if (!cancelled && response.code === 0 && response.data.schemaVersion === 3) {
           setInventory(response.data);
         }
+      })
+      .catch(() => undefined);
+    // The signed slot that is running identifies the application precisely;
+    // the crate version stays the same across development builds.
+    getApplicationUpdateStatus()
+      .then((response) => {
+        const confirmed = response.data?.confirmed;
+        if (!cancelled && response.code === 0 && confirmed?.version) {
+          setRunningSlot(`${confirmed.version} (#${confirmed.sequence})`);
+        }
+      })
+      .catch(() => undefined);
+    getInfo()
+      .then((response) => {
+        if (cancelled || response.code !== 0) return;
+        if (typeof response.data?.mdns === 'string') setMdns(response.data.mdns);
+        if (Number.isInteger(response.data?.uptime)) setUptime(response.data.uptime);
       })
       .catch(() => undefined);
     getCurrentVersion()
@@ -63,7 +85,9 @@ export const Information = () => {
         {inventory?.backend === 'kvmd_transition' && (
           <InfoRow label="KVMD" value={inventory.versions?.kvmd || '-'} />
         )}
-        <InfoRow label="Streamer" value={inventory?.versions?.streamer || '-'} />
+        {inventory?.versions?.streamer && (
+          <InfoRow label="Streamer" value={inventory.versions.streamer} />
+        )}
         <InfoRow
           label="Video source"
           value={inventory?.video?.online === true ? 'online' : inventory ? 'not online' : '-'}
@@ -77,11 +101,22 @@ export const Information = () => {
           label="RTC offset"
           value={formatRtcOffsetSeconds(inventory?.rtc?.offsetFromSystemSeconds)}
         />
+        <InfoRow label={t('settings.about.mdns')} value={mdns || '-'} />
+        <InfoRow label={t('settings.about.uptime')} value={formatUptime(uptime)} />
         <InfoRow
           label={t('settings.about.application')}
-          value={formatHardenedVersion(applicationVersion)}
+          value={runningSlot || formatHardenedVersion(applicationVersion)}
         />
       </div>
     </>
   );
 };
+
+/** Days, hours and minutes, as the reference shows the uptime. */
+function formatUptime(seconds: number | null): string {
+  if (seconds === null || seconds < 0) return '-';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${days}d ${hours}h ${minutes}m`;
+}

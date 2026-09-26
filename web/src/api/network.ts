@@ -19,8 +19,11 @@ export type IPv6Config = {
 
 // wake on lan
 export function wol(mac: string) {
+  // Pressing Ok in the Wake-on-LAN dialog is the explicit confirmation the
+  // hardened network write requires.
   const data = {
-    mac
+    mac,
+    confirm: true
   };
   return http.post('/api/network/wol', data);
 }

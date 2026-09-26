@@ -117,7 +117,11 @@ export function supportsMenuItem(
     case 'script':
       return boardFeatureWritable(manifest, 'scripts');
     case 'wol':
-      return boardFeatureWritable(manifest, 'wake_on_lan');
+      // The server advertises Wake-on-LAN as a network write.
+      return Boolean(
+        manifest &&
+        (isWritable(manifest.network.wol) || boardFeatureWritable(manifest, 'wake_on_lan'))
+      );
     case 'picoclaw':
       return boardFeatureWritable(manifest, 'picoclaw');
     case 'fullscreen':

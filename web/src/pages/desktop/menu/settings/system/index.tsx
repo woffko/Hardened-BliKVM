@@ -19,7 +19,7 @@ type SystemSection = 'network' | 'time' | 'firewall' | 'systemLog';
 export const System = () => {
   const { t } = useTranslation();
   const capabilities = useAtomValue(capabilitiesAtom);
-  const [section, setSection] = useState<SystemSection>('time');
+  const [section, setSection] = useState<SystemSection>('network');
   const [actionState, setActionState] = useState<SystemActionState>(idleSystemActionState);
   const networkRef = useRef<SystemActionHandle>(null);
   const timeRef = useRef<SystemActionHandle>(null);

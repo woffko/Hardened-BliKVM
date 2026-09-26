@@ -220,6 +220,9 @@ pub(crate) async fn wol(
         mac: body.mac.clone(),
     };
     let outcome = request_write(&state, &session, target, body.confirm, "wol").await?;
+    if outcome.applied {
+        crate::wol_macs::remember(&state, &body.mac);
+    }
     Ok(Json(ApiResponse::ok(outcome)))
 }
 

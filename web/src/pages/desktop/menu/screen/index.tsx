@@ -111,6 +111,9 @@ export const Screen = () => {
           {error}
         </span>
       )}
+      {isWritable && loaded && videoSettings.includes('resolution') && requestedResolution && (
+        <Resolution resolution={requestedResolution} refresh={refreshAfterChange} />
+      )}
       {isWritable && loaded && quality > 0 && videoSettings.includes('quality') && (
         <Quality quality={quality} refresh={refreshAfterChange} />
       )}
@@ -123,9 +126,6 @@ export const Screen = () => {
           deliveredHeight={delivered.height}
           queuedFps={delivered.queuedFps}
         />
-      )}
-      {isWritable && loaded && videoSettings.includes('resolution') && requestedResolution && (
-        <Resolution resolution={requestedResolution} refresh={refreshAfterChange} />
       )}
       <Scale />
     </div>

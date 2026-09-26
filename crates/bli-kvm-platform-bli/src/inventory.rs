@@ -162,6 +162,8 @@ pub struct NativeBoardObservations {
     pub external_rtc_seconds: Option<i64>,
     pub external_rtc_offset_seconds: Option<i64>,
     pub power_led: Option<bool>,
+    /// Signal state reported by the running capture engine.
+    pub video_online: Option<bool>,
 }
 
 /// Build the inventory of the native board profile.
@@ -175,7 +177,10 @@ pub fn native_board_inventory(observations: NativeBoardObservations) -> RuntimeI
         platform_id: PLATFORM_ID.into(),
         backend: InventoryBackend::Native,
         versions: RuntimeVersions::default(),
-        video: ComponentObservation::default(),
+        video: ComponentObservation {
+            online: observations.video_online,
+            ..ComponentObservation::default()
+        },
         hid: ComponentObservation::default(),
         power: ComponentObservation::default(),
         virtual_media: ComponentObservation::default(),
@@ -202,8 +207,10 @@ mod native_tests {
             external_rtc_seconds: Some(1_789_655_576),
             external_rtc_offset_seconds: Some(-49),
             power_led: Some(true),
+            video_online: Some(true),
         });
         inventory.validate().unwrap();
+        assert_eq!(inventory.video.online, Some(true));
         assert_eq!(inventory.backend, InventoryBackend::Native);
         assert_eq!(inventory.platform_id, "bli-h616-pikvm");
         assert_eq!(inventory.power_led, Some(true));

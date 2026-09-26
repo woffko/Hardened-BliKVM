@@ -66,10 +66,10 @@ export const HidOnly = ({ readOnly = false }: { readOnly?: boolean }) => {
     <div className="flex items-center justify-between">
       <div className="flex flex-col space-y-1">
         <div className="flex items-center space-x-2">
-          <span>{t('settings.device.hidOnly.title')}</span>
+          <span>{t('settings.device.hidOnly')}</span>
 
           <Tooltip
-            title={t('settings.device.hidOnly.desc')}
+            title={t('settings.device.hidOnlyDesc')}
             className="cursor-pointer"
             placement="right"
             styles={{ root: { maxWidth: '400px' } }}
@@ -78,7 +78,7 @@ export const HidOnly = ({ readOnly = false }: { readOnly?: boolean }) => {
           </Tooltip>
         </div>
 
-        <span className="text-xs text-neutral-500">{t('settings.device.hidOnly.desc')}</span>
+        <span className="text-xs text-neutral-500">{t('settings.device.hidOnlyDesc')}</span>
         {error && (
           <span role="alert" className="text-xs text-red-400">
             {error}

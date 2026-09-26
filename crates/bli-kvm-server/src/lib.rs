@@ -55,6 +55,7 @@ mod video_engine;
 mod video_settings;
 mod vm_info;
 mod webrtc;
+mod wol_macs;
 mod ws;
 
 #[derive(Clone)]
@@ -400,6 +401,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(network::network_ipv6).post(network_write::ipv6),
         )
         .route("/network/wol", post(network_write::wol))
+        .route(
+            "/network/wol/mac",
+            get(wol_macs::list).delete(wol_macs::delete),
+        )
+        .route("/network/wol/mac/name", post(wol_macs::rename))
         .route("/extensions/tailscale/status", get(tailscale::status))
         .route("/extensions/tailscale/install", post(tailscale::install))
         .route(
@@ -585,11 +591,24 @@ async fn native_inventory(state: &AppState) -> RuntimeInventory {
         }
         None => None,
     };
+    // The capture engine's own state tells whether the source has a signal.
+    #[cfg(feature = "restricted-control-surface")]
+    let video_online = match state.options.engine_socket.clone() {
+        Some(socket) => tokio::task::spawn_blocking(move || video_engine::read_state(&socket))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|engine| engine.online),
+        None => None,
+    };
+    #[cfg(not(feature = "restricted-control-surface"))]
+    let video_online = None;
     bli_kvm_platform_bli::native_board_inventory(bli_kvm_platform_bli::NativeBoardObservations {
         thermal_millidegrees_celsius: thermal,
         external_rtc_seconds: rtc.map(|readout| readout.unix_seconds),
         external_rtc_offset_seconds: rtc.map(|readout| readout.offset_from_system_seconds),
         power_led,
+        video_online,
     })
 }
 
@@ -1464,7 +1483,8 @@ mod tests {
         let (cookie, csrf) = setup_and_login(&app).await;
         let (status, body) = session_lock_state(&app, &cookie, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["data"]["duration"], 0);
+        // The reference default: one hour.
+        assert_eq!(body["data"]["duration"], 3600);
 
         let (status, body) = set_session_lock(&app, &cookie, Some(&csrf), 300, false).await;
         assert_eq!(status, StatusCode::OK);
