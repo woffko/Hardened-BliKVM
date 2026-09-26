@@ -67,14 +67,28 @@ fn split_terse(line: &str) -> Vec<String> {
 }
 
 /// Values of a `-g` field: several are joined by ` | ` (device) or `,`
-/// (profile).
+/// (profile), and `:` and `\\` inside a value are escaped.
 fn values(field: &str, separator: &str) -> Vec<String> {
     field
         .split(separator)
-        .map(str::trim)
+        .map(|value| unescape(value.trim()))
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
         .collect()
+}
+
+fn unescape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 impl Ipv4Settings {
@@ -203,21 +217,21 @@ impl Ipv4Settings {
             .into_iter()
             .next()
             .unwrap_or_default();
-        let ipv6_manual_gateway = ipv6.next().unwrap_or_default().to_string();
+        let ipv6_manual_gateway = unescape(ipv6.next().unwrap_or_default());
         Ok(NetworkInterfaceInfo {
             name: name.to_string(),
             kind: kind.to_string(),
             method: profile.method,
             address,
             prefix,
-            gateway: field(1).trim().to_string(),
+            gateway: unescape(field(1).trim()),
             dns: values(field(2), " | "),
             dhcp_dns,
             manual_dns: profile.ignore_auto_dns == "yes",
             search: values(field(3), " | "),
             ipv6_mode: ipv6_mode.into(),
             ipv6_addresses: values(field(5), " | "),
-            ipv6_gateway: field(6).trim().to_string(),
+            ipv6_gateway: unescape(field(6).trim()),
             ipv6_manual_address,
             ipv6_manual_gateway,
         })
@@ -690,6 +704,15 @@ mod tests {
         );
         // IPv6 never arms the IPv4 revert.
         assert_eq!(ipv4.revert_in_seconds(), 0);
+    }
+
+    #[test]
+    fn escaped_values_are_unescaped() {
+        assert_eq!(
+            values("fe80\\:\\:1/64 | 2001\\:db8\\:\\:10/64", " | "),
+            ["fe80::1/64", "2001:db8::10/64"]
+        );
+        assert_eq!(unescape("a\\\\b"), "a\\b");
     }
 
     #[test]

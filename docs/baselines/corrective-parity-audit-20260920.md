@@ -121,6 +121,38 @@ on the board through the API (`tools/playwright/device_settings_probe.mjs`,
 - The board's streamer unit in `/etc/systemd/system` was replaced by the
   packaged one (backup in `/root/backups`); new images carry it.
 
+Plan phase C 2026-09-26: mobile (Pixel 7 profile) and desktop text walks of
+every toolbar menu and settings tab against the reference 2.0.42
+(`evidence/private/parity-20260926/`). Gaps found on mobile and fixed (slot
+36, verified again by the walk and the device probe
+`evidence/private/device-settings-20260926-c.json`): About now lists the IP
+addresses, image version and hostname in the reference order (the hostname
+is editable; the owner applies it through systemd-hostnamed and /etc/hosts,
+renamed and restored on the board); IPv6 offers DHCPv6 and manual as well
+(DHCPv6 and back to SLAAC on the board); the image dialog has the per-image
+delete and USB reconnect. The IPv6 addresses the owner reads are unescaped
+and listed on About from slot 37.
+
+Remaining differences, identical on desktop and mobile, for the operator's
+approval:
+
+- Off by default by the operator's decision: Terminal, Scripts, PicoClaw and
+  remote ISO download (the reference test device has them on).
+- Our additions: the "Enable remote control" confirmation (the focus model
+  that binds keyboard and mouse to the visible target) and the Diagnostics
+  tab.
+- Not applicable to this board: the JPEG quality control (the capture
+  encoder ignores it), Virtual Disk, Virtual Network and OLED (hardware the
+  board lacks), the memory limit and swap settings (for the reference's
+  256 MB board, shown there under Device > Advanced and Tailscale).
+- Declined by the operator: USB wakeup.
+- Placed differently: HID-only is a Device setting, not in the mouse menu;
+  Reset HID is not offered (the owner restores HID state itself).
+- Updates: signed application updates instead of the reference's preview
+  channels and offline packages; RAW system updates are plan phase E.
+
+Waiting for the operator: approval of this list and a check on the phone.
+
 Observed while testing: the media catalog still lists `kubuntu.img` although
 the file is no longer in the image store; the catalog entry is stale and is
 left for the operator to delete from the image list.

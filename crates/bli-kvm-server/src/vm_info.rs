@@ -81,20 +81,41 @@ pub async fn vm_info(
     // The owner reads the addresses from NetworkManager; the unprivileged
     // server cannot enumerate links itself.
     if let Some((interfaces, _)) = crate::network_ipv4::interfaces(&state, &session.token).await {
-        response.ips = interfaces
-            .into_iter()
-            .filter(|interface| !interface.address.is_empty())
-            .map(|interface| IpInfo {
-                name: interface.name,
-                addr: interface.address,
-                version: "IPv4".into(),
-                kind: if interface.kind == "wifi" {
-                    "Wireless".into()
-                } else {
-                    "Wired".into()
-                },
-            })
-            .collect();
+        // IPv4 first, then the IPv6 addresses, as the reference lists them.
+        let mut ips = Vec::new();
+        for interface in &interfaces {
+            let kind = if interface.kind == "wifi" {
+                "Wireless"
+            } else {
+                "Wired"
+            };
+            if !interface.address.is_empty() {
+                ips.push(IpInfo {
+                    name: interface.name.clone(),
+                    addr: interface.address.clone(),
+                    version: "IPv4".into(),
+                    kind: kind.into(),
+                });
+            }
+        }
+        for interface in &interfaces {
+            for cidr in &interface.ipv6_addresses {
+                let address = cidr.split('/').next().unwrap_or_default();
+                if address.parse::<std::net::Ipv6Addr>().is_ok() {
+                    ips.push(IpInfo {
+                        name: interface.name.clone(),
+                        addr: address.to_string(),
+                        version: "IPv6".into(),
+                        kind: if interface.kind == "wifi" {
+                            "Wireless".into()
+                        } else {
+                            "Wired".into()
+                        },
+                    });
+                }
+            }
+        }
+        response.ips = ips;
     }
     Ok(Json(ApiResponse::ok(response)))
 }
