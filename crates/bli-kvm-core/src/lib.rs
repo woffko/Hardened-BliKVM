@@ -4,6 +4,7 @@
 //! broker. This crate intentionally contains no device paths, shell commands,
 //! network listeners, or credentials.
 
+mod admin_features;
 mod capabilities;
 mod control;
 mod control_v2;
@@ -13,6 +14,7 @@ mod inventory;
 mod platform;
 mod video_settings;
 
+pub use admin_features::{ADMIN_FEATURES_PATH, AdminFeatureSwitches};
 pub use capabilities::{
     Availability, BoardCapabilities, CapabilityError, CapabilityManifest, EvidenceLevel,
     FeatureStatus, HidCapabilities, HidMode, NetworkCapabilities, PlatformIdentity, PowerAction,
@@ -24,11 +26,11 @@ pub use control::{
     VirtualMediaCommand, VirtualMediaControlMode,
 };
 pub use control_v2::{
-    AcceptPostBootRequest, AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS,
-    HidLeaseRequest, MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
-    PlatformControlRequestV2, SystemActionKind, SystemActionWireRequest,
-    TARGET_ATTESTATION_MAX_TTL_SECONDS, TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation,
-    TargetRelease,
+    AcceptPostBootRequest, AdminFeature, AtxConfirmation, ControlV2ValidationError,
+    HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest, MediaObserveRequest, MediaRequest,
+    NetworkWriteRequest, NetworkWriteTarget, PlatformControlRequestV2, SystemActionKind,
+    SystemActionWireRequest, TARGET_ATTESTATION_MAX_TTL_SECONDS,
+    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,

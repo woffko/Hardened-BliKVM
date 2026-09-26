@@ -37,6 +37,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagno
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-boardd"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-admin-helper"
 install -m 0755 /bin/true "$test_root/usr/bin/ustreamer"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0755 /bin/true "$test_root/usr/bin/install"
@@ -122,7 +123,9 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-system-action-store-inspect.service \
   hardened-blikvm-update-exec.socket \
   hardened-blikvm-update-exec@.service \
-  hardened-blikvm-update-native-boot.service
+  hardened-blikvm-update-native-boot.service \
+  hardened-blikvm-admin.socket \
+  hardened-blikvm-admin@.service
 
 # Native profile: the rendered replacements override the managed base units
 # and must verify on their own, with no legacy recover/confirm dependency.

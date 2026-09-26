@@ -23,6 +23,35 @@ pub struct TargetRelease {
     pub target_binding: [u8; 32],
 }
 
+/// Administration features that stay off until the operator switches them on
+/// (`docs/design/admin-features-v1.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminFeature {
+    Terminal,
+    Scripts,
+    RemoteDownload,
+    Picoclaw,
+}
+
+impl AdminFeature {
+    pub const ALL: [Self; 4] = [
+        Self::Terminal,
+        Self::Scripts,
+        Self::RemoteDownload,
+        Self::Picoclaw,
+    ];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Scripts => "scripts",
+            Self::RemoteDownload => "remote_download",
+            Self::Picoclaw => "picoclaw",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HidLeaseRequest {
@@ -207,6 +236,13 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back whether HID-only mode is on.
     HidOnlyState {},
+    /// Switch one administration feature on or off.
+    AdminFeature {
+        feature: AdminFeature,
+        enabled: bool,
+    },
+    /// Read back the administration feature switches.
+    AdminFeatureState {},
     /// Read the WiFi device state.
     WifiState {},
     /// Connect to a WiFi network through NetworkManager.
@@ -305,6 +341,8 @@ impl PlatformControlRequestV2 {
             Self::MouseJigglerState {} => Ok(()),
             Self::HidOnly { .. } => Ok(()),
             Self::HidOnlyState {} => Ok(()),
+            Self::AdminFeature { .. } => Ok(()),
+            Self::AdminFeatureState {} => Ok(()),
             Self::WifiState {} => Ok(()),
             Self::WifiConnect { .. } => Ok(()),
             Self::WifiDisconnect {} => Ok(()),

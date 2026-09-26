@@ -401,6 +401,10 @@ async fn board_state(
         )),
         true,
     ));
+    // Administration features stay off until the operator switches them on.
+    state.with_admin_features(crate::admin_features::AdminFeaturesState::open(
+        bli_kvm_core::ADMIN_FEATURES_PATH,
+    ));
     // The reviewed HID-only switch keeps media attaches refused while on.
     state.with_hid_only(crate::device_settings::HidOnlyState::open(
         crate::device_settings::HID_ONLY_STATE,
@@ -1109,6 +1113,7 @@ where
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }

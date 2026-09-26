@@ -55,6 +55,7 @@ pub struct ControlV2State {
     mdns: Option<crate::device_settings::MdnsState>,
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
     hid_only: Option<crate::device_settings::HidOnlyState>,
+    admin_features: Option<crate::admin_features::AdminFeaturesState>,
     wifi: Option<crate::network_settings::WifiState>,
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::FirewallState>,
@@ -85,6 +86,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -152,6 +154,11 @@ impl ControlV2State {
     /// Attach the reviewed HID-only switch to the board state.
     pub fn with_hid_only(&mut self, hid_only: crate::device_settings::HidOnlyState) {
         self.hid_only = Some(hid_only);
+    }
+
+    /// Attach the administration feature switches to the board state.
+    pub fn with_admin_features(&mut self, features: crate::admin_features::AdminFeaturesState) {
+        self.admin_features = Some(features);
     }
 
     /// Attach the reviewed mouse jiggler to the board state.
@@ -224,6 +231,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -254,6 +262,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -284,6 +293,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -328,6 +338,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -360,6 +371,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -398,6 +410,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -695,6 +708,7 @@ impl ControlV2State {
             mdns: None,
             mouse_jiggler: None,
             hid_only: None,
+            admin_features: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -798,6 +812,16 @@ impl ControlV2State {
             PlatformControlRequestV2::MouseJigglerState {} => self.handle_mouse_jiggler_state(),
             PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled),
             PlatformControlRequestV2::HidOnlyState {} => self.handle_hid_only_state(),
+            PlatformControlRequestV2::AdminFeature { feature, enabled } => {
+                match self.admin_features.as_mut() {
+                    Some(features) => features.handle(*feature, *enabled),
+                    None => reject(ControlRejectionCode::CapabilityDisabled),
+                }
+            }
+            PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {
+                Some(features) => features.state(),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
             PlatformControlRequestV2::WifiState {} => self.handle_wifi_state(),
             PlatformControlRequestV2::WifiConnect { ssid, password } => {
                 self.handle_wifi_connect(ssid, password)

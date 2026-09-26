@@ -82,6 +82,13 @@ pub enum ControlResponse {
     HidOnlyState {
         enabled: bool,
     },
+    /// The persisted administration feature switches.
+    AdminFeatureState {
+        terminal: bool,
+        scripts: bool,
+        remote_download: bool,
+        picoclaw: bool,
+    },
     /// The WiFi device state the owner observed.
     WifiState {
         available: bool,

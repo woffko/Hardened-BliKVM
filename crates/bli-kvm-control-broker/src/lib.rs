@@ -1,3 +1,4 @@
+mod admin_features;
 mod attestation;
 pub mod board_status;
 mod config;

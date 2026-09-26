@@ -40,6 +40,8 @@ update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
 update_exec_helper_binary="$release_dir/bli-kvm-update-exec-helper"
 scripts/verify-aarch64-elf.sh "$update_exec_helper_binary"
+admin_helper_binary="$release_dir/bli-kvm-admin-helper"
+scripts/verify-aarch64-elf.sh "$admin_helper_binary"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 mkdir -p -- "$output_dir"
@@ -75,6 +77,7 @@ install -m 0755 "$media_isolated_gate_binary" "$stage/libexec/bli-kvm-media-isol
 install -m 0755 "$update_supervisor_binary" "$stage/libexec/bli-kvm-update-supervisor"
 install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-health-reporter"
 install -m 0755 "$update_exec_helper_binary" "$stage/libexec/bli-kvm-update-exec-helper"
+install -m 0755 "$admin_helper_binary" "$stage/libexec/bli-kvm-admin-helper"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
@@ -112,6 +115,8 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-update-exec@.service \
   packaging/systemd/hardened-blikvm-update-native-boot.service \
   packaging/systemd/hardened-blikvm-hid-gadget.service \
+  packaging/systemd/hardened-blikvm-admin.socket \
+  packaging/systemd/hardened-blikvm-admin@.service \
   "$stage/share/systemd/"
 install -d -m 0755 "$stage/share/systemd/native"
 install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"
@@ -178,6 +183,7 @@ media_isolated_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-media-isolated-gate"
 update_supervisor_sha=$(sha256sum "$stage/libexec/bli-kvm-update-supervisor" | cut -d ' ' -f 1)
 update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-reporter" | cut -d ' ' -f 1)
 update_exec_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-update-exec-helper" | cut -d ' ' -f 1)
+admin_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-admin-helper" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
 pnpm_lock_sha=$(sha256sum web/pnpm-lock.yaml | cut -d ' ' -f 1)
 web_tree_sha=$(
@@ -195,6 +201,7 @@ media_isolated_gate_size=$(wc -c < "$stage/libexec/bli-kvm-media-isolated-gate" 
 update_supervisor_size=$(wc -c < "$stage/libexec/bli-kvm-update-supervisor" | tr -d ' ')
 update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-reporter" | tr -d ' ')
 update_exec_helper_size=$(wc -c < "$stage/libexec/bli-kvm-update-exec-helper" | tr -d ' ')
+admin_helper_size=$(wc -c < "$stage/libexec/bli-kvm-admin-helper" | tr -d ' ')
 
 source_state=uncommitted-development-checkpoint
 source_commit=
@@ -217,6 +224,7 @@ jq -n \
   --arg update_supervisor_sha "$update_supervisor_sha" \
   --arg update_health_reporter_sha "$update_health_reporter_sha" \
   --arg update_exec_helper_sha "$update_exec_helper_sha" \
+  --arg admin_helper_sha "$admin_helper_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
@@ -233,6 +241,7 @@ jq -n \
   --argjson update_supervisor_size "$update_supervisor_size" \
   --argjson update_health_reporter_size "$update_health_reporter_size" \
   --argjson update_exec_helper_size "$update_exec_helper_size" \
+  --argjson admin_helper_size "$admin_helper_size" \
   '{
     schemaVersion: 1,
     product: "Hardened BliKVM",
@@ -254,6 +263,7 @@ jq -n \
       updateSupervisor: {path: "libexec/bli-kvm-update-supervisor", sha256: $update_supervisor_sha, size: $update_supervisor_size},
       updateHealthReporter: {path: "libexec/bli-kvm-update-health-reporter", sha256: $update_health_reporter_sha, size: $update_health_reporter_size},
       updateExecHelper: {path: "libexec/bli-kvm-update-exec-helper", sha256: $update_exec_helper_sha, size: $update_exec_helper_size},
+      adminHelper: {path: "libexec/bli-kvm-admin-helper", sha256: $admin_helper_sha, size: $admin_helper_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
     },
     locks: {cargo: $cargo_lock_sha, pnpm: $pnpm_lock_sha}
@@ -279,6 +289,7 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-media-isolated-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-supervisor")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-exec-helper")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-admin-helper")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755

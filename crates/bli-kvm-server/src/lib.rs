@@ -28,6 +28,7 @@ use crate::{
     error::{ApiResponse, AppError, AppResult},
 };
 
+mod admin_features;
 mod application;
 mod atx;
 mod auth;
@@ -48,6 +49,7 @@ mod system_action;
 mod system_log;
 mod system_time;
 mod tailscale;
+mod terminal;
 mod update;
 mod video;
 #[cfg(feature = "restricted-control-surface")]
@@ -78,6 +80,7 @@ pub(crate) struct AppState {
     pub control: Option<Arc<bli_kvm_control_client::ControlClient>>,
     pub focus: Arc<Mutex<hid::FocusChallengeStore>>,
     pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
+    pub terminal_tickets: Arc<Mutex<terminal::TicketStore>>,
     pub options: Arc<ServerOptions>,
 }
 
@@ -128,6 +131,9 @@ pub struct ServerOptions {
     /// The engine's read-only control socket (`/state` read-back for the
     /// measured capture rate). No value keeps the extra field absent.
     pub engine_socket: Option<PathBuf>,
+    /// Root administration helper (terminal, scripts). No value keeps those
+    /// features unavailable even when switched on.
+    pub admin_socket: Option<PathBuf>,
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
@@ -163,6 +169,7 @@ impl Default for ServerOptions {
             system_actions_enabled: false,
             video_controls_enabled: false,
             engine_socket: None,
+            admin_socket: None,
             network_writes_enabled: false,
             firewall_modes_enabled: false,
             media_directory: None,
@@ -264,6 +271,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
+        // Administration features exist when the root helper is configured;
+        // each stays switched off until the operator enables it.
+        if options.admin_socket.is_some() {
+            manifest.board.features.insert(
+                "terminal".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
         // The native owner exposes observations but refuses every action.
         manifest.board.features.insert(
             "tailscale".into(),
@@ -350,6 +365,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }),
         focus: Arc::new(Mutex::new(hid::FocusChallengeStore::new())),
         hid_ws_leases: Arc::new(Mutex::new(hid::WsLeaseStore::new())),
+        terminal_tickets: Arc::new(Mutex::new(terminal::TicketStore::new())),
         options: Arc::new(options.clone()),
     };
 
@@ -451,7 +467,16 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/download/image/enabled", get(download::image_enabled))
         .route(
             "/download/image/remote/enabled",
-            get(download::remote_enabled),
+            get(admin_features::remote_download_enabled)
+                .post(admin_features::set_remote_download_enabled),
+        )
+        .route(
+            "/vm/terminal/enabled",
+            get(admin_features::terminal_enabled).post(admin_features::set_terminal_enabled),
+        )
+        .route(
+            "/admin/features",
+            get(admin_features::list).post(admin_features::update),
         )
         .route("/vm/hardware", get(vm_info::vm_hardware))
         .route("/system-log/config", get(system_log::get_config))
@@ -493,6 +518,8 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/system/shutdown", post(system_action::shutdown))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route("/stream/webrtc", get(webrtc::webrtc_socket))
+        .route("/vm/terminal", get(terminal::connect))
+        .route("/vm/terminal/unlock", post(terminal::unlock))
         .route(
             "/vm/screen",
             get(video_settings::screen_state).post(video_settings::update_screen),
@@ -1445,6 +1472,58 @@ mod tests {
             .unwrap();
         let status = response.status();
         (status, json_body(response).await)
+    }
+
+    #[tokio::test]
+    async fn administration_features_are_refused_while_switched_off() {
+        // No switch file exists on the host, so every feature is off.
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/vm/terminal/unlock")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, &cookie)
+            .header("x-csrf-token", &csrf)
+            .body(Body::from(
+                serde_json::json!({"username": "admin", "password": "irrelevant"}).to_string(),
+            ))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 1))));
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/vm/terminal?ticket=anything")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        // Never upgraded: the upgrade extractor or the switch refuses it.
+        assert!(matches!(
+            response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
+        ));
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/admin/features")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let body = json_body(response).await;
+        for feature in ["terminal", "scripts", "remoteDownload", "picoclaw"] {
+            assert_eq!(body["data"][feature], false, "{feature}");
+        }
     }
 
     fn isolated_app() -> Router {

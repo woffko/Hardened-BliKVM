@@ -82,6 +82,8 @@ FORBIDDEN_PACKAGE_NAMES = {
     "bli-kvm-update-supervisor",
     "bli-kvm-update-health-reporter",
     "bli-kvm-update-exec-helper",
+    "bli-kvm-admin-helper",
+    "hardened-blikvm-admin@.service",
     "hardened-blikvm-update-exec@.service",
     "hardened-blikvm-update-watchdog.service",
     "hardened-blikvm-update-watchdog.timer",
