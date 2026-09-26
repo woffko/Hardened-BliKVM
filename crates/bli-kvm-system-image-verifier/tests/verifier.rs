@@ -82,6 +82,8 @@ fn manifest(rootfs: &[u8], boot: Option<&[u8]>) -> SystemManifest {
             content_type: SystemContentType::Vfat,
             size: boot.len() as u64,
             sha256: sha256(boot),
+            image_size: None,
+            image_sha256: None,
         });
     }
     components.push(SystemComponent {
@@ -90,6 +92,8 @@ fn manifest(rootfs: &[u8], boot: Option<&[u8]>) -> SystemManifest {
         content_type: SystemContentType::Ext4,
         size: rootfs.len() as u64,
         sha256: sha256(rootfs),
+        image_size: None,
+        image_sha256: None,
     });
     SystemManifest {
         format: SYSTEM_FORMAT_V1.into(),
@@ -537,5 +541,73 @@ fn rejects_nonzero_or_unbounded_trailing_archive_data() {
     assert_eq!(
         verify_system_bytes(&excessive, &trust, &policy(false)),
         Err(SystemVerifyError::InvalidArchive)
+    );
+}
+
+#[test]
+fn verifies_a_compressed_rootfs_that_fits_the_partition() {
+    let signing = signing();
+    let trust = trust(&signing);
+    let policy = SystemVerificationPolicy::new(LAYOUT_ID, 3, 4, 8192, None).unwrap();
+    let mut compressed = vec![0x28, 0xb5, 0x2f, 0xfd];
+    compressed.extend([0x42; 60]);
+    let component = |image_size: u64, bytes: &[u8]| SystemComponent {
+        role: SystemComponentRole::Rootfs,
+        path: "rootfs.img.zst".into(),
+        content_type: SystemContentType::Ext4Zstd,
+        size: bytes.len() as u64,
+        sha256: sha256(bytes),
+        image_size: Some(image_size),
+        image_sha256: Some(sha256(b"uncompressed")),
+    };
+    let bundle = |manifest: &SystemManifest, bytes: &[u8]| {
+        let manifest_bytes = serde_json::to_vec(manifest).unwrap();
+        let signature = signing.sign(&manifest_bytes).to_bytes();
+        let entries = vec![
+            EntrySpec {
+                path: "payload/",
+                entry_type: EntryType::Directory,
+                mode: 0o755,
+                bytes: Vec::new(),
+                link_name: None,
+            },
+            EntrySpec {
+                path: "payload/rootfs.img.zst",
+                entry_type: EntryType::Regular,
+                mode: 0o644,
+                bytes: bytes.to_vec(),
+                link_name: None,
+            },
+        ];
+        archive(&manifest_bytes, &signature, &entries)
+    };
+    let mut good = manifest(&rootfs(0), None);
+    good.components = vec![component(4096, &compressed)];
+    let verified = verify_system_bytes(&bundle(&good, &compressed), &trust, &policy).unwrap();
+    assert_eq!(verified.manifest.components[0].image_size, Some(4096));
+
+    // Larger than the partition, or not a multiple of the block size.
+    for image_size in [12288, 4097] {
+        let mut wrong = good.clone();
+        wrong.components = vec![component(image_size, &compressed)];
+        assert_eq!(
+            verify_system_bytes(&bundle(&wrong, &compressed), &trust, &policy),
+            Err(SystemVerifyError::PolicyMismatch)
+        );
+    }
+    // Not zstd.
+    let plain = vec![0x42; 64];
+    let mut not_zstd = good.clone();
+    not_zstd.components = vec![component(4096, &plain)];
+    assert_eq!(
+        verify_system_bytes(&bundle(&not_zstd, &plain), &trust, &policy),
+        Err(SystemVerifyError::InvalidFilesystemImage)
+    );
+    // The uncompressed digest is required.
+    let mut missing = good.clone();
+    missing.components[0].image_sha256 = None;
+    assert_eq!(
+        verify_system_bytes(&bundle(&missing, &compressed), &trust, &policy),
+        Err(SystemVerifyError::InvalidManifestShape)
     );
 }

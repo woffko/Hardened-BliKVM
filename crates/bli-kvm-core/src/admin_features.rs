@@ -22,6 +22,7 @@ pub struct AdminFeatureSwitches {
     pub scripts: bool,
     pub remote_download: bool,
     pub picoclaw: bool,
+    pub raw_system_update: bool,
 }
 
 impl AdminFeatureSwitches {
@@ -45,6 +46,7 @@ impl AdminFeatureSwitches {
             AdminFeature::Scripts => self.scripts,
             AdminFeature::RemoteDownload => self.remote_download,
             AdminFeature::Picoclaw => self.picoclaw,
+            AdminFeature::RawSystemUpdate => self.raw_system_update,
         }
     }
 
@@ -54,6 +56,7 @@ impl AdminFeatureSwitches {
             AdminFeature::Scripts => self.scripts = enabled,
             AdminFeature::RemoteDownload => self.remote_download = enabled,
             AdminFeature::Picoclaw => self.picoclaw = enabled,
+            AdminFeature::RawSystemUpdate => self.raw_system_update = enabled,
         }
     }
 
@@ -86,6 +89,7 @@ mod tests {
             AdminFeature::Scripts,
             AdminFeature::RemoteDownload,
             AdminFeature::Picoclaw,
+            AdminFeature::RawSystemUpdate,
         ] {
             assert!(!loaded.get(feature));
         }

@@ -2145,13 +2145,14 @@ class PackagingBoundaryTests(unittest.TestCase):
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
         destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
-        self.assertEqual(destinations, ["http://127.0.0.1:18080"] * 3)
+        self.assertEqual(destinations, ["http://127.0.0.1:18080"] * 4)
         locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
         self.assertEqual(
             set(locations),
             {
                 "/",
                 "= /api/application-update/upload",
+                "= /api/system-update/upload",
                 "= /api/download/file",
                 "^~ /internal/",
             },
@@ -2160,6 +2161,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("client_max_body_size 16m;", config)
         for route, limit in [
             ("= /api/application-update/upload", "128m"),
+            ("= /api/system-update/upload", "8g"),
             ("= /api/download/file", "4097m"),
         ]:
             block = locations[route]

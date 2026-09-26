@@ -32,14 +32,16 @@ pub enum AdminFeature {
     Scripts,
     RemoteDownload,
     Picoclaw,
+    RawSystemUpdate,
 }
 
 impl AdminFeature {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Terminal,
         Self::Scripts,
         Self::RemoteDownload,
         Self::Picoclaw,
+        Self::RawSystemUpdate,
     ];
 
     pub const fn key(self) -> &'static str {
@@ -48,6 +50,7 @@ impl AdminFeature {
             Self::Scripts => "scripts",
             Self::RemoteDownload => "remote_download",
             Self::Picoclaw => "picoclaw",
+            Self::RawSystemUpdate => "raw_system_update",
         }
     }
 }

@@ -27,6 +27,7 @@ impl AdminFeaturesState {
             scripts: switches.scripts,
             remote_download: switches.remote_download,
             picoclaw: switches.picoclaw,
+            raw_system_update: switches.raw_system_update,
         }
     }
 
@@ -98,6 +99,7 @@ mod tests {
                 scripts: false,
                 remote_download: false,
                 picoclaw: false,
+                raw_system_update: false,
             }
         );
         assert_eq!(
@@ -112,6 +114,7 @@ mod tests {
                 scripts: true,
                 remote_download: false,
                 picoclaw: false,
+                raw_system_update: false,
             }
         );
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();

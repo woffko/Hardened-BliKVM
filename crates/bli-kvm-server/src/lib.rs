@@ -54,6 +54,7 @@ mod ssh;
 mod system_action;
 mod system_log;
 mod system_time;
+mod system_update;
 mod tailscale;
 mod terminal;
 mod update;
@@ -559,6 +560,16 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application-update/status", get(update::status))
         .route("/application-update/upload", post(update::upload))
         .route("/application-update/activate", post(update::activate))
+        .route(
+            "/system-update/raw-enabled",
+            get(system_update::raw_enabled).post(system_update::set_raw_enabled),
+        )
+        .route("/system-update/status", get(system_update::status))
+        .route("/system-update/upload", post(system_update::upload))
+        .route("/system-update/install", post(system_update::install))
+        .route("/system-update/confirm", post(system_update::confirm))
+        .route("/system-update/rollback", post(system_update::rollback))
+        .route("/system-update/cancel", post(system_update::cancel))
         .route(
             "/hid/focus",
             get(hid::issue_focus_challenge).post(hid::confirm_focus),

@@ -37,6 +37,8 @@ pub const PICOCLAW_SERVICE: &str = "hardened-blikvm-picoclaw.service";
 pub const PICOCLAW_GATEWAY_PORT: u16 = 18790;
 /// Header carrying the internal token on the runtime's KVM calls.
 pub const INTERNAL_TOKEN_HEADER: &str = "X-BliKVM-Internal-Token";
+/// Largest signed RAW system bundle the helper accepts.
+pub const MAX_SYSTEM_BUNDLE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub const MAX_LINE_BYTES: usize = 4096;
 /// Replies may carry a chat history.
 pub const MAX_REPLY_BYTES: usize = 4 * 1024 * 1024;
@@ -120,6 +122,35 @@ pub enum AdminRequest {
     Tailscale {
         action: String,
     },
+    /// Admin helper: the RAW system update record.
+    SystemUpdateStatus {},
+    /// Admin helper: receive a signed system bundle of `size` bytes as data
+    /// frames after a `Ready` answer, verify it and stage it for the next
+    /// boot.
+    SystemUpdateUpload {
+        size: u64,
+    },
+    /// Admin helper: keep the booted new system.
+    SystemUpdateConfirm {},
+    /// Admin helper: restore the previous system on the next boot.
+    SystemUpdateRollback {},
+    /// Admin helper: drop a staged update that has not been written.
+    SystemUpdateCancel {},
+}
+
+/// What the helper reports about the RAW system update.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemUpdateState {
+    /// `none` or the apply record's phase.
+    pub phase: String,
+    pub version: String,
+    pub sequence: u64,
+    pub message: String,
+    pub boot_attempts: u32,
+    pub image_size: u64,
+    /// The lowest bundle sequence the device accepts.
+    pub minimum_sequence: u64,
 }
 
 /// The reference's Tailscale view.
@@ -279,6 +310,7 @@ pub enum AdminReply {
     PicoclawSession { detail: PicoclawSessionDetail },
     Tailscale { tailscale: TailscaleStatus },
     TailscaleLogin { url: String },
+    SystemUpdate { update: SystemUpdateState },
 }
 
 /// Script names as the reference accepts them: `[A-Za-z0-9._-]`, ending in

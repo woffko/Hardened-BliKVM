@@ -48,6 +48,8 @@ sh -n tools/device/deploy_native_profile.sh
 sh -n tools/device/deploy_vp8.sh
 sh -n tools/image/build_sd_image.sh
 sh -n tools/image/hardened-blikvm-firstboot.sh
+sh -n packaging/system-update/initramfs-hook
+sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
 python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
@@ -123,6 +125,7 @@ node --test tools/test_video_frame_timing_probe.mjs
 node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
 node --check tools/playwright/gui_parity_probe.mjs
+node --check tools/playwright/raw_system_update_probe.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
 node --check tools/playwright/restricted_power_probe.mjs
 node --check tools/playwright/restricted_control_gui_probe.mjs
@@ -273,6 +276,7 @@ python3 -m unittest \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
+  tools/test_build_system_raw_bundle.py \
   -v
 python3 -m py_compile \
   tools/capture_pikvm_baseline.py \
@@ -465,7 +469,9 @@ python3 -m py_compile \
   tools/test_stage_device_diagnostic_collector.py \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
-  tools/test_build_system_image_test_fixture.py
+  tools/test_build_system_image_test_fixture.py \
+  tools/build_system_raw_bundle.py \
+  tools/test_build_system_raw_bundle.py
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
 node --check tools/playwright/local_application_upload.mjs
@@ -741,7 +747,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_diagnostic_collector.py \
     tools/test_stage_device_tls_browser.py \
     tools/test_build_update_test_fixture.py \
-    tools/test_build_system_image_test_fixture.py
+    tools/test_build_system_image_test_fixture.py \
+    tools/build_system_raw_bundle.py \
+    tools/test_build_system_raw_bundle.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1

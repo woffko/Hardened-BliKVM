@@ -132,6 +132,8 @@ pub enum ControlResponse {
         scripts: bool,
         remote_download: bool,
         picoclaw: bool,
+        #[serde(default)]
+        raw_system_update: bool,
     },
     /// The WiFi device state the owner observed.
     WifiState {

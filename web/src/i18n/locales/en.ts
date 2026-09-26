@@ -886,6 +886,32 @@ const en = {
           rollbackConfirmTitle: 'Rollback system update?',
           rollbackConfirmDesc:
             'This will restore files from the latest system-update backup. Reboot will be required.',
+          rawRollbackNote:
+            'The previous system is kept as a verified backup and written back automatically if the new one does not report itself within two boots. Keep physical recovery access anyway.',
+          rawUpload: 'Signed system bundle',
+          rawUploadDesc:
+            'Upload a system bundle signed with the system key. It is verified and staged on the data partition; nothing is written until you install it.',
+          rawUploadStart: 'Upload and Verify',
+          rawUploading: 'Uploading the system bundle...',
+          rawVerifying: 'Verifying the bundle and saving the device settings...',
+          rawCancel: 'Discard',
+          rawDiscarded: 'The staged system update was discarded.',
+          rawInstallDesc:
+            'The board reboots and writes the new system before it starts. This can take up to 30 minutes; keep power connected. Accounts, keys, network settings and switches are carried over.',
+          rawRollbackDesc:
+            'The board reboots and writes the previous system back from the backup. This can take up to 30 minutes; keep power connected.',
+          rawRebooting: 'The board is rebooting to apply the change.',
+          rawPhase: {
+            none: 'No system update',
+            staged: 'Staged',
+            writing: 'Writing',
+            written: 'Written, starting',
+            booted: 'Running, waiting for confirmation',
+            rollback_requested: 'Rollback on the next boot',
+            confirmed: 'Confirmed',
+            rolled_back: 'Previous system restored',
+            failed: 'Not installed'
+          },
           staged: 'staged',
           stagedDesc:
             'The system update archive was downloaded and verified. You can install it now.',

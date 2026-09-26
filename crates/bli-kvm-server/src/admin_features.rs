@@ -42,6 +42,7 @@ pub(crate) struct AdminFeaturesView {
     scripts: bool,
     remote_download: bool,
     picoclaw: bool,
+    raw_system_update: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,7 +53,7 @@ pub(crate) struct EnabledView {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EnabledBody {
-    enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +70,7 @@ pub(crate) async fn list() -> Json<ApiResponse<AdminFeaturesView>> {
         scripts: current.scripts,
         remote_download: current.remote_download,
         picoclaw: current.picoclaw,
+        raw_system_update: current.raw_system_update,
     }))
 }
 
@@ -119,7 +121,7 @@ pub(crate) async fn set_remote_download_enabled(
 }
 
 #[cfg(feature = "restricted-control-surface")]
-async fn set(
+pub(crate) async fn set(
     state: &AppState,
     session_token: &str,
     feature: AdminFeature,
@@ -165,7 +167,7 @@ async fn set(
 }
 
 #[cfg(not(feature = "restricted-control-surface"))]
-async fn set(
+pub(crate) async fn set(
     _state: &AppState,
     _session_token: &str,
     _feature: AdminFeature,

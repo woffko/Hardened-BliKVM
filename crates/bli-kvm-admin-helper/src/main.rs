@@ -14,6 +14,7 @@
 mod download;
 mod picoclaw;
 mod scripts;
+mod system_update;
 mod tailscale;
 
 use std::ffi::CString;
@@ -122,6 +123,35 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
             });
             write_line(stream, &reply)
         }
+        AdminRequest::SystemUpdateStatus {} => {
+            let reply = system_update::status()
+                .map(|update| AdminReply::SystemUpdate { update })
+                .unwrap_or_else(|error| AdminReply::Refused {
+                    reason: error.to_string(),
+                });
+            write_line(stream, &reply)
+        }
+        AdminRequest::SystemUpdateCancel {} => {
+            let reply = system_update::cancel_update()
+                .map(|update| AdminReply::SystemUpdate { update })
+                .unwrap_or_else(|error| AdminReply::Refused {
+                    reason: error.to_string(),
+                });
+            write_line(stream, &reply)
+        }
+        request @ (AdminRequest::SystemUpdateUpload { .. }
+        | AdminRequest::SystemUpdateConfirm {}
+        | AdminRequest::SystemUpdateRollback {}) => {
+            if !switches.get(AdminFeature::RawSystemUpdate) {
+                return refuse(stream, "raw system updates are switched off");
+            }
+            let reply = system_update_request(stream, request).unwrap_or_else(|error| {
+                AdminReply::Refused {
+                    reason: error.to_string(),
+                }
+            });
+            write_line(stream, &reply)
+        }
         AdminRequest::Tailscale { action } => {
             eprintln!("admin helper: tailscale {action}");
             let reply = tailscale_action(&action).unwrap_or_else(|error| AdminReply::Refused {
@@ -143,6 +173,26 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
         }
         _ => refuse(stream, "not an administration request"),
     }
+}
+
+/// Uploads, confirmations and rollbacks of the RAW system update, with the
+/// switch already checked.
+fn system_update_request(stream: &mut UnixStream, request: AdminRequest) -> io::Result<AdminReply> {
+    let update = match request {
+        AdminRequest::SystemUpdateUpload { size } => {
+            system_update::check_upload(size)?;
+            write_line(stream, &AdminReply::Ready)?;
+            // A stalled upload must not hold the staging directory forever.
+            stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+            eprintln!("admin helper: receiving a system bundle of {size} bytes");
+            let upload = system_update::receive(stream, size)?;
+            system_update::stage_upload(&upload)?
+        }
+        AdminRequest::SystemUpdateConfirm {} => system_update::confirm_update()?,
+        AdminRequest::SystemUpdateRollback {} => system_update::rollback_update()?,
+        _ => return Err(io::Error::other("not a system update request")),
+    };
+    Ok(AdminReply::SystemUpdate { update })
 }
 
 /// The reference's Tailscale actions; no switch, as in the reference.

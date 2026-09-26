@@ -10,6 +10,8 @@ repository.workspace = true
 [dependencies]
 bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog" }
+bli-kvm-system-image-verifier = { path = "../bli-kvm-system-image-verifier" }
+bli-kvm-system-raw-update = { path = "../bli-kvm-system-raw-update" }
 libc.workspace = true
 nix.workspace = true
 serde.workspace = true

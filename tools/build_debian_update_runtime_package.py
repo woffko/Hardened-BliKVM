@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev25"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev26"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -147,6 +147,23 @@ FILE_MAP.update({
     "share/tailscale/tailscale-archive-keyring.asc": (
         "usr/share/hardened-blikvm/tailscale/tailscale-archive-keyring.asc"
     ),
+    # dev26: RAW system update step, trust root and first-boot report; the
+    # initramfs files take effect only when the initramfs is next built.
+    "libexec/bli-kvm-system-update": (
+        "usr/libexec/hardened-blikvm/bli-kvm-system-update"
+    ),
+    "share/systemd/hardened-blikvm-system-update-booted.service": (
+        "lib/systemd/system/hardened-blikvm-system-update-booted.service"
+    ),
+    "share/system-update/system-trust.json": (
+        "usr/share/hardened-blikvm/system-update/system-trust.json"
+    ),
+    "share/system-update/initramfs-hook": (
+        "usr/share/initramfs-tools/hooks/hardened-blikvm-system-update"
+    ),
+    "share/system-update/initramfs-local-premount": (
+        "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update"
+    ),
     # dev19: HID gadget functions before the owner (cold-boot HID access).
     "share/systemd/hardened-blikvm-hid-gadget.service": (
         "lib/systemd/system/hardened-blikvm-hid-gadget.service"
@@ -171,6 +188,9 @@ EXECUTABLE_DESTINATIONS = {
     "usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter",
     "usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper",
     "usr/libexec/hardened-blikvm/bli-kvm-admin-helper",
+    "usr/libexec/hardened-blikvm/bli-kvm-system-update",
+    "usr/share/initramfs-tools/hooks/hardened-blikvm-system-update",
+    "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update",
 }
 ACTIVE_CONFIGURATION_PREFIXES = (
     "etc/",
@@ -205,6 +225,11 @@ def file_map(version: str) -> dict[str, str]:
         "AGENT.md": 24,
         "AGENT_KVM.md": 24,
         "tailscale-archive-keyring.asc": 25,
+        "bli-kvm-system-update": 26,
+        "hardened-blikvm-system-update-booted.service": 26,
+        "system-trust.json": 26,
+        "initramfs-hook": 26,
+        "initramfs-local-premount": 26,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,
@@ -261,7 +286,9 @@ def package_manifest(
         "slotRootCreated": False,
         "httpRouteIncluded": False,
         "guiRouteIncluded": False,
-        "systemUpdateIncluded": False,
+        # dev26 carries the RAW system update step, inert until the operator
+        # switches it on and the initramfs is rebuilt.
+        "systemUpdateIncluded": SUPPORTED_PACKAGE_VERSIONS.index(version) >= 25,
         "hardwareMutationIncluded": False,
     }
 

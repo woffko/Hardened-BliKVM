@@ -52,13 +52,15 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         for rendered in (config, validation):
             self.assertEqual(
                 re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE),
-                ["http://127.0.0.1:18080"] * 3,
+                ["http://127.0.0.1:18080"] * 4,
             )
             self.assertIn("location = /api/application-update/upload {", rendered)
             self.assertIn("location = /api/download/file {", rendered)
+            self.assertIn("location = /api/system-update/upload {", rendered)
+            self.assertIn("client_max_body_size 8g;", rendered)
             self.assertIn("client_max_body_size 128m;", rendered)
             self.assertIn("client_max_body_size 4097m;", rendered)
-            self.assertEqual(rendered.count("proxy_request_buffering off;"), 2)
+            self.assertEqual(rendered.count("proxy_request_buffering off;"), 3)
         self.assertIn("listen 80 default_server;", config)
         self.assertIn("listen 443 ssl default_server;", config)
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)

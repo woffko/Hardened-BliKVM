@@ -83,6 +83,8 @@ FORBIDDEN_PACKAGE_NAMES = {
     "bli-kvm-update-health-reporter",
     "bli-kvm-update-exec-helper",
     "bli-kvm-admin-helper",
+    "bli-kvm-system-update",
+    "hardened-blikvm-system-update-booted.service",
     "hardened-blikvm-admin@.service",
     "hardened-blikvm-image-download@.service",
     "hardened-blikvm-picoclaw.service",

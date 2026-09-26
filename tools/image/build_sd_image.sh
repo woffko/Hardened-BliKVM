@@ -12,7 +12,8 @@
 #   tools/image/build_sd_image.sh assemble WORK_DIR OUTPUT_DIR
 #
 # fetch reads the root filesystem (one file system, excluding secrets and
-# bulky caches) and the raw boot area over SSH without modifying the board.
+# bulky caches) and the raw boot area over SSH; on the board it only builds
+# the image's initramfs in a temporary /var/tmp directory, never in /boot.
 # assemble runs locally under fakeroot, removes machine secrets, installs the
 # first-boot provisioning unit and writes the images.
 set -eu
@@ -40,8 +41,15 @@ fetch() {
   exec 3<&0
   # Secrets and machine state never leave the board.
   # One SSH session (the password can be read only once): exactly 2047 raw
-  # sectors after the MBR, then the root filesystem archive.
-  ssh_device 'dd if=/dev/mmcblk0 bs=512 skip=1 count=2047 status=none &&
+  # sectors after the MBR, then the root filesystem archive. The image's
+  # initramfs is built first into /var/tmp (never /boot), so it carries the
+  # RAW system update step even while the board's own initramfs does not.
+  ssh_device 'set -e; kernel=$(uname -r); boot_dir=/var/tmp/hardened-image-boot;
+    rm -rf "$boot_dir"; mkdir -p "$boot_dir";
+    mkinitramfs -o "$boot_dir/initrd.img-$kernel" "$kernel" >&2;
+    mkimage -A arm64 -O linux -T ramdisk -C gzip -n uInitrd -d "$boot_dir/initrd.img-$kernel" "$boot_dir/uInitrd-$kernel" >/dev/null;
+    set +e;
+    dd if=/dev/mmcblk0 bs=512 skip=1 count=2047 status=none &&
     tar --one-file-system --numeric-owner --xattrs --acls -C / -cpf - \
       --exclude=./root --exclude=./home/*/* --exclude=./var/cache/apt/archives \
       --exclude=./var/log/journal --exclude=./var/backups/hardened-blikvm-native \
@@ -55,7 +63,7 @@ fetch() {
       --exclude=./etc/hardened-blikvm/tls.key --exclude=./etc/hardened-blikvm/tls.crt \
       --exclude=./etc/ssl/private/ssl-cert-snakeoil.key --exclude=./etc/hardened-blikvm-gadget/serial \
       --exclude=./var/lib/hardened-blikvm/accounts --exclude=./var/lib/hardened-blikvm/sessions \
-      --exclude="./home/*/.bash_history" .; status=$?; [ "$status" -le 1 ] || exit "$status"' \
+      --exclude="./home/*/.bash_history" .; status=$?; rm -rf "$boot_dir"; [ "$status" -le 1 ] || exit "$status"' \
     | { dd of="$work/boot-area.bin" bs=512 count=2047 iflag=fullblock status=none && cat > "$work/rootfs.tar"; }
   [ "$(stat -c %s "$work/boot-area.bin")" = $((2047 * 512)) ]
   # GNU tar exits 1 when a live file changed while it was read; the archive
@@ -89,6 +97,12 @@ assemble() {
     # ACLs (journal directories) and xattrs are not reproduced; systemd
     # recreates the journal ACLs on the device.
     tar --numeric-owner --no-acls --no-xattrs -C "$staging" -xpf "$tarball"
+    # The initramfs built for the image replaces the board'"'"'s own one.
+    for built in "$staging"/var/tmp/hardened-image-boot/initrd.img-* "$staging"/var/tmp/hardened-image-boot/uInitrd-*; do
+      [ -f "$built" ] || { echo "the image initramfs is missing; fetch again" >&2; exit 1; }
+      cat "$built" > "$staging/boot/${built##*/}"
+    done
+    rm -rf "$staging/var/tmp/hardened-image-boot"
     # Machine identity is regenerated on the first boot.
     : > "$staging/etc/machine-id"
     rm -f "$staging/var/lib/dbus/machine-id"
@@ -118,6 +132,16 @@ assemble() {
         exit 1
       fi
     done
+    # nginx must use the TLS pair the first boot generates; the board'"'"'s
+    # own certificate (rendered into its nginx.conf) is excluded above.
+    sed -i -e "s#/etc/kvmd/nginx/ssl/server.crt;#/etc/hardened-blikvm/tls.crt;#" \
+      -e "s#/etc/kvmd/nginx/ssl/server.key;#/etc/hardened-blikvm/tls.key;#" \
+      "$staging/etc/hardened-blikvm/nginx.conf"
+    grep -q "ssl_certificate /etc/hardened-blikvm/tls.crt;" "$staging/etc/hardened-blikvm/nginx.conf" &&
+      grep -q "ssl_certificate_key /etc/hardened-blikvm/tls.key;" "$staging/etc/hardened-blikvm/nginx.conf" || {
+      echo "nginx.conf does not use the first-boot TLS pair" >&2
+      exit 1
+    }
     install -d -m 0700 -o 0 -g 0 "$staging/root"
     install -d -m 0755 "$staging/var/log/journal"
     # Default credentials follow the Armbian convention: root/1234, expired, so
@@ -144,6 +168,14 @@ assemble() {
     printf "Hardened BliKVM H616 SD image %s\n" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"
   ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash"
+
+  # The image's initramfs must carry the RAW system update step.
+  for initrd in "$staging"/boot/initrd.img-*; do
+    zcat "$initrd" | cpio -t 2>/dev/null | grep -Eq '^(usr/)?sbin/bli-kvm-system-update$' || {
+      echo "the image initramfs lacks the RAW system update step" >&2
+      exit 1
+    }
+  done
 
   root_img="$work/root.ext4"
   rm -f "$root_img" "$work/data.ext4" "$work/msd.ext4"

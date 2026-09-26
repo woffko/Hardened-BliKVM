@@ -20,7 +20,8 @@ pub const SYSTEM_SIGNATURE_PATH: &str = "manifest.sig";
 pub const SYSTEM_PAYLOAD_DIRECTORY: &str = "payload/";
 
 pub const MAX_SYSTEM_ARCHIVE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
-pub const MAX_ROOTFS_IMAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// The root partition of the card layout is 12 GiB.
+pub const MAX_ROOTFS_IMAGE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 pub const MAX_BOOT_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_SYSTEM_MANIFEST_BYTES: u64 = 64 * 1024;
 
@@ -42,7 +43,13 @@ pub enum SystemComponentRole {
 pub enum SystemContentType {
     Ext4,
     Vfat,
+    /// A zstd-compressed ext4 image (`rootfs.img.zst`): the compressed bytes
+    /// are hashed here, the uncompressed image when it is written.
+    Ext4Zstd,
 }
+
+/// The zstd frame magic that starts a compressed image.
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -52,6 +59,12 @@ pub struct SystemComponent {
     pub content_type: SystemContentType,
     pub size: u64,
     pub sha256: String,
+    /// For a compressed image: the uncompressed size and digest the writer
+    /// checks while writing and when reading the partition back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,11 +413,12 @@ fn hash_component(
     reader: &mut impl Read,
     component: &SystemComponent,
 ) -> Result<String, SystemVerifyError> {
-    let (signature_offset, expected_signature) = match component.content_type {
-        SystemContentType::Ext4 => (EXT4_MAGIC_OFFSET, [0x53, 0xef]),
-        SystemContentType::Vfat => (VFAT_SIGNATURE_OFFSET, [0x55, 0xaa]),
+    let (signature_offset, expected_signature): (u64, &[u8]) = match component.content_type {
+        SystemContentType::Ext4 => (EXT4_MAGIC_OFFSET, &[0x53, 0xef]),
+        SystemContentType::Vfat => (VFAT_SIGNATURE_OFFSET, &[0x55, 0xaa]),
+        SystemContentType::Ext4Zstd => (0, &ZSTD_MAGIC),
     };
-    let mut observed_signature = [0_u8; 2];
+    let mut observed_signature = vec![0_u8; expected_signature.len()];
     let mut signature_bytes_seen = 0_usize;
     let mut hasher = Sha256::new();
     let mut total = 0_u64;
@@ -423,7 +437,7 @@ fn hash_component(
         if total > component.size {
             return Err(SystemVerifyError::InvalidArchive);
         }
-        for index in 0..2_u64 {
+        for index in 0..expected_signature.len() as u64 {
             let offset = signature_offset + index;
             if (start..total).contains(&offset) {
                 observed_signature[index as usize] = buffer[(offset - start) as usize];
@@ -435,7 +449,8 @@ fn hash_component(
     if total != component.size {
         return Err(SystemVerifyError::InvalidArchive);
     }
-    if signature_bytes_seen != 2 || observed_signature != expected_signature {
+    if signature_bytes_seen != expected_signature.len() || observed_signature != expected_signature
+    {
         return Err(SystemVerifyError::InvalidFilesystemImage);
     }
     Ok(hex_lower(hasher.finalize().as_ref()))
@@ -488,6 +503,15 @@ fn validate_components(
         {
             return Err(SystemVerifyError::InvalidManifestShape);
         }
+        let compressed = component.content_type == SystemContentType::Ext4Zstd;
+        if compressed != (component.image_size.is_some() && component.image_sha256.is_some())
+            || component
+                .image_sha256
+                .as_deref()
+                .is_some_and(|digest| !valid_sha256(digest))
+        {
+            return Err(SystemVerifyError::InvalidManifestShape);
+        }
         previous_path = Some(component.path.as_str());
         match (
             component.role,
@@ -503,6 +527,18 @@ fn validate_components(
             }
             (SystemComponentRole::Rootfs, SystemContentType::Ext4, "rootfs.img") => {
                 if rootfs_seen || component.size != policy.rootfs_bytes {
+                    return Err(SystemVerifyError::PolicyMismatch);
+                }
+                rootfs_seen = true;
+            }
+            // A shrunk image that fits the partition; the writer grows the
+            // file system to the partition afterwards.
+            (SystemComponentRole::Rootfs, SystemContentType::Ext4Zstd, "rootfs.img.zst") => {
+                let image_size = component.image_size.unwrap_or(0);
+                if rootfs_seen
+                    || !(MIN_ROOTFS_IMAGE_BYTES..=policy.rootfs_bytes).contains(&image_size)
+                    || image_size % 4096 != 0
+                {
                     return Err(SystemVerifyError::PolicyMismatch);
                 }
                 rootfs_seen = true;

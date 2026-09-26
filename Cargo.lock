@@ -123,6 +123,8 @@ version = "0.1.0"
 dependencies = [
  "bli-kvm-core",
  "bli-kvm-media-catalog",
+ "bli-kvm-system-image-verifier",
+ "bli-kvm-system-raw-update",
  "libc",
  "nix",
  "serde",
@@ -833,6 +835,21 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "bli-kvm-system-raw-update"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-system-image-verifier",
+ "ed25519-dalek",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
  "thiserror",
 ]
 

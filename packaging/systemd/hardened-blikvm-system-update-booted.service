@@ -1,0 +1,28 @@
+[Unit]
+Description=Hardened BliKVM RAW system update boot report
+Documentation=https://github.com/woffko/Hardened-BliKVM
+# Only after a RAW system update wrote a new root: marks it booted once the
+# web stack answers, so the next boot keeps it instead of counting a failed
+# attempt (docs/design/system-raw-update-v1.md).
+ConditionPathExists=/mnt/.hardened-system-update/apply.json
+RequiresMountsFor=/mnt
+After=hardened-blikvm-nginx.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-system-update booted
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/mnt/.hardened-system-update
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target
