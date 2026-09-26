@@ -247,11 +247,39 @@ slot 38, update runtime 0.1.0~dev26):
   root image shrunk to 4.65 GB, 1.16 GB compressed; signature checked
   against the shipped trust root). The bundle built from the faulty first
   image is superseded.
-- Waiting for the operator: the device test needs a spare card written from
-  the new image (install that bundle and check that the
-  account, TLS certificate, SSH host keys, root password, slot and switches
-  survive, then confirm; then check that a new root that never reports
-  itself booted is replaced by the backup on the third boot).
+- Device test on the card written from `h616-sd-20260926-f`, run by the
+  agent under the operator's authorization of 2026-09-26
+  (`tools/playwright/raw_system_update_device_test.mjs`; root commands and the
+  baseline through the web terminal, `tools/playwright/terminal_run.mjs`,
+  because the card's root password still has to be changed at the first
+  login; `evidence/private/raw-system-update-baseline-20260926.txt`):
+  - Stage: the bundle uploaded through the API was verified and staged on the
+    card's data partition (payload 1.16 GB, carried state 100 MB).
+  - Install (`evidence/private/raw-system-update-device-20260926-install.json`,
+    passed): the board backed the 12 GiB root up (1.57 GB compressed, proven
+    before writing), wrote and read back the 4.65 GB image, grew and
+    relabelled it, and came back after 32 minutes; the boot report marked it
+    booted. The TLS certificate, the SSH host keys, the account, the
+    application slot, the hostname, the session lock, the SSH switch, the root
+    password hash and the machine id were unchanged, except the DSA host key:
+    the carried-state list named the other three key types only, and the
+    image's first boot generated a new DSA key. DSA keys are carried from
+    commit a49c809, with a test for every key type.
+  - Rollback through the API
+    (`evidence/private/raw-system-update-device-20260926-rollback.json`,
+    passed): the board wrote the backup back and returned after 21 minutes as
+    `rolled_back`, with the previous root byte for byte (the old DSA key
+    returned with it) and every compared item unchanged.
+  - Found on the way: a reboot through the system action stays pending until
+    the post-boot acceptance closes it, and the record from the phase B KVM
+    reboot had never been accepted, so the image carried it and every further
+    API reboot answered `pending_unreconciled`. The acceptance unit cannot
+    take the store lock while the owner runs; the owner accepts through its
+    control socket (`accept_post_boot` with the guard attestation), which the
+    agent did after checking each reboot. Every GUI reboot therefore needs
+    this acceptance before the next one; that is by design
+    (`docs/design/system-actions-v1.md`) but differs from the reference,
+    which reboots again at any time.
 
 Final GUI comparison 2026-09-26 (reference Hardened NanoKVM 2.0.42 against
 slot 26, desktop). The generic parity probe could not capture the

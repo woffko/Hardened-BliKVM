@@ -3,6 +3,17 @@ import { pathToFileURL } from "node:url";
 
 import { startApp } from "./app_harness.mjs";
 
+// A release request is asynchronous; poll for it instead of assuming a fixed
+// delay, which a loaded host can exceed.
+async function eventually(condition, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return condition();
+}
+
 const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ??
   "/home/w0w/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
@@ -89,10 +100,12 @@ try {
   await page.keyboard.down("KeyB");
   await page.waitForTimeout(100);
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await page.waitForTimeout(100);
   assert.ok(
-    hidActions().filter((action) => action === "release").length >
-      releasesBeforeBlur,
+    await eventually(
+      () =>
+        hidActions().filter((action) => action === "release").length >
+        releasesBeforeBlur,
+    ),
     "blur did not release the active lease",
   );
   await page.keyboard.up("KeyB");
@@ -108,10 +121,12 @@ try {
     window.location.hash = "/auth/login";
   });
   await page.waitForURL(`${baseUrl}/#/auth/login`);
-  await page.waitForTimeout(100);
   assert.ok(
-    hidActions().filter((action) => action === "release").length >
-      releasesBeforeUnmount,
+    await eventually(
+      () =>
+        hidActions().filter((action) => action === "release").length >
+        releasesBeforeUnmount,
+    ),
     "desktop unmount did not release the active lease",
   );
   await context.close();
