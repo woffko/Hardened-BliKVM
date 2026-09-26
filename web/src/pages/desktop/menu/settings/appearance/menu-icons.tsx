@@ -72,18 +72,24 @@ export const MenuIcons = () => {
     [setMenuDisabledItems]
   );
 
-  // Scripts are switched on the server as well: the owner persists the switch
-  // and the server refuses the feature while it is off.
+  // Scripts and PicoClaw are switched on the server as well: the owner persists
+  // the switch and the server refuses the feature while it is off.
   const [serverSwitchLoading, setServerSwitchLoading] = useState('');
   const scriptsSupported = supportsMenuItem(capabilities, 'script');
+  const picoclawSupported = supportsMenuItem(capabilities, 'picoclaw');
 
   useEffect(() => {
-    if (!scriptsSupported) return;
+    if (!scriptsSupported && !picoclawSupported) return;
     adminApi.getAdminFeatures().then((rsp) => {
-      if (rsp.code !== 0 || typeof rsp.data?.scripts !== 'boolean') return;
-      setItemVisible('script', rsp.data.scripts);
+      if (rsp.code !== 0 || !rsp.data) return;
+      if (scriptsSupported && typeof rsp.data.scripts === 'boolean') {
+        setItemVisible('script', rsp.data.scripts);
+      }
+      if (picoclawSupported && typeof rsp.data.picoclaw === 'boolean') {
+        setItemVisible('picoclaw', rsp.data.picoclaw);
+      }
     });
-  }, [scriptsSupported, setItemVisible]);
+  }, [picoclawSupported, scriptsSupported, setItemVisible]);
 
   function updateServerSwitch(key: string, feature: adminApi.AdminFeature, enabled: boolean) {
     if (serverSwitchLoading) return;
@@ -127,6 +133,11 @@ export const MenuIcons = () => {
 
     if (key === 'script' && scriptsSupported) {
       updateServerSwitch(key, 'scripts', nextEnabled);
+      return;
+    }
+
+    if (key === 'picoclaw' && picoclawSupported) {
+      updateServerSwitch(key, 'picoclaw', nextEnabled);
       return;
     }
 

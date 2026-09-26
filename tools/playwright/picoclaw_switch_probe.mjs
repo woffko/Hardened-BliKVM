@@ -137,68 +137,81 @@ try {
     pressed: await toggle.first().getAttribute("aria-pressed"),
   });
 
-  const sessionId = crypto.randomUUID();
-  const chat = await page.evaluate(
-    async ({ sessionId }) => {
-      const seen = { types: [], observation: 0, final: "", manual: "" };
-      return await new Promise((resolve) => {
-        const socket = new WebSocket(
-          `wss://${location.host}/api/picoclaw/gateway/ws?session_id=${sessionId}`,
-        );
-        const done = (extra) => {
-          socket.close();
-          resolve({ ...seen, ...extra });
-        };
-        socket.onopen = () => {
-          socket.send(
-            JSON.stringify({
-              id: crypto.randomUUID(),
-              session_id: sessionId,
-              type: "message.send",
-              payload: { content: "Take a screenshot and centre the mouse." },
-            }),
-          );
-          // Manual HID input while the assistant holds the lock.
-          const hid = new WebSocket(`wss://${location.host}/api/ws`);
-          hid.binaryType = "arraybuffer";
-          hid.onopen = () => hid.send(new Uint8Array([2, 0, 0, 0, 0, 0, 0]));
-          hid.onmessage = (event) => {
-            seen.manual = String(event.data).slice(0, 120);
-            hid.close();
-          };
-        };
-        socket.onmessage = (event) => {
-          let message = null;
-          try {
-            message = JSON.parse(event.data);
-          } catch {
-            return;
-          }
-          seen.types.push(message.type);
-          const payload = message.payload ?? {};
-          if (
-            message.type === "observation" &&
-            String(payload.image_base64 ?? "").length > 1000
-          ) {
-            seen.observation += 1;
-          }
-          const content = String(payload.content ?? "");
-          if (
-            (message.type === "message.create" ||
-              message.type === "message.update") &&
-            content.includes("FAKE-DONE")
-          ) {
-            seen.final = content.slice(0, 400);
-            setTimeout(() => done({ opened: true }), 500);
-          }
-        };
-        socket.onclose = (event) =>
-          resolve({ ...seen, closed: event.code, reason: event.reason });
-        setTimeout(() => done({ opened: true, timeout: true }), 120000);
-      });
-    },
-    { sessionId },
+  // Drive the real assistant sidebar and watch its gateway frames.
+  const chat = { types: [], observation: 0, final: "", manual: [] };
+  page.on("websocket", (socket) => {
+    if (!socket.url().includes("/api/picoclaw/gateway/ws")) return;
+    socket.on("framereceived", (frame) => {
+      let message = null;
+      try {
+        message = JSON.parse(String(frame.payload));
+      } catch {
+        return;
+      }
+      chat.types.push(message.type);
+      const payload = message.payload ?? {};
+      if (
+        message.type === "observation" &&
+        String(payload.image_base64 ?? "").length > 1000
+      ) {
+        chat.observation += 1;
+      }
+      const content = String(payload.content ?? "");
+      if (
+        (message.type === "message.create" ||
+          message.type === "message.update") &&
+        content.includes("FAKE-DONE")
+      ) {
+        chat.final = content.slice(0, 600);
+      }
+    });
+  });
+  page.on("response", async (response) => {
+    if (!response.url().includes("/api/hid/lease")) return;
+    try {
+      const body = await response.json();
+      if (body?.data?.rejection) chat.manual.push(body.data.rejection);
+    } catch {
+      // not JSON
+    }
+  });
+  await page.getByRole("button", { name: "PicoClaw Assistant" }).click();
+  const input = page.getByPlaceholder(
+    "Describe what you want the PicoClaw to do",
   );
+  await input.waitFor({ timeout: 30000 });
+  await page.waitForFunction(
+    () => !document.querySelector("textarea")?.hasAttribute("disabled"),
+    null,
+    { timeout: 30000 },
+  );
+  await input.fill("Take a screenshot and centre the mouse.");
+  await input.press("Enter");
+  // Manual input while the assistant has control: over the screen and on
+  // the raw HID socket.
+  const box = await page.locator("#screen").boundingBox();
+  for (let i = 0; i < 5; i += 1) {
+    await page.mouse.move(
+      box.x + box.width * (0.2 + i * 0.1),
+      box.y + box.height / 3,
+    );
+    await sleep(150);
+  }
+  chat.raw = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const hid = new WebSocket(`wss://${location.host}/api/ws`);
+        hid.binaryType = "arraybuffer";
+        hid.onopen = () => hid.send(new Uint8Array([2, 0, 0, 0, 0, 0, 0]));
+        hid.onmessage = (event) => {
+          resolve(String(event.data).slice(0, 120));
+          hid.close();
+        };
+        setTimeout(() => resolve("no answer"), 5000);
+      }),
+  );
+  for (let i = 0; i < 240 && !chat.final; i += 1) await sleep(500);
+  chat.controlAfter = await toggle.first().getAttribute("aria-pressed");
   chat.types = [...new Set(chat.types)];
   step("chat", chat);
   await sleep(1500);
@@ -257,7 +270,8 @@ try {
     by.control.pressed === "true" &&
     by.chat.observation >= 1 &&
     /FAKE-DONE/.test(by.chat.final) &&
-    /assistant_active/.test(by.chat.manual) &&
+    /assistant_active/.test(by.chat.raw) &&
+    by.chat.controlAfter === "true" &&
     /hid_writes/.test(by.chat.final) &&
     by.sessions.added.length === 1 &&
     !by.sessions_after_delete.ids.includes(historyId) &&
