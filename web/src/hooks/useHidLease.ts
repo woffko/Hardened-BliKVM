@@ -3,7 +3,7 @@ import { useAtomValue } from 'jotai';
 
 import type { HidReport } from '@/api/restricted-control.ts';
 import { supportsRestrictedControls } from '@/lib/capabilities.ts';
-import { HidLeaseSession } from '@/lib/hid-lease.ts';
+import { ASSISTANT_ACTIVE, HidLeaseSession } from '@/lib/hid-lease.ts';
 import { hasWheel, mergeMouseReport, type MouseReport } from '@/lib/hid-report-queue.ts';
 import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
@@ -122,13 +122,14 @@ export function useHidLease() {
     };
   }, [disableControl]);
 
-  const send = useCallback(
-    async (report: HidReport, generation: number) => {
-      if (generation !== queueGeneration || !(await ensureConfirmed())) return;
+  /** Starts the shared lease if needed; false when it cannot be used. */
+  const ensureSession = useCallback(
+    async (generation: number): Promise<HidLeaseSession | null> => {
+      if (generation !== queueGeneration || !(await ensureConfirmed())) return null;
       const current = manifestRef.current;
-      if (!current) return;
+      if (!current) return null;
       await ensureFocus(current.platform.id);
-      if (generation !== queueGeneration) return;
+      if (generation !== queueGeneration) return null;
 
       if (!sharedSession) {
         const platformId = current.platform.id;
@@ -141,30 +142,44 @@ export function useHidLease() {
         }
         if (generation !== queueGeneration) {
           await session.stop().catch(() => undefined);
-          return;
+          return null;
         }
         sharedSession = session;
       }
-
-      if (generation !== queueGeneration) return;
-      await sharedSession.report(report);
+      return generation === queueGeneration ? sharedSession : null;
     },
     [ensureConfirmed]
   );
 
-  const enqueue = useCallback(
-    (report: HidReport) => {
+  const send = useCallback(
+    async (report: HidReport, generation: number) => {
+      const session = await ensureSession(generation);
+      if (session) await session.report(report);
+    },
+    [ensureSession]
+  );
+
+  const schedule = useCallback(
+    (run: (generation: number) => Promise<unknown>) => {
       const generation = queueGeneration;
       sharedQueue = sharedQueue
-        .then(() => send(report, generation))
-        .catch(() => {
+        .then(() => run(generation))
+        .then(() => undefined)
+        .catch((error: unknown) => {
           if (generation !== queueGeneration) return;
+          // Held back while the AI assistant has control; the lease is live.
+          if (error instanceof Error && error.message === ASSISTANT_ACTIVE) return;
           resetFocusConfirmation();
           disableControl();
           cancelSharedSession();
         });
     },
-    [disableControl, send]
+    [disableControl]
+  );
+
+  const enqueue = useCallback(
+    (report: HidReport) => schedule((generation) => send(report, generation)),
+    [schedule, send]
   );
   enqueueRef = enqueue;
 
@@ -186,5 +201,14 @@ export function useHidLease() {
     cancelSharedSession();
   }, [disableControl]);
 
-  return { restricted, reportHid, release };
+  /**
+   * Holds the lease without sending input, so the AI assistant can act
+   * through this operator's control while its session is connected.
+   */
+  const hold = useCallback(() => {
+    if (!manifestRef.current || !confirmedRef.current) return;
+    schedule((generation) => ensureSession(generation));
+  }, [ensureSession, schedule]);
+
+  return { restricted, reportHid, release, hold };
 }

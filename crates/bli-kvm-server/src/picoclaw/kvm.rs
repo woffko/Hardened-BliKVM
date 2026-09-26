@@ -121,7 +121,7 @@ async fn send(state: &AppState, operator: &Session, report: HidReport) -> Result
         .await
         .live(&operator.token, Instant::now());
     let (lease_id, bindings) =
-        live.ok_or("the operator's KVM page does not hold the keyboard and mouse")?;
+        live.ok_or("remote control is off on the operator's KVM page; turn it on to let the assistant use the keyboard and mouse")?;
     let request = PlatformControlRequestV2::HidLease {
         lease: HidLeaseRequest::Report {
             lease_id,

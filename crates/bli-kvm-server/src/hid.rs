@@ -448,15 +448,20 @@ pub(crate) async fn hid_lease(
     if !valid_operation_id(operation_id) {
         return Err(AppError::BadRequest("lease operation ID is invalid".into()));
     }
+    // The assistant has the keyboard and mouse, as in the reference: the
+    // report is held back but the lease stays live for the assistant.
     if matches!(request, HidLeaseBody::Report { .. })
         && state
             .picoclaw
             .as_deref()
             .is_some_and(crate::picoclaw::Picoclaw::blocks_manual_input)
     {
-        return Err(AppError::Conflict(
-            "the assistant is operating the keyboard and mouse".into(),
-        ));
+        return Ok(Json(ApiResponse::ok(HidLeaseResponse {
+            applied: false,
+            lease_id: None,
+            ttl_seconds: None,
+            rejection: Some("assistant_active"),
+        })));
     }
     let now = Instant::now();
     let confirmed = { state.focus.lock().await.bindings(&session.token, now) };

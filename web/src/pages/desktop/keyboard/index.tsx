@@ -24,7 +24,7 @@ export const Keyboard = () => {
   const pressedKeys = useRef(new Set<string>());
   const isComposing = useRef(false);
 
-  const { restricted, reportHid } = useHidLease();
+  const { restricted, reportHid, hold } = useHidLease();
 
   const sendReport = useCallback(
     (report: Uint8Array) => {
@@ -66,8 +66,15 @@ export const Keyboard = () => {
     pressedKeys.current.clear();
     leaderKeyRef.current.reset();
     altGrRef.current.reset();
+    if (restricted) {
+      // The server holds manual input back while the assistant has control
+      // and releases the keys itself; the assistant acts through this lease.
+      keyboardRef.current.reset();
+      hold();
+      return;
+    }
     sendReport(keyboardRef.current.reset());
-  }, [picoclawTakeoverState.active, sendReport]);
+  }, [picoclawTakeoverState.active, restricted, hold, sendReport]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);

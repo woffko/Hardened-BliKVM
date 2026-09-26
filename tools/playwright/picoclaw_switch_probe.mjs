@@ -122,6 +122,11 @@ try {
   step("start", await api("POST", "/api/picoclaw/runtime/start"));
   step("status_started", await status());
 
+  const listed = async () =>
+    ((await api("GET", "/api/picoclaw/sessions")).data ?? []).map(
+      (item) => item.id,
+    );
+  const before = await listed();
   const page = await context.newPage();
   await page.goto(`${url.origin}/`);
   await page.waitForSelector("#screen", { timeout: 20000 });
@@ -198,13 +203,11 @@ try {
   step("chat", chat);
   await sleep(1500);
   step("status_after_chat", await status());
-  const sessions = await api("GET", "/api/picoclaw/sessions");
-  step("sessions", {
-    http: sessions.http,
-    code: sessions.code,
-    ids: (sessions.data ?? []).map((item) => item.id),
-  });
-  const detail = await api("GET", `/api/picoclaw/sessions/${sessionId}`);
+  // The runtime keys its history by an opaque ID, as in the reference.
+  const added = (await listed()).filter((id) => !before.includes(id));
+  step("sessions", { before: before.length, added });
+  const historyId = added[0] ?? "missing";
+  const detail = await api("GET", `/api/picoclaw/sessions/${historyId}`);
   step("session_detail", {
     http: detail.http,
     code: detail.code,
@@ -212,8 +215,9 @@ try {
   });
   step(
     "session_delete",
-    await api("DELETE", `/api/picoclaw/sessions/${sessionId}`),
+    await api("DELETE", `/api/picoclaw/sessions/${historyId}`),
   );
+  step("sessions_after_delete", { ids: await listed() });
   let modelLog = [];
   try {
     modelLog = await (await fetch(new URL("/log", model))).json();
@@ -254,7 +258,9 @@ try {
     by.chat.observation >= 1 &&
     /FAKE-DONE/.test(by.chat.final) &&
     /assistant_active/.test(by.chat.manual) &&
-    by.sessions.ids.includes(sessionId) &&
+    /hid_writes/.test(by.chat.final) &&
+    by.sessions.added.length === 1 &&
+    !by.sessions_after_delete.ids.includes(historyId) &&
     by.session_detail.messages >= 2 &&
     by.session_delete.code === 0 &&
     by.model_log.answers.length >= 3 &&

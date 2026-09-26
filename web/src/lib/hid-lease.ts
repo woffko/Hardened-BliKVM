@@ -1,6 +1,8 @@
 import * as api from '@/api/restricted-control.ts';
 
 const OPERATION_ID_BYTES = 16;
+/** The server holds manual input back while the AI assistant has control. */
+export const ASSISTANT_ACTIVE = 'assistant_active';
 const RENEW_FRACTION = 0.5;
 
 export function newOperationId(): string {
@@ -58,6 +60,8 @@ export class HidLeaseSession {
     );
     this.requireGeneration(generation);
     if (!response.data.applied) {
+      // The lease is still live; only this report was held back.
+      if (response.data.rejection === ASSISTANT_ACTIVE) throw new Error(ASSISTANT_ACTIVE);
       this.invalidateLease();
       throw new Error(response.data.rejection ?? 'HID report was not applied');
     }
