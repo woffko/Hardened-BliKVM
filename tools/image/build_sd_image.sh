@@ -137,6 +137,12 @@ assemble() {
     sed -i -e "s#/etc/kvmd/nginx/ssl/server.crt;#/etc/hardened-blikvm/tls.crt;#" \
       -e "s#/etc/kvmd/nginx/ssl/server.key;#/etc/hardened-blikvm/tls.key;#" \
       "$staging/etc/hardened-blikvm/nginx.conf"
+    # The rendered nginx unit also starts only when that pair exists.
+    for unit in "$staging"/etc/systemd/system/hardened-blikvm-nginx.service; do
+      [ -f "$unit" ] || continue
+      sed -i -e "s#^ConditionPathExists=/etc/kvmd/nginx/ssl/server.crt\$#ConditionPathExists=/etc/hardened-blikvm/tls.crt#" \
+        -e "s#^ConditionPathExists=/etc/kvmd/nginx/ssl/server.key\$#ConditionPathExists=/etc/hardened-blikvm/tls.key#" "$unit"
+    done
     grep -q "ssl_certificate /etc/hardened-blikvm/tls.crt;" "$staging/etc/hardened-blikvm/nginx.conf" &&
       grep -q "ssl_certificate_key /etc/hardened-blikvm/tls.key;" "$staging/etc/hardened-blikvm/nginx.conf" || {
       echo "nginx.conf does not use the first-boot TLS pair" >&2
@@ -144,6 +150,9 @@ assemble() {
     }
     install -d -m 0700 -o 0 -g 0 "$staging/root"
     install -d -m 0755 "$staging/var/log/journal"
+    # The board'"'"'s connection profiles are excluded, but the directory is part
+    # of the board owner'"'"'s sandbox (ReadWritePaths) and must exist.
+    install -d -m 0700 -o 0 -g 0 "$staging/etc/NetworkManager/system-connections"
     # Default credentials follow the Armbian convention: root/1234, expired, so
     # the first SSH login must set a new password. The blikvm user is locked.
     awk -F: -v OFS=: -v hash="$root_hash" '"'"'$1 == "root" { $2 = hash; $3 = 0 }
@@ -176,6 +185,49 @@ assemble() {
       exit 1
     }
   done
+
+  # Every path the units that start need must exist in the image, or be one
+  # the first boot creates: a missing sandbox path stops a unit before it
+  # runs (the board owner, and with it the whole application, on a card
+  # without /etc/NetworkManager/system-connections), and a missing condition
+  # path skips it silently (nginx without its certificate). Checked are the
+  # rendered units in /etc/systemd/system, the packaged units that are
+  # enabled, and the socket-activated services behind enabled sockets.
+  created_at_first_boot="/etc/hardened-blikvm/tls.crt /etc/hardened-blikvm/tls.key /etc/hardened-blikvm-gadget/serial"
+  # Default-off features whose files appear only once switched on.
+  optional_until_enabled="/mnt/.hardened-system-update /mnt/.hardened-system-update/apply.json /var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
+  enabled=$(find "$staging/etc/systemd/system" -path "*.wants/hardened-blikvm-*" -exec basename {} \; | sort -u)
+  units=$(
+    find "$staging/etc/systemd/system" -maxdepth 1 -type f -name "hardened-blikvm-*"
+    find "$staging/etc/systemd/system" -mindepth 2 -maxdepth 2 -path "*/hardened-blikvm-*.d/*.conf" -type f
+    for name in $enabled; do
+      [ -f "$staging/lib/systemd/system/$name" ] && echo "$staging/lib/systemd/system/$name"
+      case "$name" in
+        *.socket)
+          service="${name%.socket}"
+          for candidate in "$service.service" "$service@.service"; do
+            [ -f "$staging/lib/systemd/system/$candidate" ] && echo "$staging/lib/systemd/system/$candidate"
+          done
+          ;;
+      esac
+    done
+  )
+  missing=$(
+    for unit in $units; do cat "$unit"; done |
+      awk '/^(ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ExecPaths|NoExecPaths|BindPaths|BindReadOnlyPaths|ConditionPathExists|AssertPathExists|LoadCredential)=/ {
+        n = split($0, words, /[= ]+/)
+        for (i = 2; i <= n; i++) print words[i]
+      }' | sed -e 's#^[^/]*:##' -e 's#:.*$##' | grep '^/' | grep -Ev '^/(run|dev|sys|proc|tmp)/' | grep -v '%' | sort -u |
+      while read -r path; do
+        case " $created_at_first_boot $optional_until_enabled " in *" $path "*) continue ;; esac
+        [ -e "$staging$path" ] || [ -L "$staging$path" ] || echo "$path"
+      done
+  )
+  if [ -n "$missing" ]; then
+    echo "units need paths the image lacks:" >&2
+    echo "$missing" >&2
+    exit 1
+  fi
 
   root_img="$work/root.ext4"
   rm -f "$root_img" "$work/data.ext4" "$work/msd.ext4"
