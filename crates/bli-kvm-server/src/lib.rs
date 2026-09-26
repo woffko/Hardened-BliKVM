@@ -1493,7 +1493,10 @@ mod tests {
             .unwrap();
         request
             .extensions_mut()
-            .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 1))));
+            .insert(axum::extract::ConnectInfo(SocketAddr::from((
+                [127, 0, 0, 1],
+                1,
+            ))));
         let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
