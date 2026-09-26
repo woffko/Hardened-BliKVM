@@ -56,6 +56,10 @@ pub const CARRIED_STATE: &[&str] = &[
     "etc/hostname",
     "etc/hosts",
     "etc/NetworkManager/system-connections",
+    // The stable-privacy IPv6 addresses and the DHCP client identity derive
+    // from this key; the image leaves it out, so without it every update
+    // would give the board new addresses.
+    "var/lib/NetworkManager/secret_key",
     "root/.ssh",
     "var/lib/hardened-blikvm",
     "var/lib/hardened-blikvm-exec",

@@ -162,13 +162,60 @@ Observed while testing: the media catalog still lists `kubuntu.img` although
 the file is no longer in the image store; the catalog entry is stale and is
 left for the operator to delete from the image list.
 
-Plan phase D 2026-09-26 (firewall on the device): not started, as the plan
-requires. Migrating the legacy iptables rules and enabling the owned nft
-table can cut the board off the network, so it needs a recovery path first:
-a UART console, physical access to the board, or a card with the current
-image that the operator has checked boots. Nothing on the board's firewall
-was changed. The operator chose the card from the phase E1 boot check as
-the recovery path, so phase D starts after that check.
+Plan phase D 2026-09-27 (firewall on the device), run by the agent under the
+operator's authorization, with the card from the phase E1 check as the
+recovery path. Slot 40 and update runtime 0.1.0~dev28; probe
+`tools/playwright/firewall_modes_device_probe.mjs` (host checks over IPv4
+and, through the Windows host, IPv6; board checks through one web-terminal
+session; WebRTC through `tools/playwright/vp8_webrtc_probe.mjs`):
+
+- Legacy rules: none on this card. xtables held no rule; the `ip`/`ip6`
+  `filter`/`nat` tables are Tailscale's empty netfilter tables
+  (`NetfilterMode` 2); kvmd's units are masked or disabled and
+  `nftables.service` is disabled (its `/etc/nftables.conf` would flush the
+  ruleset, and the owner would then restore the confirmed mode). The owned
+  `inet hardened-blikvm` table works beside them; no other table held a rule
+  in any mode.
+- Activation: `/etc/hardened-blikvm/firewall.env` and the reviewed
+  `firewall-mode.json` (HTTPS 443 with the device certificate as the probe
+  CA, syslog 514, WebRTC media 20000-20099) and the tmpfiles entry for
+  `/run/hardened-blikvm-firewall`; the API reported `baseline` (no owned
+  table) with the configuration ready. The first attempt put a start hook in
+  the owner unit, which the update supervisor refuses (`IncompatibleStartup`);
+  the board's unit was corrected before any restart and the fix shipped in
+  0.1.0~dev28 with a packaging test.
+- Modes (`evidence/private/firewall-modes-device-20260927-{a,b,c}.json`,
+  `...-status-restricted.json`, `...-after-reboot.json`):
+  - baseline: HTTPS and SSH open over IPv4 and IPv6, WebRTC frames decoded,
+    Tailscale's control server reachable.
+  - moderate: the same from the local network; DHCP (67/68, 546/547) and the
+    ICMPv6 control rules present in the kernel.
+  - restricted: HTTPS and SSH open over IPv4 and IPv6, WebRTC frames decoded,
+    Tailscale's control server reachable over 443; confirmed.
+  - paranoid: HTTPS open over IPv4 and IPv6, SSH closed over both, Tailscale's
+    control server unreachable (outbound blocked), DHCP and ICMPv6 rules
+    present; WebRTC connected but decoded no frame in the first run (27 KB
+    received, no keyframe within 10 s of a static screen) and decoded a
+    1920x1080 keyframe in the second.
+  - The IPv6 router (learned from router advertisements) stayed in the
+    neighbour table in every mode. A live DHCP renewal was not observed: the
+    lease is 12 hours, so the first renewal falls outside the test.
+- Rollback: `restricted` applied from `moderate` and left unconfirmed was
+  rolled back to `moderate` by the owner after the 60-second deadline.
+- Reboot reconciliation: kernel rules and the pending journal do not survive
+  a reboot, and the reference re-applies its saved mode at boot, so the owner
+  now keeps the last confirmed mode in
+  `/var/lib/hardened-blikvm-gadget/firewall-mode.json` and restores it,
+  journaled, when it starts without an owned table (commit a49c809). After a
+  reboot in the confirmed `restricted` mode the board came back after 55 s
+  with the table restored (`firewall: restored the confirmed Restricted
+  mode`), HTTPS and SSH open over IPv4 and IPv6.
+- The board ended in its original mode, `baseline`.
+- Open for the operator: Tailscale peers reach the board from
+  `100.64.0.0/10` over `tailscale0`, which is not a local range, so
+  moderate, restricted and paranoid block incoming tailnet connections, as in
+  the reference; testing that path needs a Tailscale login with the
+  operator's account.
 
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
@@ -270,6 +317,29 @@ slot 38, update runtime 0.1.0~dev26):
     passed): the board wrote the backup back and returned after 21 minutes as
     `rolled_back`, with the previous root byte for byte (the old DSA key
     returned with it) and every compared item unchanged.
+  - Reinstall and confirmation
+    (`evidence/private/raw-system-update-device-20260926-reinstall.json`,
+    `...-confirm.json`, passed): the same bundle uploaded again through the
+    API was staged, written and booted; with the update runtime 0.1.0~dev27
+    helper every SSH host key, DSA included, the root password hash, the TLS
+    certificate and the machine id matched the baseline. The confirmation
+    removed the backup, payload and carried files and raised the accepted
+    sequence to 2.
+  - Boot-attempt rollback
+    (`evidence/private/raw-system-update-device-20260926-bootfail-*.json`,
+    passed): with a carried nginx configuration that answered the boot
+    report's loopback health check with 503 (the web interface kept working),
+    a sequence 2 bundle was installed; the new root stayed `written` through
+    two boots, and the third boot restored the backup ("the new root did not
+    come up in 2 boots; the backup was restored"), after which the test
+    configuration was removed. The raw system update switch was then turned
+    off and an install was refused with 403.
+  - Found at the end: the board's stable IPv6 address changed with each root
+    written, because NetworkManager derives it (and the DHCP client
+    identity) from `/var/lib/NetworkManager/secret_key`, which the image
+    leaves out and the carried-state list did not name. It is carried from
+    this commit on (update runtime 0.1.0~dev29); the next raw update on a
+    board shows it on hardware.
   - Found on the way: a reboot through the system action stays pending until
     the post-boot acceptance closes it, and the record from the phase B KVM
     reboot had never been accepted, so the image carried it and every further

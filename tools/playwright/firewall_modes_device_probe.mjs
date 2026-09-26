@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -77,22 +78,35 @@ function windows(command) {
   );
   return (result.stdout ?? "").replace(/\r/g, "").trim();
 }
+function httpsHealth(host) {
+  // The board's certificate is self-signed; only reachability is checked.
+  return new Promise((resolve) => {
+    const request = https.get(
+      {
+        host,
+        port: 443,
+        path: "/api/health",
+        rejectUnauthorized: false,
+        timeout: 6000,
+      },
+      (response) => {
+        response.resume();
+        resolve(
+          response.statusCode === 200 ? "open" : `http_${response.statusCode}`,
+        );
+      },
+    );
+    request.on("timeout", () => request.destroy());
+    request.on("error", () => resolve("closed"));
+  });
+}
 async function hostChecks() {
-  let https4 = "closed";
-  try {
-    const response = await fetch(`${url.origin}/api/health`, {
-      signal: AbortSignal.timeout(6000),
-    });
-    https4 = response.status === 200 ? "open" : `http_${response.status}`;
-  } catch {
-    https4 = "closed";
-  }
-  // The Windows host has an address on the board's IPv6 network; WSL does not.
+  const https4 = await httpsHealth(url.hostname);
   const https6 = windows(
     `$code = curl.exe -6 -k -s -o NUL -w '%{http_code}' --max-time 6 'https://[${ipv6}]/api/health'; $code`,
   );
   const ssh6 = windows(
-    `$c = New-Object Net.Sockets.TcpClient; try { $t = $c.ConnectAsync('${ipv6}', 22); if ($t.Wait(5000) -and $c.Connected) { 'open' } else { 'closed' } } catch { 'closed' } finally { $c.Close() }`,
+    `$c = New-Object Net.Sockets.TcpClient([Net.Sockets.AddressFamily]::InterNetworkV6); try { $t = $c.ConnectAsync('${ipv6}', 22); if ($t.Wait(5000) -and $c.Connected) { 'open' } else { 'closed' } } catch { 'closed' } finally { $c.Close() }`,
   );
   return {
     https4,
@@ -202,8 +216,9 @@ try {
     const tailscale = await shell(
       "printf 'control=%s ' $(curl -s -o /dev/null -w '%{http_code}' --max-time 6 https://controlplane.tailscale.com/key?v=71); tailscale status --json 2>/dev/null | sed -n 's/.*\"BackendState\": *\"\\([A-Za-z]*\\)\".*/state=\\1/p' | head -1",
     );
+    // Rules outside the owned table: legacy xtables and any other nft table.
     const legacy = await shell(
-      "printf 'xtables=%s nft_filter_drops=%s' $(iptables-legacy-save 2>/dev/null | grep -c '^-A') $(nft list ruleset 2>/dev/null | grep -v 'hardened-blikvm' | grep -c 'drop')",
+      "printf 'xtables=%s ' $(iptables-legacy-save 2>/dev/null | grep -c '^-A'); for t in $(nft list tables | awk '$3 != \"hardened-blikvm\" {print $2\":\"$3}'); do printf '%s=%s ' $t $(nft list table ${t%%:*} ${t#*:} | grep -cE '^[[:space:]]+[a-z].*(drop|reject|accept)$'); done",
     );
     return {
       table: table.includes("NO-TABLE")

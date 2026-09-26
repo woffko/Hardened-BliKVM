@@ -113,7 +113,9 @@ about 30 minutes; the web page says so and asks to keep power connected.
 (DSA, ECDSA, Ed25519 and RSA: the image's first-boot provisioning creates any
 that is missing, so a key left out is silently replaced),
 `/etc/machine-id`, `/etc/hostname`, `/etc/hosts`,
-`/etc/NetworkManager/system-connections`, `/root/.ssh`, the
+`/etc/NetworkManager/system-connections`, NetworkManager's
+`/var/lib/NetworkManager/secret_key` (the stable-privacy IPv6 addresses and
+the DHCP client identity derive from it), `/root/.ssh`, the
 `/var/lib/hardened-blikvm*` state (accounts, slots, exec store, switches,
 system actions, video, administration scripts, PicoClaw runtime and state)
 and `/var/lib/tailscale`. The state is restored with owners, modes, ACLs and

@@ -845,3 +845,18 @@ fn every_ssh_host_key_type_is_carried() {
         }
     }
 }
+
+#[test]
+fn the_network_identity_is_carried() {
+    for path in [
+        "etc/NetworkManager/system-connections",
+        "var/lib/NetworkManager/secret_key",
+        "etc/machine-id",
+        "etc/hostname",
+    ] {
+        assert!(
+            bli_kvm_system_raw_update::CARRIED_STATE.contains(&path),
+            "{path}"
+        );
+    }
+}

@@ -93,8 +93,10 @@ do not claim Tailscale preservation from these rules alone.
    systemd sandbox. Local `nft` is currently absent; no syntax/runtime gate passed.
 5. Device connectivity checks for HTTPS, DHCP, IPv6 discovery, Tailscale and
    WebRTC in each mode, including intentional restrictions, timeout rollback,
-   confirmation, restart and recovery. Preserve an independently verified way
-   to recover management access before any live restrictive-mode change.
+   confirmation, restart and recovery. Done on 2026-09-27 (plan phase D in
+   `docs/baselines/corrective-parity-audit-20260920.md`), except a live DHCP
+   renewal (12-hour lease) and tailnet peer traffic, which needs a Tailscale
+   login and is blocked by the restrictive modes as in the reference.
 
-This document records verified reference behavior and open port requirements.
-It does not mark mode parity or device acceptance complete.
+This document records verified reference behavior, the native adaptation and
+the device checks of plan phase D.
