@@ -60,6 +60,30 @@ leaving its switch off:
   carries the local upload, is now offered whenever the image store is
   configured.
 
+- PicoClaw (slots 31-33, update runtime 0.1.0~dev24): refused while off;
+  with the switch on the pinned v0.2.8 arm64 release installed from the
+  upstream GitHub release with progress (download, extract, install), a
+  model was configured and the key never appeared in any API response, both
+  agent profiles were applied, and the runtime started. Through the real
+  assistant sidebar a chat reached a scripted OpenAI-compatible model on the
+  board's LAN address (`tools/device/fake_openai_model.py`), which made the
+  runtime call the KVM screenshot tool (the image reached the browser as an
+  observation) and the actions tool (one HID report written through the
+  operator's lease); manual input was held back as `assistant_active` while
+  the operator's control stayed on; the chat appeared in the history under
+  the runtime's opaque key and was read and deleted; switching off stopped
+  the runtime; uninstall removed the binary and the runtime's home
+  (`evidence/private/picoclaw-switch-20260926-c.json`,
+  `tools/playwright/picoclaw_switch_probe.mjs`). The PicoClaw Appearance
+  switch now changes the server switch, and the menu bar takes the terminal,
+  scripts and PicoClaw visibility from the server switches. A real model
+  needs the operator's own API key; that check is the operator's.
+- Local image upload: the Download menu is shown with its file input and
+  the remote URL field (switched off) on slot 33.
+
+After the phase A probes every administration switch is off on the board,
+PicoClaw is uninstalled and no test fixture is left running.
+
 Observed while testing: the media catalog still lists `kubuntu.img` although
 the file is no longer in the image store; the catalog entry is stale and is
 left for the operator to delete from the image list.
