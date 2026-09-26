@@ -93,7 +93,9 @@ assemble() {
     : > "$staging/etc/machine-id"
     rm -f "$staging/var/lib/dbus/machine-id"
     find "$staging/var/log" -type f -exec truncate -s 0 {} +
-    rm -rf "$staging/var/lib/hardened-blikvm-exec"/* "$staging/var/lib/hardened-blikvm-exec-ledger"/*
+    # The protected execution store and its selection ledger are kept: they
+    # hold signed, verified slot copies (no secrets), and on the native
+    # profile native boot starts every service from them.
     # Device state that identifies or authenticates this board: web account
     # and backups, Tailscale node keys, NetworkManager secret and leases, the
     # entropy seed and old deployment copies. First Setup recreates the account.
