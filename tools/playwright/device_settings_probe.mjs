@@ -179,6 +179,38 @@ try {
     await api("POST", "/api/stream/mjpeg/detect", { enabled: true }),
   );
 
+  // Hostname: rename, read back, restore.
+  const hostname = (await api("GET", "/api/vm/hostname")).data?.hostname;
+  step(
+    "hostname_set",
+    await api("POST", "/api/vm/hostname", { hostname: `${hostname}-probe` }),
+  );
+  step("hostname_mdns", {
+    mdns: (await api("GET", "/api/vm/info")).data?.mdns,
+  });
+  step("hostname_restore", await api("POST", "/api/vm/hostname", { hostname }));
+  step(
+    "hostname_bad",
+    await api("POST", "/api/vm/hostname", { hostname: "-x" }),
+  );
+
+  // IPv6: DHCPv6, then back to the original mode.
+  const ipv6 = await api("GET", "/api/network/ipv6");
+  step("ipv6_initial", {
+    mode: ipv6.data?.mode,
+    addresses: ipv6.data?.addresses?.length,
+  });
+  step(
+    "ipv6_dhcpv6",
+    await api("POST", "/api/network/ipv6", { mode: "dhcpv6" }),
+  );
+  step(
+    "ipv6_restore",
+    await api("POST", "/api/network/ipv6", {
+      mode: ipv6.data?.mode ?? "slaac",
+    }),
+  );
+
   // Tailscale view.
   step("tailscale", await api("GET", "/api/extensions/tailscale/status"));
 
@@ -215,7 +247,13 @@ try {
     by.frame_detect_off.code === 0 &&
     by.frame_detect_stop.code === 0 &&
     by.frame_detect_on.code === 0 &&
-    typeof by.tailscale.data?.state === "string"
+    typeof by.tailscale.data?.state === "string" &&
+    by.hostname_set.data?.hostname?.endsWith("-probe") &&
+    by.hostname_mdns.mdns?.includes("-probe") &&
+    by.hostname_restore.code === 0 &&
+    by.hostname_bad.code !== 0 &&
+    by.ipv6_dhcpv6.data?.mode === "dhcpv6" &&
+    by.ipv6_restore.data?.mode === by.ipv6_initial.mode
       ? "passed"
       : "failed";
 } finally {

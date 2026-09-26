@@ -38,6 +38,7 @@ mod download;
 mod error;
 mod firewall_modes;
 mod hid;
+mod hostname;
 mod leader_key;
 mod media;
 mod network;
@@ -278,6 +279,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         for feature in [
             "device_ssh",
+            "device_hostname",
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
@@ -456,6 +458,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/mdns", get(device_settings::mdns_state))
         .route("/vm/mdns/enable", post(device_settings::mdns_enable))
         .route("/vm/mdns/disable", post(device_settings::mdns_disable))
+        .route(
+            "/vm/hostname",
+            get(hostname::get_hostname).post(hostname::set_hostname),
+        )
         .route("/vm/ssh", get(ssh::state))
         .route("/vm/ssh/enable", post(ssh::enable))
         .route("/vm/ssh/disable", post(ssh::disable))
@@ -479,7 +485,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/network/dns/confirm", post(network_ipv4::confirm))
         .route(
             "/network/ipv6",
-            get(network::network_ipv6).post(network_write::ipv6),
+            get(network_ipv4::ipv6::get).post(network_ipv4::ipv6::set),
         )
         .route("/network/wol", post(network_write::wol))
         .route(
@@ -2471,7 +2477,7 @@ mod tests {
         let mut request = json_request(
             Method::POST,
             "/api/network/ipv6",
-            serde_json::json!({"interface": "wlan0", "disabled": true}),
+            serde_json::json!({"interface": "wlan0", "mode": "bogus"}),
         );
         request
             .headers_mut()

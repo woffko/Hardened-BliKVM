@@ -2041,7 +2041,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn(
             "ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget "
             "/var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions "
-            "/var/lib/hardened-blikvm-video /etc/resolv.conf /etc/systemd/resolved.conf "
+            "/var/lib/hardened-blikvm-video /etc/resolv.conf /etc/hosts "
+            "/etc/systemd/resolved.conf "
             "/etc/NetworkManager/system-connections /etc/hardened-blikvm",
             unit,
         )

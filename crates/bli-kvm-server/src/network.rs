@@ -17,10 +17,9 @@ use crate::auth::middleware::CurrentSession;
 use crate::error::{ApiResponse, AppError, AppResult};
 
 pub(crate) const RESOLV_CONF_FILE: &str = "/etc/resolv.conf";
-pub(crate) const IPV6_CONF_ROOT: &str = "/proc/sys/net/ipv6/conf";
 pub(crate) const NET_CLASS_ROOT: &str = "/sys/class/net";
 pub(crate) const ROUTE_FILE: &str = "/proc/net/route";
-const MAX_IPV6_INTERFACES: usize = 16;
+const MAX_INTERFACES: usize = 16;
 const MAX_INTERFACE_BYTES: usize = 32;
 const MAX_SERVERS: usize = 8;
 const MAX_SEARCH_DOMAINS: usize = 8;
@@ -107,35 +106,6 @@ pub(crate) fn read_resolver_config(path: &Path) -> ResolverConfig {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Ipv6State {
-    pub source: String,
-    /// Kernel truth for `conf/default`, or `unknown` when it cannot be read.
-    pub default_state: String,
-    pub interfaces: std::collections::BTreeMap<String, String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkIpv6Response {
-    pub ipv6: Ipv6State,
-    /// The reference shape: the mode the primary interface runs in. The kernel
-    /// sysctl only distinguishes disabled from automatic, so `manual` and
-    /// `dhcpv6` are never reported back.
-    pub mode: &'static str,
-    pub interface: String,
-}
-
-/// Maps the kernel state of the primary interface onto the reference mode.
-pub(crate) fn ipv6_mode(states: &Ipv6State, interface: &str) -> &'static str {
-    match states.interfaces.get(interface).map(String::as_str) {
-        Some("disabled") => "disabled",
-        Some(_) => "slaac",
-        None => "disabled",
-    }
-}
-
 fn interface_name_valid(name: &str) -> bool {
     let bytes = name.as_bytes();
     (1..=MAX_INTERFACE_BYTES).contains(&bytes.len())
@@ -143,48 +113,6 @@ fn interface_name_valid(name: &str) -> bool {
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-'))
-}
-
-fn disable_ipv6_state(value: &str) -> Option<String> {
-    match value.trim() {
-        "0" => Some("enabled".to_string()),
-        "1" => Some("disabled".to_string()),
-        _ => None,
-    }
-}
-
-/// Read the IPv6 enable state from the kernel's fixed sysctl tree.
-pub(crate) fn read_ipv6_states(root: &Path) -> Ipv6State {
-    let mut interfaces = std::collections::BTreeMap::new();
-    let mut default_state = "unknown".to_string();
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !interface_name_valid(&name) {
-                continue;
-            }
-            let Ok(value) = std::fs::read_to_string(entry.path().join("disable_ipv6")) else {
-                continue;
-            };
-            let Some(state) = disable_ipv6_state(&value) else {
-                continue;
-            };
-            if name == "default" {
-                default_state = state.clone();
-            }
-            if name != "all" && name != "default" {
-                if interfaces.len() >= MAX_IPV6_INTERFACES {
-                    continue;
-                }
-                interfaces.insert(name, state);
-            }
-        }
-    }
-    Ipv6State {
-        source: format!("{IPV6_CONF_ROOT}/<interface>/disable_ipv6"),
-        default_state,
-        interfaces,
-    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -249,7 +177,7 @@ pub(crate) fn read_interfaces(root: &Path, route_file: &Path) -> NetworkInterfac
                 mtu,
                 wireless,
             });
-            if interfaces.len() >= MAX_IPV6_INTERFACES {
+            if interfaces.len() >= MAX_INTERFACES {
                 break;
             }
         }
@@ -269,23 +197,6 @@ pub(crate) async fn network_interfaces() -> AppResult<Json<ApiResponse<NetworkIn
         Path::new(NET_CLASS_ROOT),
         Path::new(ROUTE_FILE),
     ))))
-}
-
-pub(crate) async fn network_ipv6() -> AppResult<Json<ApiResponse<NetworkIpv6Response>>> {
-    let ipv6 = read_ipv6_states(Path::new(IPV6_CONF_ROOT));
-    let route = std::fs::read_to_string(ROUTE_FILE).unwrap_or_default();
-    let interface = parse_default_route(&route);
-    let interface = if interface.is_empty() {
-        "eth0".to_string()
-    } else {
-        interface
-    };
-    let mode = ipv6_mode(&ipv6, &interface);
-    Ok(Json(ApiResponse::ok(NetworkIpv6Response {
-        ipv6,
-        mode,
-        interface,
-    })))
 }
 
 #[cfg(test)]
@@ -338,31 +249,6 @@ domain ignored.example
     }
 
     #[test]
-    fn ipv6_states_come_from_the_sysctl_tree() {
-        let directory = tempfile::tempdir().unwrap();
-        for (name, value) in [
-            ("default", "0"),
-            ("all", "1"),
-            ("eth0", "0"),
-            ("wlan0", "1"),
-            ("odd name", "0"),
-            ("broken", "maybe"),
-        ] {
-            let path = directory.path().join(name);
-            std::fs::create_dir_all(&path).unwrap();
-            std::fs::write(path.join("disable_ipv6"), value).unwrap();
-        }
-        let state = read_ipv6_states(directory.path());
-        assert_eq!(state.default_state, "enabled");
-        assert_eq!(state.interfaces.get("eth0"), Some(&"enabled".to_string()));
-        assert_eq!(state.interfaces.get("wlan0"), Some(&"disabled".to_string()));
-        assert!(!state.interfaces.contains_key("all"));
-        assert!(!state.interfaces.contains_key("odd name"));
-        assert!(!state.interfaces.contains_key("broken"));
-        assert!(state.source.contains("disable_ipv6"));
-    }
-
-    #[test]
     fn interfaces_are_listed_with_their_state_and_default_route() {
         let directory = tempfile::tempdir().unwrap();
         for (name, state, mtu, wireless) in [
@@ -409,29 +295,6 @@ domain ignored.example
         assert!(response.interfaces.is_empty());
         assert_eq!(response.default_route, "");
         assert_eq!(parse_default_route(""), "");
-    }
-
-    #[test]
-    fn the_reference_ipv6_mode_comes_from_the_primary_interface() {
-        let mut states = Ipv6State {
-            source: "sysctl".into(),
-            default_state: "enabled".into(),
-            interfaces: Default::default(),
-        };
-        states.interfaces.insert("eth0".into(), "enabled".into());
-        assert_eq!(ipv6_mode(&states, "eth0"), "slaac");
-        states.interfaces.insert("eth0".into(), "disabled".into());
-        assert_eq!(ipv6_mode(&states, "eth0"), "disabled");
-        // An interface the tree does not know is reported disabled, like the
-        // reference does before the sysctl exists.
-        assert_eq!(ipv6_mode(&states, "wlan9"), "disabled");
-    }
-
-    #[test]
-    fn a_missing_ipv6_tree_reports_unknown() {
-        let state = read_ipv6_states(Path::new("/nonexistent/ipv6/conf"));
-        assert_eq!(state.default_state, "unknown");
-        assert!(state.interfaces.is_empty());
     }
 
     #[test]

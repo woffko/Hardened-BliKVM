@@ -363,6 +363,7 @@ mod tests {
             dhcp_dns: vec!["192.0.2.5".into()],
             manual_dns,
             search: vec!["int".into()],
+            ..NetworkInterfaceInfo::default()
         }
     }
 
@@ -418,5 +419,231 @@ mod tests {
         }))
         .unwrap();
         assert!(super::change(&wrong, "eth0").is_err());
+    }
+}
+
+/// The reference's IPv6 page (`/api/network/ipv6`).
+pub(crate) mod ipv6 {
+    use super::*;
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(crate) struct Address {
+        interface: String,
+        address: String,
+        prefix: u8,
+        scope: &'static str,
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(crate) struct Config {
+        address: String,
+        prefix: u8,
+        gateway: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(crate) struct State {
+        interface: String,
+        mode: String,
+        enabled: bool,
+        active: bool,
+        /// NetworkManager's own DHCPv6 client.
+        client_available: bool,
+        client_path: &'static str,
+        addresses: Vec<Address>,
+        gateway: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config: Option<Config>,
+        status: &'static str,
+        message: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) struct Body {
+        mode: String,
+        #[serde(default)]
+        interface: Option<String>,
+        #[serde(default)]
+        address: Option<String>,
+        #[serde(default)]
+        prefix: Option<u8>,
+        #[serde(default)]
+        gateway: Option<String>,
+    }
+
+    fn scope(address: &str) -> &'static str {
+        match address.parse::<std::net::Ipv6Addr>() {
+            Ok(address) if address.segments()[0] & 0xffc0 == 0xfe80 => "link",
+            Ok(address) if address.segments()[0] & 0xfe00 == 0xfc00 => "private",
+            _ => "global",
+        }
+    }
+
+    fn split(cidr: &str) -> Option<(String, u8)> {
+        let (address, prefix) = cidr.split_once('/')?;
+        Some((address.to_string(), prefix.parse().ok()?))
+    }
+
+    pub(crate) fn view(interfaces: &[NetworkInterfaceInfo]) -> State {
+        let Some(interface) = primary(interfaces) else {
+            return State {
+                interface: String::new(),
+                mode: "disabled".into(),
+                enabled: false,
+                active: false,
+                client_available: false,
+                client_path: "",
+                addresses: Vec::new(),
+                gateway: String::new(),
+                config: None,
+                status: "",
+                message: String::new(),
+            };
+        };
+        let addresses: Vec<Address> = interface
+            .ipv6_addresses
+            .iter()
+            .filter_map(|cidr| split(cidr))
+            .map(|(address, prefix)| Address {
+                interface: interface.name.clone(),
+                scope: scope(&address),
+                address,
+                prefix,
+            })
+            .collect();
+        let active = addresses.iter().any(|address| address.scope != "link");
+        State {
+            interface: interface.name.clone(),
+            mode: interface.ipv6_mode.clone(),
+            enabled: interface.ipv6_mode != "disabled",
+            active,
+            client_available: true,
+            client_path: "NetworkManager",
+            addresses,
+            gateway: interface.ipv6_gateway.clone(),
+            config: (interface.ipv6_mode == "manual")
+                .then(|| split(&interface.ipv6_manual_address))
+                .flatten()
+                .map(|(address, prefix)| Config {
+                    address,
+                    prefix,
+                    gateway: interface.ipv6_manual_gateway.clone(),
+                }),
+            status: "",
+            message: if active {
+                "IPv6 is active".into()
+            } else {
+                String::new()
+            },
+        }
+    }
+
+    pub(crate) async fn get(
+        State(state): axum::extract::State<AppState>,
+        Extension(CurrentSession(session)): Extension<CurrentSession>,
+    ) -> Json<ApiResponse<self::State>> {
+        let interfaces = interfaces(&state, &session.token)
+            .await
+            .map(|(interfaces, _)| interfaces)
+            .unwrap_or_default();
+        Json(ApiResponse::ok(view(&interfaces)))
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    pub(crate) async fn set(
+        axum::extract::State(state): axum::extract::State<AppState>,
+        Extension(CurrentSession(session)): Extension<CurrentSession>,
+        Json(body): Json<Body>,
+    ) -> AppResult<Json<ApiResponse<self::State>>> {
+        use bli_kvm_control_protocol::ControlResponse;
+        let Some(control) = state.control.as_ref() else {
+            return Err(AppError::ServiceUnavailable(
+                "network writes are not configured".into(),
+            ));
+        };
+        if !state.options.restricted_controls_enabled || !state.options.network_writes_enabled {
+            return Err(AppError::ServiceUnavailable(
+                "network writes are not enabled".into(),
+            ));
+        }
+        let fallback = interfaces(&state, &session.token)
+            .await
+            .and_then(|(interfaces, _)| primary(&interfaces).map(|i| i.name.clone()))
+            .unwrap_or_else(|| "eth0".into());
+        let manual = body.mode == "manual";
+        let change = bli_kvm_core::Ipv6Change {
+            interface: body
+                .interface
+                .filter(|name| !name.is_empty())
+                .unwrap_or(fallback),
+            mode: body.mode,
+            address: body.address.filter(|_| manual),
+            prefix: body.prefix.filter(|_| manual),
+            gateway: body.gateway.filter(|value| manual && !value.is_empty()),
+        };
+        change
+            .validate()
+            .map_err(|_| AppError::BadRequest("invalid arguments".into()))?;
+        match control
+            .execute_v2(
+                crate::network_write::operation_id(&session.token),
+                bli_kvm_core::PlatformControlRequestV2::Ipv6Set { change },
+            )
+            .await
+            .map_err(|_| AppError::ServiceUnavailable("network writes are unavailable".into()))?
+        {
+            ControlResponse::NetworkInfo { interfaces, .. } => {
+                Ok(Json(ApiResponse::ok(view(&interfaces))))
+            }
+            ControlResponse::Rejected { code } => Err(AppError::BadRequest(format!(
+                "the IPv6 change was refused: {}",
+                crate::hid::rejection_name(code)
+            ))),
+            _ => Err(AppError::ServiceUnavailable(
+                "network writes are unavailable".into(),
+            )),
+        }
+    }
+
+    #[cfg(not(feature = "restricted-control-surface"))]
+    pub(crate) async fn set(
+        axum::extract::State(_state): axum::extract::State<AppState>,
+        Extension(CurrentSession(_session)): Extension<CurrentSession>,
+        Json(_body): Json<Body>,
+    ) -> AppResult<Json<ApiResponse<self::State>>> {
+        Err(AppError::ServiceUnavailable(
+            "network writes are not configured".into(),
+        ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_ipv6_view_follows_the_reference_shape() {
+            let eth0 = NetworkInterfaceInfo {
+                name: "eth0".into(),
+                gateway: "192.0.2.1".into(),
+                ipv6_mode: "manual".into(),
+                ipv6_addresses: vec!["2001:db8::10/64".into(), "fe80::1/64".into()],
+                ipv6_gateway: "fe80::9".into(),
+                ipv6_manual_address: "2001:db8::10/64".into(),
+                ipv6_manual_gateway: "2001:db8::1".into(),
+                ..NetworkInterfaceInfo::default()
+            };
+            let value = serde_json::to_value(view(&[eth0])).unwrap();
+            assert_eq!(value["mode"], "manual");
+            assert_eq!(value["active"], true);
+            assert_eq!(value["clientAvailable"], true);
+            assert_eq!(value["addresses"][1]["scope"], "link");
+            assert_eq!(value["config"]["prefix"], 64);
+            assert_eq!(scope("fd00::1"), "private");
+        }
     }
 }

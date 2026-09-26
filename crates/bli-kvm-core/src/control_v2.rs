@@ -258,6 +258,14 @@ pub enum PlatformControlRequestV2 {
     },
     /// Keep the addressing change that is waiting for confirmation.
     Ipv4Confirm {},
+    /// Set one interface's IPv6 mode.
+    Ipv6Set {
+        change: Ipv6Change,
+    },
+    /// Rename the device (RFC 1123 host label).
+    Hostname {
+        name: String,
+    },
     /// Read the WiFi device state.
     WifiState {},
     /// Connect to a WiFi network through NetworkManager.
@@ -335,6 +343,74 @@ pub enum ControlV2ValidationError {
     InvalidVideoSettings,
     #[error("IPv4 change is invalid")]
     InvalidIpv4Change,
+    #[error("hostname is invalid")]
+    InvalidHostname,
+}
+
+/// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
+/// address, prefix and optional router.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ipv6Change {
+    pub interface: String,
+    pub mode: String,
+    pub address: Option<String>,
+    pub prefix: Option<u8>,
+    pub gateway: Option<String>,
+}
+
+impl Ipv6Change {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        use std::net::Ipv6Addr;
+        let invalid = ControlV2ValidationError::InvalidIpv4Change;
+        let interface_ok = (1..=15).contains(&self.interface.len())
+            && self
+                .interface
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+        if !interface_ok {
+            return Err(invalid);
+        }
+        match self.mode.as_str() {
+            "disabled" | "slaac" | "dhcpv6" => {
+                if self.address.is_none() && self.prefix.is_none() && self.gateway.is_none() {
+                    Ok(())
+                } else {
+                    Err(invalid)
+                }
+            }
+            "manual" => {
+                let address = self
+                    .address
+                    .as_deref()
+                    .and_then(|value| value.parse::<Ipv6Addr>().ok())
+                    .ok_or(invalid)?;
+                let prefix_ok = self
+                    .prefix
+                    .is_some_and(|prefix| (1..=128).contains(&prefix));
+                let gateway_ok = self
+                    .gateway
+                    .as_deref()
+                    .is_none_or(|value| value.parse::<Ipv6Addr>().is_ok());
+                if prefix_ok && gateway_ok && !address.is_unspecified() && !address.is_multicast() {
+                    Ok(())
+                } else {
+                    Err(invalid)
+                }
+            }
+            _ => Err(invalid),
+        }
+    }
+}
+
+/// One RFC 1123 host label: letters, digits and inner hyphens, 1-63 bytes.
+pub fn valid_hostname(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 /// One IPv4 change: DHCP, or manual DNS servers with an optional static
@@ -436,6 +512,14 @@ impl PlatformControlRequestV2 {
             Self::NetworkInfo {} => Ok(()),
             Self::Ipv4Set { change } => change.validate(),
             Self::Ipv4Confirm {} => Ok(()),
+            Self::Ipv6Set { change } => change.validate(),
+            Self::Hostname { name } => {
+                if valid_hostname(name) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidHostname)
+                }
+            }
             Self::WifiState {} => Ok(()),
             Self::WifiConnect { .. } => Ok(()),
             Self::WifiDisconnect {} => Ok(()),

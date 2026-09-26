@@ -1,14 +1,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Input, Segmented } from 'antd';
-import { useAtomValue } from 'jotai';
 import { CheckIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/network.ts';
 import type { IPv6Mode } from '@/api/network.ts';
-import { ipv6WriteVerified } from '@/lib/network-outcome.ts';
-import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import type { NetworkSectionHandle, NetworkSectionResult, NetworkSectionStatus } from './types.ts';
 
@@ -158,10 +155,7 @@ const EditableInfoRow = ({
 export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
   ({ showFooter = true, disabled = false, readOnly = false, onStatusChange }, ref) => {
     const { t } = useTranslation();
-    const capabilities = useAtomValue(capabilitiesAtom);
-    const isBli = capabilities?.platform.id === 'bli-h616-pikvm';
     const [interfaceName, setInterfaceName] = useState('');
-    const [kernelState, setKernelState] = useState('unknown');
 
     const [mode, setMode] = useState<IPv6Mode>('disabled');
     const [originalMode, setOriginalMode] = useState<IPv6Mode>('disabled');
@@ -193,26 +187,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
           }
 
           const data = rsp.data as IPv6State;
-          if (isBli) {
-            if (
-              typeof data.interface !== 'string' ||
-              !data.ipv6 ||
-              typeof data.ipv6.interfaces !== 'object' ||
-              data.ipv6.interfaces === null
-            ) {
-              throw new Error('Invalid IPv6 state response');
-            }
-            const observed = data.ipv6.interfaces[data.interface];
-            setInterfaceName(data.interface);
-            setKernelState(
-              observed === 'enabled' || observed === 'disabled' ? observed : 'unknown'
-            );
-            const observedMode = observed === 'enabled' ? 'slaac' : 'disabled';
-            setMode(observedMode);
-            setOriginalMode(observedMode);
-            setStatusMessage(observed || 'unknown');
-            return true;
-          }
+          setInterfaceName(data.interface || '');
           const fetchedMode = data.mode || 'disabled';
           const config = data.config || {};
           const fetchedAddress = normalizeIPv6(config.address || '');
@@ -241,7 +216,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
           if (showLoading) setIsLoading(false);
         }
       },
-      [isBli, t]
+      [t]
     );
 
     useEffect(() => {
@@ -255,14 +230,6 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
 
       setMessage('');
       setError('');
-
-      if (
-        isBli &&
-        (!interfaceName || kernelState === 'unknown' || !['disabled', 'slaac'].includes(mode))
-      ) {
-        setError(t('settings.network.ipv6.saveFailed'));
-        return { changed: false, error: true };
-      }
 
       const normalizedAddress = normalizeIPv6(address);
       const normalizedRouter = normalizeIPv6(router);
@@ -285,29 +252,20 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
 
       setIsSaving(true);
       try {
-        const rsp = isBli
-          ? await api.setBliIPv6(interfaceName, mode === 'disabled')
-          : await api.setIPv6(
-              mode,
-              mode === 'manual'
-                ? {
-                    interface: 'eth0',
-                    address: normalizedAddress,
-                    prefix: Number(trimmedPrefix),
-                    gateway: normalizedRouter
-                  }
-                : undefined
-            );
+        const rsp = await api.setIPv6(
+          mode,
+          mode === 'manual'
+            ? {
+                interface: interfaceName || 'eth0',
+                address: normalizedAddress,
+                prefix: Number(trimmedPrefix),
+                gateway: normalizedRouter
+              }
+            : undefined
+        );
         if (rsp.code !== 0) {
           setError(rsp.msg || t('settings.network.ipv6.saveFailed'));
           return { changed: true, error: true };
-        }
-
-        if (isBli) {
-          if (!ipv6WriteVerified(rsp.data, interfaceName, mode === 'disabled')) {
-            setError(rsp.data?.rejection || t('settings.network.ipv6.saveFailed'));
-            return { changed: true, error: true };
-          }
         }
 
         setOriginalMode(mode);
@@ -343,7 +301,6 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
     const needsApply = status === 'needs-apply';
     const canSave =
       !readOnly &&
-      (!isBli || (Boolean(interfaceName) && kernelState !== 'unknown')) &&
       (hasChanges || needsApply) &&
       !isLoading &&
       !isSaving &&
@@ -398,10 +355,8 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
 
           <Segmented
             className="max-w-full overflow-x-auto"
-            disabled={
-              readOnly || disabled || isLoading || isSaving || (isBli && kernelState === 'unknown')
-            }
-            value={isBli && kernelState === 'unknown' ? undefined : mode}
+            disabled={readOnly || disabled || isLoading || isSaving}
+            value={mode}
             onChange={(val) => {
               setMode(val as IPv6Mode);
               setStatus('');
@@ -413,26 +368,19 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
               { label: t('settings.network.ipv6.slaac'), value: 'slaac' },
               { label: t('settings.network.ipv6.dhcpv6'), value: 'dhcpv6' },
               { label: t('settings.network.ipv6.manual'), value: 'manual' }
-            ].filter((option) => !isBli || option.value === 'disabled' || option.value === 'slaac')}
+            ]}
           />
         </div>
 
         <Panel title={t('settings.network.ipv6.status')}>
-          <InfoRow
-            label={t('settings.network.ipv6.interface')}
-            value={isBli ? interfaceName : 'eth0'}
-          />
+          <InfoRow label={t('settings.network.ipv6.interface')} value={interfaceName || 'eth0'} />
           <InfoRow label={t('settings.network.ipv6.state')} value={statusMessage} />
-          {!isBli && <InfoRow label={t('settings.network.ipv6.router')} value={gateway} />}
-          {!isBli && (
-            <>
-              <InfoRow
-                label={t('settings.network.ipv6.dhcpv6Client')}
-                value={clientAvailable ? clientPath : t('settings.network.ipv6.notInstalled')}
-              />
-              <InfoRow label={t('settings.network.ipv6.addresses')} value={addressList} isLast />
-            </>
-          )}
+          <InfoRow label={t('settings.network.ipv6.router')} value={gateway} />
+          <InfoRow
+            label={t('settings.network.ipv6.dhcpv6Client')}
+            value={clientAvailable ? clientPath : t('settings.network.ipv6.notInstalled')}
+          />
+          <InfoRow label={t('settings.network.ipv6.addresses')} value={addressList} isLast />
         </Panel>
 
         {mode === 'manual' && (

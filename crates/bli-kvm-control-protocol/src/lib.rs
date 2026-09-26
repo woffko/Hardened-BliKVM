@@ -58,6 +58,19 @@ pub struct NetworkInterfaceInfo {
     /// Whether the configured resolvers replace the DHCP ones.
     pub manual_dns: bool,
     pub search: Vec<String>,
+    /// `disabled`, `slaac`, `dhcpv6` or `manual`.
+    #[serde(default)]
+    pub ipv6_mode: String,
+    /// Addresses in use, as `address/prefix`.
+    #[serde(default)]
+    pub ipv6_addresses: Vec<String>,
+    #[serde(default)]
+    pub ipv6_gateway: String,
+    /// The configured manual address (`address/prefix`) and router.
+    #[serde(default)]
+    pub ipv6_manual_address: String,
+    #[serde(default)]
+    pub ipv6_manual_gateway: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

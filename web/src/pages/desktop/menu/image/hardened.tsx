@@ -1,17 +1,20 @@
-import { useEffect, useState } from 'react';
-import { message, Modal, Segmented, Tooltip } from 'antd';
+import { useCallback, useEffect, useState } from 'react';
+import { Button, message, Modal, Popconfirm, Segmented, Tooltip } from 'antd';
 import clsx from 'clsx';
 import { useAtomValue, useSetAtom } from 'jotai';
 import {
   ArrowBigDownDashIcon,
   ArrowBigUpDashIcon,
+  CableIcon,
   DiscIcon,
   HardDriveIcon,
   LoaderCircleIcon,
-  PackageIcon
+  PackageIcon,
+  Trash2Icon
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import * as storage from '@/api/storage.ts';
 import {
   getMediaCatalog,
   submitVirtualMedia,
@@ -21,6 +24,7 @@ import {
 } from '@/api/virtual-media.ts';
 import { isWritable } from '@/lib/capabilities.ts';
 import { newOperationId } from '@/lib/hid-lease.ts';
+import { IMAGE_LIST_CHANGED_EVENT } from '@/lib/image-events.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { submenuOpenCountAtom } from '@/jotai/settings.ts';
 
@@ -49,9 +53,9 @@ export const HardenedImage = () => {
   const [mode, setMode] = useState('mass-storage');
   const [mounted, setMounted] = useState<string | null>(null);
   const [busyImage, setBusyImage] = useState<string | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
-  useEffect(() => {
-    if (!isModalOpen) return;
+  const refresh = useCallback(() => {
     getMediaCatalog()
       .then((rsp) => {
         if (rsp.code === 0) {
@@ -59,7 +63,62 @@ export const HardenedImage = () => {
         }
       })
       .catch(() => undefined);
-  }, [isModalOpen]);
+    storage
+      .getMountedImage()
+      .then((rsp) => {
+        if (rsp.code === 0) setMounted(rsp.data?.file || null);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (isModalOpen) refresh();
+  }, [isModalOpen, refresh]);
+
+  // A finished upload or download adds an image while the dialog is open.
+  useEffect(() => {
+    window.addEventListener(IMAGE_LIST_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(IMAGE_LIST_CHANGED_EVENT, refresh);
+  }, [refresh]);
+
+  function remove(image: MediaImage) {
+    if (busyImage || !writable || mounted === image.imageName) return;
+    Modal.confirm({
+      title: t('image.attention'),
+      content: `${t('image.deleteConfirm')} ${image.imageName}`,
+      okText: t('image.okBtn'),
+      cancelText: t('image.cancelBtn'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setBusyImage(image.imageName);
+        try {
+          const rsp = await storage.deleteImage(image.imageName);
+          if (rsp.code !== 0) message.error(rsp.msg || t('image.deleteFailed'));
+          refresh();
+        } finally {
+          setBusyImage(null);
+        }
+      }
+    });
+  }
+
+  async function reconnect() {
+    if (isReconnecting) return;
+    setIsReconnecting(true);
+    try {
+      const rsp = await storage.reconnectUsbGadget();
+      if (rsp.code !== 0 || rsp.data?.applied === false) {
+        message.error(rsp.msg || rsp.data?.rejection || t('image.usbReconnectFailed'));
+        return;
+      }
+      message.success(t('image.usbReconnectSuccess'));
+      refresh();
+    } catch {
+      message.error(t('image.usbReconnectFailed'));
+    } finally {
+      setIsReconnecting(false);
+    }
+  }
 
   function toggleModal(open: boolean) {
     setIsModalOpen(open);
@@ -217,10 +276,54 @@ export const HardenedImage = () => {
                     />
                   )}
                 </div>
+                {writable && (
+                  <div
+                    role="button"
+                    aria-label={`${t('image.delete')} ${image.imageName}`}
+                    className={clsx(
+                      'flex h-[24px] w-[24px] items-center justify-center rounded hover:bg-neutral-500/50',
+                      active
+                        ? 'cursor-not-allowed text-neutral-500'
+                        : 'text-neutral-300 hover:text-red-500'
+                    )}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      remove(image);
+                    }}
+                  >
+                    <Trash2Icon size={16} />
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
+
+        {writable && (
+          <div className="mt-3 flex justify-end border-t border-neutral-700/70 pt-3">
+            <Popconfirm
+              title={t('image.usbReconnect')}
+              description={t('image.usbReconnectConfirm')}
+              okText={t('image.okBtn')}
+              cancelText={t('image.cancelBtn')}
+              onConfirm={() => void reconnect()}
+            >
+              <Button
+                size="small"
+                icon={
+                  isReconnecting ? (
+                    <LoaderCircleIcon className="animate-spin" size={14} />
+                  ) : (
+                    <CableIcon size={14} />
+                  )
+                }
+                loading={isReconnecting}
+              >
+                {t('image.usbReconnect')}
+              </Button>
+            </Popconfirm>
+          </div>
+        )}
 
         {!writable && (
           <div className="mt-2 text-sm text-neutral-500">

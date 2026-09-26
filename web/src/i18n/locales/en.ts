@@ -222,6 +222,8 @@ const en = {
         'Reconnect the USB gadget only if the remote host did not notice the media change. Keyboard and mouse may briefly disconnect.',
       usbReconnectSuccess: 'USB reconnected',
       usbReconnectFailed: 'USB reconnect failed',
+      delete: 'Delete',
+      deleteFailed: 'Delete failed',
       refresh: 'Refresh the image list',
       attention: 'Attention',
       deleteConfirm: 'Are you sure you want to delete this image?',
@@ -338,7 +340,7 @@ const en = {
         deviceKey: 'Device Key',
         community: 'Community',
         hostname: 'Hostname',
-        hostnameUpdated: 'Hostname updated. Reboot to apply.',
+        hostnameUpdated: 'Hostname updated.',
         ipType: {
           Wired: 'Wired',
           Wireless: 'Wireless',

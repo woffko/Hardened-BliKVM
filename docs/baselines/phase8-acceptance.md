@@ -34,7 +34,7 @@ schema-v2 report has not yet completed.
   test; topology capture recorded
   (`evidence/private/device-kvm-topology-20260915-a.json`).
 - **Phase 1 — read-only platform API.** Server routes plus the route-drift guard
-  `tools/test_plan_route_drift.py`; 103 routes as of 2026-09-26.
+  `tools/test_plan_route_drift.py`; 104 routes as of 2026-09-26.
 - **Phase 4 — video gates (partly).** Two-client probe and soak receipts
   recorded (`video-two-client-probe-20260913-a.json`,
   `video-soak-probe-20260913-a.json`); the frame-timing probe is added and

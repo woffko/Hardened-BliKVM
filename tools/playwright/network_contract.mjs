@@ -217,7 +217,7 @@ try {
     let servers = ["1.1.1.1"];
     let wifiSSID = "";
     let refuseDisconnect = true;
-    let ipv6State = "enabled";
+    let ipv6Mode = "slaac";
     await page.route("**/api/network/**", (route) => {
       const request = route.request();
       if (new URL(request.url()).pathname.startsWith("/api/network/wifi")) {
@@ -277,37 +277,27 @@ try {
         servers = request.postDataJSON().servers;
         return route.fulfill({ json: { code: 0, data: dnsState() } });
       }
-      if (request.method() === "POST" && applied) {
-        const body = request.postDataJSON();
-        const dns = request.url().endsWith("/dns");
-        if (dns) servers = body.servers;
-        else ipv6State = body.disabled ? "disabled" : "enabled";
-        return route.fulfill({
-          json: {
-            code: 0,
-            data: {
-              applied: true,
-              ...(dns
-                ? { readBack: { servers } }
-                : { ipv6State: { interfaces: { enp1s0: ipv6State } } }),
-            },
-          },
-        });
+      const ipv6State = () => ({
+        interface: "enp1s0",
+        mode: ipv6Mode,
+        enabled: ipv6Mode !== "disabled",
+        active: false,
+        clientAvailable: true,
+        clientPath: "NetworkManager",
+        addresses: [],
+        gateway: "",
+        status: "",
+        message: "",
+      });
+      if (request.method() === "POST" && request.url().endsWith("/ipv6")) {
+        if (!applied)
+          return route.fulfill({
+            json: { code: -1, msg: "fixture_refused", data: null },
+          });
+        ipv6Mode = request.postDataJSON().mode;
+        return route.fulfill({ json: { code: 0, data: ipv6State() } });
       }
-      const data =
-        request.method() === "POST"
-          ? { applied: false, rejection: "fixture_refused" }
-          : request.url().endsWith("/dns")
-            ? dnsState()
-            : {
-                interface: "enp1s0",
-                mode: "slaac",
-                ipv6: {
-                  source: "fixture",
-                  defaultState: "enabled",
-                  interfaces: { enp1s0: ipv6State },
-                },
-              };
+      const data = request.url().endsWith("/dns") ? dnsState() : ipv6State();
       return route.fulfill({ json: { code: 0, data } });
     });
     await page.goto(app.baseUrl, { waitUntil: "networkidle" });
@@ -380,11 +370,7 @@ try {
           request.method() === "POST" && request.url().endsWith("/ipv6"),
       );
       assert.equal(ipv6Writes.length, 1);
-      assert.deepEqual(ipv6Writes[0].postDataJSON(), {
-        interface: "enp1s0",
-        disabled: true,
-        confirm: true,
-      });
+      assert.deepEqual(ipv6Writes[0].postDataJSON(), { mode: "disabled" });
       assert.equal(
         await page.getByText("IPv6 settings saved").count(),
         applied ? 1 : 0,

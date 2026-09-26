@@ -12,6 +12,7 @@ pub mod firewall_rules;
 pub mod firewall_runtime;
 pub mod firewall_settings;
 pub mod firewall_transaction;
+mod hostname_settings;
 mod ipv4_settings;
 pub mod mouse_jiggler;
 pub mod network_settings;

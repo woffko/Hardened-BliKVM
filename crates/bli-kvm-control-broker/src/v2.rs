@@ -58,6 +58,7 @@ pub struct ControlV2State {
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
     ipv4: Option<crate::ipv4_settings::Ipv4Settings>,
+    hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::WifiState>,
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::FirewallState>,
@@ -91,6 +92,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -161,6 +163,10 @@ impl ControlV2State {
     }
 
     /// Attach the administration feature switches to the board state.
+    pub fn with_hostname(&mut self, hostname: crate::hostname_settings::HostnameSettings) {
+        self.hostname = Some(hostname);
+    }
+
     pub fn with_ipv4(&mut self, ipv4: crate::ipv4_settings::Ipv4Settings) {
         self.ipv4 = Some(ipv4);
     }
@@ -246,6 +252,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -279,6 +286,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -312,6 +320,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -359,6 +368,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -394,6 +404,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -435,6 +446,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -735,6 +747,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             ipv4: None,
+            hostname: None,
             wifi: None,
             tls: None,
             firewall: None,
@@ -848,12 +861,20 @@ impl ControlV2State {
                 Some(ssh) => ssh.handle(*enabled),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
+            PlatformControlRequestV2::Hostname { name } => match self.hostname.as_mut() {
+                Some(hostname) => hostname.set(name),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
             PlatformControlRequestV2::NetworkInfo {} => match self.ipv4.as_mut() {
                 Some(ipv4) => ipv4.info(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::Ipv4Set { change } => match self.ipv4.as_mut() {
                 Some(ipv4) => ipv4.set(change),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::Ipv6Set { change } => match self.ipv4.as_mut() {
+                Some(ipv4) => ipv4.set_ipv6(change),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::Ipv4Confirm {} => match self.ipv4.as_mut() {

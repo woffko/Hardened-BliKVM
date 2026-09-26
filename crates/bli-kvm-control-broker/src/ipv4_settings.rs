@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse, NetworkInterfaceInfo};
-use bli_kvm_core::Ipv4Change;
+use bli_kvm_core::{Ipv4Change, Ipv6Change};
 
 use crate::network_settings::WifiRunner;
 
@@ -157,7 +157,7 @@ impl Ipv4Settings {
             &self.runner,
             &[
                 "-g",
-                "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.DOMAIN,DHCP4.OPTION",
+                "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.DOMAIN,DHCP4.OPTION,IP6.ADDRESS,IP6.GATEWAY",
                 "device",
                 "show",
                 name,
@@ -180,7 +180,30 @@ impl Ipv4Settings {
                     .map(|servers| values(servers, " "))
             })
             .unwrap_or_default();
-        let profile = self.snapshot(&self.profile_uuid(connection)?)?;
+        let uuid = self.profile_uuid(connection)?;
+        let profile = self.snapshot(&uuid)?;
+        let ipv6 = nmcli(
+            &self.runner,
+            &[
+                "-g",
+                "ipv6.method,ipv6.addresses,ipv6.gateway",
+                "connection",
+                "show",
+                &uuid,
+            ],
+        )?;
+        let mut ipv6 = ipv6.lines().map(str::trim);
+        let ipv6_mode = match ipv6.next().unwrap_or_default() {
+            "disabled" | "ignore" => "disabled",
+            "dhcp" => "dhcpv6",
+            "manual" => "manual",
+            _ => "slaac",
+        };
+        let ipv6_manual_address = values(ipv6.next().unwrap_or_default(), ",")
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        let ipv6_manual_gateway = ipv6.next().unwrap_or_default().to_string();
         Ok(NetworkInterfaceInfo {
             name: name.to_string(),
             kind: kind.to_string(),
@@ -192,6 +215,11 @@ impl Ipv4Settings {
             dhcp_dns,
             manual_dns: profile.ignore_auto_dns == "yes",
             search: values(field(3), " | "),
+            ipv6_mode: ipv6_mode.into(),
+            ipv6_addresses: values(field(5), " | "),
+            ipv6_gateway: field(6).trim().to_string(),
+            ipv6_manual_address,
+            ipv6_manual_gateway,
         })
     }
 
@@ -363,6 +391,66 @@ impl Ipv4Settings {
         });
     }
 
+    /// IPv6 does not carry the management address, so it applies at once.
+    pub fn set_ipv6(&mut self, change: &Ipv6Change) -> ControlResponse {
+        if change.validate().is_err() {
+            return reject(ControlRejectionCode::InvalidState);
+        }
+        let devices = match self.devices() {
+            Ok(devices) => devices,
+            Err(reason) => {
+                eprintln!("network: device list failed: {reason}");
+                return reject(ControlRejectionCode::BackendRejected);
+            }
+        };
+        let Some((device, _, connection)) = devices
+            .into_iter()
+            .find(|(name, _, _)| *name == change.interface)
+        else {
+            return reject(ControlRejectionCode::InvalidState);
+        };
+        let uuid = match self.profile_uuid(&connection) {
+            Ok(uuid) => uuid,
+            Err(reason) => {
+                eprintln!("network: profile read failed: {reason}");
+                return reject(ControlRejectionCode::BackendRejected);
+            }
+        };
+        let method = match change.mode.as_str() {
+            "disabled" => "disabled",
+            "dhcpv6" => "dhcp",
+            "manual" => "manual",
+            _ => "auto",
+        };
+        let (addresses, gateway) = match (&change.address, change.prefix) {
+            (Some(address), Some(prefix)) if method == "manual" => (
+                format!("{address}/{prefix}"),
+                change.gateway.clone().unwrap_or_default(),
+            ),
+            _ => (String::new(), String::new()),
+        };
+        // A manual address must be set before the method that requires it.
+        let settings: Vec<(&str, String)> = if method == "manual" {
+            vec![
+                ("ipv6.addresses", addresses),
+                ("ipv6.gateway", gateway),
+                ("ipv6.method", method.to_string()),
+            ]
+        } else {
+            vec![
+                ("ipv6.method", method.to_string()),
+                ("ipv6.addresses", addresses),
+                ("ipv6.gateway", gateway),
+            ]
+        };
+        if let Err(reason) = Self::apply(&self.runner, &device, &uuid, &settings) {
+            eprintln!("network: applying the IPv6 change failed: {reason}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        eprintln!("network: {device} IPv6 set to {}", change.mode);
+        self.info()
+    }
+
     pub fn confirm(&mut self) -> ControlResponse {
         let confirmed = self.pending.lock().expect("pending poisoned").take();
         if confirmed.is_some() {
@@ -386,6 +474,7 @@ mod tests {
     struct FakeNm {
         profile: Arc<Mutex<Snapshot>>,
         calls: Arc<Mutex<Vec<String>>>,
+        ipv6: Arc<Mutex<std::collections::BTreeMap<String, String>>>,
     }
 
     impl WifiRunner for FakeNm {
@@ -398,6 +487,16 @@ mod tests {
                 }
                 ["-g", "connection.uuid", "connection", "show", "Wired connection 1"] => {
                     "8fe436fc-dbd5-3398-9d6d-669fa69d8a73\n".into()
+                }
+                ["-g", "ipv6.method,ipv6.addresses,ipv6.gateway", "connection", "show", _] => {
+                    let ipv6 = self.ipv6.lock().unwrap();
+                    let get = |key: &str| ipv6.get(key).cloned().unwrap_or_default();
+                    format!(
+                        "{}\n{}\n{}\n",
+                        get("ipv6.method"),
+                        get("ipv6.addresses"),
+                        get("ipv6.gateway")
+                    )
                 }
                 ["-g", _, "connection", "show", _] => format!(
                     "{}\n{}\n{}\n{}\n{}\n",
@@ -418,6 +517,20 @@ mod tests {
                             "ipv4.gateway" => profile.gateway = value,
                             "ipv4.dns" => profile.dns = value,
                             "ipv4.ignore-auto-dns" => profile.ignore_auto_dns = value,
+                            key if key.starts_with("ipv6.") => {
+                                if key == "ipv6.method"
+                                    && value == "manual"
+                                    && self
+                                        .ipv6
+                                        .lock()
+                                        .unwrap()
+                                        .get("ipv6.addresses")
+                                        .is_none_or(String::is_empty)
+                                {
+                                    return Err("manual needs an address".into());
+                                }
+                                self.ipv6.lock().unwrap().insert(key.into(), value);
+                            }
                             _ => return Err("unknown setting".into()),
                         }
                     }
@@ -455,6 +568,9 @@ mod tests {
         Ipv4Settings::open(Box::new(FakeNm {
             profile: Arc::clone(profile),
             calls: Arc::new(Mutex::new(Vec::new())),
+            ipv6: Arc::new(Mutex::new(
+                [("ipv6.method".to_string(), "auto".to_string())].into(),
+            )),
         }))
         .with_revert_after(revert_after)
     }
@@ -541,6 +657,39 @@ mod tests {
         });
         assert_eq!(ipv4.confirm(), ControlResponse::Applied);
         assert_eq!(*profile.lock().unwrap(), dhcp_profile());
+    }
+
+    #[test]
+    fn ipv6_modes_map_to_network_manager_methods() {
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        let mut ipv4 = settings(&profile, REVERT_AFTER);
+        let mode = |response: ControlResponse| match response {
+            ControlResponse::NetworkInfo { interfaces, .. } => (
+                interfaces[0].ipv6_mode.clone(),
+                interfaces[0].ipv6_manual_address.clone(),
+            ),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(mode(ipv4.info()).0, "slaac");
+        let change = |mode: &str, address: Option<&str>| Ipv6Change {
+            interface: "eth0".into(),
+            mode: mode.into(),
+            address: address.map(str::to_string),
+            prefix: address.map(|_| 64),
+            gateway: address.map(|_| "2001:db8::1".to_string()),
+        };
+        assert_eq!(
+            mode(ipv4.set_ipv6(&change("manual", Some("2001:db8::10")))),
+            ("manual".to_string(), "2001:db8::10/64".to_string())
+        );
+        assert_eq!(mode(ipv4.set_ipv6(&change("dhcpv6", None))).0, "dhcpv6");
+        assert_eq!(mode(ipv4.set_ipv6(&change("disabled", None))).0, "disabled");
+        assert_eq!(
+            ipv4.set_ipv6(&change("manual", None)),
+            reject(ControlRejectionCode::InvalidState)
+        );
+        // IPv6 never arms the IPv4 revert.
+        assert_eq!(ipv4.revert_in_seconds(), 0);
     }
 
     #[test]

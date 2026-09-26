@@ -406,6 +406,10 @@ async fn board_state(
     state.with_ipv4(crate::ipv4_settings::Ipv4Settings::open(Box::new(
         crate::network_settings::NmcliRunner::new(crate::network_settings::NM_CONNECTIONS_DIR),
     )));
+    // The reference's hostname setting through systemd-hostnamed.
+    state.with_hostname(crate::hostname_settings::HostnameSettings::open(Box::new(
+        crate::tailscale::SystemTailscaleRunner,
+    )));
     // The reference's SSH switch: enable/disable the OpenSSH server unit.
     state.with_ssh(crate::ssh_settings::SshSettings::open(Box::new(
         crate::tailscale::SystemTailscaleRunner,
