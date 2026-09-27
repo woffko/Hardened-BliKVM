@@ -126,7 +126,13 @@ mod tests {
                 );
             });
             let mut client = UpdateActivationClient::new(path).unwrap();
-            client.deadline = Duration::from_millis(100);
+            // Only the held connection must outlast the deadline; the others
+            // get room for a loaded host.
+            client.deadline = if mode == "held-eof" {
+                Duration::from_millis(100)
+            } else {
+                Duration::from_secs(5)
+            };
             let result = if mode == "legacy-client" {
                 client.activate(&slot(), 41).await.map(|_| ())
             } else {

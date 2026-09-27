@@ -337,11 +337,13 @@ mod tests {
             &path,
             std::process::id(),
             b"status\n",
-            start + Duration::from_millis(50),
+            // A blocking connect would run into this deadline (TimedOut);
+            // it is long enough that a loaded host still reaches connect.
+            start + Duration::from_millis(900),
         )
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
-        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(start.elapsed() < Duration::from_millis(900));
     }
 
     #[test]

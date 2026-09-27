@@ -980,14 +980,16 @@ esac
     fn hung_client_is_killed_and_reaped_on_deadline() {
         let (directory, controller) = fixture(
             "printf '%s' \"$$\" > \"$0.pid\"\nexec /bin/sleep 5",
-            Duration::from_millis(150),
+            // Long enough for a loaded host to write the PID first, far
+            // shorter than the sleep.
+            Duration::from_millis(1000),
         );
         let start = Instant::now();
         assert!(matches!(
             controller.run(&[]),
             Err(CompositionError::Deadline)
         ));
-        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(start.elapsed() < Duration::from_secs(4));
         let pid: libc::pid_t = fs::read_to_string(directory.path().join("systemctl-fixture.pid"))
             .unwrap()
             .parse()

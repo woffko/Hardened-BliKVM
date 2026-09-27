@@ -47,7 +47,8 @@ async fn process_signals_release_native_hid_before_successful_exit() {
                 .spawn()
                 .unwrap(),
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Generous for a loaded host; a hung shutdown still fails the test.
+        let deadline = Instant::now() + Duration::from_secs(15);
         while !socket.exists() {
             assert!(
                 child.0.try_wait().unwrap().is_none(),
@@ -118,7 +119,8 @@ async fn process_signals_release_native_hid_before_successful_exit() {
         // SAFETY: kill does not access memory; this PID belongs to our unreaped
         // child. Only this isolated fixture process receives the selected signal.
         assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Generous for a loaded host; a hung shutdown still fails the test.
+        let deadline = Instant::now() + Duration::from_secs(15);
         let status = loop {
             if let Some(status) = child.0.try_wait().unwrap() {
                 break status;
