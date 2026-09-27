@@ -37,6 +37,10 @@ pub enum ControlRejectionCode {
     BackendUnavailable,
     BackendRejected,
     Internal,
+    /// The selected image's file is not in the image store.
+    ImageMissing,
+    /// The image is shorter than a CD-ROM needs.
+    ImageTooSmall,
 }
 
 /// One connected interface as NetworkManager reports it.

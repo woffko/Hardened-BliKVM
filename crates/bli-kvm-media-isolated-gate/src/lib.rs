@@ -225,9 +225,10 @@ pub async fn run_isolated_checks() -> Result<Vec<(&'static str, &'static str)>, 
         VirtualMediaCommand::SetConnected { connected: true },
         12_000,
     )?;
-    if apply(&mut machine, failing, observed(false, false), 12_000).await?
-        != MediaTransitionOutcome::BackendFailed
-    {
+    if !matches!(
+        apply(&mut machine, failing, observed(false, false), 12_000).await?,
+        MediaTransitionOutcome::BackendFailed(_)
+    ) {
         return Err(GateError::Phase("backend-failure"));
     }
     if apply(&mut machine, failing, observed(false, false), 14_500).await?

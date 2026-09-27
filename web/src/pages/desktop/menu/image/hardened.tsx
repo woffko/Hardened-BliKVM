@@ -125,17 +125,37 @@ export const HardenedImage = () => {
     setSubmenuOpenCount((count) => (open ? count + 1 : Math.max(0, count - 1)));
   }
 
+  // The board spaces media commands; one sent too early is sent again once
+  // the pause is over instead of failing.
   async function run(command: VirtualMediaCommand): Promise<boolean> {
     try {
-      const rsp = await submitVirtualMedia(newOperationId(), command);
-      if (rsp.data.applied) {
-        return true;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const rsp = await submitVirtualMedia(newOperationId(), command);
+        if (rsp.data.applied) {
+          return true;
+        }
+        if (rsp.data.rejection === 'cooldown_active' && attempt < 2) {
+          await delay(COOLDOWN_MS);
+          continue;
+        }
+        message.error(rejectionText(rsp.data.rejection));
+        return false;
       }
-      message.error(rsp.data.rejection || 'Virtual media command rejected');
       return false;
     } catch {
-      message.error('Virtual media command failed');
+      message.error(t('image.commandFailed'));
       return false;
+    }
+  }
+
+  function rejectionText(rejection: string | null | undefined) {
+    switch (rejection) {
+      case 'image_missing':
+        return t('image.imageMissing');
+      case 'image_too_small':
+        return t('image.imageTooSmall');
+      default:
+        return `${t('image.commandFailed')}${rejection ? ` (${rejection})` : ''}`;
     }
   }
 
@@ -191,7 +211,7 @@ export const HardenedImage = () => {
       <Modal open={isModalOpen} footer={null} onCancel={() => toggleModal(false)}>
         <div className="flex items-center space-x-1">
           <span className="text-xl font-bold">{t('image.title')}</span>
-          <Tips />
+          <Tips hardened />
         </div>
 
         <div className="mt-4 flex items-center justify-between">

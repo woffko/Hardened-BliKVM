@@ -225,6 +225,10 @@ const en = {
       usbReconnectFailed: 'USB reconnect failed',
       delete: 'Delete',
       deleteFailed: 'Delete failed',
+      commandFailed: 'The virtual media command failed',
+      imageMissing:
+        'The image file is missing on the board. Delete the entry and upload the image again.',
+      imageTooSmall: 'A CD-ROM image must be at least 600 KiB. Mount it as Mass Storage instead.',
       refresh: 'Refresh the image list',
       attention: 'Attention',
       deleteConfirm: 'Are you sure you want to delete this image?',
@@ -232,6 +236,13 @@ const en = {
       cancelBtn: 'No',
       tips: {
         title: 'How to upload',
+        uploadTitle: 'Upload to the board',
+        upload1: 'Open the Download menu (the arrow icon) in the menu bar.',
+        upload2:
+          'Choose an ISO or IMG file on this computer and confirm; it is stored on the board.',
+        upload3:
+          'Where the remote download is switched on, an ISO can also be fetched from a URL there.',
+        upload4: 'Pick the image in this list: CD-ROM (at least 600 KiB) or Mass Storage.',
         usb1: 'Connect the BliKVM to your computer via USB.',
         usb2: 'Ensure that the virtual disk is mounted (Settings - Virtual Disk).',
         usb3: 'Open the virtual disk on your computer and copy the image file to the root directory of the virtual disk.',
@@ -307,6 +318,8 @@ const en = {
       uploading: 'Uploading',
       failed: 'Transfer failed',
       uploadFailed: 'Upload failed',
+      storeNotWritable: 'The image store on the board is not writable. See the board log.',
+      detachFirst: 'This image is attached to the target. Detach the drive before replacing it.',
       stalled: 'Transfer stalled. Check the connection and retry.',
       canceled: 'Upload canceled',
       cancel: 'Cancel',

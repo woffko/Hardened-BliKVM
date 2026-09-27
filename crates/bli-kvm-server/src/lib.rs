@@ -3540,6 +3540,47 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    /// A board owner that reports `file` as the attached image to every
+    /// request, for the media routes that ask it first.
+    fn serve_media_state(
+        socket: &std::path::Path,
+        file: Option<&str>,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = UnixListener::bind(socket).unwrap();
+        let file = file.map(str::to_string);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut prefix = [0; 4];
+                if stream.read_exact(&mut prefix).await.is_err() {
+                    continue;
+                }
+                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+                if stream.read_exact(&mut bytes).await.is_err() {
+                    continue;
+                }
+                let envelope = bli_kvm_control_protocol::decode_request_v2(&bytes).unwrap();
+                let response = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: 2,
+                    request_id: envelope.request_id,
+                    operation_id: envelope.operation_id,
+                    response: bli_kvm_control_protocol::ControlResponse::MediaState {
+                        file: file.clone(),
+                        connected: file.is_some(),
+                        cdrom: false,
+                        writable: false,
+                    },
+                };
+                let bytes = bli_kvm_control_protocol::encode_response_v2(&response).unwrap();
+                let _ = stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&bytes).unwrap())
+                    .await;
+            }
+        })
+    }
+
     #[tokio::test]
     async fn authenticated_image_upload_writes_the_file_and_the_catalog() {
         use std::os::unix::fs::PermissionsExt;
@@ -3551,6 +3592,7 @@ mod tests {
         let catalog = directory.path().join("catalog.json");
         fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
         fs::set_permissions(&catalog, fs::Permissions::from_mode(0o644)).unwrap();
+        let owner = serve_media_state(&directory.path().join("control.sock"), None);
         let app = app_with_options(ServerOptions {
             state_dir: directory.path().join("state"),
             restricted_controls_enabled: true,
@@ -3615,6 +3657,84 @@ mod tests {
         assert_eq!(summaries[0].image_name, "kubuntu.img");
         assert!(summaries[0].removable_allowed);
         assert!(!summaries[0].cdrom_allowed);
+        owner.abort();
+        #[cfg(feature = "restricted-control-surface")]
+        attached_image_is_kept_and_stale_entries_dropped(&directory, &images, &catalog, boundary)
+            .await;
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    async fn attached_image_is_kept_and_stale_entries_dropped(
+        directory: &tempfile::TempDir,
+        images: &std::path::Path,
+        catalog: &std::path::Path,
+        boundary: &str,
+    ) {
+        let (images, catalog) = (images.to_path_buf(), catalog.to_path_buf());
+        // With the same image attached, replacing it is refused.
+        let attached_socket = directory.path().join("attached.sock");
+        let attached_owner = serve_media_state(&attached_socket, Some("kubuntu.img"));
+        let attached = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state-attached"),
+            restricted_controls_enabled: true,
+            media_controls_enabled: true,
+            media_catalog: Some(catalog.clone()),
+            media_directory: Some(images.clone()),
+            control_socket: Some(attached_socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&attached).await;
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"kubuntu.img\"\r\nContent-Type: application/octet-stream\r\n\r\nreplacement\r\n--{boundary}--\r\n"
+            )
+            .as_bytes(),
+        );
+        let refused = json_body(
+            attached
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/download/file")
+                        .header(header::HOST, "kvm.test")
+                        .header(header::ORIGIN, "https://kvm.test")
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .header(header::CONTENT_LENGTH, body.len())
+                        .header(header::COOKIE, &cookie)
+                        .header("x-csrf-token", &csrf)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(refused["code"], -409);
+        assert_eq!(
+            fs::read(images.join("kubuntu.img")).unwrap(),
+            b"disk-image-bytes"
+        );
+        attached_owner.abort();
+
+        // A catalog entry whose file is gone is dropped when the catalog is read.
+        fs::remove_file(images.join("kubuntu.img")).unwrap();
+        let mut request = json_request(Method::GET, "/api/virtual-media/catalog", Value::Null);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let listed = json_body(attached.oneshot(request).await.unwrap()).await;
+        assert_eq!(listed["data"]["images"], serde_json::json!([]));
+        assert!(
+            bli_kvm_media_catalog::MediaCatalog::open(&catalog)
+                .unwrap()
+                .summaries()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

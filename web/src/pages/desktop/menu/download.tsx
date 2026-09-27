@@ -314,6 +314,14 @@ export const DownloadImage = () => {
     }
   }
 
+  // The board's reasons, in the operator's language where they are known.
+  function uploadErrorText(msg: string | undefined) {
+    if (msg === 'the image store on the board is not writable')
+      return t('download.storeNotWritable');
+    if (msg === 'detach the drive before replacing its image') return t('download.detachFirst');
+    return msg || t('download.uploadFailed');
+  }
+
   function uploadFileWithProgress(file: File, formData: FormData) {
     const csrfToken = getCsrfToken();
 
@@ -344,7 +352,7 @@ export const DownloadImage = () => {
           resolve();
           return;
         }
-        reject(new Error(body?.msg || t('download.uploadFailed')));
+        reject(new Error(uploadErrorText(body?.msg)));
       };
 
       xhr.onerror = () => {

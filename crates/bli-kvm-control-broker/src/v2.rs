@@ -1287,9 +1287,20 @@ impl ControlV2State {
                 | MediaTransitionOutcome::Noop
                 | MediaTransitionOutcome::ReplayedApplied,
             ) => ControlResponse::Applied,
-            Ok(
-                MediaTransitionOutcome::ReplayedRejected | MediaTransitionOutcome::BackendFailed,
-            ) => reject(ControlRejectionCode::BackendRejected),
+            Ok(MediaTransitionOutcome::BackendFailed(failure)) => reject(match failure {
+                bli_kvm_media_transition::MediaBackendFailure::ImageMissing => {
+                    ControlRejectionCode::ImageMissing
+                }
+                bli_kvm_media_transition::MediaBackendFailure::ImageTooSmall => {
+                    ControlRejectionCode::ImageTooSmall
+                }
+                bli_kvm_media_transition::MediaBackendFailure::Other => {
+                    ControlRejectionCode::BackendRejected
+                }
+            }),
+            Ok(MediaTransitionOutcome::ReplayedRejected) => {
+                reject(ControlRejectionCode::BackendRejected)
+            }
             Ok(MediaTransitionOutcome::Rejected(rejection)) => reject(media_code(rejection)),
             Err(_) => reject(ControlRejectionCode::Internal),
         }

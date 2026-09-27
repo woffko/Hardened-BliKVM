@@ -11,7 +11,7 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use axum::{Json, extract::State};
+use axum::{Extension, Json, extract::State};
 use bli_kvm_admin_helper::{
     AdminReply, AdminRequest, DOWNLOAD_STATUS, DownloadStatus, validate_remote_iso,
 };
@@ -20,6 +20,7 @@ use serde::Deserialize;
 
 use crate::{
     AppState,
+    auth::middleware::CurrentSession,
     error::{ApiResponse, AppError, AppResult},
 };
 
@@ -35,6 +36,7 @@ pub(crate) struct DownloadBody {
 
 pub(crate) async fn start(
     State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(body): Json<DownloadBody>,
 ) -> AppResult<Json<ApiResponse<DownloadStatus>>> {
     crate::admin_features::require(AdminFeature::RemoteDownload)?;
@@ -43,6 +45,19 @@ pub(crate) async fn start(
     })?;
     let iso = validate_remote_iso(&body.file)
         .ok_or_else(|| AppError::BadRequest("invalid url".into()))?;
+    // As for an upload: the attached image is not replaced under the target.
+    #[cfg(feature = "restricted-control-surface")]
+    if crate::media::attached_image(&state, &session.token)
+        .await?
+        .as_deref()
+        == Some(iso.filename.as_str())
+    {
+        return Err(AppError::Conflict(
+            "detach the drive before replacing its image".into(),
+        ));
+    }
+    #[cfg(not(feature = "restricted-control-surface"))]
+    let _ = &session;
     let request = AdminRequest::ImageDownload {
         url: iso.url.clone(),
     };

@@ -1,0 +1,72 @@
+"""Pin what the SD image builder does to a board's state (tools/image/build_sd_image.sh).
+
+The builder runs against a live board, so these tests exercise the pieces
+that can run alone (the fstab rewrite) and pin the rest by their text.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILDER = ROOT / "tools/image/build_sd_image.sh"
+QUOTE = "'\"'\"'"
+
+
+def fstab_program(script: str) -> str:
+    start = script.index('awk -v root="$root_uuid"')
+    start = script.index(QUOTE, start) + len(QUOTE)
+    return script[start : script.index(QUOTE, start)]
+
+
+class BuildSdImageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.script = BUILDER.read_text(encoding="utf-8")
+
+    def test_the_image_store_is_mounted_after_tmpfiles_with_its_new_uuid(self) -> None:
+        board = (
+            "UUID=a / ext4 defaults,noatime 0 1\n"
+            "UUID=b /mnt ext4 defaults 0 0\n"
+            "UUID=c /var/lib/hardened-blikvm-gadget/images ext4 rw,nosuid,nodev,noexec,nofail,"
+            "x-systemd.requires=systemd-tmpfiles-setup.service,x-systemd.device-timeout=10s 0 2\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            program = Path(directory, "fstab.awk")
+            program.write_text(fstab_program(self.script), encoding="utf-8")
+            source = Path(directory, "fstab")
+            source.write_text(board, encoding="utf-8")
+            result = subprocess.run(
+                ["awk", "-v", "root=R", "-v", "data=D", "-v", "msd=M", "-f", str(program), str(source)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "UUID=R / ext4 defaults,noatime 0 1",
+                "UUID=D /mnt ext4 defaults 0 0",
+                "UUID=M /var/lib/hardened-blikvm-gadget/images ext4 "
+                "rw,nosuid,nodev,noexec,nofail,x-systemd.device-timeout=10s 0 2",
+            ],
+        )
+
+    def test_the_image_store_root_takes_the_store_mode_and_group(self) -> None:
+        self.assertIn('set_inode_field / mode 040770" "$work/msd.ext4"', self.script)
+        self.assertIn('set_inode_field / gid $store_gid" "$work/msd.ext4"', self.script)
+        # The result is checked, not assumed.
+        self.assertIn('grep -q "Mode:  0770"', self.script)
+        self.assertIn("the image store's owner could not be set", self.script)
+        self.assertIn('$1 == "hardened-blikvm" { print $3 }', self.script)
+
+    def test_the_image_catalog_starts_empty(self) -> None:
+        self.assertIn('"  \\"entries\\": []"', self.script)
+        self.assertIn('> "$staging/etc/hardened-blikvm-gadget/catalog.json"', self.script)
+
+
+if __name__ == "__main__":
+    unittest.main()

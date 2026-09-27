@@ -162,6 +162,9 @@ assemble() {
     # The board'"'"'s connection profiles are excluded, but the directory is part
     # of the board owner'"'"'s sandbox (ReadWritePaths) and must exist.
     install -d -m 0700 -o 0 -g 0 "$staging/etc/NetworkManager/system-connections"
+    # The image store starts empty on a new card, and so does its catalog.
+    printf "%s\n" "{" "  \"schemaVersion\": 1," "  \"entries\": []" "}" \
+      > "$staging/etc/hardened-blikvm-gadget/catalog.json"
     # Default credentials follow the Armbian convention: root/1234, expired, so
     # the first SSH login must set a new password. The blikvm user is locked.
     awk -F: -v OFS=: -v hash="$root_hash" '"'"'$1 == "root" { $2 = hash; $3 = 0 }
@@ -173,7 +176,12 @@ assemble() {
     awk -v root="$root_uuid" -v data="$data_uuid" -v msd="$msd_uuid" '"'"'
       $2 == "/" { $1 = "UUID=" root }
       $2 == "/mnt" { $1 = "UUID=" data }
-      $2 == "/var/lib/hardened-blikvm-gadget/images" { $1 = "UUID=" msd }
+      $2 == "/var/lib/hardened-blikvm-gadget/images" {
+        $1 = "UUID=" msd
+        # Mounted after tmpfiles, the tmpfiles rule for the image store
+        # applies to the partition itself rather than the empty mount point.
+        gsub(/,x-systemd\.requires=systemd-tmpfiles-setup\.service/, "", $4)
+      }
       $2 == "var/lib/kvmd/msd" { next }
       { print }'"'"' "$staging/etc/fstab" > "$staging/etc/fstab.next"
     cat "$staging/etc/fstab.next" > "$staging/etc/fstab"
@@ -248,6 +256,18 @@ assemble() {
   msd_start=$((ROOT_START + ROOT_SECTORS + DATA_SECTORS))
   msd_sectors=$((IMAGE_BYTES / 512 - msd_start))
   fakeroot -- mke2fs -q -t ext4 -L MSD -U "$msd_uuid" -E root_owner=0:0 "$work/msd.ext4" $((msd_sectors / 2))k
+  # The server stores uploads on this partition: its root carries the image
+  # store's mode and group (tmpfiles: 0770 root:hardened-blikvm).
+  store_gid=$(awk -F: '$1 == "hardened-blikvm" { print $3 }' "$staging/etc/group")
+  case "$store_gid" in ''|*[!0-9]*) echo "the hardened-blikvm group is missing from the image" >&2; exit 1 ;; esac
+  debugfs -w -R "set_inode_field / mode 040770" "$work/msd.ext4" >/dev/null 2>&1
+  debugfs -w -R "set_inode_field / gid $store_gid" "$work/msd.ext4" >/dev/null 2>&1
+  debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -q "Mode:  0770" &&
+    debugfs -R "stat /" "$work/msd.ext4" 2>/dev/null | grep -Eq "Group: +$store_gid( |\$)" || {
+      echo "the image store's owner could not be set" >&2
+      exit 1
+    }
+  e2fsck -fn "$work/msd.ext4" >/dev/null
   e2fsck -fn "$root_img" >/dev/null
 
   image="$output/hardened-blikvm-h616-sd.img"

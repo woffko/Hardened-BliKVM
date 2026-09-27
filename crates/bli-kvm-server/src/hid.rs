@@ -709,6 +709,8 @@ pub(crate) fn rejection_name(code: ControlRejectionCode) -> &'static str {
         ControlRejectionCode::BackendUnavailable => "backend_unavailable",
         ControlRejectionCode::BackendRejected => "backend_rejected",
         ControlRejectionCode::Internal => "internal",
+        ControlRejectionCode::ImageMissing => "image_missing",
+        ControlRejectionCode::ImageTooSmall => "image_too_small",
     }
 }
 

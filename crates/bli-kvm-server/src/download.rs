@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Multipart, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Response},
@@ -22,6 +22,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::AppState;
+use crate::auth::middleware::CurrentSession;
 use crate::error::{ApiResponse, AppError, AppResult};
 
 /// Hard cap for one uploaded image.
@@ -83,17 +84,37 @@ fn temporary_path(directory: &Path, name: &str) -> PathBuf {
 
 pub(crate) async fn upload_image(
     State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Response {
-    match upload_image_inner(&state, &headers, &mut multipart).await {
+    match upload_image_inner(&state, &session.token, &headers, &mut multipart).await {
         Ok(response) => response.into_response(),
         Err(error) => error.into_response(),
     }
 }
 
+#[cfg(feature = "restricted-control-surface")]
+async fn attached_image(state: &AppState, session_token: &str) -> AppResult<Option<String>> {
+    crate::media::attached_image(state, session_token).await
+}
+
+/// Without the restricted control surface nothing can be attached.
+#[cfg(not(feature = "restricted-control-surface"))]
+async fn attached_image(_state: &AppState, _session_token: &str) -> AppResult<Option<String>> {
+    Ok(None)
+}
+
+/// The image store cannot take a file: the operator is told so, the board log
+/// keeps the cause.
+fn store_unwritable(name: &str, error: &std::io::Error) -> AppError {
+    eprintln!("media: {name} could not be stored: {error}");
+    AppError::Conflict("the image store on the board is not writable".into())
+}
+
 async fn upload_image_inner(
     state: &AppState,
+    session_token: &str,
     headers: &HeaderMap,
     multipart: &mut Multipart,
 ) -> AppResult<Json<ApiResponse<ImageUploadResponse>>> {
@@ -136,12 +157,19 @@ async fn upload_image_inner(
         }
         let name = field.file_name().unwrap_or_default().to_owned();
         let kind = validate_upload_name(&name)?;
+        // Replacing the attached image would leave the target reading the
+        // old file while the catalog describes the new one.
+        if attached_image(state, session_token).await?.as_deref() == Some(name.as_str()) {
+            return Err(AppError::Conflict(
+                "detach the drive before replacing its image".into(),
+            ));
+        }
         let temporary = temporary_path(&directory, &name);
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)
-            .map_err(|_| AppError::ServiceUnavailable("image storage is unavailable".into()))?;
+            .map_err(|error| store_unwritable(&name, &error))?;
         let mut hasher = Sha256::new();
         let mut total: u64 = 0;
         let mut field = field;
@@ -156,9 +184,8 @@ async fn upload_image_inner(
                     return Err(AppError::BadRequest("upload is too large".into()));
                 }
                 hasher.update(&chunk);
-                file.write_all(&chunk).map_err(|_| {
-                    AppError::ServiceUnavailable("image storage is unavailable".into())
-                })?;
+                file.write_all(&chunk)
+                    .map_err(|error| store_unwritable(&name, &error))?;
             }
             Ok(())
         }
@@ -171,17 +198,19 @@ async fn upload_image_inner(
                     sha256.push_str(&format!("{byte:02x}"));
                 }
                 let target = directory.join(&name);
-                file.sync_all().map_err(|_| {
-                    AppError::ServiceUnavailable("image storage is unavailable".into())
-                })?;
+                if let Err(error) = file.sync_all() {
+                    drop(file);
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(store_unwritable(&name, &error));
+                }
                 drop(file);
-                std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o644))
-                    .map_err(|_| {
-                        AppError::ServiceUnavailable("image storage is unavailable".into())
-                    })?;
-                std::fs::rename(&temporary, &target).map_err(|_| {
-                    AppError::ServiceUnavailable("image storage is unavailable".into())
-                })?;
+                if let Err(error) =
+                    std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o644))
+                        .and_then(|()| std::fs::rename(&temporary, &target))
+                {
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(store_unwritable(&name, &error));
+                }
                 uploaded = Some((name, kind, total, sha256));
             }
             Err(error) => {

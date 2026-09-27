@@ -167,14 +167,7 @@ pub(crate) async fn media_catalog(
                 "virtual media catalog is not enabled".into(),
             ));
         }
-        let Some(path) = state.options.media_catalog.as_ref() else {
-            return Err(AppError::ServiceUnavailable(
-                "virtual media catalog is not configured".into(),
-            ));
-        };
-        let catalog = bli_kvm_media_catalog::MediaCatalog::open(path).map_err(|_| {
-            AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
-        })?;
+        let catalog = reconciled_catalog(&state)?;
         Ok(Json(ApiResponse::ok(MediaCatalogView {
             images: catalog.summaries(),
         })))
@@ -237,6 +230,54 @@ pub(crate) struct MediaObserved {
     pub file: Option<String>,
     pub connected: bool,
     pub cdrom: bool,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+/// Opens the catalog after dropping entries whose file is gone from the image
+/// store (a card written from another board, a file removed by hand), so the
+/// dialog never offers an image the owner cannot attach.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) fn reconciled_catalog(
+    state: &AppState,
+) -> AppResult<bli_kvm_media_catalog::MediaCatalog> {
+    let path = storage_catalog_path(state)?;
+    let open = || {
+        bli_kvm_media_catalog::MediaCatalog::open(path).map_err(|_| {
+            AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
+        })
+    };
+    let catalog = open()?;
+    let Some(directory) = state.options.media_directory.as_deref() else {
+        return Ok(catalog);
+    };
+    let missing: Vec<String> = catalog
+        .summaries()
+        .into_iter()
+        .map(|entry| entry.image_name)
+        .filter(|name| !directory.join(name).is_file())
+        .collect();
+    if missing.is_empty() {
+        return Ok(catalog);
+    }
+    for name in &missing {
+        match bli_kvm_media_catalog::MediaCatalog::remove_image(path, name) {
+            Ok(_) => eprintln!("media: dropped the catalog entry {name}: its file is gone"),
+            Err(error) => eprintln!("media: could not drop the catalog entry {name}: {error:?}"),
+        }
+    }
+    open()
+}
+
+/// The image attached to the target now, if any.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn attached_image(
+    state: &AppState,
+    session_token: &str,
+) -> AppResult<Option<String>> {
+    Ok(observe_media(state, session_token)
+        .await?
+        .file
+        .filter(|name| !name.is_empty()))
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -371,10 +412,7 @@ pub(crate) async fn storage_images(
                 "virtual media control is not enabled".into(),
             ));
         }
-        let catalog = bli_kvm_media_catalog::MediaCatalog::open(storage_catalog_path(&state)?)
-            .map_err(|_| {
-                AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
-            })?;
+        let catalog = reconciled_catalog(&state)?;
         Ok(Json(ApiResponse::ok(StorageImagesView {
             files: catalog
                 .summaries()
@@ -445,10 +483,7 @@ pub(crate) async fn storage_mount(
         let command = if body.file.is_empty() {
             bli_kvm_core::VirtualMediaCommand::SetConnected { connected: false }
         } else {
-            let catalog = bli_kvm_media_catalog::MediaCatalog::open(storage_catalog_path(&state)?)
-                .map_err(|_| {
-                    AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
-                })?;
+            let catalog = reconciled_catalog(&state)?;
             let Some(entry) = catalog.find_by_name(&body.file) else {
                 return Err(AppError::BadRequest(
                     "image is not present in the catalog".into(),

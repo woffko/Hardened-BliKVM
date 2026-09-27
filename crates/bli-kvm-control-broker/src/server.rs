@@ -1310,7 +1310,9 @@ fn reason_for(code: ControlRejectionCode) -> RejectReason {
         ControlRejectionCode::NotArmed
         | ControlRejectionCode::NotAttested
         | ControlRejectionCode::ConfirmationStale
-        | ControlRejectionCode::InvalidState => RejectReason::InvalidInput,
+        | ControlRejectionCode::InvalidState
+        | ControlRejectionCode::ImageMissing
+        | ControlRejectionCode::ImageTooSmall => RejectReason::InvalidInput,
     }
 }
 
@@ -1801,7 +1803,12 @@ mod tests {
         let socket = directory.path().join("control.sock");
         let image_dir = directory.path().join("images");
         std::fs::create_dir_all(&image_dir).unwrap();
-        std::fs::write(image_dir.join("rescue.iso"), b"image").unwrap();
+        // Large enough for a CD-ROM.
+        std::fs::write(
+            image_dir.join("rescue.iso"),
+            vec![0_u8; bli_kvm_usb_gadget::MIN_CDROM_IMAGE_BYTES as usize],
+        )
+        .unwrap();
         let catalog = image_dir.join("catalog.json");
         std::fs::write(
             &catalog,
@@ -2417,7 +2424,12 @@ mod tests {
         let socket = directory.path().join("control.sock");
         let image_dir = directory.path().join("images");
         std::fs::create_dir_all(&image_dir).unwrap();
-        std::fs::write(image_dir.join("rescue.iso"), b"image").unwrap();
+        // Large enough for a CD-ROM.
+        std::fs::write(
+            image_dir.join("rescue.iso"),
+            vec![0_u8; bli_kvm_usb_gadget::MIN_CDROM_IMAGE_BYTES as usize],
+        )
+        .unwrap();
         let catalog = image_dir.join("catalog.json");
         std::fs::write(
             &catalog,
@@ -2592,7 +2604,12 @@ mod tests {
         let socket = directory.path().join("control.sock");
         let image_dir = directory.path().join("images");
         std::fs::create_dir_all(&image_dir).unwrap();
-        std::fs::write(image_dir.join("rescue.iso"), b"image").unwrap();
+        // Large enough for a CD-ROM.
+        std::fs::write(
+            image_dir.join("rescue.iso"),
+            vec![0_u8; bli_kvm_usb_gadget::MIN_CDROM_IMAGE_BYTES as usize],
+        )
+        .unwrap();
         let catalog = image_dir.join("catalog.json");
         std::fs::write(
             &catalog,
