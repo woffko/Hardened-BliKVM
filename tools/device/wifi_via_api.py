@@ -145,7 +145,8 @@ def main() -> int:
     def act(route: str, body: dict | None = None) -> tuple[bool, object, int]:
         status, answer, elapsed = call("POST", route, body)
         result = answer.get("data") or {}
-        return status == 200 and result.get("applied") is True, result.get("rejection") or answer.get("msg"), elapsed
+        applied = status == 200 and result.get("applied") is True
+        return applied, None if applied else (result.get("rejection") or answer.get("msg")), elapsed
 
     status, body, _ = call("POST", "/api/auth/login", {"username": args.username, "password": gui_password}, 15)
     gui_password = ""

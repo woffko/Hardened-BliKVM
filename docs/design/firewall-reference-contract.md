@@ -97,6 +97,18 @@ leaves `webrtcMedia` unset, so Restricted and Paranoid block WebRTC as the
 reference and its texts say; the local media range remains an explicit
 configuration option.
 
+Serving the page (plan of 2026-09-27, phase F): each `nft` run goes through
+a transient systemd unit (about half a second on the board), so the owner
+reads the ruleset once per status and serves the preview and the three
+listings from that snapshot (later chunks reuse it for 10 seconds). The
+firewall state, baseline and listing requests run on the firewall's own lock
+and a blocking worker, like the mode runtime, so HID and media requests never
+wait on `nft`. The server calls the firewall with a 30-second client, reads
+the status afresh after a change (once more if that read fails) and answers
+other reads, such as the video menu's, from a 5-second cache. Both WebRTC
+transports (H.264 and VP8) are unavailable in the video menu while
+`webrtcBlocked` is set, and a page using one falls back to MJPEG.
+
 ## Remaining implementation and acceptance gates
 
 1. Typed four-mode control request/status, explicit confirmation identity and

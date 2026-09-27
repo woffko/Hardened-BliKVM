@@ -218,11 +218,55 @@ session; WebRTC through `tools/playwright/vp8_webrtc_probe.mjs`):
   device configuration blocks WebRTC in Restricted and Paranoid as the
   reference does (the WebRTC frames above were taken with the local media
   range allowed).
+- Page in working order (plan `work-plan-20260927-firewall-wifi.md`,
+  phase F, run by the agent): applying Restricted from the page had returned
+  503 although the owner applied it. The status read after it ran about nine
+  `nft` commands through transient units, outlasted the server's 5-second
+  control timeout, and the owner rolled the unconfirmed change back; HID
+  requests waited behind it on the owner's shared state. Fixed in slot 44
+  (one ruleset snapshot per status, firewall requests off the shared state,
+  a 30-second client with a retried status read and a 5-second cache) and
+  slot 45 (VP8 is WebRTC too: it is no longer offered in Restricted or
+  Paranoid). Checked on the board with
+  `tools/playwright/firewall_page_device_test.mjs`
+  (`evidence/private/firewall-page-device-seq45-*.json`,
+  `firewall-gui-apply-seq44-*.json`, `firewall-latency-seq44-*.json`,
+  `firewall-timeout-seq45-*.json`, `kvm-reboot-firewall-seq45-*.json`):
+  - Desktop: Moderate, Restricted, Paranoid and Baseline chosen on the page;
+    every write answered 200, the page confirmed Restricted and Paranoid
+    itself and the owner reported no pending change. In both restrictive
+    modes the video menu left only MJPEG selectable (VP8 disabled with its
+    reason).
+  - Mobile (390x844, touch): Restricted, Moderate and Baseline the same way,
+    with the same video menu.
+  - A status read that the cache cannot answer takes 0.6-0.7 s (it outlasted
+    5 s before). The mouse-jiggler read, which shares the owner's lock with
+    HID, took a median of 9-17 ms and at most 20-225 ms idle, and a median of
+    10-17 ms and at most 61-234 ms while the firewall status was read.
+  - Restricted applied through the mode API and left unconfirmed was rolled
+    back to Baseline after the 60-second deadline.
+  - Restricted confirmed on the page came back after an API reboot (board up
+    after 50 s): the page and the owner reported Restricted.
+  - The board ended in Baseline.
 - Open for the operator: Tailscale peers reach the board from
   `100.64.0.0/10` over `tailscale0`, which is not a local range, so
   moderate, restricted and paranoid block incoming tailnet connections, as in
   the reference; testing that path needs a Tailscale login with the
   operator's account.
+
+Wi-Fi 2026-09-27 (plan `work-plan-20260927-firewall-wifi.md`, phase W;
+`docs/design/wifi-v1.md`): the reference has no Wi-Fi section. Ours offered
+only a typed name and password and could not join (the profile was brought
+up by file name and never loaded, only WPA-PSK was written, and only a
+profile from the same owner process could be disconnected). Slot 45 lists
+the networks in range and the saved networks, joins open, WPA2 and WPA3
+networks and hidden ones, switches auto-join and the radio, and forgets a
+network; the owner serves Wi-Fi on its own lock. Checked on the board with
+`tools/device/wifi_via_api.py` (`evidence/private/wifi-seq45-auto-*.json`;
+networks in range are recorded without their names): the Wi-Fi device is
+present with the radio on; a new scan listed 3 networks (WPA2/WPA3, strongest
+67 %); the radio went off (no network listed) and on again (3 listed);
+Ethernet kept the default route.
 
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the

@@ -5,11 +5,13 @@
 // owner's mode and pending state, and, in a restrictive mode, which transports
 // the video menu leaves selectable. `latency` measures the owner's shared
 // state (the mouse-jiggler read shares its lock with HID) while idle and while
-// the firewall status is read afresh. The GUI password is read from stdin; a
+// the firewall status is read afresh; `status` records the mode the page and
+// the owner report without changing it. The GUI password is read from stdin; a
 // receipt is written under evidence/private. No screenshot is taken.
 //
 // Usage: node firewall_page_device_test.mjs BASE_URL USERNAME OUTPUT VIEWPORT STEP...
-//   VIEWPORT: desktop | mobile; STEP: baseline | moderate | restricted | paranoid | latency
+//   VIEWPORT: desktop | mobile
+//   STEP: baseline | moderate | restricted | paranoid | latency | status
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -25,7 +27,9 @@ assert.ok(["desktop", "mobile"].includes(viewport));
 const modes = ["baseline", "moderate", "restricted", "paranoid"];
 assert.ok(
   steps.length > 0 &&
-    steps.every((step) => step === "latency" || modes.includes(step)),
+    steps.every(
+      (step) => ["latency", "status"].includes(step) || modes.includes(step),
+    ),
 );
 let password = "";
 for await (const chunk of process.stdin) password += chunk.toString("utf8");
@@ -105,6 +109,12 @@ try {
   async function openFirewall() {
     await page.locator("svg.lucide-settings").first().click();
     await page.locator('[data-settings-tab="system"]').click();
+    // System opens on its first section; Firewall is chosen explicitly.
+    await page
+      .locator(".ant-modal-wrap")
+      .getByText(/^Firewall$/)
+      .first()
+      .click();
     await page
       .getByText(/Firewall mode is active/)
       .first()
@@ -170,6 +180,21 @@ try {
   for (const step of steps) {
     if (step === "latency") {
       await latency();
+      continue;
+    }
+    if (step === "status") {
+      await openFirewall();
+      const shown = await page
+        .getByText(/Firewall mode is active/)
+        .first()
+        .innerText();
+      const owner = (await api("/api/system/firewall/mode")).body.data;
+      record("status", {
+        page: shown,
+        ownerMode: owner?.mode,
+        pending: owner?.pendingOperationId ?? null,
+      });
+      await closeSettings();
       continue;
     }
     const before = writes.length;
