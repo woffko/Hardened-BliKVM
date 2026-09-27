@@ -273,6 +273,42 @@ announces was refused after 24 s (`backend_rejected`; the owner logged
 profile afterwards, the root-only `system-connections` directory was empty,
 and Ethernet kept the default route.
 
+The operator joined their test network (WPA2/WPA3) from the page on
+2026-09-27; its name and password stay out of this repository. Then, by the
+agent (`wifi-seq45-operator-join-*.json`, `wifi-seq45-after-reboot-*.json`,
+`kvm-reboot-wifi-seq45-*.json`, `wifi-seq45-eth-fallback-*.log`):
+
+- Connected with an address, signal 65 %; one saved profile,
+  `hardened-blikvm-wifi-<uuid8>.nmconnection`, mode 0600 owned by root,
+  bound to `wlan0` with `wpa-psk` (a transition network is joined as WPA2).
+- Ethernet kept the default route: `eth0` metric 100, `wlan0` metric 600.
+- Auto-join switched off and on again through the API.
+- After an API reboot (the board was back after 62 s; the previous reboot's
+  record first had to be accepted through the owner socket) the board
+  rejoined the network on its own.
+- Fallback: a transient unit took `eth0` down for 60 s and brought it back;
+  the board answered its API over its Wi-Fi address throughout and over
+  Ethernet again once `eth0` returned.
+
+Added at the operator's request (plan items W7 and W8), slot 46
+(`wifi-seq46-main-*.json`, `wifi-seq46-unconfirmed-*.json`,
+`wifi-page-seq46-*.json`, `wifi-seq46-forget-*.json`,
+`firewall-page-device-seq46-final-*.json`):
+
+- The connected network's details: gateway, resolver, global IPv6 address,
+  MAC, channel 1 and a link rate of 260 Mbit/s came back from the board, and
+  the page listed IPv4, Gateway, DNS, IPv6, MAC, Channel and Link speed
+  under the network on desktop and mobile without a page error.
+- Main connection: Wi-Fi chosen and confirmed moved the default route to
+  `wlan0` (the confirmation still reached the board over Ethernet); Ethernet
+  chosen and confirmed moved it back to `eth0`. Wi-Fi chosen and left
+  unconfirmed showed the countdown (56 s left) and the owner returned the
+  default route to `eth0` after the deadline.
+- Forget removed the saved profile; Wi-Fi disconnected and Ethernet kept
+  the default route.
+- The firewall ended in Baseline. The operator will join the network again
+  from the phone during the phone check.
+
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
 board and assembled `hardened-blikvm-h616-sd.img` (28 GiB, layout p1 root

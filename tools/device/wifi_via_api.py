@@ -18,6 +18,8 @@ Steps run in order:
   ``disconnect``: act on the saved profile or the device.
 - ``prefer-wifi`` / ``prefer-ethernet``: make that connection the main one,
   confirm it over this connection, and check the default route.
+- ``prefer-wifi-unconfirmed``: make Wi-Fi the main connection without
+  confirming it; the board must return to Ethernet after the deadline.
 
 The GUI password is read from stdin (via project-memory-exec). For ``join`` the
 stdin carries project-memory-exec's two-secret envelope with roles ``gui`` and
@@ -259,6 +261,17 @@ def main() -> int:
                        confirmRejection=confirm_reason, state=observed)
                 passed &= done and observed["wifiPreferred"] is wifi and observed["revertInSeconds"] == 0
                 passed &= observed["defaultRoute"] == ("wlan0" if wifi else "eth0")
+            elif name == "prefer-wifi-unconfirmed":
+                done, reason, elapsed = act("/api/network/wifi/preferred", {"enabled": True})
+                time.sleep(3)
+                pending = state()
+                time.sleep(max(pending.get("revertInSeconds") or 0, 0) + 15)
+                after = state()
+                record("prefer_wifi_unconfirmed", applied=done, rejection=reason, ms=elapsed,
+                       pending=pending, after=after)
+                passed &= done and pending["defaultRoute"] == "wlan0" and (pending["revertInSeconds"] or 0) > 0
+                passed &= after["wifiPreferred"] is False and after["defaultRoute"] == "eth0"
+                passed &= after["revertInSeconds"] == 0
             elif name == "disconnect":
                 done, reason, elapsed = act("/api/network/wifi/disconnect")
                 observed = state()
