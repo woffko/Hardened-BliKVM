@@ -514,7 +514,7 @@ mod reference_tests {
 
     #[test]
     fn the_local_media_range_is_read_from_the_owned_table_only() {
-        let owned = "table ip filter {\n\tchain x {\n\t\tudp dport 1-2 accept\n\t}\n}\ntable inet hardened-blikvm {\n\tchain input {\n\t\tip saddr { 10.0.0.0/8 } udp dport 20000-20099 accept\n\t}\n}\n";
+        let owned = "table ip filter {\n\tchain x {\n\t\tudp dport 1-2 accept\n\t}\n}\ntable inet hardened-blikvm {\n\tchain input {\n\t\tip saddr { 192.0.2.0/24 } udp dport 20000-20099 accept\n\t}\n}\n";
         assert!(media_admitted(owned));
         let foreign_only = "table ip filter {\n\tchain x {\n\t\tudp dport 20000-20099 accept\n\t}\n}\ntable inet hardened-blikvm {\n\tchain input {\n\t\ttcp dport 443 accept\n\t}\n}\n";
         assert!(!media_admitted(foreign_only));
