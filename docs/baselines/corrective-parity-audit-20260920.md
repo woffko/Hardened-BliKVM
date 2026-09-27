@@ -306,8 +306,10 @@ Added at the operator's request (plan items W7 and W8), slot 46
   default route to `eth0` after the deadline.
 - Forget removed the saved profile; Wi-Fi disconnected and Ethernet kept
   the default route.
-- The firewall ended in Baseline. The operator will join the network again
-  from the phone during the phone check.
+- The firewall ended in Baseline.
+
+The operator checked the firewall and Wi-Fi sections from the phone on
+2026-09-27 and accepted them.
 
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
