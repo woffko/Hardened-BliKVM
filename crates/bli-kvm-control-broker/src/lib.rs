@@ -41,7 +41,9 @@ pub use firewall_settings::{
     FIREWALL_STATE_DIR, FirewallRunner, FirewallState, FirewallView, SystemFirewallRunner,
 };
 pub use mouse_jiggler::{JiggleWriter, MouseJigglerState};
-pub use network_settings::{NM_CONNECTIONS_DIR, NmcliRunner, WifiRunner, WifiState, WifiStatus};
+pub use network_settings::{
+    NM_CONNECTIONS_DIR, NmcliRunner, SharedWifi, WifiRunner, WifiState, WifiStatus,
+};
 pub use tls_settings::{
     CertificateView, NGINX_CONF, NGINX_UNIT, SystemTlsRunner, TlsRunner, TlsState,
 };

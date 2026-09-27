@@ -38,6 +38,47 @@ pub enum FirewallRulesFamily {
     Nft,
 }
 
+/// The most networks a scan answer carries, and saved profiles a list does:
+/// both keep one control message within its 4 KiB.
+pub const MAX_WIFI_NETWORKS: usize = 20;
+pub const MAX_WIFI_PROFILES: usize = 16;
+
+/// What the operator does with a saved WiFi profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WifiProfileAction {
+    Connect,
+    Forget,
+    AutoconnectOn,
+    AutoconnectOff,
+}
+
+/// A WiFi network name: 1 to 32 bytes without control characters.
+pub fn valid_wifi_ssid(ssid: &str) -> bool {
+    (1..=32).contains(&ssid.len()) && !ssid.chars().any(char::is_control)
+}
+
+/// A WPA passphrase (8 to 63 printable characters) or a 64-digit hex key;
+/// an empty password stands for an open network.
+pub fn valid_wifi_password(password: &str) -> bool {
+    password.is_empty()
+        || ((8..=63).contains(&password.len()) && !password.chars().any(char::is_control))
+        || (password.len() == 64 && password.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// A NetworkManager profile UUID in its canonical lowercase or uppercase
+/// hyphenated form.
+pub fn valid_wifi_profile_id(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
 /// Administration features that stay off until the operator switches them on
 /// (`docs/design/admin-features-v1.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -286,13 +327,32 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read the WiFi device state.
     WifiState {},
-    /// Connect to a WiFi network through NetworkManager.
+    /// The networks in range; `rescan` asks NetworkManager for a new scan,
+    /// whose results arrive a few seconds later.
+    WifiScan {
+        rescan: bool,
+    },
+    /// The saved WiFi profiles.
+    WifiSaved {},
+    /// Connect to a WiFi network through NetworkManager; `hidden` for a
+    /// network that does not announce its name.
     WifiConnect {
         ssid: String,
         password: String,
+        #[serde(default)]
+        hidden: bool,
     },
-    /// Disconnect the profile the owner brought up.
+    /// Disconnect the WiFi device.
     WifiDisconnect {},
+    /// Act on a saved WiFi profile.
+    WifiProfile {
+        id: String,
+        action: WifiProfileAction,
+    },
+    /// Switch the WiFi radio on or off.
+    WifiRadio {
+        enabled: bool,
+    },
     /// Read the HTTPS redirect state and the public certificate.
     TlsState {},
     /// Switch the HTTP listener between serving and redirecting to HTTPS.
@@ -371,6 +431,8 @@ pub enum ControlV2ValidationError {
     InvalidHostname,
     #[error("firewall rules offset is out of range")]
     InvalidFirewallRulesOffset,
+    #[error("WiFi network or profile is invalid")]
+    InvalidWifiNetwork,
 }
 
 /// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
@@ -547,8 +609,24 @@ impl PlatformControlRequestV2 {
                 }
             }
             Self::WifiState {} => Ok(()),
-            Self::WifiConnect { .. } => Ok(()),
+            Self::WifiScan { .. } => Ok(()),
+            Self::WifiSaved {} => Ok(()),
+            Self::WifiConnect { ssid, password, .. } => {
+                if valid_wifi_ssid(ssid) && valid_wifi_password(password) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidWifiNetwork)
+                }
+            }
             Self::WifiDisconnect {} => Ok(()),
+            Self::WifiProfile { id, .. } => {
+                if valid_wifi_profile_id(id) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidWifiNetwork)
+                }
+            }
+            Self::WifiRadio { .. } => Ok(()),
             Self::TlsState {} => Ok(()),
             Self::TlsSet { .. } => Ok(()),
             Self::FirewallState {} => Ok(()),
@@ -916,5 +994,59 @@ mod tests {
             .validate(),
             Err(ControlV2ValidationError::InvalidConfirmationTimestamp)
         );
+    }
+
+    #[test]
+    fn wifi_requests_bound_names_passwords_and_profile_ids() {
+        let connect = |ssid: &str, password: &str| PlatformControlRequestV2::WifiConnect {
+            ssid: ssid.into(),
+            password: password.into(),
+            hidden: false,
+        };
+        for valid in [
+            connect("HomeNet", ""),
+            connect("HomeNet", "eight888"),
+            connect(&"n".repeat(32), &"p".repeat(63)),
+            connect("Café", &"ab".repeat(32)),
+        ] {
+            assert_eq!(valid.validate(), Ok(()));
+        }
+        for invalid in [
+            connect("", "eight888"),
+            connect(&"n".repeat(33), "eight888"),
+            connect("line\nbreak", "eight888"),
+            connect("HomeNet", "short"),
+            connect("HomeNet", &"p".repeat(64)),
+            connect("HomeNet", "tab\tinside"),
+        ] {
+            assert_eq!(
+                invalid.validate(),
+                Err(ControlV2ValidationError::InvalidWifiNetwork)
+            );
+        }
+        let profile = |id: &str| PlatformControlRequestV2::WifiProfile {
+            id: id.into(),
+            action: WifiProfileAction::Forget,
+        };
+        assert_eq!(
+            profile("0123abcd-0123-4567-89ab-0123456789ab").validate(),
+            Ok(())
+        );
+        for id in [
+            "",
+            "hardened-blikvm-wifi-0123abcd",
+            "../0123-4567-89ab-0123456789ab.x",
+        ] {
+            assert_eq!(
+                profile(id).validate(),
+                Err(ControlV2ValidationError::InvalidWifiNetwork)
+            );
+        }
+        // Older clients omit `hidden`.
+        let decoded: PlatformControlRequestV2 = serde_json::from_str(
+            r#"{"type":"wifi_connect","ssid":"HomeNet","password":"eight888"}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded, connect("HomeNet", "eight888"));
     }
 }

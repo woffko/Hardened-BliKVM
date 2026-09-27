@@ -28,10 +28,12 @@ pub use control::{
 pub use control_v2::{
     AcceptPostBootRequest, AdminFeature, AtxConfirmation, ControlV2ValidationError,
     FirewallRulesFamily, HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest, Ipv4Change, Ipv6Change,
-    MAX_FIREWALL_RULES_BYTES, MAX_FIREWALL_RULES_CHUNK, MAX_IPV4_DNS_SERVERS, MediaObserveRequest,
-    MediaRequest, NetworkWriteRequest, NetworkWriteTarget, PlatformControlRequestV2,
-    SystemActionKind, SystemActionWireRequest, TARGET_ATTESTATION_MAX_TTL_SECONDS,
-    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease, valid_hostname,
+    MAX_FIREWALL_RULES_BYTES, MAX_FIREWALL_RULES_CHUNK, MAX_IPV4_DNS_SERVERS, MAX_WIFI_NETWORKS,
+    MAX_WIFI_PROFILES, MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
+    PlatformControlRequestV2, SystemActionKind, SystemActionWireRequest,
+    TARGET_ATTESTATION_MAX_TTL_SECONDS, TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation,
+    TargetRelease, WifiProfileAction, valid_hostname, valid_wifi_password, valid_wifi_profile_id,
+    valid_wifi_ssid,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,

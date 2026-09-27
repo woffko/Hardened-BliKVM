@@ -73,6 +73,40 @@ pub struct NetworkInterfaceInfo {
     pub ipv6_manual_gateway: String,
 }
 
+/// One network in range: its name, the strongest signal heard for it in
+/// percent, its security (`open`, `wpa2`, `wpa3`, `wpa2_wpa3`, `wep`,
+/// `enterprise` or `other`), channel, and whether the board uses it now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub signal: u8,
+    pub security: String,
+    pub channel: u16,
+    pub in_use: bool,
+}
+
+/// One saved WiFi profile. Its password never leaves the owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WifiProfileView {
+    pub id: String,
+    pub ssid: String,
+    pub autoconnect: bool,
+    pub active: bool,
+}
+
+/// The security labels a network or connection can carry.
+pub const WIFI_SECURITY_LABELS: [&str; 7] = [
+    "open",
+    "wpa2",
+    "wpa3",
+    "wpa2_wpa3",
+    "wep",
+    "enterprise",
+    "other",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
@@ -142,6 +176,24 @@ pub enum ControlResponse {
         interface: Option<String>,
         ssid: Option<String>,
         state: String,
+        #[serde(default)]
+        radio: bool,
+        /// The connected network's signal in percent.
+        #[serde(default)]
+        signal: Option<u8>,
+        #[serde(default)]
+        security: Option<String>,
+        /// The connected network's IPv4 address, as `address/prefix`.
+        #[serde(default)]
+        address: Option<String>,
+    },
+    /// The networks in range, strongest first, one entry per name.
+    WifiNetworks {
+        networks: Vec<WifiNetwork>,
+    },
+    /// The saved WiFi profiles.
+    WifiProfiles {
+        profiles: Vec<WifiProfileView>,
     },
     /// The HTTPS redirect state and the public certificate the front serves.
     TlsState {
@@ -403,6 +455,35 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
         && (chunk.len() > bli_kvm_core::MAX_FIREWALL_RULES_CHUNK
             || *total as usize > bli_kvm_core::MAX_FIREWALL_RULES_BYTES
             || u64::from(*offset) + chunk.len() as u64 > u64::from(*total))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::WifiNetworks { networks } = response
+        && (networks.len() > bli_kvm_core::MAX_WIFI_NETWORKS
+            || networks.iter().any(|network| {
+                !bli_kvm_core::valid_wifi_ssid(&network.ssid)
+                    || network.signal > 100
+                    || !WIFI_SECURITY_LABELS.contains(&network.security.as_str())
+            }))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::WifiProfiles { profiles } = response
+        && (profiles.len() > bli_kvm_core::MAX_WIFI_PROFILES
+            || profiles.iter().any(|profile| {
+                !bli_kvm_core::valid_wifi_profile_id(&profile.id)
+                    || (!profile.ssid.is_empty() && !bli_kvm_core::valid_wifi_ssid(&profile.ssid))
+            }))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::WifiState {
+        signal, security, ..
+    } = response
+        && (signal.is_some_and(|signal| signal > 100)
+            || security
+                .as_deref()
+                .is_some_and(|security| !WIFI_SECURITY_LABELS.contains(&security)))
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
@@ -804,6 +885,76 @@ mod tests {
             };
             assert!(encode_response_v2(&invalid).is_err(), "{file}");
         }
+    }
+
+    #[test]
+    fn wifi_lists_fit_one_message_and_reject_unsafe_entries() {
+        let envelope = |response| ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 26,
+            operation_id: OPERATION_ID.into(),
+            response,
+        };
+        // The longest names JSON can make: every byte escaped.
+        let widest = "\"".repeat(32);
+        let network = WifiNetwork {
+            ssid: widest.clone(),
+            signal: 100,
+            security: "wpa2_wpa3".into(),
+            channel: 165,
+            in_use: false,
+        };
+        let scan = envelope(ControlResponse::WifiNetworks {
+            networks: vec![network.clone(); bli_kvm_core::MAX_WIFI_NETWORKS],
+        });
+        let json = encode_response_v2(&scan).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), scan);
+        let profile = WifiProfileView {
+            id: "0123abcd-0123-4567-89ab-0123456789ab".into(),
+            ssid: widest,
+            autoconnect: true,
+            active: false,
+        };
+        let saved = envelope(ControlResponse::WifiProfiles {
+            profiles: vec![profile.clone(); bli_kvm_core::MAX_WIFI_PROFILES],
+        });
+        let json = encode_response_v2(&saved).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), saved);
+
+        let too_many = envelope(ControlResponse::WifiNetworks {
+            networks: vec![network.clone(); bli_kvm_core::MAX_WIFI_NETWORKS + 1],
+        });
+        assert!(encode_response_v2(&too_many).is_err());
+        for bad in [
+            WifiNetwork {
+                ssid: String::new(),
+                ..network.clone()
+            },
+            WifiNetwork {
+                ssid: "line\nbreak".into(),
+                ..network.clone()
+            },
+            WifiNetwork {
+                signal: 101,
+                ..network.clone()
+            },
+            WifiNetwork {
+                security: "wpa-psk".into(),
+                ..network.clone()
+            },
+        ] {
+            let invalid = envelope(ControlResponse::WifiNetworks {
+                networks: vec![bad],
+            });
+            assert!(encode_response_v2(&invalid).is_err());
+        }
+        let invalid = envelope(ControlResponse::WifiProfiles {
+            profiles: vec![WifiProfileView {
+                id: "../system-connections".into(),
+                ..profile
+            }],
+        });
+        assert!(encode_response_v2(&invalid).is_err());
     }
 
     #[test]

@@ -65,11 +65,11 @@ W2. Owner: requests run outside the shared owner state. Scan asks
     be switched. The password never reaches a command line, a log, a response
     or the saved list.
 W3. Server: `GET /api/network/wifi`, `GET /api/network/wifi/scan`,
-    `GET /api/network/wifi/saved`, `POST /api/network/wifi/connect`,
-    `POST /api/network/wifi/disconnect`,
-    `POST /api/network/wifi/saved/{connect,forget,autoconnect}`,
+    `GET /api/network/wifi/saved`, `POST /api/network/wifi/saved`
+    (`{id, action}`: connect, forget, auto-join on or off),
+    `POST /api/network/wifi/connect`, `POST /api/network/wifi/disconnect`,
     `POST /api/network/wifi/radio`, gated by the `network_wifi` capability;
-    a 45-second client for connect.
+    a 45-second client for Wi-Fi requests.
 W4. Web (Settings > System > Network): radio switch; the current network with
     signal, security, address and Disconnect; networks in range with signal,
     lock and Refresh, a password dialog (none for open networks); "Other

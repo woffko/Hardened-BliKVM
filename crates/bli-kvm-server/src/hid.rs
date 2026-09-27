@@ -254,6 +254,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::SshState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
         | ControlResponse::FirewallRules { .. }
@@ -284,6 +286,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::SshState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
         | ControlResponse::FirewallRules { .. }
@@ -564,6 +568,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::SshState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
         | ControlResponse::FirewallRules { .. }
@@ -599,6 +605,8 @@ pub(crate) async fn hid_lease(
         | ControlResponse::SshState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
         | ControlResponse::FirewallRules { .. }

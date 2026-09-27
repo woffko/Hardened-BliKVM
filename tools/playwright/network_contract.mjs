@@ -215,40 +215,27 @@ try {
       }),
     );
     let servers = ["1.1.1.1"];
-    let wifiSSID = "";
-    let refuseDisconnect = true;
     let ipv6Mode = "slaac";
     await page.route("**/api/network/**", (route) => {
       const request = route.request();
-      if (new URL(request.url()).pathname.startsWith("/api/network/wifi")) {
-        if (request.method() === "GET")
-          return route.fulfill({
-            json: {
-              code: 0,
-              data: {
-                available: true,
-                connected: Boolean(wifiSSID),
-                ssid: wifiSSID,
-                state: wifiSSID ? "connected" : "disconnected",
-              },
-            },
-          });
-        const accepted =
-          applied &&
-          !(refuseDisconnect && request.url().endsWith("/disconnect"));
-        if (accepted)
-          wifiSSID = request.url().endsWith("/connect")
-            ? request.postDataJSON().ssid
-            : "";
+      // Wi-Fi has its own contract (wifi_contract.mjs); here the board has
+      // no Wi-Fi device and the section stays hidden.
+      if (new URL(request.url()).pathname.startsWith("/api/network/wifi"))
         return route.fulfill({
           json: {
             code: 0,
-            data: accepted
-              ? { applied: true }
-              : { applied: false, rejection: "wifi_refused" },
+            data: {
+              available: false,
+              connected: false,
+              ssid: "",
+              state: "unavailable",
+              radio: false,
+              signal: null,
+              security: null,
+              address: null,
+            },
           },
         });
-      }
       const dnsState = () => ({
         mode: "manual",
         servers,
@@ -379,68 +366,6 @@ try {
         requests.filter((request) => request.method() === "POST").length,
         2,
       );
-    }
-    const wifi = page.getByRole("button", {
-      name: "Configure Wi-Fi",
-      exact: true,
-    });
-    assert.equal(await wifi.isDisabled(), !writable);
-    if (writable) {
-      await wifi.click();
-      await page
-        .getByPlaceholder("Name", { exact: true })
-        .fill("fixture-network");
-      await page
-        .getByPlaceholder("Password", { exact: true })
-        .fill("fixture-only-password");
-      await page.getByRole("button", { name: "Join", exact: true }).click();
-      if (applied)
-        await page
-          .getByRole("button", { name: "Join", exact: true })
-          .waitFor({ state: "hidden" });
-      else {
-        await page
-          .getByRole("alert")
-          .filter({ hasText: "Connection failed" })
-          .waitFor();
-        await page.getByRole("button", { name: "Cancel", exact: true }).click();
-      }
-      // The joined network appears after the follow-up status refresh.
-      if (applied)
-        await page.getByText("fixture-network", { exact: true }).waitFor();
-      assert.equal(
-        await page.getByText("fixture-network", { exact: true }).count(),
-        applied ? 1 : 0,
-      );
-    }
-    if (applied) {
-      await wifi.click();
-      const connection = page.getByRole("switch", {
-        name: "Wi-Fi connection",
-        exact: true,
-      });
-      await connection.click();
-      await page
-        .getByRole("alert")
-        .filter({ hasText: "Connection failed" })
-        .waitFor();
-      assert.equal(await connection.getAttribute("aria-checked"), "true");
-      refuseDisconnect = false;
-      await connection.click();
-      await connection.waitFor({ state: "hidden" });
-      assert.equal(
-        await page.getByText("fixture-network", { exact: true }).count(),
-        0,
-      );
-      assert.equal(
-        requests.filter(
-          (request) =>
-            request.method() === "POST" &&
-            request.url().endsWith("/wifi/disconnect"),
-        ).length,
-        2,
-      );
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
     }
     const tls = page.getByRole("switch", { name: "HTTPS", exact: true });
     assert.equal(await tls.isDisabled(), !writable);

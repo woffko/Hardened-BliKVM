@@ -64,6 +64,7 @@ mod video_engine;
 mod video_settings;
 mod vm_info;
 mod webrtc;
+mod wifi;
 mod wol_macs;
 mod ws;
 
@@ -528,13 +529,19 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route(
             "/network/wifi",
-            get(network::network_wifi).post(network::network_wifi_ap),
+            get(wifi::network_wifi).post(wifi::network_wifi_ap),
         )
-        .route("/network/wifi/connect", post(network::network_wifi_connect))
+        .route("/network/wifi/scan", get(wifi::network_wifi_scan))
+        .route(
+            "/network/wifi/saved",
+            get(wifi::network_wifi_saved).post(wifi::network_wifi_profile),
+        )
+        .route("/network/wifi/connect", post(wifi::network_wifi_connect))
         .route(
             "/network/wifi/disconnect",
-            post(network::network_wifi_disconnect),
+            post(wifi::network_wifi_disconnect),
         )
+        .route("/network/wifi/radio", post(wifi::network_wifi_radio))
         .route("/network/interfaces", get(network::network_interfaces))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
@@ -3271,6 +3278,195 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn wifi_routes_reach_the_owner_with_typed_requests_only() {
+        use bli_kvm_control_protocol::{ControlResponse, WifiNetwork, WifiProfileView};
+        use bli_kvm_core::{PlatformControlRequestV2, WifiProfileAction};
+        const PROFILE: &str = "0123abcd-0123-4567-89ab-0123456789ab";
+        let root = tempdir().unwrap();
+        let socket = root.path().join("wifi.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..5 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let envelope = bli_kvm_control_protocol::decode_request_v2(&bytes).unwrap();
+                let response = match &envelope.request {
+                    PlatformControlRequestV2::WifiScan { rescan: true } => {
+                        ControlResponse::WifiNetworks {
+                            networks: vec![WifiNetwork {
+                                ssid: "HomeNet".into(),
+                                signal: 81,
+                                security: "wpa2".into(),
+                                channel: 36,
+                                in_use: true,
+                            }],
+                        }
+                    }
+                    PlatformControlRequestV2::WifiSaved {} => ControlResponse::WifiProfiles {
+                        profiles: vec![WifiProfileView {
+                            id: PROFILE.into(),
+                            ssid: "HomeNet".into(),
+                            autoconnect: true,
+                            active: true,
+                        }],
+                    },
+                    PlatformControlRequestV2::WifiConnect { .. } => ControlResponse::Rejected {
+                        code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                    },
+                    _ => ControlResponse::Applied,
+                };
+                seen.push(envelope.request);
+                let response = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: 2,
+                    request_id: envelope.request_id,
+                    operation_id: envelope.operation_id,
+                    response,
+                };
+                let bytes = bli_kvm_control_protocol::encode_response_v2(&response).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&bytes).unwrap())
+                    .await
+                    .unwrap();
+            }
+            seen
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(socket),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let call = |method: Method, path: &str, body: Value| {
+            let mut request = json_request(method, path, body);
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            request
+        };
+        let scan = json_body(
+            app.clone()
+                .oneshot(call(
+                    Method::GET,
+                    "/api/network/wifi/scan?rescan=true",
+                    Value::Null,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            scan["data"]["networks"][0],
+            serde_json::json!({"ssid":"HomeNet","signal":81,"security":"wpa2","channel":36,"inUse":true})
+        );
+        let saved = json_body(
+            app.clone()
+                .oneshot(call(Method::GET, "/api/network/wifi/saved", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(saved["data"]["profiles"][0]["id"], PROFILE);
+        // Invalid input never reaches the owner.
+        for (path, body) in [
+            (
+                "/api/network/wifi/connect",
+                serde_json::json!({"ssid":"HomeNet","password":"short"}),
+            ),
+            (
+                "/api/network/wifi/connect",
+                serde_json::json!({"ssid":"","password":""}),
+            ),
+            (
+                "/api/network/wifi/saved",
+                serde_json::json!({"id":"../x","action":"forget"}),
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(call(Method::POST, path, body))
+                .await
+                .unwrap();
+            assert_ne!(json_body(response).await["code"], 0, "{path}");
+        }
+        let connect = json_body(
+            app.clone()
+                .oneshot(call(
+                    Method::POST,
+                    "/api/network/wifi/connect",
+                    serde_json::json!({"ssid":"Hidden","password":"eight888","hidden":true}),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            connect["data"],
+            serde_json::json!({"applied":false,"rejection":"backend_rejected"})
+        );
+        for (path, body) in [
+            (
+                "/api/network/wifi/saved",
+                serde_json::json!({"id":PROFILE,"action":"autoconnect_off"}),
+            ),
+            (
+                "/api/network/wifi/radio",
+                serde_json::json!({"enabled":false}),
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(call(Method::POST, path, body))
+                .await
+                .unwrap();
+            assert_eq!(json_body(response).await["data"]["applied"], true, "{path}");
+        }
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(2), broker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            seen,
+            [
+                PlatformControlRequestV2::WifiScan { rescan: true },
+                PlatformControlRequestV2::WifiSaved {},
+                PlatformControlRequestV2::WifiConnect {
+                    ssid: "Hidden".into(),
+                    password: "eight888".into(),
+                    hidden: true,
+                },
+                PlatformControlRequestV2::WifiProfile {
+                    id: PROFILE.into(),
+                    action: WifiProfileAction::AutoconnectOff,
+                },
+                PlatformControlRequestV2::WifiRadio { enabled: false },
+            ]
+        );
+
+        // Without the operator's opt-in the routes answer unavailable.
+        let closed = app_with_options(ServerOptions {
+            state_dir: root.path().join("closed"),
+            control_socket: Some(root.path().join("absent.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&closed).await;
+        let mut request = json_request(Method::GET, "/api/network/wifi/scan", Value::Null);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let response = closed.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

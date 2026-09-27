@@ -59,7 +59,7 @@ pub struct ControlV2State {
     ssh: Option<crate::ssh_settings::SshSettings>,
     ipv4: Option<crate::ipv4_settings::Ipv4Settings>,
     hostname: Option<crate::hostname_settings::HostnameSettings>,
-    wifi: Option<crate::network_settings::WifiState>,
+    wifi: Option<crate::network_settings::SharedWifi>,
     tls: Option<crate::tls_settings::TlsState>,
     firewall: Option<crate::firewall_settings::SharedFirewall>,
     /// The mode runtime of `firewall`, kept apart so finding it never waits
@@ -167,7 +167,15 @@ impl ControlV2State {
 
     /// Attach the reviewed WiFi surface to the board state.
     pub fn with_wifi(&mut self, wifi: crate::network_settings::WifiState) {
-        self.wifi = Some(wifi);
+        self.wifi = Some(std::sync::Arc::new(std::sync::Mutex::new(wifi)));
+    }
+
+    /// The WiFi state for the server's blocking worker, while enabled.
+    pub fn wifi_shared(&self) -> Option<crate::network_settings::SharedWifi> {
+        if !self.enabled {
+            return None;
+        }
+        self.wifi.clone()
     }
 
     /// Attach the reviewed HID-only switch to the board state.
@@ -606,37 +614,14 @@ impl ControlV2State {
         tls.set(enabled)
     }
 
-    fn handle_wifi_state(&mut self) -> ControlResponse {
-        let Some(wifi) = self.wifi.as_mut() else {
+    fn handle_wifi(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
+        let Some(wifi) = self.wifi.as_ref() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        match wifi.status() {
-            Ok(status) => ControlResponse::WifiState {
-                available: status.available,
-                up: status.up,
-                interface: status.interface,
-                ssid: status.ssid,
-                state: status.state,
-            },
-            Err(reason) => {
-                eprintln!("wifi: state read failed: {reason}");
-                reject(ControlRejectionCode::BackendRejected)
-            }
+        match wifi.lock() {
+            Ok(mut wifi) => wifi.dispatch(request),
+            Err(_) => reject(ControlRejectionCode::BackendRejected),
         }
-    }
-
-    fn handle_wifi_connect(&mut self, ssid: &str, password: &str) -> ControlResponse {
-        let Some(wifi) = self.wifi.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        wifi.connect(ssid, password)
-    }
-
-    fn handle_wifi_disconnect(&mut self) -> ControlResponse {
-        let Some(wifi) = self.wifi.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        wifi.disconnect()
     }
 
     fn handle_hid_only(&mut self, enabled: bool) -> ControlResponse {
@@ -892,11 +877,13 @@ impl ControlV2State {
                 Some(features) => features.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
-            PlatformControlRequestV2::WifiState {} => self.handle_wifi_state(),
-            PlatformControlRequestV2::WifiConnect { ssid, password } => {
-                self.handle_wifi_connect(ssid, password)
-            }
-            PlatformControlRequestV2::WifiDisconnect {} => self.handle_wifi_disconnect(),
+            PlatformControlRequestV2::WifiState {}
+            | PlatformControlRequestV2::WifiScan { .. }
+            | PlatformControlRequestV2::WifiSaved {}
+            | PlatformControlRequestV2::WifiConnect { .. }
+            | PlatformControlRequestV2::WifiDisconnect {}
+            | PlatformControlRequestV2::WifiProfile { .. }
+            | PlatformControlRequestV2::WifiRadio { .. } => self.handle_wifi(request),
             PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
             PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
             PlatformControlRequestV2::FirewallState {}

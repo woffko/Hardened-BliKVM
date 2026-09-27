@@ -136,6 +136,8 @@ pub(crate) async fn virtual_media(
             | ControlResponse::SshState { .. }
             | ControlResponse::NetworkInfo { .. }
             | ControlResponse::WifiState { .. }
+            | ControlResponse::WifiNetworks { .. }
+            | ControlResponse::WifiProfiles { .. }
             | ControlResponse::TlsState { .. }
             | ControlResponse::FirewallModeState { .. }
             | ControlResponse::FirewallState { .. }

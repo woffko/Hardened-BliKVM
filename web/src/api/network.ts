@@ -76,18 +76,65 @@ export function verifyApLogin(apPassword: string) {
   );
 }
 
-// connect wifi
-export function connectWifi(ssid: string, password: string) {
-  const data = {
-    ssid,
-    password
-  };
-  return http.post('/api/network/wifi/connect', data);
+export type WifiSecurity = 'open' | 'wpa2' | 'wpa3' | 'wpa2_wpa3' | 'wep' | 'enterprise' | 'other';
+
+export type WifiStatus = {
+  available: boolean;
+  connected: boolean;
+  ssid: string;
+  interface?: string;
+  state: string;
+  radio: boolean;
+  signal: number | null;
+  security: WifiSecurity | null;
+  address: string | null;
+};
+
+export type WifiNetwork = {
+  ssid: string;
+  signal: number;
+  security: WifiSecurity;
+  channel: number;
+  inUse: boolean;
+};
+
+export type WifiProfile = {
+  id: string;
+  ssid: string;
+  autoconnect: boolean;
+  active: boolean;
+};
+
+export type WifiProfileAction = 'connect' | 'forget' | 'autoconnect_on' | 'autoconnect_off';
+
+// the networks in range; rescan asks the board for a new scan first
+export function scanWifi(rescan: boolean) {
+  return http.get('/api/network/wifi/scan', { rescan });
+}
+
+// the saved networks
+export function getSavedWifi() {
+  return http.get('/api/network/wifi/saved');
+}
+
+// act on a saved network
+export function wifiProfile(id: string, action: WifiProfileAction) {
+  return http.post('/api/network/wifi/saved', { id, action });
+}
+
+// connect wifi; an association can take up to 30 seconds
+export function connectWifi(ssid: string, password: string, hidden = false) {
+  return http.post('/api/network/wifi/connect', { ssid, password, hidden });
 }
 
 // disconnect wifi
 export function disconnectWifi() {
   return http.post('/api/network/wifi/disconnect');
+}
+
+// switch the wifi radio
+export function setWifiRadio(enabled: boolean) {
+  return http.post('/api/network/wifi/radio', { enabled });
 }
 
 export function getDNS() {

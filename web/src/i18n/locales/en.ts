@@ -73,6 +73,7 @@ const en = {
       videoDirectTips: 'Enable HTTPS in "Settings > System > Network" to use this mode',
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC is disabled in Restricted and Paranoid Firewall modes',
+      videoVp8BlockedByFirewall: 'VP8 WebRTC is disabled in Restricted and Paranoid Firewall modes',
       resolution: 'Resolution',
       auto: 'Automatic',
       autoTips:
@@ -462,13 +463,47 @@ const en = {
           connect: 'Join Wi-Fi',
           connectDesc1: 'Please enter the network ssid and password',
           connectDesc2: 'Please enter the password to join this network',
-          disconnect: 'Are you sure to disconnect the network?',
-          failed: 'Connection failed, please try again.',
+          disconnect: 'Disconnect from this network?',
+          failed: 'Could not join the network. Check the password and try again.',
           ssid: 'Name',
           password: 'Password',
           joinBtn: 'Join',
           confirmBtn: 'Ok',
-          cancelBtn: 'Cancel'
+          cancelBtn: 'Cancel',
+          radio: 'Wi-Fi radio',
+          radioOff: 'Wi-Fi is off',
+          radioOffDesc: 'Turn Wi-Fi on to see the networks in range.',
+          notConnected: 'Not connected',
+          connected: 'Connected',
+          disconnectBtn: 'Disconnect',
+          available: 'Networks in range',
+          refresh: 'Refresh',
+          scanning: 'Looking for networks…',
+          noNetworks: 'No networks found',
+          other: 'Other network…',
+          otherDesc:
+            'Enter the name of a hidden network and its password. Leave the password empty for an open network.',
+          openDesc: 'This network is open: traffic on it is not encrypted.',
+          passwordOptional: 'Password (optional)',
+          saved: 'Saved networks',
+          unnamed: 'Unnamed network',
+          autoconnect: 'Auto-join',
+          forget: 'Forget',
+          forgetConfirm: 'Forget {{ssid}}? Its saved password is deleted.',
+          connecting: 'Connecting… this can take up to 30 seconds.',
+          actionFailed: 'The action failed, please try again.',
+          loadFailed: 'Could not read the Wi-Fi state.',
+          unsupportedSecurity:
+            'This network uses security the board cannot join (enterprise, WEP or other).',
+          security: {
+            open: 'Open',
+            wpa2: 'WPA2',
+            wpa3: 'WPA3',
+            wpa2_wpa3: 'WPA2/WPA3',
+            wep: 'WEP',
+            enterprise: 'Enterprise',
+            other: 'Other'
+          }
         },
         tls: {
           description: 'Enable HTTPS protocol',

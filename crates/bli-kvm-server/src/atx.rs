@@ -109,6 +109,8 @@ pub(crate) async fn application_power(
         | ControlResponse::SshState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }

@@ -11,6 +11,10 @@ import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { videoModeAtom } from '@/jotai/screen.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
 
+// Both WebRTC transports carry media over UDP, which Restricted and Paranoid
+// firewall modes drop.
+const WEBRTC_MODES = ['h264', 'vp8'];
+
 const videoModes = [
   { key: 'direct', name: 'H.264 (Direct)' },
   { key: 'h264', name: 'H.264 (WebRTC)' },
@@ -78,18 +82,18 @@ export const VideoMode = () => {
   }, [supportedModes, videoMode]);
 
   useEffect(() => {
-    if (!isWebrtcBlocked || videoMode !== 'h264' || isDirectSupported === null) return;
+    if (!isWebrtcBlocked || !WEBRTC_MODES.includes(videoMode) || isDirectSupported === null) return;
 
-    setCookie(isDirectSupported ? 'direct' : 'mjpeg');
+    setCookie(isDirectSupported && supportedModes.includes('direct') ? 'direct' : 'mjpeg');
     setTimeout(() => {
       window.location.reload();
     }, 250);
-  }, [isDirectSupported, isWebrtcBlocked, videoMode]);
+  }, [isDirectSupported, isWebrtcBlocked, supportedModes, videoMode]);
 
   function update(mode: string) {
     if (mode === videoMode) return;
     if (!supportedModes.includes(mode as UiVideoMode)) return;
-    if (mode === 'h264' && isWebrtcBlocked) return;
+    if (WEBRTC_MODES.includes(mode) && isWebrtcBlocked) return;
 
     setCookie(mode);
 
@@ -121,16 +125,22 @@ export const VideoMode = () => {
             <Tooltip
               key={mode.key}
               title={
-                mode.key === 'h264' && isWebrtcBlocked
-                  ? t('screen.videoWebrtcBlockedByFirewall')
+                WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked
+                  ? t(
+                      mode.key === 'vp8'
+                        ? 'screen.videoVp8BlockedByFirewall'
+                        : 'screen.videoWebrtcBlockedByFirewall'
+                    )
                   : undefined
               }
               placement="right"
               styles={{ root: { maxWidth: '270px' } }}
             >
               <div
+                aria-disabled={WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked}
+                data-video-mode={mode.key}
                 className={
-                  mode.key === 'h264' && isWebrtcBlocked
+                  WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked
                     ? 'flex cursor-not-allowed select-none items-center rounded py-1.5 pl-1 pr-5 text-neutral-500 hover:bg-neutral-700/70'
                     : 'flex cursor-pointer select-none items-center rounded py-1.5 pl-1 pr-5 hover:bg-neutral-700/70'
                 }

@@ -128,6 +128,7 @@ node --check tools/playwright/gui_parity_probe.mjs
 node --check tools/playwright/raw_system_update_probe.mjs
 node --check tools/playwright/raw_system_update_device_test.mjs
 node --check tools/playwright/firewall_modes_device_probe.mjs
+node --check tools/playwright/firewall_page_device_test.mjs
 node --check tools/playwright/terminal_run.mjs
 node --check tools/playwright/terminal_put.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
@@ -137,6 +138,7 @@ node --check tools/playwright/restricted_control_virtual_keyboard_probe.mjs
 node --check tools/playwright/restricted_control_lifecycle.mjs
 node --check tools/playwright/network_contract.mjs
 node --check tools/playwright/firewall_modes_contract.mjs
+node --check tools/playwright/wifi_contract.mjs
 node --check tools/playwright/vp8_webrtc_probe.mjs
 node --check tools/playwright/video_settings_contract.mjs
 node --check tools/playwright/app_harness.mjs
@@ -769,6 +771,7 @@ pnpm_web lint
 node tools/playwright/restricted_control_lifecycle.mjs
 node tools/playwright/network_contract.mjs
 node tools/playwright/firewall_modes_contract.mjs
+node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'

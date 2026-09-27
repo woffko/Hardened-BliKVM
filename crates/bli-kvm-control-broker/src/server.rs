@@ -1140,6 +1140,8 @@ where
         | ControlResponse::SshState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }
@@ -1208,7 +1210,35 @@ async fn respond(
             } else {
                 None
             };
-            let response = if let Some(firewall) = firewall_state {
+            // WiFi requests wait on NetworkManager (an association takes up
+            // to 30 s) and get the same treatment.
+            let wifi_request = matches!(
+                &request.request,
+                bli_kvm_core::PlatformControlRequestV2::WifiState {}
+                    | bli_kvm_core::PlatformControlRequestV2::WifiScan { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::WifiSaved {}
+                    | bli_kvm_core::PlatformControlRequestV2::WifiConnect { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::WifiDisconnect {}
+                    | bli_kvm_core::PlatformControlRequestV2::WifiProfile { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::WifiRadio { .. }
+            );
+            let wifi = if wifi_request {
+                v2.lock().await.wifi_shared()
+            } else {
+                None
+            };
+            let response = if let Some(wifi) = wifi {
+                let payload = request.request.clone();
+                tokio::task::spawn_blocking(move || {
+                    wifi.lock()
+                        .map(|mut state| state.dispatch(&payload))
+                        .unwrap_or(ControlResponse::Rejected {
+                            code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                        })
+                })
+                .await
+                .map_err(|_| io::Error::other("wifi worker failed"))?
+            } else if let Some(firewall) = firewall_state {
                 let payload = request.request.clone();
                 tokio::task::spawn_blocking(move || {
                     firewall

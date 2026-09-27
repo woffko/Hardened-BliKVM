@@ -1,8 +1,8 @@
 // The BliKVM firewall section renders the reference page on the reference
 // contract (/api/system/firewall) once the owner runs the four modes:
 // read-only, Cancel, refusal, and a restrictive change that the page
-// confirms on its own, on desktop and mobile. Without the modes the reviewed
-// baseline toggle remains.
+// confirms on its own, on desktop and mobile; the video menu then offers no
+// WebRTC transport. Without the modes the reviewed baseline toggle remains.
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { defaultManifest, startApp } from "./app_harness.mjs";
@@ -88,6 +88,10 @@ try {
         wol: unavailable,
       },
     });
+    manifest.video = {
+      ...manifest.video,
+      transports: ["mjpeg", "web_rtc_janus"],
+    };
     await page.route("**/api/capabilities", (route) =>
       route.fulfill({ json: { code: 0, data: manifest } }),
     );
@@ -145,6 +149,29 @@ try {
         assert.equal(writes[1].path, "/api/system/firewall/confirm");
         assert.equal(state.confirmationRequired, false);
         await page.getByText("# restricted ipv4").waitFor();
+        // With WebRTC blocked the video menu keeps only MJPEG selectable.
+        await page.getByRole("button", { name: "Close" }).first().click();
+        await page
+          .locator('[data-settings-tab="system"]')
+          .waitFor({ state: "hidden" });
+        await page.locator("svg.lucide-monitor").first().click();
+        const videoMenu = page.getByText("Video Mode", { exact: true });
+        if (mobile) await videoMenu.click();
+        else await videoMenu.hover();
+        const vp8 = page.locator('[data-video-mode="vp8"]');
+        await vp8.waitFor();
+        await page.waitForFunction(
+          () =>
+            document
+              .querySelector('[data-video-mode="vp8"]')
+              ?.getAttribute("aria-disabled") === "true",
+        );
+        assert.equal(
+          await page
+            .locator('[data-video-mode="mjpeg"]')
+            .getAttribute("aria-disabled"),
+          "false",
+        );
       } else {
         await page.getByText("fixture_refused").first().waitFor();
         await page.getByText("Moderate Firewall mode is active").waitFor();
@@ -155,7 +182,7 @@ try {
     await context.close();
   }
   console.log(
-    "Firewall modes: reference page on the reference contract, read-only, Cancel, refusal and automatic desktop/mobile confirmation passed",
+    "Firewall modes: reference page on the reference contract, read-only, Cancel, refusal, automatic desktop/mobile confirmation and the MJPEG-only video menu passed",
   );
 } finally {
   await browser.close();
