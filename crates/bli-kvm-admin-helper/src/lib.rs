@@ -136,6 +136,11 @@ pub enum AdminRequest {
     SystemUpdateRollback {},
     /// Admin helper: drop a staged update that has not been written.
     SystemUpdateCancel {},
+    /// Admin helper: set root's password to the web account's new one, as
+    /// the reference does at first setup and on every password change.
+    RootPassword {
+        password: String,
+    },
 }
 
 /// What the helper reports about the RAW system update.

@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Button, Card, Modal } from 'antd';
+import { Button, Card, Modal, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
+
+const { Text } = Typography;
 
 export const Tips = () => {
   const { t } = useTranslation();
@@ -39,6 +41,16 @@ export const Tips = () => {
                   'This Hardened image does not support password reset from the BOOT button. If the password is lost, reflash the SD card and create a new account.'
               })}
             </div>
+
+            <ul className="list-outside list-disc">
+              <li>
+                {t('auth.tips.reset3')} <Text>{t('auth.tips.resetWebAccount')}</Text>
+              </li>
+              <li>
+                {t('auth.tips.reset4')} <Text code={true}>root</Text>{' '}
+                <Text>{t('auth.tips.resetRootAccount')}</Text>
+              </li>
+            </ul>
           </div>
         </Card>
 

@@ -323,6 +323,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                     FeatureStatus::read_write(EvidenceLevel::SourceVerified),
                 );
             }
+            // RAW system updates go through the same helper behind their own
+            // switch (`docs/design/system-raw-update-v1.md`).
+            manifest.system.signed_system_updates =
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
         if picoclaw_available(&options) {
             manifest.board.features.insert(
@@ -531,7 +535,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/network/wifi",
             get(wifi::network_wifi).post(wifi::network_wifi_ap),
         )
-        .route("/network/wifi/scan", get(wifi::network_wifi_scan))
+        .route(
+            "/network/wifi/scan",
+            get(wifi::network_wifi_scan).post(wifi::network_wifi_rescan),
+        )
         .route(
             "/network/wifi/saved",
             get(wifi::network_wifi_saved).post(wifi::network_wifi_profile),
@@ -3365,11 +3372,7 @@ mod tests {
         };
         let scan = json_body(
             app.clone()
-                .oneshot(call(
-                    Method::GET,
-                    "/api/network/wifi/scan?rescan=true",
-                    Value::Null,
-                ))
+                .oneshot(call(Method::POST, "/api/network/wifi/scan", Value::Null))
                 .await
                 .unwrap(),
         )
@@ -3482,6 +3485,107 @@ mod tests {
             .insert(header::COOKIE, cookie.parse().unwrap());
         let response = closed.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn first_setup_and_password_changes_set_root_through_the_helper() {
+        use tokio::io::AsyncBufReadExt;
+        let root = tempdir().unwrap();
+        let socket = root.path().join("admin.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        // The helper refuses the first request and accepts the others.
+        let helper = tokio::spawn(async move {
+            let mut passwords = Vec::new();
+            for index in 0..3 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let request: bli_kvm_admin_helper::AdminRequest =
+                    serde_json::from_str(&line).unwrap();
+                let bli_kvm_admin_helper::AdminRequest::RootPassword { password } = request else {
+                    panic!("unexpected helper request");
+                };
+                passwords.push(password);
+                let reply = if index == 0 {
+                    r#"{"status":"refused","reason":"fixture"}"#
+                } else {
+                    r#"{"status":"done"}"#
+                };
+                let mut stream = reader.into_inner();
+                stream
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            passwords
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("state"),
+            admin_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let setup = |password: &str| {
+            json_request(
+                Method::POST,
+                "/api/auth/setup",
+                serde_json::json!({ "username": "operator", "password": password }),
+            )
+        };
+        // Refused by the helper: no account is stored.
+        let refused = json_body(
+            app.clone()
+                .oneshot(setup("initial password"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(refused["code"], 0);
+        let state = json_body(
+            app.clone()
+                .oneshot(json_request(Method::GET, "/api/auth/setup", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(state["data"]["required"], true);
+        // A password root cannot take is refused before the helper is asked.
+        let broken = json_body(app.clone().oneshot(setup("two\nlines!")).await.unwrap()).await;
+        assert_ne!(broken["code"], 0);
+
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut change = json_request(
+            Method::POST,
+            "/api/auth/password",
+            serde_json::json!({ "username": "operator", "password": "second password" }),
+        );
+        change
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        change
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let changed = json_body(app.clone().oneshot(change).await.unwrap()).await;
+        assert_eq!(changed["code"], 0);
+        let passwords = tokio::time::timeout(std::time::Duration::from_secs(5), helper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            passwords,
+            ["initial password", "initial password", "second password"]
+        );
+        let login = json_body(
+            app.oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({ "username": "operator", "password": "second password" }),
+            ))
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(login["code"], 0);
     }
 
     #[tokio::test]

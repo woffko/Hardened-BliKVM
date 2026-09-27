@@ -115,9 +115,9 @@ export type WifiProfile = {
 
 export type WifiProfileAction = 'connect' | 'forget' | 'autoconnect_on' | 'autoconnect_off';
 
-// the networks in range; rescan asks the board for a new scan first
+// the networks in range; a rescan asks the board for a new scan first
 export function scanWifi(rescan: boolean) {
-  return http.get('/api/network/wifi/scan', { rescan });
+  return rescan ? http.post('/api/network/wifi/scan') : http.get('/api/network/wifi/scan');
 }
 
 // the saved networks

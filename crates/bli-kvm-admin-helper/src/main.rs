@@ -13,6 +13,7 @@
 
 mod download;
 mod picoclaw;
+mod root_password;
 mod scripts;
 mod system_update;
 mod tailscale;
@@ -150,6 +151,23 @@ fn serve(stream: &mut UnixStream) -> io::Result<()> {
                     reason: error.to_string(),
                 }
             });
+            write_line(stream, &reply)
+        }
+        // Not a switchable feature: the server sends it only for the first
+        // setup and for a signed-in password change.
+        AdminRequest::RootPassword { password } => {
+            let reply = match root_password::set(&password) {
+                Ok(()) => {
+                    eprintln!("admin helper: root password changed");
+                    AdminReply::Done
+                }
+                Err(error) => {
+                    eprintln!("admin helper: root password change failed: {error}");
+                    AdminReply::Refused {
+                        reason: "the root password could not be changed".into(),
+                    }
+                }
+            };
             write_line(stream, &reply)
         }
         AdminRequest::Tailscale { action } => {

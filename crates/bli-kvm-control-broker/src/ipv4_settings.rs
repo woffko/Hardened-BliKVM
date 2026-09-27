@@ -6,16 +6,26 @@
 //! change of the addressing itself is reverted after two minutes unless the
 //! operator confirms it from the new address, so a mistake cannot strand the
 //! board; a change of the resolvers alone applies at once.
+//!
+//! These requests run on their own lock and a blocking worker (see
+//! `server.rs`): reading NetworkManager takes a second or more on the board,
+//! and HID reports must not wait behind it. The DNS, IPv6 and About pages
+//! load together, so one reading serves them for two seconds.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse, NetworkInterfaceInfo};
-use bli_kvm_core::{Ipv4Change, Ipv6Change};
+use bli_kvm_core::{Ipv4Change, Ipv6Change, PlatformControlRequestV2};
 
 use crate::network_settings::WifiRunner;
 
 pub const REVERT_AFTER: Duration = Duration::from_secs(120);
+/// One reading of NetworkManager serves the pages that ask together.
+const INFO_REUSE: Duration = Duration::from_secs(2);
+
+/// The network settings behind their own lock, served on a blocking worker.
+pub type SharedIpv4 = Arc<Mutex<Ipv4Settings>>;
 
 type Runner = Arc<Mutex<Box<dyn WifiRunner>>>;
 
@@ -39,6 +49,8 @@ pub struct Ipv4Settings {
     pending: Arc<Mutex<Option<Pending>>>,
     generation: u64,
     revert_after: Duration,
+    /// The last network information and when it was read.
+    cache: Option<(Instant, ControlResponse)>,
 }
 
 fn nmcli(runner: &Runner, args: &[&str]) -> Result<String, String> {
@@ -76,6 +88,10 @@ fn values(field: &str, separator: &str) -> Vec<String> {
         .collect()
 }
 
+fn valid_uuid(uuid: &str) -> bool {
+    uuid.len() == 36 && uuid.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+}
+
 fn unescape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars();
@@ -98,6 +114,18 @@ impl Ipv4Settings {
             pending: Arc::new(Mutex::new(None)),
             generation: 0,
             revert_after: REVERT_AFTER,
+            cache: None,
+        }
+    }
+
+    /// Answers the network information, IPv4, IPv6 and confirmation requests.
+    pub fn dispatch(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
+        match request {
+            PlatformControlRequestV2::NetworkInfo {} => self.info(),
+            PlatformControlRequestV2::Ipv4Set { change } => self.set(change),
+            PlatformControlRequestV2::Ipv6Set { change } => self.set_ipv6(change),
+            PlatformControlRequestV2::Ipv4Confirm {} => self.confirm(),
+            _ => reject(ControlRejectionCode::CapabilityDisabled),
         }
     }
 
@@ -132,7 +160,7 @@ impl Ipv4Settings {
             &["-g", "connection.uuid", "connection", "show", connection],
         )?;
         let uuid = uuid.trim().to_string();
-        if uuid.len() == 36 && uuid.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+        if valid_uuid(&uuid) {
             Ok(uuid)
         } else {
             Err("the active profile has no valid UUID".into())
@@ -171,7 +199,7 @@ impl Ipv4Settings {
             &self.runner,
             &[
                 "-g",
-                "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.DOMAIN,DHCP4.OPTION,IP6.ADDRESS,IP6.GATEWAY",
+                "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.DOMAIN,DHCP4.OPTION,IP6.ADDRESS,IP6.GATEWAY,GENERAL.CON-UUID",
                 "device",
                 "show",
                 name,
@@ -194,30 +222,46 @@ impl Ipv4Settings {
                     .map(|servers| values(servers, " "))
             })
             .unwrap_or_default();
-        let uuid = self.profile_uuid(connection)?;
-        let profile = self.snapshot(&uuid)?;
-        let ipv6 = nmcli(
+        // The active profile's UUID comes with the device; a NetworkManager
+        // that does not report it is asked by the profile's name.
+        let uuid = match unescape(field(7).trim()) {
+            uuid if valid_uuid(&uuid) => uuid,
+            _ => self.profile_uuid(connection)?,
+        };
+        // IPv4 and IPv6 settings of the profile in one reading.
+        let settings = nmcli(
             &self.runner,
             &[
                 "-g",
-                "ipv6.method,ipv6.addresses,ipv6.gateway",
+                "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns,ipv4.ignore-auto-dns,ipv6.method,ipv6.addresses,ipv6.gateway",
                 "connection",
                 "show",
                 &uuid,
             ],
         )?;
-        let mut ipv6 = ipv6.lines().map(str::trim);
-        let ipv6_mode = match ipv6.next().unwrap_or_default() {
+        let mut settings = settings.lines().map(str::trim);
+        let mut next = || settings.next().unwrap_or_default().to_string();
+        let profile = Snapshot {
+            method: next(),
+            addresses: next(),
+            gateway: next(),
+            dns: next(),
+            ignore_auto_dns: next(),
+        };
+        let ipv6_method = next();
+        let ipv6_addresses = next();
+        let ipv6_gateway = next();
+        let ipv6_mode = match ipv6_method.as_str() {
             "disabled" | "ignore" => "disabled",
             "dhcp" => "dhcpv6",
             "manual" => "manual",
             _ => "slaac",
         };
-        let ipv6_manual_address = values(ipv6.next().unwrap_or_default(), ",")
+        let ipv6_manual_address = values(&ipv6_addresses, ",")
             .into_iter()
             .next()
             .unwrap_or_default();
-        let ipv6_manual_gateway = unescape(ipv6.next().unwrap_or_default());
+        let ipv6_manual_gateway = unescape(&ipv6_gateway);
         Ok(NetworkInterfaceInfo {
             name: name.to_string(),
             kind: kind.to_string(),
@@ -252,6 +296,19 @@ impl Ipv4Settings {
     }
 
     pub fn info(&mut self) -> ControlResponse {
+        if let Some((at, response)) = &self.cache
+            && at.elapsed() < INFO_REUSE
+        {
+            return response.clone();
+        }
+        let response = self.read_info();
+        if matches!(response, ControlResponse::NetworkInfo { .. }) {
+            self.cache = Some((Instant::now(), response.clone()));
+        }
+        response
+    }
+
+    fn read_info(&mut self) -> ControlResponse {
         let devices = match self.devices() {
             Ok(devices) => devices,
             Err(reason) => {
@@ -301,6 +358,8 @@ impl Ipv4Settings {
     }
 
     pub fn set(&mut self, change: &Ipv4Change) -> ControlResponse {
+        // Whatever happens, the next reading is fresh.
+        self.cache = None;
         if change.validate().is_err() {
             return reject(ControlRejectionCode::InvalidState);
         }
@@ -407,6 +466,7 @@ impl Ipv4Settings {
 
     /// IPv6 does not carry the management address, so it applies at once.
     pub fn set_ipv6(&mut self, change: &Ipv6Change) -> ControlResponse {
+        self.cache = None;
         if change.validate().is_err() {
             return reject(ControlRejectionCode::InvalidState);
         }
@@ -466,6 +526,7 @@ impl Ipv4Settings {
     }
 
     pub fn confirm(&mut self) -> ControlResponse {
+        self.cache = None;
         let confirmed = self.pending.lock().expect("pending poisoned").take();
         if confirmed.is_some() {
             eprintln!("network: IPv4 change confirmed");
@@ -512,6 +573,21 @@ mod tests {
                         get("ipv6.gateway")
                     )
                 }
+                ["-g", fields, "connection", "show", _] if fields.contains("ipv6.method") => {
+                    let ipv6 = self.ipv6.lock().unwrap();
+                    let get = |key: &str| ipv6.get(key).cloned().unwrap_or_default();
+                    format!(
+                        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                        profile.method,
+                        profile.addresses,
+                        profile.gateway,
+                        profile.dns,
+                        profile.ignore_auto_dns,
+                        get("ipv6.method"),
+                        get("ipv6.addresses"),
+                        get("ipv6.gateway")
+                    )
+                }
                 ["-g", _, "connection", "show", _] => format!(
                     "{}\n{}\n{}\n{}\n{}\n",
                     profile.method,
@@ -520,7 +596,7 @@ mod tests {
                     profile.dns,
                     profile.ignore_auto_dns
                 ),
-                ["-g", _, "device", "show", "eth0"] => "192.0.2.118/24\n192.0.2.5\n192.0.2.5\nint\nrouters = 192.0.2.5 | domain_name_servers = 192.0.2.5 192.0.2.6 | subnet_mask = 255.255.255.0\n".into(),
+                ["-g", _, "device", "show", "eth0"] => "192.0.2.118/24\n192.0.2.5\n192.0.2.5\nint\nrouters = 192.0.2.5 | domain_name_servers = 192.0.2.5 192.0.2.6 | subnet_mask = 255.255.255.0\n\n\n8fe436fc-dbd5-3398-9d6d-669fa69d8a73\n".into(),
                 ["connection", "modify", _, rest @ ..] => {
                     let mut profile = self.profile.lock().unwrap();
                     for pair in rest.chunks(2) {
@@ -623,6 +699,34 @@ mod tests {
         assert_eq!(eth0.dhcp_dns, ["192.0.2.5", "192.0.2.6"]);
         assert_eq!(eth0.search, ["int"]);
         assert!(!eth0.manual_dns);
+    }
+
+    #[test]
+    fn one_reading_serves_the_pages_that_ask_together() {
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut ipv4 = Ipv4Settings::open(Box::new(FakeNm {
+            profile: Arc::clone(&profile),
+            calls: Arc::clone(&calls),
+            ipv6: Arc::new(Mutex::new(
+                [("ipv6.method".to_string(), "auto".to_string())].into(),
+            )),
+        }));
+        let first = ipv4.info();
+        let reads = calls.lock().unwrap().len();
+        // The device list, the device (with its profile's UUID) and one
+        // reading of the profile's IPv4 and IPv6 settings.
+        assert_eq!(reads, 3, "{:?}", calls.lock().unwrap());
+        assert_eq!(
+            ipv4.dispatch(&PlatformControlRequestV2::NetworkInfo {}),
+            first
+        );
+        assert_eq!(calls.lock().unwrap().len(), reads);
+        // A change is read afresh.
+        let ControlResponse::NetworkInfo { .. } = ipv4.set(&manual(None)) else {
+            panic!("not applied");
+        };
+        assert!(calls.lock().unwrap().len() > reads + 3);
     }
 
     #[test]

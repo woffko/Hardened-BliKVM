@@ -36,6 +36,18 @@ const DEVICE: &str = "wlan0";
 const PROFILE_PREFIX: &str = "hardened-blikvm-wifi-";
 /// How long NetworkManager may take to associate and obtain an address.
 const ACTIVATION_SECONDS: &str = "30";
+/// A NetworkManager that stops answering must not hold the owner: an `nmcli`
+/// run ends after this long, or after its own `--wait` plus ten seconds.
+const NMCLI_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn nmcli_timeout(args: &[&str]) -> Duration {
+    args.iter()
+        .position(|arg| *arg == "--wait")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|seconds| seconds.parse::<u64>().ok())
+        .map(|seconds| Duration::from_secs(seconds + 10))
+        .unwrap_or(NMCLI_TIMEOUT)
+}
 /// The Ethernet route metric that puts WiFi (600) first; `-1` restores
 /// NetworkManager's default (100).
 const ETHERNET_BACKUP_METRIC: &str = "700";
@@ -117,15 +129,46 @@ impl NmcliRunner {
 
 impl WifiRunner for NmcliRunner {
     fn nmcli(&mut self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new(NMCLI)
+        use std::io::Read;
+        use std::process::Stdio;
+        let mut child = Command::new(NMCLI)
             .args(args)
-            .stdin(std::process::Stdio::null())
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        // Read both pipes while waiting, so a long answer cannot stall it.
+        let reader = |pipe: Option<Box<dyn Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut bytes);
+                }
+                bytes
+            })
+        };
+        let stdout = reader(child.stdout.take().map(|pipe| Box::new(pipe) as _));
+        let stderr = reader(child.stderr.take().map(|pipe| Box::new(pipe) as _));
+        let limit = nmcli_timeout(args);
+        let deadline = Instant::now() + limit;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("nmcli did not answer within {} s", limit.as_secs()));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let stdout = stdout.join().unwrap_or_default();
+        let stderr = stderr.join().unwrap_or_default();
+        if !status.success() {
+            return Err(String::from_utf8_lossy(&stderr).trim().to_string());
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 
     fn write_keyfile(&mut self, name: &str, contents: &str) -> Result<PathBuf, String> {
@@ -1288,6 +1331,16 @@ mod tests {
         assert_eq!(state.confirm_preference(), ControlResponse::Applied);
         std::thread::sleep(Duration::from_millis(300));
         assert!(!fake.lock().unwrap().calls.contains(&modify("-1")));
+    }
+
+    #[test]
+    fn nmcli_runs_are_bounded_by_their_own_wait() {
+        assert_eq!(nmcli_timeout(&["radio", "wifi"]), NMCLI_TIMEOUT);
+        assert_eq!(
+            nmcli_timeout(&["--wait", "30", "connection", "up", "uuid", OLD]),
+            Duration::from_secs(40)
+        );
+        assert_eq!(nmcli_timeout(&["--wait"]), NMCLI_TIMEOUT);
     }
 
     #[test]

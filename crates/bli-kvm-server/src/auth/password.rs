@@ -142,6 +142,15 @@ pub fn validate_credentials(username: &str, password: &str) -> AppResult<()> {
             "password must be between 8 and 256 bytes".into(),
         ));
     }
+    // Root's password follows it, and chpasswd reads one line.
+    if password
+        .bytes()
+        .any(|byte| matches!(byte, b'\n' | b'\r' | 0))
+    {
+        return Err(AppError::BadRequest(
+            "password must not contain line breaks".into(),
+        ));
+    }
     Ok(())
 }
 

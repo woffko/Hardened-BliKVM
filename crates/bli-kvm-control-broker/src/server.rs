@@ -1229,7 +1229,33 @@ async fn respond(
             } else {
                 None
             };
-            let response = if let Some(wifi) = wifi {
+            // Network information and IPv4/IPv6 changes read and write
+            // NetworkManager for a second or more: the same treatment.
+            let network_request = matches!(
+                &request.request,
+                bli_kvm_core::PlatformControlRequestV2::NetworkInfo {}
+                    | bli_kvm_core::PlatformControlRequestV2::Ipv4Set { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::Ipv6Set { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::Ipv4Confirm {}
+            );
+            let network = if network_request {
+                v2.lock().await.ipv4_shared()
+            } else {
+                None
+            };
+            let response = if let Some(network) = network {
+                let payload = request.request.clone();
+                tokio::task::spawn_blocking(move || {
+                    network
+                        .lock()
+                        .map(|mut state| state.dispatch(&payload))
+                        .unwrap_or(ControlResponse::Rejected {
+                            code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                        })
+                })
+                .await
+                .map_err(|_| io::Error::other("network worker failed"))?
+            } else if let Some(wifi) = wifi {
                 let payload = request.request.clone();
                 tokio::task::spawn_blocking(move || {
                     wifi.lock()

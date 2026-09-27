@@ -146,7 +146,8 @@ try {
     }
   }
 
-  await page.goto(targetUrl, { waitUntil: "load", timeout: 20_000 });
+  // Generous for a loaded build host; a device answers in a few seconds.
+  await page.goto(targetUrl, { waitUntil: "load", timeout: 60_000 });
   await page.waitForTimeout(500);
 
   if (username) {
@@ -164,7 +165,11 @@ try {
         await passInput.press("Enter");
       }
       await page
-        .waitForLoadState("networkidle", { timeout: 20_000 })
+        .waitForLoadState("networkidle", { timeout: 45_000 })
+        .catch(() => {});
+      // The menu renders after the capabilities arrive.
+      await page
+        .waitForSelector("svg.lucide-settings", { timeout: 30_000 })
         .catch(() => {});
       await page.waitForTimeout(800);
     }

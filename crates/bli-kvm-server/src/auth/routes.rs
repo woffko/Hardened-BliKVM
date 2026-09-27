@@ -56,6 +56,33 @@ pub struct PasswordStateResponse {
     pub is_updated: bool,
 }
 
+/// As in the reference, the root password follows the web account's: the
+/// first setup and every password change set it through the administration
+/// helper before the account is stored, and nothing is stored if it fails.
+/// A server without the helper (development and tests) keeps the account
+/// alone.
+async fn set_root_password(state: &AppState, password: &str) -> AppResult<()> {
+    let Some(socket) = state.options.admin_socket.as_ref() else {
+        return Ok(());
+    };
+    let request = bli_kvm_admin_helper::AdminRequest::RootPassword {
+        password: password.to_string(),
+    };
+    match crate::scripts::call_with_timeout(
+        socket,
+        &request,
+        None,
+        std::time::Duration::from_secs(15),
+    )
+    .await?
+    {
+        bli_kvm_admin_helper::AdminReply::Done => Ok(()),
+        _ => Err(AppError::Internal(
+            "the root password could not be changed".into(),
+        )),
+    }
+}
+
 pub async fn setup_state(State(state): State<AppState>) -> Json<ApiResponse<SetupStateResponse>> {
     Json(ApiResponse::ok(SetupStateResponse {
         required: !state.accounts.exists(),
@@ -70,6 +97,10 @@ pub async fn setup_first_account(
     require_request_origin(&headers, state.options.allow_missing_origin)?;
     validate_credentials(&request.username, &request.password)?;
     let _guard = state.setup_lock.lock().await;
+    if state.accounts.exists() {
+        return Err(AppError::Conflict("account already initialized".into()));
+    }
+    set_root_password(&state, &request.password).await?;
     state
         .accounts
         .create_initial(&request.username, &request.password)?;
@@ -177,6 +208,7 @@ pub async fn change_password(
         ));
     }
     validate_credentials(&request.username, &request.password)?;
+    set_root_password(&state, &request.password).await?;
     state
         .accounts
         .replace(&request.username, &request.password)?;

@@ -100,7 +100,8 @@ All under `/api/network/wifi`, authenticated, CSRF-checked for writes:
 | --- | --- | --- |
 | `GET /api/network/wifi` | - | `{available, connected, ssid, interface, state, radio, signal, security, address}` |
 | `POST /api/network/wifi` | any | `{applied: false, rejection: "unsupported_mode"}` |
-| `GET /api/network/wifi/scan` | `?rescan=true` | `{networks: [{ssid, signal, security, channel, inUse}]}` |
+| `GET /api/network/wifi/scan` | - | `{networks: [{ssid, signal, security, channel, inUse}]}` |
+| `POST /api/network/wifi/scan` | - | a new scan is asked for; the same answer, the new networks arrive seconds later |
 | `GET /api/network/wifi/saved` | - | `{profiles: [{id, ssid, autoconnect, active}]}` |
 | `POST /api/network/wifi/saved` | `{id, action}` | `{applied, rejection?}` |
 | `POST /api/network/wifi/connect` | `{ssid, password, hidden?}` | `{applied, rejection?}` |

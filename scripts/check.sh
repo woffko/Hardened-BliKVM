@@ -150,6 +150,7 @@ python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
   tools/test_build_sd_image.py \
+  tools/test_web_api_routes.py \
   tools/test_hid_credential_service.py \
   tools/test_hid_transition_service.py \
   tools/test_build_hid_transition_profile.py \

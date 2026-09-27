@@ -234,11 +234,11 @@ fn parse_openssl(output: &str) -> CertificateView {
             view.issuer = value.trim().to_string();
         } else if let Some(value) = line.strip_prefix("notAfter=") {
             view.not_after = value.trim().to_string();
-        } else if line.starts_with("SHA256 Fingerprint=") {
-            view.fingerprint_sha256 = line
-                .trim_start_matches("SHA256 Fingerprint=")
-                .trim()
-                .to_string();
+        } else if let Some((label, value)) = line.split_once('=')
+            // OpenSSL 1.1 prints "SHA256 Fingerprint=", OpenSSL 3 "sha256 Fingerprint=".
+            && label.eq_ignore_ascii_case("SHA256 Fingerprint")
+        {
+            view.fingerprint_sha256 = value.trim().to_string();
         }
     }
     view
@@ -348,6 +348,11 @@ mod tests {
         assert_eq!(view.subject, "CN = mangopimcore");
         assert_eq!(view.not_after, "Sep 18 12:00:00 2036 GMT");
         assert_eq!(view.fingerprint_sha256, "AA:BB");
+        // OpenSSL 3 spells the digest in lowercase.
+        assert_eq!(
+            parse_openssl("sha256 Fingerprint=CC:DD\n").fingerprint_sha256,
+            "CC:DD"
+        );
         assert!(!state.enabled().unwrap());
     }
 

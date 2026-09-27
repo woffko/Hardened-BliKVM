@@ -121,6 +121,30 @@ assemble() {
       "$staging/var/lib/NetworkManager/seen-bssids" "$staging/var/lib/NetworkManager/timestamps" \
       "$staging/var/lib/systemd/random-seed" "$staging/var/lib/systemd/credential.secret" \
       "$staging"/var/lib/hardened-blikvm-gadget/deploy-* "$staging/var/lib/hardened-blikvm-gadget/gate"
+    # The source board'"'"'s switches, confirmed firewall mode and journals do
+    # not belong to a new board. Each service starts clean without its file:
+    # every administration switch off, the firewall in Baseline, HID-only
+    # off, empty media, ATX and HID journals.
+    gadget_state="$staging/var/lib/hardened-blikvm-gadget"
+    rm -f "$gadget_state/admin-features.json" "$gadget_state/firewall-mode.json" \
+      "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
+      "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
+      "$gadget_state/hid-only.env"
+    # Leftovers of earlier deployments on the source board; nothing refers to
+    # them.
+    rm -rf "$gadget_state"/kvmd-backup-* "$gadget_state"/unit-owner-* \
+      "$gadget_state"/update-trust-*.json "$gadget_state"/web-pre-* \
+      "$staging"/etc/hardened-blikvm/update-supervisor-*.json
+    leftover=$(find "$gadget_state" "$staging/etc/hardened-blikvm" -maxdepth 1 \
+      \( -name admin-features.json -o -name firewall-mode.json -o -name journal.json \
+      -o -name media-journal.json -o -name atx-journal.json -o -name hid-ledger.json \
+      -o -name hid-only.env -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
+      -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
+      -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
+    if [ -n "$leftover" ]; then
+      echo "source board state remains: $leftover" >&2
+      exit 1
+    fi
     # Refuse to build an image that still carries a private key or known
     # per-device state anywhere outside documentation.
     if grep -rlI --exclude-dir=doc --exclude-dir=man "BEGIN [A-Z ]*PRIVATE KEY" \

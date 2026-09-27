@@ -149,7 +149,12 @@ def main() -> int:
         }
 
     def scan(rescan: bool) -> list[dict]:
-        return data(f"/api/network/wifi/scan?rescan={'true' if rescan else 'false'}").get("networks", [])
+        if not rescan:
+            return data("/api/network/wifi/scan").get("networks", [])
+        status, body, _ = call("POST", "/api/network/wifi/scan")
+        if status != 200 or body.get("code") != 0:
+            raise RuntimeError(f"a rescan answered {status} {body.get('msg')}")
+        return (body.get("data") or {}).get("networks", [])
 
     def fresh_scan() -> list[dict]:
         scan(True)

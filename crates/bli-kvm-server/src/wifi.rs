@@ -1,10 +1,7 @@
 //! Authenticated WiFi API (`docs/design/wifi-v1.md`). The board owner drives
 //! NetworkManager; a password passes through to the owner once and is never
 //! stored, logged or answered here.
-use axum::{
-    Extension, Json,
-    extract::{Query, State},
-};
+use axum::{Extension, Json, extract::State};
 use bli_kvm_control_protocol::ControlResponse;
 use bli_kvm_core::{PlatformControlRequestV2, WifiProfileAction};
 use serde::{Deserialize, Serialize};
@@ -86,13 +83,6 @@ pub(crate) struct WifiConnectBody {
     pub password: String,
     #[serde(default)]
     pub hidden: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ScanQuery {
-    #[serde(default)]
-    pub rescan: bool,
 }
 
 #[derive(Deserialize)]
@@ -210,19 +200,25 @@ pub(crate) async fn network_wifi(
     }
 }
 
+/// `GET /api/network/wifi/scan`: the networks NetworkManager last heard.
 pub(crate) async fn network_wifi_scan(
     State(state): State<AppState>,
     Extension(CurrentSession(_session)): Extension<CurrentSession>,
-    Query(query): Query<ScanQuery>,
 ) -> AppResult<Json<ApiResponse<WifiNetworks>>> {
-    match wifi_request(
-        &state,
-        PlatformControlRequestV2::WifiScan {
-            rescan: query.rescan,
-        },
-    )
-    .await?
-    {
+    scan(&state, false).await
+}
+
+/// `POST /api/network/wifi/scan`: asks for a new scan, whose networks arrive
+/// a few seconds later, and answers the current list.
+pub(crate) async fn network_wifi_rescan(
+    State(state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<WifiNetworks>>> {
+    scan(&state, true).await
+}
+
+async fn scan(state: &AppState, rescan: bool) -> AppResult<Json<ApiResponse<WifiNetworks>>> {
+    match wifi_request(state, PlatformControlRequestV2::WifiScan { rescan }).await? {
         ControlResponse::WifiNetworks { networks } => Ok(Json(ApiResponse::ok(WifiNetworks {
             networks: networks
                 .into_iter()

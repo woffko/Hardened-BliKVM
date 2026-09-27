@@ -140,6 +140,11 @@ try {
           revertInSeconds: 0,
         });
       }
+      // A rescan is a POST that answers the list, not a setting.
+      if (url.pathname.endsWith("/scan")) {
+        reads.push("POST " + url.pathname);
+        return ok({ networks: state.radio ? networks() : [] });
+      }
       const body = request.postDataJSON();
       writes.push({ path: url.pathname, body });
       if (url.pathname.endsWith("/connect")) {
@@ -326,8 +331,10 @@ try {
     });
 
     // Refresh and the radio.
-    const rescan = page.waitForRequest((request) =>
-      request.url().includes("/api/network/wifi/scan?rescan=true"),
+    const rescan = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        request.url().endsWith("/api/network/wifi/scan"),
     );
     await block.getByRole("button", { name: "Refresh" }).click();
     await rescan;

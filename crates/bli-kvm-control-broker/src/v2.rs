@@ -57,7 +57,7 @@ pub struct ControlV2State {
     hid_only: Option<crate::device_settings::HidOnlyState>,
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
-    ipv4: Option<crate::ipv4_settings::Ipv4Settings>,
+    ipv4: Option<crate::ipv4_settings::SharedIpv4>,
     hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::SharedWifi>,
     tls: Option<crate::tls_settings::TlsState>,
@@ -189,7 +189,15 @@ impl ControlV2State {
     }
 
     pub fn with_ipv4(&mut self, ipv4: crate::ipv4_settings::Ipv4Settings) {
-        self.ipv4 = Some(ipv4);
+        self.ipv4 = Some(std::sync::Arc::new(std::sync::Mutex::new(ipv4)));
+    }
+
+    /// The network settings for the server's blocking worker, while enabled.
+    pub fn ipv4_shared(&self) -> Option<crate::ipv4_settings::SharedIpv4> {
+        if !self.enabled {
+            return None;
+        }
+        self.ipv4.clone()
     }
 
     pub fn with_ssh(&mut self, ssh: crate::ssh_settings::SshSettings) {
@@ -853,20 +861,14 @@ impl ControlV2State {
                 Some(hostname) => hostname.set(name),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
-            PlatformControlRequestV2::NetworkInfo {} => match self.ipv4.as_mut() {
-                Some(ipv4) => ipv4.info(),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::Ipv4Set { change } => match self.ipv4.as_mut() {
-                Some(ipv4) => ipv4.set(change),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::Ipv6Set { change } => match self.ipv4.as_mut() {
-                Some(ipv4) => ipv4.set_ipv6(change),
-                None => reject(ControlRejectionCode::CapabilityDisabled),
-            },
-            PlatformControlRequestV2::Ipv4Confirm {} => match self.ipv4.as_mut() {
-                Some(ipv4) => ipv4.confirm(),
+            PlatformControlRequestV2::NetworkInfo {}
+            | PlatformControlRequestV2::Ipv4Set { .. }
+            | PlatformControlRequestV2::Ipv6Set { .. }
+            | PlatformControlRequestV2::Ipv4Confirm {} => match self.ipv4.as_ref() {
+                Some(ipv4) => match ipv4.lock() {
+                    Ok(mut ipv4) => ipv4.dispatch(request),
+                    Err(_) => reject(ControlRejectionCode::BackendRejected),
+                },
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::SshState {} => match self.ssh.as_mut() {

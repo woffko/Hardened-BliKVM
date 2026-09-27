@@ -212,6 +212,13 @@ test("the real app renders the desktop without calling the removed endpoints", a
       ],
       "testpassword\n",
     );
+    if (result.status !== 0 && fs.existsSync(output)) {
+      // Name what the page reported, not only that it failed.
+      const failed = JSON.parse(fs.readFileSync(output, "utf8"));
+      assert.fail(
+        `${result.stdout.trim()} console=${JSON.stringify(failed.consoleErrorSamples)} requests=${JSON.stringify(failed.failedRequests)}`,
+      );
+    }
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const receipt = JSON.parse(fs.readFileSync(output, "utf8"));
     assert.equal(receipt.schemaVersion, 2);

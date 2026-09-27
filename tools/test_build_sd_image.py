@@ -63,6 +63,24 @@ class BuildSdImageTests(unittest.TestCase):
         self.assertIn("the image store's owner could not be set", self.script)
         self.assertIn('$1 == "hardened-blikvm" { print $3 }', self.script)
 
+    def test_the_source_boards_state_is_reset(self) -> None:
+        for name in (
+            "admin-features.json",
+            "firewall-mode.json",
+            "journal.json",
+            "media-journal.json",
+            "atx-journal.json",
+            "hid-ledger.json",
+            "hid-only.env",
+        ):
+            self.assertIn(f'"$gadget_state/{name}"', self.script, name)
+        for leftover in ("kvmd-backup-*", "unit-owner-*", "update-trust-*.json", "web-pre-*"):
+            self.assertIn(f'"$gadget_state"/{leftover}', self.script, leftover)
+        self.assertIn('"$staging"/etc/hardened-blikvm/update-supervisor-*.json', self.script)
+        # The firewall's configuration (not its confirmed mode) stays.
+        self.assertIn('-not -path "$staging/etc/hardened-blikvm/firewall-mode.json"', self.script)
+        self.assertIn("source board state remains", self.script)
+
     def test_the_image_catalog_starts_empty(self) -> None:
         self.assertIn('"  \\"entries\\": []"', self.script)
         self.assertIn('> "$staging/etc/hardened-blikvm-gadget/catalog.json"', self.script)
