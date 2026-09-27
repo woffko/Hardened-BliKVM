@@ -186,10 +186,8 @@ try {
     const dialog = page.getByRole("dialog", {
       name: /^(Join Wi-Fi|Other network…)$/,
     });
-    const joinButton = dialog.getByRole("button", {
-      name: "Join",
-      exact: true,
-    });
+    // The dialog's OK button; its accessible name changes while it loads.
+    const joinButton = dialog.locator(".ant-modal-footer .ant-btn-primary");
     const secret = dialog.getByPlaceholder("Password", { exact: true });
     await secret.fill("short");
     assert.equal(await joinButton.isDisabled(), true);
@@ -197,6 +195,9 @@ try {
     await joinButton.click();
     await block.getByText("Check the password").waitFor();
     assert.equal(await dialog.isVisible(), true);
+    await dialog
+      .locator(".ant-modal-footer .ant-btn-loading")
+      .waitFor({ state: "detached" });
     await joinButton.click();
     await dialog.waitFor({ state: "hidden" });
     await block.getByText("Connected · 192.0.2.40/24 · WPA3").waitFor();

@@ -136,8 +136,10 @@ fn read_trimmed(path: &Path) -> Option<String> {
         .filter(|value| !value.is_empty() && value.len() <= 64)
 }
 
-/// The interface owning the default IPv4 route, from the fixed route file.
+/// The interface owning the default IPv4 route, from the fixed route file:
+/// with several default routes (Ethernet and Wi-Fi), the lowest metric wins.
 pub(crate) fn parse_default_route(content: &str) -> String {
+    let mut best: Option<(u32, &str)> = None;
     for line in content.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 4 {
@@ -146,10 +148,16 @@ pub(crate) fn parse_default_route(content: &str) -> String {
         let destination = fields[1];
         let mask = fields[7.min(fields.len() - 1)];
         if destination == "00000000" && mask == "00000000" && interface_name_valid(fields[0]) {
-            return fields[0].to_string();
+            let metric = fields
+                .get(6)
+                .and_then(|metric| metric.parse::<u32>().ok())
+                .unwrap_or(u32::MAX);
+            if best.is_none_or(|(lowest, _)| metric < lowest) {
+                best = Some((metric, fields[0]));
+            }
         }
     }
-    String::new()
+    best.map(|(_, name)| name.to_string()).unwrap_or_default()
 }
 
 /// Read the interface list from the fixed sysfs tree.
@@ -293,6 +301,23 @@ domain ignored.example
         assert!(response.interfaces.is_empty());
         assert_eq!(response.default_route, "");
         assert_eq!(parse_default_route(""), "");
+    }
+
+    #[test]
+    fn the_default_route_with_the_lowest_metric_wins() {
+        let header =
+            "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n";
+        let wifi = "wlan0\t00000000\t0102000A\t0003\t0\t0\t600\t00000000\t0\t0\t0\n";
+        let wired = "eth0\t00000000\t0101000A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+        assert_eq!(
+            parse_default_route(&format!("{header}{wifi}{wired}")),
+            "eth0"
+        );
+        assert_eq!(
+            parse_default_route(&format!("{header}{wired}{wifi}")),
+            "eth0"
+        );
+        assert_eq!(parse_default_route(&format!("{header}{wifi}")), "wlan0");
     }
 
     #[test]

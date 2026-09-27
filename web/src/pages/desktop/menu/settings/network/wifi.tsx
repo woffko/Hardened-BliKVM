@@ -135,8 +135,9 @@ export const Wifi = ({ readOnly = false }: { readOnly?: boolean }) => {
     } catch {
       setError(text(failure));
     }
-    await refreshAll(false);
+    // The action is over; the lists catch up behind it.
     if (mounted.current) setBusy('');
+    await refreshAll(false);
     return done;
   }
 
