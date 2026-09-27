@@ -84,8 +84,12 @@ async fn execute(
         ));
     }
     let control = state
-        .control
+        .options
+        .control_socket
         .as_ref()
+        .and_then(|socket| {
+            bli_kvm_control_client::ControlClient::with_timeout(socket, FIREWALL_TIMEOUT).ok()
+        })
         .ok_or_else(|| AppError::ServiceUnavailable("firewall owner is unavailable".into()))?;
     let mut operation = [0; 16];
     rand_core::OsRng
@@ -235,10 +239,23 @@ mod tests {
     }
 }
 
+/// The last reference status and when it was read. The page and the video
+/// menu opened together share one read of the owner; a change reads afresh.
+pub(crate) type StatusCache = tokio::sync::Mutex<Option<(std::time::Instant, ReferenceStatus)>>;
+
+/// A status younger than this answers a read without asking the owner.
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+const STATUS_REUSE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Firewall requests run `nft` through transient units in the owner; a change
+/// and the status after it take several seconds on the board.
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+const FIREWALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The reference firewall page's status (`GET /api/system/firewall`), served
 /// from the owner's mode runtime while firewall modes are enabled.
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReferenceStatus {
     config: ReferenceConfig,
@@ -257,13 +274,13 @@ pub(crate) struct ReferenceStatus {
 }
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct ReferenceConfig {
     mode: FirewallMode,
 }
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct ReferenceBackend {
     preferred: String,
     iptables: ReferenceTool,
@@ -272,14 +289,14 @@ pub(crate) struct ReferenceBackend {
 }
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct ReferenceTool {
     installed: bool,
     detail: String,
 }
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct ReferenceRules {
     ipv4: String,
     ipv6: String,
@@ -346,8 +363,43 @@ async fn rules_listing(
     ))
 }
 
+/// The reference status, from the cache while it is younger than
+/// `STATUS_REUSE`.
 #[cfg(feature = "restricted-control-surface")]
 pub(crate) async fn reference_status(state: &AppState) -> AppResult<ReferenceStatus> {
+    cached_status(state, STATUS_REUSE, 1).await
+}
+
+/// Reads the status unless the cache holds one younger than `max_age`; a
+/// failed read is tried again up to `attempts` times in all.
+#[cfg(feature = "restricted-control-surface")]
+async fn cached_status(
+    state: &AppState,
+    max_age: std::time::Duration,
+    attempts: usize,
+) -> AppResult<ReferenceStatus> {
+    let mut cache = state.firewall_status.lock().await;
+    if let Some((at, status)) = cache.as_ref() {
+        if at.elapsed() < max_age {
+            return Ok(status.clone());
+        }
+    }
+    *cache = None;
+    let mut result = read_status(state).await;
+    for _ in 1..attempts {
+        if result.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        result = read_status(state).await;
+    }
+    let status = result?;
+    *cache = Some((std::time::Instant::now(), status.clone()));
+    Ok(status)
+}
+
+#[cfg(feature = "restricted-control-surface")]
+async fn read_status(state: &AppState) -> AppResult<ReferenceStatus> {
     use bli_kvm_control_protocol::ControlResponse;
     use bli_kvm_core::FirewallRulesFamily;
     let ControlResponse::FirewallModeState { status } = execute(
@@ -465,7 +517,12 @@ pub(crate) async fn reference_set(
     )
     .await?
     {
-        bli_kvm_control_protocol::ControlResponse::Applied => reference_status(state).await,
+        // The owner applied the change: the status after it is read afresh,
+        // and once more if that read fails, so the page learns of the pending
+        // change it has to confirm.
+        bli_kvm_control_protocol::ControlResponse::Applied => {
+            cached_status(state, std::time::Duration::ZERO, 2).await
+        }
         other => Err(refused(other)),
     }
 }
@@ -504,6 +561,7 @@ pub(crate) async fn reference_confirm(
             ControlResponse::Applied => {}
             other => return Err(refused(other)),
         }
+        return cached_status(state, std::time::Duration::ZERO, 2).await;
     }
     reference_status(state).await
 }

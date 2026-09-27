@@ -89,6 +89,8 @@ pub(crate) struct AppState {
     pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
     pub terminal_tickets: Arc<Mutex<terminal::TicketStore>>,
     pub picoclaw: Option<Arc<picoclaw::Picoclaw>>,
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub firewall_status: Arc<firewall_modes::StatusCache>,
     pub options: Arc<ServerOptions>,
 }
 
@@ -430,6 +432,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                     .unwrap_or_else(|| "http://127.0.0.1:18080/internal/picoclaw/mcp".into()),
             ))
         }),
+        firewall_status: Arc::new(firewall_modes::StatusCache::default()),
         options: Arc::new(options.clone()),
     };
 

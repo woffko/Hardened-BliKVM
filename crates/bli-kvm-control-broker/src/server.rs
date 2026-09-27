@@ -1194,7 +1194,33 @@ async fn respond(
                     | bli_kvm_core::PlatformControlRequestV2::FirewallModeStatus {}
                     | bli_kvm_core::PlatformControlRequestV2::FirewallModeConfirm { .. }
             );
-            let response = if firewall_request {
+            // The firewall state, baseline and listings run `nft` through
+            // transient units; they get the firewall's own lock and a
+            // blocking worker so the shared state (HID, media) never waits.
+            let firewall_state_request = matches!(
+                &request.request,
+                bli_kvm_core::PlatformControlRequestV2::FirewallState {}
+                    | bli_kvm_core::PlatformControlRequestV2::FirewallBaseline { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::FirewallRules { .. }
+            );
+            let firewall_state = if firewall_state_request {
+                v2.lock().await.firewall_shared()
+            } else {
+                None
+            };
+            let response = if let Some(firewall) = firewall_state {
+                let payload = request.request.clone();
+                tokio::task::spawn_blocking(move || {
+                    firewall
+                        .lock()
+                        .map(|mut state| state.dispatch(&payload))
+                        .unwrap_or(ControlResponse::Rejected {
+                            code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                        })
+                })
+                .await
+                .map_err(|_| io::Error::other("firewall worker failed"))?
+            } else if firewall_request {
                 let runtime = v2.lock().await.firewall_mode_runtime();
                 if let Some(runtime) = runtime {
                     let payload = request.request.clone();

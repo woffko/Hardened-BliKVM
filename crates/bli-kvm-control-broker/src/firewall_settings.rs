@@ -200,12 +200,14 @@ pub struct FirewallState {
     state_dir: PathBuf,
     capability_enabled: bool,
     active: bool,
-    /// The last listing served in chunks, per family, and when it was taken.
-    listings:
-        std::collections::HashMap<bli_kvm_core::FirewallRulesFamily, (String, std::time::Instant)>,
+    /// The last `nft list ruleset` and when it was taken: one snapshot serves
+    /// the state's preview and every family's listing.
+    snapshot: Option<(String, std::time::Instant)>,
 }
 
-/// A chunked listing stays the same for this long, so its chunks match.
+/// A status read and its three listings share one snapshot this recent.
+const SNAPSHOT_SHARE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Later chunks of a listing come from the same snapshot this long.
 const LISTING_REUSE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Splits `nft list ruleset` output into its top-level tables and keeps the
@@ -238,7 +240,59 @@ pub fn family_listing(ruleset: &str, family: bli_kvm_core::FirewallRulesFamily) 
     out
 }
 
+/// The firewall state behind its own lock: its `nft` work never holds the
+/// owner's shared state, so HID and media requests do not wait on it.
+pub type SharedFirewall = std::sync::Arc<std::sync::Mutex<FirewallState>>;
+
+/// The rule preview in the firewall state; the full listing is chunked.
+const RULES_PREVIEW_BYTES: usize = 1024;
+
 impl FirewallState {
+    /// Answers the firewall state, baseline and rule requests.
+    pub fn dispatch(
+        &mut self,
+        request: &bli_kvm_core::PlatformControlRequestV2,
+    ) -> ControlResponse {
+        use bli_kvm_core::PlatformControlRequestV2;
+        match request {
+            PlatformControlRequestV2::FirewallState {} => {
+                let view = self.view();
+                // A preview only: a whole ruleset can exceed one control
+                // message, and FirewallRules serves it in chunks.
+                let mut rules_nft = view.rules_nft;
+                let mut end = RULES_PREVIEW_BYTES.min(rules_nft.len());
+                while !rules_nft.is_char_boundary(end) {
+                    end -= 1;
+                }
+                rules_nft.truncate(end);
+                ControlResponse::FirewallState {
+                    backend_available: view.backend_available,
+                    baseline_active: view.baseline_active,
+                    mode: view.mode,
+                    message: view.message,
+                    nft_installed: view.nft.installed,
+                    nft_detail: view.nft.detail,
+                    iptables_installed: view.iptables.installed,
+                    ip6tables_installed: view.ip6tables.installed,
+                    rules_nft,
+                    https_port: view.https_port,
+                }
+            }
+            PlatformControlRequestV2::FirewallRules { family, offset } => {
+                match self.rules_chunk(*family, *offset) {
+                    Ok((total, offset, chunk)) => ControlResponse::FirewallRules {
+                        total,
+                        offset,
+                        chunk,
+                    },
+                    Err(_) => reject(ControlRejectionCode::InvalidState),
+                }
+            }
+            PlatformControlRequestV2::FirewallBaseline { enabled } => self.set_baseline(*enabled),
+            _ => reject(ControlRejectionCode::CapabilityDisabled),
+        }
+    }
+
     pub fn open(
         runner: Box<dyn FirewallRunner>,
         state_dir: impl Into<PathBuf>,
@@ -250,33 +304,44 @@ impl FirewallState {
             state_dir: state_dir.into(),
             capability_enabled,
             active: false,
-            listings: std::collections::HashMap::new(),
+            snapshot: None,
         }
     }
 
-    /// Serves one chunk of the family's listing; a chunk at offset 0 takes a
-    /// new listing, later chunks reuse it while it is fresh.
+    /// The kernel ruleset, taken again unless the last snapshot is younger
+    /// than `max_age`.
+    fn ruleset(&mut self, max_age: std::time::Duration) -> String {
+        if let Some((ruleset, taken)) = &self.snapshot
+            && taken.elapsed() < max_age
+        {
+            return ruleset.clone();
+        }
+        let ruleset = self.rules("nft");
+        self.snapshot = Some((ruleset.clone(), std::time::Instant::now()));
+        ruleset
+    }
+
+    /// Serves one chunk of the family's listing. The first chunk shares a
+    /// recent snapshot; later chunks must come from the same one.
     pub fn rules_chunk(
         &mut self,
         family: bli_kvm_core::FirewallRulesFamily,
         offset: u32,
     ) -> Result<(u32, u32, String), String> {
-        let fresh = self
-            .listings
-            .get(&family)
-            .is_some_and(|(_, taken)| taken.elapsed() < LISTING_REUSE);
-        if offset == 0 || !fresh {
-            let ruleset = self.rules("nft");
-            let mut listing = family_listing(&ruleset, family);
-            let mut end = bli_kvm_core::MAX_FIREWALL_RULES_BYTES.min(listing.len());
-            while !listing.is_char_boundary(end) {
-                end -= 1;
+        let ruleset = if offset == 0 {
+            self.ruleset(SNAPSHOT_SHARE)
+        } else {
+            match &self.snapshot {
+                Some((ruleset, taken)) if taken.elapsed() < LISTING_REUSE => ruleset.clone(),
+                _ => return Err("the rules listing expired; start again".into()),
             }
-            listing.truncate(end);
-            self.listings
-                .insert(family, (listing, std::time::Instant::now()));
+        };
+        let mut listing = family_listing(&ruleset, family);
+        let mut end = bli_kvm_core::MAX_FIREWALL_RULES_BYTES.min(listing.len());
+        while !listing.is_char_boundary(end) {
+            end -= 1;
         }
-        let (listing, _) = &self.listings[&family];
+        listing.truncate(end);
         let start = offset as usize;
         if start > listing.len() || !listing.is_char_boundary(start) {
             return Err("the rules listing changed; start again".into());
@@ -306,13 +371,16 @@ impl FirewallState {
         let nft = self.probe(NFT, &["--version"]);
         let iptables = self.probe(IPTABLES, &["--version"]);
         let ip6tables = self.probe(IP6TABLES, &["--version"]);
-        let observation = if nft.installed {
-            self.owned_handle()
-        } else {
+        // With the four-mode runtime attached the reviewed baseline's own
+        // table check does not apply, and it would cost one more nft run.
+        let observation = if self.mode_runtime.is_some() || !nft.installed {
             Ok(None)
+        } else {
+            self.owned_handle()
         };
         self.active = matches!(observation, Ok(Some(_)));
         let available = nft.installed && observation.is_ok();
+        let ruleset = self.ruleset(SNAPSHOT_SHARE);
         FirewallView {
             backend_available: available,
             baseline_active: self.active,
@@ -337,9 +405,9 @@ impl FirewallState {
             nft,
             iptables,
             ip6tables,
-            rules_ipv4: self.rules("ipv4"),
-            rules_ipv6: self.rules("ipv6"),
-            rules_nft: self.rules("nft"),
+            rules_ipv4: family_listing(&ruleset, bli_kvm_core::FirewallRulesFamily::Ipv4),
+            rules_ipv6: family_listing(&ruleset, bli_kvm_core::FirewallRulesFamily::Ipv6),
+            rules_nft: ruleset,
         }
     }
 
@@ -347,6 +415,8 @@ impl FirewallState {
     /// offered; the reference's other modes would need rules this arrangement
     /// has not reviewed.
     pub fn set_baseline(&mut self, enabled: bool) -> ControlResponse {
+        // Whatever happens next, the kernel rules may differ from the snapshot.
+        self.snapshot = None;
         if self.mode_runtime.is_some() {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }

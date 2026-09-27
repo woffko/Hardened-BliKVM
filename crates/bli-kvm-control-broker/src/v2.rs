@@ -8,9 +8,6 @@
 
 use std::time::Instant;
 
-/// The rule preview in the firewall state; the full listing is chunked.
-const RULES_PREVIEW_BYTES: usize = 1024;
-
 #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use std::time::Duration;
 
@@ -64,7 +61,10 @@ pub struct ControlV2State {
     hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::WifiState>,
     tls: Option<crate::tls_settings::TlsState>,
-    firewall: Option<crate::firewall_settings::FirewallState>,
+    firewall: Option<crate::firewall_settings::SharedFirewall>,
+    /// The mode runtime of `firewall`, kept apart so finding it never waits
+    /// on the firewall's lock.
+    firewall_modes: Option<crate::firewall_runtime::SharedModeRuntime>,
     system_log: Option<crate::system_log_settings::SystemLogState>,
     tailscale: Option<crate::tailscale::TailscaleState>,
     board_status: Option<crate::board_status::BoardStatusClient>,
@@ -99,6 +99,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -147,7 +148,16 @@ impl ControlV2State {
 
     /// Attach the reviewed firewall baseline to the board state.
     pub fn with_firewall(&mut self, firewall: crate::firewall_settings::FirewallState) {
-        self.firewall = Some(firewall);
+        self.firewall_modes = firewall.mode_runtime();
+        self.firewall = Some(std::sync::Arc::new(std::sync::Mutex::new(firewall)));
+    }
+
+    /// The firewall state for the server's blocking worker, while enabled.
+    pub fn firewall_shared(&self) -> Option<crate::firewall_settings::SharedFirewall> {
+        if !self.enabled {
+            return None;
+        }
+        self.firewall.clone()
     }
 
     /// Attach the reviewed HTTPS surface to the board state.
@@ -259,6 +269,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -293,6 +304,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -327,6 +339,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -375,6 +388,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -411,6 +425,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -453,6 +468,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -552,56 +568,14 @@ impl ControlV2State {
         system_log.test_message()
     }
 
-    fn handle_firewall_state(&mut self) -> ControlResponse {
-        let Some(firewall) = self.firewall.as_mut() else {
+    fn handle_firewall(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
+        let Some(firewall) = self.firewall.as_ref() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        let view = firewall.view();
-        // A preview only: a whole ruleset can exceed one control message, and
-        // FirewallRules serves it in chunks.
-        let mut rules_nft = view.rules_nft;
-        let mut end = RULES_PREVIEW_BYTES.min(rules_nft.len());
-        while !rules_nft.is_char_boundary(end) {
-            end -= 1;
+        match firewall.lock() {
+            Ok(mut firewall) => firewall.dispatch(request),
+            Err(_) => reject(ControlRejectionCode::BackendRejected),
         }
-        rules_nft.truncate(end);
-        ControlResponse::FirewallState {
-            backend_available: view.backend_available,
-            baseline_active: view.baseline_active,
-            mode: view.mode,
-            message: view.message,
-            nft_installed: view.nft.installed,
-            nft_detail: view.nft.detail,
-            iptables_installed: view.iptables.installed,
-            ip6tables_installed: view.ip6tables.installed,
-            rules_nft,
-            https_port: view.https_port,
-        }
-    }
-
-    fn handle_firewall_rules(
-        &mut self,
-        family: bli_kvm_core::FirewallRulesFamily,
-        offset: u32,
-    ) -> ControlResponse {
-        let Some(firewall) = self.firewall.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        match firewall.rules_chunk(family, offset) {
-            Ok((total, offset, chunk)) => ControlResponse::FirewallRules {
-                total,
-                offset,
-                chunk,
-            },
-            Err(_) => reject(ControlRejectionCode::InvalidState),
-        }
-    }
-
-    fn handle_firewall_baseline(&mut self, enabled: bool) -> ControlResponse {
-        let Some(firewall) = self.firewall.as_mut() else {
-            return reject(ControlRejectionCode::CapabilityDisabled);
-        };
-        firewall.set_baseline(enabled)
     }
 
     fn handle_tls_state(&mut self) -> ControlResponse {
@@ -781,6 +755,7 @@ impl ControlV2State {
             wifi: None,
             tls: None,
             firewall: None,
+            firewall_modes: None,
             system_log: None,
             tailscale: None,
             board_status: None,
@@ -810,9 +785,7 @@ impl ControlV2State {
         if !self.enabled {
             return None;
         }
-        self.firewall
-            .as_ref()
-            .and_then(crate::firewall_settings::FirewallState::mode_runtime)
+        self.firewall_modes.clone()
     }
 
     pub async fn handle(
@@ -926,18 +899,14 @@ impl ControlV2State {
             PlatformControlRequestV2::WifiDisconnect {} => self.handle_wifi_disconnect(),
             PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
             PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
-            PlatformControlRequestV2::FirewallState {} => self.handle_firewall_state(),
-            PlatformControlRequestV2::FirewallRules { family, offset } => {
-                self.handle_firewall_rules(*family, *offset)
-            }
+            PlatformControlRequestV2::FirewallState {}
+            | PlatformControlRequestV2::FirewallRules { .. }
+            | PlatformControlRequestV2::FirewallBaseline { .. } => self.handle_firewall(request),
             PlatformControlRequestV2::FirewallModeChange { .. }
             | PlatformControlRequestV2::FirewallModeStatus {}
             | PlatformControlRequestV2::FirewallModeConfirm { .. } => ControlResponse::Rejected {
                 code: ControlRejectionCode::CapabilityDisabled,
             },
-            PlatformControlRequestV2::FirewallBaseline { enabled } => {
-                self.handle_firewall_baseline(*enabled)
-            }
             PlatformControlRequestV2::SystemLogTest {} => self.handle_system_log_test(),
             PlatformControlRequestV2::TailscaleStatus {} => self.handle_tailscale_status(),
             PlatformControlRequestV2::TailscaleAction { action } => {
