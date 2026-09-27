@@ -129,6 +129,8 @@ node --check tools/playwright/raw_system_update_probe.mjs
 node --check tools/playwright/raw_system_update_device_test.mjs
 node --check tools/playwright/firewall_modes_device_probe.mjs
 node --check tools/playwright/firewall_page_device_test.mjs
+node --check tools/playwright/gui_walk_device.mjs
+node --check tools/playwright/media_gui_device_test.mjs
 node --check tools/playwright/terminal_run.mjs
 node --check tools/playwright/terminal_put.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
