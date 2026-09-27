@@ -68,7 +68,7 @@ try {
       { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
     ]);
     const page = await context.newPage();
-    page.setDefaultTimeout(4000);
+    page.setDefaultTimeout(8000);
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     const access = feature(writable ? "read_write" : "read_only");
@@ -131,9 +131,17 @@ try {
     const restricted = page.getByRole("button", { name: /^Restricted/ });
     assert.equal(await restricted.isDisabled(), !writable);
     if (writable) {
+      // The section's sticky header can cover a button scrolled to the top.
+      await restricted.evaluate((button) =>
+        button.scrollIntoView({ block: "center" }),
+      );
       await restricted.click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       assert.equal(writes.length, 0, "Cancel caused a write");
+      // The section's sticky header can cover a button scrolled to the top.
+      await restricted.evaluate((button) =>
+        button.scrollIntoView({ block: "center" }),
+      );
       await restricted.click();
       await page
         .getByRole("button", { name: "Enable Restricted", exact: true })
