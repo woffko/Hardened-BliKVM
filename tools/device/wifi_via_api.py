@@ -9,6 +9,9 @@ Steps run in order:
 - ``radio-cycle``: the radio off (the scan must come back empty) and on again.
 - ``wrong-password:SSID``: joining with a password that cannot be right must
   fail and leave no saved profile for SSID.
+- ``absent-hidden``: joining a hidden network that does not exist must fail
+  within the activation limit, leave no saved profile and keep Ethernet as the
+  default route; no real network is touched.
 - ``join:SSID``: joins with the Wi-Fi password, then checks the state, the
   saved profile and that Ethernet keeps the default route.
 - ``autoconnect-off:SSID`` / ``autoconnect-on:SSID`` / ``forget:SSID`` /
@@ -38,6 +41,8 @@ from urllib.parse import urlparse
 # Never a valid WPA passphrase for a real network: it is refused by the owner
 # only after NetworkManager has tried it.
 WRONG_PASSWORD = "not-the-password-0"
+# A hidden network name nobody announces.
+ABSENT_SSID = "hardened-blikvm-absent-test"
 
 
 def read_secrets() -> tuple[str, str]:
@@ -196,6 +201,17 @@ def main() -> int:
                 record("wrong_password", ssid=ssid, joined=joined, rejection=reason, ms=elapsed,
                        profilesBefore=before, profilesAfter=after, state=state())
                 passed &= not joined and after == before
+            elif name == "absent-hidden":
+                before = len(data("/api/network/wifi/saved").get("profiles", []))
+                joined, reason, elapsed = act(
+                    "/api/network/wifi/connect", {"ssid": ABSENT_SSID, "password": WRONG_PASSWORD, "hidden": True}
+                )
+                after = data("/api/network/wifi/saved").get("profiles", [])
+                observed = state()
+                record("absent_hidden", joined=joined, rejection=reason, ms=elapsed, profilesBefore=before,
+                       profilesAfter=len(after), leftover=any(p.get("ssid") == ABSENT_SSID for p in after),
+                       state=observed)
+                passed &= not joined and len(after) == before and observed["defaultRoute"] == "eth0"
             elif name == "join":
                 if not wifi_password:
                     raise RuntimeError("join needs the Wi-Fi password in the envelope")

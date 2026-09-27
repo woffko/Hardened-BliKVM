@@ -266,7 +266,12 @@ network; the owner serves Wi-Fi on its own lock. Checked on the board with
 networks in range are recorded without their names): the Wi-Fi device is
 present with the radio on; a new scan listed 3 networks (WPA2/WPA3, strongest
 67 %); the radio went off (no network listed) and on again (3 listed);
-Ethernet kept the default route.
+Ethernet kept the default route. A failed join, without touching a real
+network (`wifi-seq45-absent-*.json`): a hidden network that nobody
+announces was refused after 24 s (`backend_rejected`; the owner logged
+"The Wi-Fi network could not be found"), NetworkManager held no Wi-Fi
+profile afterwards, the root-only `system-connections` directory was empty,
+and Ethernet kept the default route.
 
 Plan phase E1 2026-09-26 (card image from the final board state, slot 38,
 update runtime 0.1.0~dev26): `tools/image/build_sd_image.sh` fetched the
