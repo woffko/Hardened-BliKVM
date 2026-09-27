@@ -504,6 +504,7 @@ pub(crate) async fn mdns_disable(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) struct FirewallView {
     pub backend_available: bool,
     pub baseline_active: bool,
@@ -536,6 +537,7 @@ fn firewall_view(response: ControlResponse) -> Option<FirewallView> {
             iptables_installed,
             ip6tables_installed,
             rules_nft,
+            ..
         } => Some(FirewallView {
             backend_available,
             baseline_active,
@@ -555,7 +557,13 @@ fn firewall_view(response: ControlResponse) -> Option<FirewallView> {
 pub(crate) async fn firewall_state(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<FirewallView>>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    // With the four modes enabled the reference page's contract is served;
+    // otherwise the reviewed baseline toggle's view.
+    if state.options.firewall_modes_enabled {
+        let status = crate::firewall_modes::reference_status(&state).await?;
+        return Ok(Json(ApiResponse::ok(json_value(status)?)));
+    }
     let Some(control) = state.control.as_ref() else {
         return Err(AppError::ServiceUnavailable(
             "firewall control is not configured".into(),
@@ -568,9 +576,15 @@ pub(crate) async fn firewall_state(
         )
         .await
         .map_err(|_| AppError::ServiceUnavailable("firewall control is unavailable".into()))?;
-    firewall_view(response)
-        .map(|view| Json(ApiResponse::ok(view)))
-        .ok_or_else(|| AppError::ServiceUnavailable("firewall state is unavailable".into()))
+    let view = firewall_view(response)
+        .ok_or_else(|| AppError::ServiceUnavailable("firewall state is unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(json_value(view)?)))
+}
+
+#[cfg(feature = "restricted-control-surface")]
+fn json_value(value: impl Serialize) -> AppResult<serde_json::Value> {
+    serde_json::to_value(value)
+        .map_err(|_| AppError::ServiceUnavailable("firewall state is unavailable".into()))
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -578,17 +592,21 @@ pub(crate) async fn firewall_set(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(body): Json<FirewallBody>,
-) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
-    // Only the reviewed baseline is offered; the reference's other modes need
-    // rules this arrangement has not reviewed.
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if state.options.firewall_modes_enabled {
+        let status =
+            crate::firewall_modes::reference_set(&state, &session, body.mode.as_str()).await?;
+        return Ok(Json(ApiResponse::ok(json_value(status)?)));
+    }
+    // Without the modes only the reviewed baseline is offered.
     let enabled = match body.mode.as_str() {
         "baseline" => true,
         "disabled" | "off" | "none" => false,
         _ => {
-            return Ok(Json(ApiResponse::ok(ToggleOutcome {
+            return Ok(Json(ApiResponse::ok(json_value(ToggleOutcome {
                 applied: false,
                 rejection: Some("unsupported_mode"),
-            })));
+            })?)));
         }
     };
     let Some(control) = state.control.as_ref() else {
@@ -603,7 +621,7 @@ pub(crate) async fn firewall_set(
         )
         .await
         .map_err(|_| AppError::ServiceUnavailable("firewall control is unavailable".into()))?;
-    Ok(Json(ApiResponse::ok(match response {
+    Ok(Json(ApiResponse::ok(json_value(match response {
         ControlResponse::Applied => ToggleOutcome {
             applied: true,
             rejection: None,
@@ -616,27 +634,32 @@ pub(crate) async fn firewall_set(
             applied: false,
             rejection: Some("unexpected_response"),
         },
-    })))
+    })?)))
 }
 
-/// The reviewed baseline is synchronous, so the confirmation the reference
-/// requires for its other modes is an accepted no-op here.
+/// With the four modes enabled this keeps the pending mode, as the reference
+/// page asks right after a change; the reviewed baseline alone is
+/// synchronous, so there the confirmation is an accepted no-op.
 #[cfg(feature = "restricted-control-surface")]
 pub(crate) async fn firewall_confirm(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
-    Ok(Json(ApiResponse::ok(ToggleOutcome {
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if state.options.firewall_modes_enabled {
+        let status = crate::firewall_modes::reference_confirm(&state, &session).await?;
+        return Ok(Json(ApiResponse::ok(json_value(status)?)));
+    }
+    Ok(Json(ApiResponse::ok(json_value(ToggleOutcome {
         applied: true,
         rejection: None,
-    })))
+    })?)))
 }
 
 #[cfg(not(feature = "restricted-control-surface"))]
 pub(crate) async fn firewall_state(
     State(_state): State<AppState>,
     Extension(CurrentSession(_session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<FirewallView>>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     Err(AppError::ServiceUnavailable(
         "firewall control is not configured".into(),
     ))
@@ -647,7 +670,7 @@ pub(crate) async fn firewall_set(
     State(_state): State<AppState>,
     Extension(CurrentSession(_session)): Extension<CurrentSession>,
     Json(_body): Json<FirewallBody>,
-) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     Err(AppError::ServiceUnavailable(
         "firewall control is not configured".into(),
     ))
@@ -657,7 +680,7 @@ pub(crate) async fn firewall_set(
 pub(crate) async fn firewall_confirm(
     State(_state): State<AppState>,
     Extension(CurrentSession(_session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     Err(AppError::ServiceUnavailable(
         "firewall control is not configured".into(),
     ))

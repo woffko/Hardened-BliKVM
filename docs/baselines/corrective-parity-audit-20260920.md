@@ -211,6 +211,13 @@ session; WebRTC through `tools/playwright/vp8_webrtc_probe.mjs`):
   with the table restored (`firewall: restored the confirmed Restricted
   mode`), HTTPS and SSH open over IPv4 and IPv6.
 - The board ended in its original mode, `baseline`.
+- Settings page (2026-09-27, after the operator compared it with the
+  reference): the BliKVM section had been a bare four-button page on the mode
+  API, missed by the phase C walk. It now renders the reference page on the
+  reference contract (`evidence/private/firewall-page-20260927/`), and the
+  device configuration blocks WebRTC in Restricted and Paranoid as the
+  reference does (the WebRTC frames above were taken with the local media
+  range allowed).
 - Open for the operator: Tailscale peers reach the board from
   `100.64.0.0/10` over `tailscale0`, which is not a local range, so
   moderate, restricted and paranoid block incoming tailnet connections, as in

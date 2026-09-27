@@ -23,6 +23,21 @@ pub struct TargetRelease {
     pub target_binding: [u8; 32],
 }
 
+/// Largest rule listing the owner serves in chunks.
+pub const MAX_FIREWALL_RULES_BYTES: usize = 64 * 1024;
+/// Largest rule chunk in one control response.
+pub const MAX_FIREWALL_RULES_CHUNK: usize = 2048;
+
+/// The reference's rule views: IPv4 and IPv6 (their tables plus the dual-stack
+/// `inet` ones) and the whole nft ruleset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirewallRulesFamily {
+    Ipv4,
+    Ipv6,
+    Nft,
+}
+
 /// Administration features that stay off until the operator switches them on
 /// (`docs/design/admin-features-v1.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -297,6 +312,12 @@ pub enum PlatformControlRequestV2 {
         request: crate::FirewallConfirmRequest,
     },
     FirewallModeStatus {},
+    /// Read the kernel's current rules for one address family, in bounded
+    /// chunks the caller reassembles.
+    FirewallRules {
+        family: FirewallRulesFamily,
+        offset: u32,
+    },
     /// Write one reviewed test line through the system log.
     SystemLogTest {},
     /// Read the Tailscale surface state.
@@ -348,6 +369,8 @@ pub enum ControlV2ValidationError {
     InvalidIpv4Change,
     #[error("hostname is invalid")]
     InvalidHostname,
+    #[error("firewall rules offset is out of range")]
+    InvalidFirewallRulesOffset,
 }
 
 /// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
@@ -533,6 +556,13 @@ impl PlatformControlRequestV2 {
             Self::FirewallModeChange { request } => request.validate(),
             Self::FirewallModeConfirm { request } => request.validate(),
             Self::FirewallModeStatus {} => Ok(()),
+            Self::FirewallRules { offset, .. } => {
+                if *offset as usize > MAX_FIREWALL_RULES_BYTES {
+                    Err(ControlV2ValidationError::InvalidFirewallRulesOffset)
+                } else {
+                    Ok(())
+                }
+            }
             Self::SystemLogTest {} => Ok(()),
             Self::TailscaleStatus {} => Ok(()),
             Self::TailscaleAction { .. } => Ok(()),

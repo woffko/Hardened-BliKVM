@@ -112,6 +112,7 @@ pub(crate) async fn application_power(
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::TailscaleState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),

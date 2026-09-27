@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/system-firewall.ts';
 import type { FirewallMode, FirewallStatus } from '@/api/system-firewall.ts';
+import { boardFeatureIsWritable, supportsBoardFeature } from '@/lib/capabilities.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import { NativeFirewall } from './firewall-native.tsx';
@@ -32,10 +33,17 @@ type ModeOption = {
 
 export const FirewallSettings = () => {
   const manifest = useAtomValue(capabilitiesAtom);
-  return manifest?.platform.id === 'bli-h616-pikvm' ? <NativeFirewall /> : <ReferenceFirewall />;
+  if (manifest?.platform.id !== 'bli-h616-pikvm') return <ReferenceFirewall />;
+  // BliKVM serves the reference contract once its owner runs the four modes;
+  // without them only the reviewed baseline toggle is offered.
+  return supportsBoardFeature(manifest, 'system_firewall_modes') ? (
+    <ReferenceFirewall writable={boardFeatureIsWritable(manifest, 'system_firewall_modes')} />
+  ) : (
+    <NativeFirewall />
+  );
 };
 
-const ReferenceFirewall = () => {
+const ReferenceFirewall = ({ writable = true }: { writable?: boolean }) => {
   const { t } = useTranslation();
 
   const [status, setStatus] = useState<FirewallStatus | null>(null);
@@ -128,7 +136,7 @@ const ReferenceFirewall = () => {
   }, [load]);
 
   function selectMode(mode: FirewallMode) {
-    if (!status || isApplying || mode === effectiveMode) return;
+    if (!writable || !status || isApplying || mode === effectiveMode) return;
 
     const option = modeOptions.find((item) => item.mode === mode);
     if (!option || option.disabled) {
@@ -290,7 +298,7 @@ const ReferenceFirewall = () => {
               option={option}
               active={option.mode === effectiveMode}
               current={option.mode === effectiveMode}
-              busy={isApplying || !status}
+              busy={isApplying || !status || !writable}
               currentLabel={t('settings.system.firewall.mode.current')}
               onSelect={selectMode}
             />

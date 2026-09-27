@@ -256,6 +256,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => false,
     };
@@ -285,6 +286,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => FocusConfirmResponse {
             attested: false,
@@ -564,6 +566,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => {}
     }
@@ -598,6 +601,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::WifiState { .. }
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::TailscaleState { .. } => HidLeaseResponse {
             applied: false,

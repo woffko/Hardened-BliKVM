@@ -81,6 +81,22 @@ do not claim Tailscale preservation from these rules alone.
   (the front may still be starting; the mode was confirmed with it running).
   A failed restore rolls back to the open baseline.
 
+## Settings page
+
+With the four modes enabled the server answers the reference page's own
+contract: `GET /api/system/firewall` (mode flags, backend, HTTPS port and the
+IPv4, IPv6 and nft rule listings, which the owner serves in chunks of at
+most 2 KiB because one control message is limited to 4 KiB),
+`POST /api/system/firewall {mode}` and `POST /api/system/firewall/confirm`.
+The web shows the reference page unchanged; it confirms a restrictive
+change itself right after applying it, which proves that the page still
+reaches the board through the new rules, and the owner's 60-second rollback
+still covers a page that cannot. The mode API
+(`/api/system/firewall/mode`) stays for probes. The device configuration
+leaves `webrtcMedia` unset, so Restricted and Paranoid block WebRTC as the
+reference and its texts say; the local media range remains an explicit
+configuration option.
+
 ## Remaining implementation and acceptance gates
 
 1. Typed four-mode control request/status, explicit confirmation identity and

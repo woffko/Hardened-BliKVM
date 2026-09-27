@@ -1,3 +1,8 @@
+// The BliKVM firewall section renders the reference page on the reference
+// contract (/api/system/firewall) once the owner runs the four modes:
+// read-only, Cancel, refusal, and a restrictive change that the page
+// confirms on its own, on desktop and mobile. Without the modes the reviewed
+// baseline toggle remains.
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { defaultManifest, startApp } from "./app_harness.mjs";
@@ -19,13 +24,36 @@ const feature = (availability) => ({
   availability,
   evidence: "source_verified",
 });
+const status = (mode, pending) => ({
+  config: { mode },
+  effectiveMode: mode,
+  moderateActive: mode === "moderate",
+  restrictedActive: mode === "restricted",
+  paranoidActive: mode === "paranoid",
+  webrtcBlocked: mode === "restricted" || mode === "paranoid",
+  paranoidAvailable: true,
+  confirmationRequired: pending,
+  httpsEnabled: true,
+  httpsPort: 443,
+  backend: {
+    preferred: "nftables",
+    iptables: { installed: true, detail: "/usr/sbin/iptables" },
+    ip6tables: { installed: true, detail: "/usr/sbin/ip6tables" },
+    nft: { installed: true, detail: "/usr/sbin/nft" },
+  },
+  rules: {
+    ipv4: `table inet hardened-blikvm {\n  # ${mode} ipv4\n}`,
+    ipv6: `table inet hardened-blikvm {\n  # ${mode} ipv6\n}`,
+    nft: `table inet hardened-blikvm {\n  # ${mode} nft\n}`,
+  },
+  message: "",
+});
 try {
-  for (const [writable, accepted, mobile, rollback] of [
+  for (const [writable, accepted, mobile] of [
     [false, false, false],
     [true, false, false],
     [true, true, false],
     [true, true, true],
-    [true, true, true, true],
   ]) {
     const context = await browser.newContext(
       mobile
@@ -63,156 +91,63 @@ try {
     await page.route("**/api/capabilities", (route) =>
       route.fulfill({ json: { code: 0, data: manifest } }),
     );
-    let state = {
-      mode: "moderate",
-      pendingOperationId: null,
-      confirmationDeadlineUnixMs: null,
-      recoveryRequired: false,
-      configurationReady: true,
-    };
+    let state = status("moderate", false);
     const writes = [];
-    await page.route("**/api/system/firewall/mode**", (route) => {
+    await page.route("**/api/system/firewall/mode**", () =>
+      assert.fail("the reference page must not use the mode API"),
+    );
+    await page.route("**/api/system/firewall**", (route) => {
       const request = route.request();
       if (request.method() === "GET")
         return route.fulfill({ json: { code: 0, data: state } });
-      const body = request.postDataJSON();
-      writes.push({ path: new URL(request.url()).pathname, body });
+      const path = new URL(request.url()).pathname;
+      writes.push({ path, body: request.postDataJSON() });
       if (!accepted)
         return route.fulfill({
           json: {
-            code: 0,
-            data: {
-              applied: false,
-              rejection: "fixture_refused",
-              operationId: "a".repeat(32),
-            },
+            code: -409,
+            msg: "the firewall change was refused: fixture_refused",
+            data: null,
           },
         });
-      if (request.url().endsWith("/confirm")) {
-        assert.equal(body.operationId, state.pendingOperationId);
-        state = {
-          ...state,
-          pendingOperationId: null,
-          confirmationDeadlineUnixMs: null,
-        };
+      if (path.endsWith("/confirm")) {
+        state = status(state.effectiveMode, false);
       } else {
-        assert.deepEqual(body, { mode: "restricted", confirm: true });
-        state = {
-          ...state,
-          mode: "restricted",
-          pendingOperationId: "a".repeat(32),
-          confirmationDeadlineUnixMs: String(Date.now() + 60000),
-        };
+        assert.deepEqual(request.postDataJSON(), { mode: "restricted" });
+        state = status("restricted", true);
       }
-      return route.fulfill({
-        json: {
-          code: 0,
-          data: { applied: true, rejection: null, operationId: "a".repeat(32) },
-        },
-      });
+      return route.fulfill({ json: { code: 0, data: state } });
     });
     await page.goto(app.baseUrl, { waitUntil: "networkidle" });
     await page.locator("svg.lucide-settings").click();
     await page.locator('[data-settings-tab="system"]').click();
-    await page.getByText("Current mode: moderate", { exact: true }).waitFor();
+    await page.getByText("Moderate Firewall mode is active").waitFor();
+    await page.getByText("# moderate ipv4").waitFor();
     assert.equal(writes.length, 0);
-    const restricted = page.getByRole("button", {
-      name: "restricted",
-      exact: true,
-    });
+    const restricted = page.getByRole("button", { name: /^Restricted/ });
     assert.equal(await restricted.isDisabled(), !writable);
     if (writable) {
       await restricted.click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       assert.equal(writes.length, 0, "Cancel caused a write");
       await restricted.click();
-      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      await page
+        .getByRole("button", { name: "Enable Restricted", exact: true })
+        .click();
       if (accepted) {
-        await page
-          .getByText("Current mode: restricted", { exact: true })
-          .waitFor();
-        assert.equal(writes.length, 1, "confirmation must not be automatic");
-        if (rollback) {
-          state = {
-            ...state,
-            confirmationDeadlineUnixMs: String(Date.now() - 1),
-            recoveryRequired: true,
-          };
-          await page
-            .getByRole("alert")
-            .filter({ hasText: "Firewall recovery is pending." })
-            .waitFor();
-          assert.equal(
-            await page
-              .getByRole("button", {
-                name: "Confirm firewall connectivity",
-                exact: true,
-              })
-              .isDisabled(),
-            true,
-          );
-          assert.equal(
-            await page
-              .getByRole("button", { name: "baseline", exact: true })
-              .isDisabled(),
-            true,
-          );
-          state = {
-            ...state,
-            mode: "moderate",
-            pendingOperationId: null,
-            confirmationDeadlineUnixMs: null,
-            recoveryRequired: false,
-          };
-          await page
-            .getByText("Current mode: moderate", { exact: true })
-            .waitFor();
-          assert.equal(
-            await page
-              .getByRole("button", {
-                name: "Confirm firewall connectivity",
-                exact: true,
-              })
-              .count(),
-            0,
-          );
-          assert.equal(
-            writes.length,
-            1,
-            "browser performed a mutation during owner rollback",
-          );
-          assert.deepEqual(errors, []);
-          await context.close();
-          continue;
-        }
-        await page
-          .getByRole("button", {
-            name: "Confirm firewall connectivity",
-            exact: true,
-          })
-          .click();
-        await page
-          .getByRole("button", {
-            name: "Confirm firewall connectivity",
-            exact: true,
-          })
-          .waitFor({ state: "hidden" });
-        assert.equal(writes.length, 2);
-        assert.deepEqual(writes[1], {
-          path: "/api/system/firewall/mode/confirm",
-          body: { operationId: "a".repeat(32) },
+        await page.getByText("Restricted Firewall mode is active").waitFor();
+        // The page confirms a restrictive change itself, as the reference does.
+        assert.equal(writes.length, 2, JSON.stringify(writes));
+        assert.deepEqual(writes[0], {
+          path: "/api/system/firewall",
+          body: { mode: "restricted" },
         });
+        assert.equal(writes[1].path, "/api/system/firewall/confirm");
+        assert.equal(state.confirmationRequired, false);
+        await page.getByText("# restricted ipv4").waitFor();
       } else {
-        await page
-          .getByRole("alert")
-          .filter({ hasText: "fixture_refused" })
-          .waitFor();
-        assert.equal(
-          await page
-            .getByText("Current mode: moderate", { exact: true })
-            .count(),
-          1,
-        );
+        await page.getByText("fixture_refused").first().waitFor();
+        await page.getByText("Moderate Firewall mode is active").waitFor();
         assert.equal(writes.length, 1);
       }
     }
@@ -220,7 +155,7 @@ try {
     await context.close();
   }
   console.log(
-    "Firewall modes: read-only, Cancel, refusal, explicit desktop/mobile confirmation and owner rollback polling passed",
+    "Firewall modes: reference page on the reference contract, read-only, Cancel, refusal and automatic desktop/mobile confirmation passed",
   );
 } finally {
   await browser.close();

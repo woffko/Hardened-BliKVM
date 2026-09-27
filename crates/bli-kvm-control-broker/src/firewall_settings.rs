@@ -200,6 +200,42 @@ pub struct FirewallState {
     state_dir: PathBuf,
     capability_enabled: bool,
     active: bool,
+    /// The last listing served in chunks, per family, and when it was taken.
+    listings:
+        std::collections::HashMap<bli_kvm_core::FirewallRulesFamily, (String, std::time::Instant)>,
+}
+
+/// A chunked listing stays the same for this long, so its chunks match.
+const LISTING_REUSE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Splits `nft list ruleset` output into its top-level tables and keeps the
+/// ones the family shows: IPv4 and IPv6 with the dual-stack `inet` tables,
+/// nft everything.
+pub fn family_listing(ruleset: &str, family: bli_kvm_core::FirewallRulesFamily) -> String {
+    use bli_kvm_core::FirewallRulesFamily;
+    if family == FirewallRulesFamily::Nft {
+        return ruleset.to_string();
+    }
+    let wanted = match family {
+        FirewallRulesFamily::Ipv4 => "ip",
+        _ => "ip6",
+    };
+    let mut out = String::new();
+    let mut keep = false;
+    for line in ruleset.lines() {
+        if let Some(rest) = line.strip_prefix("table ") {
+            let table_family = rest.split_whitespace().next().unwrap_or_default();
+            keep = table_family == wanted || table_family == "inet";
+        }
+        if keep {
+            out.push_str(line);
+            out.push('\n');
+        }
+        if line == "}" {
+            keep = false;
+        }
+    }
+    out
 }
 
 impl FirewallState {
@@ -214,7 +250,46 @@ impl FirewallState {
             state_dir: state_dir.into(),
             capability_enabled,
             active: false,
+            listings: std::collections::HashMap::new(),
         }
+    }
+
+    /// Serves one chunk of the family's listing; a chunk at offset 0 takes a
+    /// new listing, later chunks reuse it while it is fresh.
+    pub fn rules_chunk(
+        &mut self,
+        family: bli_kvm_core::FirewallRulesFamily,
+        offset: u32,
+    ) -> Result<(u32, u32, String), String> {
+        let fresh = self
+            .listings
+            .get(&family)
+            .is_some_and(|(_, taken)| taken.elapsed() < LISTING_REUSE);
+        if offset == 0 || !fresh {
+            let ruleset = self.rules("nft");
+            let mut listing = family_listing(&ruleset, family);
+            let mut end = bli_kvm_core::MAX_FIREWALL_RULES_BYTES.min(listing.len());
+            while !listing.is_char_boundary(end) {
+                end -= 1;
+            }
+            listing.truncate(end);
+            self.listings
+                .insert(family, (listing, std::time::Instant::now()));
+        }
+        let (listing, _) = &self.listings[&family];
+        let start = offset as usize;
+        if start > listing.len() || !listing.is_char_boundary(start) {
+            return Err("the rules listing changed; start again".into());
+        }
+        let mut end = (start + bli_kvm_core::MAX_FIREWALL_RULES_CHUNK).min(listing.len());
+        while !listing.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok((
+            listing.len() as u32,
+            offset,
+            listing[start..end].to_string(),
+        ))
     }
 
     pub fn attach_mode_runtime(&mut self, runtime: crate::firewall_runtime::SharedModeRuntime) {
@@ -701,6 +776,56 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|call| call.contains("-f ") || call.contains("delete "))
+        );
+    }
+
+    #[test]
+    fn listings_follow_the_reference_families() {
+        use bli_kvm_core::FirewallRulesFamily;
+        let ruleset = "table ip filter {\n\tchain input {\n\t}\n}\ntable ip6 nat {\n}\ntable inet hardened-blikvm {\n\tcomment \"x\"\n}\n";
+        assert_eq!(
+            family_listing(ruleset, FirewallRulesFamily::Ipv4),
+            "table ip filter {\n\tchain input {\n\t}\n}\ntable inet hardened-blikvm {\n\tcomment \"x\"\n}\n"
+        );
+        assert_eq!(
+            family_listing(ruleset, FirewallRulesFamily::Ipv6),
+            "table ip6 nat {\n}\ntable inet hardened-blikvm {\n\tcomment \"x\"\n}\n"
+        );
+        assert_eq!(family_listing(ruleset, FirewallRulesFamily::Nft), ruleset);
+    }
+
+    #[test]
+    fn listings_are_served_in_bounded_chunks_that_reassemble() {
+        use bli_kvm_core::{FirewallRulesFamily, MAX_FIREWALL_RULES_CHUNK};
+        let ruleset = format!(
+            "table inet hardened-blikvm {{\n{}}}\n",
+            "\té rule\n".repeat(700)
+        );
+        let runner = RecordingRunner {
+            installed: true,
+            ruleset: ruleset.clone(),
+            ..Default::default()
+        };
+        let mut state = FirewallState::open(Box::new(runner), "/run/fw", true);
+        let mut assembled = String::new();
+        let mut offset = 0_u32;
+        loop {
+            let (total, at, chunk) = state
+                .rules_chunk(FirewallRulesFamily::Ipv4, offset)
+                .unwrap();
+            assert_eq!(at, offset);
+            assert!(chunk.len() <= MAX_FIREWALL_RULES_CHUNK && !chunk.is_empty());
+            assembled.push_str(&chunk);
+            offset += chunk.len() as u32;
+            if offset >= total {
+                break;
+            }
+        }
+        assert_eq!(assembled, ruleset);
+        assert!(
+            state
+                .rules_chunk(FirewallRulesFamily::Ipv4, offset + 1)
+                .is_err()
         );
     }
 

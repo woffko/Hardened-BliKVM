@@ -3,10 +3,8 @@ import { Button, Popconfirm } from 'antd';
 import { useAtomValue } from 'jotai';
 
 import { getStatus, setNativeMode } from '@/api/system-firewall.ts';
-import { boardFeatureIsWritable, supportsBoardFeature } from '@/lib/capabilities.ts';
+import { boardFeatureIsWritable } from '@/lib/capabilities.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
-
-import { FirewallModes } from './firewall-modes.tsx';
 
 type NativeStatus = {
   backendAvailable: boolean;
@@ -37,16 +35,8 @@ function decode(value: unknown): NativeStatus {
   return value as NativeStatus;
 }
 
+/** The reviewed baseline toggle, for boards whose owner runs no modes. */
 export const NativeFirewall = () => {
-  const manifest = useAtomValue(capabilitiesAtom);
-  return supportsBoardFeature(manifest, 'system_firewall_modes') ? (
-    <FirewallModes />
-  ) : (
-    <LegacyNativeFirewall />
-  );
-};
-
-const LegacyNativeFirewall = () => {
   const manifest = useAtomValue(capabilitiesAtom);
   const writable = boardFeatureIsWritable(manifest, 'system_firewall');
   const [status, setStatus] = useState<NativeStatus | null>(null);

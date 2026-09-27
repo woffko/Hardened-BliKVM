@@ -1143,6 +1143,7 @@ where
         | ControlResponse::TlsState { .. }
         | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::TailscaleState { .. } => None,
     };
     timeout(

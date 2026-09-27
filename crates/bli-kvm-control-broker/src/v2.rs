@@ -8,6 +8,9 @@
 
 use std::time::Instant;
 
+/// The rule preview in the firewall state; the full listing is chunked.
+const RULES_PREVIEW_BYTES: usize = 1024;
+
 #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use std::time::Duration;
 
@@ -554,6 +557,14 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         let view = firewall.view();
+        // A preview only: a whole ruleset can exceed one control message, and
+        // FirewallRules serves it in chunks.
+        let mut rules_nft = view.rules_nft;
+        let mut end = RULES_PREVIEW_BYTES.min(rules_nft.len());
+        while !rules_nft.is_char_boundary(end) {
+            end -= 1;
+        }
+        rules_nft.truncate(end);
         ControlResponse::FirewallState {
             backend_available: view.backend_available,
             baseline_active: view.baseline_active,
@@ -563,7 +574,26 @@ impl ControlV2State {
             nft_detail: view.nft.detail,
             iptables_installed: view.iptables.installed,
             ip6tables_installed: view.ip6tables.installed,
-            rules_nft: view.rules_nft,
+            rules_nft,
+            https_port: view.https_port,
+        }
+    }
+
+    fn handle_firewall_rules(
+        &mut self,
+        family: bli_kvm_core::FirewallRulesFamily,
+        offset: u32,
+    ) -> ControlResponse {
+        let Some(firewall) = self.firewall.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        match firewall.rules_chunk(family, offset) {
+            Ok((total, offset, chunk)) => ControlResponse::FirewallRules {
+                total,
+                offset,
+                chunk,
+            },
+            Err(_) => reject(ControlRejectionCode::InvalidState),
         }
     }
 
@@ -897,6 +927,9 @@ impl ControlV2State {
             PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
             PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
             PlatformControlRequestV2::FirewallState {} => self.handle_firewall_state(),
+            PlatformControlRequestV2::FirewallRules { family, offset } => {
+                self.handle_firewall_rules(*family, *offset)
+            }
             PlatformControlRequestV2::FirewallModeChange { .. }
             | PlatformControlRequestV2::FirewallModeStatus {}
             | PlatformControlRequestV2::FirewallModeConfirm { .. } => ControlResponse::Rejected {

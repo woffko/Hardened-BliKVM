@@ -38,18 +38,6 @@ export function getStatus() {
   return http.get('/api/system/firewall');
 }
 
-export function getModeStatus() {
-  return http.get('/api/system/firewall/mode');
-}
-
-export function changeMode(mode: FirewallMode) {
-  return http.post('/api/system/firewall/mode', { mode, confirm: true });
-}
-
-export function confirmMode(operationId: string) {
-  return http.post('/api/system/firewall/mode/confirm', { operationId });
-}
-
 export function setNativeMode(mode: 'baseline' | 'disabled') {
   return http.post('/api/system/firewall', { mode });
 }

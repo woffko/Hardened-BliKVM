@@ -174,7 +174,17 @@ pub enum ControlResponse {
         nft_detail: String,
         iptables_installed: bool,
         ip6tables_installed: bool,
+        /// A bounded preview; `FirewallRules` serves the complete listing.
         rules_nft: String,
+        #[serde(default)]
+        https_port: u16,
+    },
+    /// One chunk of a rule listing: `total` bytes in all, this chunk starting
+    /// at `offset`.
+    FirewallRules {
+        total: u32,
+        offset: u32,
+        chunk: String,
     },
     Rejected {
         code: ControlRejectionCode,
@@ -384,6 +394,17 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
             (Some(operation), Some(deadline)) if operation != [0; 16] && deadline > 0 => {}
             _ => return Err(ControlProtocolError::InvalidControlResponse),
         }
+    }
+    if let ControlResponse::FirewallRules {
+        total,
+        offset,
+        chunk,
+    } = response
+        && (chunk.len() > bli_kvm_core::MAX_FIREWALL_RULES_CHUNK
+            || *total as usize > bli_kvm_core::MAX_FIREWALL_RULES_BYTES
+            || u64::from(*offset) + chunk.len() as u64 > u64::from(*total))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
     }
     if let ControlResponse::LeaseGranted { lease_id } = response
         && lease_id.iter().all(|byte| *byte == 0)
