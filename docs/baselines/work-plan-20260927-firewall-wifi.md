@@ -82,6 +82,14 @@ W5. Board: scan lists the networks in range; radio off and on; a wrong
     password stored in project-memory, or the operator joins it in the page;
     then connect, reconnect after reboot, automatic connection off, forget.
 W6. Audit, design document (`docs/design/wifi-v1.md`), release, `check.sh`.
+W7. Added at the operator's request on 2026-09-27: the connected network's
+    details under it (IPv4 address, gateway, resolvers, IPv6 address, MAC,
+    channel and band, link speed).
+W8. Added at the operator's request on 2026-09-27: Wi-Fi takes over when the
+    Ethernet cable is out (checked on the board), and a switch chooses the
+    main connection, Ethernet or Wi-Fi, with the other as standby; the
+    change is reverted unless the page confirms it. Aggregating both links
+    is not offered (see the design document).
 
 ## Order and operator steps
 

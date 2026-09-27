@@ -34,9 +34,13 @@ Requests (`PlatformControlRequestV2`):
 | `wifi_disconnect {}` | none | `device disconnect wlan0` |
 | `wifi_profile {id, action}` | canonical UUID; action `connect`, `forget`, `autoconnect_on`, `autoconnect_off` | the UUID must be a saved Wi-Fi profile; `connection up`, `delete` or `modify connection.autoconnect` |
 | `wifi_radio {enabled}` | none | `radio wifi on/off` |
+| `wifi_preferred {enabled}` | none | Ethernet profiles' route metric, `device reapply`, revert timer |
+| `wifi_preferred_confirm {}` | none | keeps the pending main-connection change |
 
 Responses: `wifi_state` (available, up, interface, SSID, state, radio, signal,
-security, IPv4 address), `wifi_networks` (at most 20) and `wifi_profiles` (at
+security, IPv4 address, gateway, up to three resolvers, a global IPv6
+address, MAC, channel, link rate, whether Wi-Fi is the main connection and
+the seconds until an unconfirmed change reverts), `wifi_networks` (at most 20) and `wifi_profiles` (at
 most 16). The limits keep the widest possible answer, every SSID byte escaped
 by JSON, within the 4 KiB control message; a protocol test encodes that case.
 Security labels are `open`, `wpa2` (WPA1 and WPA2 personal), `wpa3`,
@@ -65,6 +69,29 @@ Security labels are `open`, `wpa2` (WPA1 and WPA2 personal), `wpa3`,
 A network in range that has a saved profile is rejoined from the list without
 asking for the password again.
 
+## Main connection and fallback
+
+Ethernet and Wi-Fi stay connected together, and the kernel sends traffic
+over the default route with the lower metric. NetworkManager gives Ethernet
+100 and Wi-Fi 600, so Ethernet is the main connection and Wi-Fi takes over
+the moment the cable is out (its default route is already in place), and
+Ethernet takes over again when it returns. Choosing Wi-Fi as the main
+connection sets every saved Ethernet profile's IPv4 and IPv6 route metric to
+700 and reapplies it to the connected Ethernet devices, which keeps their
+links and addresses; choosing Ethernet restores NetworkManager's default
+(`-1`). Wi-Fi can become the main connection only while it is connected.
+
+A change of the main connection can cut the path the operator uses (asymmetric
+routing through a router that drops it), so like an addressing change it is
+reverted after 60 seconds unless confirmed. The page confirms it right after
+the change answers, which proves the page still reaches the board; the state
+reports the seconds left while a change is pending.
+
+Link aggregation of Ethernet and Wi-Fi is not offered: a Wi-Fi client cannot
+be bonded with Ethernet in a balancing mode, and the two links usually sit
+in different subnets. "Both" is therefore both connected, one main and one
+standby.
+
 ## Server routes
 
 All under `/api/network/wifi`, authenticated, CSRF-checked for writes:
@@ -79,6 +106,8 @@ All under `/api/network/wifi`, authenticated, CSRF-checked for writes:
 | `POST /api/network/wifi/connect` | `{ssid, password, hidden?}` | `{applied, rejection?}` |
 | `POST /api/network/wifi/disconnect` | - | `{applied, rejection?}` |
 | `POST /api/network/wifi/radio` | `{enabled}` | `{applied, rejection?}` |
+| `POST /api/network/wifi/preferred` | `{enabled}` | `{applied, rejection?}` |
+| `POST /api/network/wifi/preferred/confirm` | - | `{applied, rejection?}` |
 
 The server checks the SSID, password and profile ID before calling the owner.
 
@@ -86,7 +115,10 @@ The server checks the SSID, password and profile ID before calling the owner.
 
 Settings > System > Network shows the Wi-Fi block when the board reports a
 Wi-Fi device: the radio switch with the current network or "Not connected";
-the connected network with signal, IPv4 address, security and Disconnect;
+the connected network with security, signal and Disconnect, and below it the
+IPv4 address, gateway, resolvers, IPv6 address, MAC, channel and band, and
+link speed; the main connection (Ethernet or Wi-Fi) with its explanation or
+the countdown of an unconfirmed change;
 networks in range, strongest first, with signal, a lock for secured ones and
 a tag for security the board cannot join, plus Refresh (a new scan, read again
 four seconds later); "Other network…" for a hidden network; saved networks

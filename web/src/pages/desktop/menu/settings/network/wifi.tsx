@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Button, Input, Modal, Popconfirm, Spin, Switch, Tag } from 'antd';
+import { Alert, Button, Input, Modal, Popconfirm, Segmented, Spin, Switch, Tag } from 'antd';
 import {
   LockIcon,
   RefreshCwIcon,
@@ -157,6 +157,18 @@ export const Wifi = ({ readOnly = false }: { readOnly?: boolean }) => {
     setTarget({ ssid: network.ssid, security: network.security, hidden: false });
   }
 
+  // The page confirms the change from where it stands: if the board can no
+  // longer be reached, the confirmation never arrives and the board reverts.
+  async function preferWifi(enabled: boolean) {
+    const done = await run('preferred', () => api.setWifiPreferred(enabled));
+    if (!done) return;
+    try {
+      await api.confirmWifiPreferred();
+    } finally {
+      await refreshAll(false);
+    }
+  }
+
   const needsPassword = !!target && !target.hidden && target.security !== 'open';
   const passwordValid =
     password === '' ? !needsPassword : password.length >= 8 && password.length <= 64;
@@ -186,6 +198,16 @@ export const Wifi = ({ readOnly = false }: { readOnly?: boolean }) => {
   if (!status.available) return null;
 
   const radioBusy = busy === 'radio';
+  const band = (channel: number) => (channel > 14 ? text('band5') : text('band24'));
+  const details: [string, string][] = [
+    [text('ipv4'), status.address ?? ''],
+    [text('gateway'), status.gateway ?? ''],
+    [text('dns'), (status.dns ?? []).join(', ')],
+    [text('ipv6'), status.ipv6 ?? ''],
+    [text('mac'), status.hwAddress ?? ''],
+    [text('channel'), status.channel ? `${status.channel} · ${band(status.channel)}` : ''],
+    [text('rate'), status.rateMbps ? text('rateValue', { rate: status.rateMbps }) : '']
+  ].filter((row): row is [string, string] => row[1] !== '');
   const summary = !status.radio
     ? text('radioOff')
     : status.connected
@@ -213,37 +235,75 @@ export const Wifi = ({ readOnly = false }: { readOnly?: boolean }) => {
       )}
 
       {status.radio && status.connected && (
-        <div className="flex items-center justify-between gap-3 rounded-lg bg-neutral-800/50 p-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <SignalIcon signal={status.signal ?? 0} />
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate">{status.ssid}</span>
-              <span className="truncate text-xs text-neutral-500">
-                {[
-                  text('connected'),
-                  status.address,
-                  status.security ? text(`security.${status.security}`) : ''
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
+        <div className="flex flex-col gap-3 rounded-lg bg-neutral-800/50 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <SignalIcon signal={status.signal ?? 0} />
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate">{status.ssid}</span>
+                <span className="truncate text-xs text-neutral-500">
+                  {[
+                    text('connected'),
+                    status.security ? text(`security.${status.security}`) : '',
+                    status.signal != null ? `${status.signal}%` : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </div>
             </div>
-          </div>
-          <Popconfirm
-            title={text('disconnect')}
-            okText={text('confirmBtn')}
-            cancelText={text('cancelBtn')}
-            disabled={readOnly || busy !== ''}
-            onConfirm={() => void run('disconnect', () => api.disconnectWifi())}
-          >
-            <Button
-              size="small"
-              loading={busy === 'disconnect'}
-              disabled={readOnly || (busy !== '' && busy !== 'disconnect')}
+            <Popconfirm
+              title={text('disconnect')}
+              okText={text('confirmBtn')}
+              cancelText={text('cancelBtn')}
+              disabled={readOnly || busy !== ''}
+              onConfirm={() => void run('disconnect', () => api.disconnectWifi())}
             >
-              {text('disconnectBtn')}
-            </Button>
-          </Popconfirm>
+              <Button
+                size="small"
+                loading={busy === 'disconnect'}
+                disabled={readOnly || (busy !== '' && busy !== 'disconnect')}
+              >
+                {text('disconnectBtn')}
+              </Button>
+            </Popconfirm>
+          </div>
+          <dl
+            data-testid="wifi-details"
+            className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs"
+          >
+            {details.map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-neutral-500">{label}</dt>
+                <dd className="m-0 break-all text-neutral-300">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+
+      {status.radio && (
+        <div className="flex flex-col space-y-2" data-testid="wifi-main-connection">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-neutral-400">{text('mainConnection')}</span>
+            <Segmented
+              size="small"
+              value={status.wifiPreferred ? 'wifi' : 'ethernet'}
+              disabled={readOnly || busy !== ''}
+              options={[
+                { value: 'ethernet', label: text('ethernet') },
+                { value: 'wifi', label: text('wifi'), disabled: !status.connected }
+              ]}
+              onChange={(value) => void preferWifi(value === 'wifi')}
+            />
+          </div>
+          <span className="text-xs text-neutral-500">
+            {status.revertInSeconds > 0
+              ? text('mainReverting', { seconds: status.revertInSeconds })
+              : status.connected
+                ? text('mainConnectionDesc')
+                : text('mainNeedsWifi')}
+          </span>
         </div>
       )}
 

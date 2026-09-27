@@ -31,6 +31,16 @@ pub(crate) struct WifiView {
     pub security: Option<String>,
     /// The IPv4 address on the WiFi network, as `address/prefix`.
     pub address: Option<String>,
+    pub gateway: Option<String>,
+    pub dns: Vec<String>,
+    pub ipv6: Option<String>,
+    pub hw_address: Option<String>,
+    pub channel: Option<u16>,
+    pub rate_mbps: Option<u32>,
+    /// WiFi is the main connection and Ethernet the backup.
+    pub wifi_preferred: bool,
+    /// Seconds until an unconfirmed main-connection change is reverted.
+    pub revert_in_seconds: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,6 +102,7 @@ pub(crate) struct ProfileBody {
     pub action: WifiProfileAction,
 }
 
+/// `{enabled}` for the radio and for WiFi as the main connection.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RadioBody {
@@ -168,6 +179,14 @@ pub(crate) async fn network_wifi(
             signal,
             security,
             address,
+            gateway,
+            dns,
+            ipv6,
+            hw_address,
+            channel,
+            rate_mbps,
+            wifi_preferred,
+            revert_in_seconds,
         } => Ok(Json(ApiResponse::ok(WifiView {
             available,
             connected: up,
@@ -178,6 +197,14 @@ pub(crate) async fn network_wifi(
             signal,
             security,
             address,
+            gateway,
+            dns,
+            ipv6,
+            hw_address,
+            channel,
+            rate_mbps,
+            wifi_preferred,
+            revert_in_seconds,
         }))),
         _ => Err(unavailable("the WiFi state")),
     }
@@ -295,6 +322,31 @@ pub(crate) async fn network_wifi_radio(
         },
     )
     .await?;
+    Ok(Json(ApiResponse::ok(outcome(response))))
+}
+
+/// Makes WiFi (or Ethernet) the main connection; the page confirms it from
+/// the new path, otherwise the owner reverts it after a minute.
+pub(crate) async fn network_wifi_preferred(
+    State(state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(body): Json<RadioBody>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    let response = wifi_request(
+        &state,
+        PlatformControlRequestV2::WifiPreferred {
+            enabled: body.enabled,
+        },
+    )
+    .await?;
+    Ok(Json(ApiResponse::ok(outcome(response))))
+}
+
+pub(crate) async fn network_wifi_preferred_confirm(
+    State(state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
+    let response = wifi_request(&state, PlatformControlRequestV2::WifiPreferredConfirm {}).await?;
     Ok(Json(ApiResponse::ok(outcome(response))))
 }
 

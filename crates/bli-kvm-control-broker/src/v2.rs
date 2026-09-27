@@ -883,7 +883,9 @@ impl ControlV2State {
             | PlatformControlRequestV2::WifiConnect { .. }
             | PlatformControlRequestV2::WifiDisconnect {}
             | PlatformControlRequestV2::WifiProfile { .. }
-            | PlatformControlRequestV2::WifiRadio { .. } => self.handle_wifi(request),
+            | PlatformControlRequestV2::WifiRadio { .. }
+            | PlatformControlRequestV2::WifiPreferred { .. }
+            | PlatformControlRequestV2::WifiPreferredConfirm {} => self.handle_wifi(request),
             PlatformControlRequestV2::TlsState {} => self.handle_tls_state(),
             PlatformControlRequestV2::TlsSet { enabled } => self.handle_tls_set(*enabled),
             PlatformControlRequestV2::FirewallState {}

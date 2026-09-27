@@ -542,6 +542,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             post(wifi::network_wifi_disconnect),
         )
         .route("/network/wifi/radio", post(wifi::network_wifi_radio))
+        .route(
+            "/network/wifi/preferred",
+            post(wifi::network_wifi_preferred),
+        )
+        .route(
+            "/network/wifi/preferred/confirm",
+            post(wifi::network_wifi_preferred_confirm),
+        )
         .route("/network/interfaces", get(network::network_interfaces))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
@@ -3291,7 +3299,7 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         let broker = tokio::spawn(async move {
             let mut seen = Vec::new();
-            for _ in 0..5 {
+            for _ in 0..7 {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut prefix = [0; 4];
                 stream.read_exact(&mut prefix).await.unwrap();
@@ -3424,6 +3432,11 @@ mod tests {
                 "/api/network/wifi/radio",
                 serde_json::json!({"enabled":false}),
             ),
+            (
+                "/api/network/wifi/preferred",
+                serde_json::json!({"enabled":true}),
+            ),
+            ("/api/network/wifi/preferred/confirm", Value::Null),
         ] {
             let response = app
                 .clone()
@@ -3451,6 +3464,8 @@ mod tests {
                     action: WifiProfileAction::AutoconnectOff,
                 },
                 PlatformControlRequestV2::WifiRadio { enabled: false },
+                PlatformControlRequestV2::WifiPreferred { enabled: true },
+                PlatformControlRequestV2::WifiPreferredConfirm {},
             ]
         );
 

@@ -7,9 +7,17 @@
 //! environment or a log; a profile that fails to come up is removed again.
 //! Every request runs outside the owner's shared state (see `server.rs`), so
 //! a slow association never holds HID or media requests.
+//!
+//! Ethernet and WiFi stay up together; the main connection is the one with
+//! the lower route metric. NetworkManager gives Ethernet 100 and WiFi 600, so
+//! WiFi carries the traffic only when the cable is out. Making WiFi the main
+//! connection raises the Ethernet profiles' metric above WiFi's; like an
+//! addressing change it is reverted unless confirmed within a minute.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use bli_kvm_control_protocol::{
     ControlRejectionCode, ControlResponse, WifiNetwork, WifiProfileView,
@@ -28,6 +36,12 @@ const DEVICE: &str = "wlan0";
 const PROFILE_PREFIX: &str = "hardened-blikvm-wifi-";
 /// How long NetworkManager may take to associate and obtain an address.
 const ACTIVATION_SECONDS: &str = "30";
+/// The Ethernet route metric that puts WiFi (600) first; `-1` restores
+/// NetworkManager's default (100).
+const ETHERNET_BACKUP_METRIC: &str = "700";
+const ETHERNET_DEFAULT_METRIC: &str = "-1";
+/// An unconfirmed main-connection change is reverted after this long.
+pub const PREFERENCE_REVERT_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WifiStatus {
@@ -40,6 +54,14 @@ pub struct WifiStatus {
     pub signal: Option<u8>,
     pub security: Option<String>,
     pub address: Option<String>,
+    pub gateway: Option<String>,
+    pub dns: Vec<String>,
+    pub ipv6: Option<String>,
+    pub hw_address: Option<String>,
+    pub channel: Option<u16>,
+    pub rate_mbps: Option<u32>,
+    pub wifi_preferred: bool,
+    pub revert_in_seconds: u32,
 }
 
 impl Default for WifiStatus {
@@ -54,6 +76,14 @@ impl Default for WifiStatus {
             signal: None,
             security: None,
             address: None,
+            gateway: None,
+            dns: Vec::new(),
+            ipv6: None,
+            hw_address: None,
+            channel: None,
+            rate_mbps: None,
+            wifi_preferred: false,
+            revert_in_seconds: 0,
         }
     }
 }
@@ -132,9 +162,42 @@ impl WifiRunner for NmcliRunner {
 /// The WiFi state behind its own lock, served on a blocking worker.
 pub type SharedWifi = std::sync::Arc<std::sync::Mutex<WifiState>>;
 
+type SharedRunner = Arc<Mutex<Box<dyn WifiRunner>>>;
+
+/// An unconfirmed main-connection change and when it is reverted.
+struct PendingPreference {
+    generation: u64,
+    deadline: Instant,
+}
+
 pub struct WifiState {
-    runner: Box<dyn WifiRunner>,
+    runner: SharedRunner,
     capability_enabled: bool,
+    pending: Arc<Mutex<Option<PendingPreference>>>,
+    generation: u64,
+    revert_after: Duration,
+}
+
+/// One entry of the scan listing, before names are merged.
+struct ScanEntry {
+    network: WifiNetwork,
+    rate_mbps: Option<u32>,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The values of one `nmcli -g` field: several are joined by ` | `, and `:`
+/// and `\` inside a value are escaped.
+fn field_values(field: &str) -> Vec<String> {
+    field
+        .split(" | ")
+        .map(|value| terse_fields(value.trim()).join(":"))
+        .filter(|value| !value.is_empty() && value.len() <= 64)
+        .collect()
 }
 
 /// Splits one terse `nmcli` line, where `:` and `\` inside a value are
@@ -183,9 +246,22 @@ fn security_label(security: &str) -> &'static str {
 impl WifiState {
     pub fn open(runner: Box<dyn WifiRunner>, capability_enabled: bool) -> Self {
         Self {
-            runner,
+            runner: Arc::new(Mutex::new(runner)),
             capability_enabled,
+            pending: Arc::new(Mutex::new(None)),
+            generation: 0,
+            revert_after: PREFERENCE_REVERT_AFTER,
         }
+    }
+
+    #[cfg(test)]
+    fn with_revert_after(mut self, revert_after: Duration) -> Self {
+        self.revert_after = revert_after;
+        self
+    }
+
+    fn run(&self) -> MutexGuard<'_, Box<dyn WifiRunner>> {
+        lock(&self.runner)
     }
 
     pub fn dispatch(&mut self, request: &PlatformControlRequestV2) -> ControlResponse {
@@ -201,6 +277,14 @@ impl WifiState {
                     signal: status.signal,
                     security: status.security,
                     address: status.address,
+                    gateway: status.gateway,
+                    dns: status.dns,
+                    ipv6: status.ipv6,
+                    hw_address: status.hw_address,
+                    channel: status.channel,
+                    rate_mbps: status.rate_mbps,
+                    wifi_preferred: status.wifi_preferred,
+                    revert_in_seconds: status.revert_in_seconds,
                 },
                 Err(reason) => {
                     eprintln!("wifi: state read failed: {reason}");
@@ -229,13 +313,15 @@ impl WifiState {
             PlatformControlRequestV2::WifiDisconnect {} => self.disconnect(),
             PlatformControlRequestV2::WifiProfile { id, action } => self.profile(id, *action),
             PlatformControlRequestV2::WifiRadio { enabled } => self.radio(*enabled),
+            PlatformControlRequestV2::WifiPreferred { enabled } => self.prefer(*enabled),
+            PlatformControlRequestV2::WifiPreferredConfirm {} => self.confirm_preference(),
             _ => reject(ControlRejectionCode::CapabilityDisabled),
         }
     }
 
     pub fn status(&mut self) -> Result<WifiStatus, String> {
         let listing = self
-            .runner
+            .run()
             .nmcli(&["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"])?;
         let mut status = WifiStatus::default();
         for line in listing.lines() {
@@ -253,48 +339,64 @@ impl WifiState {
             return Ok(status);
         }
         status.radio = self
-            .runner
+            .run()
             .nmcli(&["radio", "wifi"])
             .map(|state| state.trim() == "enabled")
             .unwrap_or(false);
+        status.wifi_preferred = self.wifi_preferred().unwrap_or(false);
+        status.revert_in_seconds = self.revert_in_seconds();
         if status.up {
             // The SSID comes from the scan entry in use: a profile name is
             // not the network's name.
-            if let Some(network) = self.scan(false)?.into_iter().find(|network| network.in_use) {
-                status.signal = Some(network.signal);
-                status.security = Some(network.security);
-                status.ssid = Some(network.ssid);
+            if let Some(entry) = self
+                .entries(false)?
+                .into_iter()
+                .find(|entry| entry.network.in_use)
+            {
+                status.signal = Some(entry.network.signal);
+                status.security = Some(entry.network.security);
+                status.ssid = Some(entry.network.ssid);
+                status.channel = Some(entry.network.channel).filter(|channel| *channel > 0);
+                status.rate_mbps = entry.rate_mbps;
             }
-            status.address = self
-                .runner
-                .nmcli(&["-g", "IP4.ADDRESS", "device", "show", DEVICE])
-                .ok()
-                .and_then(|addresses| {
-                    // Several addresses come as one line joined by " | ".
-                    addresses
-                        .lines()
-                        .next()
-                        .and_then(|line| line.split(" | ").next())
-                        .map(|address| address.trim().to_string())
-                })
-                .filter(|address| !address.is_empty() && address.len() <= 43);
+            let details = self
+                .run()
+                .nmcli(&[
+                    "-g",
+                    "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,GENERAL.HWADDR",
+                    "device",
+                    "show",
+                    DEVICE,
+                ])
+                .unwrap_or_default();
+            let lines: Vec<&str> = details.lines().collect();
+            let field = |index: usize| field_values(lines.get(index).copied().unwrap_or_default());
+            status.address = field(0).into_iter().next();
+            status.gateway = field(1).into_iter().next();
+            status.dns = field(2).into_iter().take(3).collect();
+            // The global address; link-local ones say nothing to the operator.
+            status.ipv6 = field(3)
+                .into_iter()
+                .find(|address| !address.to_ascii_lowercase().starts_with("fe80:"));
+            status.hw_address = field(4).into_iter().next();
         }
         Ok(status)
     }
 
-    /// The networks in range, strongest first, one entry per name.
-    pub fn scan(&mut self, rescan: bool) -> Result<Vec<WifiNetwork>, String> {
+    /// The scan listing as NetworkManager reports it, one entry per access
+    /// point.
+    fn entries(&mut self, rescan: bool) -> Result<Vec<ScanEntry>, String> {
         if rescan {
             // Asks for a new scan and returns at once; NetworkManager refuses
             // one right after another, which is harmless.
             let _ = self
-                .runner
+                .run()
                 .nmcli(&["device", "wifi", "rescan", "ifname", DEVICE]);
         }
-        let listing = self.runner.nmcli(&[
+        let listing = self.run().nmcli(&[
             "-t",
             "-f",
-            "IN-USE,SSID,SIGNAL,SECURITY,CHAN",
+            "IN-USE,SSID,SIGNAL,SECURITY,CHAN,RATE",
             "device",
             "wifi",
             "list",
@@ -303,20 +405,32 @@ impl WifiState {
             "ifname",
             DEVICE,
         ])?;
-        let mut networks: Vec<WifiNetwork> = Vec::new();
-        for line in listing.lines() {
-            let fields = terse_fields(line);
+        Ok(listing
+            .lines()
+            .map(terse_fields)
             // A hidden network announces no name; it is joined as "other".
-            if fields.len() < 5 || !valid_wifi_ssid(&fields[1]) {
-                continue;
-            }
-            let network = WifiNetwork {
-                ssid: fields[1].clone(),
-                signal: fields[2].trim().parse::<u8>().unwrap_or(0).min(100),
-                security: security_label(&fields[3]).to_string(),
-                channel: fields[4].trim().parse::<u16>().unwrap_or(0),
-                in_use: fields[0].trim() == "*",
-            };
+            .filter(|fields| fields.len() >= 5 && valid_wifi_ssid(&fields[1]))
+            .map(|fields| ScanEntry {
+                network: WifiNetwork {
+                    ssid: fields[1].clone(),
+                    signal: fields[2].trim().parse::<u8>().unwrap_or(0).min(100),
+                    security: security_label(&fields[3]).to_string(),
+                    channel: fields[4].trim().parse::<u16>().unwrap_or(0),
+                    in_use: fields[0].trim() == "*",
+                },
+                rate_mbps: fields
+                    .get(5)
+                    .and_then(|rate| rate.split_whitespace().next())
+                    .and_then(|rate| rate.parse::<u32>().ok()),
+            })
+            .collect())
+    }
+
+    /// The networks in range, strongest first, one entry per name.
+    pub fn scan(&mut self, rescan: bool) -> Result<Vec<WifiNetwork>, String> {
+        let entries = self.entries(rescan)?;
+        let mut networks: Vec<WifiNetwork> = Vec::new();
+        for ScanEntry { network, .. } in entries {
             match networks.iter_mut().find(|known| known.ssid == network.ssid) {
                 Some(known) => {
                     known.in_use |= network.in_use;
@@ -335,7 +449,7 @@ impl WifiState {
 
     /// The saved WiFi profiles.
     pub fn saved(&mut self) -> Result<Vec<WifiProfileView>, String> {
-        let listing = self.runner.nmcli(&[
+        let listing = self.run().nmcli(&[
             "-t",
             "-f",
             "UUID,TYPE,AUTOCONNECT,ACTIVE",
@@ -353,7 +467,7 @@ impl WifiState {
             }
             // A name the protocol cannot carry is listed without it.
             let ssid = self
-                .runner
+                .run()
                 .nmcli(&[
                     "-g",
                     "802-11-wireless.ssid",
@@ -422,13 +536,13 @@ impl WifiState {
                 return reject(ControlRejectionCode::BackendRejected);
             }
         };
-        let uuid = match self.runner.new_uuid() {
+        let uuid = match self.run().new_uuid() {
             Ok(uuid) if valid_wifi_profile_id(&uuid) => uuid.to_ascii_lowercase(),
             _ => return reject(ControlRejectionCode::BackendRejected),
         };
         let name = format!("{PROFILE_PREFIX}{}", &uuid[..8]);
         let contents = keyfile(&name, &uuid, ssid, password, key_management, hidden);
-        let path = match self.runner.write_keyfile(&name, &contents) {
+        let path = match self.run().write_keyfile(&name, &contents) {
             Ok(path) => path,
             Err(reason) => {
                 eprintln!("wifi: profile write failed: {reason}");
@@ -436,24 +550,24 @@ impl WifiState {
             }
         };
         let path_text = path.to_string_lossy().into_owned();
-        let activated = self
-            .runner
-            .nmcli(&["connection", "load", &path_text])
-            .and_then(|_| {
-                self.runner.nmcli(&[
-                    "--wait",
-                    ACTIVATION_SECONDS,
-                    "connection",
-                    "up",
-                    "uuid",
-                    &uuid,
-                ])
-            });
+        // One runner lock per call: a guard held across both would block.
+        let loaded = self.run().nmcli(&["connection", "load", &path_text]);
+        let activated = match loaded {
+            Ok(_) => self.run().nmcli(&[
+                "--wait",
+                ACTIVATION_SECONDS,
+                "connection",
+                "up",
+                "uuid",
+                &uuid,
+            ]),
+            Err(reason) => Err(reason),
+        };
         if let Err(reason) = activated {
             eprintln!("wifi: profile activation failed: {reason}");
             // Reversible: a profile that never came up is removed again.
-            let _ = self.runner.nmcli(&["connection", "delete", "uuid", &uuid]);
-            if let Err(cleanup) = self.runner.remove_keyfile(&path) {
+            let _ = self.run().nmcli(&["connection", "delete", "uuid", &uuid]);
+            if let Err(cleanup) = self.run().remove_keyfile(&path) {
                 eprintln!("wifi: profile cleanup failed: {cleanup}");
             }
             return reject(ControlRejectionCode::BackendRejected);
@@ -461,7 +575,7 @@ impl WifiState {
         // One profile per network: the earlier ones go once the new one is up,
         // so a wrong password never costs the working profile.
         for id in earlier {
-            if let Err(reason) = self.runner.nmcli(&["connection", "delete", "uuid", &id]) {
+            if let Err(reason) = self.run().nmcli(&["connection", "delete", "uuid", &id]) {
                 eprintln!("wifi: earlier profile removal failed: {reason}");
             }
         }
@@ -472,7 +586,7 @@ impl WifiState {
         if !self.capability_enabled {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }
-        match self.runner.nmcli(&["device", "disconnect", DEVICE]) {
+        match self.run().nmcli(&["device", "disconnect", DEVICE]) {
             Ok(_) => ControlResponse::Applied,
             Err(reason) => {
                 eprintln!("wifi: disconnect failed: {reason}");
@@ -496,17 +610,17 @@ impl WifiState {
         }
         let result = match action {
             WifiProfileAction::Connect => {
-                self.runner
+                self.run()
                     .nmcli(&["--wait", ACTIVATION_SECONDS, "connection", "up", "uuid", id])
             }
-            WifiProfileAction::Forget => self.runner.nmcli(&["connection", "delete", "uuid", id]),
+            WifiProfileAction::Forget => self.run().nmcli(&["connection", "delete", "uuid", id]),
             WifiProfileAction::AutoconnectOn | WifiProfileAction::AutoconnectOff => {
                 let value = if action == WifiProfileAction::AutoconnectOn {
                     "yes"
                 } else {
                     "no"
                 };
-                self.runner.nmcli(&[
+                self.run().nmcli(&[
                     "connection",
                     "modify",
                     "uuid",
@@ -525,12 +639,170 @@ impl WifiState {
         }
     }
 
+    /// The saved Ethernet profiles, whose route metric decides the main
+    /// connection.
+    fn ethernet_profiles(&mut self) -> Result<Vec<String>, String> {
+        let listing = self
+            .run()
+            .nmcli(&["-t", "-f", "UUID,TYPE", "connection", "show"])?;
+        Ok(listing
+            .lines()
+            .map(terse_fields)
+            .filter(|fields| {
+                fields.len() >= 2
+                    && fields[1] == "802-3-ethernet"
+                    && valid_wifi_profile_id(&fields[0])
+            })
+            .map(|fields| fields[0].clone())
+            .collect())
+    }
+
+    fn wifi_preferred(&mut self) -> Result<bool, String> {
+        let profiles = self.ethernet_profiles()?;
+        let mut preferred = !profiles.is_empty();
+        for uuid in profiles {
+            let metric = self.run().nmcli(&[
+                "-g",
+                "ipv4.route-metric",
+                "connection",
+                "show",
+                "uuid",
+                &uuid,
+            ])?;
+            preferred &= metric.trim() == ETHERNET_BACKUP_METRIC;
+        }
+        Ok(preferred)
+    }
+
+    fn revert_in_seconds(&self) -> u32 {
+        lock(&self.pending)
+            .as_ref()
+            .map(|pending| {
+                pending
+                    .deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_secs()
+                    .max(1) as u32
+            })
+            .unwrap_or(0)
+    }
+
+    /// Sets every Ethernet profile's route metric and reapplies it to the
+    /// devices in use, which keeps their links and addresses.
+    fn set_ethernet_metric(
+        runner: &SharedRunner,
+        profiles: &[String],
+        metric: &str,
+    ) -> Result<(), String> {
+        for uuid in profiles {
+            lock(runner).nmcli(&[
+                "connection",
+                "modify",
+                "uuid",
+                uuid,
+                "ipv4.route-metric",
+                metric,
+                "ipv6.route-metric",
+                metric,
+            ])?;
+        }
+        let devices = lock(runner).nmcli(&["-t", "-f", "DEVICE,TYPE,STATE", "device"])?;
+        for fields in devices.lines().map(terse_fields) {
+            if fields.len() >= 3 && fields[1] == "ethernet" && fields[2] == "connected" {
+                lock(runner).nmcli(&["device", "reapply", &fields[0]])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Makes WiFi (or Ethernet) the main connection. WiFi must be connected
+    /// to become the main one, and the change is reverted unless confirmed.
+    pub fn prefer(&mut self, wifi: bool) -> ControlResponse {
+        if !self.capability_enabled {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        }
+        let (profiles, before) = match self.ethernet_profiles().and_then(|profiles| {
+            let before = self.wifi_preferred()?;
+            Ok((profiles, before))
+        }) {
+            Ok(found) => found,
+            Err(reason) => {
+                eprintln!("wifi: main connection read failed: {reason}");
+                return reject(ControlRejectionCode::BackendRejected);
+            }
+        };
+        if profiles.is_empty() {
+            return reject(ControlRejectionCode::InvalidState);
+        }
+        if wifi && !self.status().map(|status| status.up).unwrap_or(false) {
+            return reject(ControlRejectionCode::InvalidState);
+        }
+        let metric = if wifi {
+            ETHERNET_BACKUP_METRIC
+        } else {
+            ETHERNET_DEFAULT_METRIC
+        };
+        if let Err(reason) = Self::set_ethernet_metric(&self.runner, &profiles, metric) {
+            eprintln!("wifi: main connection change failed: {reason}");
+            let previous = if before {
+                ETHERNET_BACKUP_METRIC
+            } else {
+                ETHERNET_DEFAULT_METRIC
+            };
+            let _ = Self::set_ethernet_metric(&self.runner, &profiles, previous);
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        if wifi != before {
+            self.arm_revert(profiles, before);
+        }
+        ControlResponse::Applied
+    }
+
+    fn arm_revert(&mut self, profiles: Vec<String>, before: bool) {
+        self.generation += 1;
+        let generation = self.generation;
+        *lock(&self.pending) = Some(PendingPreference {
+            generation,
+            deadline: Instant::now() + self.revert_after,
+        });
+        let pending = Arc::clone(&self.pending);
+        let runner = Arc::clone(&self.runner);
+        let wait = self.revert_after;
+        std::thread::spawn(move || {
+            std::thread::sleep(wait);
+            let mut current = lock(&pending);
+            if current.as_ref().map(|pending| pending.generation) != Some(generation) {
+                return;
+            }
+            *current = None;
+            drop(current);
+            let metric = if before {
+                ETHERNET_BACKUP_METRIC
+            } else {
+                ETHERNET_DEFAULT_METRIC
+            };
+            match Self::set_ethernet_metric(&runner, &profiles, metric) {
+                Ok(()) => eprintln!("wifi: unconfirmed main connection change reverted"),
+                Err(reason) => eprintln!("wifi: reverting the main connection failed: {reason}"),
+            }
+        });
+    }
+
+    pub fn confirm_preference(&mut self) -> ControlResponse {
+        if lock(&self.pending).take().is_some() {
+            eprintln!("wifi: main connection change confirmed");
+            ControlResponse::Applied
+        } else {
+            reject(ControlRejectionCode::InvalidState)
+        }
+    }
+
     pub fn radio(&mut self, enabled: bool) -> ControlResponse {
         if !self.capability_enabled {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }
         match self
-            .runner
+            .run()
             .nmcli(&["radio", "wifi", if enabled { "on" } else { "off" }])
         {
             Ok(_) => ControlResponse::Applied,
@@ -645,7 +917,10 @@ mod tests {
 
     const SAVED: &str = "-t -f UUID,TYPE,AUTOCONNECT,ACTIVE connection show";
     const LIST: &str =
-        "-t -f IN-USE,SSID,SIGNAL,SECURITY,CHAN device wifi list --rescan no ifname wlan0";
+        "-t -f IN-USE,SSID,SIGNAL,SECURITY,CHAN,RATE device wifi list --rescan no ifname wlan0";
+    const DETAILS: &str =
+        "-g IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,GENERAL.HWADDR device show wlan0";
+    const ETH: &str = "22222222-3333-4444-8555-666666666666";
 
     fn fixture(answers: &[(&str, Result<&str, &str>)]) -> (WifiState, Arc<Mutex<Fake>>) {
         let mut fake = Fake::default();
@@ -721,7 +996,7 @@ mod tests {
 
     #[test]
     fn status_names_the_network_in_use_with_signal_and_address() {
-        let in_use = SCAN.replacen(" :HomeNet:81", "*:HomeNet:81", 1);
+        let in_use = SCAN.replacen(" :HomeNet:81:WPA2:36", "*:HomeNet:81:WPA2:36:130 Mbit/s", 1);
         let (mut state, _) = fixture(&[
             (
                 "-t -f DEVICE,TYPE,STATE,CONNECTION device",
@@ -729,8 +1004,10 @@ mod tests {
             ),
             (LIST, Ok(in_use.as_str())),
             (
-                "-g IP4.ADDRESS device show wlan0",
-                Ok("192.0.2.40/24 | 192.0.2.41/24\n"),
+                DETAILS,
+                Ok(
+                    "192.0.2.40/24 | 192.0.2.41/24\n192.0.2.1\n192.0.2.53 | 192.0.2.54\nfe80\\:\\:1/64 | 2001\\:db8\\:\\:40/64\nAA\\:BB\\:CC\\:DD\\:EE\\:FF\n",
+                ),
             ),
         ]);
         let status = state.status().unwrap();
@@ -739,6 +1016,13 @@ mod tests {
         assert_eq!(status.signal, Some(81));
         assert_eq!(status.security.as_deref(), Some("wpa2"));
         assert_eq!(status.address.as_deref(), Some("192.0.2.40/24"));
+        assert_eq!(status.gateway.as_deref(), Some("192.0.2.1"));
+        assert_eq!(status.dns, ["192.0.2.53", "192.0.2.54"]);
+        assert_eq!(status.ipv6.as_deref(), Some("2001:db8::40/64"));
+        assert_eq!(status.hw_address.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+        assert_eq!(status.channel, Some(36));
+        assert_eq!(status.rate_mbps, Some(130));
+        assert!(!status.wifi_preferred);
 
         let (mut state, _) = fixture(&[("radio wifi", Ok("disabled\n"))]);
         let status = state.status().unwrap();
@@ -932,6 +1216,78 @@ mod tests {
             .collect();
         let (mut state, _) = fixture(&[(SAVED, Ok(many.as_str()))]);
         assert_eq!(state.saved().unwrap().len(), MAX_WIFI_PROFILES);
+    }
+
+    #[test]
+    fn wifi_becomes_the_main_connection_only_when_up_and_reverts_unless_confirmed() {
+        let metric = format!("-g ipv4.route-metric connection show uuid {ETH}");
+        let answers = [
+            (
+                "-t -f UUID,TYPE connection show",
+                Ok(format!("{ETH}:802-3-ethernet\n{OLD}:802-11-wireless\n")),
+            ),
+            (metric.as_str(), Ok("-1\n".to_string())),
+            (
+                "-t -f DEVICE,TYPE,STATE device",
+                Ok("eth0:ethernet:connected\nwlan0:wifi:connected\n".to_string()),
+            ),
+        ];
+        let owned: Vec<(&str, Result<&str, &str>)> = answers
+            .iter()
+            .map(|(call, answer)| (*call, answer.as_deref().map_err(|e: &String| e.as_str())))
+            .collect();
+        // Not connected over WiFi: WiFi cannot become the main connection.
+        let (mut state, fake) = fixture(&owned);
+        assert_eq!(
+            state.prefer(true),
+            rejected(ControlRejectionCode::InvalidState)
+        );
+        assert!(
+            fake.lock()
+                .unwrap()
+                .calls
+                .iter()
+                .all(|call| !call.contains("modify"))
+        );
+
+        let mut connected = owned.clone();
+        connected.push((
+            "-t -f DEVICE,TYPE,STATE,CONNECTION device",
+            Ok("eth0:ethernet:connected:Wired\nwlan0:wifi:connected:home\n"),
+        ));
+        let modify = |value: &str| {
+            format!(
+                "connection modify uuid {ETH} ipv4.route-metric {value} ipv6.route-metric {value}"
+            )
+        };
+        // Unconfirmed: reverted after the deadline, links kept by reapply.
+        let (state, fake) = fixture(&connected);
+        let mut state = state.with_revert_after(Duration::from_millis(50));
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        {
+            let calls = &fake.lock().unwrap().calls;
+            let at = calls
+                .iter()
+                .position(|call| *call == modify("700"))
+                .unwrap();
+            assert_eq!(calls[at + 2], "device reapply eth0");
+        }
+        assert!(state.revert_in_seconds() > 0);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(fake.lock().unwrap().calls.contains(&modify("-1")));
+        assert_eq!(state.revert_in_seconds(), 0);
+        assert_eq!(
+            state.confirm_preference(),
+            rejected(ControlRejectionCode::InvalidState)
+        );
+
+        // Confirmed: kept.
+        let (state, fake) = fixture(&connected);
+        let mut state = state.with_revert_after(Duration::from_millis(50));
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        assert_eq!(state.confirm_preference(), ControlResponse::Applied);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!fake.lock().unwrap().calls.contains(&modify("-1")));
     }
 
     #[test]

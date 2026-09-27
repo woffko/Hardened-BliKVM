@@ -1221,6 +1221,8 @@ async fn respond(
                     | bli_kvm_core::PlatformControlRequestV2::WifiDisconnect {}
                     | bli_kvm_core::PlatformControlRequestV2::WifiProfile { .. }
                     | bli_kvm_core::PlatformControlRequestV2::WifiRadio { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::WifiPreferred { .. }
+                    | bli_kvm_core::PlatformControlRequestV2::WifiPreferredConfirm {}
             );
             let wifi = if wifi_request {
                 v2.lock().await.wifi_shared()

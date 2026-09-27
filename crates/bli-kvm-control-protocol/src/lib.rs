@@ -186,6 +186,26 @@ pub enum ControlResponse {
         /// The connected network's IPv4 address, as `address/prefix`.
         #[serde(default)]
         address: Option<String>,
+        #[serde(default)]
+        gateway: Option<String>,
+        /// At most three resolvers.
+        #[serde(default)]
+        dns: Vec<String>,
+        /// A global IPv6 address, as `address/prefix`.
+        #[serde(default)]
+        ipv6: Option<String>,
+        #[serde(default)]
+        hw_address: Option<String>,
+        #[serde(default)]
+        channel: Option<u16>,
+        #[serde(default)]
+        rate_mbps: Option<u32>,
+        /// WiFi is the main connection and Ethernet the backup.
+        #[serde(default)]
+        wifi_preferred: bool,
+        /// Seconds until an unconfirmed main-connection change is reverted.
+        #[serde(default)]
+        revert_in_seconds: u32,
     },
     /// The networks in range, strongest first, one entry per name.
     WifiNetworks {
@@ -478,12 +498,25 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
         return Err(ControlProtocolError::InvalidControlResponse);
     }
     if let ControlResponse::WifiState {
-        signal, security, ..
+        signal,
+        security,
+        address,
+        gateway,
+        dns,
+        ipv6,
+        hw_address,
+        ..
     } = response
         && (signal.is_some_and(|signal| signal > 100)
             || security
                 .as_deref()
-                .is_some_and(|security| !WIFI_SECURITY_LABELS.contains(&security)))
+                .is_some_and(|security| !WIFI_SECURITY_LABELS.contains(&security))
+            || dns.len() > 3
+            || [address, gateway, ipv6, hw_address]
+                .into_iter()
+                .flatten()
+                .chain(dns)
+                .any(|value| value.is_empty() || value.len() > 64))
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }

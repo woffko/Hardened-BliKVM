@@ -495,6 +495,24 @@ const ru = {
           loadFailed: 'Не удалось прочитать состояние Wi-Fi.',
           unsupportedSecurity:
             'Эта сеть использует защиту, к которой устройство не подключается (Enterprise, WEP или другая).',
+          ipv4: 'IPv4',
+          gateway: 'Шлюз',
+          dns: 'DNS',
+          ipv6: 'IPv6',
+          mac: 'MAC',
+          channel: 'Канал',
+          band24: '2,4 ГГц',
+          band5: '5 ГГц',
+          rate: 'Скорость',
+          rateValue: '{{rate}} Мбит/с',
+          mainConnection: 'Основное подключение',
+          ethernet: 'Ethernet',
+          wifi: 'Wi-Fi',
+          mainConnectionDesc:
+            'Оба подключения остаются активными; если основное пропадёт, работу продолжит второе.',
+          mainNeedsWifi: 'Подключитесь к сети Wi-Fi, чтобы сделать её основной.',
+          mainReverting:
+            'Изменение не подтверждено: прежнее основное подключение вернётся через {{seconds}} с.',
           security: {
             open: 'Открытая',
             wpa2: 'WPA2',

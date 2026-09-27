@@ -88,6 +88,14 @@ export type WifiStatus = {
   signal: number | null;
   security: WifiSecurity | null;
   address: string | null;
+  gateway: string | null;
+  dns: string[];
+  ipv6: string | null;
+  hwAddress: string | null;
+  channel: number | null;
+  rateMbps: number | null;
+  wifiPreferred: boolean;
+  revertInSeconds: number;
 };
 
 export type WifiNetwork = {
@@ -130,6 +138,15 @@ export function connectWifi(ssid: string, password: string, hidden = false) {
 // disconnect wifi
 export function disconnectWifi() {
   return http.post('/api/network/wifi/disconnect');
+}
+
+// make wifi (or ethernet) the main connection; reverted unless confirmed
+export function setWifiPreferred(enabled: boolean) {
+  return http.post('/api/network/wifi/preferred', { enabled });
+}
+
+export function confirmWifiPreferred() {
+  return http.post('/api/network/wifi/preferred/confirm');
 }
 
 // switch the wifi radio

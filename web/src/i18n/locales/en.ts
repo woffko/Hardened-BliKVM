@@ -495,6 +495,24 @@ const en = {
           loadFailed: 'Could not read the Wi-Fi state.',
           unsupportedSecurity:
             'This network uses security the board cannot join (enterprise, WEP or other).',
+          ipv4: 'IPv4',
+          gateway: 'Gateway',
+          dns: 'DNS',
+          ipv6: 'IPv6',
+          mac: 'MAC',
+          channel: 'Channel',
+          band24: '2.4 GHz',
+          band5: '5 GHz',
+          rate: 'Link speed',
+          rateValue: '{{rate}} Mbit/s',
+          mainConnection: 'Main connection',
+          ethernet: 'Ethernet',
+          wifi: 'Wi-Fi',
+          mainConnectionDesc:
+            'Both connections stay up; if the main one is lost, the other takes over.',
+          mainNeedsWifi: 'Connect to a Wi-Fi network to make it the main connection.',
+          mainReverting:
+            'Unconfirmed change: the previous main connection returns in {{seconds}} s.',
           security: {
             open: 'Open',
             wpa2: 'WPA2',

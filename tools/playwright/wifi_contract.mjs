@@ -1,8 +1,9 @@
-// The Wi-Fi block in Settings > System > Network on a mocked API: networks in
-// range with signal and security, joining with a password (a refused attempt
-// keeps the dialog), an open network, a hidden one, saved networks with
-// auto-join and Forget, Disconnect, Refresh and the radio switch; read-only
-// changes nothing; desktop and mobile.
+// The Wi-Fi block in Settings > System > Network on a mocked API: the current
+// connection with its details, the main connection (Ethernet or Wi-Fi, which
+// the page confirms), networks in range with signal and security, joining
+// with a password (a refused attempt keeps the dialog), an open network, a
+// hidden one, saved networks with auto-join and Forget, Disconnect, Refresh
+// and the radio switch; read-only changes nothing; desktop and mobile.
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { defaultManifest, startApp } from "./app_harness.mjs";
@@ -31,6 +32,7 @@ function board() {
   const state = {
     radio: true,
     ssid: "HomeNet",
+    wifiPreferred: false,
     refuseNext: true,
     profiles: [{ id: HOME, ssid: "HomeNet", autoconnect: true, active: true }],
   };
@@ -128,6 +130,14 @@ try {
           signal: current ? current.signal : null,
           security: current ? current.security : null,
           address: current ? "192.0.2.40/24" : null,
+          gateway: current ? "192.0.2.1" : null,
+          dns: current ? ["192.0.2.53", "192.0.2.54"] : [],
+          ipv6: current ? "2001:db8::40/64" : null,
+          hwAddress: current ? "AA:BB:CC:DD:EE:FF" : null,
+          channel: current ? current.channel : null,
+          rateMbps: current ? 130 : null,
+          wifiPreferred: state.wifiPreferred,
+          revertInSeconds: 0,
         });
       }
       const body = request.postDataJSON();
@@ -141,6 +151,8 @@ try {
       } else if (url.pathname.endsWith("/disconnect")) {
         state.ssid = "";
         state.profiles = state.profiles.map((p) => ({ ...p, active: false }));
+      } else if (url.pathname.endsWith("/preferred")) {
+        state.wifiPreferred = body.enabled;
       } else if (url.pathname.endsWith("/radio")) {
         state.radio = body.enabled;
       } else if (url.pathname.endsWith("/saved")) {
@@ -164,8 +176,26 @@ try {
       (await rows.allInnerTexts()).map((row) => row.replace(/\s+/g, "")),
       ["CorpEnterprise90%", "HomeNetConnected81%", "Office70%", "Cafe55%"],
     );
-    await block.getByText("Connected · 192.0.2.40/24 · WPA2").waitFor();
+    await block.getByText("Connected · WPA2 · 81%").waitFor();
     assert.equal(await block.getByTestId("wifi-profile").count(), 1);
+    const details = (
+      await block.getByTestId("wifi-details").innerText()
+    ).replace(/\s+/g, " ");
+    for (const expected of [
+      "IPv4 192.0.2.40/24",
+      "Gateway 192.0.2.1",
+      "DNS 192.0.2.53, 192.0.2.54",
+      "IPv6 2001:db8::40/64",
+      "MAC AA:BB:CC:DD:EE:FF",
+      "Channel 36 · 5 GHz",
+      "Link speed 130 Mbit/s",
+    ])
+      assert.ok(details.includes(expected), `${expected} in ${details}`);
+    const main = block.getByTestId("wifi-main-connection");
+    assert.equal(
+      await main.locator(".ant-segmented-disabled").count(),
+      writable ? 0 : 1,
+    );
     const radio = block.getByRole("switch", { name: "Wi-Fi radio" });
     assert.equal(await radio.isDisabled(), !writable);
     assert.equal(await rows.nth(2).isDisabled(), !writable);
@@ -200,7 +230,7 @@ try {
       .waitFor({ state: "detached" });
     await joinButton.click();
     await dialog.waitFor({ state: "hidden" });
-    await block.getByText("Connected · 192.0.2.40/24 · WPA3").waitFor();
+    await block.getByText("Connected · WPA3 · 70%").waitFor();
     assert.deepEqual(writes.slice(0, 2), [
       {
         path: "/api/network/wifi/connect",
@@ -211,6 +241,25 @@ try {
         body: { ssid: "Office", password: PASSWORD, hidden: false },
       },
     ]);
+
+    // Wi-Fi as the main connection, confirmed by the page, and back.
+    for (const [label, enabled] of [
+      ["Wi-Fi", true],
+      ["Ethernet", false],
+    ]) {
+      const before = writes.length;
+      const confirmed = page.waitForResponse((response) =>
+        response.url().endsWith("/api/network/wifi/preferred/confirm"),
+      );
+      await main.getByText(label, { exact: true }).click();
+      await confirmed;
+      await page.waitForTimeout(200);
+      assert.deepEqual(writes.slice(before), [
+        { path: "/api/network/wifi/preferred", body: { enabled } },
+        { path: "/api/network/wifi/preferred/confirm", body: null },
+      ]);
+      assert.equal(state.wifiPreferred, enabled);
+    }
 
     // An open network asks for no password.
     await rows.nth(3).click();
@@ -226,7 +275,7 @@ try {
 
     // A saved network rejoins without a dialog.
     await rows.filter({ hasText: "HomeNet" }).click();
-    await block.getByText("Connected · 192.0.2.40/24 · WPA2").waitFor();
+    await block.getByText("Connected · WPA2 · 81%").waitFor();
     assert.deepEqual(writes.at(-1), {
       path: "/api/network/wifi/saved",
       body: { id: HOME, action: "connect" },
@@ -298,7 +347,7 @@ try {
     await context.close();
   }
   console.log(
-    "Wi-Fi: networks, join with refusal, open, saved rejoin, hidden, auto-join, Forget, Disconnect, Refresh, radio and read-only passed on desktop and mobile",
+    "Wi-Fi: connection details, main connection, networks, join with refusal, open, saved rejoin, hidden, auto-join, Forget, Disconnect, Refresh, radio and read-only passed on desktop and mobile",
   );
 } finally {
   await browser.close();

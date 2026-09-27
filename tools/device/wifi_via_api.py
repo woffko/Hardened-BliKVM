@@ -16,6 +16,8 @@ Steps run in order:
   saved profile and that Ethernet keeps the default route.
 - ``autoconnect-off:SSID`` / ``autoconnect-on:SSID`` / ``forget:SSID`` /
   ``disconnect``: act on the saved profile or the device.
+- ``prefer-wifi`` / ``prefer-ethernet``: make that connection the main one,
+  confirm it over this connection, and check the default route.
 
 The GUI password is read from stdin (via project-memory-exec). For ``join`` the
 stdin carries project-memory-exec's two-secret envelope with roles ``gui`` and
@@ -134,6 +136,14 @@ def main() -> int:
             "hasAddress": bool(wifi.get("address")),
             "defaultRoute": route,
             "ssid": wifi.get("ssid"),
+            "gateway": wifi.get("gateway"),
+            "dnsCount": len(wifi.get("dns") or []),
+            "hasIpv6": bool(wifi.get("ipv6")),
+            "hasHwAddress": bool(wifi.get("hwAddress")),
+            "channel": wifi.get("channel"),
+            "rateMbps": wifi.get("rateMbps"),
+            "wifiPreferred": wifi.get("wifiPreferred"),
+            "revertInSeconds": wifi.get("revertInSeconds"),
         }
 
     def scan(rescan: bool) -> list[dict]:
@@ -239,6 +249,16 @@ def main() -> int:
                     passed &= done and not after
                 else:
                     passed &= done and after[0].get("autoconnect") is (name == "autoconnect-on")
+            elif name in ("prefer-wifi", "prefer-ethernet"):
+                wifi = name == "prefer-wifi"
+                done, reason, elapsed = act("/api/network/wifi/preferred", {"enabled": wifi})
+                confirmed, confirm_reason, _ = act("/api/network/wifi/preferred/confirm") if done else (False, None, 0)
+                time.sleep(3)
+                observed = state()
+                record(name.replace("-", "_"), applied=done, rejection=reason, ms=elapsed, confirmed=confirmed,
+                       confirmRejection=confirm_reason, state=observed)
+                passed &= done and observed["wifiPreferred"] is wifi and observed["revertInSeconds"] == 0
+                passed &= observed["defaultRoute"] == ("wlan0" if wifi else "eth0")
             elif name == "disconnect":
                 done, reason, elapsed = act("/api/network/wifi/disconnect")
                 observed = state()

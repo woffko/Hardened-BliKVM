@@ -353,6 +353,13 @@ pub enum PlatformControlRequestV2 {
     WifiRadio {
         enabled: bool,
     },
+    /// Make WiFi (or Ethernet) the main connection; the other stays up as a
+    /// backup. Reverted unless confirmed within a minute.
+    WifiPreferred {
+        enabled: bool,
+    },
+    /// Keep the main-connection change.
+    WifiPreferredConfirm {},
     /// Read the HTTPS redirect state and the public certificate.
     TlsState {},
     /// Switch the HTTP listener between serving and redirecting to HTTPS.
@@ -627,6 +634,8 @@ impl PlatformControlRequestV2 {
                 }
             }
             Self::WifiRadio { .. } => Ok(()),
+            Self::WifiPreferred { .. } => Ok(()),
+            Self::WifiPreferredConfirm {} => Ok(()),
             Self::TlsState {} => Ok(()),
             Self::TlsSet { .. } => Ok(()),
             Self::FirewallState {} => Ok(()),
