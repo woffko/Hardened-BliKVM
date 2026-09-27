@@ -20,6 +20,9 @@ set -eu
 
 # The device address comes from the operator environment, never from Git.
 ENDPOINT_HOST=${BLI_KVM_DEVICE_HOST:?set BLI_KVM_DEVICE_HOST to the board address}
+# The release the image belongs to, shown on the About page.
+IMAGE_RELEASE=${BLI_KVM_IMAGE_RELEASE:-development}
+case "$IMAGE_RELEASE" in *[!A-Za-z0-9.+-]*|"") echo "BLI_KVM_IMAGE_RELEASE is invalid" >&2; exit 2 ;; esac
 KNOWN_HOSTS=${BLI_KVM_KNOWN_HOSTS:-evidence/private/ssh-known-hosts}
 IMAGE_BYTES=$((28 * 1024 * 1024 * 1024))
 ROOT_START=8192
@@ -93,7 +96,7 @@ assemble() {
   # A fresh random salt per build; the password itself is the documented default.
   root_hash=$(openssl passwd -6 1234)
   fakeroot -s "$work/fakeroot.state" -- sh -eu -c '
-    staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7
+    staging=$1 tarball=$2 root_uuid=$3 data_uuid=$4 msd_uuid=$5 script_dir=$6 root_hash=$7 image_release=$8
     # ACLs (journal directories) and xattrs are not reproduced; systemd
     # recreates the journal ACLs on the device.
     tar --numeric-owner --no-acls --no-xattrs -C "$staging" -xpf "$tarball"
@@ -123,6 +126,12 @@ assemble() {
     if grep -rlI --exclude-dir=doc --exclude-dir=man "BEGIN [A-Z ]*PRIVATE KEY" \
         "$staging/etc" "$staging/var" "$staging/root" "$staging/home" 2>/dev/null | grep -q .; then
       echo "a private key remains in the root filesystem" >&2
+      exit 1
+    fi
+    # Nor a Wi-Fi passphrase (NetworkManager keyfiles, wpa_supplicant).
+    if grep -rlIE --exclude-dir=doc --exclude-dir=man "^[[:space:]]*(psk|wep-key[0-9]|password)=" \
+        "$staging/etc/NetworkManager" "$staging/etc/wpa_supplicant" "$staging/var/lib/NetworkManager" 2>/dev/null | grep -q .; then
+      echo "a Wi-Fi passphrase remains in the root filesystem" >&2
       exit 1
     fi
     for leaked in var/lib/tailscale/tailscaled.state var/lib/hardened-blikvm/account.json \
@@ -174,9 +183,9 @@ assemble() {
     ln -sf ../hardened-blikvm-firstboot.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-firstboot.service"
     : > "$staging/etc/hardened-blikvm/.firstboot-pending"
     # The About page shows this as the system image version.
-    printf "Hardened BliKVM H616 SD image %s\n" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
+    printf "Hardened BliKVM H616 SD image %s (%s)\n" "$image_release" "$(date -u +%Y-%m-%d)" > "$staging/etc/hardened-blikvm-image"
     chmod 0644 "$staging/etc/hardened-blikvm-image"
-  ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash"
+  ' sh "$staging" "$work/rootfs.tar" "$root_uuid" "$data_uuid" "$msd_uuid" "$script_dir" "$root_hash" "$IMAGE_RELEASE"
 
   # The image's initramfs must carry the RAW system update step.
   for initrd in "$staging"/boot/initrd.img-*; do
@@ -263,7 +272,7 @@ assemble() {
     sha256sum "$(basename "$image")" "$(basename "$image").zst" "$(basename "$raw")" "$(basename "$raw").zst" > SHA256SUMS
   )
   cat > "$output/IMAGE-INFO.txt" <<INFO
-Hardened BliKVM H616 SD image (development, not release-accepted)
+Hardened BliKVM H616 SD image, release $IMAGE_RELEASE
 source system: $(tr '\n' ' ' < "$work/source-system.txt")
 layout: MBR; raw boot area sectors 1-2047 from the board; p1 root 12 GiB
         (UUID $root_uuid); p2 data 14 GiB at /mnt; p3 MSD remainder; total 28 GiB
