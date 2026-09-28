@@ -186,9 +186,12 @@ export const DownloadImage = () => {
     }
   }
 
+  // The board's status covers the remote download only; a local upload is
+  // followed by its own request, and an "idle" here does not end it.
   function getDownloadStatus() {
+    if (activeTransferRef.current === 'local') return;
     statusImage().then((rsp) => {
-      if (rsp.code !== 0 || !rsp.data?.status) {
+      if (rsp.code !== 0 || !rsp.data?.status || activeTransferRef.current === 'local') {
         return;
       }
 
@@ -224,15 +227,6 @@ export const DownloadImage = () => {
           setInput('');
           setDownloadStatus('complete');
           setLog(t('download.complete'));
-          notifyImageListChanged();
-          return;
-        }
-
-        if (previousStatus === 'in_progress' && previousTransfer === 'local') {
-          setDownloadStatus('complete');
-          setLog(t('download.uploadComplete'));
-          setSelectedFile(null);
-          clearFileInput();
           notifyImageListChanged();
           return;
         }
@@ -321,7 +315,7 @@ export const DownloadImage = () => {
 
     const formData = new FormData();
     formData.append('file', file);
-    startStatusPolling();
+    stopStatusPolling();
     resetStallWatchdog();
 
     try {

@@ -141,8 +141,9 @@ I3. The server reports the store's free space and the limit
     have enough free space"); the Download dialog shows the free space,
     refuses a file that does not fit, and asks
     `POST /api/download/file/check` (name, size, free space, attached image)
-    before sending. Names may have 128 characters, as in the catalog. Cancel
-    takes the upload button's place while a file is sent.
+    before sending. Names may have 128 characters, as in the catalog. The
+    remote download's status no longer ends an upload; Cancel takes the
+    upload button's place while a file is sent.
 I4. The IPv6 address placeholder (inherited from the reference, an address of
     a private test network) becomes a documentation address
     (`2001:db8::132`).

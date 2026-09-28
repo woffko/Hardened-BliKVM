@@ -36,7 +36,10 @@ the operator is told when an attach fails. Found and fixed in the audit of
   download's), `[A-Za-z0-9][A-Za-z0-9._-]*` with an `.iso` or `.img`
   extension; distribution images such as FreeBSD's carry names of about 70.
 - While a file is sent, Cancel takes the upload button's place, so the
-  narrow menu keeps it in view.
+  narrow menu keeps it in view. The dialog's poll of
+  `GET /api/download/image/status` follows the remote download only: that
+  status knows nothing of an upload (the reference's covered both), and its
+  "idle" used to mark a running upload complete after 2.5 s, hiding Cancel.
 - An upload that cannot be stored otherwise is answered "the image store on
   the board is not writable" (409); the server log names the file and the
   error.

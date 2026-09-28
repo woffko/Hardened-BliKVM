@@ -13,7 +13,6 @@
 //   the dialog must refuse after the board's check, without sending it;
 //   MEDIA_CANCEL_PATH, a large .iso whose upload is canceled from the dialog.
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -86,20 +85,11 @@ try {
         headers: { Origin: baseUrl, "X-CSRF-Token": csrf },
       })
     ).json();
-  const detach = async () =>
-    (
-      await context.request.post(`${baseUrl}/api/virtual-media`, {
-        headers: { Origin: baseUrl, "X-CSRF-Token": csrf },
-        data: {
-          operationId: randomBytes(16).toString("hex"),
-          command: { action: "set_connected", connected: false },
-        },
-      })
-    ).json();
-  // A previous run may have left the drive attached.
-  if ((await api("/api/storage/image/mounted")).data?.file) {
-    record("detach_before", { answer: (await detach()).data });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+  // An attached drive may be the operator's: stop rather than detach it.
+  const attachedBefore = (await api("/api/storage/image/mounted")).data?.file;
+  if (attachedBefore) {
+    record("drive_in_use", { file: attachedBefore });
+    throw new Error("a drive is attached; detach it from the GUI and rerun");
   }
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
