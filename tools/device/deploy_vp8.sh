@@ -48,7 +48,9 @@ install_vp8() {
       > "$units/$unit.service.d/60-webrtc.conf"
   done
   systemctl daemon-reload
-  systemctl enable --now hardened-blikvm-janus.service
+  systemctl enable hardened-blikvm-janus.service
+  # Janus reads its mountpoints only at start.
+  systemctl restart hardened-blikvm-janus.service
   systemctl restart hardened-blikvm-ustreamer.service
   systemctl enable hardened-blikvm-video-encoder.service hardened-blikvm-video-encoder-h264.service
   systemctl restart hardened-blikvm-video-encoder.service hardened-blikvm-video-encoder-h264.service

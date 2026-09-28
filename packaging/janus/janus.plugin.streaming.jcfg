@@ -29,7 +29,8 @@ bli-kvm-h264: {
 	videoiface = "127.0.0.1"
 	videopt = 97
 	videortpmap = "H264/90000"
-	# Constrained baseline, as x264 encodes it; FU-A fragments.
-	videofmtp = "profile-level-id=42e01f;packetization-mode=1"
+	# Constrained baseline, as x264 encodes it, up to level 4.0 (1080p at
+	# 30 frames/s); FU-A fragments.
+	videofmtp = "profile-level-id=42e028;packetization-mode=1"
 	videobufferkf = true
 }

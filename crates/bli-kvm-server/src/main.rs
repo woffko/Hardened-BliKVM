@@ -9,7 +9,7 @@ use tokio::net::{TcpListener, UnixListener, UnixStream};
 
 const DEFAULT_BIND: &str = "127.0.0.1:18080";
 /// Send buffer of a stream connection (the kernel doubles it).
-const STREAM_SEND_BUFFER: libc::c_int = 64 * 1024;
+const STREAM_SEND_BUFFER: libc::c_int = 32 * 1024;
 
 /// A small, fixed send buffer: a slow viewer's frames then wait in the
 /// server, where a newer frame replaces them, not in nginx.

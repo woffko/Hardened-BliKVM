@@ -143,9 +143,12 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   server's unix socket (`BLI_KVM_STREAM_SOCKET`,
   `/run/hardened-blikvm-stream/mjpeg.sock`, mode 0666 like the reachable
   TCP port, with the same session check), whose send buffer the server sets
-  to 128 KiB per connection. `net.ipv4.tcp_notsent_lowat` of 128 KiB
+  to 64 KiB per connection. `net.ipv4.tcp_notsent_lowat` of 64 KiB
   (`packaging/sysctl/60-hardened-blikvm-stream.conf`) keeps nginx's send
-  queue to the browser to about one frame.
+  queue to the browser under a frame. Measured with 60 KB frames: a
+  full-speed viewer 12 ms behind uStreamer at p90, a 20 Mbit/s viewer 2.9 s
+  over TCP, 310 ms over the unix socket with a 128 KiB limit and 288 ms with
+  64 KiB (`mjpeg-latency-seq54-*.json`).
 - uStreamer's `X-Timestamp` is the board's wall clock when the frame left
   it (checked on the board to 1 ms), so the probe measures a viewer's delay
   as its arrival in true time minus the stamp. The build host's monotonic

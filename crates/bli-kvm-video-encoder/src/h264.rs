@@ -272,4 +272,49 @@ mod tests {
             assert_eq!(keys, 2, "{preset:?}");
         }
     }
+
+    #[test]
+    fn a_1080p_stream_matches_the_profile_janus_announces() {
+        // Janus offers profile-level-id=42e028: constrained baseline (66 with
+        // constraint_set1), level 4.0 or lower.
+        let mut encoder = H264Encoder::new(H264Config {
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            kbps: 2500,
+            threads: 2,
+            keyframe_interval: 60,
+            preset: H264Preset::Ultrafast,
+        })
+        .unwrap();
+        let y: Vec<u8> = (0..1920 * 1080).map(|value| (value % 251) as u8).collect();
+        let (u, v) = (vec![128_u8; 960 * 540], vec![128_u8; 960 * 540]);
+        let frames = encoder
+            .encode(
+                I420 {
+                    y: &y,
+                    u: &u,
+                    v: &v,
+                    y_stride: 1920,
+                    uv_stride: 960,
+                },
+                0,
+                true,
+            )
+            .unwrap();
+        let data = &frames[0].data;
+        let sps = data
+            .windows(4)
+            .position(|w| w[..3] == [0, 0, 1] && w[3] & 0x1f == 7)
+            .expect("an SPS")
+            + 3;
+        let (profile, constraints, level) = (data[sps + 1], data[sps + 2], data[sps + 3]);
+        assert_eq!(profile, 66, "baseline");
+        assert_ne!(
+            constraints & 0x40,
+            0,
+            "constraint_set1: constrained baseline"
+        );
+        assert!(level <= 40, "level {level}");
+    }
 }
