@@ -8,7 +8,10 @@
 //   VIEWPORT: desktop | mobile
 // Environment: MEDIA_UPLOAD_TIMEOUT_MS (default 120000) for a large ISO;
 //   MEDIA_OVERSIZE_PATH, an .iso larger than the store's free space (a sparse
-//   file), which the dialog must refuse without sending it.
+//   file), which the dialog must refuse without sending it;
+//   MEDIA_BADNAME_PATH, an .iso whose name the board refuses (a space), which
+//   the dialog must refuse after the board's check, without sending it;
+//   MEDIA_CANCEL_PATH, a large .iso whose upload is canceled from the dialog.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -26,6 +29,10 @@ assert.ok(["desktop", "mobile"].includes(viewport));
 const uploadTimeout = Number(process.env.MEDIA_UPLOAD_TIMEOUT_MS ?? 120000);
 const oversizePath = process.env.MEDIA_OVERSIZE_PATH ?? "";
 assert.ok(!oversizePath || fs.existsSync(oversizePath));
+const badNamePath = process.env.MEDIA_BADNAME_PATH ?? "";
+assert.ok(!badNamePath || fs.existsSync(badNamePath));
+const cancelPath = process.env.MEDIA_CANCEL_PATH ?? "";
+assert.ok(!cancelPath || fs.existsSync(cancelPath));
 const imageName = path.basename(isoPath);
 let password = "";
 for await (const chunk of process.stdin) password += chunk.toString("utf8");
@@ -159,6 +166,58 @@ try {
     assert.ok(/does not fit/.test(shown), "the oversize file was not refused");
     assert.ok(disabled && sent.length === 0);
     take();
+  }
+  if (badNamePath) {
+    // The board's check refuses the name; the file is not sent.
+    await page.locator("#file-upload").setInputFiles(badNamePath);
+    await uploadButton.click();
+    const refusal = page.locator(".ant-popover:visible .text-red-500").first();
+    await refusal.waitFor({ timeout: 15000 });
+    const shown = (await refusal.innerText()).trim();
+    const seen = take();
+    record("bad_name_refused", {
+      shown,
+      checked: seen.filter((a) => a.path === "/api/download/file/check"),
+      sent: seen.filter((a) => a.path === "/api/download/file").length,
+    });
+    assert.ok(/file name may have/.test(shown), "the bad name was not refused");
+    assert.equal(seen.filter((a) => a.path === "/api/download/file").length, 0);
+  }
+  if (cancelPath) {
+    // Cancel stays in view while a file is sent, and stops it.
+    await page.locator("#file-upload").setInputFiles(cancelPath);
+    await uploadButton.click();
+    const cancel = page.locator(".ant-popover:visible [data-upload-cancel]");
+    await cancel.waitFor({ timeout: 15000 });
+    await page.waitForTimeout(3000);
+    const box = await cancel.boundingBox();
+    const popover = await page
+      .locator(".ant-popover:visible .ant-popover-inner")
+      .first()
+      .boundingBox();
+    const inView =
+      box !== null &&
+      popover !== null &&
+      box.x >= popover.x &&
+      box.x + box.width <= popover.x + popover.width + 1;
+    await cancel.click();
+    const shownLine = page
+      .locator(".ant-popover:visible .text-green-500")
+      .filter({ hasText: /canceled/i })
+      .first();
+    await shownLine.waitFor({ timeout: 15000 });
+    const cancelName = path.basename(cancelPath);
+    const listed = (
+      (await api("/api/virtual-media/catalog")).data?.images ?? []
+    ).some((image) => image.imageName === cancelName);
+    record("upload_canceled", {
+      inView,
+      shown: (await shownLine.innerText()).trim(),
+      listed,
+      answers: take(),
+    });
+    assert.ok(inView, "Cancel is outside the menu");
+    assert.ok(!listed, "a canceled upload reached the catalog");
   }
   await page.locator("#file-upload").setInputFiles(isoPath);
   // The upload button sits beside the file drop area; the URL form above it

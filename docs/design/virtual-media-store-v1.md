@@ -22,13 +22,21 @@ the operator is told when an attach fails. Found and fixed in the audit of
 - One image may have up to 64 GiB (the upload, nginx's body limit for it and
   the remote download); the store's free space is the usual limit.
   `GET /api/download/image/enabled` reports the free space
-  (`freeBytes`) and that limit (`maxUploadBytes`). The Download dialog shows
-  the free space and refuses a file that does not fit before sending it:
-  nginx passes the body on unbuffered, and when the server refuses early it
-  keeps receiving the body, so the browser would only see the connection
-  drop. The server still refuses a declared length beyond the free space,
-  and a write that runs out of space, with "the image store does not have
-  enough free space" (409).
+  (`freeBytes`) and that limit (`maxUploadBytes`).
+- Before sending a file the Download dialog shows the free space, refuses a
+  file that does not fit, and asks `POST /api/download/file/check` with the
+  name and size: the server answers the refusals the upload would meet (the
+  name, an empty or oversize file, the free space, the attached image). A
+  refusal given while a large body is still arriving does not reliably reach
+  the browser: nginx passes the body on unbuffered, and the operator saw the
+  progress start over instead of the reason. The upload itself still refuses
+  a declared length beyond the free space, and a write that runs out of
+  space, with "the image store does not have enough free space" (409).
+- A name has up to 128 characters (the catalog's limit, and the remote
+  download's), `[A-Za-z0-9][A-Za-z0-9._-]*` with an `.iso` or `.img`
+  extension; distribution images such as FreeBSD's carry names of about 70.
+- While a file is sent, Cancel takes the upload button's place, so the
+  narrow menu keeps it in view.
 - An upload that cannot be stored otherwise is answered "the image store on
   the board is not writable" (409); the server log names the file and the
   error.

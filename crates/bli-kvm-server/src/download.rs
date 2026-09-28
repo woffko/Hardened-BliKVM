@@ -5,6 +5,9 @@
 //! administration feature, off until switched on. The local upload (`POST /api/download/file`) accepts one bounded
 //! multipart file, writes it atomically into the configured image directory,
 //! hashes it while streaming and records it in the media catalog.
+//! `POST /api/download/file/check` answers the same refusals for a name and a
+//! size before the web client sends a file: an answer the server gives while
+//! a large body is still arriving does not reliably reach the browser.
 
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -18,7 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use bli_kvm_media_catalog::{CatalogImage, MediaCatalog};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::AppState;
@@ -30,7 +33,8 @@ use crate::error::{ApiResponse, AppError, AppResult};
 pub(crate) const MAX_MEDIA_UPLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 /// Slack allowed over `Content-Length` for multipart framing.
 const CONTENT_LENGTH_SLACK: u64 = 1024 * 1024;
-const MAX_UPLOAD_NAME_BYTES: usize = 64;
+/// The media catalog's limit for an image name.
+const MAX_UPLOAD_NAME_BYTES: usize = 128;
 /// The web client maps this reason to the operator's language.
 const NO_SPACE: &str = "the image store does not have enough free space";
 
@@ -73,6 +77,64 @@ pub(crate) fn validate_upload_name(value: &str) -> Result<UploadKind, AppError> 
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UploadCheck {
+    name: String,
+    size: u64,
+}
+
+/// The refusals an upload of `name` with `size` bytes would meet.
+pub(crate) async fn check_upload(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(check): Json<UploadCheck>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    let directory = upload_directory(&state)?;
+    validate_upload_name(&check.name)?;
+    if check.size == 0 {
+        return Err(AppError::BadRequest("the file is empty".into()));
+    }
+    if check.size > MAX_MEDIA_UPLOAD_BYTES {
+        return Err(AppError::BadRequest("upload is too large".into()));
+    }
+    if let Some(free) = store_free_bytes(&directory)
+        && check.size > free
+    {
+        return Err(AppError::Conflict(NO_SPACE.into()));
+    }
+    refuse_attached(&state, &session.token, &check.name).await?;
+    Ok(Json(ApiResponse::ok(())))
+}
+
+/// The image directory, when uploads are available at all.
+fn upload_directory(state: &AppState) -> AppResult<PathBuf> {
+    if !state.options.restricted_controls_enabled
+        || !state.options.media_controls_enabled
+        || state.control.is_none()
+    {
+        return Err(AppError::ServiceUnavailable(
+            "image upload is not available".into(),
+        ));
+    }
+    state
+        .options
+        .media_directory
+        .clone()
+        .ok_or_else(|| AppError::ServiceUnavailable("image storage is not configured".into()))
+}
+
+/// Replacing the attached image would leave the target reading the old file
+/// while the catalog describes the new one.
+async fn refuse_attached(state: &AppState, session_token: &str, name: &str) -> AppResult<()> {
+    if attached_image(state, session_token).await?.as_deref() == Some(name) {
+        return Err(AppError::Conflict(
+            "detach the drive before replacing its image".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn upload_allows(kind: UploadKind) -> (bool, bool, bool) {
     match kind {
         UploadKind::Iso => (true, true, false),
@@ -93,7 +155,20 @@ pub(crate) async fn upload_image(
 ) -> Response {
     match upload_image_inner(&state, &session.token, &headers, &mut multipart).await {
         Ok(response) => response.into_response(),
-        Err(error) => error.into_response(),
+        Err(error) => {
+            // nginx passes the body on unbuffered and reads the answer only
+            // once the body is sent: a refusal with the body left unread
+            // stalls the upload instead of reaching the browser.
+            drain(&mut multipart).await;
+            error.into_response()
+        }
+    }
+}
+
+/// Reads and discards what is left of an upload.
+async fn drain(multipart: &mut Multipart) {
+    while let Ok(Some(mut field)) = multipart.next_field().await {
+        while let Ok(Some(_)) = field.chunk().await {}
     }
 }
 
@@ -143,18 +218,7 @@ async fn upload_image_inner(
     headers: &HeaderMap,
     multipart: &mut Multipart,
 ) -> AppResult<Json<ApiResponse<ImageUploadResponse>>> {
-    if !state.options.restricted_controls_enabled
-        || !state.options.media_controls_enabled
-        || state.control.is_none()
-    {
-        return Err(AppError::ServiceUnavailable(
-            "image upload is not available".into(),
-        ));
-    }
-    let directory =
-        state.options.media_directory.clone().ok_or_else(|| {
-            AppError::ServiceUnavailable("image storage is not configured".into())
-        })?;
+    let directory = upload_directory(state)?;
     let catalog_path =
         state.options.media_catalog.clone().ok_or_else(|| {
             AppError::ServiceUnavailable("image catalog is not configured".into())
@@ -191,13 +255,7 @@ async fn upload_image_inner(
         }
         let name = field.file_name().unwrap_or_default().to_owned();
         let kind = validate_upload_name(&name)?;
-        // Replacing the attached image would leave the target reading the
-        // old file while the catalog describes the new one.
-        if attached_image(state, session_token).await?.as_deref() == Some(name.as_str()) {
-            return Err(AppError::Conflict(
-                "detach the drive before replacing its image".into(),
-            ));
-        }
+        refuse_attached(state, session_token, &name).await?;
         let temporary = temporary_path(&directory, &name);
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -371,6 +429,12 @@ mod tests {
             with_rejected(invalid);
         }
         with_rejected(&"a".repeat(MAX_UPLOAD_NAME_BYTES + 1));
+        // Distribution images carry long names.
+        validate_upload_name(
+            "FreeBSD-15.0-PRERELEASE-amd64-20250822-027be99b1f33-279771-disc1.iso",
+        )
+        .unwrap();
+        validate_upload_name(&format!("{}.iso", "a".repeat(MAX_UPLOAD_NAME_BYTES - 4))).unwrap();
     }
 
     fn with_rejected(name: &str) {

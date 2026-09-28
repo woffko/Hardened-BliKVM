@@ -325,6 +325,10 @@ const en = {
       noSpace: 'The file ({{size}}) does not fit: the image store has {{free}} free.',
       tooLarge: 'The file ({{size}}) is larger than the {{max}} an image may have.',
       storeFree: 'Free in the image store: {{free}}',
+      nameInvalid:
+        'The file name may have up to 128 letters, digits, dots, dashes and underscores and must start with a letter or digit. Rename the file and try again.',
+      tooLargeAny: 'The file is larger than an image may be.',
+      fileEmpty: 'The file is empty.',
       stalled: 'Transfer stalled. Check the connection and retry.',
       canceled: 'Upload canceled',
       cancel: 'Cancel',

@@ -562,6 +562,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/autostart", get(autostart::list))
         .route("/vm/autostart/{name}", get(autostart::content))
         .route("/download/image/enabled", get(download::image_enabled))
+        .route("/download/file/check", post(download::check_upload))
         .route("/download/image", post(remote_download::start))
         .route("/download/image/status", get(remote_download::status))
         .route(
@@ -3767,6 +3768,79 @@ mod tests {
             .await;
     }
 
+    #[tokio::test]
+    async fn a_refused_upload_is_read_to_its_end_before_the_answer() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let directory = tempdir().unwrap();
+        let images = directory.path().join("images");
+        fs::create_dir_all(&images).unwrap();
+        let catalog = directory.path().join("catalog.json");
+        fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        let owner = serve_media_state(&directory.path().join("control.sock"), None);
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            restricted_controls_enabled: true,
+            media_controls_enabled: true,
+            media_catalog: Some(catalog),
+            media_directory: Some(images.clone()),
+            control_socket: Some(directory.path().join("control.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let boundary = "----blikvm-upload";
+        let mut chunks = vec![bytes::Bytes::from(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"name with space.iso\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        ))];
+        chunks.extend(std::iter::repeat_n(
+            bytes::Bytes::from(vec![0_u8; 64 * 1024]),
+            64,
+        ));
+        chunks.push(bytes::Bytes::from(format!("\r\n--{boundary}--\r\n")));
+        let length: usize = chunks.iter().map(bytes::Bytes::len).sum();
+        let (total, read) = (chunks.len(), Arc::new(AtomicUsize::new(0)));
+        let counter = read.clone();
+        // Each chunk arrives after a pause, as over a connection; a stream
+        // that is always ready would be buffered whole by the parser.
+        let stream = futures_util::stream::unfold(chunks.into_iter(), move |mut chunks| {
+            let counter = counter.clone();
+            async move {
+                tokio::task::yield_now().await;
+                let chunk = chunks.next()?;
+                counter.fetch_add(1, Ordering::SeqCst);
+                Some((Ok::<_, std::io::Error>(chunk), chunks))
+            }
+        });
+        let answer = json_body(
+            app.oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/download/file")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .header(header::CONTENT_LENGTH, length)
+                    .header(header::COOKIE, cookie)
+                    .header("x-csrf-token", csrf)
+                    .body(Body::from_stream(stream))
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(answer["msg"], "image name is invalid");
+        // Behind nginx the answer is read only after the whole body is sent.
+        assert_eq!(read.load(Ordering::SeqCst), total);
+        assert_eq!(fs::read_dir(&images).unwrap().count(), 0);
+        owner.abort();
+    }
+
     #[cfg(feature = "restricted-control-surface")]
     async fn attached_image_is_kept_and_stale_entries_dropped(
         directory: &tempfile::TempDir,
@@ -3823,6 +3897,53 @@ mod tests {
             fs::read(images.join("kubuntu.img")).unwrap(),
             b"disk-image-bytes"
         );
+        // The check before sending answers the same refusals.
+        for (name, size, code, msg) in [
+            (
+                "kubuntu.img",
+                11_u64,
+                -409,
+                "detach the drive before replacing its image",
+            ),
+            ("name with space.iso", 11, -1, "image name is invalid"),
+            (
+                "big.iso",
+                65 * 1024 * 1024 * 1024,
+                -1,
+                "upload is too large",
+            ),
+            ("big.iso", 0, -1, "the file is empty"),
+            (
+                "FreeBSD-15.0-PRERELEASE-amd64-20250822-027be99b1f33-279771-disc1.iso",
+                11,
+                0,
+                "success",
+            ),
+        ] {
+            let answer = json_body(
+                attached
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/download/file/check")
+                            .header(header::HOST, "kvm.test")
+                            .header(header::ORIGIN, "https://kvm.test")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::COOKIE, &cookie)
+                            .header("x-csrf-token", &csrf)
+                            .body(Body::from(
+                                serde_json::json!({ "name": name, "size": size }).to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(answer["code"], code, "{name} {size}: {answer}");
+            assert_eq!(answer["msg"], msg, "{name} {size}: {answer}");
+        }
         attached_owner.abort();
 
         // A catalog entry whose file is gone is dropped when the catalog is read.

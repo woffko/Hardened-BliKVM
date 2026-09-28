@@ -6,7 +6,7 @@ import { useSetAtom } from 'jotai';
 import { DownloadIcon, XCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { downloadImage, imageEnabled, statusImage } from '@/api/download.ts';
+import { checkUpload, downloadImage, imageEnabled, statusImage } from '@/api/download.ts';
 import { getCsrfToken } from '@/lib/cookie.ts';
 import { notifyImageListChanged } from '@/lib/image-events.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
@@ -306,7 +306,7 @@ export const DownloadImage = () => {
     }
 
     const { free, max } = await checkDiskEnabled();
-    const refusal = sizeRefusal(file, free, max);
+    const refusal = sizeRefusal(file, free, max) || (await boardRefusal(file));
     if (refusal) {
       setDownloadStatus('failed');
       setLog(refusal);
@@ -350,12 +350,27 @@ export const DownloadImage = () => {
     }
   }
 
+  // The board refuses a name, size or attached image before the file is sent:
+  // a refusal while a large body is still arriving may never reach the page.
+  async function boardRefusal(file: File) {
+    try {
+      const rsp = await checkUpload(file.name, file.size);
+      return rsp.code === 0 ? '' : uploadErrorText(rsp.msg);
+    } catch {
+      return t('download.uploadFailed');
+    }
+  }
+
   // The board's reasons, in the operator's language where they are known.
   function uploadErrorText(msg: string | undefined) {
     if (msg === 'the image store on the board is not writable')
       return t('download.storeNotWritable');
     if (msg === 'detach the drive before replacing its image') return t('download.detachFirst');
     if (msg === 'the image store does not have enough free space') return t('download.storeFull');
+    if (msg === 'image name is invalid') return t('download.nameInvalid');
+    if (msg === 'only .img and .iso images are accepted') return t('download.NoISO');
+    if (msg === 'upload is too large') return t('download.tooLargeAny');
+    if (msg === 'the file is empty') return t('download.fileEmpty');
     return msg || t('download.uploadFailed');
   }
 
@@ -541,22 +556,30 @@ export const DownloadImage = () => {
                   className="hidden"
                 />
               </div>
-              <Button
-                type="primary"
-                className="h-10 border-2"
-                onClick={() => upload(selectedFile)}
-                disabled={
-                  status === 'in_progress' ||
-                  status === 'complete' ||
-                  !selectedFile ||
-                  sizeRefusal(selectedFile, storeFree, maxUpload) !== ''
-                }
-              >
-                {t('download.ok')}
-              </Button>
-              {status === 'in_progress' && activeTransfer === 'local' && (
-                <Button danger icon={<XCircleIcon size={14} />} onClick={cancelTransfer}>
+              {status === 'in_progress' && activeTransfer === 'local' ? (
+                // In the upload button's place, so the narrow menu keeps it in view.
+                <Button
+                  danger
+                  className="h-10 border-2"
+                  icon={<XCircleIcon size={14} />}
+                  onClick={cancelTransfer}
+                  data-upload-cancel
+                >
                   {t('download.cancel')}
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  className="h-10 border-2"
+                  onClick={() => upload(selectedFile)}
+                  disabled={
+                    status === 'in_progress' ||
+                    status === 'complete' ||
+                    !selectedFile ||
+                    sizeRefusal(selectedFile, storeFree, maxUpload) !== ''
+                  }
+                >
+                  {t('download.ok')}
                 </Button>
               )}
             </div>
