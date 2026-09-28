@@ -65,7 +65,15 @@ try {
       video.playsInline = true;
       document.body.append(video);
       let answered = false;
+      let answerCodecs = [];
       let frames = 0;
+      const receiverCodecs = [
+        ...new Set(
+          RTCRtpReceiver.getCapabilities("video").codecs.map(
+            (entry) => entry.mimeType,
+          ),
+        ),
+      ];
       peer.ontrack = (event) => {
         video.srcObject = new MediaStream([event.track]);
         const count = () => {
@@ -98,6 +106,9 @@ try {
         await peer.setRemoteDescription({ type: "offer", sdp: message.sdp });
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
+        answerCodecs = answer.sdp
+          .split("\r\n")
+          .filter((line) => line.startsWith("a=rtpmap:"));
         answered = true;
         socket.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
       };
@@ -112,8 +123,35 @@ try {
             frameWidth: report.frameWidth,
             frameHeight: report.frameHeight,
             keyFramesDecoded: report.keyFramesDecoded,
+            packetsReceived: report.packetsReceived,
+            packetsLost: report.packetsLost,
+            nackCount: report.nackCount,
+            pliCount: report.pliCount,
+            framesDropped: report.framesDropped,
+            framesReceived: report.framesReceived,
+            // Mean per-frame delays in milliseconds: time in the jitter
+            // buffer, and from the first packet received to the decoded frame.
+            jitterBufferMs:
+              report.jitterBufferEmittedCount > 0
+                ? (1000 * report.jitterBufferDelay) /
+                  report.jitterBufferEmittedCount
+                : null,
+            processingMs:
+              report.framesDecoded > 0 && report.totalProcessingDelay != null
+                ? (1000 * report.totalProcessingDelay) / report.framesDecoded
+                : null,
+            decodeMs:
+              report.framesDecoded > 0
+                ? (1000 * report.totalDecodeTime) / report.framesDecoded
+                : null,
           });
         }
+        if (
+          report.type === "candidate-pair" &&
+          report.nominated &&
+          report.currentRoundTripTime != null
+        )
+          stats.roundTripMs = 1000 * report.currentRoundTripTime;
         if (report.type === "codec" && report.mimeType)
           stats.mimeType = report.mimeType;
       });
@@ -125,6 +163,8 @@ try {
       peer.close();
       return {
         events,
+        receiverCodecs,
+        answerCodecs,
         frames,
         stats,
         state,

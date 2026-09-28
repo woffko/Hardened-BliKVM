@@ -207,6 +207,21 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   screen): no viewer 1.5 % (the encoders wait), MJPEG 7 % (nginx, server,
   uStreamer), VP8 10 % (encoder 13 % of a core), H.264 11 % (encoder 12 %
   of a core), 1.5 % again once the viewers left.
-- The headless Chromium used by the probes has no H.264 decoder
-  (proprietary codecs are left out of its build); H.264 is negotiated and
-  delivered there, and decoded in Chrome.
+- Delay of a WebRTC frame, on a still screen where every frame is a key
+  frame (`{vp8,h264}-webrtc-seq55-diag-*.json` and the encoders' journal
+  lines of the same minute): on the board, decoding the JPEG, converting it
+  and encoding take 105-120 ms for H.264 (34-46, 28-30 and 41-44 ms) and
+  135-155 ms for VP8 (37-38, 26 and 73-92 ms); in the browser (Chromium,
+  1920x1080, no packet lost) the frame waits 8 ms in the jitter buffer and
+  is decoded 10 ms after its first packet arrived (H.264 1.4 ms of decoding,
+  VP8 3 ms); the round trip was 1-12 ms. A frame that is not a key frame
+  encodes faster (the benchmark's 29 ms for x264 ultrafast, 39-43 ms for
+  VP8): with the benchmark's 45 ms of preparation that is about 85 ms
+  (H.264) and 100 ms (VP8) from capture to screen, and 20-30 ms more when
+  preparation takes the 60-75 ms seen here. MJPEG's
+  12 ms at p90 is measured from the capture's own timestamp to the viewer
+  and leaves the JPEG decoding to the browser.
+- The probes' Chromium decodes H.264: the first H.264 probe (before the
+  periodic key frames) received only the headers and decoded nothing, as
+  the VP8 probe of the same minute did; with key frames every two seconds
+  both decode at 1920x1080.

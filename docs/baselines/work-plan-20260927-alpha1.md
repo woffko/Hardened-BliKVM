@@ -218,6 +218,10 @@ Status of phase J (2026-09-28, slots 53-55, receipts under evidence/private):
   ultrafast is therefore the WebRTC mode to use at 1920x1080 and is listed
   before VP8 in the video menu; MJPEG stays the default, as in the
   reference. No lower resolution needs to be forced.
-- J5 done for MJPEG, VP8 and H.264 CPU and for MJPEG latency; the H.264
-  picture is checked in Chrome by the operator, since the probes' headless
-  Chromium cannot decode H.264.
+- J5 done: CPU for every mode (`cpu-modes-seq55-*`), frame rates from the
+  benchmark, MJPEG latency from the capture's timestamps, and the WebRTC
+  delay from the encoders' stage times and the browser's statistics
+  (`{vp8,h264}-webrtc-seq55-diag-*`): on a still screen a key frame takes
+  105-120 ms (H.264) or 135-155 ms (VP8) on the board and 10 ms in the
+  browser, with no packet lost; the probes' Chromium decodes both at
+  1920x1080 (design note).
