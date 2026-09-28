@@ -11,7 +11,11 @@
 //   file), which the dialog must refuse without sending it;
 //   MEDIA_BADNAME_PATH, an .iso whose name the board refuses (a space), which
 //   the dialog must refuse after the board's check, without sending it;
-//   MEDIA_CANCEL_PATH, a large .iso whose upload is canceled from the dialog.
+//   MEDIA_CANCEL_PATH, a large .iso whose upload is canceled from the dialog;
+//   MEDIA_SKIP_MOUNT=1 while the operator's drive is attached: everything but
+//   the mount runs, the image dialog is never opened (a click there would
+//   swap the operator's drive), the uploaded image is deleted through the API
+//   and the operator's drive must still be attached at the end.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -31,6 +35,7 @@ assert.ok(!oversizePath || fs.existsSync(oversizePath));
 const badNamePath = process.env.MEDIA_BADNAME_PATH ?? "";
 assert.ok(!badNamePath || fs.existsSync(badNamePath));
 const cancelPath = process.env.MEDIA_CANCEL_PATH ?? "";
+const skipMount = process.env.MEDIA_SKIP_MOUNT === "1";
 assert.ok(!cancelPath || fs.existsSync(cancelPath));
 const imageName = path.basename(isoPath);
 let password = "";
@@ -87,10 +92,12 @@ try {
     ).json();
   // An attached drive may be the operator's: stop rather than detach it.
   const attachedBefore = (await api("/api/storage/image/mounted")).data?.file;
-  if (attachedBefore) {
+  if (attachedBefore && !skipMount) {
     record("drive_in_use", { file: attachedBefore });
     throw new Error("a drive is attached; detach it from the GUI and rerun");
   }
+  if (skipMount)
+    record("mount_skipped", { operatorDrive: attachedBefore || null });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const answers = [];
@@ -246,57 +253,79 @@ try {
   });
   assert.ok(uploaded, "the uploaded image is not in the catalog");
 
-  // Mount as a CD-ROM from the image dialog.
-  await page.locator("svg.lucide-disc").first().click();
-  const dialog = page.locator(".ant-modal-wrap:visible").first();
-  await dialog.getByText("CD ROM", { exact: true }).click();
-  const row = dialog
-    .locator("div.group")
-    .filter({ hasText: imageName })
-    .first();
-  await row.waitFor();
-  await row.click();
-  await page
-    .waitForFunction(
-      (name) =>
-        [...document.querySelectorAll(".ant-modal-wrap div.group")].some(
-          (element) =>
-            element.textContent.includes(name) &&
-            element.className.includes("text-blue-500"),
-        ),
-      imageName,
-      { timeout: 30000 },
-    )
-    .catch(() => {});
-  const mounted = (await api("/api/storage/image/mounted")).data;
-  const cdrom = (await api("/api/storage/cdrom")).data;
-  record("mount", { mounted, cdrom, answers: take() });
-  assert.equal(mounted?.file, imageName, "the image is not mounted");
+  if (skipMount) {
+    const csrfToken = (await context.cookies()).find(
+      (cookie) => cookie.name === "hardened-blikvm-csrf",
+    )?.value;
+    const removed = await (
+      await context.request.post(`${baseUrl}/api/storage/image/delete`, {
+        headers: { Origin: baseUrl, "X-CSRF-Token": csrfToken ?? "" },
+        data: { file: imageName },
+      })
+    ).json();
+    const remaining =
+      (await api("/api/virtual-media/catalog")).data?.images ?? [];
+    const attachedAfter = (await api("/api/storage/image/mounted")).data?.file;
+    record("delete_by_api", {
+      code: removed.code,
+      present: remaining.some((image) => image.imageName === imageName),
+      operatorDriveKept: attachedAfter === attachedBefore,
+    });
+    assert.ok(!remaining.some((image) => image.imageName === imageName));
+    assert.equal(attachedAfter, attachedBefore, "the operator's drive changed");
+  } else {
+    // Mount as a CD-ROM from the image dialog.
+    await page.locator("svg.lucide-disc").first().click();
+    const dialog = page.locator(".ant-modal-wrap:visible").first();
+    await dialog.getByText("CD ROM", { exact: true }).click();
+    const row = dialog
+      .locator("div.group")
+      .filter({ hasText: imageName })
+      .first();
+    await row.waitFor();
+    await row.click();
+    await page
+      .waitForFunction(
+        (name) =>
+          [...document.querySelectorAll(".ant-modal-wrap div.group")].some(
+            (element) =>
+              element.textContent.includes(name) &&
+              element.className.includes("text-blue-500"),
+          ),
+        imageName,
+        { timeout: 30000 },
+      )
+      .catch(() => {});
+    const mounted = (await api("/api/storage/image/mounted")).data;
+    const cdrom = (await api("/api/storage/cdrom")).data;
+    record("mount", { mounted, cdrom, answers: take() });
+    assert.equal(mounted?.file, imageName, "the image is not mounted");
 
-  // Unmount, after the owner's cooldown between media commands.
-  await page.waitForTimeout(3000);
-  await row.click();
-  await page.waitForTimeout(3000);
-  const afterUnmount = (await api("/api/storage/image/mounted")).data;
-  record("unmount", { mounted: afterUnmount, answers: take() });
-  assert.ok(!afterUnmount?.file, "the image is still mounted");
+    // Unmount, after the owner's cooldown between media commands.
+    await page.waitForTimeout(3000);
+    await row.click();
+    await page.waitForTimeout(3000);
+    const afterUnmount = (await api("/api/storage/image/mounted")).data;
+    record("unmount", { mounted: afterUnmount, answers: take() });
+    assert.ok(!afterUnmount?.file, "the image is still mounted");
 
-  // Delete.
-  await row
-    .getByRole("button", { name: new RegExp(imageName.replace(".", "\\.")) })
-    .click();
-  await page.locator(".ant-modal-confirm .ant-btn-dangerous").click();
-  await page.waitForTimeout(2000);
-  const finalCatalog =
-    (await api("/api/virtual-media/catalog")).data?.images ?? [];
-  record("delete", {
-    present: finalCatalog.some((image) => image.imageName === imageName),
-    answers: take(),
-  });
-  assert.ok(
-    !finalCatalog.some((image) => image.imageName === imageName),
-    "the image was not deleted",
-  );
+    // Delete.
+    await row
+      .getByRole("button", { name: new RegExp(imageName.replace(".", "\\.")) })
+      .click();
+    await page.locator(".ant-modal-confirm .ant-btn-dangerous").click();
+    await page.waitForTimeout(2000);
+    const finalCatalog =
+      (await api("/api/virtual-media/catalog")).data?.images ?? [];
+    record("delete", {
+      present: finalCatalog.some((image) => image.imageName === imageName),
+      answers: take(),
+    });
+    assert.ok(
+      !finalCatalog.some((image) => image.imageName === imageName),
+      "the image was not deleted",
+    );
+  }
   record("page_errors", { errors });
   assert.deepEqual(errors, []);
   result = "passed";
