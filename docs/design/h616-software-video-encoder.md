@@ -195,3 +195,18 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   1920x1080 is the fastest full-size WebRTC mode; 1280x720 is taken from the
   capture (Settings > Video resolution) rather than scaled, since scaling
   after decoding a 1080p frame saves no preparation time.
+- Key frames: the encoder forces one at least every two seconds, besides one
+  for every new viewer. Frames come only when the picture changes, so a
+  frame-count interval (60 frames) meant up to two minutes between key
+  frames on a still screen; Janus cannot pass a viewer's key frame request
+  on to an RTP source, and a viewer that lost the one key frame, or joined
+  before its media was up, saw nothing. A 1920x1080 VP8 viewer on a still
+  screen then decoded 12 frames in 20 s, 8 of them key frames
+  (`vp8-webrtc-seq55-key-*.json`).
+- CPU on the board (`cpu-modes-seq55-*.txt`, share of all four cores, still
+  screen): no viewer 1.5 % (the encoders wait), MJPEG 7 % (nginx, server,
+  uStreamer), VP8 10 % (encoder 13 % of a core), H.264 11 % (encoder 12 %
+  of a core), 1.5 % again once the viewers left.
+- The headless Chromium used by the probes has no H.264 decoder
+  (proprietary codecs are left out of its build); H.264 is negotiated and
+  delivered there, and decoded in Chrome.

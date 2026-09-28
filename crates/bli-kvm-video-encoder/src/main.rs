@@ -67,6 +67,11 @@ struct Settings {
 
 /// After the last viewer leaves, the capture stream is kept this long.
 const IDLE_GRACE: Duration = Duration::from_secs(2);
+/// A key frame at least this often, whatever the frame rate: frames come only
+/// when the picture changes, Janus cannot pass a viewer's key frame request
+/// on to an RTP source, and a viewer that lost the last key frame (or joined
+/// before its media was up) sees nothing until the next.
+const KEY_FRAME_EVERY: Duration = Duration::from_secs(2);
 /// Decoding and converting a 1080p frame takes about 45 ms on the H616,
 /// more than encoding it with x264 ultrafast (29 ms): two threads take turns
 /// so preparation keeps up with the encoder (plan J2).
@@ -251,6 +256,7 @@ fn encode_loop(
     let mut stats = Stats::default();
     let mut generation = demand.generation();
     let mut last_capture: Option<Instant> = None;
+    let mut last_key: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
         stats.report(slot.replaced(), rejected.load(Ordering::Relaxed));
         let Some(decoded) = slot.take(Duration::from_millis(500)) else {
@@ -280,9 +286,14 @@ fn encode_loop(
         let pts =
             (decoded.at.saturating_duration_since(start).as_micros() as i64).max(last_pts + 1);
         last_pts = pts;
-        // A new viewer starts from a key frame instead of the next periodic one.
-        let force_key = demand.generation() != generation;
+        // A new viewer starts from a key frame instead of the next periodic
+        // one, and a key frame follows at least every KEY_FRAME_EVERY.
+        let force_key = demand.generation() != generation
+            || last_key.is_none_or(|last| last.elapsed() >= KEY_FRAME_EVERY);
         generation = demand.generation();
+        if force_key {
+            last_key = Some(Instant::now());
+        }
         let encode_start = Instant::now();
         let packets = engine.encode(frame, pts, force_key)?;
         stats.encode += encode_start.elapsed();
