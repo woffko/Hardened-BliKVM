@@ -297,6 +297,11 @@ python3 -m unittest \
   tools/test_build_system_raw_bundle.py \
   -v
 python3 -m py_compile \
+  tools/device/owner_lock_probe.py \
+  tools/device/safe_writes_probe.py \
+  tools/device/wifi_via_api.py \
+  tools/device/stream_latency_probe.py \
+  tools/device/hid_latency_probe.py \
   tools/capture_pikvm_baseline.py \
   tools/capture_ssh_preflight.py \
   tools/capture_rtc_baseline.py \

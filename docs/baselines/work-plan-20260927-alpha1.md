@@ -196,3 +196,28 @@ J5. Board: latency measured from the capture timestamp (`X-Timestamp`) on a
     full-speed viewer and one throttled to 20 Mbit/s; frame rate while the
     screen moves and CPU with and without a viewer, for MJPEG, VP8 and
     H.264, desktop and mobile.
+
+Status of phase J (2026-09-28, slots 53-55, receipts under evidence/private):
+
+- J0 done: both encoders wait on their demand sockets; with no viewer the
+  board is 98.5 % idle (`cpu-modes-seq55-*`).
+- J1 done: a full-speed MJPEG viewer trails uStreamer by 12 ms at p90, one
+  reading at 20 Mbit/s by 298 ms (`mjpeg-latency-seq55-*`); the capture
+  defaults to 30 frames/s. Getting there took the unix socket between
+  nginx and the server (nginx's loopback TCP receive buffer held 4-6 MB).
+- J2 partly as planned: two converter threads take turns (preparation was
+  the bottleneck at 45 ms a 1080p frame) and every encoder forces a key
+  frame at least every two seconds. The JPEG decoder still outputs 4:4:4
+  YCbCr (zune-jpeg has no planar or DCT-scaled output; libjpeg-turbo would
+  be another pinned C library), and VP8's token partitions are unchanged:
+  the numbers below already reach the target.
+- J3 done: "H.264 (WebRTC)" through x264 ultrafast, Janus mountpoint 2.
+- J4 done (`codec-bench-*`, design note): at 1920x1080 VP8 23-25 frames/s,
+  x264 superfast 21-22, x264 ultrafast 34 with two converters; at 1280x720
+  every codec is bounded by preparation at 42. H.264 (WebRTC) with x264
+  ultrafast is therefore the WebRTC mode to use at 1920x1080 and is listed
+  before VP8 in the video menu; MJPEG stays the default, as in the
+  reference. No lower resolution needs to be forced.
+- J5 done for MJPEG, VP8 and H.264 CPU and for MJPEG latency; the H.264
+  picture is checked in Chrome by the operator, since the probes' headless
+  Chromium cannot decode H.264.
