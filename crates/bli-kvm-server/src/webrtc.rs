@@ -1,4 +1,4 @@
-//! Authenticated WebRTC signaling for the VP8 stream.
+//! Authenticated WebRTC signaling for the VP8 and H.264 streams.
 //!
 //! The browser speaks a closed protocol with this server; the server alone
 //! talks to Janus over its loopback WebSocket, creates one session and
@@ -10,7 +10,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     extract::{
-        Extension, State,
+        Extension, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
@@ -39,7 +39,9 @@ pub(crate) const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 const MAX_SDP_BYTES: usize = 32 * 1024;
 const MAX_CANDIDATE_BYTES: usize = 1024;
 const MAX_CANDIDATES: usize = 64;
-const MOUNTPOINT_ID: u64 = 1;
+/// Janus mountpoints (`packaging/janus/janus.plugin.streaming.jcfg`).
+const VP8_MOUNTPOINT: u64 = 1;
+const H264_MOUNTPOINT: u64 = 2;
 const KEEPALIVE: Duration = Duration::from_secs(20);
 const JANUS_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -49,27 +51,67 @@ const JANUS_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) struct WebRtcGateway {
     pub janus: SocketAddr,
     pub viewers: Arc<Semaphore>,
-    /// The encoder's demand socket; see `hold_demand`.
+    /// The VP8 encoder's demand socket; see `hold_demand`.
     pub demand: Option<PathBuf>,
+    /// The H.264 encoder's; set, H.264 is offered.
+    pub h264_demand: Option<PathBuf>,
+}
+
+/// The codec a viewer asked for (`?codec=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamCodec {
+    Vp8,
+    H264,
+}
+
+impl StreamCodec {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Vp8 => "vp8",
+            Self::H264 => "h264",
+        }
+    }
+
+    fn mountpoint(self) -> u64 {
+        match self {
+            Self::Vp8 => VP8_MOUNTPOINT,
+            Self::H264 => H264_MOUNTPOINT,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct StreamQuery {
+    codec: Option<String>,
 }
 
 impl WebRtcGateway {
-    pub(crate) fn new(janus: SocketAddr, demand: Option<PathBuf>) -> Option<Arc<Self>> {
+    pub(crate) fn new(
+        janus: SocketAddr,
+        demand: Option<PathBuf>,
+        h264_demand: Option<PathBuf>,
+    ) -> Option<Arc<Self>> {
         janus.ip().is_loopback().then(|| {
             Arc::new(Self {
                 janus,
                 viewers: Arc::new(Semaphore::new(2)),
                 demand,
+                h264_demand,
             })
         })
     }
 
-    /// Asks the encoder to run while the returned connection is held: it
-    /// otherwise decodes and encodes every changed frame for nobody. The
-    /// first line names the codec. An encoder without the socket runs
+    /// Asks the codec's encoder to run while the returned connection is
+    /// held: it otherwise decodes and encodes every changed frame for nobody.
+    /// The first line names the codec. An encoder without the socket runs
     /// anyway, so a failure only means no demand is signalled.
-    pub(crate) async fn hold_demand(&self, codec: &str) -> Option<UnixStream> {
-        let mut connection = UnixStream::connect(self.demand.as_ref()?).await.ok()?;
+    pub(crate) async fn hold_demand(&self, codec: StreamCodec) -> Option<UnixStream> {
+        let socket = match codec {
+            StreamCodec::Vp8 => self.demand.as_ref(),
+            StreamCodec::H264 => self.h264_demand.as_ref(),
+        }?;
+        let codec = codec.name();
+        let mut connection = UnixStream::connect(socket).await.ok()?;
         connection
             .write_all(format!("{codec}\n").as_bytes())
             .await
@@ -104,6 +146,7 @@ fn error(code: &str) -> Message {
 pub(crate) async fn webrtc_socket(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Query(query): Query<StreamQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -113,6 +156,14 @@ pub(crate) async fn webrtc_socket(
             "WebRTC video is not configured",
         )
             .into_response();
+    };
+    let codec = match query.codec.as_deref() {
+        None | Some("vp8") => StreamCodec::Vp8,
+        Some("h264") if gateway.h264_demand.is_some() => StreamCodec::H264,
+        Some("h264") => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "H.264 is not configured").into_response();
+        }
+        Some(_) => return (StatusCode::BAD_REQUEST, "unknown codec").into_response(),
     };
     if !origin_allowed(&headers, state.options.allow_missing_origin) {
         return (StatusCode::FORBIDDEN, "websocket origin is not allowed").into_response();
@@ -130,8 +181,8 @@ pub(crate) async fn webrtc_socket(
         .on_upgrade(move |mut socket| async move {
             let _guard = guard;
             let _permit = permit;
-            let _demand = gateway.hold_demand("vp8").await;
-            if let Err(code) = relay(&state, &gateway, &session, &mut socket).await {
+            let _demand = gateway.hold_demand(codec).await;
+            if let Err(code) = relay(&state, &gateway, &session, codec, &mut socket).await {
                 let _ = socket.send(error(code)).await;
             }
             let _ = socket.close().await;
@@ -241,10 +292,11 @@ async fn relay(
     state: &AppState,
     gateway: &WebRtcGateway,
     session: &Session,
+    codec: StreamCodec,
     socket: &mut WebSocket,
 ) -> Result<(), &'static str> {
     let mut janus = JanusSession::connect(gateway.janus).await?;
-    let result = exchange(state, session, socket, &mut janus).await;
+    let result = exchange(state, session, socket, codec.mountpoint(), &mut janus).await;
     // Always release the gateway session, even after a browser failure.
     let _ = janus.send(json!({ "janus": "destroy" })).await;
     result
@@ -254,10 +306,11 @@ async fn exchange(
     state: &AppState,
     session: &Session,
     socket: &mut WebSocket,
+    mountpoint: u64,
     janus: &mut JanusSession,
 ) -> Result<(), &'static str> {
     janus
-        .send(json!({ "janus": "message", "body": { "request": "watch", "id": MOUNTPOINT_ID } }))
+        .send(json!({ "janus": "message", "body": { "request": "watch", "id": mountpoint } }))
         .await?;
     let mut offered = false;
     let mut answered = false;

@@ -1,6 +1,6 @@
 import { useAtomValue } from 'jotai';
 
-import { normalizeVideoMode } from '@/lib/capabilities.ts';
+import { normalizeVideoMode, supportsVideoTransport } from '@/lib/capabilities.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
 
@@ -21,7 +21,12 @@ export const Screen = () => {
   }
 
   if (videoMode === 'vp8') {
-    return <Vp8Webrtc key={streamKey} />;
+    return <Vp8Webrtc key={streamKey} codec="vp8" />;
+  }
+
+  // x264 through the board's Janus gateway, on the VP8 path's signaling.
+  if (videoMode === 'h264' && supportsVideoTransport(capabilities, 'web_rtc_janus_h264')) {
+    return <Vp8Webrtc key={`h264-${streamKey}`} codec="h264" />;
   }
 
   if (videoMode === 'direct') {

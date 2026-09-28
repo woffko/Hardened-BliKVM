@@ -124,6 +124,9 @@ pub struct ServerOptions {
     /// The WebRTC encoder's demand socket: held open while a viewer is
     /// connected, so the encoder works only then. Absent: it always runs.
     pub webrtc_demand_socket: Option<PathBuf>,
+    /// The H.264 encoder's demand socket; set, it also offers H.264 over
+    /// WebRTC (Janus mountpoint 2) beside VP8.
+    pub webrtc_h264_demand_socket: Option<PathBuf>,
     /// Privileged control broker used only for safe-target/focus attestation.
     /// No value keeps the HID focus endpoint unavailable.
     pub control_socket: Option<PathBuf>,
@@ -186,6 +189,7 @@ impl Default for ServerOptions {
             update_native_admission: false,
             webrtc_janus: None,
             webrtc_demand_socket: None,
+            webrtc_h264_demand_socket: None,
             control_socket: None,
             restricted_controls_enabled: false,
             media_catalog: None,
@@ -274,6 +278,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .is_some_and(|address| address.ip().is_loopback())
     {
         manifest.video.transports.push(VideoTransport::WebRtcJanus);
+        if options.webrtc_h264_demand_socket.is_some() {
+            manifest
+                .video
+                .transports
+                .push(VideoTransport::WebRtcJanusH264);
+        }
     }
     if options.update_status_socket.is_some() {
         manifest.system.signed_application_updates = if options.update_writes_enabled {
@@ -381,7 +391,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         update_http_upload: Arc::new(tokio::sync::Semaphore::new(1)),
         update_native_admission: options.update_native_admission,
         webrtc: options.webrtc_janus.and_then(|janus| {
-            webrtc::WebRtcGateway::new(janus, options.webrtc_demand_socket.clone())
+            webrtc::WebRtcGateway::new(
+                janus,
+                options.webrtc_demand_socket.clone(),
+                options.webrtc_h264_demand_socket.clone(),
+            )
         }),
         update_activation: options
             .update_activation_socket
@@ -1479,6 +1493,71 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(asked, b"vp8\n");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn h264_over_webrtc_is_offered_only_with_its_encoder() {
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
+
+        let root = tempdir().unwrap();
+        let janus = SocketAddr::from(([127, 0, 0, 1], 9));
+        let with_h264 = app_with_options(ServerOptions {
+            state_dir: root.path().join("with"),
+            webrtc_janus: Some(janus),
+            webrtc_h264_demand_socket: Some(root.path().join("h264.sock")),
+            ..ServerOptions::default()
+        });
+        let without = app_with_options(ServerOptions {
+            state_dir: root.path().join("without"),
+            webrtc_janus: Some(janus),
+            ..ServerOptions::default()
+        });
+        for (app, transports) in [
+            (
+                &with_h264,
+                serde_json::json!(["mjpeg", "web_rtc_janus", "web_rtc_janus_h264"]),
+            ),
+            (&without, serde_json::json!(["mjpeg", "web_rtc_janus"])),
+        ] {
+            let manifest = json_body(
+                app.clone()
+                    .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(manifest["data"]["video"]["transports"], transports);
+        }
+
+        // Asked of a server without it, H.264 is refused before the upgrade.
+        let (cookie, _) = setup_and_login(&without).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                without.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        for (query, status) in [("h264", 503), ("av1", 400)] {
+            let mut request = format!("ws://{address}/api/stream/webrtc?codec={query}")
+                .into_client_request()
+                .unwrap();
+            let headers = request.headers_mut();
+            headers.insert("cookie", cookie.parse().unwrap());
+            headers.insert("origin", HeaderValue::from_static("http://kvm.test"));
+            headers.insert("host", HeaderValue::from_static("kvm.test"));
+            let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            match tokio_tungstenite::client_async(request, stream).await {
+                Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                    assert_eq!(response.status().as_u16(), status, "{query}");
+                }
+                other => panic!("{query}: {:?}", other.map(|_| ())),
+            }
+        }
         server.abort();
     }
 

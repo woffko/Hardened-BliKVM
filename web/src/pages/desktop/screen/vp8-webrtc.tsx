@@ -34,9 +34,10 @@ function parseServerMessage(data: unknown): ServerMessage | null {
   return null;
 }
 
-// VP8 over WebRTC through the server's closed signaling protocol. The server
-// owns the gateway session; this client only answers the offer it receives.
-export const Vp8Webrtc = () => {
+// VP8 or H.264 over WebRTC through the server's closed signaling protocol.
+// The server owns the gateway session; this client only answers the offer it
+// receives.
+export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
   const [resolution, setResolution] = useAtom(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
@@ -53,7 +54,8 @@ export const Vp8Webrtc = () => {
   });
 
   useEffect(() => {
-    const socket = new WebSocket(`${getBaseUrl('ws')}/api/stream/webrtc`);
+    const query = codec === 'h264' ? '?codec=h264' : '';
+    const socket = new WebSocket(`${getBaseUrl('ws')}/api/stream/webrtc${query}`);
     const peer = new RTCPeerConnection({ iceServers: [] });
     let answered = false;
     let attached: HTMLVideoElement | null = null;
@@ -151,7 +153,7 @@ export const Vp8Webrtc = () => {
       peer.close();
       if (attached) attached.srcObject = null;
     };
-  }, [attempt]);
+  }, [attempt, codec]);
 
   // An applied capture change restarts the encoder; negotiate again once the
   // new stream is flowing instead of keeping a frozen track.
@@ -222,7 +224,7 @@ export const Vp8Webrtc = () => {
           className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center text-sm text-neutral-400"
           role="alert"
         >
-          VP8 stream unavailable ({failure})
+          {codec === 'h264' ? 'H.264' : 'VP8'} stream unavailable ({failure})
         </div>
       ) : (
         isLoading && (

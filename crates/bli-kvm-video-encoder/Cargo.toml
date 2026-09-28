@@ -12,6 +12,8 @@ build = "build.rs"
 [features]
 # Links the pinned static libvpx from BLI_KVM_LIBVPX_DIR (scripts/build-libvpx.sh).
 vp8 = ["dep:cc"]
+# Links the pinned static x264 from BLI_KVM_X264_DIR (scripts/build-x264.sh).
+h264 = ["vp8"]
 
 [dependencies]
 sha2.workspace = true
@@ -24,4 +26,4 @@ cc = { version = "=1.2.55", optional = true }
 [[bin]]
 name = "bli-kvm-video-encoder"
 path = "src/main.rs"
-required-features = ["vp8"]
+required-features = ["vp8", "h264"]

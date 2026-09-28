@@ -1,4 +1,5 @@
-# One VP8 mountpoint fed over loopback RTP by bli-kvm-video-encoder.
+# VP8 and H.264 mountpoints, each fed over loopback RTP by its own
+# bli-kvm-video-encoder instance.
 general: {
 	events = false
 	string_ids = false
@@ -15,5 +16,20 @@ bli-kvm-vp8: {
 	videopt = 96
 	videortpmap = "VP8/90000"
 	# New viewers start from the last key frame.
+	videobufferkf = true
+}
+
+bli-kvm-h264: {
+	type = "rtp"
+	id = 2
+	description = "Hardened BliKVM H.264"
+	audio = false
+	video = true
+	videoport = 5006
+	videoiface = "127.0.0.1"
+	videopt = 97
+	videortpmap = "H264/90000"
+	# Constrained baseline, as x264 encodes it; FU-A fragments.
+	videofmtp = "profile-level-id=42e01f;packetization-mode=1"
 	videobufferkf = true
 }

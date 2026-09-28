@@ -2169,7 +2169,10 @@ class PackagingBoundaryTests(unittest.TestCase):
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
         destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
-        self.assertEqual(destinations, ["http://127.0.0.1:18080"] * 4)
+        self.assertEqual(
+            sorted(destinations),
+            ["http://127.0.0.1:18080"] * 4 + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
+        )
         locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
         self.assertEqual(
             set(locations),
@@ -2178,9 +2181,13 @@ class PackagingBoundaryTests(unittest.TestCase):
                 "= /api/application-update/upload",
                 "= /api/system-update/upload",
                 "= /api/download/file",
+                "= /api/stream/mjpeg",
                 "^~ /internal/",
             },
         )
+        stream = locations["= /api/stream/mjpeg"]
+        self.assertIn("proxy_buffering off;", stream)
+        self.assertIn("proxy_set_header Host $hardened_blikvm_forwarded_host;", stream)
         self.assertEqual(locations["^~ /internal/"].strip(), "return 404;")
         self.assertIn("client_max_body_size 16m;", config)
         for route, limit in [

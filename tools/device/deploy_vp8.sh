@@ -5,6 +5,7 @@
 #   janus/*.jcfg                           packaging/janus
 #   hardened-blikvm-janus.service          packaging/systemd
 #   hardened-blikvm-video-encoder.service  packaging/systemd
+#   hardened-blikvm-video-encoder-h264.service  packaging/systemd (x264)
 #   60-hardened-blikvm-stream.conf         packaging/sysctl (MJPEG latency)
 #   hardened-blikvm-ustreamer.service      packaging/systemd (default rate)
 # Usage: deploy_vp8.sh install|remove STAGING_DIR
@@ -35,6 +36,7 @@ install_vp8() {
   done
   install -m 0644 "$staging/hardened-blikvm-janus.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-video-encoder.service" "$units/"
+  install -m 0644 "$staging/hardened-blikvm-video-encoder-h264.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-ustreamer.service" "$units/"
   install -m 0644 -o root -g root "$staging/60-hardened-blikvm-stream.conf" /etc/sysctl.d/
   sysctl -q -p /etc/sysctl.d/60-hardened-blikvm-stream.conf
@@ -42,27 +44,30 @@ install_vp8() {
     install -d -m 0755 "$units/$unit.service.d"
     printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.1:8188' \
       'Environment=BLI_KVM_WEBRTC_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock' \
+      'Environment=BLI_KVM_WEBRTC_H264_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock' \
       > "$units/$unit.service.d/60-webrtc.conf"
   done
   systemctl daemon-reload
   systemctl enable --now hardened-blikvm-janus.service
   systemctl restart hardened-blikvm-ustreamer.service
-  systemctl enable hardened-blikvm-video-encoder.service
-  systemctl restart hardened-blikvm-video-encoder.service
+  systemctl enable hardened-blikvm-video-encoder.service hardened-blikvm-video-encoder-h264.service
+  systemctl restart hardened-blikvm-video-encoder.service hardened-blikvm-video-encoder-h264.service
   for unit in $serving; do
     if systemctl is-active --quiet "$unit"; then
       systemctl restart "$unit"
     fi
   done
   sleep 3
-  for unit in hardened-blikvm-janus hardened-blikvm-video-encoder $serving; do
+  for unit in hardened-blikvm-janus hardened-blikvm-video-encoder hardened-blikvm-video-encoder-h264 $serving; do
     printf '%s %s\n' "$unit" "$(systemctl is-active "$unit" || true)"
   done
 }
 
 remove_vp8() {
-  systemctl disable --now hardened-blikvm-video-encoder.service hardened-blikvm-janus.service 2>/dev/null || true
-  rm -f "$units/hardened-blikvm-video-encoder.service" "$units/hardened-blikvm-janus.service"
+  systemctl disable --now hardened-blikvm-video-encoder.service hardened-blikvm-video-encoder-h264.service \
+    hardened-blikvm-janus.service 2>/dev/null || true
+  rm -f "$units/hardened-blikvm-video-encoder.service" "$units/hardened-blikvm-video-encoder-h264.service" \
+    "$units/hardened-blikvm-janus.service"
   for unit in $serving; do
     rm -f "$units/$unit.service.d/60-webrtc.conf"
   done

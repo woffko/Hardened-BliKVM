@@ -46,7 +46,12 @@ impl Demand {
             Err(error) => return Err(error),
         }
         let listener = UnixListener::bind(path)?;
-        if let Some(group) = group {
+        // The unit runs the encoder with that group as its primary group, so
+        // the socket normally has it already; the system call filter refuses
+        // chown to the service.
+        if let Some(group) = group
+            && std::os::unix::fs::MetadataExt::gid(&std::fs::metadata(path)?) != group
+        {
             std::os::unix::fs::chown(path, None, Some(group))?;
         }
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))?;

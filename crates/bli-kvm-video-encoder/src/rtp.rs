@@ -1,8 +1,11 @@
-//! RTP packetization of encoded VP8 frames (RFC 3550, RFC 7741).
+//! RTP packetization of encoded VP8 (RFC 3550, RFC 7741) and H.264
+//! (RFC 6184) frames.
 //!
 //! Each frame is split into packets no larger than the configured MTU. The
 //! VP8 payload descriptor carries a 15-bit picture ID so receivers can detect
-//! loss; the marker bit ends a frame. No RTCP or retransmission is done here.
+//! loss; H.264 NAL units go out whole when they fit and as FU-A fragments
+//! otherwise. The marker bit ends a frame. No RTCP or retransmission is done
+//! here.
 
 use thiserror::Error;
 
@@ -92,6 +95,119 @@ impl Vp8Packetizer {
     }
 }
 
+/// Packetizes H.264 access units in Annex B form (start codes between NAL
+/// units), as x264 emits them, in single NAL unit packets or FU-A fragments
+/// (packetization-mode=1).
+#[derive(Debug)]
+pub struct H264Packetizer {
+    payload_type: u8,
+    ssrc: u32,
+    mtu: usize,
+    sequence: u16,
+}
+
+/// FU indicator type for a fragmentation unit A.
+const FU_A: u8 = 28;
+
+impl H264Packetizer {
+    /// `payload_type` must be dynamic (96..=127); the SSRC and initial
+    /// sequence number should be random per session.
+    pub fn new(
+        payload_type: u8,
+        ssrc: u32,
+        initial_sequence: u16,
+        mtu: usize,
+    ) -> Result<Self, RtpError> {
+        if !(96..=127).contains(&payload_type) || !(MIN_MTU..=MAX_MTU).contains(&mtu) {
+            return Err(RtpError::InvalidConfig);
+        }
+        Ok(Self {
+            payload_type,
+            ssrc,
+            mtu,
+            sequence: initial_sequence,
+        })
+    }
+
+    /// Packetize one access unit; the marker bit is set on its last packet.
+    pub fn packetize(&mut self, frame: &[u8], timestamp: u32) -> Result<Vec<Vec<u8>>, RtpError> {
+        if frame.is_empty() || frame.len() > MAX_FRAME_BYTES {
+            return Err(RtpError::InvalidFrame);
+        }
+        let units = nal_units(frame);
+        if units.is_empty() {
+            return Err(RtpError::InvalidFrame);
+        }
+        let room = self.mtu - RTP_HEADER_BYTES;
+        let mut packets = Vec::new();
+        for (index, unit) in units.iter().enumerate() {
+            let last_unit = index + 1 == units.len();
+            if unit.len() <= room {
+                packets.push(self.packet(unit, &[], last_unit, timestamp));
+                continue;
+            }
+            let header = unit[0];
+            let indicator = (header & 0xe0) | FU_A;
+            let body = &unit[1..];
+            let chunk = room - 2;
+            let count = body.len().div_ceil(chunk);
+            for (fragment, payload) in body.chunks(chunk).enumerate() {
+                let start = if fragment == 0 { 0x80 } else { 0 };
+                let end = if fragment + 1 == count { 0x40 } else { 0 };
+                let prefix = [indicator, start | end | (header & 0x1f)];
+                packets.push(self.packet(
+                    &prefix,
+                    payload,
+                    last_unit && fragment + 1 == count,
+                    timestamp,
+                ));
+            }
+        }
+        Ok(packets)
+    }
+
+    fn packet(&mut self, first: &[u8], second: &[u8], marker: bool, timestamp: u32) -> Vec<u8> {
+        let mut packet = Vec::with_capacity(RTP_HEADER_BYTES + first.len() + second.len());
+        packet.push(0x80);
+        packet.push(self.payload_type | if marker { 0x80 } else { 0 });
+        packet.extend_from_slice(&self.sequence.to_be_bytes());
+        packet.extend_from_slice(&timestamp.to_be_bytes());
+        packet.extend_from_slice(&self.ssrc.to_be_bytes());
+        packet.extend_from_slice(first);
+        packet.extend_from_slice(second);
+        self.sequence = self.sequence.wrapping_add(1);
+        packet
+    }
+}
+
+/// The NAL units of an Annex B byte stream, without their start codes.
+fn nal_units(stream: &[u8]) -> Vec<&[u8]> {
+    let mut starts = Vec::new();
+    let mut index = 0;
+    while index + 3 <= stream.len() {
+        if stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1 {
+            starts.push(index + 3);
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+    let mut units = Vec::with_capacity(starts.len());
+    for (position, &start) in starts.iter().enumerate() {
+        let mut end = starts
+            .get(position + 1)
+            .map_or(stream.len(), |next| next - 3);
+        // A four-byte start code leaves a zero before the next three.
+        while end > start && stream[end - 1] == 0 && position + 1 < starts.len() {
+            end -= 1;
+        }
+        if end > start {
+            units.push(&stream[start..end]);
+        }
+    }
+    units
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +268,49 @@ mod tests {
         assert_eq!(u16::from_be_bytes([packet[14] & 0x7f, packet[15]]), 0);
         assert_eq!(Vp8Packetizer::timestamp(1_000_000), 90_000);
         assert_eq!(Vp8Packetizer::timestamp(33_333), 2_999);
+    }
+
+    #[test]
+    fn h264_units_go_out_whole_or_as_fu_a_fragments() {
+        let mut packetizer = H264Packetizer::new(97, 7, 10, 300).unwrap();
+        let sps = [0x67, 1, 2, 3];
+        let pps = [0x68, 4, 5];
+        let mut idr = vec![0x65];
+        idr.extend((0..700).map(|value| value as u8));
+        let mut frame = vec![0, 0, 0, 1];
+        frame.extend_from_slice(&sps);
+        frame.extend_from_slice(&[0, 0, 0, 1]);
+        frame.extend_from_slice(&pps);
+        frame.extend_from_slice(&[0, 0, 1]);
+        frame.extend_from_slice(&idr);
+        let packets = packetizer.packetize(&frame, 90_000).unwrap();
+        // SPS and PPS whole, the IDR slice in three fragments.
+        assert_eq!(&packets[0][12..], &sps);
+        assert_eq!(&packets[1][12..], &pps);
+        let fragments = &packets[2..];
+        assert_eq!(fragments.len(), 700_usize.div_ceil(300 - 12 - 2));
+        let mut reassembled = vec![(fragments[0][12] & 0xe0) | (fragments[0][13] & 0x1f)];
+        for (index, packet) in fragments.iter().enumerate() {
+            assert!(packet.len() <= 300);
+            assert_eq!(packet[12] & 0x1f, 28);
+            assert_eq!(packet[13] & 0x80 != 0, index == 0);
+            assert_eq!(packet[13] & 0x40 != 0, index + 1 == fragments.len());
+            reassembled.extend_from_slice(&packet[14..]);
+        }
+        assert_eq!(reassembled, idr);
+        for (index, packet) in packets.iter().enumerate() {
+            assert_eq!(packet[1] & 0x7f, 97);
+            // Only the access unit's last packet carries the marker.
+            assert_eq!(packet[1] & 0x80 != 0, index + 1 == packets.len());
+            assert_eq!(
+                u16::from_be_bytes([packet[2], packet[3]]),
+                10 + index as u16
+            );
+            assert_eq!(u32::from_be_bytes(packet[4..8].try_into().unwrap()), 90_000);
+        }
+        assert_eq!(
+            packetizer.packetize(&[1, 2, 3], 0),
+            Err(RtpError::InvalidFrame)
+        );
     }
 }

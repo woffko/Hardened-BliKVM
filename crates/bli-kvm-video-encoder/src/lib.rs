@@ -6,7 +6,11 @@
 //! JPEG decoding and VP8 encoding are separate, replaceable stages.
 
 pub mod demand;
+#[cfg(feature = "h264")]
+pub mod engine;
 pub mod gate;
+#[cfg(feature = "h264")]
+pub mod h264;
 pub mod mjpeg;
 pub mod rtp;
 pub mod slot;
@@ -15,5 +19,5 @@ pub mod vp8;
 pub mod yuv;
 
 pub use gate::{FrameDecision, FrameGate, GatePolicy};
-pub use rtp::{RtpError, Vp8Packetizer};
+pub use rtp::{H264Packetizer, RtpError, Vp8Packetizer};
 pub use slot::LatestFrame;

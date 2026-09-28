@@ -171,7 +171,13 @@ export function supportedUiVideoModes(manifest: CapabilityManifest | null): UiVi
   const modes: UiVideoMode[] = [];
   if (supportsVideoTransport(manifest, 'mjpeg')) modes.push('mjpeg');
   if (supportsVideoTransport(manifest, 'h264_direct')) modes.push('direct');
-  if (supportsVideoTransport(manifest, 'web_rtc_native')) modes.push('h264');
+  // H.264 over WebRTC: the reference's native path, or x264 through the
+  // board's Janus gateway.
+  if (
+    supportsVideoTransport(manifest, 'web_rtc_native') ||
+    supportsVideoTransport(manifest, 'web_rtc_janus_h264')
+  )
+    modes.push('h264');
   if (supportsVideoTransport(manifest, 'web_rtc_janus')) modes.push('vp8');
   return modes.length ? modes : ['mjpeg'];
 }

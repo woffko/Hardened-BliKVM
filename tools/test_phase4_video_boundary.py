@@ -37,7 +37,11 @@ class Phase4VideoBoundaryTests(unittest.TestCase):
         self.assertIn("janus.ip().is_loopback()", webrtc)
         self.assertIn('"plugin": "janus.plugin.streaming"', webrtc)
         self.assertIn("deny_unknown_fields", webrtc)
-        self.assertIn("const MOUNTPOINT_ID: u64 = 1;", webrtc)
+        # Two fixed mountpoints (VP8 and H.264); the browser picks by codec
+        # name, never by id.
+        self.assertIn("const VP8_MOUNTPOINT: u64 = 1;", webrtc)
+        self.assertIn("const H264_MOUNTPOINT: u64 = 2;", webrtc)
+        self.assertIn('Some(_) => return (StatusCode::BAD_REQUEST, "unknown codec")', webrtc)
         for forbidden in ("\"admin", "janus.plugin.videoroom", "janus.plugin.sip", "rtp_forward"):
             self.assertNotIn(forbidden, webrtc)
 

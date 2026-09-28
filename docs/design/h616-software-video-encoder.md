@@ -132,9 +132,63 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
 - MJPEG: the server reads the capture's multipart stream continuously and
   keeps only the newest complete part (`mjpeg_latest.rs`); the response
   sends a part only when the connection takes one, so a slow viewer skips
-  frames instead of receiving old ones late. `net.ipv4.tcp_notsent_lowat`
-  of 128 KiB (`packaging/sysctl/60-hardened-blikvm-stream.conf`) keeps the
-  backlog in the kernel's send queues, between the server and nginx and
-  between nginx and the browser, to about one frame.
+  frames instead of receiving old ones late. That works only if the queues
+  after the server stay small. Measured on the board with a viewer reading
+  at 20 Mbit/s (`tools/device/stream_latency_probe.py`): nginx's loopback
+  TCP connection to the server grew its receive buffer to 4-6 MB of frames
+  (the kernel's receive autotuning; nginx cannot set `SO_RCVBUF` on
+  upstream connections, and a route `window` clamp is overridden by the
+  autotuning), and the viewer trailed by 2.9 s while a full-speed viewer
+  trailed by 39 ms at p90. nginx therefore takes the stream from the
+  server's unix socket (`BLI_KVM_STREAM_SOCKET`,
+  `/run/hardened-blikvm-stream/mjpeg.sock`, mode 0666 like the reachable
+  TCP port, with the same session check), whose send buffer the server sets
+  to 128 KiB per connection. `net.ipv4.tcp_notsent_lowat` of 128 KiB
+  (`packaging/sysctl/60-hardened-blikvm-stream.conf`) keeps nginx's send
+  queue to the browser to about one frame.
+- uStreamer's `X-Timestamp` is the board's wall clock when the frame left
+  it (checked on the board to 1 ms), so the probe measures a viewer's delay
+  as its arrival in true time minus the stamp. The build host's monotonic
+  clock ran at a steady 0.9 of true time, and its wall clock was stepped, so
+  the probe converts arrivals through two SNTP readings.
 - The capture unit's default rate is 30 frames/s, as in the reference; the
   SD image drops the source board's saved video settings.
+
+## H.264 through x264 and the codec benchmark (2026-09-28, plan J2-J4)
+
+- `scripts/build-x264.sh` builds a static 8-bit 4:2:0 x264 (build 165, the
+  head of its stable branch, pinned by commit and SHA-256) with its NEON
+  assembly for the board and without assembly for host tests. x264 is
+  GPL-2.0-or-later, compatible with the project's GPL-3.0-only; unlike VP8,
+  H.264 is covered by patent pools, which is why VP8 came first.
+- The encoder (`bli-kvm-video-encoder`, features `vp8` and `h264`) runs one
+  codec per instance: `BLI_KVM_ENCODER_CODEC` is `vp8`, `h264` (superfast)
+  or `h264-ultrafast`; x264 uses tune `zerolatency`, the constrained
+  baseline profile, SPS and PPS before every key frame, and constant-rate
+  input (with variable-rate input x264 held each frame until the next one
+  arrived, and a still screen sends no next one). RTP follows RFC 6184
+  (single NAL units, FU-A fragments). `hardened-blikvm-video-encoder-h264`
+  feeds Janus mountpoint 2 (port 5006, payload type 97) and has its own
+  demand socket; the server offers `web_rtc_janus_h264` when
+  `BLI_KVM_WEBRTC_H264_DEMAND_SOCKET` is set, and the browser asks for it
+  with `/api/stream/webrtc?codec=h264` ("H.264 (WebRTC)" in the video menu).
+- `bli-kvm-video-encoder bench [FRAMES]` reads capture frames into memory
+  (they never leave the process), shifts each by 24 more rows to stand for
+  scrolling, and times every codec and size on the same frames. On the
+  idle board, 60 frames of 1920x1080 (`codec-bench-*.json`):
+
+  | codec | size | decode + convert | encode | frames/s, two converters |
+  | --- | --- | --- | --- | --- |
+  | VP8 | 1920x1080 | 25 + 20 ms | 39-43 ms | 23-25 |
+  | x264 superfast | 1920x1080 | 25 + 20 ms | 45-47 ms | 21-22 |
+  | x264 ultrafast | 1920x1080 | 25 + 20 ms | 29 ms | 34 |
+  | VP8 | 1280x720 | 25 + 22 ms | 15 ms | 42 |
+  | x264 ultrafast | 1280x720 | 25 + 22 ms | 13-14 ms | 42 |
+
+  The 10 frames/s seen earlier came from load (the idle encoder, MJPEG at
+  60 frames/s and its TLS), not from the codecs. Preparing a frame (45 ms)
+  was the bottleneck, so two converter threads take turns and the encoder
+  drops a frame that finishes after a newer one. x264 ultrafast at
+  1920x1080 is the fastest full-size WebRTC mode; 1280x720 is taken from the
+  capture (Settings > Video resolution) rather than scaled, since scaling
+  after decoding a 1080p frame saves no preparation time.

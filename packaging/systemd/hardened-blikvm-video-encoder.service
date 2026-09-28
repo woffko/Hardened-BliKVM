@@ -8,7 +8,9 @@ Wants=hardened-blikvm-janus.service
 [Service]
 Type=simple
 DynamicUser=yes
-# Read access to the uStreamer socket, which is group hardened-blikvm.
+# Read access to the uStreamer socket, which is group hardened-blikvm; as the
+# primary group it also owns the demand socket below (chown is filtered).
+Group=hardened-blikvm
 SupplementaryGroups=hardened-blikvm
 UMask=0077
 # The web server holds this socket open while a WebRTC viewer is connected;

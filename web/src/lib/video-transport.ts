@@ -32,7 +32,10 @@ export function selectVideoTransport(
 export function isWebRtcAdvertised(manifest: CapabilityManifest | null) {
   return Boolean(
     manifest?.video.transports.some(
-      (transport) => transport === 'web_rtc_janus' || transport === 'web_rtc_native'
+      (transport) =>
+        transport === 'web_rtc_janus' ||
+        transport === 'web_rtc_native' ||
+        transport === 'web_rtc_janus_h264'
     )
   );
 }

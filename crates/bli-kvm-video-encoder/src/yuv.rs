@@ -131,6 +131,58 @@ impl JpegToI420 {
     }
 }
 
+/// Scales an I420 frame to two thirds of its size (1920x1080 to 1280x720):
+/// every three source samples give two, weighted 2:1 and 1:2, across and
+/// down. The width and height must be multiples of six.
+pub fn scale_two_thirds(src: &I420Frame, dst: &mut I420Frame) -> Result<(), YuvError> {
+    if src.width < 12 || src.height < 12 || src.width % 6 != 0 || src.height % 6 != 0 {
+        return Err(YuvError::Dimensions);
+    }
+    let (width, height) = (src.width * 2 / 3, src.height * 2 / 3);
+    dst.width = width;
+    dst.height = height;
+    dst.y.resize(width * height, 0);
+    dst.u.resize(width / 2 * (height / 2), 0);
+    dst.v.resize(width / 2 * (height / 2), 0);
+    plane_two_thirds(&src.y, src.width, src.height, &mut dst.y);
+    plane_two_thirds(&src.u, src.width / 2, src.height / 2, &mut dst.u);
+    plane_two_thirds(&src.v, src.width / 2, src.height / 2, &mut dst.v);
+    Ok(())
+}
+
+fn plane_two_thirds(src: &[u8], width: usize, height: usize, dst: &mut [u8]) {
+    let out_width = width * 2 / 3;
+    let mut rows = [
+        vec![0_u16; out_width],
+        vec![0_u16; out_width],
+        vec![0_u16; out_width],
+    ];
+    let across = |row: &[u8], out: &mut [u16]| {
+        for (pair, triple) in out.chunks_exact_mut(2).zip(row.chunks_exact(3)) {
+            let (a, b, c) = (
+                u16::from(triple[0]),
+                u16::from(triple[1]),
+                u16::from(triple[2]),
+            );
+            pair[0] = 2 * a + b;
+            pair[1] = b + 2 * c;
+        }
+    };
+    for (band, out) in dst.chunks_exact_mut(2 * out_width).enumerate() {
+        for (index, row) in rows.iter_mut().enumerate() {
+            let y = band * 3 + index;
+            across(&src[y * width..(y + 1) * width], row);
+        }
+        let (top, bottom) = out.split_at_mut(out_width);
+        for x in 0..out_width {
+            // Each value is three times a sample; nine times after both passes.
+            top[x] = ((2 * rows[0][x] + rows[1][x] + 4) / 9) as u8;
+            bottom[x] = ((rows[1][x] + 2 * rows[2][x] + 4) / 9) as u8;
+        }
+    }
+    let _ = height;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +227,36 @@ mod tests {
         );
         // 64x48 is divisible by 2 and 4; 48/4 == 12, so halving is allowed.
         assert!(converter.convert(FRAME_420, true, &mut out).is_ok());
+    }
+
+    #[test]
+    fn two_thirds_keeps_flat_areas_and_blends_edges() {
+        let mut src = I420Frame {
+            width: 18,
+            height: 12,
+            y: vec![90; 18 * 12],
+            u: vec![128; 9 * 6],
+            v: vec![60; 9 * 6],
+        };
+        // A bright column at x=1 of every luma row.
+        for row in src.y.chunks_exact_mut(18) {
+            row[1] = 180;
+        }
+        let mut dst = I420Frame::default();
+        scale_two_thirds(&src, &mut dst).unwrap();
+        assert_eq!((dst.width, dst.height), (12, 8));
+        assert_eq!(dst.u, vec![128; 6 * 4]);
+        assert_eq!(dst.v, vec![60; 6 * 4]);
+        // (2*90 + 180)/3 = 120 and (180 + 2*90)/3 = 120, then flat vertically.
+        assert!(
+            dst.y
+                .chunks_exact(12)
+                .all(|row| row[0] == 120 && row[1] == 120 && row[2] == 90)
+        );
+        let odd = I420Frame {
+            width: 16,
+            ..src.clone()
+        };
+        assert_eq!(scale_two_thirds(&odd, &mut dst), Err(YuvError::Dimensions));
     }
 }

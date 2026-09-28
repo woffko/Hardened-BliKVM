@@ -18,6 +18,11 @@ Environment=BLI_KVM_WEB_ROOT=/usr/share/hardened-blikvm/web
 Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
+# nginx takes the MJPEG stream from this socket: its buffer stays small,
+# while nginx's loopback TCP receive buffer grew to megabytes of old frames.
+Environment=BLI_KVM_STREAM_SOCKET=/run/hardened-blikvm-stream/mjpeg.sock
+RuntimeDirectory=hardened-blikvm-stream
+RuntimeDirectoryMode=0755
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-server

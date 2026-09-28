@@ -12,7 +12,12 @@ export type FeatureStatus = {
   evidence: EvidenceLevel;
 };
 
-export type VideoTransport = 'mjpeg' | 'h264_direct' | 'web_rtc_janus' | 'web_rtc_native';
+export type VideoTransport =
+  | 'mjpeg'
+  | 'h264_direct'
+  | 'web_rtc_janus'
+  | 'web_rtc_native'
+  | 'web_rtc_janus_h264';
 export type HidMode = 'keyboard' | 'absolute_mouse' | 'relative_mouse';
 export type PowerAction = 'power_short' | 'power_long' | 'reset';
 export type VirtualMediaMode = 'cd_rom' | 'removable_disk';

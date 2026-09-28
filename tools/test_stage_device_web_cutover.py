@@ -51,9 +51,11 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         unit = cutover.render_unit(self.baseline())
         for rendered in (config, validation):
             self.assertEqual(
-                re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE),
-                ["http://127.0.0.1:18080"] * 4,
+                sorted(re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE)),
+                ["http://127.0.0.1:18080"] * 4
+                + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
             )
+            self.assertIn("location = /api/stream/mjpeg {", rendered)
             self.assertIn("location = /api/application-update/upload {", rendered)
             self.assertIn("location = /api/download/file {", rendered)
             self.assertIn("location = /api/system-update/upload {", rendered)
