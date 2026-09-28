@@ -111,13 +111,17 @@ class RestrictedControlGuiTests(unittest.TestCase):
         queue = (ROOT / "web/src/lib/hid-report-queue.ts").read_text()
         # Absolute positions may collapse to the latest point. Relative deltas
         # are summed, while wheel and button transitions flush in order.
-        self.assertIn("let pendingMouse: MouseReport | null = null;", hook)
-        self.assertIn("function scheduleMouseFlush()", hook)
+        # At most one mouse report is in flight (tools/test_hid_report_queue.mjs).
+        self.assertIn("const mouseQueue = new MouseQueue(", hook)
         self.assertIn("MOUSE_FLUSH_MS", hook)
         self.assertIn("if (report.mode === 'keyboard') {", hook)
+        self.assertIn("mouseQueue.flush();", hook)
+        self.assertIn("mouseQueue.clear();", hook)
+        self.assertIn("private pending: MouseReport | null = null;", queue)
+        self.assertIn("if (this.inFlight === 0 && this.pending) this.flush();", queue)
         self.assertIn("signedByte(current.data[1]) + signedByte(next.data[1])", queue)
         self.assertIn("current.data[0] !== next.data[0]", queue)
-        self.assertIn("hasWheel(report)", hook)
+        self.assertIn("hasWheel(report)", queue)
 
     def test_stop_cancels_stale_queued_and_inflight_reports(self) -> None:
         hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()

@@ -4,7 +4,7 @@ import { useAtomValue } from 'jotai';
 import type { HidReport } from '@/api/restricted-control.ts';
 import { supportsRestrictedControls } from '@/lib/capabilities.ts';
 import { ASSISTANT_ACTIVE, HidLeaseSession } from '@/lib/hid-lease.ts';
-import { hasWheel, mergeMouseReport, type MouseReport } from '@/lib/hid-report-queue.ts';
+import { MouseQueue } from '@/lib/hid-report-queue.ts';
 import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
@@ -21,56 +21,18 @@ let sharedSession: HidLeaseSession | null = null;
 let startingSession: HidLeaseSession | null = null;
 let sharedQueue: Promise<void> = Promise.resolve();
 let queueGeneration = 0;
-let pendingMouse: MouseReport | null = null;
-let mouseFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let enqueueRef: ((report: HidReport) => void) | null = null;
+let enqueueRef: ((report: HidReport) => Promise<void>) | null = null;
+// At most one mouse report in flight; see MouseQueue.
+const mouseQueue = new MouseQueue(
+  (report) => (enqueueRef ? enqueueRef(report) : Promise.resolve()),
+  MOUSE_FLUSH_MS
+);
 let consumers = 0;
 let lifecycleCleanup: (() => void) | null = null;
 
-function clearPendingMouse() {
-  if (mouseFlushTimer !== null) {
-    clearTimeout(mouseFlushTimer);
-    mouseFlushTimer = null;
-  }
-  pendingMouse = null;
-}
-
-function flushMouse() {
-  if (mouseFlushTimer !== null) {
-    clearTimeout(mouseFlushTimer);
-    mouseFlushTimer = null;
-  }
-  const report = pendingMouse;
-  pendingMouse = null;
-  if (report && enqueueRef) enqueueRef(report);
-}
-
-function scheduleMouseFlush() {
-  if (mouseFlushTimer !== null) return;
-  mouseFlushTimer = setTimeout(flushMouse, MOUSE_FLUSH_MS);
-}
-
-function queueMouse(report: MouseReport) {
-  if (hasWheel(report)) {
-    flushMouse();
-    enqueueRef?.(report);
-    return;
-  }
-  if (pendingMouse) {
-    const merged = mergeMouseReport(pendingMouse, report);
-    if (merged) {
-      pendingMouse = merged;
-      return;
-    }
-    flushMouse();
-  }
-  pendingMouse = report;
-  scheduleMouseFlush();
-}
-
 function cancelSharedSession() {
   queueGeneration += 1;
-  clearPendingMouse();
+  mouseQueue.clear();
   const sessions = new Set([sharedSession, startingSession]);
   sharedSession = null;
   startingSession = null;
@@ -160,7 +122,7 @@ export function useHidLease() {
   );
 
   const schedule = useCallback(
-    (run: (generation: number) => Promise<unknown>) => {
+    (run: (generation: number) => Promise<unknown>): Promise<void> => {
       const generation = queueGeneration;
       sharedQueue = sharedQueue
         .then(() => run(generation))
@@ -173,6 +135,7 @@ export function useHidLease() {
           disableControl();
           cancelSharedSession();
         });
+      return sharedQueue;
     },
     [disableControl]
   );
@@ -187,10 +150,10 @@ export function useHidLease() {
     (report: HidReport) => {
       if (!manifestRef.current || !confirmedRef.current) return;
       if (report.mode === 'keyboard') {
-        flushMouse();
-        enqueue(report);
+        mouseQueue.flush();
+        void enqueue(report);
       } else {
-        queueMouse(report);
+        mouseQueue.push(report);
       }
     },
     [enqueue]

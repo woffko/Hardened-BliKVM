@@ -155,3 +155,18 @@ I5. Board: the test board's p3 grown in place; the growth script run on the
     upload; the GUI walk desktop and mobile.
 I6. The release is rebuilt: a new slot and SD image, published again as
     `v0.1.0-alpha.1` after the first publish is deleted.
+I7. (M8) At most one mouse report is in flight; movement meanwhile merges
+    into one report (`web/src/lib/hid-report-queue.ts`, tested in
+    `tools/test_hid_report_queue.mjs`).
+
+## Phase J: video smoothness (M9)
+
+J1. MJPEG: the relay forwards only the newest frame when the viewer falls
+    behind, and the send queues on the way stay small, so the picture trails
+    the capture by a frame or two on any link; the default frame rate
+    follows the reference (30).
+J2. VP8: 1080p at 20 frames/s or more: JPEG decoded straight to I420,
+    stages on separate cores, the encoder's token partitions and threads.
+J3. Board: latency measured from the capture timestamp (`X-Timestamp`) on a
+    full-speed and a throttled viewer, VP8 frame rate while the screen
+    moves, desktop and mobile.
