@@ -4,8 +4,9 @@
 #
 #   raw   sectors 1..2047   SPL/U-Boot copied from the board (MBR is new)
 #   p1    12 GiB ext4       system root (armbian_root)
-#   p2    14 GiB ext4       persistent data and update staging, mounted at /mnt
-#   p3    remainder ext4    virtual media (MSD), empty
+#   p2    8 GiB ext4        persistent data and update staging, mounted at /mnt
+#   p3    remainder ext4    virtual media (MSD), empty; the first boot grows it
+#                           to the end of the card
 #
 # Usage (from the repository root, credentials on stdin via project-memory-exec):
 #   tools/image/build_sd_image.sh fetch WORK_DIR
@@ -27,7 +28,8 @@ KNOWN_HOSTS=${BLI_KVM_KNOWN_HOSTS:-evidence/private/ssh-known-hosts}
 IMAGE_BYTES=$((28 * 1024 * 1024 * 1024))
 ROOT_START=8192
 ROOT_SECTORS=$((12 * 1024 * 1024 * 2))
-DATA_SECTORS=$((14 * 1024 * 1024 * 2))
+# Room for a RAW system update: the bundle, its payload and a root backup.
+DATA_SECTORS=$((8 * 1024 * 1024 * 2))
 
 action=${1:-}
 work=${2:-}
@@ -216,6 +218,7 @@ assemble() {
     cat "$staging/etc/fstab.next" > "$staging/etc/fstab"
     rm -f "$staging/etc/fstab.next"
     install -m 0755 -o 0 -g 0 "$script_dir/hardened-blikvm-firstboot.sh" "$staging/usr/libexec/hardened-blikvm/hardened-blikvm-firstboot"
+    install -m 0755 -o 0 -g 0 "$script_dir/hardened-blikvm-grow-image-store.sh" "$staging/usr/libexec/hardened-blikvm/hardened-blikvm-grow-image-store"
     install -m 0644 -o 0 -g 0 "$script_dir/hardened-blikvm-firstboot.service" "$staging/etc/systemd/system/hardened-blikvm-firstboot.service"
     ln -sf ../hardened-blikvm-firstboot.service "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-firstboot.service"
     : > "$staging/etc/hardened-blikvm/.firstboot-pending"
@@ -324,7 +327,8 @@ assemble() {
 Hardened BliKVM H616 SD image, release $IMAGE_RELEASE
 source system: $(tr '\n' ' ' < "$work/source-system.txt")
 layout: MBR; raw boot area sectors 1-2047 from the board; p1 root 12 GiB
-        (UUID $root_uuid); p2 data 14 GiB at /mnt; p3 MSD remainder; total 28 GiB
+        (UUID $root_uuid); p2 data 8 GiB at /mnt; p3 MSD remainder (about
+        8 GiB), grown to the end of the card at the first boot; total 28 GiB
 first boot: regenerates SSH host keys, machine id, TLS and snakeoil keys and the
             USB gadget serial; the web UI starts at First Setup, which sets the
             web password and root's password to the same value (later web

@@ -388,7 +388,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
             <EditableInfoRow
               label={t('settings.network.ipv6.ipAddress')}
               value={address}
-              placeholder="fd00:1234:abcd:2::132"
+              placeholder="2001:db8::132"
               status={address.trim() && !isValidIPv6(normalizedAddress) ? 'error' : undefined}
               onChange={(value) => {
                 setAddress(value);

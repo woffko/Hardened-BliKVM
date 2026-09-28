@@ -2186,7 +2186,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         for route, limit in [
             ("= /api/application-update/upload", "128m"),
             ("= /api/system-update/upload", "8g"),
-            ("= /api/download/file", "4097m"),
+            ("= /api/download/file", "65537m"),
         ]:
             block = locations[route]
             self.assertIn(f"client_max_body_size {limit};", block)

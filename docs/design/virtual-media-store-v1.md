@@ -2,7 +2,7 @@
 
 How images reach the board, how the catalog stays true to the store, and what
 the operator is told when an attach fails. Found and fixed in the audit of
-2026-09-27 (`docs/baselines/audit-20260927.md`, H1, H2, M2, M3).
+2026-09-27 (`docs/baselines/audit-20260927.md`, H1, H2, M2, M3, H6).
 
 ## Store
 
@@ -16,8 +16,22 @@ the operator is told when an attach fails. Found and fixed in the audit of
   creates p3 (checked after writing), and mounts it after
   `systemd-tmpfiles-setup.service` rather than before, so the tmpfiles rule for
   the directory also corrects a partition's root on a card that has one.
-- An upload that cannot be stored is answered "the image store on the board is
-  not writable" (409); the server log names the file and the error.
+- The SD image's p3 is about 8 GiB; the first boot grows it to the end of
+  the card (`hardened-blikvm-grow-image-store`, online `resize2fs`), so a
+  32 GB card holds about 9 GiB of images and a 64 GB card about 39 GiB.
+- One image may have up to 64 GiB (the upload, nginx's body limit for it and
+  the remote download); the store's free space is the usual limit.
+  `GET /api/download/image/enabled` reports the free space
+  (`freeBytes`) and that limit (`maxUploadBytes`). The Download dialog shows
+  the free space and refuses a file that does not fit before sending it:
+  nginx passes the body on unbuffered, and when the server refuses early it
+  keeps receiving the body, so the browser would only see the connection
+  drop. The server still refuses a declared length beyond the free space,
+  and a write that runs out of space, with "the image store does not have
+  enough free space" (409).
+- An upload that cannot be stored otherwise is answered "the image store on
+  the board is not writable" (409); the server log names the file and the
+  error.
 
 ## Catalog
 

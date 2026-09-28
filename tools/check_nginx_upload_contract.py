@@ -89,10 +89,12 @@ def main() -> None:
                 assert request("/api/application-update/upload", 17 * mib) == 200
                 assert request("/api/application-update/upload", 128 * mib + 1) == 413
                 assert request("/api/download/file", 129 * mib) == 200
-                assert request("/api/download/file", 4097 * mib + 1) == 413
+                assert request("/api/download/file", 5 * 1024 * mib) == 200
+                assert request("/api/download/file", 65537 * mib + 1) == 413
                 assert request("/api/other", 17 * mib) == 413
                 assert request("/api/application-update/upload/extra", 17 * mib) == 413
                 assert observed == [("/api/application-update/upload", f"fixture.local:{port}", "https"),
+                                    ("/api/download/file", f"fixture.local:{port}", "https"),
                                     ("/api/download/file", f"fixture.local:{port}", "https")]
                 print("nginx upload contract: endpoint limits, early forwarding and unchanged default limit passed")
             finally:

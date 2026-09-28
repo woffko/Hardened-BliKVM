@@ -48,6 +48,7 @@ sh -n tools/device/deploy_native_profile.sh
 sh -n tools/device/deploy_vp8.sh
 sh -n tools/image/build_sd_image.sh
 sh -n tools/image/hardened-blikvm-firstboot.sh
+sh -n tools/image/hardened-blikvm-grow-image-store.sh
 sh -n packaging/system-update/initramfs-hook
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface

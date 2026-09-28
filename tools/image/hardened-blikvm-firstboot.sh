@@ -31,5 +31,10 @@ if [ ! -s /etc/machine-id ]; then
   systemd-machine-id-setup
 fi
 
+# A larger card's remainder goes to the image store. The image works without
+# it, so a failure is logged and the first boot still completes.
+/usr/libexec/hardened-blikvm/hardened-blikvm-grow-image-store ||
+  echo "hardened-blikvm-firstboot: the image store was not grown" >&2
+
 sync
 rm -f /etc/hardened-blikvm/.firstboot-pending

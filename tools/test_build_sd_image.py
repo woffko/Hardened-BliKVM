@@ -6,6 +6,7 @@ that can run alone (the fstab rewrite) and pin the rest by their text.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILDER = ROOT / "tools/image/build_sd_image.sh"
+GROW = ROOT / "tools/image/hardened-blikvm-grow-image-store.sh"
+FIRSTBOOT = ROOT / "tools/image/hardened-blikvm-firstboot.sh"
+FIRSTBOOT_UNIT = ROOT / "tools/image/hardened-blikvm-firstboot.service"
 QUOTE = "'\"'\"'"
 
 
@@ -88,6 +92,57 @@ class BuildSdImageTests(unittest.TestCase):
 
     def test_the_image_notes_say_first_setup_sets_root(self) -> None:
         self.assertIn("web password and root's password to the same value", self.script)
+
+    def test_the_data_partition_leaves_the_rest_to_the_image_store(self) -> None:
+        self.assertIn("ROOT_SECTORS=$((12 * 1024 * 1024 * 2))", self.script)
+        self.assertIn("DATA_SECTORS=$((8 * 1024 * 1024 * 2))", self.script)
+        self.assertIn("msd_sectors=$((IMAGE_BYTES / 512 - msd_start))", self.script)
+
+    def test_the_first_boot_grows_the_image_store(self) -> None:
+        self.assertIn(
+            '"$script_dir/hardened-blikvm-grow-image-store.sh" '
+            '"$staging/usr/libexec/hardened-blikvm/hardened-blikvm-grow-image-store"',
+            self.script,
+        )
+        firstboot = FIRSTBOOT.read_text(encoding="utf-8")
+        grow = firstboot.index("/usr/libexec/hardened-blikvm/hardened-blikvm-grow-image-store ||")
+        # A failure is logged; the marker is still cleared.
+        self.assertLess(grow, firstboot.index("rm -f /etc/hardened-blikvm/.firstboot-pending"))
+        unit = FIRSTBOOT_UNIT.read_text(encoding="utf-8")
+        self.assertIn("After=var-lib-hardened\\x2dblikvm\\x2dgadget-images.mount", unit)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk is not installed")
+    def test_the_last_partition_takes_the_rest_of_the_disk(self) -> None:
+        def table(disk: Path) -> list[str]:
+            dump = subprocess.run(["sfdisk", "-d", str(disk)], check=True, capture_output=True, text=True)
+            return [line.split(":", 1)[1].replace(" ", "") for line in dump.stdout.splitlines() if " : start=" in line]
+
+        with tempfile.TemporaryDirectory() as directory:
+            disk = Path(directory, "card.img")
+            with disk.open("wb") as card:
+                card.truncate(200 * 1024 * 1024)
+            layout = "label: dos\nstart=2048, size=40960\nstart=43008, size=40960\nstart=83968, size=40960\n"
+            subprocess.run(["sfdisk", "-q", str(disk)], input=layout, check=True, text=True)
+            subprocess.run(["sh", str(GROW), str(disk), "3"], check=True, capture_output=True)
+            self.assertEqual(
+                table(disk),
+                [
+                    "start=2048,size=40960,type=83",
+                    "start=43008,size=40960,type=83",
+                    "start=83968,size=325632,type=83",
+                ],
+            )
+            again = subprocess.run(["sh", str(GROW), str(disk), "3"], check=True, capture_output=True, text=True)
+            self.assertIn("already takes the rest of the card", again.stdout)
+
+            # Less than 64 MiB of room is left alone.
+            with disk.open("wb") as card:
+                card.truncate(0)
+                card.truncate(100 * 1024 * 1024)
+            subprocess.run(["sfdisk", "-q", str(disk)], input=layout, check=True, text=True)
+            small = subprocess.run(["sh", str(GROW), str(disk), "3"], check=True, capture_output=True, text=True)
+            self.assertIn("already takes the rest of the card", small.stdout)
+            self.assertEqual(table(disk)[2], "start=83968,size=40960,type=83")
 
     def test_the_image_catalog_starts_empty(self) -> None:
         self.assertIn('"  \\"entries\\": []"', self.script)

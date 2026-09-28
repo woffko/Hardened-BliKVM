@@ -18,6 +18,10 @@ type AbortReason = 'cancel' | 'stall';
 
 const TRANSFER_STALL_TIMEOUT_MS = 90_000;
 
+function formatGiB(bytes: number) {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+}
+
 function isAllowedLocalImage(file: File | null) {
   if (!file) return false;
   const name = file.name.toLowerCase();
@@ -34,6 +38,9 @@ export const DownloadImage = () => {
   const [log, setLog] = useState('');
   const [diskEnabled, setDiskEnabled] = useState(false);
   const [remoteEnabled, setRemoteEnabled] = useState(false);
+  // The image store's free space and the largest upload, from the board.
+  const [storeFree, setStoreFree] = useState<number | null>(null);
+  const [maxUpload, setMaxUpload] = useState<number | null>(null);
   const [popoverKey, setPopoverKey] = useState(0);
   const [activeTransfer, setActiveTransfer] = useState<TransferKind | null>(null);
 
@@ -115,15 +122,35 @@ export const DownloadImage = () => {
   }
 
   function checkDiskEnabled() {
-    imageEnabled()
+    return imageEnabled()
       .then((res) => {
         setDiskEnabled(res.data.enabled);
         setRemoteEnabled(res.data.remoteEnabled === true);
+        const free = typeof res.data.freeBytes === 'number' ? res.data.freeBytes : null;
+        const max = typeof res.data.maxUploadBytes === 'number' ? res.data.maxUploadBytes : null;
+        setStoreFree(free);
+        setMaxUpload(max);
+        return { free, max };
       })
       .catch(() => {
         setDiskEnabled(false);
         setRemoteEnabled(false);
+        setStoreFree(null);
+        setMaxUpload(null);
+        return { free: null, max: null };
       });
+  }
+
+  // Checked before sending: a proxy may not pass the board's early refusal
+  // on, and the browser would only see the connection drop.
+  function sizeRefusal(file: File, free: number | null, max: number | null) {
+    if (max !== null && file.size > max) {
+      return t('download.tooLarge', { size: formatGiB(file.size), max: formatGiB(max) });
+    }
+    if (free !== null && file.size > free) {
+      return t('download.noSpace', { size: formatGiB(file.size), free: formatGiB(free) });
+    }
+    return '';
   }
 
   function handleOpenChange(open: boolean) {
@@ -255,8 +282,9 @@ export const DownloadImage = () => {
       clearFileInput();
       return;
     }
-    setDownloadStatus('idle');
-    setLog('');
+    const refusal = file ? sizeRefusal(file, storeFree, maxUpload) : '';
+    setDownloadStatus(refusal ? 'failed' : 'idle');
+    setLog(refusal);
     setSelectedFile(file);
     setActiveTransferKind(null);
     stopStatusPolling();
@@ -274,6 +302,14 @@ export const DownloadImage = () => {
     if (!isAllowedLocalImage(file)) {
       setDownloadStatus('failed');
       setLog(t('download.NoISO'));
+      return;
+    }
+
+    const { free, max } = await checkDiskEnabled();
+    const refusal = sizeRefusal(file, free, max);
+    if (refusal) {
+      setDownloadStatus('failed');
+      setLog(refusal);
       return;
     }
 
@@ -319,6 +355,7 @@ export const DownloadImage = () => {
     if (msg === 'the image store on the board is not writable')
       return t('download.storeNotWritable');
     if (msg === 'detach the drive before replacing its image') return t('download.detachFirst');
+    if (msg === 'the image store does not have enough free space') return t('download.storeFull');
     return msg || t('download.uploadFailed');
   }
 
@@ -508,7 +545,12 @@ export const DownloadImage = () => {
                 type="primary"
                 className="h-10 border-2"
                 onClick={() => upload(selectedFile)}
-                disabled={status === 'in_progress' || status === 'complete' || !selectedFile}
+                disabled={
+                  status === 'in_progress' ||
+                  status === 'complete' ||
+                  !selectedFile ||
+                  sizeRefusal(selectedFile, storeFree, maxUpload) !== ''
+                }
               >
                 {t('download.ok')}
               </Button>
@@ -518,6 +560,11 @@ export const DownloadImage = () => {
                 </Button>
               )}
             </div>
+            {storeFree !== null && (
+              <div className="pt-1 text-xs text-neutral-500" data-store-free={storeFree}>
+                {t('download.storeFree', { free: formatGiB(storeFree) })}
+              </div>
+            )}
           </div>
         </>
       )}

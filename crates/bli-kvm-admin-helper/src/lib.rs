@@ -16,8 +16,9 @@ pub const ADMIN_SOCKET: &str = "/run/hardened-blikvm-admin/admin.sock";
 pub const DOWNLOAD_SOCKET: &str = "/run/hardened-blikvm-download-api/download.sock";
 /// Progress of the current or last download, read by the web server.
 pub const DOWNLOAD_STATUS: &str = "/run/hardened-blikvm-download/status.json";
-/// Largest image a download may produce, as in the reference.
-pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// Largest image a download may produce, as large as an upload (the
+/// reference allows 8 GiB); the image store's free space is the usual limit.
+pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 /// The PicoClaw configuration helper, running as the runtime's own user.
 pub const PICOCLAW_SOCKET: &str = "/run/hardened-blikvm-picoclaw-api/picoclaw.sock";
 /// Home of the PicoClaw runtime user; `PICOCLAW_HOME` is `.picoclaw` in it.

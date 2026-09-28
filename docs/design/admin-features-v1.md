@@ -58,8 +58,9 @@ and are socket-activated per connection.
     segment is an `.iso` name the store accepts, one download at a time
     (a lock next to the status file);
   - `curl` runs with a cleared environment and the reference limits (HTTP(S)
-    redirects only, 5 redirects, 2 h, a stall limit and an 8 GiB file limit)
-    into a hidden temporary file; progress goes to
+    redirects only, 5 redirects, 2 h, a stall limit), except that a file may
+    be as large as an upload (64 GiB, the reference's is 8 GiB), into a
+    hidden temporary file; progress goes to
     `/run/hardened-blikvm-download/status.json` in the reference shape;
   - a finished file must carry the ISO 9660 magic, then it is hashed,
     published atomically (0644) and recorded in the media catalog as a

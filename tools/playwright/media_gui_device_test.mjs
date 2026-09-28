@@ -6,6 +6,9 @@
 //
 // Usage: node media_gui_device_test.mjs BASE_URL USERNAME OUTPUT ISO_PATH VIEWPORT
 //   VIEWPORT: desktop | mobile
+// Environment: MEDIA_UPLOAD_TIMEOUT_MS (default 120000) for a large ISO;
+//   MEDIA_OVERSIZE_PATH, an .iso larger than the store's free space (a sparse
+//   file), which the dialog must refuse without sending it.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -20,6 +23,9 @@ assert.equal(path.dirname(output), path.resolve("evidence/private"));
 assert.ok(!fs.existsSync(output));
 assert.ok(fs.existsSync(isoPath) && isoPath.toLowerCase().endsWith(".iso"));
 assert.ok(["desktop", "mobile"].includes(viewport));
+const uploadTimeout = Number(process.env.MEDIA_UPLOAD_TIMEOUT_MS ?? 120000);
+const oversizePath = process.env.MEDIA_OVERSIZE_PATH ?? "";
+assert.ok(!oversizePath || fs.existsSync(oversizePath));
 const imageName = path.basename(isoPath);
 let password = "";
 for await (const chunk of process.stdin) password += chunk.toString("utf8");
@@ -122,23 +128,65 @@ try {
 
   // Upload from the Download menu.
   await page.locator("svg.lucide-download").first().click();
+  const uploadButton = page
+    .locator("#file-upload")
+    .locator("xpath=ancestor::div[.//button][1]")
+    .locator("button.ant-btn-primary");
+  const storeFree = await page
+    .locator(".ant-popover:visible [data-store-free]")
+    .first()
+    .getAttribute("data-store-free", { timeout: 15000 })
+    .catch(() => null);
+  record("store_free", {
+    bytes: storeFree === null ? null : Number(storeFree),
+  });
+  if (oversizePath) {
+    // Refused in the dialog: nothing is sent.
+    await page.locator("#file-upload").setInputFiles(oversizePath);
+    const refusal = page.locator(".ant-popover:visible .text-red-500").first();
+    await refusal.waitFor({ timeout: 10000 });
+    const shown = (await refusal.innerText()).trim();
+    const disabled = await uploadButton.isDisabled();
+    const sent = answers.filter(
+      (answer) => answer.path === "/api/download/file",
+    );
+    record("oversize_refused", {
+      shown,
+      uploadDisabled: disabled,
+      sent: sent.length,
+      bytes: fs.statSync(oversizePath).size,
+    });
+    assert.ok(/does not fit/.test(shown), "the oversize file was not refused");
+    assert.ok(disabled && sent.length === 0);
+    take();
+  }
   await page.locator("#file-upload").setInputFiles(isoPath);
   // The upload button sits beside the file drop area; the URL form above it
   // has its own.
-  await page
-    .locator("#file-upload")
-    .locator("xpath=ancestor::div[.//button][1]")
-    .locator("button.ant-btn-primary")
-    .click();
+  await uploadButton.click();
   const outcome = page
     .locator(
       ".ant-popover:visible .text-green-500, .ant-popover:visible .text-red-500",
     )
     .first();
-  await outcome.waitFor({ timeout: 120000 });
+  // The progress line is green too; wait for the outcome after it.
+  await page.waitForFunction(
+    () =>
+      [
+        ...document.querySelectorAll(
+          ".ant-popover .text-green-500, .ant-popover .text-red-500",
+        ),
+      ].some((element) => !/^Uploading/.test(element.textContent.trim())),
+    null,
+    { timeout: uploadTimeout, polling: 1000 },
+  );
   await page.waitForTimeout(1000);
   const uploadText = (await outcome.innerText()).trim();
-  record("upload", { shown: uploadText, answers: take() });
+  record("upload", {
+    shown: uploadText,
+    bytes: fs.statSync(isoPath).size,
+    answers: take(),
+  });
   await page.keyboard.press("Escape");
   await page.mouse.click(mobile ? 380 : 1400, mobile ? 830 : 980);
   const catalog = (await api("/api/virtual-media/catalog")).data?.images ?? [];

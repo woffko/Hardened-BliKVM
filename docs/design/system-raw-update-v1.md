@@ -23,9 +23,11 @@ with SD-card recovery and has no automatic rollback.
   administration switches, the application slots and exec store, the media
   catalog and Tailscale state. A raw root write would reset the device. The
   update therefore carries a fixed list of state paths across the write.
-- The card layout of the new image (p1 root 12 GiB, p2 data 14 GiB at
-  `/mnt`, p3 virtual media) has room to stage the payload and the backup on
-  p2. The hand-built test board's layout (p3 data 5 GiB) does not, so the
+- The card layout of the new image (p1 root 12 GiB, p2 data 8 GiB at
+  `/mnt`, p3 virtual media grown to the end of the card) has room to stage
+  the payload and the backup on p2: the upload check below asks for the
+  bundle, the payload and the root's used size (about 5 GB with today's
+  3.5 GB root). The hand-built test board's layout (p3 data 5 GiB) does not, so the
   device test runs on a card written from the new image.
 - Unlike the reference, the previous root is backed up and restored
   automatically when the new one fails; the operator can still roll back

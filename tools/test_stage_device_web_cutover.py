@@ -59,7 +59,7 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             self.assertIn("location = /api/system-update/upload {", rendered)
             self.assertIn("client_max_body_size 8g;", rendered)
             self.assertIn("client_max_body_size 128m;", rendered)
-            self.assertIn("client_max_body_size 4097m;", rendered)
+            self.assertIn("client_max_body_size 65537m;", rendered)
             self.assertEqual(rendered.count("proxy_request_buffering off;"), 3)
         self.assertIn("listen 80 default_server;", config)
         self.assertIn("listen 443 ssl default_server;", config)

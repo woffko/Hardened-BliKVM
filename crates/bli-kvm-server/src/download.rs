@@ -25,11 +25,14 @@ use crate::AppState;
 use crate::auth::middleware::CurrentSession;
 use crate::error::{ApiResponse, AppError, AppResult};
 
-/// Hard cap for one uploaded image.
-pub(crate) const MAX_MEDIA_UPLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// Hard cap for one uploaded image; the image store's free space is the
+/// usual limit.
+pub(crate) const MAX_MEDIA_UPLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 /// Slack allowed over `Content-Length` for multipart framing.
 const CONTENT_LENGTH_SLACK: u64 = 1024 * 1024;
 const MAX_UPLOAD_NAME_BYTES: usize = 64;
+/// The web client maps this reason to the operator's language.
+const NO_SPACE: &str = "the image store does not have enough free space";
 
 static UPLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -109,7 +112,29 @@ async fn attached_image(_state: &AppState, _session_token: &str) -> AppResult<Op
 /// keeps the cause.
 fn store_unwritable(name: &str, error: &std::io::Error) -> AppError {
     eprintln!("media: {name} could not be stored: {error}");
+    if error.raw_os_error() == Some(libc::ENOSPC) {
+        return AppError::Conflict(NO_SPACE.into());
+    }
     AppError::Conflict("the image store on the board is not writable".into())
+}
+
+/// Bytes the server's user may still write into the image store.
+pub(crate) fn store_free_bytes(directory: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(directory.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `statvfs` only writes into the zeroed structure.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+}
+
+/// Whether a request body of `length` bytes can hold a file that fits into
+/// `free` bytes; the multipart framing stays under the slack.
+fn fits_store(length: u64, free: u64) -> bool {
+    length <= free.saturating_add(CONTENT_LENGTH_SLACK)
 }
 
 async fn upload_image_inner(
@@ -134,13 +159,22 @@ async fn upload_image_inner(
         state.options.media_catalog.clone().ok_or_else(|| {
             AppError::ServiceUnavailable("image catalog is not configured".into())
         })?;
-    if let Some(length) = headers
+    let length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if let Some(length) = length
         && length > MAX_MEDIA_UPLOAD_BYTES + CONTENT_LENGTH_SLACK
     {
         return Err(AppError::BadRequest("upload is too large".into()));
+    }
+    // Refused before the body is read; the web client checks the same free
+    // space first, since a proxy may not pass an early answer on.
+    if let Some(length) = length
+        && let Some(free) = store_free_bytes(&directory)
+        && !fits_store(length, free)
+    {
+        return Err(AppError::Conflict(NO_SPACE.into()));
     }
 
     let mut uploaded: Option<(String, UploadKind, u64, String)> = None;
@@ -249,6 +283,9 @@ async fn upload_image_inner(
 pub struct ImageEnabledResponse {
     enabled: bool,
     remote_enabled: bool,
+    /// Free space in the image store, when it can be read.
+    free_bytes: Option<u64>,
+    max_upload_bytes: u64,
 }
 
 pub async fn image_enabled(
@@ -258,6 +295,12 @@ pub async fn image_enabled(
         enabled: state.options.media_catalog.is_some(),
         // Remote download is an administration feature, off until switched on.
         remote_enabled: crate::admin_features::switches().remote_download,
+        free_bytes: state
+            .options
+            .media_directory
+            .as_deref()
+            .and_then(store_free_bytes),
+        max_upload_bytes: MAX_MEDIA_UPLOAD_BYTES,
     }))
 }
 
@@ -270,10 +313,37 @@ mod tests {
         let json = serde_json::to_value(ImageEnabledResponse {
             enabled: true,
             remote_enabled: false,
+            free_bytes: Some(7),
+            max_upload_bytes: MAX_MEDIA_UPLOAD_BYTES,
         })
         .unwrap();
         assert_eq!(json["enabled"], true);
         assert_eq!(json["remoteEnabled"], false);
+        assert_eq!(json["freeBytes"], 7);
+        assert_eq!(json["maxUploadBytes"], MAX_MEDIA_UPLOAD_BYTES);
+    }
+
+    #[test]
+    fn an_upload_is_refused_when_the_store_cannot_hold_it() {
+        let free = 2 * 1024 * 1024 * 1024;
+        assert!(fits_store(free, free));
+        assert!(fits_store(free + CONTENT_LENGTH_SLACK, free));
+        assert!(!fits_store(free + CONTENT_LENGTH_SLACK + 1, free));
+        assert!(store_free_bytes(Path::new("/")).is_some());
+        assert!(store_free_bytes(Path::new("/nonexistent/image/store")).is_none());
+    }
+
+    #[test]
+    fn a_full_store_is_named() {
+        let full = std::io::Error::from_raw_os_error(libc::ENOSPC);
+        assert!(
+            matches!(store_unwritable("a.iso", &full), AppError::Conflict(message) if message == NO_SPACE)
+        );
+        let denied = std::io::Error::from_raw_os_error(libc::EACCES);
+        assert!(matches!(
+            store_unwritable("a.iso", &denied),
+            AppError::Conflict(message) if message == "the image store on the board is not writable"
+        ));
     }
 
     #[test]

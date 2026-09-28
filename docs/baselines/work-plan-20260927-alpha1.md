@@ -125,8 +125,27 @@ A, B, C, D, E, F, G, H. Operator: D3 (change the web password once and allow
 the GUI record for SSH), H4 (optional first boot of the image), the
 collaborator's invitation.
 
-## After the release
+## Phase I: image store size (H6, found after the first publish)
 
-- The IPv6 address placeholder in Settings > Network (inherited from the
-  reference) is an address of a private test network; the next slot shows a
-  documentation address (`2001:db8::/32`) instead.
+I1. The SD image's data partition is 8 GiB; the image store (p3) takes the
+    rest of the image and the first boot grows it to the end of the card
+    (`tools/image/hardened-blikvm-grow-image-store.sh`, run after the store's
+    mount job, online `resize2fs`; a failure is logged and the first boot
+    completes).
+I2. One image may have 64 GiB: the server's upload cap, nginx's body limit
+    for the upload and the remote download's limit (update runtime
+    `0.1.0~dev32`).
+I3. The server reports the store's free space and the limit
+    (`GET /api/download/image/enabled`) and refuses a declared length beyond
+    the free space and a write that runs out of it ("the image store does not
+    have enough free space"); the Download dialog shows the free space and
+    refuses a file that does not fit before sending it.
+I4. The IPv6 address placeholder (inherited from the reference, an address of
+    a private test network) becomes a documentation address
+    (`2001:db8::132`).
+I5. Board: the test board's p3 grown in place; the growth script run on the
+    board against a shrunken p3; an upload above 4 GiB, mounted as a CD-ROM
+    and deleted; a file larger than the free space refused in the dialog
+    without sending; the GUI walk desktop and mobile.
+I6. The release is rebuilt: a new slot and SD image, published again as
+    `v0.1.0-alpha.1` after the first publish is deleted.

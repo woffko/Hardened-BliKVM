@@ -3,6 +3,9 @@ Description=Hardened BliKVM first-boot machine identity provisioning
 Documentation=https://github.com/woffko/Hardened-BliKVM
 DefaultDependencies=no
 After=local-fs.target systemd-machine-id-commit.service
+# The image store's mount is optional (nofail), so local-fs.target does not
+# wait for it; the store grows after its mount job, mounted or not.
+After=var-lib-hardened\x2dblikvm\x2dgadget-images.mount
 Before=ssh.service sshd.service hardened-blikvm-nginx.service hardened-blikvm-board-owner.service multi-user.target
 ConditionPathExists=/etc/hardened-blikvm/.firstboot-pending
 
