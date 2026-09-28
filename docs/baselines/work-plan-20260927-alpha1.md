@@ -83,6 +83,9 @@ E2. The builder resets in the staged root: the administration switches, the
     backups, old web copies and configuration backups. Assembly stops if any
     of them remains.
 E3. The image records its release (`BLI_KVM_IMAGE_RELEASE=0.1.0-alpha.1`).
+E4. The builder replaces the board's `resolv.conf` (the source network's name
+    servers and search domain) with an empty NetworkManager file; found in the
+    staged root of the first alpha build.
 
 ## Phase F: guard against unrouted web calls (M7)
 
@@ -121,3 +124,9 @@ H4. Operator (recommended): write the image to a spare card and boot it once
 A, B, C, D, E, F, G, H. Operator: D3 (change the web password once and allow
 the GUI record for SSH), H4 (optional first boot of the image), the
 collaborator's invitation.
+
+## After the release
+
+- The IPv6 address placeholder in Settings > Network (inherited from the
+  reference) is an address of a private test network; the next slot shows a
+  documentation address (`2001:db8::/32`) instead.
