@@ -147,6 +147,17 @@ class BuildSdImageTests(unittest.TestCase):
             self.assertIn("already takes the rest of the card", small.stdout)
             self.assertEqual(table(disk)[2], "start=83968,size=40960,type=83")
 
+    def test_the_fakeroot_program_has_no_stray_quote(self) -> None:
+        # The staged root is prepared by one single-quoted `sh -c` program; a
+        # bare apostrophe (in a comment, too) ends the quote and breaks it,
+        # which `sh -n` does not notice. Apostrophes are written '"'"'.
+        start = self.script.index("fakeroot -s \"$work/fakeroot.state\" -- sh -eu -c '") + len(
+            "fakeroot -s \"$work/fakeroot.state\" -- sh -eu -c '"
+        )
+        end = self.script.index("' sh \"$staging\"", start)
+        program = self.script[start:end].replace(QUOTE, "")
+        self.assertNotIn("'", program)
+
     def test_the_image_catalog_starts_empty(self) -> None:
         self.assertIn('"  \\"entries\\": []"', self.script)
         self.assertIn('> "$staging/etc/hardened-blikvm-gadget/catalog.json"', self.script)

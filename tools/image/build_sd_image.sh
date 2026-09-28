@@ -132,7 +132,7 @@ assemble() {
     # not belong to a new board. Each service starts clean without its file:
     # every administration switch off, the firewall in Baseline, HID-only
     # off, empty media, ATX and HID journals, and the video settings at the
-    # capture unit's defaults.
+    # defaults of the capture unit.
     gadget_state="$staging/var/lib/hardened-blikvm-gadget"
     rm -f "$gadget_state/admin-features.json" "$gadget_state/firewall-mode.json" \
       "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
