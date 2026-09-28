@@ -183,7 +183,10 @@ try {
     locale: "en-US",
     viewport: { width: 390, height: 844 },
   });
-  page.setDefaultTimeout(10000);
+  // The dev server compiles modules on the first request; a loaded build host
+  // needs room for that.
+  page.setDefaultTimeout(20000);
+  page.setDefaultNavigationTimeout(60000);
   const errors = [];
   let logicalUploads = 0;
   page.on("request", (request) => {
