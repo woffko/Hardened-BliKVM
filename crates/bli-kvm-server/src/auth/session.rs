@@ -168,6 +168,34 @@ impl SessionStore {
         revoked
     }
 
+    /// How long a new session lives: the session lock setting, as in the
+    /// reference ("require login again after this time"), or `fallback`
+    /// while the lock is off.
+    pub async fn lifetime_seconds(&self, fallback: u64) -> u64 {
+        match *self.lock_after_seconds.read().await {
+            Some(seconds) => seconds,
+            None => fallback,
+        }
+    }
+
+    /// Gives a live session a new lifetime from now; the session lock
+    /// setting's change applies to the operator who made it.
+    pub async fn retime(&self, token: &str, ttl_secs: u64) -> Option<Session> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(token)?;
+        if !session.is_active() {
+            return None;
+        }
+        let ttl = Duration::from_secs(ttl_secs);
+        session.expires_at = Instant::now() + ttl;
+        session.expires_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .saturating_add(ttl)
+            .as_secs();
+        Some(session.clone())
+    }
+
     /// Revoke every session except the caller's, used by a forced lock.
     pub async fn revoke_others(&self, token: &str) -> Vec<String> {
         let mut revoked = Vec::new();
@@ -191,6 +219,22 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn sessions_follow_the_session_lock_and_can_be_retimed() {
+        let store = SessionStore::with_lock_after_seconds(3600);
+        assert_eq!(store.lifetime_seconds(900).await, 3600);
+        store.set_lock_after_seconds(0).await;
+        assert_eq!(store.lifetime_seconds(900).await, 900);
+
+        let session = store.issue("operator", 60).await;
+        let retimed = store.retime(&session.token, 1800).await.unwrap();
+        assert!(retimed.expires_at_unix >= session.expires_at_unix + 1700);
+        assert!(store.validate(&session.token).await.unwrap().expires_at > session.expires_at);
+        assert!(store.retime("unknown", 1800).await.is_none());
+        store.revoke(&session.token).await;
+        assert!(store.retime(&session.token, 1800).await.is_none());
+    }
 
     #[tokio::test]
     async fn revocation_is_visible_to_existing_session_clones() {

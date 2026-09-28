@@ -116,3 +116,25 @@ firewall modes need `webrtcMedia: [20000, 20099]` in the reviewed firewall
 configuration (host-implemented and checked against the device's nft) before
 VP8 works in those modes; acceptance with real capture on desktop and mobile
 browsers, glass-to-glass latency and MJPEG/VP8 switching.
+
+## Encoder on demand and the MJPEG relay (2026-09-28, plan phase J)
+
+- The encoder ran whether or not anyone watched VP8: it decoded and encoded
+  every changed frame and took 2.3 of the four cores while the operator
+  watched MJPEG. It now listens on `/run/hardened-blikvm-vp8/demand.sock`
+  (`BLI_KVM_VP8_DEMAND_SOCKET`, group `hardened-blikvm`, mode 0660). The
+  server (`BLI_KVM_WEBRTC_DEMAND_SOCKET`, set by `deploy_vp8.sh` next to
+  `BLI_KVM_JANUS_WS`) holds one connection per viewer for as long as the
+  viewer's signaling lasts and names the codec on its first line. Without a
+  connection the encoder leaves the capture stream two seconds later; a new
+  viewer makes it reconnect and start from a key frame. Without the socket
+  setting the encoder runs always, as before.
+- MJPEG: the server reads the capture's multipart stream continuously and
+  keeps only the newest complete part (`mjpeg_latest.rs`); the response
+  sends a part only when the connection takes one, so a slow viewer skips
+  frames instead of receiving old ones late. `net.ipv4.tcp_notsent_lowat`
+  of 128 KiB (`packaging/sysctl/60-hardened-blikvm-stream.conf`) keeps the
+  backlog in the kernel's send queues, between the server and nginx and
+  between nginx and the browser, to about one frame.
+- The capture unit's default rate is 30 frames/s, as in the reference; the
+  SD image drops the source board's saved video settings.

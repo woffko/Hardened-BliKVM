@@ -159,14 +159,40 @@ I7. (M8) At most one mouse report is in flight; movement meanwhile merges
     into one report (`web/src/lib/hid-report-queue.ts`, tested in
     `tools/test_hid_report_queue.mjs`).
 
+I8. (L7) A session lives as long as Settings > Device > Session lock after
+    (5, 15, 30 or 60 minutes), as in the reference: login issues the session
+    and its cookies for that duration, and a change of the setting retimes
+    the current session. Today the server issues 15-minute sessions whatever
+    the setting says.
+
 ## Phase J: video smoothness (M9)
 
+J0. The VP8 encoder runs only while a WebRTC viewer is connected (the
+    signaling socket holds it; the last viewer leaving stops it). Today it
+    decodes and encodes every changed frame for nobody: 2.3 of the four
+    cores while the operator watched MJPEG, taken from the MJPEG relay, TLS
+    and HID.
 J1. MJPEG: the relay forwards only the newest frame when the viewer falls
     behind, and the send queues on the way stay small, so the picture trails
     the capture by a frame or two on any link; the default frame rate
     follows the reference (30).
-J2. VP8: 1080p at 20 frames/s or more: JPEG decoded straight to I420,
-    stages on separate cores, the encoder's token partitions and threads.
-J3. Board: latency measured from the capture timestamp (`X-Timestamp`) on a
-    full-speed and a throttled viewer, VP8 frame rate while the screen
-    moves, desktop and mobile.
+J2. Frame preparation for every encoder: the capture's JPEG decoded straight
+    to I420 (no RGB step), at half scale in the DCT when the encoder runs at
+    half resolution; decoding, conversion and encoding on separate cores;
+    VP8 with token partitions and four threads.
+J3. H.264 through x264 (GPL-2.0-or-later, compatible with the project's
+    GPL-3.0-only), built from a pinned source release like libvpx: preset
+    `superfast` and `ultrafast`, tune `zerolatency`, constrained baseline
+    profile for WebRTC, four threads, into Janus over loopback RTP
+    (RFC 6184 packetization) as an "H.264 (WebRTC)" video mode beside VP8.
+    Browsers decode it in hardware.
+J4. Benchmark on the board, on the same recorded capture frames: VP8 and
+    x264 `superfast` and `ultrafast` at 1920x1080 and 1280x720, frames per
+    second, per-stage times, CPU and bitrate. The default WebRTC mode and
+    resolution follow the numbers; the goal is 20 frames/s or more at
+    1920x1080. If the H616 cannot, the reached rates are recorded and the
+    video menu offers the lower resolution.
+J5. Board: latency measured from the capture timestamp (`X-Timestamp`) on a
+    full-speed viewer and one throttled to 20 Mbit/s; frame rate while the
+    screen moves and CPU with and without a viewer, for MJPEG, VP8 and
+    H.264, desktop and mobile.

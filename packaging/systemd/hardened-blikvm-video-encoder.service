@@ -11,6 +11,12 @@ DynamicUser=yes
 # Read access to the uStreamer socket, which is group hardened-blikvm.
 SupplementaryGroups=hardened-blikvm
 UMask=0077
+# The web server holds this socket open while a WebRTC viewer is connected;
+# without one the encoder leaves the capture stream and takes no CPU. The
+# socket is group hardened-blikvm, mode 0660.
+RuntimeDirectory=hardened-blikvm-vp8
+RuntimeDirectoryMode=0755
+Environment=BLI_KVM_VP8_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock
 Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
 Environment=BLI_KVM_VP8_RTP_PORT=5004
 Environment=BLI_KVM_VP8_MAX_FPS=30

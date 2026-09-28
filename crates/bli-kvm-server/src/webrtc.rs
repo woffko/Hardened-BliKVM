@@ -6,7 +6,7 @@
 //! offer/answer and trickle candidates, keeps the session alive and destroys
 //! it when either side leaves. No Janus request is ever forwarded verbatim.
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     extract::{
@@ -19,7 +19,11 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, sync::Semaphore};
+use tokio::{
+    io::AsyncWriteExt,
+    net::{TcpStream, UnixStream},
+    sync::Semaphore,
+};
 use tokio_tungstenite::{
     WebSocketStream, client_async,
     tungstenite::{self, client::IntoClientRequest, http::HeaderValue},
@@ -45,16 +49,32 @@ const JANUS_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) struct WebRtcGateway {
     pub janus: SocketAddr,
     pub viewers: Arc<Semaphore>,
+    /// The encoder's demand socket; see `hold_demand`.
+    pub demand: Option<PathBuf>,
 }
 
 impl WebRtcGateway {
-    pub(crate) fn new(janus: SocketAddr) -> Option<Arc<Self>> {
+    pub(crate) fn new(janus: SocketAddr, demand: Option<PathBuf>) -> Option<Arc<Self>> {
         janus.ip().is_loopback().then(|| {
             Arc::new(Self {
                 janus,
                 viewers: Arc::new(Semaphore::new(2)),
+                demand,
             })
         })
+    }
+
+    /// Asks the encoder to run while the returned connection is held: it
+    /// otherwise decodes and encodes every changed frame for nobody. The
+    /// first line names the codec. An encoder without the socket runs
+    /// anyway, so a failure only means no demand is signalled.
+    pub(crate) async fn hold_demand(&self, codec: &str) -> Option<UnixStream> {
+        let mut connection = UnixStream::connect(self.demand.as_ref()?).await.ok()?;
+        connection
+            .write_all(format!("{codec}\n").as_bytes())
+            .await
+            .ok()?;
+        Some(connection)
     }
 }
 
@@ -110,6 +130,7 @@ pub(crate) async fn webrtc_socket(
         .on_upgrade(move |mut socket| async move {
             let _guard = guard;
             let _permit = permit;
+            let _demand = gateway.hold_demand("vp8").await;
             if let Err(code) = relay(&state, &gateway, &session, &mut socket).await {
                 let _ = socket.send(error(code)).await;
             }

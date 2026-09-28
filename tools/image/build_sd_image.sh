@@ -131,12 +131,13 @@ assemble() {
     # The source board'"'"'s switches, confirmed firewall mode and journals do
     # not belong to a new board. Each service starts clean without its file:
     # every administration switch off, the firewall in Baseline, HID-only
-    # off, empty media, ATX and HID journals.
+    # off, empty media, ATX and HID journals, and the video settings at the
+    # capture unit's defaults.
     gadget_state="$staging/var/lib/hardened-blikvm-gadget"
     rm -f "$gadget_state/admin-features.json" "$gadget_state/firewall-mode.json" \
       "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
-      "$gadget_state/hid-only.env"
+      "$gadget_state/hid-only.env" "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
     # Leftovers of earlier deployments on the source board; nothing refers to
     # them.
     rm -rf "$gadget_state"/kvmd-backup-* "$gadget_state"/unit-owner-* \
@@ -148,6 +149,7 @@ assemble() {
       -o -name hid-only.env -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
+    [ ! -e "$staging/var/lib/hardened-blikvm-video/ustreamer.env" ] || leftover="$leftover ustreamer.env"
     if [ -n "$leftover" ]; then
       echo "source board state remains: $leftover" >&2
       exit 1

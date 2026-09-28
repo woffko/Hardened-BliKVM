@@ -4,12 +4,16 @@
 //! The reference settings expose this as a duration plus an explicit forced
 //! lock; both are unprivileged, so the server owns them directly.
 
-use axum::{Extension, Json, extract::State};
+use axum::{
+    Extension, Json,
+    extract::State,
+    http::{HeaderMap, header},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     AppState,
-    auth::middleware::CurrentSession,
+    auth::{cookie::session_cookie, middleware::CurrentSession},
     error::{ApiResponse, AppError, AppResult},
 };
 
@@ -55,8 +59,12 @@ fn store(state_dir: &std::path::Path, duration: u64) -> std::io::Result<()> {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLockView {
-    /// Idle seconds before a forced re-login; `0` disables the auto-lock.
+    /// Seconds a session lives, and idles at most, before a forced re-login;
+    /// `0` disables the auto-lock.
     pub duration: u64,
+    /// After a change, when the caller's retimed session ends.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +81,7 @@ pub(crate) async fn get_session_lock(
 ) -> Json<ApiResponse<SessionLockView>> {
     Json(ApiResponse::ok(SessionLockView {
         duration: state.sessions.lock_after_seconds().await,
+        expires_at: None,
     }))
 }
 
@@ -80,7 +89,7 @@ pub(crate) async fn set_session_lock(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(body): Json<SessionLockBody>,
-) -> AppResult<Json<ApiResponse<SessionLockView>>> {
+) -> AppResult<(HeaderMap, Json<ApiResponse<SessionLockView>>)> {
     if body.duration > MAX_LOCK_SECONDS {
         return Err(AppError::BadRequest(
             "the session lock duration is too large".into(),
@@ -99,9 +108,26 @@ pub(crate) async fn set_session_lock(
             crate::hid::release_session_hid(&state, &token).await;
         }
     }
-    Ok(Json(ApiResponse::ok(SessionLockView {
-        duration: state.sessions.lock_after_seconds().await,
-    })))
+    // As in the reference, the caller's own session takes the new lifetime.
+    let mut headers = HeaderMap::new();
+    let lifetime = state
+        .sessions
+        .lifetime_seconds(state.options.session_ttl_secs)
+        .await;
+    let retimed = state.sessions.retime(&session.token, lifetime).await;
+    if let Some(retimed) = &retimed {
+        headers.insert(
+            header::SET_COOKIE,
+            session_cookie(&retimed.token, lifetime, state.options.secure_cookies)?,
+        );
+    }
+    Ok((
+        headers,
+        Json(ApiResponse::ok(SessionLockView {
+            duration: state.sessions.lock_after_seconds().await,
+            expires_at: retimed.map(|session| session.expires_at_unix),
+        })),
+    ))
 }
 
 #[cfg(test)]

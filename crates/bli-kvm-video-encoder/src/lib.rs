@@ -5,6 +5,7 @@
 //! packetizes encoded VP8 frames into RTP (RFC 7741) for a loopback consumer.
 //! JPEG decoding and VP8 encoding are separate, replaceable stages.
 
+pub mod demand;
 pub mod gate;
 pub mod mjpeg;
 pub mod rtp;

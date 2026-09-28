@@ -1987,7 +1987,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ).read_text()
         # The defaults are reviewed values and the owner's file is processed
         # after them, so an accepted request wins.
-        self.assertIn("Environment=BLI_KVM_USTREAMER_FPS=40", unit)
+        self.assertIn("Environment=BLI_KVM_USTREAMER_FPS=30", unit)
         self.assertIn("Environment=BLI_KVM_USTREAMER_QUALITY=80", unit)
         self.assertIn(
             "EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env", unit
@@ -1995,7 +1995,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("--desired-fps=${BLI_KVM_USTREAMER_FPS}", unit)
         self.assertIn("--quality=${BLI_KVM_USTREAMER_QUALITY}", unit)
         self.assertLess(
-            unit.index("Environment=BLI_KVM_USTREAMER_FPS=40"),
+            unit.index("Environment=BLI_KVM_USTREAMER_FPS=30"),
             unit.index("EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env"),
         )
         self.assertLess(

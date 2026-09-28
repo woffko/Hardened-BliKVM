@@ -41,6 +41,7 @@ mod hid;
 mod hostname;
 mod leader_key;
 mod media;
+mod mjpeg_latest;
 mod network;
 mod network_ipv4;
 mod network_write;
@@ -120,6 +121,9 @@ pub struct ServerOptions {
     pub update_native_admission: bool,
     /// Loopback Janus WebSocket for VP8 WebRTC signaling; absent disables it.
     pub webrtc_janus: Option<std::net::SocketAddr>,
+    /// The WebRTC encoder's demand socket: held open while a viewer is
+    /// connected, so the encoder works only then. Absent: it always runs.
+    pub webrtc_demand_socket: Option<PathBuf>,
     /// Privileged control broker used only for safe-target/focus attestation.
     /// No value keeps the HID focus endpoint unavailable.
     pub control_socket: Option<PathBuf>,
@@ -181,6 +185,7 @@ impl Default for ServerOptions {
             update_writes_enabled: false,
             update_native_admission: false,
             webrtc_janus: None,
+            webrtc_demand_socket: None,
             control_socket: None,
             restricted_controls_enabled: false,
             media_catalog: None,
@@ -375,7 +380,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         capabilities: Arc::new(manifest),
         update_http_upload: Arc::new(tokio::sync::Semaphore::new(1)),
         update_native_admission: options.update_native_admission,
-        webrtc: options.webrtc_janus.and_then(webrtc::WebRtcGateway::new),
+        webrtc: options.webrtc_janus.and_then(|janus| {
+            webrtc::WebRtcGateway::new(janus, options.webrtc_demand_socket.clone())
+        }),
         update_activation: options
             .update_activation_socket
             .as_ref()
@@ -1365,9 +1372,19 @@ mod tests {
         });
 
         let root = tempdir().unwrap();
+        // The encoder's demand socket: held for exactly the viewer's session.
+        let demand_path = root.path().join("demand.sock");
+        let demand_listener = tokio::net::UnixListener::bind(&demand_path).unwrap();
+        let demand = tokio::spawn(async move {
+            let (mut connection, _) = demand_listener.accept().await.unwrap();
+            let mut received = Vec::new();
+            connection.read_to_end(&mut received).await.unwrap();
+            received
+        });
         let app = app_with_options(ServerOptions {
             state_dir: root.path().join("account"),
             webrtc_janus: Some(janus_address),
+            webrtc_demand_socket: Some(demand_path),
             ..ServerOptions::default()
         });
         let (cookie, _) = setup_and_login(&app).await;
@@ -1456,6 +1473,12 @@ mod tests {
             seen.iter()
                 .all(|request| request["janus"] == "create" || request["session_id"] == 11)
         );
+        // The viewer left, so the demand connection closed after naming VP8.
+        let asked = tokio::time::timeout(std::time::Duration::from_secs(5), demand)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(asked, b"vp8\n");
         server.abort();
     }
 
@@ -1833,6 +1856,65 @@ mod tests {
             body["data"]["duration"], 300,
             "a rejected write must not change the policy"
         );
+    }
+
+    #[tokio::test]
+    async fn sessions_live_as_long_as_the_session_lock_says() {
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        };
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (_, account) = {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/auth/account")
+                        .header(header::HOST, "kvm.test")
+                        .header(header::COOKIE, &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (response.status(), json_body(response).await)
+        };
+        // Login used the reference default of one hour, not 15 minutes.
+        let expires = account["data"]["expiresAt"].as_u64().unwrap();
+        assert!(
+            (now() + 3590..=now() + 3600).contains(&expires),
+            "{account}"
+        );
+
+        // A change retimes the caller's own session and its cookie.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/vm/session-lock")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(header::COOKIE, &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .body(Body::from(r#"{"duration":1800}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let set_cookie = response.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(set_cookie.contains("Max-Age=1800"), "{set_cookie}");
+        let body = json_body(response).await;
+        let expires = body["data"]["expiresAt"].as_u64().unwrap();
+        assert!((now() + 1790..=now() + 1800).contains(&expires), "{body}");
     }
 
     #[tokio::test]
@@ -4220,7 +4302,7 @@ mod tests {
             assert!(request.starts_with("get /mjpeg http/1.1\r\n"));
             stream
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nX-Private-Backend: forbidden\r\nContent-Length: 4\r\n\r\nJPEG",
+                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nX-Private-Backend: forbidden\r\nContent-Length: 62\r\n\r\n--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n",
                 )
                 .await
                 .unwrap();
@@ -4246,9 +4328,10 @@ mod tests {
             "no-store, no-cache, must-revalidate"
         );
         assert!(!response.headers().contains_key("x-private-backend"));
+        // Whole parts are relayed as they came.
         assert_eq!(
             to_bytes(response.into_body(), 64 * 1024).await.unwrap(),
-            "JPEG"
+            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n"
         );
         proxy.await.unwrap();
     }

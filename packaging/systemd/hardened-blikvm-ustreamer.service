@@ -16,7 +16,7 @@ RuntimeDirectoryMode=0750
 Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
 # Reviewed defaults; the privileged owner rewrites the file below from the
 # accepted video-settings request and restarts this unit.
-Environment=BLI_KVM_USTREAMER_FPS=40
+Environment=BLI_KVM_USTREAMER_FPS=30
 # Frame detect (the reference's MJPEG setting); the owner may override it.
 Environment=BLI_KVM_USTREAMER_DROP_SAME_FRAMES=30
 Environment=BLI_KVM_USTREAMER_QUALITY=80

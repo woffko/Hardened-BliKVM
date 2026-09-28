@@ -135,18 +135,17 @@ pub async fn login(
     limiter.record_success(&source, &request.username);
     drop(limiter);
 
-    let session = state
+    // The session lives as long as Session lock after says, as in the
+    // reference; the server's default applies while the lock is off.
+    let lifetime = state
         .sessions
-        .issue(&request.username, state.options.session_ttl_secs)
+        .lifetime_seconds(state.options.session_ttl_secs)
         .await;
+    let session = state.sessions.issue(&request.username, lifetime).await;
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::SET_COOKIE,
-        session_cookie(
-            &session.token,
-            state.options.session_ttl_secs,
-            state.options.secure_cookies,
-        )?,
+        session_cookie(&session.token, lifetime, state.options.secure_cookies)?,
     );
     Ok((
         response_headers,

@@ -28,8 +28,16 @@ pub async fn mjpeg(
         .mjpeg()
         .await
         .map_err(|_| AppError::ServiceUnavailable("video proxy unavailable".into()))?;
+    // A slow viewer gets the newest frame instead of a queue of old ones.
+    let boundary = stream
+        .content_type
+        .to_str()
+        .ok()
+        .and_then(crate::mjpeg_latest::boundary)
+        .map(str::to_owned)
+        .ok_or_else(|| AppError::ServiceUnavailable("video proxy unavailable".into()))?;
     let mut response = Response::new(Body::new(SessionBoundBody::new(
-        stream.body,
+        crate::mjpeg_latest::newest_parts(stream.body, &boundary),
         session,
         state.options.shutdown.clone(),
     )));

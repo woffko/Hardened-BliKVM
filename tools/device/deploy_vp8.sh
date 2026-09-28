@@ -5,10 +5,14 @@
 #   janus/*.jcfg                           packaging/janus
 #   hardened-blikvm-janus.service          packaging/systemd
 #   hardened-blikvm-video-encoder.service  packaging/systemd
+#   60-hardened-blikvm-stream.conf         packaging/sysctl (MJPEG latency)
+#   hardened-blikvm-ustreamer.service      packaging/systemd (default rate)
 # Usage: deploy_vp8.sh install|remove STAGING_DIR
 #
 # The server advertises VP8 only when BLI_KVM_JANUS_WS is set, which this
-# script adds as a drop-in for the serving units; the server restarts once.
+# script adds as a drop-in for the serving units together with the encoder's
+# demand socket (the encoder works only while a viewer is connected); the
+# server restarts once.
 set -eu
 
 action=${1:-}
@@ -31,13 +35,20 @@ install_vp8() {
   done
   install -m 0644 "$staging/hardened-blikvm-janus.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-video-encoder.service" "$units/"
+  install -m 0644 "$staging/hardened-blikvm-ustreamer.service" "$units/"
+  install -m 0644 -o root -g root "$staging/60-hardened-blikvm-stream.conf" /etc/sysctl.d/
+  sysctl -q -p /etc/sysctl.d/60-hardened-blikvm-stream.conf
   for unit in $serving; do
     install -d -m 0755 "$units/$unit.service.d"
     printf '%s\n' '[Service]' 'Environment=BLI_KVM_JANUS_WS=127.0.0.1:8188' \
+      'Environment=BLI_KVM_WEBRTC_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock' \
       > "$units/$unit.service.d/60-webrtc.conf"
   done
   systemctl daemon-reload
-  systemctl enable --now hardened-blikvm-janus.service hardened-blikvm-video-encoder.service
+  systemctl enable --now hardened-blikvm-janus.service
+  systemctl restart hardened-blikvm-ustreamer.service
+  systemctl enable hardened-blikvm-video-encoder.service
+  systemctl restart hardened-blikvm-video-encoder.service
   for unit in $serving; do
     if systemctl is-active --quiet "$unit"; then
       systemctl restart "$unit"

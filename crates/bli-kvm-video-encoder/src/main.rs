@@ -1,5 +1,6 @@
 //! VP8 WebRTC feed for Janus: reads the uStreamer MJPEG stream, encodes
-//! changed frames with libvpx and sends RTP to a loopback UDP port.
+//! changed frames with libvpx and sends RTP to a loopback UDP port. With a
+//! demand socket it works only while a WebRTC viewer is connected.
 
 use std::{
     env,
@@ -18,6 +19,7 @@ use std::{
 
 use bli_kvm_video_encoder::{
     FrameDecision, FrameGate, GatePolicy, LatestFrame, Vp8Packetizer,
+    demand::{Demand, group_id},
     mjpeg::MjpegReader,
     vp8::{I420, Vp8Config, Vp8Encoder},
     yuv::{I420Frame, JpegToI420},
@@ -35,7 +37,12 @@ struct Settings {
     kbps: u32,
     threads: u32,
     halve: bool,
+    demand: Option<PathBuf>,
+    demand_group: String,
 }
+
+/// After the last viewer leaves, the capture stream is kept this long.
+const IDLE_GRACE: Duration = Duration::from_secs(2);
 
 fn number(name: &str, default: u32, range: std::ops::RangeInclusive<u32>) -> Result<u32, String> {
     match env::var(name) {
@@ -65,6 +72,14 @@ fn settings() -> Result<Settings, String> {
         kbps: number("BLI_KVM_VP8_KBPS", 2500, 64..=20000)?,
         threads: number("BLI_KVM_VP8_THREADS", 3, 1..=4)?,
         halve: number("BLI_KVM_VP8_HALVE", 0, 0..=1)? == 1,
+        demand: match env::var_os("BLI_KVM_VP8_DEMAND_SOCKET").map(PathBuf::from) {
+            Some(path) if !path.is_absolute() => {
+                return Err("BLI_KVM_VP8_DEMAND_SOCKET must be absolute".into());
+            }
+            path => path,
+        },
+        demand_group: env::var("BLI_KVM_VP8_DEMAND_GROUP")
+            .unwrap_or_else(|_| "hardened-blikvm".into()),
     })
 }
 
@@ -78,14 +93,22 @@ fn read_stream(
     settings: &Settings,
     gate: &mut FrameGate,
     slot: &LatestFrame<Captured>,
+    demand: &Demand,
     stop: &AtomicBool,
 ) -> io::Result<()> {
     let mut stream = UnixStream::connect(&settings.upstream)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.write_all(STREAM_REQUEST)?;
     let mut reader = MjpegReader::new(stream)?;
+    let mut idle_since: Option<Instant> = None;
     loop {
         if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        // Nobody watches: leave the capture stream until someone does.
+        if demand.active() {
+            idle_since = None;
+        } else if idle_since.get_or_insert_with(Instant::now).elapsed() >= IDLE_GRACE {
             return Ok(());
         }
         let mut jpeg = Vec::new();
@@ -140,6 +163,7 @@ fn encode_loop(
     settings: &Settings,
     slot: &LatestFrame<Decoded>,
     rejected: &AtomicU32,
+    demand: &Demand,
     stop: &AtomicBool,
 ) -> Result<(), String> {
     let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|error| error.to_string())?;
@@ -159,6 +183,7 @@ fn encode_loop(
     let start = Instant::now();
     let mut last_pts = -1_i64;
     let mut stats = Stats::default();
+    let mut generation = demand.generation();
     while !stop.load(Ordering::Relaxed) {
         stats.report(slot.replaced(), rejected.load(Ordering::Relaxed));
         let Some(decoded) = slot.take(Duration::from_millis(500)) else {
@@ -189,6 +214,9 @@ fn encode_loop(
         let pts =
             (decoded.at.saturating_duration_since(start).as_micros() as i64).max(last_pts + 1);
         last_pts = pts;
+        // A new viewer starts from a key frame instead of the next periodic one.
+        let force_key = demand.generation() != generation;
+        generation = demand.generation();
         let encode_start = Instant::now();
         let encoded = encoder
             .encode(
@@ -201,7 +229,7 @@ fn encode_loop(
                 },
                 pts,
                 1_000_000 / i64::from(settings.max_fps),
-                false,
+                force_key,
             )
             .map_err(|error| error.to_string())?;
         stats.encode += encode_start.elapsed();
@@ -268,14 +296,30 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let demand = match &settings.demand {
+        Some(path) => {
+            let group = std::fs::read_to_string("/etc/group")
+                .ok()
+                .and_then(|groups| group_id(&groups, &settings.demand_group));
+            match Demand::listen(path, group) {
+                Ok(demand) => demand,
+                Err(error) => {
+                    eprintln!("bli-kvm-video-encoder: demand socket: {error}");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        None => Demand::always(),
+    };
     let stop = Arc::new(AtomicBool::new(false));
     let captured = Arc::new(LatestFrame::new());
     let decoded = Arc::new(LatestFrame::new());
     let rejected = Arc::new(AtomicU32::new(0));
     let reader = {
-        let (settings, captured, stop) = (
+        let (settings, captured, demand, stop) = (
             Arc::clone(&settings),
             Arc::clone(&captured),
+            Arc::clone(&demand),
             Arc::clone(&stop),
         );
         thread::spawn(move || {
@@ -284,11 +328,20 @@ fn main() -> ExitCode {
             let mut gate = FrameGate::new(policy);
             let mut backoff = Duration::from_millis(200);
             while !stop.load(Ordering::Relaxed) {
+                demand.wait_for_viewers(&stop);
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 let started = Instant::now();
-                if let Err(error) = read_stream(&settings, &mut gate, &captured, &stop) {
+                if let Err(error) = read_stream(&settings, &mut gate, &captured, &demand, &stop) {
                     eprintln!("bli-kvm-video-encoder: capture stream ended: {error}");
                 }
                 gate.reset();
+                if !demand.active() {
+                    // Left for want of viewers, not because the stream failed.
+                    backoff = Duration::from_millis(200);
+                    continue;
+                }
                 if started.elapsed() > Duration::from_secs(10) {
                     backoff = Duration::from_millis(200);
                 }
@@ -307,7 +360,7 @@ fn main() -> ExitCode {
         );
         thread::spawn(move || convert_loop(&settings, &captured, &decoded, &rejected, &stop))
     };
-    let result = encode_loop(&settings, &decoded, &rejected, &stop);
+    let result = encode_loop(&settings, &decoded, &rejected, &demand, &stop);
     // Any encoder failure ends the process; systemd restarts it with backoff.
     stop.store(true, Ordering::Relaxed);
     captured.close();

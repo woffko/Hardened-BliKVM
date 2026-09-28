@@ -81,6 +81,9 @@ class BuildSdImageTests(unittest.TestCase):
         for leftover in ("kvmd-backup-*", "unit-owner-*", "update-trust-*.json", "web-pre-*"):
             self.assertIn(f'"$gadget_state"/{leftover}', self.script, leftover)
         self.assertIn('"$staging"/etc/hardened-blikvm/update-supervisor-*.json', self.script)
+        # The video settings chosen on the source board (frame rate, quality,
+        # resolution) give way to the capture unit's defaults.
+        self.assertIn('"$staging/var/lib/hardened-blikvm-video/ustreamer.env"', self.script)
         # The firewall's configuration (not its confirmed mode) stays.
         self.assertIn('-not -path "$staging/etc/hardened-blikvm/firewall-mode.json"', self.script)
         self.assertIn("source board state remains", self.script)
