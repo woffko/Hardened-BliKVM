@@ -193,6 +193,10 @@ try {
     await panel.getByRole("progressbar").getAttribute("aria-valuenow"),
     "100",
   );
+  // The browser counts a throttled body as sent before the fixture has read
+  // all of it; log out only once verification is really pending.
+  for (let count = 0; count < 250 && completedBodies < 1; count++)
+    await new Promise((resolve) => setTimeout(resolve, 20));
   // Ant Design's labelled logout icon contributes to the accessible name.
   await page.getByRole("button", { name: /Logout$/ }).click();
   await page.getByRole("button", { name: "Yes", exact: true }).click();
@@ -209,12 +213,12 @@ try {
   assert.equal(status, 401);
   for (let count = 0; count < 50 && abortedResponses < 2; count++)
     await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(uploadCount, 2);
-  assert.equal(logoutCount, 1);
-  assert.equal(incompleteUploads, 1);
-  assert.equal(completedBodies, 1);
-  assert.equal(abortedResponses, 2);
-  assert.equal(held.size, 0);
+  assert.equal(uploadCount, 2, "uploads");
+  assert.equal(logoutCount, 1, "logouts");
+  assert.equal(incompleteUploads, 1, "incomplete uploads");
+  assert.equal(completedBodies, 1, "completed bodies");
+  assert.equal(abortedResponses, 2, "aborted responses");
+  assert.equal(held.size, 0, "held responses");
   assert.deepEqual(violations, []);
   assert.deepEqual(errors, []);
   console.log(
