@@ -144,7 +144,8 @@ I3. The server reports the store's free space and the limit
     before sending. Names may have 128 characters, as in the catalog. The
     remote download's status no longer ends an upload; Cancel takes the
     upload button's place while a file is sent.
-I4. The IPv6 address placeholder (inherited from the reference, an address of
+I4. (L6) The read-only autostart entry leaves Settings > Device, as in the
+    reference. The IPv6 address placeholder (inherited from the reference, an address of
     a private test network) becomes a documentation address
     (`2001:db8::132`).
 I5. Board: the test board's p3 grown in place; the growth script run on the

@@ -194,9 +194,11 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   (the owner refuses media attach and the media capability follows),
   `hidOnly` (the owner persists the switch and refuses every virtual-media
   command except a detach while it is on, with `GET`/`POST /api/vm/hid-only`
-  and a switch in the device section). The read-only `autostart` list is
-  surfaced with the network link (both live in the device section and the link
-  switches the shared settings tab to `system`), and the `hdmi` entry is gone
+  and a switch in the device section). The read-only `autostart` list and its
+  network link were removed from the device section on 2026-09-28: the
+  reference 2.0.42 shows neither (its autostart editor is commented out), and
+  the operator took the entry for the scripts switch, which is
+  Appearance > Menu Bar > Scripts in both. The `hdmi` entry is gone
   with the reason recorded: the board captures HDMI and has no HDMI output or
   hotplug control to toggle.
 - **P1.1 (evidence, 2026-09-19)**: the HDMI bridge is a plain **USB2 UVC dongle**
@@ -347,8 +349,8 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
 
 
 Reference mapping, kept here for the sections that are still open: `device`
-carries `autostart`, `hidOnly`, `mouseJiggler`, `mdns` and the `network` link,
-while `hdmi`, `disk` and `advanced` stay hidden with a documented reason;
+carries `hidOnly`, `mouseJiggler` and `mdns`, while `autostart`, `hdmi`,
+`disk` and `advanced` stay hidden with a documented reason;
 `network` carries `dns`, `ipv6`, `tls` and `wifi`; `system.firewall` is the
 reference baseline model over the owner and nftables, installed only with the
 operator's approval and hidden and fail-closed until then, with the gate

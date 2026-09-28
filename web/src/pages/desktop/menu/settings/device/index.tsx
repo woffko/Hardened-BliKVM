@@ -6,7 +6,6 @@ import { boardFeatureIsWritable, supportsBoardFeature } from '@/lib/capabilities
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import { Advanced } from './advanced';
-import { Autostart } from './autostart.tsx';
 import { HidOnly } from './hid-only.tsx';
 import { Mdns } from './mdns.tsx';
 import { MouseJiggler } from './mouse-jiggler.tsx';
@@ -34,7 +33,6 @@ export const Device = () => {
         {has('device_hid_only') && (
           <HidOnly readOnly={!boardFeatureIsWritable(capabilities, 'device_hid_only')} />
         )}
-        {has('device_autostart') && <Autostart />}
         {has('device_virtual_devices') && <VirtualDevices />}
         {has('device_oled') && <Oled />}
         {has('device_mouse_jiggler') && (
