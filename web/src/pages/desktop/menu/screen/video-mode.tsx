@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import * as firewallApi from '@/api/system-firewall.ts';
 import { supportedUiVideoModes, type UiVideoMode } from '@/lib/capabilities.ts';
 import { setVideoMode as setCookie } from '@/lib/localstorage.ts';
+import { browserSupportsWebRtc } from '@/lib/video-transport.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { videoModeAtom } from '@/jotai/screen.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
@@ -30,6 +31,10 @@ export const VideoMode = () => {
 
   const [isDirectSupported, setIsDirectSupported] = useState<boolean | null>(null);
   const [isWebrtcBlocked, setIsWebrtcBlocked] = useState(false);
+  // A VPN or privacy extension, or a policy, can switch WebRTC off in the
+  // browser; both WebRTC modes then stay unselectable like under the firewall.
+  const isWebrtcMissing = !browserSupportsWebRtc();
+  const isWebrtcOff = isWebrtcBlocked || isWebrtcMissing;
 
   const refreshFirewallStatus = useCallback(() => {
     firewallApi
@@ -82,18 +87,18 @@ export const VideoMode = () => {
   }, [supportedModes, videoMode]);
 
   useEffect(() => {
-    if (!isWebrtcBlocked || !WEBRTC_MODES.includes(videoMode) || isDirectSupported === null) return;
+    if (!isWebrtcOff || !WEBRTC_MODES.includes(videoMode) || isDirectSupported === null) return;
 
     setCookie(isDirectSupported && supportedModes.includes('direct') ? 'direct' : 'mjpeg');
     setTimeout(() => {
       window.location.reload();
     }, 250);
-  }, [isDirectSupported, isWebrtcBlocked, supportedModes, videoMode]);
+  }, [isDirectSupported, isWebrtcOff, supportedModes, videoMode]);
 
   function update(mode: string) {
     if (mode === videoMode) return;
     if (!supportedModes.includes(mode as UiVideoMode)) return;
-    if (WEBRTC_MODES.includes(mode) && isWebrtcBlocked) return;
+    if (WEBRTC_MODES.includes(mode) && isWebrtcOff) return;
 
     setCookie(mode);
 
@@ -125,22 +130,24 @@ export const VideoMode = () => {
             <Tooltip
               key={mode.key}
               title={
-                WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked
-                  ? t(
-                      mode.key === 'vp8'
-                        ? 'screen.videoVp8BlockedByFirewall'
-                        : 'screen.videoWebrtcBlockedByFirewall'
-                    )
-                  : undefined
+                WEBRTC_MODES.includes(mode.key) && isWebrtcMissing
+                  ? t('screen.videoWebrtcUnavailable')
+                  : WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked
+                    ? t(
+                        mode.key === 'vp8'
+                          ? 'screen.videoVp8BlockedByFirewall'
+                          : 'screen.videoWebrtcBlockedByFirewall'
+                      )
+                    : undefined
               }
               placement="right"
               styles={{ root: { maxWidth: '270px' } }}
             >
               <div
-                aria-disabled={WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked}
+                aria-disabled={WEBRTC_MODES.includes(mode.key) && isWebrtcOff}
                 data-video-mode={mode.key}
                 className={
-                  WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked
+                  WEBRTC_MODES.includes(mode.key) && isWebrtcOff
                     ? 'flex cursor-not-allowed select-none items-center rounded py-1.5 pl-1 pr-5 text-neutral-500 hover:bg-neutral-700/70'
                     : 'flex cursor-pointer select-none items-center rounded py-1.5 pl-1 pr-5 hover:bg-neutral-700/70'
                 }

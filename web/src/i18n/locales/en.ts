@@ -75,6 +75,8 @@ const en = {
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC is disabled in Restricted and Paranoid Firewall modes',
       videoVp8BlockedByFirewall: 'VP8 WebRTC is disabled in Restricted and Paranoid Firewall modes',
+      videoWebrtcUnavailable:
+        'WebRTC is switched off in this browser, often by a VPN or privacy extension. Allow WebRTC for this site to use this mode.',
       resolution: 'Resolution',
       auto: 'Automatic',
       autoTips:

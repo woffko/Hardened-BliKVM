@@ -80,6 +80,8 @@ const ru = {
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC отключен в режимах Restricted и Paranoid Firewall',
       videoVp8BlockedByFirewall: 'VP8 WebRTC отключен в режимах Restricted и Paranoid Firewall',
+      videoWebrtcUnavailable:
+        'В этом браузере выключен WebRTC, часто это делает VPN или расширение для приватности. Разрешите WebRTC для этого сайта, чтобы использовать этот режим.',
       resolution: 'Разрешение',
       auto: 'Автоматическое',
       autoTips:

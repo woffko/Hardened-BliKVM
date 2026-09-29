@@ -165,6 +165,11 @@ I8. (L7) A session lives as long as Settings > Device > Session lock after
     the current session. Today the server issues 15-minute sessions whatever
     the setting says.
 
+I9. (L8) A browser without a working `RTCPeerConnection` keeps the page:
+    MJPEG instead of a remembered WebRTC mode, both WebRTC modes
+    unselectable in the video menu with the reason, and a failure message
+    in the WebRTC view instead of the router's error page (slot 56).
+
 ## Phase J: video smoothness (M9)
 
 J0. The VP8 encoder runs only while a WebRTC viewer is connected (the

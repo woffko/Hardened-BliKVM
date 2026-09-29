@@ -14,6 +14,7 @@ import { HARDENED_NAME } from '@/lib/hardened.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { formatRtcOffsetSeconds, formatRtcUnixSeconds } from '@/lib/rtc.ts';
 import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
+import { browserSupportsWebRtc } from '@/lib/video-transport.ts';
 import { client } from '@/lib/websocket.ts';
 import {
   capabilitiesAtom,
@@ -41,6 +42,9 @@ function getVideoMode(capabilities: Parameters<typeof normalizeVideoMode>[0]) {
   const cookieVideoMode = storage.getVideoMode();
   let selected = normalizeVideoMode(capabilities, cookieVideoMode);
   if (selected === 'direct' && !isH264DirectSupported) {
+    selected = normalizeVideoMode(capabilities, 'mjpeg');
+  }
+  if ((selected === 'h264' || selected === 'vp8') && !browserSupportsWebRtc()) {
     selected = normalizeVideoMode(capabilities, 'mjpeg');
   }
   if (cookieVideoMode !== selected) storage.setVideoMode(selected);

@@ -29,6 +29,15 @@ export function selectVideoTransport(
   return null;
 }
 
+/**
+ * Whether this browser can open a WebRTC connection. Extensions and
+ * policies that switch WebRTC off replace RTCPeerConnection with undefined
+ * or a stub, so check that it is a constructor rather than that it exists.
+ */
+export function browserSupportsWebRtc() {
+  return typeof window !== 'undefined' && typeof window.RTCPeerConnection === 'function';
+}
+
 export function isWebRtcAdvertised(manifest: CapabilityManifest | null) {
   return Boolean(
     manifest?.video.transports.some(

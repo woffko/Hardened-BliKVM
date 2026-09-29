@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Spin } from 'antd';
 import clsx from 'clsx';
 import { useAtom, useAtomValue } from 'jotai';
+import { useTranslation } from 'react-i18next';
 
 import * as storage from '@/lib/localstorage.ts';
 import { getBaseUrl } from '@/lib/service.ts';
@@ -38,6 +39,7 @@ function parseServerMessage(data: unknown): ServerMessage | null {
 // The server owns the gateway session; this client only answers the offer it
 // receives.
 export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
+  const { t } = useTranslation();
   const [resolution, setResolution] = useAtom(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
@@ -54,9 +56,18 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
   });
 
   useEffect(() => {
+    // A VPN or privacy extension can replace RTCPeerConnection; report it
+    // instead of letting the page fail.
+    let peer: RTCPeerConnection;
+    try {
+      peer = new RTCPeerConnection({ iceServers: [] });
+    } catch {
+      setFailure('webrtc_unavailable');
+      setIsLoading(false);
+      return;
+    }
     const query = codec === 'h264' ? '?codec=h264' : '';
     const socket = new WebSocket(`${getBaseUrl('ws')}/api/stream/webrtc${query}`);
-    const peer = new RTCPeerConnection({ iceServers: [] });
     let answered = false;
     let attached: HTMLVideoElement | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -224,7 +235,9 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
           className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center text-sm text-neutral-400"
           role="alert"
         >
-          {codec === 'h264' ? 'H.264' : 'VP8'} stream unavailable ({failure})
+          {failure === 'webrtc_unavailable'
+            ? t('screen.videoWebrtcUnavailable')
+            : `${codec === 'h264' ? 'H.264' : 'VP8'} stream unavailable (${failure})`}
         </div>
       ) : (
         isLoading && (
