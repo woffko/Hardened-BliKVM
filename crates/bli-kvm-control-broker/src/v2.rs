@@ -2048,7 +2048,7 @@ mod tests {
         struct SlowRunner;
         impl AtxPulseRunner for SlowRunner {
             fn execute(&mut self, _action: AtxControlAction) -> Result<(), String> {
-                std::thread::sleep(Duration::from_millis(1500));
+                std::thread::sleep(std::time::Duration::from_millis(1500));
                 Ok(())
             }
         }
@@ -2080,11 +2080,11 @@ mod tests {
                 .await
             }
         });
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         // The shared state is free while the pulse runs.
         let begun = Instant::now();
         drop(state.lock().await);
-        assert!(begun.elapsed() < Duration::from_millis(100));
+        assert!(begun.elapsed() < std::time::Duration::from_millis(100));
         // A second pulse is refused at once.
         let begun = Instant::now();
         let second = run_atx(
@@ -2095,7 +2095,7 @@ mod tests {
         )
         .await;
         assert_eq!(second, reject(ControlRejectionCode::CooldownActive));
-        assert!(begun.elapsed() < Duration::from_millis(100));
+        assert!(begun.elapsed() < std::time::Duration::from_millis(100));
         assert_eq!(first.await.unwrap(), ControlResponse::Applied);
     }
 }
