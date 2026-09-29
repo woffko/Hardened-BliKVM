@@ -250,11 +250,17 @@ pub(crate) fn reconciled_catalog(
     let Some(directory) = state.options.media_directory.as_deref() else {
         return Ok(catalog);
     };
+    if state.options.media_store_must_be_mounted && !store_is_mounted(directory) {
+        eprintln!("media: the image store is not mounted; the catalog is left as it is");
+        return Ok(catalog);
+    }
+    // Only a file that is positively not there drops its entry; any other
+    // failure to look keeps it.
     let missing: Vec<String> = catalog
         .summaries()
         .into_iter()
         .map(|entry| entry.image_name)
-        .filter(|name| !directory.join(name).is_file())
+        .filter(|name| entry_is_gone(&directory.join(name)))
         .collect();
     if missing.is_empty() {
         return Ok(catalog);
@@ -266,6 +272,33 @@ pub(crate) fn reconciled_catalog(
         }
     }
     open()
+}
+
+/// Whether a catalog entry's file is positively gone: not there, or not a
+/// regular file. A file that cannot be looked at (an I/O error, no access)
+/// keeps its entry.
+#[cfg(feature = "restricted-control-surface")]
+fn entry_is_gone(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) => !metadata.is_file(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// Whether the image store is a filesystem of its own: its device differs from
+/// its parent directory's, and the directory can be read.
+#[cfg(feature = "restricted-control-surface")]
+fn store_is_mounted(directory: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(parent) = directory.parent() else {
+        return false;
+    };
+    match (std::fs::metadata(directory), std::fs::metadata(parent)) {
+        (Ok(store), Ok(above)) => {
+            store.dev() != above.dev() && std::fs::read_dir(directory).is_ok()
+        }
+        _ => false,
+    }
 }
 
 /// The image attached to the target now, if any.
@@ -599,5 +632,28 @@ pub(crate) async fn storage_delete(
         Err(AppError::ServiceUnavailable(
             "virtual media control is not available".into(),
         ))
+    }
+}
+
+#[cfg(all(test, feature = "restricted-control-surface"))]
+mod store_tests {
+    use super::*;
+
+    #[test]
+    fn an_unmounted_or_unreadable_store_drops_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        // A plain directory shares its parent's filesystem: not a mounted store.
+        assert!(!store_is_mounted(dir.path()));
+        // A separate filesystem is one.
+        assert!(store_is_mounted(std::path::Path::new("/proc")));
+        assert!(!store_is_mounted(&dir.path().join("missing")));
+
+        std::fs::write(dir.path().join("there.img"), b"x").unwrap();
+        assert!(!entry_is_gone(&dir.path().join("there.img")));
+        assert!(entry_is_gone(&dir.path().join("gone.img")));
+        assert!(entry_is_gone(dir.path()), "a directory is not an image");
+        // A name that cannot be looked at keeps its entry (a name that is too
+        // long is an error other than "not found").
+        assert!(!entry_is_gone(&dir.path().join("x".repeat(300))));
     }
 }

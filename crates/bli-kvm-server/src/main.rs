@@ -86,6 +86,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         picoclaw_socket: env::var_os("BLI_KVM_PICOCLAW_SOCKET").map(PathBuf::from),
         picoclaw_mcp_url: Some(format!("http://{address}/internal/picoclaw/mcp")),
         media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),
+        media_store_must_be_mounted: true,
         ..ServerOptions::default()
     };
 

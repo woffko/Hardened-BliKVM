@@ -171,6 +171,10 @@ pub struct ServerOptions {
     /// Image directory an operator upload writes into. Must be the same
     /// directory the board owner serves, and is required for uploads.
     pub media_directory: Option<PathBuf>,
+    /// Reconcile the catalog with the image store only while the store is a
+    /// filesystem of its own (the card's third partition). An unmounted store
+    /// looks like an empty one, and must not empty the catalog.
+    pub media_store_must_be_mounted: bool,
 }
 
 impl Default for ServerOptions {
@@ -208,6 +212,7 @@ impl Default for ServerOptions {
             network_writes_enabled: false,
             firewall_modes_enabled: false,
             media_directory: None,
+            media_store_must_be_mounted: false,
         }
     }
 }
