@@ -124,9 +124,7 @@ pub async fn login(
         return Err(AppError::BadRequest("invalid username or password".into()));
     }
     let source = crate::auth::rate_limit::client_address(address, &headers);
-    let locked = || {
-        AppError::RateLimited("account locked after repeated failures".into())
-    };
+    let locked = || AppError::RateLimited("account locked after repeated failures".into());
     if state
         .login_limiter
         .lock()

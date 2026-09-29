@@ -112,9 +112,7 @@ pub(crate) async fn unlock(
     }
     let source = crate::auth::rate_limit::client_address(address, &headers);
     let limiter_key = format!("terminal:{}", session.username);
-    let locked = || {
-        AppError::RateLimited("terminal unlock locked after repeated failures".into())
-    };
+    let locked = || AppError::RateLimited("terminal unlock locked after repeated failures".into());
     if state
         .login_limiter
         .lock()

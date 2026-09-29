@@ -7,8 +7,8 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::PathBuf;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -279,9 +279,7 @@ mod tests {
     fn a_background_child_does_not_hold_the_foreground_run() {
         let dir = tempfile::tempdir().unwrap();
         let store = ScriptStore::open(dir.path().join("scripts")).unwrap();
-        store
-            .store("bg.sh", b"sleep 30 &\necho started\n")
-            .unwrap();
+        store.store("bg.sh", b"sleep 30 &\necho started\n").unwrap();
         let begun = Instant::now();
         match store.run_foreground("bg.sh").unwrap() {
             AdminReply::Output { log, success } => {
@@ -289,7 +287,11 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
-        assert!(begun.elapsed() < Duration::from_secs(5), "{:?}", begun.elapsed());
+        assert!(
+            begun.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            begun.elapsed()
+        );
     }
 
     #[test]
@@ -312,7 +314,11 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
-        assert!(begun.elapsed() < Duration::from_secs(5), "{:?}", begun.elapsed());
+        assert!(
+            begun.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            begun.elapsed()
+        );
     }
 
     #[test]

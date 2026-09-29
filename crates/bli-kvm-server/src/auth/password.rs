@@ -24,8 +24,7 @@ thread_local! {
 fn dummy_hash() -> &'static str {
     static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     DUMMY.get_or_init(|| {
-        hash_password(&crate::auth::token::random_token(32))
-            .unwrap_or_else(|_| String::new())
+        hash_password(&crate::auth::token::random_token(32)).unwrap_or_else(|_| String::new())
     })
 }
 
@@ -231,7 +230,9 @@ mod tests {
     fn a_wrong_user_name_costs_one_verification_like_a_right_one() {
         let dir = tempfile::tempdir().unwrap();
         let store = AccountStore::new(dir.path().join("account.json"));
-        store.create_initial("operator", "initial password").unwrap();
+        store
+            .create_initial("operator", "initial password")
+            .unwrap();
         let count = || VERIFICATIONS.with(|count| count.get());
         let before = count();
         assert!(store.verify("operator", "initial password").unwrap());

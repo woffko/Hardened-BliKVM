@@ -1974,9 +1974,9 @@ mod tests {
         request
             .headers_mut()
             .insert("x-forwarded-for", from.parse().unwrap());
-        request.extensions_mut().insert(ConnectInfo(
-            "127.0.0.1:4242".parse::<SocketAddr>().unwrap(),
-        ));
+        request
+            .extensions_mut()
+            .insert(ConnectInfo("127.0.0.1:4242".parse::<SocketAddr>().unwrap()));
         request
     }
 

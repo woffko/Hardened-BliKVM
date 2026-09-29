@@ -60,14 +60,11 @@ impl LoginRateLimiter {
                 None => return false,
             }
         }
-        let attempt = self
-            .attempts
-            .entry(key)
-            .or_insert(Attempt {
-                failures: 0,
-                lockout_until: None,
-                last_failure: now,
-            });
+        let attempt = self.attempts.entry(key).or_insert(Attempt {
+            failures: 0,
+            lockout_until: None,
+            last_failure: now,
+        });
         if now.duration_since(attempt.last_failure) > self.lockout_duration {
             attempt.failures = 0;
             attempt.lockout_until = None;
