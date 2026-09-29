@@ -23,6 +23,8 @@ target=${1:-}
 output=${2:-}
 case "$target" in aarch64|host) ;; *) echo "usage: $0 aarch64|host OUTPUT_DIR" >&2; exit 2 ;; esac
 case "$output" in /*) ;; *) echo "output directory must be absolute" >&2; exit 2 ;; esac
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/safe-output.sh"
+refuse_unsafe_output "$output" || exit 2
 
 sources=${BLI_KVM_THIRD_PARTY_SOURCES:-/mnt/d/debug/blikvm/hardened-blikvm/third-party-src}
 mkdir -p "$sources"
@@ -94,6 +96,7 @@ fi
 
 grep -q '^#define HAVE_THREAD 1' "$source_dir/config.h"
 grep -q '^#define X264_BIT_DEPTH *8' "$source_dir/x264_config.h"
+refuse_unsafe_output "$output" || exit 2
 rm -rf -- "$output"
 mkdir -p "$output/lib" "$output/include"
 cp "$source_dir/libx264.a" "$output/lib/"
