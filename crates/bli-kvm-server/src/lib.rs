@@ -1960,6 +1960,50 @@ mod tests {
         assert!(!login_again(&app).await.is_empty());
     }
 
+    fn forwarded_login(from: &str, password: &str) -> Request<Body> {
+        let mut request = json_request(
+            Method::POST,
+            "/api/auth/login",
+            serde_json::json!({"username": "operator", "password": password}),
+        );
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", from.parse().unwrap());
+        request.extensions_mut().insert(ConnectInfo(
+            "127.0.0.1:4242".parse::<SocketAddr>().unwrap(),
+        ));
+        request
+    }
+
+    #[tokio::test]
+    async fn a_lockout_belongs_to_the_forwarded_client_not_to_nginx() {
+        let root = tempdir().unwrap();
+        let app = auth_app(root.path().join("account"), 2);
+        setup_and_login(&app).await;
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(forwarded_login("198.51.100.1", "wrong password"))
+                .await
+                .unwrap();
+            assert_eq!(json_body(response).await["code"], -2);
+        }
+        // The first client is locked, even with the right password.
+        let response = app
+            .clone()
+            .oneshot(forwarded_login("198.51.100.1", "initial password"))
+            .await
+            .unwrap();
+        assert_ne!(json_body(response).await["code"], 0);
+        // A second client behind the same nginx is not.
+        let response = app
+            .clone()
+            .oneshot(forwarded_login("198.51.100.2", "initial password"))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["code"], 0);
+    }
+
     #[tokio::test]
     async fn session_lock_round_trips_and_requires_csrf() {
         let app = isolated_app();

@@ -96,6 +96,23 @@ impl LoginRateLimiter {
     }
 }
 
+/// The address a request really comes from. nginx is the only client of the
+/// server's TCP port and sets `X-Forwarded-For` to exactly the peer it saw
+/// (replacing whatever the client sent), so the header is believed only when
+/// the connection itself is loopback and the value is one address. Anything
+/// else falls back to the connection's address.
+pub fn client_address(peer: std::net::SocketAddr, headers: &axum::http::HeaderMap) -> String {
+    if peer.ip().is_loopback()
+        && let Some(forwarded) = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+        && let Ok(address) = forwarded.trim().parse::<std::net::IpAddr>()
+    {
+        return address.to_string();
+    }
+    peer.ip().to_string()
+}
+
 fn key(source_ip: &str, username: &str) -> String {
     format!("{source_ip}:{username}")
 }
@@ -103,6 +120,22 @@ fn key(source_ip: &str, username: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_address_trusts_the_forwarded_header_only_from_loopback() {
+        use axum::http::HeaderMap;
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
+        let loopback: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let remote: std::net::SocketAddr = "192.0.2.10:5000".parse().unwrap();
+        assert_eq!(client_address(loopback, &headers), "198.51.100.7");
+        assert_eq!(client_address(remote, &headers), "192.0.2.10");
+        headers.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
+        assert_eq!(client_address(loopback, &headers), "127.0.0.1");
+        headers.insert("x-forwarded-for", "junk".parse().unwrap());
+        assert_eq!(client_address(loopback, &headers), "127.0.0.1");
+        assert_eq!(client_address(loopback, &HeaderMap::new()), "127.0.0.1");
+    }
 
     #[test]
     fn many_distinct_keys_stay_bounded_and_keep_lockouts() {

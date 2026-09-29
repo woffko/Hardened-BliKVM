@@ -98,6 +98,7 @@ pub(crate) async fn unlock(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     ConnectInfo(address): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(body): Json<UnlockBody>,
 ) -> AppResult<Json<ApiResponse<UnlockView>>> {
     crate::admin_features::require(AdminFeature::Terminal)?;
@@ -109,7 +110,7 @@ pub(crate) async fn unlock(
     if body.username != session.username {
         return Err(AppError::InvalidCredentials);
     }
-    let source = address.ip().to_string();
+    let source = crate::auth::rate_limit::client_address(address, &headers);
     let limiter_key = format!("terminal:{}", session.username);
     let mut limiter = state.login_limiter.lock().await;
     if limiter.is_locked(&source, &limiter_key) {

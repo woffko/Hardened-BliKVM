@@ -123,7 +123,7 @@ pub async fn login(
     if request.username.len() > 64 || request.password.len() > 256 {
         return Err(AppError::BadRequest("invalid username or password".into()));
     }
-    let source = address.ip().to_string();
+    let source = crate::auth::rate_limit::client_address(address, &headers);
     let mut limiter = state.login_limiter.lock().await;
     if limiter.is_locked(&source, &request.username) {
         return Err(AppError::RateLimited(
