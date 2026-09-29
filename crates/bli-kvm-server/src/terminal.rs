@@ -176,6 +176,19 @@ pub(crate) async fn connect(
         .into_response())
 }
 
+/// Why an open terminal must end now, if it must: the switch is off or the
+/// session is over. Checked every second, so switching the feature off closes
+/// the shells that were open, not only the ones opened later.
+fn close_reason(session_active: bool, switched_on: bool) -> Option<(u16, &'static str)> {
+    if !switched_on {
+        Some((1008, "the terminal is switched off"))
+    } else if !session_active {
+        Some((1008, "terminal session expired"))
+    } else {
+        None
+    }
+}
+
 async fn relay(websocket: WebSocket, socket: std::path::PathBuf, session: Session) {
     let (mut ws_tx, mut ws_rx) = websocket.split();
     let close = |reason: &'static str| {
@@ -219,12 +232,15 @@ async fn relay(websocket: WebSocket, socket: std::path::PathBuf, session: Sessio
     loop {
         tokio::select! {
             _ = watchdog.tick() => {
-                if session.is_active() {
+                let Some((code, reason)) = close_reason(
+                    session.is_active(),
+                    crate::admin_features::switches().get(AdminFeature::Terminal),
+                ) else {
                     continue;
-                }
+                };
                 let _ = ws_tx.send(Message::Close(Some(CloseFrame {
-                    code: 1008,
-                    reason: "terminal session expired".into(),
+                    code,
+                    reason: reason.into(),
                 }))).await;
                 break;
             }
@@ -313,5 +329,17 @@ mod tests {
         assert!(store.consume(&ticket, "session-a"));
         assert!(!store.consume(&ticket, "session-a"));
         assert!(!store.consume("unknown", "session-a"));
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::close_reason;
+
+    #[test]
+    fn an_open_terminal_ends_with_its_switch_or_its_session() {
+        assert_eq!(close_reason(true, true), None);
+        assert!(close_reason(true, false).is_some());
+        assert!(close_reason(false, true).is_some());
     }
 }

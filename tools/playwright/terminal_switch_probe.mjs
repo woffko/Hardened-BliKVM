@@ -116,10 +116,34 @@ try {
     });
   }, ticket);
   step("ticket_reuse", { result: reuse });
+  // A shell left open across the switch-off must be closed by the server.
+  const second = await unlock();
+  const held = await page.evaluate(async (ticket) => {
+    return await new Promise((resolve) => {
+      const socket = new WebSocket(
+        `wss://${location.host}/api/vm/terminal?ticket=${encodeURIComponent(ticket)}`,
+      );
+      window.__heldTerminal = { closedAt: null, code: null };
+      socket.onclose = (event) => {
+        window.__heldTerminal.closedAt = Date.now();
+        window.__heldTerminal.code = event.code;
+      };
+      socket.onopen = () => resolve("open");
+      socket.onerror = () => resolve("refused");
+    });
+  }, second.data?.ticket);
+  step("held_terminal", { result: held });
+  const offAt = Date.now();
   step(
     "switch_off",
     await api("POST", "/api/vm/terminal/enabled", { enabled: false }),
   );
+  await page.waitForTimeout(3000);
+  const closed = await page.evaluate(() => window.__heldTerminal);
+  step("held_terminal_closed", {
+    closedWithinMs: closed.closedAt ? closed.closedAt - offAt : null,
+    code: closed.code,
+  });
   step("unlock_after_off", await unlock());
   step("final", await api("GET", "/api/admin/features"));
   password = "";
@@ -134,6 +158,9 @@ try {
     byName.shell.marker === true &&
     byName.shell.root === true &&
     byName.ticket_reuse.result === "refused" &&
+    byName.held_terminal.result === "open" &&
+    byName.held_terminal_closed.closedWithinMs !== null &&
+    byName.held_terminal_closed.closedWithinMs <= 3000 &&
     byName.switch_off.data?.enabled === false &&
     byName.unlock_after_off.http === 403 &&
     byName.final.data?.terminal === false
