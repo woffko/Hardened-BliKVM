@@ -38,7 +38,14 @@ Environment=BLI_KVM_GADGET_CONFIGFS=/sys/kernel/config/usb_gadget
 Environment=BLI_KVM_GADGET_IMAGES=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_GADGET_UDC=musb-hdrc.2.auto
 Environment=BLI_KVM_GADGET_SERIAL_FILE=/etc/hardened-blikvm-gadget/serial
-Environment=BLI_KVM_GADGET_HID_LEDGER=/var/lib/hardened-blikvm-gadget/hid-ledger.json
+# The HID release ledger records which keys and buttons may be held, so a
+# restarted owner can release them. It is stored twice per key event, and a
+# synced write costs about 16 ms on the card, so it lives on tmpfs in
+# /run/hardened-blikvm-hid (created by the operator's tmpfiles entry,
+# packaging/tmpfiles.d/hardened-blikvm-hid-ledger.conf): it survives an owner
+# restart; a reboot resets it together with the USB gadget, and the host then
+# sees the keyboard re-enumerate with nothing held.
+Environment=BLI_KVM_GADGET_HID_LEDGER=/run/hardened-blikvm-hid/hid-ledger.json
 Environment=BLI_KVM_GADGET_HIDG_DIR=/dev
 # The board profile serves the ATX pulses itself through the reviewed GPIO
 # character-device executor; the line timings come from atx.env.
@@ -89,7 +96,7 @@ IPAddressDeny=any
 # The owner holds the privileged system-action journal, and the armed profile
 # must persist a record before the reboot it triggers, so the store
 # directory is writable together with the gadget and network surfaces.
-ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /var/lib/hardened-blikvm-video /etc/resolv.conf /etc/hosts /etc/systemd/resolved.conf /etc/NetworkManager/system-connections /etc/hardened-blikvm -/run/hardened-blikvm-firewall
+ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget /var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions /var/lib/hardened-blikvm-video /etc/resolv.conf /etc/hosts /etc/systemd/resolved.conf /etc/NetworkManager/system-connections /etc/hardened-blikvm -/run/hardened-blikvm-firewall -/run/hardened-blikvm-hid
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

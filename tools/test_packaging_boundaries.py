@@ -2165,6 +2165,21 @@ class PackagingBoundaryTests(unittest.TestCase):
         tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-firewall.conf").read_text()
         self.assertIn("d /run/hardened-blikvm-firewall 0700 root root - -", tmpfiles)
 
+    def test_hid_ledger_lives_on_tmpfs_from_tmpfiles(self) -> None:
+        for path in (
+            "packaging/systemd/hardened-blikvm-board-owner.service",
+            "packaging/systemd/native/hardened-blikvm-board-owner.service",
+        ):
+            owner = (ROOT / path).read_text()
+            self.assertIn(
+                "Environment=BLI_KVM_GADGET_HID_LEDGER=/run/hardened-blikvm-hid/hid-ledger.json",
+                owner,
+                path,
+            )
+            self.assertIn("-/run/hardened-blikvm-hid", owner, path)
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-hid-ledger.conf").read_text()
+        self.assertIn("d /run/hardened-blikvm-hid 0700 root root - -", tmpfiles)
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
