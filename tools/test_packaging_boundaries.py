@@ -2195,7 +2195,9 @@ class PackagingBoundaryTests(unittest.TestCase):
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         for header in ("Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy"):
             self.assertRegex(config, rf'add_header {header} "[^"]+" always;', header)
-        policy = re.search(r'add_header Content-Security-Policy "([^"]+)"', config).group(1)
+        found = re.search(r'add_header Content-Security-Policy "([^"]+)"', config)
+        assert found is not None
+        policy = found.group(1)
         for directive in ("default-src 'self'", "script-src 'self'", "frame-ancestors 'none'", "object-src 'none'"):
             self.assertIn(directive, policy)
         self.assertNotIn("unsafe-eval", policy)
