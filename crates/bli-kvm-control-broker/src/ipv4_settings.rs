@@ -19,6 +19,7 @@ use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse, NetworkInt
 use bli_kvm_core::{Ipv4Change, Ipv6Change, PlatformControlRequestV2};
 
 use crate::network_settings::WifiRunner;
+use crate::revert_journal::RevertJournal;
 
 pub const REVERT_AFTER: Duration = Duration::from_secs(120);
 /// One reading of NetworkManager serves the pages that ask together.
@@ -30,7 +31,7 @@ pub type SharedIpv4 = Arc<Mutex<Ipv4Settings>>;
 type Runner = Arc<Mutex<Box<dyn WifiRunner>>>;
 
 /// The profile settings a revert restores.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Snapshot {
     method: String,
     addresses: String,
@@ -44,11 +45,20 @@ struct Pending {
     deadline: Instant,
 }
 
+/// What an unconfirmed addressing change must restore, kept across a restart.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct RevertRecord {
+    device: String,
+    uuid: String,
+    before: Snapshot,
+}
+
 pub struct Ipv4Settings {
     runner: Runner,
     pending: Arc<Mutex<Option<Pending>>>,
     generation: u64,
     revert_after: Duration,
+    journal: Option<RevertJournal>,
     /// The last network information and when it was read.
     cache: Option<(Instant, ControlResponse)>,
 }
@@ -114,7 +124,61 @@ impl Ipv4Settings {
             pending: Arc::new(Mutex::new(None)),
             generation: 0,
             revert_after: REVERT_AFTER,
+            journal: None,
             cache: None,
+        }
+    }
+
+    /// Keeps an unconfirmed addressing change in `journal`.
+    pub fn with_journal(mut self, journal: RevertJournal) -> Self {
+        self.journal = Some(journal);
+        self
+    }
+
+    /// A journal record at start means the owner stopped before the change
+    /// was confirmed, so nothing can confirm it now: it is reverted at once,
+    /// retrying while NetworkManager is not up. Returns whether one was found.
+    pub fn reconcile(&self) -> bool {
+        let Some(journal) = self.journal.clone() else {
+            return false;
+        };
+        let Some(record) = journal.read::<RevertRecord>() else {
+            return false;
+        };
+        let runner = Arc::clone(&self.runner);
+        std::thread::spawn(move || {
+            for attempt in 0..12 {
+                if attempt > 0 {
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+                if Self::revert_record(&runner, &journal, &record) {
+                    return;
+                }
+            }
+            eprintln!("network: the unconfirmed IPv4 change could not be reverted");
+        });
+        true
+    }
+
+    fn revert_record(runner: &Runner, journal: &RevertJournal, record: &RevertRecord) -> bool {
+        match Self::apply(
+            runner,
+            &record.device,
+            &record.uuid,
+            &Self::restore_settings(&record.before),
+        ) {
+            Ok(()) => {
+                journal.clear();
+                eprintln!(
+                    "network: unconfirmed IPv4 change on {} reverted after a restart",
+                    record.device
+                );
+                true
+            }
+            Err(reason) => {
+                eprintln!("network: reverting {} failed: {reason}", record.device);
+                false
+            }
         }
     }
 
@@ -410,6 +474,17 @@ impl Ipv4Settings {
                 ("ipv4.ignore-auto-dns", "yes".to_string()),
             ]);
         }
+        // Written before the change: a restart from here on still reverts it.
+        if let Some(journal) = &self.journal
+            && let Err(error) = journal.write(&RevertRecord {
+                device: device.clone(),
+                uuid: uuid.clone(),
+                before: before.clone(),
+            })
+        {
+            eprintln!("network: the revert journal could not be written: {error}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
         if let Err(reason) = Self::apply(&self.runner, &device, &uuid, &settings) {
             eprintln!("network: applying the IPv4 change failed: {reason}");
             let _ = Self::apply(
@@ -418,6 +493,9 @@ impl Ipv4Settings {
                 &uuid,
                 &Self::restore_settings(&before),
             );
+            if let Some(journal) = &self.journal {
+                journal.clear();
+            }
             return reject(ControlRejectionCode::BackendRejected);
         }
         let after = self.snapshot(&uuid).unwrap_or_else(|_| before.clone());
@@ -435,6 +513,9 @@ impl Ipv4Settings {
         );
         if addressing_changed {
             self.arm_revert(device, uuid, before);
+        } else if let Some(journal) = &self.journal {
+            // A change of the resolvers alone needs no confirmation.
+            journal.clear();
         }
         self.info()
     }
@@ -448,6 +529,7 @@ impl Ipv4Settings {
         });
         let pending = Arc::clone(&self.pending);
         let runner = Arc::clone(&self.runner);
+        let journal = self.journal.clone();
         let wait = self.revert_after;
         std::thread::spawn(move || {
             std::thread::sleep(wait);
@@ -458,7 +540,12 @@ impl Ipv4Settings {
             *current = None;
             drop(current);
             match Self::apply(&runner, &device, &uuid, &Self::restore_settings(&before)) {
-                Ok(()) => eprintln!("network: unconfirmed IPv4 change on {device} reverted"),
+                Ok(()) => {
+                    if let Some(journal) = &journal {
+                        journal.clear();
+                    }
+                    eprintln!("network: unconfirmed IPv4 change on {device} reverted");
+                }
                 Err(reason) => eprintln!("network: reverting {device} failed: {reason}"),
             }
         });
@@ -529,6 +616,9 @@ impl Ipv4Settings {
         self.cache = None;
         let confirmed = self.pending.lock().expect("pending poisoned").take();
         if confirmed.is_some() {
+            if let Some(journal) = &self.journal {
+                journal.clear();
+            }
             eprintln!("network: IPv4 change confirmed");
             ControlResponse::Applied
         } else {
@@ -775,6 +865,38 @@ mod tests {
         });
         assert_eq!(ipv4.confirm(), ControlResponse::Applied);
         assert_eq!(*profile.lock().unwrap(), dhcp_profile());
+    }
+
+    #[test]
+    fn an_unconfirmed_addressing_change_is_reverted_by_the_next_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("ipv4.json"));
+        let profile = Arc::new(Mutex::new(dhcp_profile()));
+        // A long window: the owner "restarts" before the timer would fire.
+        let mut ipv4 = settings(&profile, Duration::from_secs(3600)).with_journal(journal.clone());
+        ipv4.set(&manual(Some("192.0.2.200")));
+        assert_eq!(profile.lock().unwrap().method, "manual");
+        assert!(journal.read::<RevertRecord>().is_some());
+        drop(ipv4);
+
+        let next = settings(&profile, REVERT_AFTER).with_journal(journal.clone());
+        assert!(next.reconcile());
+        for _ in 0..50 {
+            if journal.read::<RevertRecord>().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(journal.read::<RevertRecord>().is_none());
+        assert_eq!(profile.lock().unwrap().method, "auto");
+
+        // A resolver-only change and a confirmed change leave no record.
+        let mut ipv4 = settings(&profile, REVERT_AFTER).with_journal(journal.clone());
+        ipv4.set(&manual(None));
+        assert!(journal.read::<RevertRecord>().is_none());
+        ipv4.set(&manual(Some("192.0.2.200")));
+        assert_eq!(ipv4.confirm(), ControlResponse::Applied);
+        assert!(journal.read::<RevertRecord>().is_none());
     }
 
     #[test]

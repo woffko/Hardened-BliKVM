@@ -28,6 +28,7 @@ pub mod network_write;
     feature = "chardev-atx-profile"
 ))]
 mod profile;
+pub mod revert_journal;
 mod server;
 mod ssh_settings;
 #[cfg(feature = "system-action-profile")]

@@ -14,6 +14,7 @@
 //! connection raises the Ethernet profiles' metric above WiFi's; like an
 //! addressing change it is reverted unless confirmed within a minute.
 
+use crate::revert_journal::RevertJournal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -219,6 +220,15 @@ pub struct WifiState {
     pending: Arc<Mutex<Option<PendingPreference>>>,
     generation: u64,
     revert_after: Duration,
+    /// The unconfirmed main-connection change, kept across a restart.
+    journal: Option<RevertJournal>,
+}
+
+/// What an unconfirmed main-connection change must restore.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PreferenceRecord {
+    profiles: Vec<String>,
+    restore_metric: String,
 }
 
 /// One entry of the scan listing, before names are merged.
@@ -294,6 +304,57 @@ impl WifiState {
             pending: Arc::new(Mutex::new(None)),
             generation: 0,
             revert_after: PREFERENCE_REVERT_AFTER,
+            journal: None,
+        }
+    }
+
+    /// Keeps an unconfirmed change in `journal`, and reverts one the previous
+    /// owner left behind (see [`Self::reconcile`]).
+    pub fn with_journal(mut self, journal: RevertJournal) -> Self {
+        self.journal = Some(journal);
+        self
+    }
+
+    /// A journal record at start means the owner stopped before the change
+    /// was confirmed: nothing can confirm it now, so it is reverted at once,
+    /// retrying while NetworkManager is not up. Returns whether one was found.
+    pub fn reconcile(&self) -> bool {
+        let Some(journal) = self.journal.clone() else {
+            return false;
+        };
+        let Some(record) = journal.read::<PreferenceRecord>() else {
+            return false;
+        };
+        let runner = Arc::clone(&self.runner);
+        std::thread::spawn(move || {
+            for attempt in 0..12 {
+                if attempt > 0 {
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+                if Self::apply_record(&runner, &journal, &record) {
+                    return;
+                }
+            }
+            eprintln!("wifi: the unconfirmed main connection change could not be reverted");
+        });
+        true
+    }
+
+    fn apply_record(
+        runner: &SharedRunner,
+        journal: &RevertJournal,
+        record: &PreferenceRecord,
+    ) -> bool {
+        match Self::set_ethernet_metric(runner, &record.profiles, &record.restore_metric) {
+            Ok(()) => {
+                journal.clear();
+                eprintln!("wifi: unconfirmed main connection change reverted after a restart");
+                true
+            }
+            Err(reason) => {
+                eprintln!("wifi: reverting the main connection failed: {reason}");
+                false
+            }
         }
     }
 
@@ -785,14 +846,28 @@ impl WifiState {
         } else {
             ETHERNET_DEFAULT_METRIC
         };
+        let previous = if before {
+            ETHERNET_BACKUP_METRIC
+        } else {
+            ETHERNET_DEFAULT_METRIC
+        };
+        // Written before the change: a restart from here on still reverts it.
+        if wifi != before
+            && let Some(journal) = &self.journal
+            && let Err(error) = journal.write(&PreferenceRecord {
+                profiles: profiles.clone(),
+                restore_metric: previous.to_string(),
+            })
+        {
+            eprintln!("wifi: the revert journal could not be written: {error}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
         if let Err(reason) = Self::set_ethernet_metric(&self.runner, &profiles, metric) {
             eprintln!("wifi: main connection change failed: {reason}");
-            let previous = if before {
-                ETHERNET_BACKUP_METRIC
-            } else {
-                ETHERNET_DEFAULT_METRIC
-            };
             let _ = Self::set_ethernet_metric(&self.runner, &profiles, previous);
+            if let Some(journal) = &self.journal {
+                journal.clear();
+            }
             return reject(ControlRejectionCode::BackendRejected);
         }
         if wifi != before {
@@ -810,6 +885,7 @@ impl WifiState {
         });
         let pending = Arc::clone(&self.pending);
         let runner = Arc::clone(&self.runner);
+        let journal = self.journal.clone();
         let wait = self.revert_after;
         std::thread::spawn(move || {
             std::thread::sleep(wait);
@@ -825,7 +901,12 @@ impl WifiState {
                 ETHERNET_DEFAULT_METRIC
             };
             match Self::set_ethernet_metric(&runner, &profiles, metric) {
-                Ok(()) => eprintln!("wifi: unconfirmed main connection change reverted"),
+                Ok(()) => {
+                    if let Some(journal) = &journal {
+                        journal.clear();
+                    }
+                    eprintln!("wifi: unconfirmed main connection change reverted");
+                }
                 Err(reason) => eprintln!("wifi: reverting the main connection failed: {reason}"),
             }
         });
@@ -833,6 +914,9 @@ impl WifiState {
 
     pub fn confirm_preference(&mut self) -> ControlResponse {
         if lock(&self.pending).take().is_some() {
+            if let Some(journal) = &self.journal {
+                journal.clear();
+            }
             eprintln!("wifi: main connection change confirmed");
             ControlResponse::Applied
         } else {
@@ -1331,6 +1415,58 @@ mod tests {
         assert_eq!(state.confirm_preference(), ControlResponse::Applied);
         std::thread::sleep(Duration::from_millis(300));
         assert!(!fake.lock().unwrap().calls.contains(&modify("-1")));
+    }
+
+    #[test]
+    fn an_unconfirmed_change_is_reverted_by_the_next_owner() {
+        let metric = format!("-g ipv4.route-metric connection show uuid {ETH}");
+        let profiles = format!("{ETH}:802-3-ethernet\n{OLD}:802-11-wireless\n");
+        let answers: Vec<(&str, Result<&str, &str>)> = vec![
+            ("-t -f UUID,TYPE connection show", Ok(profiles.as_str())),
+            (metric.as_str(), Ok("-1\n")),
+            (
+                "-t -f DEVICE,TYPE,STATE,CONNECTION device",
+                Ok("eth0:ethernet:connected:Wired\nwlan0:wifi:connected:home\n"),
+            ),
+            (
+                "-t -f DEVICE,TYPE,STATE device",
+                Ok("eth0:ethernet:connected\nwlan0:wifi:connected\n"),
+            ),
+        ];
+        let modify = |value: &str| {
+            format!(
+                "connection modify uuid {ETH} ipv4.route-metric {value} ipv6.route-metric {value}"
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let journal = RevertJournal::new(dir.path().join("wifi.json"));
+        let (state, _) = fixture(&answers);
+        // A long window: the owner "restarts" before the timer would fire.
+        let mut state = state
+            .with_journal(journal.clone())
+            .with_revert_after(Duration::from_secs(3600));
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        assert!(journal.read::<PreferenceRecord>().is_some());
+        drop(state);
+
+        let (next, fake) = fixture(&answers);
+        let next = next.with_journal(journal.clone());
+        assert!(next.reconcile());
+        for _ in 0..50 {
+            if journal.read::<PreferenceRecord>().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(journal.read::<PreferenceRecord>().is_none());
+        assert!(fake.lock().unwrap().calls.contains(&modify("-1")));
+
+        // A confirmed change leaves nothing behind.
+        let (state, _) = fixture(&answers);
+        let mut state = state.with_journal(journal.clone());
+        assert_eq!(state.prefer(true), ControlResponse::Applied);
+        assert_eq!(state.confirm_preference(), ControlResponse::Applied);
+        assert!(journal.read::<PreferenceRecord>().is_none());
     }
 
     #[test]

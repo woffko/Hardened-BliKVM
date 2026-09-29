@@ -407,17 +407,30 @@ async fn board_state(
         false,
     ));
     // The reviewed WiFi surface drives NetworkManager through the owner.
-    state.with_wifi(crate::network_settings::WifiState::open(
+    // An unconfirmed change is journaled, and one a previous owner left
+    // behind is reverted now.
+    let journal_dir = std::path::Path::new(crate::revert_journal::REVERT_JOURNAL_DIR);
+    let wifi = crate::network_settings::WifiState::open(
         Box::new(crate::network_settings::NmcliRunner::new(
             crate::network_settings::NM_CONNECTIONS_DIR,
         )),
         true,
+    )
+    .with_journal(crate::revert_journal::RevertJournal::new(
+        journal_dir.join("network-revert-wifi.json"),
     ));
+    wifi.reconcile();
+    state.with_wifi(wifi);
     // IPv4 addressing and DNS through NetworkManager, with a revert unless
     // an addressing change is confirmed.
-    state.with_ipv4(crate::ipv4_settings::Ipv4Settings::open(Box::new(
+    let ipv4 = crate::ipv4_settings::Ipv4Settings::open(Box::new(
         crate::network_settings::NmcliRunner::new(crate::network_settings::NM_CONNECTIONS_DIR),
-    )));
+    ))
+    .with_journal(crate::revert_journal::RevertJournal::new(
+        journal_dir.join("network-revert-ipv4.json"),
+    ));
+    ipv4.reconcile();
+    state.with_ipv4(ipv4);
     // The reference's hostname setting through systemd-hostnamed.
     state.with_hostname(crate::hostname_settings::HostnameSettings::open(Box::new(
         crate::tailscale::SystemTailscaleRunner,
