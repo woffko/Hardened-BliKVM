@@ -34,11 +34,21 @@ use bli_kvm_media_transition::{MediaTransitionEngine, MediaTransitionOutcome};
 #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
 use rand_core::{OsRng, RngCore};
 
+/// The ATX engine behind a lock of its own: a pulse holds the line for up to
+/// five seconds and must not hold the state HID, media and settings share.
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+pub type SharedAtx = std::sync::Arc<tokio::sync::Mutex<AtxTransitionEngine>>;
+
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+fn share_atx(engine: AtxTransitionEngine) -> SharedAtx {
+    std::sync::Arc::new(tokio::sync::Mutex::new(engine))
+}
+
 pub struct ControlV2State {
     enabled: bool,
     attestations: TargetAttestationRegistry,
     #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-    atx: Option<AtxTransitionEngine>,
+    atx: Option<SharedAtx>,
     #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
     media: Option<MediaTransitionEngine>,
     #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
@@ -168,6 +178,16 @@ impl ControlV2State {
     /// Attach the reviewed WiFi surface to the board state.
     pub fn with_wifi(&mut self, wifi: crate::network_settings::WifiState) {
         self.wifi = Some(std::sync::Arc::new(std::sync::Mutex::new(wifi)));
+    }
+
+    /// The ATX engine for the server, which runs a pulse without the state's
+    /// lock, while enabled.
+    #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+    pub fn atx_shared(&self) -> Option<SharedAtx> {
+        if !self.enabled {
+            return None;
+        }
+        self.atx.clone()
     }
 
     /// The WiFi state for the server's blocking worker, while enabled.
@@ -334,7 +354,7 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            atx: Some(engine),
+            atx: Some(share_atx(engine)),
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
@@ -384,7 +404,7 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            atx: Some(atx),
+            atx: Some(share_atx(atx)),
             #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
             media: None,
             hid: Some(hid),
@@ -465,7 +485,7 @@ impl ControlV2State {
         Self {
             enabled: true,
             attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            atx: Some(atx),
+            atx: Some(share_atx(atx)),
             media: Some(media),
             hid: Some(hid),
             #[cfg(feature = "system-action-profile")]
@@ -1160,42 +1180,63 @@ impl ControlV2State {
         confirmation: &AtxConfirmation,
         _now: Instant,
     ) -> ControlResponse {
-        let Some(engine) = self.atx.as_mut() else {
+        let Some(engine) = self.atx.clone() else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
-        let Some(operation_id) = hex_operation_id(operation_id) else {
-            return reject(ControlRejectionCode::InvalidState);
-        };
-        let now_ms = unix_millis();
-        let Some(eligibility) = AtxEligibility::reviewed_for_confirmation(
-            confirmation.session_binding,
-            confirmation.confirmation_binding,
-            confirmation.confirmed_at_unix_ms,
-            now_ms,
-            true,
-            true,
-        ) else {
-            return reject(ControlRejectionCode::ConfirmationStale);
-        };
-        let Ok(operation) = AtxOperation::new(
-            operation_id,
-            confirmation.session_binding,
-            confirmation.confirmation_binding,
-            confirmation.confirmed_at_unix_ms,
-            action,
-        ) else {
-            return reject(ControlRejectionCode::InvalidState);
-        };
-        match engine.execute(operation, eligibility, now_ms).await {
-            Ok(AtxTransitionOutcome::Applied | AtxTransitionOutcome::ReplayedApplied) => {
-                ControlResponse::Applied
-            }
-            Ok(AtxTransitionOutcome::ReplayedRejected | AtxTransitionOutcome::BackendFailed) => {
-                reject(ControlRejectionCode::BackendRejected)
-            }
-            Ok(AtxTransitionOutcome::Rejected(rejection)) => reject(atx_code(rejection)),
-            Err(_) => reject(ControlRejectionCode::Internal),
+        run_atx(engine, operation_id, action, confirmation).await
+    }
+}
+
+/// Validates one ATX request and runs its pulse on the blocking pool while
+/// holding only the engine's own lock. A request that finds a pulse running
+/// is refused at once instead of waiting behind it.
+#[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+pub async fn run_atx(
+    engine: SharedAtx,
+    operation_id: &str,
+    action: AtxControlAction,
+    confirmation: &AtxConfirmation,
+) -> ControlResponse {
+    let Some(operation_id) = hex_operation_id(operation_id) else {
+        return reject(ControlRejectionCode::InvalidState);
+    };
+    let now_ms = unix_millis();
+    let Some(eligibility) = AtxEligibility::reviewed_for_confirmation(
+        confirmation.session_binding,
+        confirmation.confirmation_binding,
+        confirmation.confirmed_at_unix_ms,
+        now_ms,
+        true,
+        true,
+    ) else {
+        return reject(ControlRejectionCode::ConfirmationStale);
+    };
+    let Ok(operation) = AtxOperation::new(
+        operation_id,
+        confirmation.session_binding,
+        confirmation.confirmation_binding,
+        confirmation.confirmed_at_unix_ms,
+        action,
+    ) else {
+        return reject(ControlRejectionCode::InvalidState);
+    };
+    let Ok(mut guard) = engine.try_lock_owned() else {
+        return reject(ControlRejectionCode::CooldownActive);
+    };
+    let runtime = tokio::runtime::Handle::current();
+    let outcome = tokio::task::spawn_blocking(move || {
+        runtime.block_on(guard.execute(operation, eligibility, now_ms))
+    })
+    .await;
+    match outcome {
+        Ok(Ok(AtxTransitionOutcome::Applied | AtxTransitionOutcome::ReplayedApplied)) => {
+            ControlResponse::Applied
         }
+        Ok(Ok(AtxTransitionOutcome::ReplayedRejected | AtxTransitionOutcome::BackendFailed)) => {
+            reject(ControlRejectionCode::BackendRejected)
+        }
+        Ok(Ok(AtxTransitionOutcome::Rejected(rejection))) => reject(atx_code(rejection)),
+        Ok(Err(_)) | Err(_) => reject(ControlRejectionCode::Internal),
     }
 }
 
@@ -1997,5 +2038,64 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("POST /atx/click?button=power&wait=1 HTTP/1.1\r\n"));
         assert!(requests[0].contains("x-kvmd-user: test-user"));
+    }
+
+    #[cfg(feature = "gpio-atx-profile")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_running_pulse_holds_neither_the_state_nor_a_second_pulse() {
+        use bli_kvm_atx_transition::{AtxExecutor, AtxPulseRunner, AtxTransitionEngine};
+
+        struct SlowRunner;
+        impl AtxPulseRunner for SlowRunner {
+            fn execute(&mut self, _action: AtxControlAction) -> Result<(), String> {
+                std::thread::sleep(Duration::from_millis(1500));
+                Ok(())
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let engine = AtxTransitionEngine::open_with_executor(
+            directory.path().join("journal.json"),
+            AtxExecutor::Gpio(std::sync::Mutex::new(Box::new(SlowRunner))),
+        )
+        .unwrap();
+        let state = std::sync::Arc::new(tokio::sync::Mutex::new(ControlV2State::with_atx_engine(
+            engine,
+        )));
+        let atx = state.lock().await.atx_shared().unwrap();
+        let confirmation = AtxConfirmation {
+            session_binding: 9,
+            confirmation_binding: [0x44; 32],
+            confirmed_at_unix_ms: unix_millis(),
+        };
+        let first = tokio::spawn({
+            let atx = atx.clone();
+            async move {
+                run_atx(
+                    atx,
+                    "0123456789abcdef0123456789abcdef",
+                    AtxControlAction::PowerLong,
+                    &confirmation,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        // The shared state is free while the pulse runs.
+        let begun = Instant::now();
+        drop(state.lock().await);
+        assert!(begun.elapsed() < Duration::from_millis(100));
+        // A second pulse is refused at once.
+        let begun = Instant::now();
+        let second = run_atx(
+            atx.clone(),
+            "fedcba9876543210fedcba9876543210",
+            AtxControlAction::Reset,
+            &confirmation,
+        )
+        .await;
+        assert_eq!(second, reject(ControlRejectionCode::CooldownActive));
+        assert!(begun.elapsed() < Duration::from_millis(100));
+        assert_eq!(first.await.unwrap(), ControlResponse::Applied);
     }
 }

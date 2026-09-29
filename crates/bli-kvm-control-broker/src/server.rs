@@ -1258,7 +1258,35 @@ async fn respond(
             } else {
                 None
             };
-            let response = if let Some(network) = network {
+            // An ATX pulse holds the line for seconds: it runs under the ATX
+            // engine's own lock, not the shared state's.
+            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
+            let atx_response = match &request.request {
+                bli_kvm_core::PlatformControlRequestV2::Atx {
+                    action,
+                    confirmation,
+                } => {
+                    let engine = v2.lock().await.atx_shared();
+                    match engine {
+                        Some(engine) => Some(
+                            crate::v2::run_atx(
+                                engine,
+                                &request.operation_id,
+                                *action,
+                                confirmation,
+                            )
+                            .await,
+                        ),
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
+            #[cfg(not(any(feature = "atx-transition-profile", feature = "gpio-atx-profile")))]
+            let atx_response: Option<ControlResponse> = None;
+            let response = if let Some(response) = atx_response {
+                response
+            } else if let Some(network) = network {
                 let payload = request.request.clone();
                 tokio::task::spawn_blocking(move || {
                     network
