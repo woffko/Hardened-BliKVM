@@ -55,6 +55,12 @@ impl Vp8Packetizer {
         })
     }
 
+    /// The sequence number the next packet carries, so a rebuilt encoder can
+    /// continue the stream instead of restarting its numbering.
+    pub fn next_sequence(&self) -> u16 {
+        self.sequence
+    }
+
     /// RTP timestamp for a capture time in microseconds since stream start.
     pub fn timestamp(elapsed_micros: u64) -> u32 {
         (elapsed_micros.wrapping_mul(VP8_CLOCK_HZ) / 1_000_000) as u32
@@ -127,6 +133,11 @@ impl H264Packetizer {
             mtu,
             sequence: initial_sequence,
         })
+    }
+
+    /// The sequence number the next packet carries (see the VP8 one).
+    pub fn next_sequence(&self) -> u16 {
+        self.sequence
     }
 
     /// Packetize one access unit; the marker bit is set on its last packet.
@@ -224,6 +235,23 @@ mod tests {
             packetizer.packetize(&vec![0; MAX_FRAME_BYTES + 1], 0),
             Err(RtpError::InvalidFrame)
         );
+    }
+
+    #[test]
+    fn a_rebuilt_encoder_continues_the_sequence_numbers() {
+        let mut vp8 = Vp8Packetizer::new(100, 1, 0xfffe, 300).unwrap();
+        let packets = vp8.packetize(&[7; 700], 0).unwrap();
+        let expected = 0xfffe_u16.wrapping_add(packets.len() as u16);
+        assert_eq!(vp8.next_sequence(), expected);
+        // The next stream segment starts from it.
+        let mut next = Vp8Packetizer::new(100, 1, vp8.next_sequence(), 300).unwrap();
+        let more = next.packetize(&[7; 10], 90).unwrap();
+        assert_eq!(u16::from_be_bytes([more[0][2], more[0][3]]), expected);
+
+        let mut h264 = H264Packetizer::new(101, 1, 40, 300).unwrap();
+        let nal = [&[0, 0, 0, 1, 0x65][..], &[9; 20][..]].concat();
+        let packets = h264.packetize(&nal, 0).unwrap();
+        assert_eq!(h264.next_sequence(), 40 + packets.len() as u16);
     }
 
     #[test]

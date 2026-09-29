@@ -111,6 +111,14 @@ impl Engine {
         })
     }
 
+    /// The sequence number the next RTP packet carries.
+    pub fn next_sequence(&self) -> u16 {
+        match &self.encoder {
+            Encoder::Vp8(_, packetizer) => packetizer.next_sequence(),
+            Encoder::H264(_, packetizer) => packetizer.next_sequence(),
+        }
+    }
+
     pub fn size(&self) -> (usize, usize) {
         (self.width, self.height)
     }

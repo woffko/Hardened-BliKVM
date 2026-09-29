@@ -274,12 +274,15 @@ fn encode_loop(
             .as_ref()
             .is_none_or(|engine| engine.size() != (frame.width, frame.height))
         {
+            // A new size builds a new encoder but the same stream: the SSRC
+            // stays and the sequence numbers go on where the last one ended.
+            let next = engine.as_ref().map_or(sequence, Engine::next_sequence);
             engine = Some(Engine::new(
                 settings.engine,
                 frame.width,
                 frame.height,
                 ssrc,
-                sequence,
+                next,
             )?);
         }
         let engine = engine.as_mut().expect("engine was just created");
