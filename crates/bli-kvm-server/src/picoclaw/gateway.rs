@@ -128,10 +128,15 @@ pub(crate) async fn connect_gateway(
         picoclaw.release(&session_id);
         return (StatusCode::SERVICE_UNAVAILABLE, "server is stopping").into_response();
     };
+    let release = super::ReleaseOnDrop {
+        picoclaw: state.picoclaw.clone().expect("checked by enabled()"),
+        session_id: session_id.clone(),
+    };
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
             let _guard = guard;
+            let _release = release;
             relay(state, socket, upstream, session_id, session).await;
         })
         .into_response()

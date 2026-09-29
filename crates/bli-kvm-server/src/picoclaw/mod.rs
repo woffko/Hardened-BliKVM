@@ -14,7 +14,7 @@ mod kvm;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::{
@@ -57,6 +57,21 @@ pub(crate) struct Active {
 #[derive(Default)]
 struct Lock {
     owner: Option<(String, Instant)>,
+}
+
+/// Releases the assistant lock for a session when dropped: a connection
+/// whose upgrade never completes drops the closure that would have relayed it,
+/// and must not leave the operator's keyboard and mouse blocked until the
+/// lock expires.
+pub(crate) struct ReleaseOnDrop {
+    pub(crate) picoclaw: Arc<Picoclaw>,
+    pub(crate) session_id: String,
+}
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        self.picoclaw.release(&self.session_id);
+    }
 }
 
 pub(crate) struct Picoclaw {
@@ -852,6 +867,23 @@ mod tests {
         assert!(!picoclaw.blocks_manual_input());
         picoclaw.lock.lock().unwrap().owner = Some(("c".into(), Instant::now()));
         assert_eq!(picoclaw.owner(), None);
+    }
+
+    #[test]
+    fn an_upgrade_that_never_runs_releases_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let picoclaw = Arc::new(Picoclaw::new(dir.path(), "http://127.0.0.1:18080/x".into()));
+        assert_eq!(picoclaw.acquire("a"), Ok(true));
+        let guard = ReleaseOnDrop {
+            picoclaw: picoclaw.clone(),
+            session_id: "a".into(),
+        };
+        // The closure handed to `on_upgrade` owns the guard; dropping it
+        // unrun is what a failed upgrade does.
+        let closure = move || drop(guard);
+        assert!(picoclaw.blocks_manual_input());
+        drop(closure);
+        assert!(!picoclaw.blocks_manual_input());
     }
 
     #[test]
