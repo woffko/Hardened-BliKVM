@@ -153,6 +153,7 @@ I5. Board: the test board's p3 grown in place; the growth script run on the
     mounted as a CD-ROM and deleted; a file larger than the free space and a
     badly named file refused in the dialog without sending; Cancel during an
     upload; the GUI walk desktop and mobile.
+    Done on slots 55 and 56 (2026-09-29, audit "Release 0.1.0-alpha.1").
 I6. The release is rebuilt: a new slot and SD image, published again as
     `v0.1.0-alpha.1` after the first publish is deleted.
 I7. (M8) At most one mouse report is in flight; movement meanwhile merges
