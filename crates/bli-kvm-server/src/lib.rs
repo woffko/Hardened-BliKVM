@@ -69,6 +69,10 @@ mod wifi;
 mod wol_macs;
 mod ws;
 
+/// Login and first setup carry two short strings; anything larger is refused
+/// before it is parsed.
+const AUTH_BODY_LIMIT: usize = 4096;
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub capabilities: Arc<CapabilityManifest>,
@@ -471,9 +475,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route(
             "/auth/setup",
-            get(auth::routes::setup_state).post(auth::routes::setup_first_account),
+            get(auth::routes::setup_state)
+                .post(auth::routes::setup_first_account)
+                .layer(DefaultBodyLimit::max(AUTH_BODY_LIMIT)),
         )
-        .route("/auth/login", post(auth::routes::login));
+        .route(
+            "/auth/login",
+            post(auth::routes::login).layer(DefaultBodyLimit::max(AUTH_BODY_LIMIT)),
+        );
     let protected_routes = Router::new()
         .route("/auth/account", get(auth::routes::account))
         .route("/auth/logout", post(auth::routes::logout))
@@ -1911,6 +1920,44 @@ mod tests {
             .next()
             .unwrap()
             .to_owned()
+    }
+
+    #[tokio::test]
+    async fn login_refuses_oversized_bodies_and_names_without_remembering_them() {
+        let app = isolated_app();
+        setup_and_login(&app).await;
+        let big = json_request(
+            Method::POST,
+            "/api/auth/login",
+            serde_json::json!({"username": "x".repeat(64 * 1024), "password": "p"}),
+        );
+        let response = app.clone().oneshot(big).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        for length in [65, 200] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    Method::POST,
+                    "/api/auth/login",
+                    serde_json::json!({"username": "x".repeat(length), "password": "p"}),
+                ))
+                .await
+                .unwrap();
+            // -1 is a bad request; a wrong name would answer -2.
+            assert_eq!(json_body(response).await["code"], -1, "{length}");
+        }
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({"username": "operator", "password": "p".repeat(257)}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["code"], -1);
+        // The real account still logs in.
+        assert!(!login_again(&app).await.is_empty());
     }
 
     #[tokio::test]

@@ -3,6 +3,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Most keys the limiter remembers. Keys come from unauthenticated requests,
+/// so the count is bounded whatever the callers send.
+pub const MAX_TRACKED_KEYS: usize = 1024;
+
 #[derive(Debug, Clone)]
 struct Attempt {
     failures: u32,
@@ -38,9 +42,27 @@ impl LoginRateLimiter {
     pub fn record_failure(&mut self, source_ip: &str, username: &str) -> bool {
         self.prune();
         let now = Instant::now();
+        let key = key(source_ip, username);
+        if !self.attempts.contains_key(&key) && self.attempts.len() >= MAX_TRACKED_KEYS {
+            // Full: make room by dropping the oldest entry that is not locked;
+            // a newcomer never evicts a lockout. With only lockouts left the
+            // newcomer is not tracked.
+            let oldest = self
+                .attempts
+                .iter()
+                .filter(|(_, attempt)| attempt.lockout_until.is_none())
+                .min_by_key(|(_, attempt)| attempt.last_failure)
+                .map(|(key, _)| key.clone());
+            match oldest {
+                Some(oldest) => {
+                    self.attempts.remove(&oldest);
+                }
+                None => return false,
+            }
+        }
         let attempt = self
             .attempts
-            .entry(key(source_ip, username))
+            .entry(key)
             .or_insert(Attempt {
                 failures: 0,
                 lockout_until: None,
@@ -81,6 +103,18 @@ fn key(source_ip: &str, username: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn many_distinct_keys_stay_bounded_and_keep_lockouts() {
+        let mut limiter = LoginRateLimiter::new(1, 600);
+        assert!(limiter.record_failure("192.0.2.1", "victim"));
+        let name = "n".repeat(64);
+        for index in 0..5000 {
+            limiter.record_failure("192.0.2.9", &format!("{name}{index}"));
+        }
+        assert!(limiter.attempts.len() <= MAX_TRACKED_KEYS);
+        assert!(limiter.is_locked("192.0.2.1", "victim"));
+    }
 
     #[test]
     fn lockout_is_scoped_to_source_and_username() {
