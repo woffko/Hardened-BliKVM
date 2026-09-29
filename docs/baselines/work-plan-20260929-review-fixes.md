@@ -290,3 +290,18 @@ rotation together with the update of the `gui` record (every board step needs
 it), the word to publish (H2), and the optional first boot of the new image
 from a spare card. When the board cannot be reached, all local work and H1's
 build are finished and the device checks are listed as pending.
+
+## Status (2026-09-29)
+
+Phases A-H done on the test board except the items the audit's status table
+marks not confirmed (R18) or accepted (decision 6): slot 57 `0.1.0-alpha.2`
+(source 1533dc2), update runtime `0.1.0~dev34`, both encoders redeployed, the
+device checks of phase G passed (login timing 200 / 198 ms, oversized login 413,
+open terminal closed in 0.94 s, background-child script 75 ms, HTTPS on and
+read-only, GUI walk desktop and mobile without an API, page or policy error,
+media GUI test desktop and mobile, VP8 and H.264 probes), and the board is back
+in its default state. Two departures from the plan text: `MemoryHigh` was not
+set (page cache from an upload would be throttled by it), and the mount
+ordering of R10 was found already in place, so no unit changed. The release
+candidate is staged under `~/.cache/hardened-blikvm/release-alpha2` and is not
+published.
