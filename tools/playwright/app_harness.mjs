@@ -82,6 +82,21 @@ export function defaultManifest(overrides = {}) {
  * Serve `web/dist` and the routes the probes need. Records every API request as
  * `METHOD /path` in `requests` and returns the base URL.
  */
+// The headers nginx sends with every page, read from the shipped
+// configuration so the contracts run under the same policy.
+export function shippedSecurityHeaders() {
+  const conf = fs.readFileSync(
+    path.resolve("packaging/nginx/hardened-blikvm.conf"),
+    "utf8",
+  );
+  const headers = {};
+  for (const match of conf.matchAll(
+    /add_header (Content-Security-Policy|X-Content-Type-Options|Referrer-Policy) "([^"]+)"/g,
+  ))
+    headers[match[1]] = match[2];
+  return headers;
+}
+
 export async function startApp({
   dist,
   manifest = defaultManifest(),
@@ -90,6 +105,7 @@ export async function startApp({
   const root = dist ?? path.resolve("web/dist");
   const requests = [];
   const requestDetails = [];
+  const securityHeaders = shippedSecurityHeaders();
   const server = http.createServer((request, response) => {
     const route = new URL(request.url, "http://127.0.0.1").pathname;
     const json = (value, status = 200, headers = {}) => {
@@ -206,11 +222,15 @@ export async function startApp({
       response.writeHead(200, {
         "Content-Type":
           CONTENT_TYPES[path.extname(candidate)] ?? "application/octet-stream",
+        ...securityHeaders,
       });
       response.end(fs.readFileSync(candidate));
       return;
     }
-    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      ...securityHeaders,
+    });
     response.end(fs.readFileSync(path.join(root, "index.html")));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

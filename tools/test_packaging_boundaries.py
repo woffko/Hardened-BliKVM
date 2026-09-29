@@ -2180,6 +2180,18 @@ class PackagingBoundaryTests(unittest.TestCase):
         tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-hid-ledger.conf").read_text()
         self.assertIn("d /run/hardened-blikvm-hid 0700 root root - -", tmpfiles)
 
+    def test_nginx_sends_security_headers_that_no_location_drops(self) -> None:
+        config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
+        for header in ("Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy"):
+            self.assertRegex(config, rf'add_header {header} "[^"]+" always;', header)
+        policy = re.search(r'add_header Content-Security-Policy "([^"]+)"', config).group(1)
+        for directive in ("default-src 'self'", "script-src 'self'", "frame-ancestors 'none'", "object-src 'none'"):
+            self.assertIn(directive, policy)
+        self.assertNotIn("unsafe-eval", policy)
+        # add_header in a location replaces every server-level header there.
+        server_end = config.index("location = /api/application-update/upload")
+        self.assertNotIn("add_header", config[server_end:])
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
