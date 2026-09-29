@@ -40,20 +40,19 @@ pub fn load(state_dir: &std::path::Path) -> u64 {
 
 fn store(state_dir: &std::path::Path, duration: u64) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(state_dir)?;
     let path = state_dir.join(SESSION_LOCK_FILE);
-    let temporary = path.with_extension("new");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&temporary)?;
+    // A file of its own per write: two changes at once cannot share one.
+    let mut file = tempfile::Builder::new()
+        .prefix(".session-lock-")
+        .tempfile_in(state_dir)?;
+    file.as_file()
+        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
     file.write_all(&serde_json::to_vec(&Persisted { duration }).map_err(std::io::Error::other)?)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(temporary, path)
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -95,13 +94,14 @@ pub(crate) async fn set_session_lock(
             "the session lock duration is too large".into(),
         ));
     }
-    state.sessions.set_lock_after_seconds(body.duration).await;
+    // Saved first: a failed save leaves the setting as it was.
     if let Err(error) = store(&state.options.state_dir, body.duration) {
         eprintln!("session lock: the setting could not be saved: {error}");
         return Err(AppError::ServiceUnavailable(
             "the session lock setting could not be saved".into(),
         ));
     }
+    state.sessions.set_lock_after_seconds(body.duration).await;
     if body.lock_now {
         let revoked = state.sessions.revoke_others(&session.token).await;
         for token in revoked {

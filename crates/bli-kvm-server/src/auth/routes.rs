@@ -138,7 +138,7 @@ pub async fn login(
     // The hash runs on the blocking pool, a few at a time and outside the
     // limiter's mutex; the lockout is checked again once a place is free, so
     // queued guesses cannot outrun it.
-    let permit = crate::auth::password::verification_permit().await;
+    let permit = state.accounts.verification_permit().await;
     if state
         .login_limiter
         .lock()

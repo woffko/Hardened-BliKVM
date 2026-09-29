@@ -2005,6 +2005,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_session_lock_that_cannot_be_saved_keeps_the_old_value() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempdir().unwrap();
+        let state = root.path().join("account");
+        let app = auth_app(state.clone(), 5);
+        let (cookie, csrf) = setup_and_login(&app).await;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let (status, _) = set_session_lock(&app, &cookie, Some(&csrf), 300, false).await;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let (_, body) = session_lock_state(&app, &cookie, None).await;
+        assert_eq!(body["data"]["duration"], 3600);
+    }
+
+    #[tokio::test]
     async fn session_lock_round_trips_and_requires_csrf() {
         let app = isolated_app();
         let (cookie, csrf) = setup_and_login(&app).await;

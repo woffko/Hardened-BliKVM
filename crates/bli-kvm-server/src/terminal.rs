@@ -123,7 +123,7 @@ pub(crate) async fn unlock(
     {
         return Err(locked());
     }
-    let permit = crate::auth::password::verification_permit().await;
+    let permit = state.accounts.verification_permit().await;
     let verified = crate::auth::password::verify_blocking(
         state.accounts.clone(),
         session.username.clone(),
@@ -192,30 +192,44 @@ async fn relay(websocket: WebSocket, socket: std::path::PathBuf, session: Sessio
         }
     };
     let (mut helper_rx, mut helper_tx) = helper.into_split();
-    let expiry = tokio::time::sleep(session.expires_at.saturating_duration_since(Instant::now()));
-    tokio::pin!(expiry);
-    let mut header = [0_u8; 5];
+    // The helper's frames are read by their own task: a read of a half frame
+    // must not be cancelled by the watchdog's tick.
+    let (frames_tx, mut frames) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+    let reader = tokio::spawn(async move {
+        let mut header = [0_u8; 5];
+        loop {
+            if helper_rx.read_exact(&mut header).await.is_err() {
+                return;
+            }
+            let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+            if header[0] != FRAME_DATA || length > MAX_FRAME_BYTES {
+                return;
+            }
+            let mut payload = vec![0_u8; length];
+            if helper_rx.read_exact(&mut payload).await.is_err()
+                || frames_tx.send(payload).await.is_err()
+            {
+                return;
+            }
+        }
+    });
+    // The deadline can move (a session lock change), so it is asked again
+    // every second rather than slept for.
+    let mut watchdog = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
         tokio::select! {
-            _ = &mut expiry => {
+            _ = watchdog.tick() => {
+                if session.is_active() {
+                    continue;
+                }
                 let _ = ws_tx.send(Message::Close(Some(CloseFrame {
                     code: 1008,
                     reason: "terminal session expired".into(),
                 }))).await;
                 break;
             }
-            read = helper_rx.read_exact(&mut header) => {
-                if read.is_err() {
-                    break;
-                }
-                let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
-                if header[0] != FRAME_DATA || length > MAX_FRAME_BYTES {
-                    break;
-                }
-                let mut payload = vec![0_u8; length];
-                if helper_rx.read_exact(&mut payload).await.is_err() {
-                    break;
-                }
+            frame = frames.recv() => {
+                let Some(payload) = frame else { break };
                 if ws_tx.send(Message::Binary(payload.into())).await.is_err() {
                     break;
                 }
@@ -244,6 +258,7 @@ async fn relay(websocket: WebSocket, socket: std::path::PathBuf, session: Sessio
             }
         }
     }
+    reader.abort();
 }
 
 async fn open_terminal(socket: &std::path::Path) -> Result<tokio::net::UnixStream, &'static str> {

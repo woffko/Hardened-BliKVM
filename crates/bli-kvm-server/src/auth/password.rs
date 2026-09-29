@@ -31,16 +31,6 @@ fn dummy_hash() -> &'static str {
 
 /// At most this many hashes run at once: each takes memory and a core.
 const CONCURRENT_VERIFICATIONS: usize = 2;
-static VERIFY_PERMITS: tokio::sync::Semaphore =
-    tokio::sync::Semaphore::const_new(CONCURRENT_VERIFICATIONS);
-
-/// Waits for a place to verify a password.
-pub async fn verification_permit() -> tokio::sync::SemaphorePermit<'static> {
-    VERIFY_PERMITS
-        .acquire()
-        .await
-        .expect("the verification semaphore is never closed")
-}
 
 /// Runs [`AccountStore::verify`] on the blocking pool.
 pub async fn verify_blocking(
@@ -63,6 +53,7 @@ pub struct Account {
 #[derive(Debug)]
 pub struct AccountStore {
     path: PathBuf,
+    permits: tokio::sync::Semaphore,
 }
 
 impl AccountStore {
@@ -72,7 +63,18 @@ impl AccountStore {
         std::thread::spawn(|| {
             let _ = dummy_hash();
         });
-        Self { path }
+        Self {
+            path,
+            permits: tokio::sync::Semaphore::new(CONCURRENT_VERIFICATIONS),
+        }
+    }
+
+    /// Waits for a place to verify a password.
+    pub async fn verification_permit(&self) -> tokio::sync::SemaphorePermit<'_> {
+        self.permits
+            .acquire()
+            .await
+            .expect("the verification semaphore is never closed")
     }
 
     pub fn exists(&self) -> bool {

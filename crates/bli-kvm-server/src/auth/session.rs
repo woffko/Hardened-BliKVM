@@ -1,8 +1,8 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -11,19 +11,40 @@ use tokio::sync::RwLock;
 
 use super::token::random_token;
 
+/// Deadlines are kept as milliseconds after this instant so that every clone
+/// of a session shares one atomic, and a `retime` reaches the streams that
+/// hold a clone.
+fn epoch() -> Instant {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+fn millis_at(instant: Instant) -> u64 {
+    u64::try_from(instant.saturating_duration_since(epoch()).as_millis()).unwrap_or(u64::MAX)
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub token: String,
     pub username: String,
     pub csrf_token: String,
-    pub expires_at: Instant,
     pub expires_at_unix: u64,
+    deadline: Arc<AtomicU64>,
     revoked: Arc<AtomicBool>,
 }
 
 impl Session {
     pub fn is_active(&self) -> bool {
-        !self.revoked.load(Ordering::Acquire) && Instant::now() < self.expires_at
+        !self.revoked.load(Ordering::Acquire) && Instant::now() < self.expires_at()
+    }
+
+    /// When the session ends now, whatever it was when this clone was made.
+    pub fn expires_at(&self) -> Instant {
+        epoch() + Duration::from_millis(self.deadline.load(Ordering::Acquire))
+    }
+
+    fn set_expiry(&self, at: Instant) {
+        self.deadline.store(millis_at(at), Ordering::Release);
     }
 
     fn revoke(&self) {
@@ -67,7 +88,7 @@ impl SessionStore {
             token: token.clone(),
             username: username.into(),
             csrf_token,
-            expires_at: Instant::now() + ttl,
+            deadline: Arc::new(AtomicU64::new(millis_at(Instant::now() + ttl))),
             expires_at_unix: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -75,14 +96,13 @@ impl SessionStore {
                 .as_secs(),
             revoked: Arc::new(AtomicBool::new(false)),
         };
-        self.sessions
-            .write()
-            .await
-            .insert(token.clone(), session.clone());
-        self.last_seen
-            .write()
-            .await
-            .insert(token.clone(), Instant::now());
+        let mut sessions = self.sessions.write().await;
+        // Sessions nobody presents again would otherwise stay for good.
+        let mut last_seen = self.last_seen.write().await;
+        sessions.retain(|_, other| other.is_active());
+        last_seen.retain(|other, _| sessions.contains_key(other));
+        sessions.insert(token.clone(), session.clone());
+        last_seen.insert(token, Instant::now());
         session
     }
 
@@ -99,6 +119,12 @@ impl SessionStore {
             self.last_seen.write().await.clear();
         } else {
             *self.lock_after_seconds.write().await = Some(seconds);
+            // Idle time is counted from now, not from a login made while the
+            // lock was off: turning it on must not log anybody out.
+            let now = Instant::now();
+            for seen in self.last_seen.write().await.values_mut() {
+                *seen = now;
+            }
         }
     }
 
@@ -187,7 +213,7 @@ impl SessionStore {
             return None;
         }
         let ttl = Duration::from_secs(ttl_secs);
-        session.expires_at = Instant::now() + ttl;
+        session.set_expiry(Instant::now() + ttl);
         session.expires_at_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -230,10 +256,37 @@ mod tests {
         let session = store.issue("operator", 60).await;
         let retimed = store.retime(&session.token, 1800).await.unwrap();
         assert!(retimed.expires_at_unix >= session.expires_at_unix + 1700);
-        assert!(store.validate(&session.token).await.unwrap().expires_at > session.expires_at);
+        assert!(
+            store.validate(&session.token).await.unwrap().expires_at()
+                > Instant::now() + Duration::from_secs(1700)
+        );
         assert!(store.retime("unknown", 1800).await.is_none());
         store.revoke(&session.token).await;
         assert!(store.retime(&session.token, 1800).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn turning_the_lock_on_does_not_log_a_session_out() {
+        let store = SessionStore::with_lock_after_seconds(0);
+        let session = store.issue("operator", 3600).await;
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        store.set_lock_after_seconds(1).await;
+        assert!(store.validate(&session.token).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_retime_reaches_the_clones_and_expired_sessions_are_swept() {
+        let store = SessionStore::new();
+        let session = store.issue("operator", 3600).await;
+        let clone = session.clone();
+        store.retime(&session.token, 0).await.unwrap();
+        assert!(!clone.is_active());
+        let old = store.issue("other", 0).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        store.issue("third", 60).await;
+        assert!(store.validate(&old.token).await.is_none());
+        assert!(store.sessions.read().await.get(&old.token).is_none());
+        assert!(store.last_seen.read().await.get(&old.token).is_none());
     }
 
     #[tokio::test]
