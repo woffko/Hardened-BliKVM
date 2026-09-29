@@ -14,6 +14,45 @@ use tempfile::Builder;
 
 use crate::error::{AppError, AppResult};
 
+// Argon2 verifications in this thread, for the equal-cost test.
+#[cfg(test)]
+thread_local! {
+    static VERIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A hash with the parameters of the account's own, of a password nobody knows.
+fn dummy_hash() -> &'static str {
+    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DUMMY.get_or_init(|| {
+        hash_password(&crate::auth::token::random_token(32))
+            .unwrap_or_else(|_| String::new())
+    })
+}
+
+/// At most this many hashes run at once: each takes memory and a core.
+const CONCURRENT_VERIFICATIONS: usize = 2;
+static VERIFY_PERMITS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(CONCURRENT_VERIFICATIONS);
+
+/// Waits for a place to verify a password.
+pub async fn verification_permit() -> tokio::sync::SemaphorePermit<'static> {
+    VERIFY_PERMITS
+        .acquire()
+        .await
+        .expect("the verification semaphore is never closed")
+}
+
+/// Runs [`AccountStore::verify`] on the blocking pool.
+pub async fn verify_blocking(
+    store: std::sync::Arc<AccountStore>,
+    username: String,
+    password: String,
+) -> AppResult<bool> {
+    tokio::task::spawn_blocking(move || store.verify(&username, &password))
+        .await
+        .map_err(|_| AppError::Internal("password verification failed".into()))?
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -28,6 +67,11 @@ pub struct AccountStore {
 
 impl AccountStore {
     pub fn new(path: PathBuf) -> Self {
+        // Build the dummy hash now, so the first wrong name costs no more.
+        #[cfg(not(test))]
+        std::thread::spawn(|| {
+            let _ = dummy_hash();
+        });
         Self { path }
     }
 
@@ -80,18 +124,23 @@ impl AccountStore {
         self.write_account(&account, false)
     }
 
+    /// Checks a login. An unknown or absent account is verified against a
+    /// dummy hash of the same cost, so the time does not tell a right user name
+    /// from a wrong one.
     pub fn verify(&self, username: &str, password: &str) -> AppResult<bool> {
-        let Some(account) = self.load()? else {
-            return Ok(false);
+        let account = self.load()?.filter(|account| account.username == username);
+        let stored = match &account {
+            Some(account) => account.password_hash.as_str(),
+            None => dummy_hash(),
         };
-        if account.username != username {
-            return Ok(false);
-        }
-        let parsed = PasswordHash::new(&account.password_hash)
+        let parsed = PasswordHash::new(stored)
             .map_err(|_| AppError::Config("invalid account password hash".into()))?;
-        Ok(Argon2::default()
+        #[cfg(test)]
+        VERIFICATIONS.with(|count| count.set(count.get() + 1));
+        let matched = Argon2::default()
             .verify_password(password.as_bytes(), &parsed)
-            .is_ok())
+            .is_ok();
+        Ok(matched && account.is_some())
     }
 
     fn write_account(&self, account: &Account, no_clobber: bool) -> AppResult<()> {
@@ -176,6 +225,21 @@ fn prepare_private_directory(path: &Path) -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_wrong_user_name_costs_one_verification_like_a_right_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AccountStore::new(dir.path().join("account.json"));
+        store.create_initial("operator", "initial password").unwrap();
+        let count = || VERIFICATIONS.with(|count| count.get());
+        let before = count();
+        assert!(store.verify("operator", "initial password").unwrap());
+        assert_eq!(count() - before, 1);
+        assert!(!store.verify("someone-else", "initial password").unwrap());
+        assert_eq!(count() - before, 2);
+        assert!(!store.verify("operator", "wrong password").unwrap());
+        assert_eq!(count() - before, 3);
+    }
+
     use super::*;
 
     #[test]

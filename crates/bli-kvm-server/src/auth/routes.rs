@@ -124,15 +124,37 @@ pub async fn login(
         return Err(AppError::BadRequest("invalid username or password".into()));
     }
     let source = crate::auth::rate_limit::client_address(address, &headers);
-    let mut limiter = state.login_limiter.lock().await;
-    if limiter.is_locked(&source, &request.username) {
-        return Err(AppError::RateLimited(
-            "account locked after repeated failures".into(),
-        ));
+    let locked = || {
+        AppError::RateLimited("account locked after repeated failures".into())
+    };
+    if state
+        .login_limiter
+        .lock()
+        .await
+        .is_locked(&source, &request.username)
+    {
+        return Err(locked());
     }
-    let verified = state
-        .accounts
-        .verify(&request.username, &request.password)?;
+    // The hash runs on the blocking pool, a few at a time and outside the
+    // limiter's mutex; the lockout is checked again once a place is free, so
+    // queued guesses cannot outrun it.
+    let permit = crate::auth::password::verification_permit().await;
+    if state
+        .login_limiter
+        .lock()
+        .await
+        .is_locked(&source, &request.username)
+    {
+        return Err(locked());
+    }
+    let verified = crate::auth::password::verify_blocking(
+        state.accounts.clone(),
+        request.username.clone(),
+        request.password.clone(),
+    )
+    .await?;
+    drop(permit);
+    let mut limiter = state.login_limiter.lock().await;
     if !verified {
         let _locked = limiter.record_failure(&source, &request.username);
         return Err(AppError::InvalidCredentials);

@@ -112,13 +112,27 @@ pub(crate) async fn unlock(
     }
     let source = crate::auth::rate_limit::client_address(address, &headers);
     let limiter_key = format!("terminal:{}", session.username);
-    let mut limiter = state.login_limiter.lock().await;
-    if limiter.is_locked(&source, &limiter_key) {
-        return Err(AppError::RateLimited(
-            "terminal unlock locked after repeated failures".into(),
-        ));
+    let locked = || {
+        AppError::RateLimited("terminal unlock locked after repeated failures".into())
+    };
+    if state
+        .login_limiter
+        .lock()
+        .await
+        .is_locked(&source, &limiter_key)
+    {
+        return Err(locked());
     }
-    if !state.accounts.verify(&session.username, &body.password)? {
+    let permit = crate::auth::password::verification_permit().await;
+    let verified = crate::auth::password::verify_blocking(
+        state.accounts.clone(),
+        session.username.clone(),
+        body.password.clone(),
+    )
+    .await?;
+    drop(permit);
+    let mut limiter = state.login_limiter.lock().await;
+    if !verified {
         let _ = limiter.record_failure(&source, &limiter_key);
         return Err(AppError::InvalidCredentials);
     }
