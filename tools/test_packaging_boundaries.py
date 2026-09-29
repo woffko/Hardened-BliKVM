@@ -2180,6 +2180,17 @@ class PackagingBoundaryTests(unittest.TestCase):
         tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-hid-ledger.conf").read_text()
         self.assertIn("d /run/hardened-blikvm-hid 0700 root root - -", tmpfiles)
 
+    def test_the_server_units_have_a_memory_limit(self) -> None:
+        for path in (
+            "packaging/systemd/hardened-blikvm-server.service",
+            "packaging/systemd/hardened-blikvm-server-candidate.service",
+            "packaging/systemd/hardened-blikvm-server-current.service",
+            "packaging/systemd/native/hardened-blikvm-server-candidate.service",
+            "packaging/systemd/native/hardened-blikvm-server-current.service",
+        ):
+            unit = (ROOT / path).read_text()
+            self.assertIn("\nMemoryMax=192M\n", unit, path)
+
     def test_nginx_sends_security_headers_that_no_location_drops(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         for header in ("Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy"):

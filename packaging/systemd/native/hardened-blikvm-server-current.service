@@ -51,6 +51,12 @@ TimeoutStartSec=15s
 # Allow the server's 20-second HTTP/WebSocket drain to report its result.
 TimeoutStopSec=30s
 
+# The server streams uploads to disk and relays only the newest video frame,
+# so it stays in a few megabytes (1.7 MB idle on the 1 GB board). The limit
+# keeps a leak or a flood of requests from taking the whole board; it is at
+# least four times the peak measured through a GUI walk, a media upload and
+# the video views (audit 2026-09-29, R1).
+MemoryMax=192M
 NoNewPrivileges=yes
 PrivateDevices=yes
 PrivateTmp=yes
