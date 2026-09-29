@@ -173,3 +173,41 @@ write to a peer that has already left. Run alone: 0 failures in 60.
   files.
 - Origin checks cover every WebSocket upgrade; the update archive is
   extracted only after its signature is verified.
+
+## Status (2026-09-29, slot 57 `0.1.0-alpha.2`, source 1533dc2)
+
+Shipped on the test board: update runtime `0.1.0~dev34` (units, tmpfiles
+entry for the HID ledger, helpers, nginx security headers), slot 57 through the
+API, both WebRTC encoders through `deploy_vp8.sh`. Receipts are under
+`evidence/private` (`*-seq57-*`). Each fix has a test that fails on the old
+code (named below) unless noted.
+
+| Finding | Outcome |
+|---|---|
+| R1 | Fixed 39c4fdb, 61b9961. Tests `login_refuses_oversized_bodies_and_names_without_remembering_them`, `many_distinct_keys_stay_bounded_and_keep_lockouts`. Board: 64 KiB and 5 KiB bodies answer 413, a 200-byte name is refused before the limiter. The server units have `MemoryMax=192M` (`MemoryHigh` left out: page cache from an upload would be throttled by it); the server sat at 1.4-2.5 MB through the GUI walks, so the limit is far above four times the peak. |
+| R2 | Fixed 1634d3b. Tests `a_lockout_belongs_to_the_forwarded_client_not_to_nginx`, `client_address_trusts_the_forwarded_header_only_from_loopback`. Not exercised on the board (a lockout there would lock the operator out). |
+| R3 | Fixed e99a823. Test `a_wrong_user_name_costs_one_verification_like_a_right_one`. Board: right name 200 ms, unknown name 198 ms (was 205 / 13). |
+| R4 | Fixed 92a4cd8. Test `close_tests::an_open_terminal_ends_with_its_switch_or_its_session` (the relay itself has no socket-level test); board: an open shell closed 0.94 s after the switch went off (`terminal_switch_probe.mjs`). |
+| R5 | Fixed 7f4d25a. Tests `a_background_child_does_not_hold_the_foreground_run`, `the_time_limit_kills_the_whole_group`. Board: a script with `sleep 20 &` returned in 75 ms. |
+| R6 | Fixed 8ea0865 (decision 1). Tests `the_shipped_redirect_counts_as_https_being_on`, manifest test, network contract. Board: `enabled: true`, `network_tls` read-only. |
+| R7 | Fixed 8998c0e. Tests `an_unconfirmed_change_is_reverted_by_the_next_owner`, `an_unconfirmed_addressing_change_is_reverted_by_the_next_owner`. Board: Wi-Fi made the main connection, owner restarted inside the window, Ethernet metric back to 100 within 7 s, journal gone ("reverted after a restart" in the owner's log). The IPv4 path was tested with the fake runner only. |
+| R8 | Fixed 42e3861. Test `a_running_pulse_holds_neither_the_state_nor_a_second_pulse`. No pulse was sent on the board. |
+| R9 | Fixed af7a5df (decision 2). Measured before on the board (`hid-ledger-fsync-20260929-before.json`): 32 ms per key event with fsync on the card, 1.4 ms on tmpfs. The owner now runs with `/run/hardened-blikvm-hid/hid-ledger.json`. A key burst was not sent (needs the HID lease). |
+| R10 | Fixed 9511989. Test `an_unmounted_or_unreadable_store_drops_nothing`. Confirmed on the board that the mount is `WantedBy=local-fs.target` and the services start after `local-fs.target`, so the ordering premise was not confirmed and no unit changed; the guard still covers an unmount or read error at run time. |
+| R11 | Fixed f1ac032. `test_optional_feature_state_is_removed_and_var_lib_is_an_allowlist`; the alpha.2 image was built with the new checks. |
+| R12 | Fixed 58870a9. Test `turning_the_lock_on_does_not_log_a_session_out`. |
+| R13 | Fixed 58870a9. Tests `a_retime_reaches_the_clones_and_expired_sessions_are_swept`, `a_session_lock_that_cannot_be_saved_keeps_the_old_value`. |
+| R14 | Fixed 74a97ac. Test `temporary_names_are_unique_and_stale_partials_are_removed`; the attached-image recheck before the rename reuses the start-of-upload check and has no dedicated race test. |
+| R15 | Fixed 3bf1062. Test `a_rebuilt_encoder_continues_the_sequence_numbers`; the encoders were redeployed and both probes decode. No resolution change was forced on the board. |
+| R16 | Fixed f46035d. Test `an_upgrade_that_never_runs_releases_the_lock` (the guard, not a real dropped upgrade). |
+| R17 | Fixed 03bd281. Test `a_start_rides_out_a_status_reader_but_not_a_running_download`. |
+| R18 | Not confirmed. A 40 MiB body sent to the system update upload with its switch off and to the application update upload with an invalid archive both delivered the refusal to the client through nginx (`upload-refusal-seq57.txt`). No change. |
+| R19 | Fixed 2cac2bc. Test `tools/test_command_result.mjs`. |
+| R20 | Fixed 96771c9. Test `the_lowest_metric_default_route_supplies_the_gateway`. |
+| R21 | Fixed 5904890. Test `tools/test_build_scripts_guard.py`. |
+| R22 | CSP, `nosniff` and a referrer policy fixed be8f599 (`csp_contract.mjs`, the packaging pin; the GUI walks on the board, desktop and mobile, report no console or policy error). Accepted, not changed (decision 6): HSTS, `overflow-checks`, the server's `capture-status` events. |
+| R23 | Fixed cfdaaab. 0 failures in 100 runs beside eight busy loops (it could not be reproduced before either). |
+
+Board end state after the checks: every administration switch off, firewall
+Baseline, the operator's two images still in the catalog, no drive attached,
+session lock 3600 s as found.
