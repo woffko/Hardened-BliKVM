@@ -211,15 +211,24 @@ fn current_gateway() -> Option<String> {
     default_ipv4_gateway(&content)
 }
 
+/// The gateway of the default IPv4 route with the lowest metric, the choice
+/// the network page makes too (Ethernet and Wi-Fi may both have one).
 fn default_ipv4_gateway(content: &str) -> Option<String> {
+    let mut best: Option<(u32, &str)> = None;
     for line in content.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 || fields[1] != "00000000" {
             continue;
         }
-        return parse_route_gateway(fields[2]);
+        let metric = fields
+            .get(6)
+            .and_then(|metric| metric.parse::<u32>().ok())
+            .unwrap_or(u32::MAX);
+        if best.is_none_or(|(lowest, _)| metric < lowest) {
+            best = Some((metric, fields[2]));
+        }
     }
-    None
+    best.and_then(|(_, gateway)| parse_route_gateway(gateway))
 }
 
 fn parse_route_gateway(value: &str) -> Option<String> {
@@ -286,6 +295,17 @@ mod tests {
         );
         assert_eq!(parse_route_gateway("00000000"), None);
         assert_eq!(parse_route_gateway("nothex"), None);
+    }
+
+    #[test]
+    fn the_lowest_metric_default_route_supplies_the_gateway() {
+        let header = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n";
+        let content = format!(
+            "{header}eth0\t00000000\t010200C0\t0003\t0\t0\t700\t00000000\n\
+             wlan0\t00000000\t010300C0\t0003\t0\t0\t600\t00000000\n"
+        );
+        // The first line is Ethernet's; Wi-Fi's has the lower metric.
+        assert_eq!(default_ipv4_gateway(&content).as_deref(), Some("192.0.3.1"));
     }
 
     #[test]
