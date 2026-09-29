@@ -68,9 +68,12 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
         self.assertIn("/etc/kvmd/nginx/ssl/server.key", config)
         self.assertIn("add_header Permissions-Policy", config)
-        self.assertNotIn("add_header X-Content-Type-Options", config)
+        # The review of 2026-09-29 (R22) added these; framing is refused by the
+        # policy's frame-ancestors, so no X-Frame-Options.
+        self.assertIn("add_header Content-Security-Policy", config)
+        self.assertIn("add_header X-Content-Type-Options", config)
+        self.assertIn("add_header Referrer-Policy", config)
         self.assertNotIn("add_header X-Frame-Options", config)
-        self.assertNotIn("add_header Referrer-Policy", config)
         self.assertIn("/etc/kvmd/nginx/ssl/server.key", validation)
         self.assertNotIn("/run/credentials/", validation)
         self.assertIn(self.paths().validation_root, validation)
