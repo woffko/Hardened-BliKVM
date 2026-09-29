@@ -250,6 +250,10 @@ fn picoclaw_available(options: &ServerOptions) -> bool {
 }
 
 pub fn app_with_options(options: ServerOptions) -> Router {
+    // Partial files an interrupted upload left in the image store.
+    if let Some(directory) = options.media_directory.as_deref() {
+        download::sweep_stale_uploads(directory);
+    }
     assert!(
         !options.update_writes_enabled
             || (options.update_status_socket.is_some()

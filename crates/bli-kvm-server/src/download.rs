@@ -9,10 +9,9 @@
 //! size before the web client sends a file: an answer the server gives while
 //! a large body is still arriving does not reliably reach the browser.
 
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::AsyncWriteExt;
 
 use axum::{
     Extension, Json,
@@ -37,8 +36,6 @@ const CONTENT_LENGTH_SLACK: u64 = 1024 * 1024;
 const MAX_UPLOAD_NAME_BYTES: usize = 128;
 /// The web client maps this reason to the operator's language.
 const NO_SPACE: &str = "the image store does not have enough free space";
-
-static UPLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UploadKind {
@@ -142,9 +139,44 @@ pub(crate) fn upload_allows(kind: UploadKind) -> (bool, bool, bool) {
     }
 }
 
+/// A name of its own per upload. A counter restarting with the process would
+/// meet the partial file an interrupted upload left and refuse the same image
+/// again.
 fn temporary_path(directory: &Path, name: &str) -> PathBuf {
-    let sequence = UPLOAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    directory.join(format!(".{name}.{sequence}.upload"))
+    let unique = crate::auth::token::random_token(9);
+    directory.join(format!(".{name}.{unique}.upload"))
+}
+
+/// Partial uploads older than this are leftovers of an interrupted process.
+const STALE_UPLOAD_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Removes the partial files interrupted uploads left in the image store.
+pub(crate) fn remove_stale_uploads(directory: &Path, age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with('.') && name.ends_with(".upload")) {
+            continue;
+        }
+        let old = entry
+            .metadata()
+            .ok()
+            .filter(|metadata| metadata.is_file())
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|elapsed| elapsed >= age);
+        if old && std::fs::remove_file(entry.path()).is_ok() {
+            eprintln!("media: removed the partial upload {name}");
+        }
+    }
+}
+
+/// The startup sweep of the image store.
+pub(crate) fn sweep_stale_uploads(directory: &Path) {
+    remove_stale_uploads(directory, STALE_UPLOAD_AGE);
 }
 
 pub(crate) async fn upload_image(
@@ -257,10 +289,13 @@ async fn upload_image_inner(
         let kind = validate_upload_name(&name)?;
         refuse_attached(state, session_token, &name).await?;
         let temporary = temporary_path(&directory, &name);
-        let mut file = std::fs::OpenOptions::new()
+        // Writes and the final sync go through the blocking pool: on the card
+        // they can stall for seconds and must not hold an async worker.
+        let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)
+            .await
             .map_err(|error| store_unwritable(&name, &error))?;
         let mut hasher = Sha256::new();
         let mut total: u64 = 0;
@@ -277,6 +312,7 @@ async fn upload_image_inner(
                 }
                 hasher.update(&chunk);
                 file.write_all(&chunk)
+                    .await
                     .map_err(|error| store_unwritable(&name, &error))?;
             }
             Ok(())
@@ -290,12 +326,18 @@ async fn upload_image_inner(
                     sha256.push_str(&format!("{byte:02x}"));
                 }
                 let target = directory.join(&name);
-                if let Err(error) = file.sync_all() {
+                if let Err(error) = file.sync_all().await {
                     drop(file);
-                    let _ = std::fs::remove_file(&temporary);
+                    let _ = tokio::fs::remove_file(&temporary).await;
                     return Err(store_unwritable(&name, &error));
                 }
                 drop(file);
+                // The drive may have been attached to this image while it was
+                // arriving; the rename would swap the file under the target.
+                if let Err(error) = refuse_attached(state, session_token, &name).await {
+                    let _ = tokio::fs::remove_file(&temporary).await;
+                    return Err(error);
+                }
                 if let Err(error) =
                     std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o644))
                         .and_then(|()| std::fs::rename(&temporary, &target))
@@ -462,5 +504,43 @@ mod tests {
             assert!(name.ends_with(".upload"));
             assert_eq!(path.parent(), Some(directory));
         }
+    }
+}
+
+#[cfg(test)]
+mod leftover_tests {
+    use super::*;
+
+    #[test]
+    fn temporary_names_are_unique_and_stale_partials_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = temporary_path(dir.path(), "a.iso");
+        let second = temporary_path(dir.path(), "a.iso");
+        assert_ne!(first, second);
+        assert!(first.to_string_lossy().ends_with(".upload"));
+
+        let old = dir.path().join(".a.iso.0.upload");
+        let fresh = dir.path().join(".b.iso.1.upload");
+        let image = dir.path().join("keep.iso");
+        for path in [&old, &fresh, &image] {
+            std::fs::write(path, b"x").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&image)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        remove_stale_uploads(dir.path(), STALE_UPLOAD_AGE);
+        assert!(!old.exists(), "an old partial upload goes");
+        assert!(fresh.exists(), "a recent one may still be arriving");
+        assert!(image.exists(), "an image is never touched");
     }
 }
