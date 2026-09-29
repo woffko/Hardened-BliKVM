@@ -8,6 +8,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -114,10 +115,18 @@ impl ScriptStore {
     /// Runs in the foreground with a time limit; stdout then stderr, each
     /// capped, as the reference returns them.
     pub fn run_foreground(&self, name: &str) -> io::Result<AdminReply> {
+        self.run_foreground_within(name, FOREGROUND_TIMEOUT)
+    }
+
+    fn run_foreground_within(&self, name: &str, limit: Duration) -> io::Result<AdminReply> {
         let (interpreter, path) = self.command(name)?;
+        // A group of its own, so that what the script leaves behind can be
+        // killed with it: a background child holds the output pipes open and
+        // would keep this call waiting long after the script has finished.
         let mut child = Command::new(interpreter)
             .arg(&path)
             .current_dir("/")
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -125,11 +134,21 @@ impl ScriptStore {
         let stdout = capture(child.stdout.take());
         let stderr = capture(child.stderr.take());
         let started = Instant::now();
+        let group = i32::try_from(child.id()).unwrap_or(0);
+        let kill_group = || {
+            if group > 0 {
+                // SAFETY: killpg only signals the process group this call
+                // created for the script.
+                unsafe { libc::killpg(group, libc::SIGKILL) };
+            }
+        };
         let status = loop {
             if let Some(status) = child.try_wait()? {
+                kill_group();
                 break Some(status);
             }
-            if started.elapsed() >= FOREGROUND_TIMEOUT {
+            if started.elapsed() >= limit {
+                kill_group();
                 let _ = child.kill();
                 let _ = child.wait();
                 break None;
@@ -254,6 +273,46 @@ mod tests {
         store.delete("hello.sh").unwrap();
         assert!(store.delete("hello.sh").is_err());
         assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_background_child_does_not_hold_the_foreground_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScriptStore::open(dir.path().join("scripts")).unwrap();
+        store
+            .store("bg.sh", b"sleep 30 &\necho started\n")
+            .unwrap();
+        let begun = Instant::now();
+        match store.run_foreground("bg.sh").unwrap() {
+            AdminReply::Output { log, success } => {
+                assert!(log.contains("started") && success, "{log}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(begun.elapsed() < Duration::from_secs(5), "{:?}", begun.elapsed());
+    }
+
+    #[test]
+    fn the_time_limit_kills_the_whole_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScriptStore::open(dir.path().join("scripts")).unwrap();
+        store
+            .store(
+                "stubborn.sh",
+                b"trap '' TERM\n(trap '' TERM; sleep 30) &\nsleep 30\n",
+            )
+            .unwrap();
+        let begun = Instant::now();
+        match store
+            .run_foreground_within("stubborn.sh", Duration::from_millis(600))
+            .unwrap()
+        {
+            AdminReply::Output { log, success } => {
+                assert!(log.contains("stopped") && !success, "{log}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(begun.elapsed() < Duration::from_secs(5), "{:?}", begun.elapsed());
     }
 
     #[test]

@@ -50,15 +50,15 @@ try {
     result(
       await context.fetch(`${url.origin}${route}`, { method, data, headers }),
     );
-  const upload = async () =>
+  const upload = async (fileName = name, text = "echo script-$((6*7)); id -u\n") =>
     result(
       await context.post(`${url.origin}/api/vm/script/upload`, {
         headers,
         multipart: {
           file: {
-            name,
+            name: fileName,
             mimeType: "text/x-sh",
-            buffer: Buffer.from("echo script-$((6*7)); id -u\n"),
+            buffer: Buffer.from(text),
           },
         },
       }),
@@ -79,6 +79,18 @@ try {
     "run_foreground",
     await api("POST", "/api/vm/script/run", { name, type: "foreground" }),
   );
+  // A script that leaves a background child must not hold the run (review R5).
+  const childName = name.replace(/\.sh$/, "-child.sh");
+  step("upload_child", await upload(childName, "sleep 20 &\necho child-started\n"));
+  const childStarted = Date.now();
+  step("run_with_child", {
+    ...(await api("POST", "/api/vm/script/run", {
+      name: childName,
+      type: "foreground",
+    })),
+    elapsedMs: Date.now() - childStarted,
+  });
+  step("delete_child", await api("DELETE", "/api/vm/script", { name: childName }));
   step(
     "run_background",
     await api("POST", "/api/vm/script/run", { name, type: "background" }),
@@ -112,6 +124,8 @@ try {
     by.list.data?.files?.includes(name) &&
     /script-42/.test(log) &&
     /^0$/m.test(log) &&
+    /child-started/.test(by.run_with_child.data?.log ?? "") &&
+    by.run_with_child.elapsedMs < 2500 &&
     by.run_background.code === 0 &&
     by.bad_name.code !== 0 &&
     by.delete.code === 0 &&
