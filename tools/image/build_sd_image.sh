@@ -154,6 +154,43 @@ assemble() {
       echo "source board state remains: $leftover" >&2
       exit 1
     fi
+    # State of the optional features belongs to the source board: the
+    # assistant'"'"'s model key, gateway token and chats, stored scripts and the
+    # Tailscale node state. They start empty on a new card.
+    rm -rf "$staging/var/lib/private/hardened-blikvm-picoclaw" \
+      "$staging/var/lib/hardened-blikvm-picoclaw"/* \
+      "$staging/var/lib/hardened-blikvm-picoclaw-runtime"/* \
+      "$staging/var/lib/hardened-blikvm-admin/scripts"/* \
+      "$staging/var/lib/hardened-blikvm-tailscale"/*
+    for state in var/lib/private var/lib/hardened-blikvm-picoclaw var/lib/hardened-blikvm-picoclaw-runtime \
+      var/lib/hardened-blikvm-admin/scripts var/lib/hardened-blikvm-tailscale; do
+      if [ -n "$(find "$staging/$state" -type f 2>/dev/null | head -n 1)" ]; then
+        echo "feature state remains in $state" >&2
+        exit 1
+      fi
+    done
+    # A deny list only removes what is known: every directory under var/lib
+    # must be one that was reviewed for a new card, so state a future feature
+    # adds fails the build until somebody decides what to do with it.
+    known_state=" alsa apt aptitude avahi-autoipd bluetooth chrony dbus dhcp dkms dpkg emacsen-common git hardened-blikvm hardened-blikvm-admin hardened-blikvm-exec hardened-blikvm-exec-ledger hardened-blikvm-gadget hardened-blikvm-picoclaw hardened-blikvm-picoclaw-runtime hardened-blikvm-slots hardened-blikvm-slots-v2 hardened-blikvm-system-actions hardened-blikvm-tailscale hardened-blikvm-update hardened-blikvm-update-v2 hardened-blikvm-upload hardened-blikvm-video kvmd logrotate man-db misc NetworkManager nfs nginx openvpn PackageKit pam php polkit-1 private python resolvconf selinux shells.state smartmontools sudo systemd tailscale ucf unattended-upgrades vim vnstat "
+    unreviewed=
+    for entry in "$staging"/var/lib/*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      case "$known_state" in
+        *" ${entry##*/} "*) ;;
+        *) unreviewed="$unreviewed ${entry##*/}" ;;
+      esac
+    done
+    if [ -n "$unreviewed" ]; then
+      echo "unreviewed state under var/lib:$unreviewed" >&2
+      exit 1
+    fi
+    # The HID ledger lives on tmpfs, created by this entry; without it the
+    # board owner cannot store it.
+    [ -f "$staging/etc/tmpfiles.d/hardened-blikvm-hid-ledger.conf" ] || {
+      echo "the HID ledger tmpfiles entry is missing on the source board" >&2
+      exit 1
+    }
     # Refuse to build an image that still carries a private key or known
     # per-device state anywhere outside documentation.
     if grep -rlI --exclude-dir=doc --exclude-dir=man "BEGIN [A-Z ]*PRIVATE KEY" \
