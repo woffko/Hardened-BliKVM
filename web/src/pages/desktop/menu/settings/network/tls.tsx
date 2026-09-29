@@ -112,6 +112,11 @@ export const Tls = ({ readOnly = false }: { readOnly?: boolean }) => {
         <span className="break-words text-xs text-neutral-500">
           {t('settings.network.tls.description')}
         </span>
+        {readOnly && loaded && (
+          <span data-testid="tls-always-on" className="break-words text-xs text-neutral-500">
+            {t('settings.network.tls.alwaysOn')}
+          </span>
+        )}
         {error && (
           <span role="alert" className="text-xs text-red-400">
             {error}

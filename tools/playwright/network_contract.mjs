@@ -369,6 +369,11 @@ try {
     }
     const tls = page.getByRole("switch", { name: "HTTPS", exact: true });
     assert.equal(await tls.isDisabled(), !writable);
+    // A read-only HTTPS row says why (it is always on), a writable one does not.
+    assert.equal(
+      await page.getByTestId("tls-always-on").count(),
+      writable ? 0 : 1,
+    );
     assert.equal(
       await tls.getAttribute("aria-checked"),
       "true",

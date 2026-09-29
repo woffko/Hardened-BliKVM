@@ -549,6 +549,7 @@ const en = {
         },
         tls: {
           description: 'Enable HTTPS protocol',
+          alwaysOn: 'HTTPS is always on in this build and cannot be switched off.',
           tip: 'Be aware: Using HTTPS can increase latency, especially with MJPEG video mode.',
           rebootTitle: 'BliKVM will reboot',
           rebootDesc:

@@ -306,7 +306,6 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
-            "network_tls",
             "network_wifi",
             "system_firewall",
         ] {
@@ -315,6 +314,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified),
             );
         }
+        // HTTPS is always on: the page shows the redirect and the
+        // certificate but offers no switch.
+        manifest.board.features.insert(
+            "network_tls".into(),
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified),
+        );
         if options.media_controls_enabled {
             manifest.virtual_media.status =
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -5267,7 +5272,6 @@ mod tests {
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
-            "network_tls",
             "network_wifi",
             "system_firewall",
         ] {
@@ -5276,6 +5280,10 @@ mod tests {
                 "{feature}"
             );
         }
+        assert_eq!(
+            body["data"]["board"]["features"]["network_tls"]["availability"],
+            "read_only"
+        );
         for feature in ["dns", "ipv6"] {
             assert_eq!(
                 body["data"]["network"][feature]["availability"],

@@ -550,6 +550,7 @@ const ru = {
         },
         tls: {
           description: 'Включить протокол HTTPS',
+          alwaysOn: 'В этой сборке HTTPS включён всегда и не отключается.',
           tip: 'Имейте в виду: использование HTTPS может увеличить задержку, особенно в режиме видео MJPEG.',
           rebootTitle: 'BliKVM будет перезагружен',
           rebootDesc:

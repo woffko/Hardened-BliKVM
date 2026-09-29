@@ -397,12 +397,14 @@ async fn board_state(
         }
     }
     state.with_firewall(firewall);
-    // The reviewed HTTPS surface edits the front's own configuration.
+    // HTTPS stays on: the shipped front redirects port 80 unconditionally, so
+    // the surface only reports that redirect and the certificate, and a
+    // change is refused.
     state.with_tls(crate::tls_settings::TlsState::open(
         crate::tls_settings::NGINX_CONF,
         crate::tls_settings::NGINX_UNIT,
         Box::new(crate::tls_settings::SystemTlsRunner),
-        true,
+        false,
     ));
     // The reviewed WiFi surface drives NetworkManager through the owner.
     state.with_wifi(crate::network_settings::WifiState::open(

@@ -50,7 +50,10 @@ try {
     result(
       await context.fetch(`${url.origin}${route}`, { method, data, headers }),
     );
-  const upload = async (fileName = name, text = "echo script-$((6*7)); id -u\n") =>
+  const upload = async (
+    fileName = name,
+    text = "echo script-$((6*7)); id -u\n",
+  ) =>
     result(
       await context.post(`${url.origin}/api/vm/script/upload`, {
         headers,
@@ -81,7 +84,10 @@ try {
   );
   // A script that leaves a background child must not hold the run (review R5).
   const childName = name.replace(/\.sh$/, "-child.sh");
-  step("upload_child", await upload(childName, "sleep 20 &\necho child-started\n"));
+  step(
+    "upload_child",
+    await upload(childName, "sleep 20 &\necho child-started\n"),
+  );
   const childStarted = Date.now();
   step("run_with_child", {
     ...(await api("POST", "/api/vm/script/run", {
@@ -90,7 +96,10 @@ try {
     })),
     elapsedMs: Date.now() - childStarted,
   });
-  step("delete_child", await api("DELETE", "/api/vm/script", { name: childName }));
+  step(
+    "delete_child",
+    await api("DELETE", "/api/vm/script", { name: childName }),
+  );
   step(
     "run_background",
     await api("POST", "/api/vm/script/run", { name, type: "background" }),

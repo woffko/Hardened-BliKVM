@@ -169,10 +169,53 @@ impl TlsState {
     }
 }
 
-/// Whether the marker block is present, plus the HTTP server block it belongs
-/// to (the block ends with the first closing brace on its own line).
+/// Whether the listener on port 80 redirects to HTTPS: the marker block this
+/// module writes, or the `return 30x https://` the shipped configuration has.
+/// The text is returned unchanged for the caller's rewrite.
 fn parse_conf(text: &str) -> (bool, String) {
-    (text.contains(MARKER_START), text.to_string())
+    (redirects_port_80(text), text.to_string())
+}
+
+fn redirects_port_80(text: &str) -> bool {
+    let mut depth = 0_usize;
+    let mut block_start = None;
+    let mut on_port_80 = false;
+    let mut redirect = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') && !trimmed.starts_with(MARKER_START) {
+            continue;
+        }
+        if depth == 1 && trimmed.starts_with("server") && trimmed.ends_with('{') {
+            block_start = Some(depth);
+            on_port_80 = false;
+            redirect = false;
+        }
+        if block_start.is_some() {
+            if trimmed.starts_with("listen")
+                && trimmed
+                    .split_whitespace()
+                    .nth(1)
+                    .is_some_and(|address| address == "80" || address.ends_with(":80"))
+            {
+                on_port_80 = true;
+            }
+            if trimmed.starts_with(MARKER_START)
+                || (trimmed.starts_with("return 30") && trimmed.contains("https://"))
+            {
+                redirect = true;
+            }
+        }
+        depth += line.matches('{').count();
+        depth = depth.saturating_sub(line.matches('}').count());
+        if block_start.is_some() && depth <= 1 {
+            if on_port_80 && redirect {
+                return true;
+            }
+            block_start = None;
+        }
+    }
+    false
 }
 
 /// Inserts or removes the reviewed redirect inside the first `server` block
@@ -314,6 +357,22 @@ mod tests {
         assert!(!parse_conf(&disabled).0);
         // Idempotent: rendering twice changes nothing.
         assert_eq!(render_conf(&disabled, false), disabled);
+    }
+
+    #[test]
+    fn the_shipped_redirect_counts_as_https_being_on() {
+        let shipped = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packaging/nginx/hardened-blikvm.conf"),
+        )
+        .unwrap();
+        assert!(parse_conf(&shipped).0, "the shipped conf redirects port 80");
+        // A redirect in the HTTPS block alone is not one on port 80.
+        let only_https = "http {\n    server {\n        listen 80;\n    }\n    server {\n        listen 443 ssl;\n        return 301 https://$host$request_uri;\n    }\n}\n";
+        assert!(!parse_conf(only_https).0);
+        // A commented-out redirect does not count.
+        let commented = "http {\n    server {\n        listen 80;\n        # return 308 https://$host$request_uri;\n    }\n}\n";
+        assert!(!parse_conf(commented).0);
     }
 
     #[test]
