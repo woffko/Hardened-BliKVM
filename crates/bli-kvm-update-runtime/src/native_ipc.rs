@@ -389,7 +389,11 @@ mod tests {
     #[test]
     fn control_payload_cannot_renew_the_prefix_deadline() {
         let (_directory, path, worker) = fixture(|mut stream| {
-            stream.write_all(&100_u32.to_be_bytes()).unwrap();
+            // Under host load the client may time out and leave before this
+            // first write: a peer that has gone is not a fixture failure.
+            if stream.write_all(&100_u32.to_be_bytes()).is_err() {
+                return;
+            }
             for _ in 0..100 {
                 if stream.write_all(b"x").is_err() {
                     break;
