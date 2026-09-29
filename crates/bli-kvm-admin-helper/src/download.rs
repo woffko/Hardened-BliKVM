@@ -47,6 +47,28 @@ impl DownloadLock {
     }
 }
 
+/// How long a start waits for a lock that a status read holds for a moment:
+/// the web server probes the same file with a shared lock, and a start that
+/// met that probe used to be refused as "in progress".
+pub const LOCK_WAIT: Duration = Duration::from_millis(250);
+
+impl DownloadLock {
+    /// [`Self::acquire`], retried for up to `wait`. A real download holds the
+    /// lock for minutes, so this only rides out a momentary reader.
+    pub fn acquire_within(path: &Path, wait: Duration) -> io::Result<Option<Self>> {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(lock) = Self::acquire(path)? {
+                return Ok(Some(lock));
+            }
+            if started.elapsed() >= wait {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 /// Writes the status atomically so the web server never reads half a file.
 pub fn write_status(path: &Path, status: &DownloadStatus) -> io::Result<()> {
     let temporary = path.with_extension("new");
@@ -459,6 +481,35 @@ mod tests {
             taken
         });
         assert!(released);
+    }
+
+    #[test]
+    fn a_start_rides_out_a_status_reader_but_not_a_running_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock");
+        let reader = File::create(&path).unwrap();
+        // SAFETY: flock on a descriptor this test owns.
+        assert_eq!(
+            unsafe { libc::flock(reader.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) },
+            0
+        );
+        assert!(DownloadLock::acquire(&path).unwrap().is_none());
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            drop(reader);
+        });
+        let taken = DownloadLock::acquire_within(&path, Duration::from_secs(2)).unwrap();
+        assert!(taken.is_some(), "the momentary reader is waited out");
+        release.join().unwrap();
+        // A held download is still refused, after the wait.
+        let begun = std::time::Instant::now();
+        assert!(
+            DownloadLock::acquire_within(&path, Duration::from_millis(100))
+                .unwrap()
+                .is_none()
+        );
+        assert!(begun.elapsed() >= Duration::from_millis(100));
+        drop(taken);
     }
 
     fn catalog(dir: &Path) -> PathBuf {

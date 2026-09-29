@@ -329,7 +329,8 @@ fn serve_download(stream: &mut UnixStream) -> io::Result<()> {
     };
     let status = Path::new(DOWNLOAD_STATUS);
     let lock_path = status.with_file_name("download.lock");
-    let Some(_lock) = download::DownloadLock::acquire(&lock_path)? else {
+    let Some(_lock) = download::DownloadLock::acquire_within(&lock_path, download::LOCK_WAIT)?
+    else {
         return refuse(stream, "download in progress");
     };
     download::write_status(status, &download::in_progress(&iso.url, ""))?;
@@ -371,7 +372,8 @@ fn install_picoclaw(stream: &mut UnixStream) -> io::Result<()> {
     }
     let status = Path::new(DOWNLOAD_STATUS);
     let lock_path = status.with_file_name("download.lock");
-    let Some(_lock) = download::DownloadLock::acquire(&lock_path)? else {
+    let Some(_lock) = download::DownloadLock::acquire_within(&lock_path, download::LOCK_WAIT)?
+    else {
         return refuse(stream, "a download is in progress");
     };
     let install_status = Path::new(PICOCLAW_INSTALL_STATUS);
