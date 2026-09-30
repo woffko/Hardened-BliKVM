@@ -3,7 +3,8 @@ import { useAtomValue } from 'jotai';
 
 import type { HidReport } from '@/api/restricted-control.ts';
 import { supportsRestrictedControls } from '@/lib/capabilities.ts';
-import { HidLeaseSession } from '@/lib/hid-lease.ts';
+import { ASSISTANT_ACTIVE, HidLeaseSession } from '@/lib/hid-lease.ts';
+import { MouseQueue } from '@/lib/hid-report-queue.ts';
 import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
@@ -12,128 +13,165 @@ const LEASE_TTL_SECONDS = 30;
 const MOUSE_FLUSH_MS = 10;
 
 /**
- * The broker admits a single active HID lease, so the keyboard, the mouse and
- * the mobile trackpad must share one lease and one ordered queue. A lease per
- * surface would make them mutually exclusive with `lease_conflict`.
- *
- * Keyboard reports keep their order. Mouse movement is coalesced to the latest
- * report per flush so a burst of pointer events cannot build an HTTP backlog
- * and make the cursor trail far behind.
+ * Every input surface shares one broker lease and one ordered queue. Queue
+ * generations prevent reports captured before stop/blur from reaching a new
+ * lease, including operations that were already waiting on HTTP.
  */
 let sharedSession: HidLeaseSession | null = null;
+let startingSession: HidLeaseSession | null = null;
 let sharedQueue: Promise<void> = Promise.resolve();
-let latestMouse: HidReport | null = null;
-let mouseFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let enqueueRef: ((report: HidReport) => void) | null = null;
+let queueGeneration = 0;
+let enqueueRef: ((report: HidReport) => Promise<void>) | null = null;
+// At most one mouse report in flight; see MouseQueue.
+const mouseQueue = new MouseQueue(
+  (report) => (enqueueRef ? enqueueRef(report) : Promise.resolve()),
+  MOUSE_FLUSH_MS
+);
 let consumers = 0;
+let lifecycleCleanup: (() => void) | null = null;
 
-function scheduleMouseFlush() {
-  if (mouseFlushTimer !== null) {
-    return;
+function cancelSharedSession() {
+  queueGeneration += 1;
+  mouseQueue.clear();
+  const sessions = new Set([sharedSession, startingSession]);
+  sharedSession = null;
+  startingSession = null;
+  sharedQueue = Promise.resolve();
+  for (const session of sessions) {
+    if (session) void session.stop().catch(() => undefined);
   }
-  mouseFlushTimer = setTimeout(() => {
-    mouseFlushTimer = null;
-    const report = latestMouse;
-    latestMouse = null;
-    if (report && enqueueRef) {
-      enqueueRef(report);
-    }
-  }, MOUSE_FLUSH_MS);
 }
 
 export function useHidLease() {
   const manifest = useAtomValue(capabilitiesAtom);
   const restricted = supportsRestrictedControls(manifest);
-  const { ensureConfirmed } = useFocusConfirmation();
+  const { confirmed, ensureConfirmed, disableControl } = useFocusConfirmation();
   const manifestRef = useRef(manifest);
+  const confirmedRef = useRef(confirmed);
   manifestRef.current = manifest;
+  confirmedRef.current = confirmed;
+
+  useEffect(() => {
+    if (!confirmed) cancelSharedSession();
+  }, [confirmed]);
 
   useEffect(() => {
     consumers += 1;
+    if (consumers === 1) {
+      const stopControl = () => {
+        disableControl();
+        cancelSharedSession();
+      };
+      const visibilityChanged = () => {
+        if (document.visibilityState === 'hidden') stopControl();
+      };
+      window.addEventListener('blur', stopControl);
+      document.addEventListener('visibilitychange', visibilityChanged);
+      lifecycleCleanup = () => {
+        window.removeEventListener('blur', stopControl);
+        document.removeEventListener('visibilitychange', visibilityChanged);
+      };
+    }
     return () => {
       consumers -= 1;
       if (consumers === 0) {
-        if (mouseFlushTimer !== null) {
-          clearTimeout(mouseFlushTimer);
-          mouseFlushTimer = null;
-        }
-        latestMouse = null;
-        const session = sharedSession;
-        sharedSession = null;
-        if (session) {
-          void session.stop();
-        }
+        lifecycleCleanup?.();
+        lifecycleCleanup = null;
+        enqueueRef = null;
+        disableControl();
+        cancelSharedSession();
       }
     };
-  }, []);
+  }, [disableControl]);
 
-  const send = useCallback(
-    async (report: HidReport) => {
-      if (!(await ensureConfirmed())) {
-        return;
-      }
+  /** Starts the shared lease if needed; false when it cannot be used. */
+  const ensureSession = useCallback(
+    async (generation: number): Promise<HidLeaseSession | null> => {
+      if (generation !== queueGeneration || !(await ensureConfirmed())) return null;
       const current = manifestRef.current;
-      if (!current) {
-        return;
-      }
+      if (!current) return null;
       await ensureFocus(current.platform.id);
+      if (generation !== queueGeneration) return null;
+
       if (!sharedSession) {
         const platformId = current.platform.id;
         const session = new HidLeaseSession(() => ensureFocus(platformId));
-        await session.start(LEASE_TTL_SECONDS);
+        startingSession = session;
+        try {
+          await session.start(LEASE_TTL_SECONDS);
+        } finally {
+          if (startingSession === session) startingSession = null;
+        }
+        if (generation !== queueGeneration) {
+          await session.stop().catch(() => undefined);
+          return null;
+        }
         sharedSession = session;
       }
-      await sharedSession.report(report);
+      return generation === queueGeneration ? sharedSession : null;
     },
     [ensureConfirmed]
   );
 
-  const enqueue = useCallback(
-    (report: HidReport) => {
-      sharedQueue = sharedQueue
-        .then(() => send(report))
-        .catch(() => {
-          const session = sharedSession;
-          sharedSession = null;
-          // A refused report may mean the confirmation lapsed, so the next
-          // attempt re-confirms instead of waiting for the cache.
-          resetFocusConfirmation();
-          if (session) {
-            void session.stop().catch(() => undefined);
-          }
-        });
+  const send = useCallback(
+    async (report: HidReport, generation: number) => {
+      const session = await ensureSession(generation);
+      if (session) await session.report(report);
     },
-    [send]
+    [ensureSession]
+  );
+
+  const schedule = useCallback(
+    (run: (generation: number) => Promise<unknown>): Promise<void> => {
+      const generation = queueGeneration;
+      sharedQueue = sharedQueue
+        .then(() => run(generation))
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          if (generation !== queueGeneration) return;
+          // Held back while the AI assistant has control; the lease is live.
+          if (error instanceof Error && error.message === ASSISTANT_ACTIVE) return;
+          resetFocusConfirmation();
+          disableControl();
+          cancelSharedSession();
+        });
+      return sharedQueue;
+    },
+    [disableControl]
+  );
+
+  const enqueue = useCallback(
+    (report: HidReport) => schedule((generation) => send(report, generation)),
+    [schedule, send]
   );
   enqueueRef = enqueue;
 
   const reportHid = useCallback(
     (report: HidReport) => {
-      if (!manifestRef.current) {
-        return;
-      }
+      if (!manifestRef.current || !confirmedRef.current) return;
       if (report.mode === 'keyboard') {
-        enqueue(report);
-        return;
+        mouseQueue.flush();
+        void enqueue(report);
+      } else {
+        mouseQueue.push(report);
       }
-      latestMouse = report;
-      scheduleMouseFlush();
     },
     [enqueue]
   );
 
   const release = useCallback(() => {
-    if (mouseFlushTimer !== null) {
-      clearTimeout(mouseFlushTimer);
-      mouseFlushTimer = null;
-    }
-    latestMouse = null;
-    const session = sharedSession;
-    sharedSession = null;
-    if (session) {
-      void session.stop();
-    }
-  }, []);
+    disableControl();
+    cancelSharedSession();
+  }, [disableControl]);
 
-  return { restricted, reportHid, release };
+  /**
+   * Holds the lease without sending input, so the AI assistant can act
+   * through this operator's control while its session is connected.
+   */
+  const hold = useCallback(() => {
+    if (!manifestRef.current || !confirmedRef.current) return;
+    schedule((generation) => ensureSession(generation));
+  }, [ensureSession, schedule]);
+
+  return { restricted, reportHid, release, hold };
 }

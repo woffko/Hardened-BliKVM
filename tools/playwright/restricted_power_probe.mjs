@@ -91,16 +91,6 @@ try {
   );
 
   phase = "open-power-menu";
-  const confirmOverlay = page.getByRole("button", {
-    name: "Confirm and control",
-  });
-  if ((await confirmOverlay.count()) > 0) {
-    await confirmOverlay
-      .first()
-      .click({ force: true, timeout: 3000 })
-      .catch(() => {});
-    await page.waitForTimeout(500);
-  }
   const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
   await page.mouse.move(Math.round(viewport.width / 2), 30);
   await page.waitForTimeout(500);
@@ -127,7 +117,7 @@ try {
   const confirmed = await page.evaluate(() => {
     const buttons = Array.from(document.querySelectorAll("button"));
     const target = buttons.find(
-      (button) => (button.textContent || "").trim() === "Confirm and control",
+      (button) => (button.textContent || "").trim() === "Yes",
     );
     if (!target) return false;
     target.dispatchEvent(new MouseEvent("click", { bubbles: true }));

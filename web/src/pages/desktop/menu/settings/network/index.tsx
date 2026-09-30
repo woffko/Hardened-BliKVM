@@ -1,7 +1,16 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Button, Divider } from 'antd';
+import { useAtomValue } from 'jotai';
 import { CheckIcon, SaveIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+import {
+  boardFeatureIsWritable,
+  isAvailable,
+  isWritable,
+  supportsBoardFeature
+} from '@/lib/capabilities.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import type { SystemActionHandle, SystemActionState } from '../system/action.ts';
 import { DNS } from './dns.tsx';
@@ -19,6 +28,13 @@ type NetworkProps = {
 export const Network = forwardRef<SystemActionHandle, NetworkProps>(
   ({ showTitle = true, onActionStateChange }, ref) => {
     const { t } = useTranslation();
+    const capabilities = useAtomValue(capabilitiesAtom);
+    const hasTls = supportsBoardFeature(capabilities, 'network_tls');
+    const hasWifi = supportsBoardFeature(capabilities, 'network_wifi');
+    const hasDNS = Boolean(capabilities && isAvailable(capabilities.network.dns));
+    const hasIPv6 = Boolean(capabilities && isAvailable(capabilities.network.ipv6));
+    const dnsWritable = Boolean(capabilities && isWritable(capabilities.network.dns));
+    const ipv6Writable = Boolean(capabilities && isWritable(capabilities.network.ipv6));
     const dnsRef = useRef<NetworkSectionHandle>(null);
     const ipv6Ref = useRef<NetworkSectionHandle>(null);
     const [dnsStatus, setDNSStatus] = useState<NetworkSectionStatus>(idleNetworkSectionStatus);
@@ -30,17 +46,17 @@ export const Network = forwardRef<SystemActionHandle, NetworkProps>(
 
       setIsApplying(true);
       try {
-        const ipv6Result = await ipv6Ref.current?.apply();
+        const ipv6Result = ipv6Writable ? await ipv6Ref.current?.apply() : undefined;
         if (ipv6Result?.error) return;
 
-        const dnsResult = await dnsRef.current?.apply();
+        const dnsResult = dnsWritable ? await dnsRef.current?.apply() : undefined;
         if (dnsResult?.error) return;
       } finally {
         setIsApplying(false);
       }
-    }, [isApplying]);
+    }, [isApplying, dnsWritable, ipv6Writable]);
 
-    const statuses = [dnsStatus, ipv6Status];
+    const statuses = [...(hasDNS ? [dnsStatus] : []), ...(hasIPv6 ? [ipv6Status] : [])];
     const hasPending = statuses.some((status) => status.hasPending);
     const hasInvalid = statuses.some((status) => status.hasInvalid);
     const isBusy = isApplying || statuses.some((status) => status.isLoading || status.isSaving);
@@ -53,7 +69,18 @@ export const Network = forwardRef<SystemActionHandle, NetworkProps>(
       statuses.find((item) => item.statusKind === 'error' && item.statusText) ||
       statuses.find((item) => item.statusKind === 'success' && item.statusText) ||
       statuses.find((item) => item.statusKind === 'warning' && item.statusText);
-    const statusText = status?.statusText || (hasPending ? t('settings.network.dns.unsaved') : '');
+    const statusText = status
+      ? [
+          ...new Set(
+            statuses
+              .filter((item) => item.statusKind === status.statusKind)
+              .map((item) => item.statusText)
+              .filter(Boolean)
+          )
+        ].join(' · ')
+      : hasPending
+        ? t('settings.network.dns.unsaved')
+        : '';
     const statusColor =
       status?.statusKind === 'error'
         ? 'text-red-400'
@@ -93,26 +120,35 @@ export const Network = forwardRef<SystemActionHandle, NetworkProps>(
           </>
         )}
 
-        <div className="flex flex-col space-y-8">
-          <Tls />
-          <Wifi />
-        </div>
+        {(hasTls || hasWifi) && (
+          <>
+            <div className="flex flex-col space-y-8">
+              {hasTls && <Tls readOnly={!boardFeatureIsWritable(capabilities, 'network_tls')} />}
+              {hasWifi && <Wifi readOnly={!boardFeatureIsWritable(capabilities, 'network_wifi')} />}
+            </div>
+            <Divider className="opacity-50" style={{ margin: '32px 0' }} />
+          </>
+        )}
 
-        <Divider className="opacity-50" style={{ margin: '32px 0' }} />
-
         <div className="flex flex-col space-y-8">
-          <DNS
-            ref={dnsRef}
-            showFooter={false}
-            disabled={isApplying}
-            onStatusChange={setDNSStatus}
-          />
-          <IPv6
-            ref={ipv6Ref}
-            showFooter={false}
-            disabled={isApplying}
-            onStatusChange={setIPv6Status}
-          />
+          {hasDNS && (
+            <DNS
+              ref={dnsRef}
+              showFooter={false}
+              disabled={isApplying}
+              readOnly={!dnsWritable}
+              onStatusChange={setDNSStatus}
+            />
+          )}
+          {hasIPv6 && (
+            <IPv6
+              ref={ipv6Ref}
+              showFooter={false}
+              disabled={isApplying}
+              readOnly={!ipv6Writable}
+              onStatusChange={setIPv6Status}
+            />
+          )}
 
           {!onActionStateChange && (hasPending || statusText) && (
             <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">

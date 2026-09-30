@@ -41,6 +41,7 @@ const en = {
         reset3: 'Web account:',
         resetWebAccount: 'created during first setup',
         reset4: 'SSH default account:',
+        resetRootAccount: "with the web account's password",
         hardenedRecovery:
           'This Hardened image does not support password reset from the BOOT button. If the password is lost, reflash the SD card and create a new account.',
         change1: 'Please note that this action will change the following passwords:',
@@ -73,6 +74,9 @@ const en = {
       videoDirectTips: 'Enable HTTPS in "Settings > System > Network" to use this mode',
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC is disabled in Restricted and Paranoid Firewall modes',
+      videoVp8BlockedByFirewall: 'VP8 WebRTC is disabled in Restricted and Paranoid Firewall modes',
+      videoWebrtcUnavailable:
+        'WebRTC is switched off in this browser, often by a VPN or privacy extension. Allow WebRTC for this site to use this mode.',
       resolution: 'Resolution',
       auto: 'Automatic',
       autoTips:
@@ -222,6 +226,12 @@ const en = {
         'Reconnect the USB gadget only if the remote host did not notice the media change. Keyboard and mouse may briefly disconnect.',
       usbReconnectSuccess: 'USB reconnected',
       usbReconnectFailed: 'USB reconnect failed',
+      delete: 'Delete',
+      deleteFailed: 'Delete failed',
+      commandFailed: 'The virtual media command failed',
+      imageMissing:
+        'The image file is missing on the board. Delete the entry and upload the image again.',
+      imageTooSmall: 'A CD-ROM image must be at least 600 KiB. Mount it as Mass Storage instead.',
       refresh: 'Refresh the image list',
       attention: 'Attention',
       deleteConfirm: 'Are you sure you want to delete this image?',
@@ -229,6 +239,13 @@ const en = {
       cancelBtn: 'No',
       tips: {
         title: 'How to upload',
+        uploadTitle: 'Upload to the board',
+        upload1: 'Open the Download menu (the arrow icon) in the menu bar.',
+        upload2:
+          'Choose an ISO or IMG file on this computer and confirm; it is stored on the board.',
+        upload3:
+          'Where the remote download is switched on, an ISO can also be fetched from a URL there.',
+        upload4: 'Pick the image in this list: CD-ROM (at least 600 KiB) or Mass Storage.',
         usb1: 'Connect the BliKVM to your computer via USB.',
         usb2: 'Ensure that the virtual disk is mounted (Settings - Virtual Disk).',
         usb3: 'Open the virtual disk on your computer and copy the image file to the root directory of the virtual disk.',
@@ -304,6 +321,16 @@ const en = {
       uploading: 'Uploading',
       failed: 'Transfer failed',
       uploadFailed: 'Upload failed',
+      storeNotWritable: 'The image store on the board is not writable. See the board log.',
+      detachFirst: 'This image is attached to the target. Detach the drive before replacing it.',
+      storeFull: 'The image store on the board does not have enough free space for this file.',
+      noSpace: 'The file ({{size}}) does not fit: the image store has {{free}} free.',
+      tooLarge: 'The file ({{size}}) is larger than the {{max}} an image may have.',
+      storeFree: 'Free in the image store: {{free}}',
+      nameInvalid:
+        'The file name may have up to 128 letters, digits, dots, dashes and underscores and must start with a letter or digit. Rename the file and try again.',
+      tooLargeAny: 'The file is larger than an image may be.',
+      fileEmpty: 'The file is empty.',
       stalled: 'Transfer stalled. Check the connection and retry.',
       canceled: 'Upload canceled',
       cancel: 'Cancel',
@@ -338,7 +365,7 @@ const en = {
         deviceKey: 'Device Key',
         community: 'Community',
         hostname: 'Hostname',
-        hostnameUpdated: 'Hostname updated. Reboot to apply.',
+        hostnameUpdated: 'Hostname updated.',
         ipType: {
           Wired: 'Wired',
           Wireless: 'Wireless',
@@ -460,16 +487,69 @@ const en = {
           connect: 'Join Wi-Fi',
           connectDesc1: 'Please enter the network ssid and password',
           connectDesc2: 'Please enter the password to join this network',
-          disconnect: 'Are you sure to disconnect the network?',
-          failed: 'Connection failed, please try again.',
+          disconnect: 'Disconnect from this network?',
+          failed: 'Could not join the network. Check the password and try again.',
           ssid: 'Name',
           password: 'Password',
           joinBtn: 'Join',
           confirmBtn: 'Ok',
-          cancelBtn: 'Cancel'
+          cancelBtn: 'Cancel',
+          radio: 'Wi-Fi radio',
+          radioOff: 'Wi-Fi is off',
+          radioOffDesc: 'Turn Wi-Fi on to see the networks in range.',
+          notConnected: 'Not connected',
+          connected: 'Connected',
+          disconnectBtn: 'Disconnect',
+          available: 'Networks in range',
+          refresh: 'Refresh',
+          scanning: 'Looking for networks…',
+          noNetworks: 'No networks found',
+          other: 'Other network…',
+          otherDesc:
+            'Enter the name of a hidden network and its password. Leave the password empty for an open network.',
+          openDesc: 'This network is open: traffic on it is not encrypted.',
+          passwordOptional: 'Password (optional)',
+          saved: 'Saved networks',
+          unnamed: 'Unnamed network',
+          autoconnect: 'Auto-join',
+          forget: 'Forget',
+          forgetConfirm: 'Forget {{ssid}}? Its saved password is deleted.',
+          connecting: 'Connecting… this can take up to 30 seconds.',
+          actionFailed: 'The action failed, please try again.',
+          loadFailed: 'Could not read the Wi-Fi state.',
+          unsupportedSecurity:
+            'This network uses security the board cannot join (enterprise, WEP or other).',
+          ipv4: 'IPv4',
+          gateway: 'Gateway',
+          dns: 'DNS',
+          ipv6: 'IPv6',
+          mac: 'MAC',
+          channel: 'Channel',
+          band24: '2.4 GHz',
+          band5: '5 GHz',
+          rate: 'Link speed',
+          rateValue: '{{rate}} Mbit/s',
+          mainConnection: 'Main connection',
+          ethernet: 'Ethernet',
+          wifi: 'Wi-Fi',
+          mainConnectionDesc:
+            'Both connections stay up; if the main one is lost, the other takes over.',
+          mainNeedsWifi: 'Connect to a Wi-Fi network to make it the main connection.',
+          mainReverting:
+            'Unconfirmed change: the previous main connection returns in {{seconds}} s.',
+          security: {
+            open: 'Open',
+            wpa2: 'WPA2',
+            wpa3: 'WPA3',
+            wpa2_wpa3: 'WPA2/WPA3',
+            wep: 'WEP',
+            enterprise: 'Enterprise',
+            other: 'Other'
+          }
         },
         tls: {
           description: 'Enable HTTPS protocol',
+          alwaysOn: 'HTTPS is always on in this build and cannot be switched off.',
           tip: 'Be aware: Using HTTPS can increase latency, especially with MJPEG video mode.',
           rebootTitle: 'BliKVM will reboot',
           rebootDesc:
@@ -493,6 +573,8 @@ const en = {
           noDhcp: 'No DHCP DNS is currently available',
           saved: 'DNS settings saved',
           redirecting: 'Network settings saved. Opening the new address...',
+          pendingConfirm: 'The new network settings revert in {{seconds}} s unless you keep them.',
+          keep: 'Keep settings',
           saveFailed: 'Failed to save DNS settings',
           unsaved: 'Unsaved changes',
           maxServers: 'Maximum {{count}} DNS servers allowed',
@@ -882,6 +964,32 @@ const en = {
           rollbackConfirmTitle: 'Rollback system update?',
           rollbackConfirmDesc:
             'This will restore files from the latest system-update backup. Reboot will be required.',
+          rawRollbackNote:
+            'The previous system is kept as a verified backup and written back automatically if the new one does not report itself within two boots. Keep physical recovery access anyway.',
+          rawUpload: 'Signed system bundle',
+          rawUploadDesc:
+            'Upload a system bundle signed with the system key. It is verified and staged on the data partition; nothing is written until you install it.',
+          rawUploadStart: 'Upload and Verify',
+          rawUploading: 'Uploading the system bundle...',
+          rawVerifying: 'Verifying the bundle and saving the device settings...',
+          rawCancel: 'Discard',
+          rawDiscarded: 'The system update files were removed from the data partition.',
+          rawInstallDesc:
+            'The board reboots and writes the new system before it starts. This can take up to 30 minutes; keep power connected. Accounts, keys, network settings and switches are carried over.',
+          rawRollbackDesc:
+            'The board reboots and writes the previous system back from the backup. This can take up to 30 minutes; keep power connected.',
+          rawRebooting: 'The board is rebooting to apply the change.',
+          rawPhase: {
+            none: 'No system update',
+            staged: 'Staged',
+            writing: 'Writing',
+            written: 'Written, starting',
+            booted: 'Running, waiting for confirmation',
+            rollback_requested: 'Rollback on the next boot',
+            confirmed: 'Confirmed',
+            rolled_back: 'Previous system restored',
+            failed: 'Not installed'
+          },
           staged: 'staged',
           stagedDesc:
             'The system update archive was downloaded and verified. You can install it now.',

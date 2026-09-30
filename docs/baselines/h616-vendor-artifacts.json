@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/blikvm/blikvm-web-server",
+  "revision": "cecede74ebe75239576c5eebf2eed7c4003a26fa",
+  "softwareH264IntroductionCommit": "77a1c1f5ad317738db9c6d210d6285a085861a84",
+  "evidence": "static_binary_inspection",
+  "executed": false,
+  "targetRuntimeVerified": false,
+  "artifacts": [
+    {
+      "path": "lib/h616/ustreamer.bin",
+      "gitBlob": "37ba2131534837152635a436541c760db33a4b75",
+      "sha256": "74ae6725b58e2ae731d6ba7e4328ac0c3d19a7ed15522c51eecc0220756421f9",
+      "sizeBytes": 1026136,
+      "elfMachine": "AArch64",
+      "elfClass": "ELF64",
+      "needed": ["libm.so.6", "libevent-2.1.so.7", "libevent_pthreads-2.1.so.7", "libx264.so.163", "libbsd.so.0", "libc.so.6", "ld-linux-aarch64.so.1"],
+      "observedEncoderMarkers": ["LIBX264-VIDEO", "WITH_LIBX264", "us_libx264_encoder_init", "us_libx264_encoder_compress", "x264_encoder_open_163"],
+      "embeddedSourcePath": "ustreamer/encoders/libx264/libx264.c"
+    },
+    {
+      "path": "lib/h616/janus_plugins/libjanus_ustreamer.so",
+      "gitBlob": "d03c053a3394e6aaaaf869140b3cc4b0148c5a59",
+      "sha256": "466ac576daf38fc9eb38277f217f3df3731a2b6b1e47c34944c994aaf785fa7d",
+      "sizeBytes": 114720,
+      "elfMachine": "AArch64",
+      "elfClass": "ELF64",
+      "needed": ["libjansson.so.4", "libopus.so.0", "libasound.so.2", "libspeexdsp.so.1", "libc.so.6", "ld-linux-aarch64.so.1"]
+    }
+  ]
+}

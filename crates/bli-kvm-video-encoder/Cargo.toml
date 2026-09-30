@@ -1,0 +1,29 @@
+[package]
+name = "bli-kvm-video-encoder"
+description = "Bounded VP8 WebRTC video pipeline core for Hardened BliKVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "bk_vp8"
+build = "build.rs"
+
+[features]
+# Links the pinned static libvpx from BLI_KVM_LIBVPX_DIR (scripts/build-libvpx.sh).
+vp8 = ["dep:cc"]
+# Links the pinned static x264 from BLI_KVM_X264_DIR (scripts/build-x264.sh).
+h264 = ["vp8"]
+
+[dependencies]
+sha2.workspace = true
+thiserror.workspace = true
+zune-jpeg = { version = "=0.4.21", default-features = false, features = ["std", "neon"] }
+
+[build-dependencies]
+cc = { version = "=1.2.55", optional = true }
+
+[[bin]]
+name = "bli-kvm-video-encoder"
+path = "src/main.rs"
+required-features = ["vp8", "h264"]

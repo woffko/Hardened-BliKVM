@@ -1,0 +1,55 @@
+[Unit]
+Description=Hardened BliKVM PicoClaw assistant runtime
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=network-online.target
+ConditionPathExists=/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw
+
+[Service]
+Type=simple
+# Started and stopped only through the administration helper while the
+# PicoClaw switch is on (docs/design/admin-features-v1.md). The runtime and
+# its agent tools run as a dedicated dynamic user whose only writable place
+# is its own home; its binary belongs to another account.
+DynamicUser=yes
+User=hardened-blikvm-picoclaw
+StateDirectory=hardened-blikvm-picoclaw
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/hardened-blikvm-picoclaw
+Environment=HOME=/var/lib/hardened-blikvm-picoclaw
+Environment=PICOCLAW_HOME=/var/lib/hardened-blikvm-picoclaw/.picoclaw
+ExecStartPre=+/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --require-feature picoclaw
+ExecStart=/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw gateway
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+KillMode=control-group
+UMask=0077
+MemoryMax=384M
+TasksMax=128
+LimitNOFILE=1024
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# The model API is on the network; the local gateway and the KVM tools are
+# on loopback. Link-local and multicast addresses are not needed.
+IPAddressDeny=link-local multicast

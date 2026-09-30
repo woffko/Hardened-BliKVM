@@ -9,18 +9,15 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
-use axum::{Extension, Json, extract::State};
-use serde::{Deserialize, Serialize};
+use axum::Json;
+use serde::Serialize;
 
-use crate::AppState;
-use crate::auth::middleware::CurrentSession;
-use crate::error::{ApiResponse, AppError, AppResult};
+use crate::error::{ApiResponse, AppResult};
 
 pub(crate) const RESOLV_CONF_FILE: &str = "/etc/resolv.conf";
-pub(crate) const IPV6_CONF_ROOT: &str = "/proc/sys/net/ipv6/conf";
 pub(crate) const NET_CLASS_ROOT: &str = "/sys/class/net";
 pub(crate) const ROUTE_FILE: &str = "/proc/net/route";
-const MAX_IPV6_INTERFACES: usize = 16;
+const MAX_INTERFACES: usize = 16;
 const MAX_INTERFACE_BYTES: usize = 32;
 const MAX_SERVERS: usize = 8;
 const MAX_SEARCH_DOMAINS: usize = 8;
@@ -33,12 +30,6 @@ pub struct ResolverConfig {
     pub source: String,
     pub servers: Vec<String>,
     pub search_domains: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkDnsResponse {
-    pub resolver: ResolverConfig,
 }
 
 fn valid_ip(value: &str) -> bool {
@@ -113,35 +104,6 @@ pub(crate) fn read_resolver_config(path: &Path) -> ResolverConfig {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Ipv6State {
-    pub source: String,
-    /// Kernel truth for `conf/default`, or `unknown` when it cannot be read.
-    pub default_state: String,
-    pub interfaces: std::collections::BTreeMap<String, String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkIpv6Response {
-    pub ipv6: Ipv6State,
-    /// The reference shape: the mode the primary interface runs in. The kernel
-    /// sysctl only distinguishes disabled from automatic, so `manual` and
-    /// `dhcpv6` are never reported back.
-    pub mode: &'static str,
-    pub interface: String,
-}
-
-/// Maps the kernel state of the primary interface onto the reference mode.
-pub(crate) fn ipv6_mode(states: &Ipv6State, interface: &str) -> &'static str {
-    match states.interfaces.get(interface).map(String::as_str) {
-        Some("disabled") => "disabled",
-        Some(_) => "slaac",
-        None => "disabled",
-    }
-}
-
 fn interface_name_valid(name: &str) -> bool {
     let bytes = name.as_bytes();
     (1..=MAX_INTERFACE_BYTES).contains(&bytes.len())
@@ -149,48 +111,6 @@ fn interface_name_valid(name: &str) -> bool {
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-'))
-}
-
-fn disable_ipv6_state(value: &str) -> Option<String> {
-    match value.trim() {
-        "0" => Some("enabled".to_string()),
-        "1" => Some("disabled".to_string()),
-        _ => None,
-    }
-}
-
-/// Read the IPv6 enable state from the kernel's fixed sysctl tree.
-pub(crate) fn read_ipv6_states(root: &Path) -> Ipv6State {
-    let mut interfaces = std::collections::BTreeMap::new();
-    let mut default_state = "unknown".to_string();
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !interface_name_valid(&name) {
-                continue;
-            }
-            let Ok(value) = std::fs::read_to_string(entry.path().join("disable_ipv6")) else {
-                continue;
-            };
-            let Some(state) = disable_ipv6_state(&value) else {
-                continue;
-            };
-            if name == "default" {
-                default_state = state.clone();
-            }
-            if name != "all" && name != "default" {
-                if interfaces.len() >= MAX_IPV6_INTERFACES {
-                    continue;
-                }
-                interfaces.insert(name, state);
-            }
-        }
-    }
-    Ipv6State {
-        source: format!("{IPV6_CONF_ROOT}/<interface>/disable_ipv6"),
-        default_state,
-        interfaces,
-    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -216,8 +136,10 @@ fn read_trimmed(path: &Path) -> Option<String> {
         .filter(|value| !value.is_empty() && value.len() <= 64)
 }
 
-/// The interface owning the default IPv4 route, from the fixed route file.
+/// The interface owning the default IPv4 route, from the fixed route file:
+/// with several default routes (Ethernet and Wi-Fi), the lowest metric wins.
 pub(crate) fn parse_default_route(content: &str) -> String {
+    let mut best: Option<(u32, &str)> = None;
     for line in content.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 4 {
@@ -226,10 +148,16 @@ pub(crate) fn parse_default_route(content: &str) -> String {
         let destination = fields[1];
         let mask = fields[7.min(fields.len() - 1)];
         if destination == "00000000" && mask == "00000000" && interface_name_valid(fields[0]) {
-            return fields[0].to_string();
+            let metric = fields
+                .get(6)
+                .and_then(|metric| metric.parse::<u32>().ok())
+                .unwrap_or(u32::MAX);
+            if best.is_none_or(|(lowest, _)| metric < lowest) {
+                best = Some((metric, fields[0]));
+            }
         }
     }
-    String::new()
+    best.map(|(_, name)| name.to_string()).unwrap_or_default()
 }
 
 /// Read the interface list from the fixed sysfs tree.
@@ -255,7 +183,7 @@ pub(crate) fn read_interfaces(root: &Path, route_file: &Path) -> NetworkInterfac
                 mtu,
                 wireless,
             });
-            if interfaces.len() >= MAX_IPV6_INTERFACES {
+            if interfaces.len() >= MAX_INTERFACES {
                 break;
             }
         }
@@ -275,29 +203,6 @@ pub(crate) async fn network_interfaces() -> AppResult<Json<ApiResponse<NetworkIn
         Path::new(NET_CLASS_ROOT),
         Path::new(ROUTE_FILE),
     ))))
-}
-
-pub(crate) async fn network_ipv6() -> AppResult<Json<ApiResponse<NetworkIpv6Response>>> {
-    let ipv6 = read_ipv6_states(Path::new(IPV6_CONF_ROOT));
-    let route = std::fs::read_to_string(ROUTE_FILE).unwrap_or_default();
-    let interface = parse_default_route(&route);
-    let interface = if interface.is_empty() {
-        "eth0".to_string()
-    } else {
-        interface
-    };
-    let mode = ipv6_mode(&ipv6, &interface);
-    Ok(Json(ApiResponse::ok(NetworkIpv6Response {
-        ipv6,
-        mode,
-        interface,
-    })))
-}
-
-pub(crate) async fn network_dns() -> AppResult<Json<ApiResponse<NetworkDnsResponse>>> {
-    Ok(Json(ApiResponse::ok(NetworkDnsResponse {
-        resolver: read_resolver_config(Path::new(RESOLV_CONF_FILE)),
-    })))
 }
 
 #[cfg(test)]
@@ -350,31 +255,6 @@ domain ignored.example
     }
 
     #[test]
-    fn ipv6_states_come_from_the_sysctl_tree() {
-        let directory = tempfile::tempdir().unwrap();
-        for (name, value) in [
-            ("default", "0"),
-            ("all", "1"),
-            ("eth0", "0"),
-            ("wlan0", "1"),
-            ("odd name", "0"),
-            ("broken", "maybe"),
-        ] {
-            let path = directory.path().join(name);
-            std::fs::create_dir_all(&path).unwrap();
-            std::fs::write(path.join("disable_ipv6"), value).unwrap();
-        }
-        let state = read_ipv6_states(directory.path());
-        assert_eq!(state.default_state, "enabled");
-        assert_eq!(state.interfaces.get("eth0"), Some(&"enabled".to_string()));
-        assert_eq!(state.interfaces.get("wlan0"), Some(&"disabled".to_string()));
-        assert!(!state.interfaces.contains_key("all"));
-        assert!(!state.interfaces.contains_key("odd name"));
-        assert!(!state.interfaces.contains_key("broken"));
-        assert!(state.source.contains("disable_ipv6"));
-    }
-
-    #[test]
     fn interfaces_are_listed_with_their_state_and_default_route() {
         let directory = tempfile::tempdir().unwrap();
         for (name, state, mtu, wireless) in [
@@ -424,241 +304,31 @@ domain ignored.example
     }
 
     #[test]
-    fn the_reference_ipv6_mode_comes_from_the_primary_interface() {
-        let mut states = Ipv6State {
-            source: "sysctl".into(),
-            default_state: "enabled".into(),
-            interfaces: Default::default(),
-        };
-        states.interfaces.insert("eth0".into(), "enabled".into());
-        assert_eq!(ipv6_mode(&states, "eth0"), "slaac");
-        states.interfaces.insert("eth0".into(), "disabled".into());
-        assert_eq!(ipv6_mode(&states, "eth0"), "disabled");
-        // An interface the tree does not know is reported disabled, like the
-        // reference does before the sysctl exists.
-        assert_eq!(ipv6_mode(&states, "wlan9"), "disabled");
+    fn the_default_route_with_the_lowest_metric_wins() {
+        let header =
+            "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n";
+        let wifi = "wlan0\t00000000\t0102000A\t0003\t0\t0\t600\t00000000\t0\t0\t0\n";
+        let wired = "eth0\t00000000\t0101000A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+        assert_eq!(
+            parse_default_route(&format!("{header}{wifi}{wired}")),
+            "eth0"
+        );
+        assert_eq!(
+            parse_default_route(&format!("{header}{wired}{wifi}")),
+            "eth0"
+        );
+        assert_eq!(parse_default_route(&format!("{header}{wifi}")), "wlan0");
     }
 
     #[test]
-    fn a_missing_ipv6_tree_reports_unknown() {
-        let state = read_ipv6_states(Path::new("/nonexistent/ipv6/conf"));
-        assert_eq!(state.default_state, "unknown");
-        assert!(state.interfaces.is_empty());
-    }
-
-    #[test]
-    fn the_response_is_camel_case() {
-        let response = NetworkDnsResponse {
-            resolver: ResolverConfig {
-                source: RESOLV_CONF_FILE.to_string(),
-                servers: vec!["192.0.2.1".to_string()],
-                search_domains: vec!["lan".to_string()],
-            },
+    fn the_resolver_is_camel_case() {
+        let resolver = ResolverConfig {
+            source: RESOLV_CONF_FILE.to_string(),
+            servers: vec!["192.0.2.1".to_string()],
+            search_domains: vec!["lan".to_string()],
         };
-        let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["resolver"]["searchDomains"][0], "lan");
-        assert_eq!(json["resolver"]["servers"][0], "192.0.2.1");
+        let json = serde_json::to_value(&resolver).unwrap();
+        assert_eq!(json["searchDomains"][0], "lan");
+        assert_eq!(json["servers"][0], "192.0.2.1");
     }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WifiView {
-    pub available: bool,
-    pub connected: bool,
-    pub ssid: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interface: Option<String>,
-    pub state: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
-pub(crate) struct WifiConnectBody {
-    pub ssid: String,
-    pub password: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WifiOutcome {
-    pub applied: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rejection: Option<&'static str>,
-}
-
-#[cfg(feature = "restricted-control-surface")]
-fn wifi_operation_id(session_token: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(b"hardened-blikvm-wifi-op-v1");
-    hasher.update(session_token.as_bytes());
-    hasher.update(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0)
-            .to_le_bytes(),
-    );
-    let digest = hasher.finalize();
-    digest
-        .iter()
-        .take(16)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-#[cfg(feature = "restricted-control-surface")]
-async fn wifi_request(
-    state: &AppState,
-    session: &crate::auth::session::Session,
-    request: bli_kvm_core::PlatformControlRequestV2,
-) -> AppResult<bli_kvm_control_protocol::ControlResponse> {
-    let Some(control) = state.control.as_ref() else {
-        return Err(AppError::ServiceUnavailable(
-            "WiFi control is not configured".into(),
-        ));
-    };
-    control
-        .execute_v2(wifi_operation_id(&session.token), request)
-        .await
-        .map_err(|_| AppError::ServiceUnavailable("WiFi control is unavailable".into()))
-}
-
-#[cfg(feature = "restricted-control-surface")]
-pub(crate) async fn network_wifi(
-    State(state): State<AppState>,
-    Extension(CurrentSession(session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<WifiView>>> {
-    let response = wifi_request(
-        &state,
-        &session,
-        bli_kvm_core::PlatformControlRequestV2::WifiState {},
-    )
-    .await?;
-    match response {
-        bli_kvm_control_protocol::ControlResponse::WifiState {
-            available,
-            up,
-            interface,
-            ssid,
-            state: connection,
-        } => Ok(Json(ApiResponse::ok(WifiView {
-            available,
-            connected: up,
-            ssid: ssid.unwrap_or_default(),
-            interface,
-            state: connection,
-        }))),
-        _ => Err(AppError::ServiceUnavailable(
-            "WiFi state is unavailable".into(),
-        )),
-    }
-}
-
-#[cfg(feature = "restricted-control-surface")]
-pub(crate) async fn network_wifi_connect(
-    State(state): State<AppState>,
-    Extension(CurrentSession(session)): Extension<CurrentSession>,
-    Json(body): Json<WifiConnectBody>,
-) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
-    let response = wifi_request(
-        &state,
-        &session,
-        bli_kvm_core::PlatformControlRequestV2::WifiConnect {
-            ssid: body.ssid,
-            password: body.password,
-        },
-    )
-    .await?;
-    Ok(Json(ApiResponse::ok(wifi_outcome(response))))
-}
-
-#[cfg(feature = "restricted-control-surface")]
-pub(crate) async fn network_wifi_disconnect(
-    State(state): State<AppState>,
-    Extension(CurrentSession(session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
-    let response = wifi_request(
-        &state,
-        &session,
-        bli_kvm_core::PlatformControlRequestV2::WifiDisconnect {},
-    )
-    .await?;
-    Ok(Json(ApiResponse::ok(wifi_outcome(response))))
-}
-
-/// The reference also offers an access-point mode; this board serves the
-/// interface over its own network, so the request is refused with a reason.
-#[cfg(feature = "restricted-control-surface")]
-pub(crate) async fn network_wifi_ap(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-    Json(_body): Json<WifiConnectBody>,
-) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
-    Ok(Json(ApiResponse::ok(WifiOutcome {
-        applied: false,
-        rejection: Some("unsupported_mode"),
-    })))
-}
-
-#[cfg(feature = "restricted-control-surface")]
-fn wifi_outcome(response: bli_kvm_control_protocol::ControlResponse) -> WifiOutcome {
-    match response {
-        bli_kvm_control_protocol::ControlResponse::Applied => WifiOutcome {
-            applied: true,
-            rejection: None,
-        },
-        bli_kvm_control_protocol::ControlResponse::Rejected { code } => WifiOutcome {
-            applied: false,
-            rejection: Some(crate::hid::rejection_name(code)),
-        },
-        _ => WifiOutcome {
-            applied: false,
-            rejection: Some("unexpected_response"),
-        },
-    }
-}
-
-#[cfg(not(feature = "restricted-control-surface"))]
-pub(crate) async fn network_wifi(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<WifiView>>> {
-    Err(AppError::ServiceUnavailable(
-        "WiFi control is not configured".into(),
-    ))
-}
-
-#[cfg(not(feature = "restricted-control-surface"))]
-pub(crate) async fn network_wifi_connect(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-    Json(_body): Json<WifiConnectBody>,
-) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
-    Err(AppError::ServiceUnavailable(
-        "WiFi control is not configured".into(),
-    ))
-}
-
-#[cfg(not(feature = "restricted-control-surface"))]
-pub(crate) async fn network_wifi_disconnect(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
-    Err(AppError::ServiceUnavailable(
-        "WiFi control is not configured".into(),
-    ))
-}
-
-#[cfg(not(feature = "restricted-control-surface"))]
-pub(crate) async fn network_wifi_ap(
-    State(_state): State<AppState>,
-    Extension(CurrentSession(_session)): Extension<CurrentSession>,
-    Json(_body): Json<WifiConnectBody>,
-) -> AppResult<Json<ApiResponse<WifiOutcome>>> {
-    Err(AppError::ServiceUnavailable(
-        "WiFi control is not configured".into(),
-    ))
 }

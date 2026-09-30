@@ -1,17 +1,17 @@
 use std::{path::PathBuf, sync::Arc};
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{DefaultBodyLimit, Request, State},
     http::{HeaderName, HeaderValue, StatusCode},
     middleware::{Next, from_fn, from_fn_with_state},
     response::Response,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use bli_kvm_broker_client::BrokerReadClient;
 use bli_kvm_core::{
     CapabilityManifest, CapabilityProvider, DiagnosticsView, EvidenceLevel, FeatureStatus,
-    RuntimeInventory,
+    RuntimeInventory, VideoTransport,
 };
 use bli_kvm_platform_bli::BliH616PikvmPlatform;
 use bli_kvm_update_client::{UpdateActivationClient, UpdateStatusClient, UpdateUploadClient};
@@ -28,6 +28,7 @@ use crate::{
     error::{ApiResponse, AppError, AppResult},
 };
 
+mod admin_features;
 mod application;
 mod atx;
 mod auth;
@@ -35,24 +36,42 @@ mod autostart;
 mod device_settings;
 mod download;
 mod error;
+mod firewall_modes;
 mod hid;
+mod hostname;
 mod leader_key;
 mod media;
+mod mjpeg_latest;
 mod network;
+mod network_ipv4;
 mod network_write;
+mod picoclaw;
+mod remote_download;
+mod scripts;
 mod session_lock;
 mod shortcuts;
+pub mod shutdown;
+mod ssh;
 mod system_action;
 mod system_log;
 mod system_time;
+mod system_update;
 mod tailscale;
+mod terminal;
 mod update;
 mod video;
 #[cfg(feature = "restricted-control-surface")]
 mod video_engine;
 mod video_settings;
 mod vm_info;
+mod webrtc;
+mod wifi;
+mod wol_macs;
 mod ws;
+
+/// Login and first setup carry two short strings; anything larger is refused
+/// before it is parsed.
+const AUTH_BODY_LIMIT: usize = 4096;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -63,6 +82,10 @@ pub(crate) struct AppState {
     pub update_upload: Option<Arc<UpdateUploadClient>>,
     pub update_http_upload: Arc<tokio::sync::Semaphore>,
     pub update_activation: Option<Arc<UpdateActivationClient>>,
+    /// Native profile: activation is a Prepared admission followed by the
+    /// coordinator's full composition transition, not a legacy apply.
+    pub update_native_admission: bool,
+    pub webrtc: Option<Arc<webrtc::WebRtcGateway>>,
     pub accounts: Arc<AccountStore>,
     pub sessions: Arc<SessionStore>,
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
@@ -70,11 +93,16 @@ pub(crate) struct AppState {
     pub control: Option<Arc<bli_kvm_control_client::ControlClient>>,
     pub focus: Arc<Mutex<hid::FocusChallengeStore>>,
     pub hid_ws_leases: Arc<Mutex<hid::WsLeaseStore>>,
+    pub terminal_tickets: Arc<Mutex<terminal::TicketStore>>,
+    pub picoclaw: Option<Arc<picoclaw::Picoclaw>>,
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub firewall_status: Arc<firewall_modes::StatusCache>,
     pub options: Arc<ServerOptions>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
+    pub shutdown: shutdown::Shutdown,
     pub web_root: Option<PathBuf>,
     pub state_dir: PathBuf,
     pub secure_cookies: bool,
@@ -93,6 +121,16 @@ pub struct ServerOptions {
     /// Explicit operator opt-in for both write clients and the GUI capability.
     /// Requires all three separate IPC paths; does not prove worker liveness.
     pub update_writes_enabled: bool,
+    /// Native update profile; selected by the reviewed native server unit.
+    pub update_native_admission: bool,
+    /// Loopback Janus WebSocket for VP8 WebRTC signaling; absent disables it.
+    pub webrtc_janus: Option<std::net::SocketAddr>,
+    /// The WebRTC encoder's demand socket: held open while a viewer is
+    /// connected, so the encoder works only then. Absent: it always runs.
+    pub webrtc_demand_socket: Option<PathBuf>,
+    /// The H.264 encoder's demand socket; set, it also offers H.264 over
+    /// WebRTC (Janus mountpoint 2) beside VP8.
+    pub webrtc_h264_demand_socket: Option<PathBuf>,
     /// Privileged control broker used only for safe-target/focus attestation.
     /// No value keeps the HID focus endpoint unavailable.
     pub control_socket: Option<PathBuf>,
@@ -115,17 +153,34 @@ pub struct ServerOptions {
     /// The engine's read-only control socket (`/state` read-back for the
     /// measured capture rate). No value keeps the extra field absent.
     pub engine_socket: Option<PathBuf>,
+    /// Root administration helper (terminal, scripts). No value keeps those
+    /// features unavailable even when switched on.
+    pub admin_socket: Option<PathBuf>,
+    /// Unprivileged remote image download helper. No value keeps remote
+    /// download unavailable even when switched on.
+    pub download_socket: Option<PathBuf>,
+    /// PicoClaw configuration helper (runs as the runtime's user). With the
+    /// admin and download helpers it makes the assistant available.
+    pub picoclaw_socket: Option<PathBuf>,
+    /// The loopback address the runtime's MCP client calls.
+    pub picoclaw_mcp_url: Option<String>,
     /// Explicit opt-in for the bounded DNS and IPv6 writes. The capability
     /// stays unavailable, and every request is refused, without it.
     pub network_writes_enabled: bool,
+    pub firewall_modes_enabled: bool,
     /// Image directory an operator upload writes into. Must be the same
     /// directory the board owner serves, and is required for uploads.
     pub media_directory: Option<PathBuf>,
+    /// Reconcile the catalog with the image store only while the store is a
+    /// filesystem of its own (the card's third partition). An unmounted store
+    /// looks like an empty one, and must not empty the catalog.
+    pub media_store_must_be_mounted: bool,
 }
 
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
+            shutdown: shutdown::Shutdown::default(),
             web_root: None,
             state_dir: PathBuf::from("state"),
             secure_cookies: false,
@@ -139,6 +194,10 @@ impl Default for ServerOptions {
             update_upload_socket: None,
             update_activation_socket: None,
             update_writes_enabled: false,
+            update_native_admission: false,
+            webrtc_janus: None,
+            webrtc_demand_socket: None,
+            webrtc_h264_demand_socket: None,
             control_socket: None,
             restricted_controls_enabled: false,
             media_catalog: None,
@@ -146,8 +205,14 @@ impl Default for ServerOptions {
             system_actions_enabled: false,
             video_controls_enabled: false,
             engine_socket: None,
+            admin_socket: None,
+            download_socket: None,
+            picoclaw_socket: None,
+            picoclaw_mcp_url: None,
             network_writes_enabled: false,
+            firewall_modes_enabled: false,
             media_directory: None,
+            media_store_must_be_mounted: false,
         }
     }
 }
@@ -176,7 +241,19 @@ pub fn app_with_web_root(web_root: Option<PathBuf>) -> Router {
     })
 }
 
+/// The assistant needs its configuration helper plus the admin helper (start
+/// and stop) and the download helper (install).
+fn picoclaw_available(options: &ServerOptions) -> bool {
+    options.picoclaw_socket.is_some()
+        && options.admin_socket.is_some()
+        && options.download_socket.is_some()
+}
+
 pub fn app_with_options(options: ServerOptions) -> Router {
+    // Partial files an interrupted upload left in the image store.
+    if let Some(directory) = options.media_directory.as_deref() {
+        download::sweep_stale_uploads(directory);
+    }
     assert!(
         !options.update_writes_enabled
             || (options.update_status_socket.is_some()
@@ -207,6 +284,20 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         );
     }
     let mut manifest = BliH616PikvmPlatform.capabilities();
+    // VP8 over WebRTC is offered only when the loopback gateway is configured;
+    // MJPEG stays the preferred transport.
+    if options
+        .webrtc_janus
+        .is_some_and(|address| address.ip().is_loopback())
+    {
+        manifest.video.transports.push(VideoTransport::WebRtcJanus);
+        if options.webrtc_h264_demand_socket.is_some() {
+            manifest
+                .video
+                .transports
+                .push(VideoTransport::WebRtcJanusH264);
+        }
+    }
     if options.update_status_socket.is_some() {
         manifest.system.signed_application_updates = if options.update_writes_enabled {
             FeatureStatus::read_write(EvidenceLevel::SourceVerified)
@@ -218,19 +309,72 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     if options.restricted_controls_enabled && options.control_socket.is_some() {
         manifest.hid.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         manifest.power.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        for feature in [
+            "device_ssh",
+            "device_hostname",
+            "device_mdns",
+            "device_hid_only",
+            "device_mouse_jiggler",
+            "network_wifi",
+            "system_firewall",
+        ] {
+            manifest.board.features.insert(
+                feature.into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
+        // HTTPS is always on: the page shows the redirect and the
+        // certificate but offers no switch.
+        manifest.board.features.insert(
+            "network_tls".into(),
+            FeatureStatus::read_only(EvidenceLevel::SourceVerified),
+        );
         if options.media_controls_enabled {
             manifest.virtual_media.status =
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            // The reference Download menu carries the local upload and the
+            // remote download; the latter stays switched off until enabled.
+            if options.media_directory.is_some() && options.media_catalog.is_some() {
+                manifest.virtual_media.remote_download =
+                    FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            }
         }
         if options.system_actions_enabled {
             manifest.system.actions = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+            // The reference's KVM reboot in Device settings.
+            manifest.board.features.insert(
+                "device_reboot".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
         }
-        // The reference can install and control Tailscale. The package is
-        // optional, so the surface is advertised as writable and every action
-        // is refused by the owner while the package is absent.
+        // Administration features exist when the root helper is configured;
+        // each stays switched off until the operator enables it.
+        if options.admin_socket.is_some() {
+            for feature in ["terminal", "scripts"] {
+                manifest.board.features.insert(
+                    feature.into(),
+                    FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+                );
+            }
+            // RAW system updates go through the same helper behind their own
+            // switch (`docs/design/system-raw-update-v1.md`).
+            manifest.system.signed_system_updates =
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified);
+        }
+        if picoclaw_available(&options) {
+            manifest.board.features.insert(
+                "picoclaw".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
+        // Tailscale as in the reference, through the administration helper.
         manifest.board.features.insert(
             "tailscale".into(),
-            FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            if options.admin_socket.is_some() {
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified)
+            } else {
+                FeatureStatus::unavailable()
+            },
         );
         if options.video_controls_enabled {
             manifest.video.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -241,6 +385,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             manifest.video.settings = vec![
                 bli_kvm_core::VideoSetting::Fps,
                 bli_kvm_core::VideoSetting::Resolution,
+                bli_kvm_core::VideoSetting::FrameDetect,
             ];
         }
         if options.network_writes_enabled {
@@ -249,6 +394,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             manifest.network.ipv6 = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
             manifest.network.wol = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
         }
+        if options.firewall_modes_enabled {
+            manifest.board.features.insert(
+                "system_firewall_modes".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
     }
     manifest
         .validate()
@@ -256,6 +407,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
     let state = AppState {
         capabilities: Arc::new(manifest),
         update_http_upload: Arc::new(tokio::sync::Semaphore::new(1)),
+        update_native_admission: options.update_native_admission,
+        webrtc: options.webrtc_janus.and_then(|janus| {
+            webrtc::WebRtcGateway::new(
+                janus,
+                options.webrtc_demand_socket.clone(),
+                options.webrtc_h264_demand_socket.clone(),
+            )
+        }),
         update_activation: options
             .update_activation_socket
             .as_ref()
@@ -291,7 +450,9 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 .expect("video proxy socket path must be absolute"),
         ),
         accounts: Arc::new(AccountStore::new(options.state_dir.join("account.json"))),
-        sessions: Arc::new(SessionStore::new()),
+        sessions: Arc::new(SessionStore::with_lock_after_seconds(session_lock::load(
+            &options.state_dir,
+        ))),
         login_limiter: Arc::new(Mutex::new(LoginRateLimiter::new(
             options.login_max_failures,
             options.login_lockout_secs,
@@ -305,6 +466,17 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         }),
         focus: Arc::new(Mutex::new(hid::FocusChallengeStore::new())),
         hid_ws_leases: Arc::new(Mutex::new(hid::WsLeaseStore::new())),
+        terminal_tickets: Arc::new(Mutex::new(terminal::TicketStore::new())),
+        picoclaw: picoclaw_available(&options).then(|| {
+            Arc::new(picoclaw::Picoclaw::new(
+                &options.state_dir,
+                options
+                    .picoclaw_mcp_url
+                    .clone()
+                    .unwrap_or_else(|| "http://127.0.0.1:18080/internal/picoclaw/mcp".into()),
+            ))
+        }),
+        firewall_status: Arc::new(firewall_modes::StatusCache::default()),
         options: Arc::new(options.clone()),
     };
 
@@ -317,9 +489,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route(
             "/auth/setup",
-            get(auth::routes::setup_state).post(auth::routes::setup_first_account),
+            get(auth::routes::setup_state)
+                .post(auth::routes::setup_first_account)
+                .layer(DefaultBodyLimit::max(AUTH_BODY_LIMIT)),
         )
-        .route("/auth/login", post(auth::routes::login));
+        .route(
+            "/auth/login",
+            post(auth::routes::login).layer(DefaultBodyLimit::max(AUTH_BODY_LIMIT)),
+        );
     let protected_routes = Router::new()
         .route("/auth/account", get(auth::routes::account))
         .route("/auth/logout", post(auth::routes::logout))
@@ -335,6 +512,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/mdns/enable", post(device_settings::mdns_enable))
         .route("/vm/mdns/disable", post(device_settings::mdns_disable))
         .route(
+            "/vm/hostname",
+            get(hostname::get_hostname).post(hostname::set_hostname),
+        )
+        .route("/vm/ssh", get(ssh::state))
+        .route("/vm/ssh/enable", post(ssh::enable))
+        .route("/vm/ssh/disable", post(ssh::disable))
+        .route(
             "/vm/tls",
             get(device_settings::tls_state).post(device_settings::tls_update),
         )
@@ -349,13 +533,19 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/system/time", get(system_time::get_config))
         .route(
             "/network/dns",
-            get(network::network_dns).post(network_write::dns),
+            get(network_ipv4::get_dns).post(network_ipv4::set_dns),
         )
+        .route("/network/dns/confirm", post(network_ipv4::confirm))
         .route(
             "/network/ipv6",
-            get(network::network_ipv6).post(network_write::ipv6),
+            get(network_ipv4::ipv6::get).post(network_ipv4::ipv6::set),
         )
         .route("/network/wol", post(network_write::wol))
+        .route(
+            "/network/wol/mac",
+            get(wol_macs::list).delete(wol_macs::delete),
+        )
+        .route("/network/wol/mac/name", post(wol_macs::rename))
         .route("/extensions/tailscale/status", get(tailscale::status))
         .route("/extensions/tailscale/install", post(tailscale::install))
         .route(
@@ -370,6 +560,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/extensions/tailscale/login", post(tailscale::login))
         .route("/extensions/tailscale/logout", post(tailscale::logout))
         .route(
+            "/system/firewall/mode",
+            get(firewall_modes::status).post(firewall_modes::change),
+        )
+        .route(
+            "/system/firewall/mode/confirm",
+            post(firewall_modes::confirm),
+        )
+        .route(
             "/system/firewall",
             get(device_settings::firewall_state).post(device_settings::firewall_set),
         )
@@ -379,21 +577,50 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         )
         .route(
             "/network/wifi",
-            get(network::network_wifi).post(network::network_wifi_ap),
+            get(wifi::network_wifi).post(wifi::network_wifi_ap),
         )
-        .route("/network/wifi/connect", post(network::network_wifi_connect))
+        .route(
+            "/network/wifi/scan",
+            get(wifi::network_wifi_scan).post(wifi::network_wifi_rescan),
+        )
+        .route(
+            "/network/wifi/saved",
+            get(wifi::network_wifi_saved).post(wifi::network_wifi_profile),
+        )
+        .route("/network/wifi/connect", post(wifi::network_wifi_connect))
         .route(
             "/network/wifi/disconnect",
-            post(network::network_wifi_disconnect),
+            post(wifi::network_wifi_disconnect),
+        )
+        .route("/network/wifi/radio", post(wifi::network_wifi_radio))
+        .route(
+            "/network/wifi/preferred",
+            post(wifi::network_wifi_preferred),
+        )
+        .route(
+            "/network/wifi/preferred/confirm",
+            post(wifi::network_wifi_preferred_confirm),
         )
         .route("/network/interfaces", get(network::network_interfaces))
         .route("/vm/info", get(vm_info::vm_info))
         .route("/vm/autostart", get(autostart::list))
         .route("/vm/autostart/{name}", get(autostart::content))
         .route("/download/image/enabled", get(download::image_enabled))
+        .route("/download/file/check", post(download::check_upload))
+        .route("/download/image", post(remote_download::start))
+        .route("/download/image/status", get(remote_download::status))
         .route(
             "/download/image/remote/enabled",
-            get(download::remote_enabled),
+            get(admin_features::remote_download_enabled)
+                .post(admin_features::set_remote_download_enabled),
+        )
+        .route(
+            "/vm/terminal/enabled",
+            get(admin_features::terminal_enabled).post(admin_features::set_terminal_enabled),
+        )
+        .route(
+            "/admin/features",
+            get(admin_features::list).post(admin_features::update),
         )
         .route("/vm/hardware", get(vm_info::vm_hardware))
         .route("/system-log/config", get(system_log::get_config))
@@ -403,6 +630,16 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/application-update/status", get(update::status))
         .route("/application-update/upload", post(update::upload))
         .route("/application-update/activate", post(update::activate))
+        .route(
+            "/system-update/raw-enabled",
+            get(system_update::raw_enabled).post(system_update::set_raw_enabled),
+        )
+        .route("/system-update/status", get(system_update::status))
+        .route("/system-update/upload", post(system_update::upload))
+        .route("/system-update/install", post(system_update::install))
+        .route("/system-update/confirm", post(system_update::confirm))
+        .route("/system-update/rollback", post(system_update::rollback))
+        .route("/system-update/cancel", post(system_update::cancel))
         .route(
             "/hid/focus",
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
@@ -435,9 +672,43 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/system/shutdown", post(system_action::shutdown))
         .route("/stream/mjpeg", get(video::mjpeg))
         .route(
+            "/stream/mjpeg/detect",
+            post(video_settings::update_frame_detect),
+        )
+        .route(
+            "/stream/mjpeg/detect/stop",
+            post(video_settings::stop_frame_detect),
+        )
+        .route("/stream/webrtc", get(webrtc::webrtc_socket))
+        .route("/vm/terminal", get(terminal::connect))
+        .route("/vm/terminal/unlock", post(terminal::unlock))
+        .route("/vm/script", get(scripts::list).delete(scripts::delete))
+        .route("/vm/script/upload", post(scripts::upload))
+        .route("/vm/script/run", post(scripts::run))
+        .route(
             "/vm/screen",
             get(video_settings::screen_state).post(video_settings::update_screen),
         )
+        .route("/picoclaw/model/config", post(picoclaw::model_config))
+        .route("/picoclaw/agent/profile", post(picoclaw::agent_profile))
+        .route("/picoclaw/sessions", get(picoclaw::list_sessions))
+        .route(
+            "/picoclaw/sessions/{id}",
+            get(picoclaw::get_session).delete(picoclaw::delete_session),
+        )
+        .route(
+            "/picoclaw/runtime/status",
+            get(picoclaw::get_runtime_status),
+        )
+        .route(
+            "/picoclaw/runtime/session",
+            delete(picoclaw::release_session),
+        )
+        .route("/picoclaw/runtime/install", post(picoclaw::install))
+        .route("/picoclaw/runtime/uninstall", post(picoclaw::uninstall))
+        .route("/picoclaw/runtime/start", post(picoclaw::start))
+        .route("/picoclaw/runtime/stop", post(picoclaw::stop))
+        .route("/picoclaw/gateway/ws", get(picoclaw::connect_gateway))
         .route_layer(from_fn_with_state(state.clone(), protected));
     // The media upload takes a large body, so it keeps its own bound, but it
     // must still pass the session, CSRF and origin checks before the body is
@@ -451,7 +722,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route_layer(from_fn_with_state(state.clone(), protected));
     let protected_routes = protected_routes.merge(upload);
     let api = public.merge(protected_routes).fallback(api_not_found);
-    let router = Router::new().nest("/api", api).with_state(state.clone());
+    let router = Router::new()
+        .nest("/api", api)
+        .nest(
+            "/internal/picoclaw",
+            picoclaw::internal_router(state.clone()),
+        )
+        .with_state(state.clone());
     let router = if let Some(root) = options.web_root {
         let index = root.join("index.html");
         router.fallback_service(ServeDir::new(root).fallback(ServeFile::new(index)))
@@ -459,7 +736,12 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         router
     };
 
-    router.layer(from_fn(security_headers))
+    router
+        .layer(from_fn_with_state(
+            state.options.shutdown.clone(),
+            shutdown::admit,
+        ))
+        .layer(from_fn(security_headers))
 }
 
 async fn health(State(state): State<AppState>) -> Json<ApiResponse<Health>> {
@@ -479,11 +761,11 @@ async fn capability_manifest(
 /// Resolve the runtime inventory the same way for every view: the vendor
 /// broker when it answers, otherwise (board profile) the facts our own
 /// arrangement observes instead of failing the whole view.
-async fn resolve_inventory(state: &AppState) -> AppResult<RuntimeInventory> {
+async fn resolve_inventory(state: &AppState, session_token: &str) -> AppResult<RuntimeInventory> {
     match state.inventory.inventory().await {
         Ok(inventory) => Ok(inventory),
         Err(_) if state.options.restricted_controls_enabled && state.control.is_some() => {
-            Ok(native_inventory(state).await)
+            Ok(native_inventory(state, session_token).await)
         }
         Err(_) => Err(AppError::ServiceUnavailable(
             "platform broker unavailable".into(),
@@ -493,14 +775,33 @@ async fn resolve_inventory(state: &AppState) -> AppResult<RuntimeInventory> {
 
 async fn runtime_inventory(
     State(state): State<AppState>,
+    Extension(auth::middleware::CurrentSession(session)): Extension<
+        auth::middleware::CurrentSession,
+    >,
 ) -> AppResult<Json<ApiResponse<RuntimeInventory>>> {
-    let inventory = resolve_inventory(&state).await?;
+    let inventory = resolve_inventory(&state, &session.token).await?;
     Ok(Json(ApiResponse::ok(inventory)))
 }
 
+/// The USB device controller: bound (online) and enumerated by the target
+/// host (`configured`).
+fn usb_device_controller() -> (Option<bool>, Option<bool>) {
+    let Ok(mut entries) = std::fs::read_dir("/sys/class/udc") else {
+        return (None, None);
+    };
+    let Some(Ok(entry)) = entries.next() else {
+        return (Some(false), Some(false));
+    };
+    match std::fs::read_to_string(entry.path().join("state")) {
+        Ok(state) => (Some(true), Some(state.trim() == "configured")),
+        Err(_) => (Some(true), None),
+    }
+}
+
 /// Assemble the native board inventory: thermal and RTC from the kernel views,
-/// the host power LED from the board owner, and nothing that we do not observe.
-async fn native_inventory(state: &AppState) -> RuntimeInventory {
+/// the host power LED and the component states from the board owner and the
+/// USB controller, and nothing that we do not observe.
+async fn native_inventory(state: &AppState, session_token: &str) -> RuntimeInventory {
     let thermal = bli_kvm_platform_bli::read_h616_temperature_millidegrees().ok();
     let rtc = bli_kvm_platform_bli::read_h616_external_rtc().ok();
     let power_led = match state.control.as_ref() {
@@ -521,24 +822,62 @@ async fn native_inventory(state: &AppState) -> RuntimeInventory {
                     power_led_present,
                     power_led_on,
                     ..
-                }) => power_led_present.then_some(power_led_on),
-                _ => None,
+                }) => (Some(true), power_led_present.then_some(power_led_on)),
+                _ => (Some(false), None),
             }
         }
+        None => (None, None),
+    };
+    let (power_online, power_led) = power_led;
+    let (hid_online, hid_connected) = usb_device_controller();
+    #[cfg(feature = "restricted-control-surface")]
+    let (media_enabled, media_online, media_connected) = if state.options.media_controls_enabled {
+        match media::observe(state, session_token).await {
+            Some(mounted) => (Some(true), Some(true), Some(mounted)),
+            None => (Some(true), Some(false), None),
+        }
+    } else {
+        (Some(false), None, None)
+    };
+    #[cfg(not(feature = "restricted-control-surface"))]
+    let (media_enabled, media_online, media_connected) = {
+        let _ = session_token;
+        (None, None, None)
+    };
+    // The capture engine's own state tells whether the source has a signal.
+    #[cfg(feature = "restricted-control-surface")]
+    let video_online = match state.options.engine_socket.clone() {
+        Some(socket) => tokio::task::spawn_blocking(move || video_engine::read_state(&socket))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|engine| engine.online),
         None => None,
     };
+    #[cfg(not(feature = "restricted-control-surface"))]
+    let video_online = None;
     bli_kvm_platform_bli::native_board_inventory(bli_kvm_platform_bli::NativeBoardObservations {
         thermal_millidegrees_celsius: thermal,
         external_rtc_seconds: rtc.map(|readout| readout.unix_seconds),
         external_rtc_offset_seconds: rtc.map(|readout| readout.offset_from_system_seconds),
         power_led,
+        video_online,
+        hid_online,
+        hid_connected,
+        power_online,
+        media_enabled,
+        media_online,
+        media_connected,
     })
 }
 
 async fn diagnostics_view(
     State(state): State<AppState>,
+    Extension(auth::middleware::CurrentSession(session)): Extension<
+        auth::middleware::CurrentSession,
+    >,
 ) -> AppResult<Json<ApiResponse<DiagnosticsView>>> {
-    let inventory = resolve_inventory(&state).await?;
+    let inventory = resolve_inventory(&state, &session.token).await?;
     let diagnostics = DiagnosticsView::from_inventory(&inventory)
         .map_err(|_| AppError::ServiceUnavailable("diagnostics view unavailable".into()))?;
     Ok(Json(ApiResponse::ok(diagnostics)))
@@ -969,6 +1308,353 @@ mod tests {
         );
     }
 
+    async fn next_text(
+        browser: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) -> Value {
+        use futures_util::StreamExt;
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), browser.next())
+            .await
+            .unwrap();
+        let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = frame else {
+            panic!("expected a text frame, got {frame:?}");
+        };
+        serde_json::from_str(&text).unwrap()
+    }
+
+    #[tokio::test]
+    #[allow(clippy::result_large_err)] // The tungstenite handshake callback type is fixed.
+    async fn webrtc_signaling_relays_only_the_closed_protocol_and_destroys_the_session() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{
+            Message as WsMessage,
+            client::IntoClientRequest,
+            handshake::server::{Request as HsRequest, Response as HsResponse},
+            http::HeaderValue,
+        };
+
+        let janus_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let janus_address = janus_listener.local_addr().unwrap();
+        let janus = tokio::spawn(async move {
+            let (stream, _) = janus_listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_hdr_async(
+                stream,
+                |request: &HsRequest, mut response: HsResponse| {
+                    assert_eq!(
+                        request.headers().get("sec-websocket-protocol").unwrap(),
+                        "janus-protocol"
+                    );
+                    response.headers_mut().insert(
+                        "sec-websocket-protocol",
+                        HeaderValue::from_static("janus-protocol"),
+                    );
+                    Ok(response)
+                },
+            )
+            .await
+            .unwrap();
+            let mut seen = Vec::new();
+            loop {
+                let Some(Ok(WsMessage::Text(text))) = socket.next().await else {
+                    break;
+                };
+                let request: Value = serde_json::from_str(&text).unwrap();
+                let transaction = request["transaction"].clone();
+                let kind = request["janus"].as_str().unwrap().to_string();
+                seen.push(request.clone());
+                let reply = match kind.as_str() {
+                    "create" => Some(
+                        serde_json::json!({"janus": "success", "transaction": transaction, "data": {"id": 11}}),
+                    ),
+                    "attach" => {
+                        assert_eq!(request["plugin"], "janus.plugin.streaming");
+                        assert_eq!(request["session_id"], 11);
+                        Some(
+                            serde_json::json!({"janus": "success", "transaction": transaction, "data": {"id": 22}}),
+                        )
+                    }
+                    "message" if request["body"]["request"] == "watch" => {
+                        assert_eq!(request["body"]["id"], 1);
+                        assert_eq!(request["handle_id"], 22);
+                        socket
+                            .send(WsMessage::Text(
+                                serde_json::json!({"janus": "ack", "transaction": transaction})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .unwrap();
+                        Some(
+                            serde_json::json!({"janus": "event", "transaction": transaction, "jsep": {"type": "offer", "sdp": "v=0 offer"}}),
+                        )
+                    }
+                    "message" => {
+                        assert_eq!(request["body"]["request"], "start");
+                        assert_eq!(request["jsep"]["sdp"], "v=0 answer");
+                        None
+                    }
+                    "trickle" if request["candidate"]["completed"] == true => {
+                        Some(serde_json::json!({"janus": "webrtcup", "session_id": 11}))
+                    }
+                    "destroy" => break,
+                    _ => None,
+                };
+                if let Some(reply) = reply {
+                    socket
+                        .send(WsMessage::Text(reply.to_string().into()))
+                        .await
+                        .unwrap();
+                }
+            }
+            seen
+        });
+
+        let root = tempdir().unwrap();
+        // The encoder's demand socket: held for exactly the viewer's session.
+        let demand_path = root.path().join("demand.sock");
+        let demand_listener = tokio::net::UnixListener::bind(&demand_path).unwrap();
+        let demand = tokio::spawn(async move {
+            let (mut connection, _) = demand_listener.accept().await.unwrap();
+            let mut received = Vec::new();
+            connection.read_to_end(&mut received).await.unwrap();
+            received
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            webrtc_janus: Some(janus_address),
+            webrtc_demand_socket: Some(demand_path),
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&app).await;
+        let manifest = json_body(
+            app.clone()
+                .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["video"]["transports"],
+            serde_json::json!(["mjpeg", "web_rtc_janus"])
+        );
+        assert_eq!(manifest["data"]["video"]["preferredTransport"], "mjpeg");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let mut request = format!("ws://{address}/api/stream/webrtc")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("origin", HeaderValue::from_static("http://kvm.test"));
+        request
+            .headers_mut()
+            .insert("host", HeaderValue::from_static("kvm.test"));
+        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (mut browser, _) = tokio_tungstenite::client_async(request, stream)
+            .await
+            .unwrap();
+        let offer = next_text(&mut browser).await;
+        assert_eq!(
+            offer,
+            serde_json::json!({"type": "offer", "sdp": "v=0 offer"})
+        );
+        for message in [
+            serde_json::json!({"type": "answer", "sdp": "v=0 answer"}),
+            serde_json::json!({"type": "candidate", "candidate": {"candidate": "candidate:1 1 udp 1 192.0.2.1 5000 typ host", "sdpMid": "0", "sdpMLineIndex": 0}}),
+            serde_json::json!({"type": "candidate", "candidate": null}),
+        ] {
+            browser
+                .send(WsMessage::Text(message.to_string().into()))
+                .await
+                .unwrap();
+        }
+        assert_eq!(next_text(&mut browser).await["type"], "started");
+        // Anything outside the closed protocol ends the session with an error.
+        browser
+            .send(WsMessage::Text(
+                serde_json::json!({"type": "janus", "janus": "detach"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_text(&mut browser).await,
+            serde_json::json!({"type": "error", "code": "invalid_message"})
+        );
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(5), janus)
+            .await
+            .unwrap()
+            .unwrap();
+        let kinds: Vec<_> = seen
+            .iter()
+            .map(|request| request["janus"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "create", "attach", "message", "message", "trickle", "trickle", "destroy"
+            ]
+        );
+        assert!(
+            seen.iter()
+                .all(|request| request["janus"] == "create" || request["session_id"] == 11)
+        );
+        // The viewer left, so the demand connection closed after naming VP8.
+        let asked = tokio::time::timeout(std::time::Duration::from_secs(5), demand)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(asked, b"vp8\n");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn h264_over_webrtc_is_offered_only_with_its_encoder() {
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
+
+        let root = tempdir().unwrap();
+        let janus = SocketAddr::from(([127, 0, 0, 1], 9));
+        let with_h264 = app_with_options(ServerOptions {
+            state_dir: root.path().join("with"),
+            webrtc_janus: Some(janus),
+            webrtc_h264_demand_socket: Some(root.path().join("h264.sock")),
+            ..ServerOptions::default()
+        });
+        let without = app_with_options(ServerOptions {
+            state_dir: root.path().join("without"),
+            webrtc_janus: Some(janus),
+            ..ServerOptions::default()
+        });
+        for (app, transports) in [
+            (
+                &with_h264,
+                serde_json::json!(["mjpeg", "web_rtc_janus", "web_rtc_janus_h264"]),
+            ),
+            (&without, serde_json::json!(["mjpeg", "web_rtc_janus"])),
+        ] {
+            let manifest = json_body(
+                app.clone()
+                    .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(manifest["data"]["video"]["transports"], transports);
+        }
+
+        // Asked of a server without it, H.264 is refused before the upgrade.
+        let (cookie, _) = setup_and_login(&without).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                without.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        for (query, status) in [("h264", 503), ("av1", 400)] {
+            let mut request = format!("ws://{address}/api/stream/webrtc?codec={query}")
+                .into_client_request()
+                .unwrap();
+            let headers = request.headers_mut();
+            headers.insert("cookie", cookie.parse().unwrap());
+            headers.insert("origin", HeaderValue::from_static("http://kvm.test"));
+            headers.insert("host", HeaderValue::from_static("kvm.test"));
+            let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            match tokio_tungstenite::client_async(request, stream).await {
+                Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                    assert_eq!(response.status().as_u16(), status, "{query}");
+                }
+                other => panic!("{query}: {:?}", other.map(|_| ())),
+            }
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn native_profile_activation_sends_admission_and_reports_prepared() {
+        use bli_kvm_update_protocol::{self as protocol, activation as ipc};
+        let root = tempdir().unwrap();
+        let socket = root.path().join("activate.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            update_status_socket: Some(root.path().join("status.sock")),
+            update_upload_socket: Some(root.path().join("upload.sock")),
+            update_activation_socket: Some(socket),
+            update_writes_enabled: true,
+            update_native_admission: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let slot = format!("app-00000000000000000002-{}", "a".repeat(64));
+        let worker = {
+            let slot = slot.clone();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                stream.read_to_end(&mut bytes).await.unwrap();
+                let request = ipc::decode_request(&bytes[4..]).unwrap();
+                assert_eq!(
+                    request.request,
+                    ipc::ActivationRequest::Admit {
+                        slot_id: slot.clone(),
+                        expected_generation: 7
+                    }
+                );
+                let response = ipc::ActivationResponseEnvelope {
+                    schema_version: 1,
+                    request_id: request.request_id,
+                    response: ipc::ActivationResponse::Prepared {
+                        receipt: ipc::PreparedActivationReceipt {
+                            operation_id: "2".repeat(32),
+                            target_slot_id: slot,
+                            prepared_generation: 8,
+                            deadline_monotonic_ms: 90_000,
+                        },
+                    },
+                };
+                stream
+                    .write_all(
+                        &protocol::encode_frame(&ipc::encode_response(&response).unwrap()).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            })
+        };
+        let mut request = json_request(
+            Method::POST,
+            "/api/application-update/activate",
+            serde_json::json!({"slotId": slot, "expectedGeneration": "7"}),
+        );
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let result = json_body(response).await;
+        assert_eq!(result["data"]["phase"], "prepared");
+        assert_eq!(result["data"]["receipt"]["operationId"], "2".repeat(32));
+        assert_eq!(result["data"]["receipt"]["targetSlotId"], slot);
+        worker.await.unwrap();
+    }
+
     #[tokio::test]
     async fn upload_authorization_and_headers_precede_body_and_ipc() {
         struct NeverBody;
@@ -1104,6 +1790,122 @@ mod tests {
         (status, json_body(response).await)
     }
 
+    #[tokio::test]
+    async fn administration_features_are_refused_while_switched_off() {
+        // No switch file exists on the host, so every feature is off.
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/vm/terminal/unlock")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, &cookie)
+            .header("x-csrf-token", &csrf)
+            .body(Body::from(
+                serde_json::json!({"username": "admin", "password": "irrelevant"}).to_string(),
+            ))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(SocketAddr::from((
+                [127, 0, 0, 1],
+                1,
+            ))));
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/vm/terminal?ticket=anything")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        // Never upgraded: the upgrade extractor or the switch refuses it.
+        assert!(matches!(
+            response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
+        ));
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/vm/script")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/download/image")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, &cookie)
+            .header("x-csrf-token", &csrf)
+            .body(Body::from(
+                serde_json::json!({"file": "https://mirror.example/a.iso"}).to_string(),
+            ))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/picoclaw/runtime/status")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // The runtime's internal route answers nothing without its token,
+        // and nothing that came through the TLS proxy.
+        for forwarded in [false, true] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/internal/picoclaw/mcp")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-blikvm-internal-token", "0".repeat(64));
+            if forwarded {
+                request = request.header("x-forwarded-for", "192.0.2.1");
+            }
+            let mut request = request
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+                ))
+                .unwrap();
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(SocketAddr::from((
+                    [127, 0, 0, 1],
+                    1,
+                ))));
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/admin/features")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let body = json_body(response).await;
+        for feature in ["terminal", "scripts", "remoteDownload", "picoclaw"] {
+            assert_eq!(body["data"][feature], false, "{feature}");
+        }
+    }
+
     fn isolated_app() -> Router {
         let root = tempdir().unwrap();
         app_with_options(ServerOptions {
@@ -1135,12 +1937,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn login_refuses_oversized_bodies_and_names_without_remembering_them() {
+        let app = isolated_app();
+        setup_and_login(&app).await;
+        let big = json_request(
+            Method::POST,
+            "/api/auth/login",
+            serde_json::json!({"username": "x".repeat(64 * 1024), "password": "p"}),
+        );
+        let response = app.clone().oneshot(big).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        for length in [65, 200] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    Method::POST,
+                    "/api/auth/login",
+                    serde_json::json!({"username": "x".repeat(length), "password": "p"}),
+                ))
+                .await
+                .unwrap();
+            // -1 is a bad request; a wrong name would answer -2.
+            assert_eq!(json_body(response).await["code"], -1, "{length}");
+        }
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({"username": "operator", "password": "p".repeat(257)}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["code"], -1);
+        // The real account still logs in.
+        assert!(!login_again(&app).await.is_empty());
+    }
+
+    fn forwarded_login(from: &str, password: &str) -> Request<Body> {
+        let mut request = json_request(
+            Method::POST,
+            "/api/auth/login",
+            serde_json::json!({"username": "operator", "password": password}),
+        );
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", from.parse().unwrap());
+        request
+            .extensions_mut()
+            .insert(ConnectInfo("127.0.0.1:4242".parse::<SocketAddr>().unwrap()));
+        request
+    }
+
+    #[tokio::test]
+    async fn a_lockout_belongs_to_the_forwarded_client_not_to_nginx() {
+        let root = tempdir().unwrap();
+        let app = auth_app(root.path().join("account"), 2);
+        setup_and_login(&app).await;
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(forwarded_login("198.51.100.1", "wrong password"))
+                .await
+                .unwrap();
+            assert_eq!(json_body(response).await["code"], -2);
+        }
+        // The first client is locked, even with the right password.
+        let response = app
+            .clone()
+            .oneshot(forwarded_login("198.51.100.1", "initial password"))
+            .await
+            .unwrap();
+        assert_ne!(json_body(response).await["code"], 0);
+        // A second client behind the same nginx is not.
+        let response = app
+            .clone()
+            .oneshot(forwarded_login("198.51.100.2", "initial password"))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn a_session_lock_that_cannot_be_saved_keeps_the_old_value() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempdir().unwrap();
+        let state = root.path().join("account");
+        let app = auth_app(state.clone(), 5);
+        let (cookie, csrf) = setup_and_login(&app).await;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let (status, _) = set_session_lock(&app, &cookie, Some(&csrf), 300, false).await;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let (_, body) = session_lock_state(&app, &cookie, None).await;
+        assert_eq!(body["data"]["duration"], 3600);
+    }
+
+    #[tokio::test]
     async fn session_lock_round_trips_and_requires_csrf() {
         let app = isolated_app();
         let (cookie, csrf) = setup_and_login(&app).await;
         let (status, body) = session_lock_state(&app, &cookie, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["data"]["duration"], 0);
+        // The reference default: one hour.
+        assert_eq!(body["data"]["duration"], 3600);
 
         let (status, body) = set_session_lock(&app, &cookie, Some(&csrf), 300, false).await;
         assert_eq!(status, StatusCode::OK);
@@ -1155,6 +2055,65 @@ mod tests {
             body["data"]["duration"], 300,
             "a rejected write must not change the policy"
         );
+    }
+
+    #[tokio::test]
+    async fn sessions_live_as_long_as_the_session_lock_says() {
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        };
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (_, account) = {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/auth/account")
+                        .header(header::HOST, "kvm.test")
+                        .header(header::COOKIE, &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (response.status(), json_body(response).await)
+        };
+        // Login used the reference default of one hour, not 15 minutes.
+        let expires = account["data"]["expiresAt"].as_u64().unwrap();
+        assert!(
+            (now() + 3590..=now() + 3600).contains(&expires),
+            "{account}"
+        );
+
+        // A change retimes the caller's own session and its cookie.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/vm/session-lock")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(header::COOKIE, &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .body(Body::from(r#"{"duration":1800}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let set_cookie = response.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(set_cookie.contains("Max-Age=1800"), "{set_cookie}");
+        let body = json_body(response).await;
+        let expires = body["data"]["expiresAt"].as_u64().unwrap();
+        assert!((now() + 1790..=now() + 1800).contains(&expires), "{body}");
     }
 
     #[tokio::test]
@@ -1586,6 +2545,7 @@ mod tests {
                     }
                     bli_kvm_core::PlatformControlRequestV2::VideoSettingsState {} => {
                         bli_kvm_control_protocol::ControlResponse::VideoState {
+                            resolution: Some("1280x720".into()),
                             fps: 24,
                             quality: 80,
                         }
@@ -1835,7 +2795,7 @@ mod tests {
         let mut request = json_request(
             Method::POST,
             "/api/network/ipv6",
-            serde_json::json!({"interface": "wlan0", "disabled": true}),
+            serde_json::json!({"interface": "wlan0", "mode": "bogus"}),
         );
         request
             .headers_mut()
@@ -1891,16 +2851,35 @@ mod tests {
                 .unwrap(),
         )
         .await;
-        let availability = if cfg!(feature = "restricted-control-surface") {
-            "read_write"
-        } else {
-            "unavailable"
-        };
         for component in ["dns", "ipv6", "wol"] {
+            let availability = if cfg!(feature = "restricted-control-surface") {
+                "read_write"
+            } else if component == "wol" {
+                "unavailable"
+            } else {
+                // Native DNS/IPv6 observations remain available without the
+                // separately compiled and opted-in mutation surface.
+                "read_only"
+            };
             assert_eq!(
                 capabilities["data"]["network"][component]["availability"],
                 availability
             );
+        }
+        for route in ["/api/network/dns", "/api/network/ipv6"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(route)
+                        .header(header::HOST, "kvm.test")
+                        .header(header::COOKIE, &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{route}");
         }
     }
 
@@ -2461,6 +3440,436 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn firewall_modes_bind_identity_and_preserve_refusals() {
+        let root = tempdir().unwrap();
+        let socket = root.path().join("firewall.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut identity = None;
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let envelope = bli_kvm_control_protocol::decode_request_v2(&bytes).unwrap();
+                match envelope.request {
+                    bli_kvm_core::PlatformControlRequestV2::FirewallModeChange { request } => {
+                        assert_eq!(index, 0);
+                        assert_eq!(request.mode, bli_kvm_core::FirewallMode::Restricted);
+                        assert_ne!(request.operation_id, [0; 16]);
+                        assert_ne!(request.session_binding, [0; 32]);
+                        identity = Some((request.operation_id, request.session_binding));
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::FirewallModeConfirm { request } => {
+                        assert_eq!(index, 1);
+                        assert_eq!(
+                            Some((request.operation_id, request.session_binding)),
+                            identity
+                        );
+                    }
+                    _ => panic!("unexpected firewall request"),
+                }
+                let response = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: 2,
+                    request_id: envelope.request_id,
+                    operation_id: envelope.operation_id,
+                    response: if index == 0 {
+                        bli_kvm_control_protocol::ControlResponse::Applied
+                    } else {
+                        bli_kvm_control_protocol::ControlResponse::Rejected {
+                            code:
+                                bli_kvm_control_protocol::ControlRejectionCode::PendingUnreconciled,
+                        }
+                    },
+                };
+                let bytes = bli_kvm_control_protocol::encode_response_v2(&response).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&bytes).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(socket),
+            firewall_modes_enabled: true,
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let anonymous = app
+            .clone()
+            .oneshot(json_request(
+                Method::GET,
+                "/api/system/firewall/mode",
+                Value::Null,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+        let manifest = json_body(
+            app.clone()
+                .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            manifest["data"]["board"]["features"]["system_firewall_modes"]["availability"],
+            "read_write"
+        );
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let post = |path, body| {
+            let mut request = json_request(Method::POST, path, body);
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            request
+        };
+        let denied = app
+            .clone()
+            .oneshot(post(
+                "/api/system/firewall/mode",
+                serde_json::json!({"mode":"restricted"}),
+            ))
+            .await
+            .unwrap();
+        assert_ne!(json_body(denied).await["code"], 0);
+        let mut missing_csrf = post(
+            "/api/system/firewall/mode",
+            serde_json::json!({"mode":"restricted","confirm":true}),
+        );
+        missing_csrf.headers_mut().remove("x-csrf-token");
+        assert_eq!(
+            app.clone().oneshot(missing_csrf).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        let changed = json_body(
+            app.clone()
+                .oneshot(post(
+                    "/api/system/firewall/mode",
+                    serde_json::json!({"mode":"restricted","confirm":true}),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(changed["data"]["applied"], true);
+        let confirmed = json_body(
+            app.oneshot(post(
+                "/api/system/firewall/mode/confirm",
+                serde_json::json!({"operationId":changed["data"]["operationId"]}),
+            ))
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(confirmed["data"]["applied"], false);
+        assert!(confirmed["data"]["rejection"].is_string());
+        tokio::time::timeout(std::time::Duration::from_secs(2), broker)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn wifi_routes_reach_the_owner_with_typed_requests_only() {
+        use bli_kvm_control_protocol::{ControlResponse, WifiNetwork, WifiProfileView};
+        use bli_kvm_core::{PlatformControlRequestV2, WifiProfileAction};
+        const PROFILE: &str = "0123abcd-0123-4567-89ab-0123456789ab";
+        let root = tempdir().unwrap();
+        let socket = root.path().join("wifi.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let broker = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..7 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let envelope = bli_kvm_control_protocol::decode_request_v2(&bytes).unwrap();
+                let response = match &envelope.request {
+                    PlatformControlRequestV2::WifiScan { rescan: true } => {
+                        ControlResponse::WifiNetworks {
+                            networks: vec![WifiNetwork {
+                                ssid: "HomeNet".into(),
+                                signal: 81,
+                                security: "wpa2".into(),
+                                channel: 36,
+                                in_use: true,
+                            }],
+                        }
+                    }
+                    PlatformControlRequestV2::WifiSaved {} => ControlResponse::WifiProfiles {
+                        profiles: vec![WifiProfileView {
+                            id: PROFILE.into(),
+                            ssid: "HomeNet".into(),
+                            autoconnect: true,
+                            active: true,
+                        }],
+                    },
+                    PlatformControlRequestV2::WifiConnect { .. } => ControlResponse::Rejected {
+                        code: bli_kvm_control_protocol::ControlRejectionCode::BackendRejected,
+                    },
+                    _ => ControlResponse::Applied,
+                };
+                seen.push(envelope.request);
+                let response = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: 2,
+                    request_id: envelope.request_id,
+                    operation_id: envelope.operation_id,
+                    response,
+                };
+                let bytes = bli_kvm_control_protocol::encode_response_v2(&response).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&bytes).unwrap())
+                    .await
+                    .unwrap();
+            }
+            seen
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(socket),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let call = |method: Method, path: &str, body: Value| {
+            let mut request = json_request(method, path, body);
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            request
+        };
+        let scan = json_body(
+            app.clone()
+                .oneshot(call(Method::POST, "/api/network/wifi/scan", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            scan["data"]["networks"][0],
+            serde_json::json!({"ssid":"HomeNet","signal":81,"security":"wpa2","channel":36,"inUse":true})
+        );
+        let saved = json_body(
+            app.clone()
+                .oneshot(call(Method::GET, "/api/network/wifi/saved", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(saved["data"]["profiles"][0]["id"], PROFILE);
+        // Invalid input never reaches the owner.
+        for (path, body) in [
+            (
+                "/api/network/wifi/connect",
+                serde_json::json!({"ssid":"HomeNet","password":"short"}),
+            ),
+            (
+                "/api/network/wifi/connect",
+                serde_json::json!({"ssid":"","password":""}),
+            ),
+            (
+                "/api/network/wifi/saved",
+                serde_json::json!({"id":"../x","action":"forget"}),
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(call(Method::POST, path, body))
+                .await
+                .unwrap();
+            assert_ne!(json_body(response).await["code"], 0, "{path}");
+        }
+        let connect = json_body(
+            app.clone()
+                .oneshot(call(
+                    Method::POST,
+                    "/api/network/wifi/connect",
+                    serde_json::json!({"ssid":"Hidden","password":"eight888","hidden":true}),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            connect["data"],
+            serde_json::json!({"applied":false,"rejection":"backend_rejected"})
+        );
+        for (path, body) in [
+            (
+                "/api/network/wifi/saved",
+                serde_json::json!({"id":PROFILE,"action":"autoconnect_off"}),
+            ),
+            (
+                "/api/network/wifi/radio",
+                serde_json::json!({"enabled":false}),
+            ),
+            (
+                "/api/network/wifi/preferred",
+                serde_json::json!({"enabled":true}),
+            ),
+            ("/api/network/wifi/preferred/confirm", Value::Null),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(call(Method::POST, path, body))
+                .await
+                .unwrap();
+            assert_eq!(json_body(response).await["data"]["applied"], true, "{path}");
+        }
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(2), broker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            seen,
+            [
+                PlatformControlRequestV2::WifiScan { rescan: true },
+                PlatformControlRequestV2::WifiSaved {},
+                PlatformControlRequestV2::WifiConnect {
+                    ssid: "Hidden".into(),
+                    password: "eight888".into(),
+                    hidden: true,
+                },
+                PlatformControlRequestV2::WifiProfile {
+                    id: PROFILE.into(),
+                    action: WifiProfileAction::AutoconnectOff,
+                },
+                PlatformControlRequestV2::WifiRadio { enabled: false },
+                PlatformControlRequestV2::WifiPreferred { enabled: true },
+                PlatformControlRequestV2::WifiPreferredConfirm {},
+            ]
+        );
+
+        // Without the operator's opt-in the routes answer unavailable.
+        let closed = app_with_options(ServerOptions {
+            state_dir: root.path().join("closed"),
+            control_socket: Some(root.path().join("absent.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, _) = setup_and_login(&closed).await;
+        let mut request = json_request(Method::GET, "/api/network/wifi/scan", Value::Null);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let response = closed.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn first_setup_and_password_changes_set_root_through_the_helper() {
+        use tokio::io::AsyncBufReadExt;
+        let root = tempdir().unwrap();
+        let socket = root.path().join("admin.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        // The helper refuses the first request and accepts the others.
+        let helper = tokio::spawn(async move {
+            let mut passwords = Vec::new();
+            for index in 0..3 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let request: bli_kvm_admin_helper::AdminRequest =
+                    serde_json::from_str(&line).unwrap();
+                let bli_kvm_admin_helper::AdminRequest::RootPassword { password } = request else {
+                    panic!("unexpected helper request");
+                };
+                passwords.push(password);
+                let reply = if index == 0 {
+                    r#"{"status":"refused","reason":"fixture"}"#
+                } else {
+                    r#"{"status":"done"}"#
+                };
+                let mut stream = reader.into_inner();
+                stream
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            passwords
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("state"),
+            admin_socket: Some(socket),
+            ..ServerOptions::default()
+        });
+        let setup = |password: &str| {
+            json_request(
+                Method::POST,
+                "/api/auth/setup",
+                serde_json::json!({ "username": "operator", "password": password }),
+            )
+        };
+        // Refused by the helper: no account is stored.
+        let refused = json_body(
+            app.clone()
+                .oneshot(setup("initial password"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(refused["code"], 0);
+        let state = json_body(
+            app.clone()
+                .oneshot(json_request(Method::GET, "/api/auth/setup", Value::Null))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(state["data"]["required"], true);
+        // A password root cannot take is refused before the helper is asked.
+        let broken = json_body(app.clone().oneshot(setup("two\nlines!")).await.unwrap()).await;
+        assert_ne!(broken["code"], 0);
+
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let mut change = json_request(
+            Method::POST,
+            "/api/auth/password",
+            serde_json::json!({ "username": "operator", "password": "second password" }),
+        );
+        change
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        change
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        let changed = json_body(app.clone().oneshot(change).await.unwrap()).await;
+        assert_eq!(changed["code"], 0);
+        let passwords = tokio::time::timeout(std::time::Duration::from_secs(5), helper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            passwords,
+            ["initial password", "initial password", "second password"]
+        );
+        let login = json_body(
+            app.oneshot(json_request(
+                Method::POST,
+                "/api/auth/login",
+                serde_json::json!({ "username": "operator", "password": "second password" }),
+            ))
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(login["code"], 0);
+    }
+
     #[tokio::test]
     async fn runtime_inventory_requires_an_authenticated_session() {
         let response = app()
@@ -2517,6 +3926,47 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    /// A board owner that reports `file` as the attached image to every
+    /// request, for the media routes that ask it first.
+    fn serve_media_state(
+        socket: &std::path::Path,
+        file: Option<&str>,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = UnixListener::bind(socket).unwrap();
+        let file = file.map(str::to_string);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut prefix = [0; 4];
+                if stream.read_exact(&mut prefix).await.is_err() {
+                    continue;
+                }
+                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+                if stream.read_exact(&mut bytes).await.is_err() {
+                    continue;
+                }
+                let envelope = bli_kvm_control_protocol::decode_request_v2(&bytes).unwrap();
+                let response = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: 2,
+                    request_id: envelope.request_id,
+                    operation_id: envelope.operation_id,
+                    response: bli_kvm_control_protocol::ControlResponse::MediaState {
+                        file: file.clone(),
+                        connected: file.is_some(),
+                        cdrom: false,
+                        writable: false,
+                    },
+                };
+                let bytes = bli_kvm_control_protocol::encode_response_v2(&response).unwrap();
+                let _ = stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&bytes).unwrap())
+                    .await;
+            }
+        })
+    }
+
     #[tokio::test]
     async fn authenticated_image_upload_writes_the_file_and_the_catalog() {
         use std::os::unix::fs::PermissionsExt;
@@ -2528,6 +3978,7 @@ mod tests {
         let catalog = directory.path().join("catalog.json");
         fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
         fs::set_permissions(&catalog, fs::Permissions::from_mode(0o644)).unwrap();
+        let owner = serve_media_state(&directory.path().join("control.sock"), None);
         let app = app_with_options(ServerOptions {
             state_dir: directory.path().join("state"),
             restricted_controls_enabled: true,
@@ -2592,6 +4043,204 @@ mod tests {
         assert_eq!(summaries[0].image_name, "kubuntu.img");
         assert!(summaries[0].removable_allowed);
         assert!(!summaries[0].cdrom_allowed);
+        owner.abort();
+        #[cfg(feature = "restricted-control-surface")]
+        attached_image_is_kept_and_stale_entries_dropped(&directory, &images, &catalog, boundary)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_upload_is_read_to_its_end_before_the_answer() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let directory = tempdir().unwrap();
+        let images = directory.path().join("images");
+        fs::create_dir_all(&images).unwrap();
+        let catalog = directory.path().join("catalog.json");
+        fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        let owner = serve_media_state(&directory.path().join("control.sock"), None);
+        let app = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state"),
+            restricted_controls_enabled: true,
+            media_controls_enabled: true,
+            media_catalog: Some(catalog),
+            media_directory: Some(images.clone()),
+            control_socket: Some(directory.path().join("control.sock")),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let boundary = "----blikvm-upload";
+        let mut chunks = vec![bytes::Bytes::from(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"name with space.iso\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        ))];
+        chunks.extend(std::iter::repeat_n(
+            bytes::Bytes::from(vec![0_u8; 64 * 1024]),
+            64,
+        ));
+        chunks.push(bytes::Bytes::from(format!("\r\n--{boundary}--\r\n")));
+        let length: usize = chunks.iter().map(bytes::Bytes::len).sum();
+        let (total, read) = (chunks.len(), Arc::new(AtomicUsize::new(0)));
+        let counter = read.clone();
+        // Each chunk arrives after a pause, as over a connection; a stream
+        // that is always ready would be buffered whole by the parser.
+        let stream = futures_util::stream::unfold(chunks.into_iter(), move |mut chunks| {
+            let counter = counter.clone();
+            async move {
+                tokio::task::yield_now().await;
+                let chunk = chunks.next()?;
+                counter.fetch_add(1, Ordering::SeqCst);
+                Some((Ok::<_, std::io::Error>(chunk), chunks))
+            }
+        });
+        let answer = json_body(
+            app.oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/download/file")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::ORIGIN, "https://kvm.test")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .header(header::CONTENT_LENGTH, length)
+                    .header(header::COOKIE, cookie)
+                    .header("x-csrf-token", csrf)
+                    .body(Body::from_stream(stream))
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(answer["msg"], "image name is invalid");
+        // Behind nginx the answer is read only after the whole body is sent.
+        assert_eq!(read.load(Ordering::SeqCst), total);
+        assert_eq!(fs::read_dir(&images).unwrap().count(), 0);
+        owner.abort();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    async fn attached_image_is_kept_and_stale_entries_dropped(
+        directory: &tempfile::TempDir,
+        images: &std::path::Path,
+        catalog: &std::path::Path,
+        boundary: &str,
+    ) {
+        let (images, catalog) = (images.to_path_buf(), catalog.to_path_buf());
+        // With the same image attached, replacing it is refused.
+        let attached_socket = directory.path().join("attached.sock");
+        let attached_owner = serve_media_state(&attached_socket, Some("kubuntu.img"));
+        let attached = app_with_options(ServerOptions {
+            state_dir: directory.path().join("state-attached"),
+            restricted_controls_enabled: true,
+            media_controls_enabled: true,
+            media_catalog: Some(catalog.clone()),
+            media_directory: Some(images.clone()),
+            control_socket: Some(attached_socket),
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&attached).await;
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"kubuntu.img\"\r\nContent-Type: application/octet-stream\r\n\r\nreplacement\r\n--{boundary}--\r\n"
+            )
+            .as_bytes(),
+        );
+        let refused = json_body(
+            attached
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/download/file")
+                        .header(header::HOST, "kvm.test")
+                        .header(header::ORIGIN, "https://kvm.test")
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .header(header::CONTENT_LENGTH, body.len())
+                        .header(header::COOKIE, &cookie)
+                        .header("x-csrf-token", &csrf)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(refused["code"], -409);
+        assert_eq!(
+            fs::read(images.join("kubuntu.img")).unwrap(),
+            b"disk-image-bytes"
+        );
+        // The check before sending answers the same refusals.
+        for (name, size, code, msg) in [
+            (
+                "kubuntu.img",
+                11_u64,
+                -409,
+                "detach the drive before replacing its image",
+            ),
+            ("name with space.iso", 11, -1, "image name is invalid"),
+            (
+                "big.iso",
+                65 * 1024 * 1024 * 1024,
+                -1,
+                "upload is too large",
+            ),
+            ("big.iso", 0, -1, "the file is empty"),
+            (
+                "FreeBSD-15.0-PRERELEASE-amd64-20250822-027be99b1f33-279771-disc1.iso",
+                11,
+                0,
+                "success",
+            ),
+        ] {
+            let answer = json_body(
+                attached
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri("/api/download/file/check")
+                            .header(header::HOST, "kvm.test")
+                            .header(header::ORIGIN, "https://kvm.test")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::COOKIE, &cookie)
+                            .header("x-csrf-token", &csrf)
+                            .body(Body::from(
+                                serde_json::json!({ "name": name, "size": size }).to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(answer["code"], code, "{name} {size}: {answer}");
+            assert_eq!(answer["msg"], msg, "{name} {size}: {answer}");
+        }
+        attached_owner.abort();
+
+        // A catalog entry whose file is gone is dropped when the catalog is read.
+        fs::remove_file(images.join("kubuntu.img")).unwrap();
+        let mut request = json_request(Method::GET, "/api/virtual-media/catalog", Value::Null);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        let listed = json_body(attached.oneshot(request).await.unwrap()).await;
+        assert_eq!(listed["data"]["images"], serde_json::json!([]));
+        assert!(
+            bli_kvm_media_catalog::MediaCatalog::open(&catalog)
+                .unwrap()
+                .summaries()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2852,7 +4501,7 @@ mod tests {
             assert!(request.starts_with("get /mjpeg http/1.1\r\n"));
             stream
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nX-Private-Backend: forbidden\r\nContent-Length: 4\r\n\r\nJPEG",
+                    b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nX-Private-Backend: forbidden\r\nContent-Length: 62\r\n\r\n--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n",
                 )
                 .await
                 .unwrap();
@@ -2878,9 +4527,10 @@ mod tests {
             "no-store, no-cache, must-revalidate"
         );
         assert!(!response.headers().contains_key("x-private-backend"));
+        // Whole parts are relayed as they came.
         assert_eq!(
             to_bytes(response.into_body(), 64 * 1024).await.unwrap(),
-            "JPEG"
+            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n"
         );
         proxy.await.unwrap();
     }
@@ -3269,23 +4919,70 @@ mod tests {
 
     #[tokio::test]
     async fn hid_lease_acquire_returns_a_broker_lease_id() {
+        exercise_hid_lease_teardown(false).await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_live_websocket_hid_release() {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exercise_hid_lease_teardown(true),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn exercise_hid_lease_teardown(websocket_shutdown: bool) {
         let root = tempdir().unwrap();
         let control_socket = root.path().join("control.sock");
         let listener = UnixListener::bind(&control_socket).unwrap();
+        let report_seen = Arc::new(tokio::sync::Notify::new());
+        let release_seen = Arc::new(tokio::sync::Notify::new());
+        let allow_release = Arc::new(tokio::sync::Notify::new());
+        let broker_report = report_seen.clone();
+        let broker_release = release_seen.clone();
+        let broker_allow = allow_release.clone();
         let broker = tokio::spawn(async move {
-            for _ in 0..2 {
+            let release_index = if websocket_shutdown { 3 } else { 2 };
+            for index in 0..=release_index {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut prefix = [0_u8; 4];
                 stream.read_exact(&mut prefix).await.unwrap();
                 let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
                 stream.read_exact(&mut payload).await.unwrap();
                 let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
-                let response = match request.request {
-                    bli_kvm_core::PlatformControlRequestV2::HidLease { .. } => {
-                        bli_kvm_control_protocol::ControlResponse::LeaseGranted {
-                            lease_id: [0x55; 16],
-                        }
+                if index == release_index {
+                    assert!(matches!(
+                        request.request,
+                        bli_kvm_core::PlatformControlRequestV2::HidLease {
+                            lease: bli_kvm_core::HidLeaseRequest::Release {
+                                lease_id,
+                                ..
+                            }
+                        } if lease_id == [0x55; 16]
+                    ));
+                    if websocket_shutdown {
+                        broker_release.notify_one();
+                        broker_allow.notified().await;
                     }
+                }
+                if websocket_shutdown && index == 2 {
+                    assert!(matches!(request.request,
+                        bli_kvm_core::PlatformControlRequestV2::HidLease {
+                            lease: bli_kvm_core::HidLeaseRequest::Report {
+                                lease_id,
+                                report: bli_kvm_core::HidReport::Keyboard { data }, ..
+                            }
+                        } if lease_id == [0x55; 16] && data == [0, 0, 4, 0, 0, 0, 0, 0]
+                    ));
+                    broker_report.notify_one();
+                }
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::HidLease {
+                        lease: bli_kvm_core::HidLeaseRequest::Acquire { .. },
+                    } => bli_kvm_control_protocol::ControlResponse::LeaseGranted {
+                        lease_id: [0x55; 16],
+                    },
                     _ => bli_kvm_control_protocol::ControlResponse::Applied,
                 };
                 let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
@@ -3301,7 +4998,9 @@ mod tests {
                     .unwrap();
             }
         });
+        let shutdown = shutdown::Shutdown::default();
         let app = app_with_options(ServerOptions {
+            shutdown: shutdown.clone(),
             state_dir: root.path().join("account"),
             secure_cookies: true,
             control_socket: Some(control_socket),
@@ -3364,6 +5063,67 @@ mod tests {
         assert_eq!(lease_body["data"]["applied"], true);
         assert_eq!(lease_body["data"]["leaseId"], "55".repeat(16));
         assert_eq!(lease_body["data"]["ttlSeconds"], 30);
+
+        if websocket_shutdown {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let signal = shutdown.clone();
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(async move { signal.cancelled().await })
+                .await
+                .unwrap();
+            });
+            let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+            socket.write_all(format!(
+                "GET /api/ws HTTP/1.1\r\nHost: kvm.test\r\nOrigin: https://kvm.test\r\nCookie: {cookie}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            ).as_bytes()).await.unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                assert!(headers.len() < 4096);
+                headers.push(socket.read_u8().await.unwrap());
+            }
+            assert!(headers.starts_with(b"HTTP/1.1 101"));
+            // One masked binary frame: keyboard tag followed by a held key.
+            let mask = [1_u8, 2, 3, 4];
+            let mut frame = vec![0x82, 0x89];
+            frame.extend_from_slice(&mask);
+            frame.extend(
+                [1_u8, 0, 0, 4, 0, 0, 0, 0, 0]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, byte)| byte ^ mask[index % 4]),
+            );
+            socket.write_all(&frame).await.unwrap();
+            report_seen.notified().await;
+            shutdown.stop();
+            release_seen.notified().await;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), shutdown.drained())
+                    .await
+                    .is_err()
+            );
+            allow_release.notify_one();
+            shutdown.drained().await;
+            server.await.unwrap();
+            broker.await.unwrap();
+            return;
+        }
+
+        let mut logout = json_request(Method::POST, "/api/auth/logout", Value::Null);
+        logout
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        logout
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        assert_eq!(
+            json_body(app.clone().oneshot(logout).await.unwrap()).await["code"],
+            0
+        );
         broker.await.unwrap();
     }
 
@@ -3477,9 +5237,20 @@ mod tests {
             .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
             .await
             .unwrap();
-        let text = serde_json::to_string(&json_body(response).await).unwrap();
-        assert!(text.contains(r#""availability":"unavailable""#));
-        assert!(!text.contains("read_write"));
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["hid"]["status"]["availability"], "unavailable");
+        assert_eq!(
+            body["data"]["power"]["status"]["availability"],
+            "unavailable"
+        );
+        assert_eq!(
+            body["data"]["system"]["actions"]["availability"],
+            "unavailable"
+        );
+        assert_ne!(
+            body["data"]["board"]["features"]["device_mdns"]["availability"],
+            "read_write"
+        );
     }
 
     #[cfg(feature = "restricted-control-surface")]
@@ -3494,8 +5265,40 @@ mod tests {
             .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
             .await
             .unwrap();
-        let text = serde_json::to_string(&json_body(response).await).unwrap();
-        assert!(text.contains("read_write"));
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["hid"]["status"]["availability"], "read_write");
+        assert_eq!(
+            body["data"]["power"]["status"]["availability"],
+            "read_write"
+        );
+        // Tailscale needs the administration helper, not configured here.
+        assert_eq!(
+            body["data"]["board"]["features"]["tailscale"]["availability"],
+            "unavailable"
+        );
+        for feature in [
+            "device_ssh",
+            "device_mdns",
+            "device_hid_only",
+            "device_mouse_jiggler",
+            "network_wifi",
+            "system_firewall",
+        ] {
+            assert_eq!(
+                body["data"]["board"]["features"][feature]["availability"], "read_write",
+                "{feature}"
+            );
+        }
+        assert_eq!(
+            body["data"]["board"]["features"]["network_tls"]["availability"],
+            "read_only"
+        );
+        for feature in ["dns", "ipv6"] {
+            assert_eq!(
+                body["data"]["network"][feature]["availability"],
+                "read_only"
+            );
+        }
 
         let disabled = app_with_options(ServerOptions {
             restricted_controls_enabled: true,
@@ -3505,8 +5308,27 @@ mod tests {
             .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
             .await
             .unwrap();
-        let text = serde_json::to_string(&json_body(response).await).unwrap();
-        assert!(!text.contains("read_write"));
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["hid"]["status"]["availability"], "unavailable");
+        assert_eq!(
+            body["data"]["power"]["status"]["availability"],
+            "unavailable"
+        );
+        for feature in [
+            "device_ssh",
+            "device_mdns",
+            "device_hid_only",
+            "device_mouse_jiggler",
+            "network_tls",
+            "network_wifi",
+            "system_firewall",
+            "tailscale",
+        ] {
+            assert_ne!(
+                body["data"]["board"]["features"][feature]["availability"], "read_write",
+                "{feature}"
+            );
+        }
     }
 
     #[cfg(feature = "restricted-control-surface")]

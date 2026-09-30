@@ -1,10 +1,14 @@
 //! Control surface: typed JSON lines over a Unix socket.
 
 use std::{
-    io::{BufRead, BufReader, Write},
-    os::unix::net::{UnixListener, UnixStream},
+    io::{BufRead, BufReader, Read, Write},
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt},
+        net::{UnixListener, UnixStream},
+    },
     path::Path,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use bli_kvm_fan_policy::{FanCommand, FanDutyPercent, FanObservation};
@@ -14,6 +18,39 @@ use thiserror::Error;
 
 /// Largest request line the daemon accepts.
 pub const MAX_REQUEST_BYTES: usize = 4 * 1024;
+const CONNECTION_BUDGET: Duration = Duration::from_secs(2);
+
+struct DeadlineStream {
+    stream: UnixStream,
+    deadline: Instant,
+}
+
+fn remaining_time(deadline: Instant) -> std::io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| std::io::ErrorKind::TimedOut.into())
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.stream
+            .set_read_timeout(Some(remaining_time(self.deadline)?))?;
+        self.stream.read(bytes)
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.stream
+            .set_write_timeout(Some(remaining_time(self.deadline)?))?;
+        self.stream.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        remaining_time(self.deadline)?;
+        self.stream.flush()
+    }
+}
 
 /// Display operations the control surface exposes. The daemon holds this as a
 /// trait object so the panel runtime stays behind the board configuration and
@@ -246,8 +283,19 @@ where
         self.supervisor.state()
     }
 
+    /// Latch the existing supervisor failsafe before board-specific worker drain.
+    pub fn prepare_shutdown(
+        &mut self,
+    ) -> Result<&mut A, bli_kvm_fan_supervisor::FanSupervisorError<A::Error>> {
+        self.supervisor.prepare_shutdown()?;
+        Ok(self.supervisor.actuator_mut())
+    }
+
     pub fn status(&self) -> StatusView {
-        let state = self.supervisor.state();
+        let mut state = self.supervisor.state();
+        if self.ensure_fan_runtime().is_err() {
+            state.status = bli_kvm_fan_supervisor::FanSupervisorStatus::ActuationUncertain;
+        }
         StatusView {
             fan_mode: match self.mode {
                 FanModeName::Auto => "auto",
@@ -387,6 +435,7 @@ where
     }
 
     pub fn set_mode(&mut self, mode: FanModeName) -> Result<(), BoarddError> {
+        self.ensure_fan_runtime()?;
         match (mode, self.mode) {
             (FanModeName::Auto, FanModeName::Auto) | (FanModeName::Manual, FanModeName::Manual) => {
                 return Ok(());
@@ -401,6 +450,7 @@ where
     }
 
     pub fn set_manual_duty(&mut self, percent: u8) -> Result<(), BoarddError> {
+        self.ensure_fan_runtime()?;
         if self.mode != FanModeName::Manual {
             return Err(BoarddError::InvalidState);
         }
@@ -433,6 +483,7 @@ where
 
     /// Automatic evaluation step; manual mode keeps the operator's duty.
     pub fn sample(&mut self, now_ms: u64) -> Result<(), BoarddError> {
+        self.ensure_fan_runtime()?;
         if self.mode != FanModeName::Auto {
             return Ok(());
         }
@@ -460,6 +511,14 @@ where
                 self.thermal_error = Some(error);
             }
         }
+    }
+
+    /// Read-only runtime check, including when manual mode skips policy sampling.
+    pub fn ensure_fan_runtime(&self) -> Result<(), BoarddError> {
+        self.supervisor
+            .actuator()
+            .check_runtime()
+            .map_err(|_| BoarddError::BackendUnavailable)
     }
 }
 
@@ -525,30 +584,93 @@ where
     A: FanActuator,
     A::Error: std::fmt::Debug,
 {
-    if socket.exists() {
-        std::fs::remove_file(socket)?;
-    }
-    let listener = UnixListener::bind(socket)?;
-    for connection in listener.incoming() {
-        let Ok(stream) = connection else { continue };
-        let _ = handle_connection(stream, state);
-    }
-    Ok(())
+    serve_until(socket, state, || false)
 }
 
-fn handle_connection<A>(
-    stream: UnixStream,
+/// Stop admission when requested. Active transport reads retain their finite
+/// connection deadline; already executing hardware operations must finish.
+pub fn serve_until<A>(
+    socket: &Path,
     state: &Arc<Mutex<BoarddState<A>>>,
+    stopping: impl Fn() -> bool,
 ) -> std::io::Result<()>
 where
     A: FanActuator,
     A::Error: std::fmt::Debug,
 {
-    let mut writer = stream.try_clone()?;
-    let mut reader = BufReader::new(stream);
+    // Never unlink a live listener or an unrelated node to claim its pathname.
+    let listener = UnixListener::bind(socket)?;
+    let owned = std::fs::symlink_metadata(socket)?;
+    listener.set_nonblocking(true)?;
+    while !stopping() {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                if !stopping() {
+                    let _ = handle_connection_until(
+                        stream,
+                        state,
+                        Instant::now() + CONNECTION_BUDGET,
+                        &stopping,
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    drop(listener);
+    match std::fs::symlink_metadata(socket) {
+        Ok(current)
+            if current.file_type().is_socket()
+                && current.dev() == owned.dev()
+                && current.ino() == owned.ino() =>
+        {
+            std::fs::remove_file(socket)?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        _ => return Err(std::io::Error::other("boardd socket ownership changed")),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn handle_connection_before<A>(
+    stream: UnixStream,
+    state: &Arc<Mutex<BoarddState<A>>>,
+    deadline: Instant,
+) -> std::io::Result<()>
+where
+    A: FanActuator,
+    A::Error: std::fmt::Debug,
+{
+    handle_connection_until(stream, state, deadline, &|| false)
+}
+
+fn handle_connection_until<A>(
+    stream: UnixStream,
+    state: &Arc<Mutex<BoarddState<A>>>,
+    deadline: Instant,
+    stopping: &impl Fn() -> bool,
+) -> std::io::Result<()>
+where
+    A: FanActuator,
+    A::Error: std::fmt::Debug,
+{
+    let mut writer = DeadlineStream {
+        stream: stream.try_clone()?,
+        deadline,
+    };
+    let mut reader = BufReader::new(DeadlineStream { stream, deadline });
     loop {
+        if stopping() {
+            return Ok(());
+        }
+        remaining_time(deadline)?;
         let mut line = String::new();
-        let read = reader.read_line(&mut line)?;
+        let read = read_bounded_request_line(&mut reader, &mut line)?;
         if read == 0 {
             return Ok(());
         }
@@ -560,7 +682,13 @@ where
         }
         let response = match serde_json::from_str::<Request>(line.trim_end()) {
             Ok(request) => match state.lock() {
-                Ok(mut state) => handle(&mut state, request),
+                Ok(mut state) => {
+                    if stopping() {
+                        return Ok(());
+                    }
+                    remaining_time(deadline)?;
+                    handle(&mut state, request)
+                }
                 Err(_) => Response::error(-5, "internal"),
             },
             Err(_) => Response::error(-1, "invalid_request"),
@@ -571,14 +699,205 @@ where
     }
 }
 
+fn read_bounded_request_line(
+    reader: &mut impl BufRead,
+    line: &mut String,
+) -> std::io::Result<usize> {
+    // Retain one overflow byte so the existing invalid_request response closes
+    // oversized connections. Never allocate the full untrusted line first.
+    reader.take((MAX_REQUEST_BYTES + 1) as u64).read_line(line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bli_kvm_fan_policy::{FanConfigError, FanPolicyConfig};
 
+    #[test]
+    fn listener_stops_and_removes_its_owned_socket() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("board.sock");
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            serve_until(&worker_path, &Arc::new(Mutex::new(state())), || {
+                worker_stop.load(Ordering::SeqCst)
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !path.exists() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        stop.store(true, Ordering::SeqCst);
+        worker.join().unwrap().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn occupied_socket_and_unrelated_file_are_not_unlinked_on_startup() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("occupied.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let inode = std::fs::symlink_metadata(&path).unwrap().ino();
+        let state = Arc::new(Mutex::new(state()));
+        assert!(serve_until(&path, &state, || true).is_err());
+        assert_eq!(std::fs::symlink_metadata(&path).unwrap().ino(), inode);
+        let file = root.path().join("unrelated");
+        std::fs::write(&file, "preserved").unwrap();
+        assert!(serve_until(&file, &state, || true).is_err());
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "preserved");
+    }
+
+    #[test]
+    fn stopped_connection_does_not_execute_queued_mutation() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .write_all(b"{\"request\":\"fan_mode_set\",\"mode\":\"manual\"}\n")
+            .unwrap();
+        let state = Arc::new(Mutex::new(state()));
+        handle_connection_until(
+            server,
+            &state,
+            Instant::now() + Duration::from_secs(1),
+            &|| true,
+        )
+        .unwrap();
+        assert_eq!(state.lock().unwrap().mode, FanModeName::Auto);
+    }
+
+    #[test]
+    fn shutdown_uses_the_existing_full_duty_supervisor_failsafe() {
+        let mut state = state();
+        let actuator = state.prepare_shutdown().unwrap();
+        assert_eq!(
+            actuator.applied.last(),
+            Some(&FanCommand::DutyPercent(FanDutyPercent::new(100).unwrap(),))
+        );
+        assert_eq!(state.status().fan_status, "failsafe_latched");
+    }
+
+    #[test]
+    fn idle_connection_cannot_hold_the_serial_handler_indefinitely() {
+        let (server, _client) = UnixStream::pair().unwrap();
+        let state = Arc::new(Mutex::new(state()));
+        let start = Instant::now();
+        assert!(
+            handle_connection_before(server, &state, start + Duration::from_millis(50)).is_err()
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn trickled_input_does_not_renew_the_connection_deadline() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let sender = std::thread::spawn(move || {
+            for _ in 0..30 {
+                if client.write_all(b" ").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let state = Arc::new(Mutex::new(state()));
+        let start = Instant::now();
+        assert!(
+            handle_connection_before(server, &state, start + Duration::from_millis(60)).is_err()
+        );
+        assert!(start.elapsed() < Duration::from_millis(250));
+        sender.join().unwrap();
+    }
+
+    #[test]
+    fn backpressured_writer_obeys_the_same_deadline() {
+        let (mut stream, _peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let mut full = false;
+        for _ in 0..1024 {
+            match stream.write(&[0; 8192]) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    full = true;
+                    break;
+                }
+                Err(error) => panic!("prefill failed: {error}"),
+            }
+        }
+        assert!(full);
+        stream.set_nonblocking(false).unwrap();
+        let start = Instant::now();
+        let mut writer = DeadlineStream {
+            stream,
+            deadline: start + Duration::from_millis(50),
+        };
+        assert!(writer.write_all(b"reply").is_err());
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn expired_request_waiting_for_state_cannot_change_fan_mode() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        client
+            .write_all(b"{\"request\":\"fan_mode_set\",\"mode\":\"manual\"}\n")
+            .unwrap();
+        let state = Arc::new(Mutex::new(state()));
+        let held = state.lock().unwrap();
+        let worker_state = state.clone();
+        let deadline = Instant::now() + Duration::from_millis(40);
+        let worker =
+            std::thread::spawn(move || handle_connection_before(server, &worker_state, deadline));
+        std::thread::sleep(Duration::from_millis(80));
+        drop(held);
+        assert!(worker.join().unwrap().is_err());
+        assert_eq!(state.lock().unwrap().mode, FanModeName::Auto);
+    }
+
+    #[test]
+    fn oversized_unterminated_request_is_bounded_before_allocation() {
+        let mut source =
+            std::io::BufReader::new(std::io::repeat(b'x').take((MAX_REQUEST_BYTES * 1024) as u64));
+        let mut line = String::new();
+        let count = read_bounded_request_line(&mut source, &mut line).unwrap();
+        assert_eq!(count, MAX_REQUEST_BYTES + 1);
+        assert_eq!(line.len(), MAX_REQUEST_BYTES + 1);
+    }
+
+    #[test]
+    fn bounded_lines_preserve_separate_requests_and_exact_size_boundary() {
+        let mut bytes = vec![b' '; MAX_REQUEST_BYTES - 1];
+        bytes.push(b'\n');
+        bytes.extend_from_slice(b"{\"request\":\"status\"}\n");
+        let mut source = std::io::Cursor::new(bytes);
+        let mut line = String::new();
+        assert_eq!(
+            read_bounded_request_line(&mut source, &mut line).unwrap(),
+            MAX_REQUEST_BYTES
+        );
+        line.clear();
+        read_bounded_request_line(&mut source, &mut line).unwrap();
+        assert!(matches!(
+            serde_json::from_str::<Request>(line.trim_end()).unwrap(),
+            Request::Status
+        ));
+        line.clear();
+        assert_eq!(
+            read_bounded_request_line(&mut source, &mut line).unwrap(),
+            0
+        );
+    }
+
     #[derive(Debug, Default)]
     struct MockActuator {
         applied: Vec<FanCommand>,
+        failed: bool,
     }
 
     impl FanActuator for MockActuator {
@@ -587,6 +906,14 @@ mod tests {
         fn apply(&mut self, command: FanCommand) -> Result<(), Self::Error> {
             self.applied.push(command);
             Ok(())
+        }
+
+        fn check_runtime(&self) -> Result<(), Self::Error> {
+            if self.failed {
+                Err(std::io::Error::other("fixture runtime failure"))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -623,6 +950,25 @@ mod tests {
             None,
             None,
         )
+    }
+
+    #[test]
+    fn runtime_failure_is_visible_without_new_commands_in_auto_and_manual_modes() {
+        for mode in [FanModeName::Auto, FanModeName::Manual] {
+            let mut state = state();
+            state.set_mode(mode).unwrap();
+            state.supervisor.actuator_mut().failed = true;
+            let before = state.supervisor.actuator().applied.len();
+            assert_eq!(state.status().fan_status, "actuation_uncertain");
+            assert!(state.ensure_fan_runtime().is_err());
+            assert!(state.sample(1_000).is_err());
+            assert!(
+                state.set_mode(mode).is_err(),
+                "same-mode mutation cannot report success"
+            );
+            assert!(state.set_manual_duty(50).is_err());
+            assert_eq!(state.supervisor.actuator().applied.len(), before);
+        }
     }
 
     #[derive(Default)]

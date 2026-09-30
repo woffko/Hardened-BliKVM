@@ -1,4 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import type { ReactNode } from 'react';
 import { Button, Input, Segmented } from 'antd';
 import { CheckIcon, PlusIcon, XIcon } from 'lucide-react';
@@ -15,6 +23,8 @@ type DNSState = {
   dhcp: string[];
   info: DNSInfo;
   config?: NetworkConfig;
+  /** Seconds until an unconfirmed addressing change reverts. */
+  pending?: number;
 };
 
 type DNSInfo = {
@@ -37,6 +47,7 @@ const maxServers = 6;
 type DNSProps = {
   showFooter?: boolean;
   disabled?: boolean;
+  readOnly?: boolean;
   onStatusChange?: (status: NetworkSectionStatus) => void;
 };
 
@@ -294,8 +305,10 @@ const EditableServerRow = ({
 };
 
 export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
-  ({ showFooter = true, disabled = false, onStatusChange }, ref) => {
+  ({ showFooter = true, disabled = false, readOnly = false, onStatusChange }, ref) => {
     const { t } = useTranslation();
+    const [pending, setPending] = useState(0);
+    const [isConfirming, setIsConfirming] = useState(false);
 
     const [mode, setMode] = useState<DNSMode>('dhcp');
     const [originalMode, setOriginalMode] = useState<DNSMode>('dhcp');
@@ -316,49 +329,79 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
     const [error, setError] = useState('');
     const [focusNewRow, setFocusNewRow] = useState(false);
 
+    const getDNS = useCallback(
+      async (showLoading = true) => {
+        if (showLoading) setIsLoading(true);
+
+        try {
+          const rsp = await api.getDNS();
+          if (rsp.code !== 0) {
+            setError(rsp.msg);
+            return;
+          }
+
+          const data = rsp.data as DNSState;
+          setPending(data.pending || 0);
+          const fetchedMode = data.mode || 'dhcp';
+          setMode(fetchedMode);
+          setOriginalMode(fetchedMode);
+
+          const fetchedServers = data.servers?.filter(Boolean) || [];
+          setServers(fetchedServers);
+          setOriginalServers(fetchedServers);
+          setDHCP(data.dhcp || []);
+          setInfo(data.info || {});
+
+          const config = data.config || {};
+          const fetchedAddress = normalizeIPv4(config.address || data.info?.address || '');
+          const fetchedSubnetMask = config.subnetMask || data.info?.subnetMask || '';
+          const fetchedGateway = config.gateway || data.info?.gateway || '';
+          setAddress(fetchedAddress);
+          setSubnetMask(fetchedSubnetMask);
+          setGateway(fetchedGateway);
+          setOriginalAddress(fetchedAddress);
+          setOriginalSubnetMask(fetchedSubnetMask);
+          setOriginalGateway(fetchedGateway);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : t('settings.network.dns.saveFailed'));
+        } finally {
+          if (showLoading) setIsLoading(false);
+        }
+      },
+      [t]
+    );
+
     useEffect(() => {
-      getDNS();
-    }, []);
+      void getDNS();
+    }, [getDNS]);
 
-    async function getDNS(showLoading = true) {
-      if (showLoading) setIsLoading(true);
+    // An addressing change reverts unless it is kept from the new address.
+    useEffect(() => {
+      if (pending <= 0) return;
+      const timer = window.setInterval(() => void getDNS(false), 5000);
+      return () => window.clearInterval(timer);
+    }, [getDNS, pending]);
 
+    async function confirmChange() {
+      if (isConfirming) return;
+      setIsConfirming(true);
       try {
-        const rsp = await api.getDNS();
+        const rsp = await api.confirmNetwork();
         if (rsp.code !== 0) {
-          setError(rsp.msg);
+          setError(rsp.msg || t('settings.network.dns.saveFailed'));
           return;
         }
-
-        const data = rsp.data as DNSState;
-        const fetchedMode = data.mode || 'dhcp';
-        setMode(fetchedMode);
-        setOriginalMode(fetchedMode);
-
-        const fetchedServers = data.servers?.filter(Boolean) || [];
-        setServers(fetchedServers);
-        setOriginalServers(fetchedServers);
-        setDHCP(data.dhcp || []);
-        setInfo(data.info || {});
-
-        const config = data.config || {};
-        const fetchedAddress = normalizeIPv4(config.address || data.info?.address || '');
-        const fetchedSubnetMask = config.subnetMask || data.info?.subnetMask || '';
-        const fetchedGateway = config.gateway || data.info?.gateway || '';
-        setAddress(fetchedAddress);
-        setSubnetMask(fetchedSubnetMask);
-        setGateway(fetchedGateway);
-        setOriginalAddress(fetchedAddress);
-        setOriginalSubnetMask(fetchedSubnetMask);
-        setOriginalGateway(fetchedGateway);
-      } catch (err) {
-        console.log(err);
+        setMessage(t('settings.network.dns.saved'));
+        await getDNS(false);
+      } catch {
+        setError(t('settings.network.dns.saveFailed'));
       } finally {
-        if (showLoading) setIsLoading(false);
+        setIsConfirming(false);
       }
     }
 
     async function save(): Promise<NetworkSectionResult> {
+      if (readOnly) return { changed: false, error: true };
       if (isSaving) return { changed: false };
       if (!hasChanges) return { changed: false };
 
@@ -385,7 +428,11 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
           isValidSubnetMask(normalizedSubnetMask) &&
           isValidIPv4(normalizedGateway) &&
           isSameSubnet(normalizedAddress, normalizedGateway, normalizedSubnetMask));
-      const redirectURL = mode === 'manual' ? buildRedirectURL(normalizedAddress) : '';
+      // Open the new address only when it changes: an operator who reached
+      // the device another way (a name, Tailscale) keeps that connection.
+      const addressChanged =
+        mode === 'manual' && normalizedAddress !== normalizeIPv4(info.address || '');
+      const redirectURL = addressChanged ? buildRedirectURL(normalizedAddress) : '';
       if (!hasValidManualNetwork) {
         setError(t('settings.network.dns.invalidNetwork'));
         return { changed: false, error: true };
@@ -393,7 +440,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
 
       setIsSaving(true);
       let redirectTimer: number | undefined;
-      if (mode === 'manual') {
+      if (addressChanged) {
         setMessage(t('settings.network.dns.redirecting'));
         redirectTimer = window.setTimeout(() => window.location.assign(redirectURL), 5000);
       }
@@ -427,7 +474,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
         setOriginalSubnetMask(normalizedSubnetMask);
         setOriginalGateway(normalizedGateway);
 
-        if (mode === 'manual') {
+        if (addressChanged) {
           if (redirectTimer) window.clearTimeout(redirectTimer);
           setMessage(t('settings.network.dns.redirecting'));
           window.setTimeout(() => window.location.assign(redirectURL), 800);
@@ -439,7 +486,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
         }
       } catch (err) {
         console.log(err);
-        if (mode === 'manual') {
+        if (addressChanged) {
           if (!redirectTimer) {
             setMessage(t('settings.network.dns.redirecting'));
             window.setTimeout(() => window.location.assign(redirectURL), 1200);
@@ -509,6 +556,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
         : t('settings.network.dns.manualServersDescription');
 
     const canApply =
+      !readOnly &&
       hasChanges &&
       !isLoading &&
       !isSaving &&
@@ -546,7 +594,21 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
     }, [onStatusChange, status]);
 
     return (
-      <div className="flex flex-col space-y-8">
+      <fieldset disabled={readOnly} className="flex min-w-0 flex-col space-y-8">
+        {pending > 0 && (
+          <div
+            role="alert"
+            className="flex flex-col gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span className="text-sm text-yellow-200">
+              {t('settings.network.dns.pendingConfirm', { seconds: pending })}
+            </span>
+            <Button type="primary" size="small" loading={isConfirming} onClick={confirmChange}>
+              {t('settings.network.dns.keep')}
+            </Button>
+          </div>
+        )}
+
         <div className="flex flex-col space-y-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col space-y-1">
@@ -558,7 +620,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
 
             <Segmented
               className="max-w-full overflow-x-auto"
-              disabled={disabled || isLoading || isSaving}
+              disabled={readOnly || disabled || isLoading || isSaving}
               value={mode}
               onChange={(val) => {
                 setMode(val as DNSMode);
@@ -710,6 +772,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
               icon={message ? <CheckIcon size={14} /> : undefined}
               loading={isSaving}
               disabled={
+                readOnly ||
                 isLoading ||
                 (!hasChanges && !hasInvalidServer && !hasInvalidNetwork) ||
                 hasInvalidServer ||
@@ -722,7 +785,7 @@ export const DNS = forwardRef<NetworkSectionHandle, DNSProps>(
             </Button>
           </div>
         )}
-      </div>
+      </fieldset>
     );
   }
 );

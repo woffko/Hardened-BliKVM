@@ -1987,7 +1987,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         ).read_text()
         # The defaults are reviewed values and the owner's file is processed
         # after them, so an accepted request wins.
-        self.assertIn("Environment=BLI_KVM_USTREAMER_FPS=40", unit)
+        self.assertIn("Environment=BLI_KVM_USTREAMER_FPS=30", unit)
         self.assertIn("Environment=BLI_KVM_USTREAMER_QUALITY=80", unit)
         self.assertIn(
             "EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env", unit
@@ -1995,7 +1995,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn("--desired-fps=${BLI_KVM_USTREAMER_FPS}", unit)
         self.assertIn("--quality=${BLI_KVM_USTREAMER_QUALITY}", unit)
         self.assertLess(
-            unit.index("Environment=BLI_KVM_USTREAMER_FPS=40"),
+            unit.index("Environment=BLI_KVM_USTREAMER_FPS=30"),
             unit.index("EnvironmentFile=-/var/lib/hardened-blikvm-video/ustreamer.env"),
         )
         self.assertLess(
@@ -2041,7 +2041,8 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertIn(
             "ReadWritePaths=/sys/kernel/config/usb_gadget /run/hardened-blikvm-gadget "
             "/var/lib/hardened-blikvm-gadget /var/lib/hardened-blikvm-system-actions "
-            "/var/lib/hardened-blikvm-video /etc/resolv.conf /etc/systemd/resolved.conf "
+            "/var/lib/hardened-blikvm-video /etc/resolv.conf /etc/hosts "
+            "/etc/systemd/resolved.conf "
             "/etc/NetworkManager/system-connections /etc/hardened-blikvm",
             unit,
         )
@@ -2140,10 +2141,106 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertNotIn("hardened-blikvm-system-action-accept", builder)
         self.assertNotIn("hardened-blikvm-system-actions.conf", builder)
 
+    def test_native_application_units_have_no_start_hooks(self) -> None:
+        # The update supervisor starts these units itself and refuses any with
+        # a start hook or a non-simple type (composition_systemd.rs); a hook
+        # here would stop native boot on the next start.
+        for name in (
+            "board-owner",
+            "board-video-proxy",
+            "boardd",
+            "server-current",
+            "server-candidate",
+        ):
+            unit = ROOT / f"packaging/systemd/native/hardened-blikvm-{name}.service"
+            text = unit.read_text()
+            for hook in ("ExecCondition=", "ExecStartPre=", "ExecStartPost="):
+                self.assertNotIn(f"\n{hook}", text, f"{unit.name}: {hook}")
+            self.assertIn("\nType=simple\n", text, unit.name)
+
+    def test_firewall_state_directory_comes_from_tmpfiles(self) -> None:
+        owner = (ROOT / "packaging/systemd/hardened-blikvm-board-owner.service").read_text()
+        self.assertIn("EnvironmentFile=-/etc/hardened-blikvm/firewall.env", owner)
+        self.assertIn("-/run/hardened-blikvm-firewall", owner)
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-firewall.conf").read_text()
+        self.assertIn("d /run/hardened-blikvm-firewall 0700 root root - -", tmpfiles)
+
+    def test_hid_ledger_lives_on_tmpfs_from_tmpfiles(self) -> None:
+        for path in (
+            "packaging/systemd/hardened-blikvm-board-owner.service",
+            "packaging/systemd/native/hardened-blikvm-board-owner.service",
+        ):
+            owner = (ROOT / path).read_text()
+            self.assertIn(
+                "Environment=BLI_KVM_GADGET_HID_LEDGER=/run/hardened-blikvm-hid/hid-ledger.json",
+                owner,
+                path,
+            )
+            self.assertIn("-/run/hardened-blikvm-hid", owner, path)
+        tmpfiles = (ROOT / "packaging/tmpfiles.d/hardened-blikvm-hid-ledger.conf").read_text()
+        self.assertIn("d /run/hardened-blikvm-hid 0700 root root - -", tmpfiles)
+
+    def test_the_server_units_have_a_memory_limit(self) -> None:
+        for path in (
+            "packaging/systemd/hardened-blikvm-server.service",
+            "packaging/systemd/hardened-blikvm-server-candidate.service",
+            "packaging/systemd/hardened-blikvm-server-current.service",
+            "packaging/systemd/native/hardened-blikvm-server-candidate.service",
+            "packaging/systemd/native/hardened-blikvm-server-current.service",
+        ):
+            unit = (ROOT / path).read_text()
+            self.assertIn("\nMemoryMax=192M\n", unit, path)
+
+    def test_nginx_sends_security_headers_that_no_location_drops(self) -> None:
+        config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
+        for header in ("Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy"):
+            self.assertRegex(config, rf'add_header {header} "[^"]+" always;', header)
+        found = re.search(r'add_header Content-Security-Policy "([^"]+)"', config)
+        assert found is not None
+        policy = found.group(1)
+        for directive in ("default-src 'self'", "script-src 'self'", "frame-ancestors 'none'", "object-src 'none'"):
+            self.assertIn(directive, policy)
+        self.assertNotIn("unsafe-eval", policy)
+        # add_header in a location replaces every server-level header there.
+        server_end = config.index("location = /api/application-update/upload")
+        self.assertNotIn("add_header", config[server_end:])
+
     def test_nginx_terminates_tls_to_one_fixed_loopback_upstream(self) -> None:
         config = (ROOT / "packaging/nginx/hardened-blikvm.conf").read_text()
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
-        self.assertEqual(config.count("proxy_pass http://127.0.0.1:18080;"), 1)
+        destinations = re.findall(r"^\s*proxy_pass\s+([^;]+);", config, re.MULTILINE)
+        self.assertEqual(
+            sorted(destinations),
+            ["http://127.0.0.1:18080"] * 4 + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
+        )
+        locations = dict(re.findall(r"location\s+([^{}]+?)\s*\{([^{}]*)\}", config))
+        self.assertEqual(
+            set(locations),
+            {
+                "/",
+                "= /api/application-update/upload",
+                "= /api/system-update/upload",
+                "= /api/download/file",
+                "= /api/stream/mjpeg",
+                "^~ /internal/",
+            },
+        )
+        stream = locations["= /api/stream/mjpeg"]
+        self.assertIn("proxy_buffering off;", stream)
+        self.assertIn("proxy_set_header Host $hardened_blikvm_forwarded_host;", stream)
+        self.assertEqual(locations["^~ /internal/"].strip(), "return 404;")
+        self.assertIn("client_max_body_size 16m;", config)
+        for route, limit in [
+            ("= /api/application-update/upload", "128m"),
+            ("= /api/system-update/upload", "8g"),
+            ("= /api/download/file", "65537m"),
+        ]:
+            block = locations[route]
+            self.assertIn(f"client_max_body_size {limit};", block)
+            self.assertIn("proxy_pass http://127.0.0.1:18080;", block)
+            self.assertIn("proxy_request_buffering off;", block)
+            self.assertIn("proxy_buffering off;", block)
+            self.assertIn("proxy_http_version 1.1;", block)
         self.assertIn(
             "proxy_set_header Host $hardened_blikvm_forwarded_host;", config
         )

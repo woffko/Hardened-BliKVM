@@ -53,6 +53,38 @@ fn env_u64(key: &str) -> Result<u64, Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // Bind the pinned HID functions and exit, before the owner unit starts:
+    // systemd resolves the owner's DeviceAllow=/dev/hidgN paths when the unit
+    // starts, so nodes created by the owner itself stay denied after a cold
+    // boot. The bind is the owner's own idempotent startup bind.
+    #[cfg(all(feature = "gadget-media-profile", feature = "gadget-hid-profile"))]
+    if std::env::args().nth(1).as_deref() == Some("--prepare-hid-gadget") {
+        let media = bli_kvm_control_broker::gadget_media_profile_from_values(
+            true,
+            std::env::var("BLI_KVM_GADGET_MEDIA_JOURNAL")
+                .ok()
+                .as_deref(),
+            std::env::var("BLI_KVM_GADGET_MEDIA_CATALOG")
+                .ok()
+                .as_deref(),
+            std::env::var("BLI_KVM_GADGET_CONFIGFS").ok().as_deref(),
+            std::env::var("BLI_KVM_GADGET_IMAGES").ok().as_deref(),
+            std::env::var("BLI_KVM_GADGET_UDC").ok().as_deref(),
+            std::env::var("BLI_KVM_GADGET_SERIAL_FILE").ok().as_deref(),
+        )?
+        .ok_or("the HID gadget configuration is incomplete")?;
+        let serial = bli_kvm_control_broker::gadget_serial_from_file(&media.serial_file)?;
+        let gadget = bli_kvm_control_broker::gadget_media_config(&media, serial);
+        let bound = bli_kvm_media_transition::GadgetMediaExecutor::new(gadget)
+            .ensure_hid_gadget()
+            .map_err(|error| format!("HID gadget bind failed: {error:?}"))?;
+        eprintln!(
+            "gadget: pinned HID functions {}",
+            if bound { "bound" } else { "already present" }
+        );
+        return Ok(());
+    }
+
     #[cfg(feature = "chardev-atx-profile")]
     {
         // The board profile serves the ATX lines itself, so the ATX-only entry

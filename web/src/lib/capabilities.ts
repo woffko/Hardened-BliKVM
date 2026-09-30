@@ -1,6 +1,6 @@
 import type { CapabilityManifest, FeatureStatus, VideoTransport } from '@/types/capabilities.ts';
 
-export type UiVideoMode = 'mjpeg' | 'direct' | 'h264';
+export type UiVideoMode = 'mjpeg' | 'direct' | 'h264' | 'vp8';
 export type CapabilityMenuItem =
   | 'image'
   | 'download'
@@ -68,6 +68,14 @@ function boardFeatureAvailable(manifest: CapabilityManifest | null, name: string
   return feature ? isAvailable(feature) : false;
 }
 
+export function supportsBoardFeature(manifest: CapabilityManifest | null, name: string) {
+  return boardFeatureAvailable(manifest, name);
+}
+
+export function boardFeatureIsWritable(manifest: CapabilityManifest | null, name: string) {
+  return boardFeatureWritable(manifest, name);
+}
+
 const SYSTEM_SECTION_FEATURE: Record<CapabilitySystemSection, string> = {
   network: 'system_network',
   time: 'system_time',
@@ -79,6 +87,7 @@ export function supportsSystemSection(
   manifest: CapabilityManifest | null,
   section: CapabilitySystemSection
 ): boolean {
+  if (section === 'network') return Boolean(manifest && isAvailable(manifest.network.status));
   return boardFeatureAvailable(manifest, SYSTEM_SECTION_FEATURE[section]);
 }
 
@@ -86,6 +95,7 @@ export function systemSectionWritable(
   manifest: CapabilityManifest | null,
   section: CapabilitySystemSection
 ): boolean {
+  if (section === 'network') return Boolean(manifest && isWritable(manifest.network.status));
   return boardFeatureWritable(manifest, SYSTEM_SECTION_FEATURE[section]);
 }
 
@@ -107,7 +117,12 @@ export function supportsMenuItem(
     case 'script':
       return boardFeatureWritable(manifest, 'scripts');
     case 'wol':
-      return boardFeatureWritable(manifest, 'wake_on_lan');
+      // The server advertises Wake-on-LAN as a network write.
+      return Boolean(
+        manifest &&
+        ((manifest.network?.wol !== undefined && isWritable(manifest.network.wol)) ||
+          boardFeatureWritable(manifest, 'wake_on_lan'))
+      );
     case 'picoclaw':
       return boardFeatureWritable(manifest, 'picoclaw');
     case 'fullscreen':
@@ -127,11 +142,11 @@ export function supportsSettingsTab(
     case 'account':
       return true;
     case 'device':
-      return boardFeatureWritable(manifest, 'device_settings');
+      return boardFeatureAvailable(manifest, 'device_settings');
     case 'system':
       return boardFeatureAvailable(manifest, 'system_settings');
     case 'tailscale':
-      return boardFeatureWritable(manifest, 'tailscale');
+      return boardFeatureAvailable(manifest, 'tailscale');
     case 'update':
       return Boolean(
         manifest &&
@@ -156,7 +171,14 @@ export function supportedUiVideoModes(manifest: CapabilityManifest | null): UiVi
   const modes: UiVideoMode[] = [];
   if (supportsVideoTransport(manifest, 'mjpeg')) modes.push('mjpeg');
   if (supportsVideoTransport(manifest, 'h264_direct')) modes.push('direct');
-  if (supportsVideoTransport(manifest, 'web_rtc_native')) modes.push('h264');
+  // H.264 over WebRTC: the reference's native path, or x264 through the
+  // board's Janus gateway.
+  if (
+    supportsVideoTransport(manifest, 'web_rtc_native') ||
+    supportsVideoTransport(manifest, 'web_rtc_janus_h264')
+  )
+    modes.push('h264');
+  if (supportsVideoTransport(manifest, 'web_rtc_janus')) modes.push('vp8');
   return modes.length ? modes : ['mjpeg'];
 }
 

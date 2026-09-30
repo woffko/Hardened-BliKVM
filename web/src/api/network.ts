@@ -19,8 +19,11 @@ export type IPv6Config = {
 
 // wake on lan
 export function wol(mac: string) {
+  // Pressing Ok in the Wake-on-LAN dialog is the explicit confirmation the
+  // hardened network write requires.
   const data = {
-    mac
+    mac,
+    confirm: true
   };
   return http.post('/api/network/wol', data);
 }
@@ -73,18 +76,82 @@ export function verifyApLogin(apPassword: string) {
   );
 }
 
-// connect wifi
-export function connectWifi(ssid: string, password: string) {
-  const data = {
-    ssid,
-    password
-  };
-  return http.post('/api/network/wifi/connect', data);
+export type WifiSecurity = 'open' | 'wpa2' | 'wpa3' | 'wpa2_wpa3' | 'wep' | 'enterprise' | 'other';
+
+export type WifiStatus = {
+  available: boolean;
+  connected: boolean;
+  ssid: string;
+  interface?: string;
+  state: string;
+  radio: boolean;
+  signal: number | null;
+  security: WifiSecurity | null;
+  address: string | null;
+  gateway: string | null;
+  dns: string[];
+  ipv6: string | null;
+  hwAddress: string | null;
+  channel: number | null;
+  rateMbps: number | null;
+  wifiPreferred: boolean;
+  revertInSeconds: number;
+};
+
+export type WifiNetwork = {
+  ssid: string;
+  signal: number;
+  security: WifiSecurity;
+  channel: number;
+  inUse: boolean;
+};
+
+export type WifiProfile = {
+  id: string;
+  ssid: string;
+  autoconnect: boolean;
+  active: boolean;
+};
+
+export type WifiProfileAction = 'connect' | 'forget' | 'autoconnect_on' | 'autoconnect_off';
+
+// the networks in range; a rescan asks the board for a new scan first
+export function scanWifi(rescan: boolean) {
+  return rescan ? http.post('/api/network/wifi/scan') : http.get('/api/network/wifi/scan');
+}
+
+// the saved networks
+export function getSavedWifi() {
+  return http.get('/api/network/wifi/saved');
+}
+
+// act on a saved network
+export function wifiProfile(id: string, action: WifiProfileAction) {
+  return http.post('/api/network/wifi/saved', { id, action });
+}
+
+// connect wifi; an association can take up to 30 seconds
+export function connectWifi(ssid: string, password: string, hidden = false) {
+  return http.post('/api/network/wifi/connect', { ssid, password, hidden });
 }
 
 // disconnect wifi
 export function disconnectWifi() {
   return http.post('/api/network/wifi/disconnect');
+}
+
+// make wifi (or ethernet) the main connection; reverted unless confirmed
+export function setWifiPreferred(enabled: boolean) {
+  return http.post('/api/network/wifi/preferred', { enabled });
+}
+
+export function confirmWifiPreferred() {
+  return http.post('/api/network/wifi/preferred/confirm');
+}
+
+// switch the wifi radio
+export function setWifiRadio(enabled: boolean) {
+  return http.post('/api/network/wifi/radio', { enabled });
 }
 
 export function getDNS() {
@@ -93,6 +160,11 @@ export function getDNS() {
 
 export function setDNS(mode: DNSMode, servers: string[], config?: NetworkConfig) {
   return http.post('/api/network/dns', { mode, servers, ...(config || {}) });
+}
+
+// keep an addressing change that would otherwise revert
+export function confirmNetwork() {
+  return http.post('/api/network/dns/confirm');
 }
 
 export function getIPv6() {

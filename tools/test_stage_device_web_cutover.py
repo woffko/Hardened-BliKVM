@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -48,15 +49,31 @@ class StageDeviceWebCutoverTests(unittest.TestCase):
             self.baseline(), config, self.paths().validation_root
         )
         unit = cutover.render_unit(self.baseline())
-        self.assertEqual(config.count("proxy_pass http://127.0.0.1:18080;"), 1)
+        for rendered in (config, validation):
+            self.assertEqual(
+                sorted(re.findall(r"^\s*proxy_pass\s+([^;]+);", rendered, re.MULTILINE)),
+                ["http://127.0.0.1:18080"] * 4
+                + ["http://unix:/run/hardened-blikvm-stream/mjpeg.sock:"],
+            )
+            self.assertIn("location = /api/stream/mjpeg {", rendered)
+            self.assertIn("location = /api/application-update/upload {", rendered)
+            self.assertIn("location = /api/download/file {", rendered)
+            self.assertIn("location = /api/system-update/upload {", rendered)
+            self.assertIn("client_max_body_size 8g;", rendered)
+            self.assertIn("client_max_body_size 128m;", rendered)
+            self.assertIn("client_max_body_size 65537m;", rendered)
+            self.assertEqual(rendered.count("proxy_request_buffering off;"), 3)
         self.assertIn("listen 80 default_server;", config)
         self.assertIn("listen 443 ssl default_server;", config)
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", config)
         self.assertIn("/etc/kvmd/nginx/ssl/server.key", config)
         self.assertIn("add_header Permissions-Policy", config)
-        self.assertNotIn("add_header X-Content-Type-Options", config)
+        # The review of 2026-09-29 (R22) added these; framing is refused by the
+        # policy's frame-ancestors, so no X-Frame-Options.
+        self.assertIn("add_header Content-Security-Policy", config)
+        self.assertIn("add_header X-Content-Type-Options", config)
+        self.assertIn("add_header Referrer-Policy", config)
         self.assertNotIn("add_header X-Frame-Options", config)
-        self.assertNotIn("add_header Referrer-Policy", config)
         self.assertIn("/etc/kvmd/nginx/ssl/server.key", validation)
         self.assertNotIn("/run/credentials/", validation)
         self.assertIn(self.paths().validation_root, validation)

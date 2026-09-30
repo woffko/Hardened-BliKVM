@@ -7,10 +7,12 @@ import { getCsrfToken, setCsrfToken } from '@/lib/cookie.ts';
 
 const DEFAULT_DURATION = '900';
 
-export const SessionLock = () => {
+export const SessionLock = ({ readOnly = false }: { readOnly?: boolean }) => {
   const { t } = useTranslation();
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
   const [duration, setDuration] = useState(DEFAULT_DURATION);
 
   const options = [
@@ -30,13 +32,14 @@ export const SessionLock = () => {
     api
       .getSessionLock()
       .then((rsp) => {
-        const value = rsp.data?.duration?.toString();
-        if (value) {
-          setDuration(value);
-        }
+        const value = rsp.data?.duration;
+        if (rsp.code !== 0 || !Number.isInteger(value) || value < 0 || value > 86400)
+          throw new Error(rsp.msg || 'Failed to read session lock duration');
+        setDuration(String(value));
+        setLoaded(true);
       })
       .catch((err) => {
-        console.log(err);
+        setError(err instanceof Error ? err.message : 'Failed to read session lock duration');
       })
       .finally(() => {
         setIsLoading(false);
@@ -44,16 +47,16 @@ export const SessionLock = () => {
   }
 
   function update(value: string) {
-    if (isLoading) return;
+    if (readOnly || isLoading || !loaded || !options.some((option) => option.value === value))
+      return;
     setIsLoading(true);
+    setError('');
 
     api
       .setSessionLock(parseInt(value))
       .then((rsp) => {
-        if (rsp.code !== 0) {
-          console.log(rsp.msg);
-          return;
-        }
+        if (rsp.code !== 0 || rsp.data?.duration !== Number(value))
+          throw new Error(rsp.msg || 'Session lock read-back did not match the requested duration');
 
         setDuration(value);
         const expiresAt = rsp.data?.expiresAt;
@@ -63,7 +66,7 @@ export const SessionLock = () => {
         }
       })
       .catch((err) => {
-        console.log(err);
+        setError(err instanceof Error ? err.message : 'Failed to update session lock duration');
       })
       .finally(() => {
         setIsLoading(false);
@@ -77,9 +80,16 @@ export const SessionLock = () => {
         <span className="text-xs text-neutral-500">
           {t('settings.device.sessionLock.description')}
         </span>
+        {error && (
+          <span role="alert" className="text-xs text-red-400">
+            {error}
+          </span>
+        )}
       </div>
 
       <Select
+        aria-label="Session lock duration"
+        disabled={readOnly || !loaded || isLoading}
         style={{ width: 150 }}
         value={duration}
         options={options}

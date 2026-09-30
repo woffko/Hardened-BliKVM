@@ -35,6 +35,14 @@ def writer_sources() -> dict[str, str]:
 
 
 class Phase8AcceptanceManifestTests(unittest.TestCase):
+    def test_every_device_item_has_an_explicit_success_marker(self) -> None:
+        for spec in report.PHASES:
+            for item in spec["device"]:
+                self.assertTrue(
+                    item.get("marker"),
+                    f"{item['name']} has no explicit success marker",
+                )
+
     def test_every_pinned_probe_has_a_writer_tool(self) -> None:
         sources = writer_sources()
         for spec in report.PHASES:

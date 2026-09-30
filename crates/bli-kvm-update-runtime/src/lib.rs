@@ -1,21 +1,40 @@
+pub mod board_readiness;
 mod challenge;
+pub mod composition;
+pub mod composition_systemd;
 mod kernel;
+pub mod native_exec_client;
+pub mod native_exec_server;
+pub mod native_execution;
+pub mod native_identity;
+pub mod native_ipc;
+pub mod native_selection;
+pub mod owner_readiness;
+pub mod process_identity;
+pub mod proxy_readiness;
+pub mod slot_archive;
 mod supervisor;
+pub mod web_probe;
 
 use std::io;
 
 pub use challenge::{
-    CONFIRMED_APPLY_FILE_NAME, ConfirmedApplyRequest, HealthChallengeStatus, HealthChallengeStore,
-    IssuedHealthChallenge, MAX_APPLY_REQUEST_BYTES, VerifiedHealthResponse,
+    CONFIRMED_APPLY_FILE_NAME, ChallengePresence, ConfirmedApplyRequest, HealthChallengeStatus,
+    HealthChallengeStore, IssuedHealthChallenge, MAX_APPLY_REQUEST_BYTES, VerifiedHealthResponse,
 };
 pub use kernel::LinuxKernelEvidence;
 pub use supervisor::{
-    ChallengeReconciliation, SupervisorActivation, SupervisorRecovery, UpdateSupervisor,
+    ChallengeReconciliation, NativeBootOutcome, SupervisorActivation, SupervisorAdmission,
+    SupervisorRecovery, UpdateSupervisor,
 };
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum UpdateRuntimeError {
+    #[error("native application transition failed: {0}")]
+    Composition(#[from] composition::CompositionError),
+    #[error("verified slot lacks the complete native application payload")]
+    IncompleteNativePayload,
     #[error("activation confirmation refers to an outdated journal generation")]
     StaleActivationGeneration,
     #[error("activation target is already selected")]
@@ -32,6 +51,8 @@ pub enum UpdateRuntimeError {
     InvalidRuntimeRoot,
     #[error("health runtime root is unsafe")]
     UnsafeRuntimeRoot,
+    #[error("health runtime is owned by another supervisor")]
+    RuntimeBusy,
     #[error("health challenge state is incomplete, unsafe, or invalid")]
     InvalidChallengeState,
     #[error("a health challenge already exists")]

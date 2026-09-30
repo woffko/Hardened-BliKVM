@@ -138,7 +138,10 @@ export const Paste = () => {
     const textToSend = langue === 'ru' ? translateRuToEnWithPunctuation(inputValue) : inputValue;
 
     if (restricted) {
-      for (const step of textToKeyReports(textToSend)) {
+      // Key positions come from the text itself; the selected language only
+      // sets the layout for punctuation before the first letter.
+      const layout = { script: langue === 'ru' ? ('cyrillic' as const) : ('latin' as const) };
+      for (const step of textToKeyReports(inputValue, layout)) {
         reportHid({
           mode: 'keyboard',
           data: [step.modifier, 0, step.usage, 0, 0, 0, 0, 0]

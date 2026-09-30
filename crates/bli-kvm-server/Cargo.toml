@@ -18,6 +18,7 @@ bli-kvm-broker-client = { path = "../bli-kvm-broker-client" }
 bli-kvm-control-client = { path = "../bli-kvm-control-client" }
 bli-kvm-control-focus = { path = "../bli-kvm-control-focus" }
 bli-kvm-control-protocol = { path = "../bli-kvm-control-protocol" }
+bli-kvm-admin-helper = { path = "../bli-kvm-admin-helper" }
 bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-media-catalog = { path = "../bli-kvm-media-catalog" }
 bli-kvm-platform-bli = { path = "../bli-kvm-platform-bli" }
@@ -25,17 +26,20 @@ bli-kvm-update-client = { path = "../bli-kvm-update-client" }
 bli-kvm-update-protocol = { path = "../bli-kvm-update-protocol" }
 bli-kvm-video-client = { path = "../bli-kvm-video-client" }
 bytes.workspace = true
+futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 http-body.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+libc.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tokio-tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
 tower-http.workspace = true
+http-body-util.workspace = true
 
 [dev-dependencies]
 bli-kvm-broker-protocol = { path = "../bli-kvm-broker-protocol" }
-http-body-util.workspace = true
 tower.workspace = true

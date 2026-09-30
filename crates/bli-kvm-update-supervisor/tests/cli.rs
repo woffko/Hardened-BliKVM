@@ -298,6 +298,43 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     assert!(initialized.status.success(), "{:?}", initialized.stderr);
     assert_eq!(json_output(&initialized)["result"], "initialized");
 
+    // Inspection must work without opening or initializing the credential root.
+    fs::remove_dir(&runtime).unwrap();
+    let journal_path = state.join("application-state.json");
+    let initial_journal = fs::read(&journal_path).unwrap();
+    let inspected = command(binary, &config, &["inspect-recovery"])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{:?}", inspected.stderr);
+    assert_eq!(json_output(&inspected)["selection"], "confirmed");
+    assert_eq!(json_output(&inspected)["schemaVersion"], 1);
+    assert_eq!(json_output(&inspected)["confirmedSlotId"], slot1);
+    assert!(!runtime.exists());
+    assert_eq!(fs::read(&journal_path).unwrap(), initial_journal);
+    fs::create_dir(&runtime).unwrap();
+    fs::set_permissions(&runtime, Permissions::from_mode(0o700)).unwrap();
+
+    // A different process holding only the runtime lock must fence activation,
+    // even though this worker can acquire its manager's slot/state locks.
+    let runtime_owner = bli_kvm_update_runtime::HealthChallengeStore::open(&runtime).unwrap();
+    let selected_before = fs::read_link(slots.join("current")).unwrap();
+    let busy = command(binary, &config, &["activate", &slot2])
+        .output()
+        .unwrap();
+    assert_eq!(busy.status.code(), Some(66));
+    assert!(busy.stdout.is_empty());
+    assert_eq!(fs::read(&journal_path).unwrap(), initial_journal);
+    assert_eq!(
+        fs::read_link(slots.join("current")).unwrap(),
+        selected_before
+    );
+    assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
+    let inspected = command(binary, &config, &["inspect-recovery"])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{:?}", inspected.stderr);
+    drop(runtime_owner);
+
     let activated = command(binary, &config, &["activate", &slot2])
         .output()
         .unwrap();
@@ -308,6 +345,40 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     let token_path = root.path().join("runtime/health-token");
     let token = fs::read(&token_path).unwrap();
     assert_eq!(token.len(), 32);
+
+    // A damaged candidate must not prevent inspection of the confirmed anchor.
+    let candidate_binary = slots.join(&slot2).join("bin/bli-kvm-server");
+    let candidate_bytes = fs::read(&candidate_binary).unwrap();
+    let candidate_mode = fs::metadata(&candidate_binary).unwrap().permissions();
+    fs::set_permissions(&candidate_binary, Permissions::from_mode(0o700)).unwrap();
+    fs::write(&candidate_binary, b"damaged").unwrap();
+    fs::set_permissions(&candidate_binary, candidate_mode.clone()).unwrap();
+    let pending_journal = fs::read(&journal_path).unwrap();
+    let challenge_path = runtime.join("health-challenge.json");
+    let challenge = fs::read(&challenge_path).unwrap();
+    let selected = fs::read_link(slots.join("current")).unwrap();
+    let inspected = command(binary, &config, &["inspect-recovery"])
+        .output()
+        .unwrap();
+    assert!(inspected.status.success(), "{:?}", inspected.stderr);
+    let receipt = json_output(&inspected);
+    assert_eq!(receipt["selection"], "pending_target");
+    assert_eq!(receipt["pending"]["targetSlotId"], slot2);
+    assert_eq!(receipt["confirmedSlotId"], slot1);
+    assert!(
+        !command(binary, &config, &["status"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(&journal_path).unwrap(), pending_journal);
+    assert_eq!(fs::read(&token_path).unwrap(), token);
+    assert_eq!(fs::read(&challenge_path).unwrap(), challenge);
+    assert_eq!(fs::read_link(slots.join("current")).unwrap(), selected);
+    fs::set_permissions(&candidate_binary, Permissions::from_mode(0o700)).unwrap();
+    fs::write(&candidate_binary, candidate_bytes).unwrap();
+    fs::set_permissions(&candidate_binary, candidate_mode).unwrap();
 
     let mut confirm = command(binary, &config, &["confirm-stdin"]);
     confirm.stdin(Stdio::piped());
@@ -367,6 +438,70 @@ fn full_cli_flow_keeps_health_token_out_of_arguments_environment_and_receipts() 
     assert_eq!(collected["result"], "completed");
     assert_eq!(collected["deletedSlotIds"], json!([slot3]));
     assert!(!slots.join(slot3).exists());
+}
+
+#[test]
+fn native_migration_is_explicit_and_boot_without_the_helper_changes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let slots = create_private_directory(root.path(), "slots");
+    let state = create_private_directory(root.path(), "state");
+    let runtime = create_private_directory(root.path(), "runtime");
+    let sources = create_private_directory(root.path(), "sources");
+    let signing = SigningKey::from_bytes(&[58; 32]);
+    let mut native = payload(1);
+    native.insert("libexec/bli-kvm-boardd", (0o755, b"boardd-1".to_vec()));
+    let source = sources.join("native-1.tar");
+    fs::write(&source, bundle(&signing, &manifest(1, &native), &native)).unwrap();
+    fs::set_permissions(&source, Permissions::from_mode(0o600)).unwrap();
+    let config = root.path().join("supervisor.json");
+    fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "schemaVersion": 1,
+            "product": APPLICATION_PRODUCT,
+            "target": APPLICATION_TARGET,
+            "keyId": KEY_ID,
+            "publicKeyHex": hex(&signing.verifying_key().to_bytes()),
+            "slotRoot": slots,
+            "stateRoot": state,
+            "runtimeRoot": runtime,
+            "systemSequence": 1,
+            "healthTimeoutMs": 60_000,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&config, Permissions::from_mode(0o600)).unwrap();
+    let binary = env!("CARGO_BIN_EXE_bli-kvm-update-supervisor");
+    let run = |arguments: &[&str]| command(binary, &config, arguments).output().unwrap();
+
+    let staged = run(&["stage", source.to_str().unwrap()]);
+    assert!(staged.status.success(), "{:?}", staged.stderr);
+    let slot = json_output(&staged)["slotId"].as_str().unwrap().to_string();
+    assert!(run(&["initialize", &slot]).status.success());
+    let journal_path = state.join("application-state.json");
+    let schema = || json_output(&run(&["inspect-recovery"]))["schemaVersion"].clone();
+    assert_eq!(schema(), 1);
+
+    // Migration is a separate explicit command and starts no service.
+    let migrated = run(&["migrate-native-idle"]);
+    assert!(migrated.status.success(), "{:?}", migrated.stderr);
+    assert_eq!(json_output(&migrated)["result"], "native_idle");
+    assert_eq!(schema(), 3);
+    let migrated_journal = fs::read(&journal_path).unwrap();
+    let replay = run(&["migrate-native-idle"]);
+    assert!(replay.status.success(), "{:?}", replay.stderr);
+    assert_eq!(fs::read(&journal_path).unwrap(), migrated_journal);
+
+    // Without the root helper socket, native boot fails before any mutation.
+    let selected = fs::read_link(slots.join("current")).unwrap();
+    let booted = run(&["boot-native"]);
+    assert!(!booted.status.success());
+    assert_eq!(booted.status.code(), Some(50));
+    assert!(booted.stdout.is_empty());
+    assert_eq!(fs::read(&journal_path).unwrap(), migrated_journal);
+    assert_eq!(fs::read_link(slots.join("current")).unwrap(), selected);
+    assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
 }
 
 fn command(binary: &str, config: &Path, arguments: &[&str]) -> Command {

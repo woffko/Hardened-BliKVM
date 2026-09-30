@@ -1,0 +1,14 @@
+# Only the loopback BliKVM server connects; browsers never reach Janus signaling.
+general: {
+	json = "compact"
+	ws = true
+	ws_port = 8188
+	ws_ip = "127.0.0.1"
+	wss = false
+	ws_logging = "err,warn"
+}
+
+admin: {
+	admin_ws = false
+	admin_wss = false
+}

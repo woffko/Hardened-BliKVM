@@ -8,6 +8,7 @@ import { isWritable } from '@/lib/capabilities.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { useApplicationUpdateStatus } from '@/hooks/useApplicationUpdateStatus.ts';
 
+import { BliSystemUpdate } from './bli-system.tsx';
 import { BliApplicationUpload } from './bli-upload.tsx';
 
 const Slot = ({ label, slot }: { label: string; slot: ApplicationSlot }) => (
@@ -96,6 +97,7 @@ export const BliApplicationUpdate = () => {
       {!writable && (
         <Alert showIcon type="info" message={t('settings.applicationUpdate.readOnly')} />
       )}
+      {writable && <BliSystemUpdate />}
     </div>
   );
 };

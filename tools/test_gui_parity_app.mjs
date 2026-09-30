@@ -188,21 +188,45 @@ test("the real app renders the desktop without calling the removed endpoints", a
     "private",
     `gui-parity-app-selftest-${process.pid}.json`,
   );
+  const contextPath = `${output}.context.json`;
+  fs.writeFileSync(
+    contextPath,
+    JSON.stringify({
+      acceptanceRunId: "gui-parity-app-selftest",
+      reviewedSourceCommit: "a".repeat(40),
+    }),
+    { mode: 0o600 },
+  );
   try {
     const result = await runProbe(
-      [probePath, modulePath, executablePath, baseUrl, output, usernameFile],
+      [
+        probePath,
+        modulePath,
+        executablePath,
+        baseUrl,
+        output,
+        usernameFile,
+        "ours",
+        contextPath,
+        "fixture-source-revision",
+      ],
       "testpassword\n",
     );
+    if (result.status !== 0 && fs.existsSync(output)) {
+      // Name what the page reported, not only that it failed.
+      const failed = JSON.parse(fs.readFileSync(output, "utf8"));
+      assert.fail(
+        `${result.stdout.trim()} console=${JSON.stringify(failed.consoleErrorSamples)} requests=${JSON.stringify(failed.failedRequests)}`,
+      );
+    }
+    assert.equal(result.status, 0, result.stderr || result.stdout);
     const receipt = JSON.parse(fs.readFileSync(output, "utf8"));
-    assert.equal(
-      result.status,
-      0,
-      `${result.stderr || result.stdout} receipt=${JSON.stringify(receipt)}`,
-    );
+    assert.equal(receipt.schemaVersion, 2);
+    assert.equal(receipt.result, "passed");
+    assert.equal(receipt.targetRole, "ours");
     assert.equal(receipt.title, "Remote Desktop - Hardened BliKVM");
-    // The leader key is implemented on the restricted surface, so the GUI is
-    // expected to load it; the removed legacy calls are not requested at all.
-    assert.ok(requests.includes("GET /api/hid/shortcut/leader-key"));
+    // This fixture does not advertise the leader-key capability.
+    assert.ok(!requests.includes("GET /api/hid/shortcut/leader-key"));
     for (const removed of ["/api/vm/gpio", "/api/hid/mode", "/api/hid/reset"]) {
       assert.ok(
         !requests.includes(`GET ${removed}`) &&
@@ -211,21 +235,14 @@ test("the real app renders the desktop without calling the removed endpoints", a
       );
     }
     assert.ok(requests.includes("GET /api/capabilities"));
-    // The settings surface is best effort: the safe-target confirmation can
-    // cover it in a headless run, which is why the fixture test proves the
-    // capture path instead.
-    if (receipt.settingsTabs.length === 0) {
-      t.diagnostic(
-        `settings tabs not captured (error=${receipt.settingsCaptureError || "none"})`,
-      );
-    } else {
-      assert.ok(
-        receipt.settingsTabs.includes("About"),
-        `settings tabs: ${JSON.stringify(receipt.settingsTabs)}`,
-      );
-    }
+    assert.equal(receipt.coverage.settingsTabs, "complete");
+    assert.ok(
+      receipt.settingsTabs.includes("About BliKVM"),
+      `settings tabs: ${JSON.stringify(receipt.settingsTabs)}`,
+    );
   } finally {
     fs.rmSync(output, { force: true });
+    fs.rmSync(contextPath, { force: true });
     fs.rmSync(usernameFile, { force: true });
     await new Promise((resolve) => server.close(resolve));
   }

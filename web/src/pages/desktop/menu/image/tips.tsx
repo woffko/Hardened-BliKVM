@@ -4,9 +4,26 @@ import { Collapse, Modal } from 'antd';
 import { CircleHelpIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-export const Tips = () => {
+/** How images reach the store. The hardened board keeps a catalog, so an image
+ * arrives only through the Download menu (a file or, when switched on, a URL). */
+export const Tips = ({ hardened = false }: { hardened?: boolean }) => {
   const { t } = useTranslation();
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const hardenedItems: CollapseProps['items'] = [
+    {
+      key: 'upload',
+      label: t('image.tips.uploadTitle'),
+      children: (
+        <ul className="list-decimal">
+          <li>{t('image.tips.upload1')}</li>
+          <li>{t('image.tips.upload2')}</li>
+          <li>{t('image.tips.upload3')}</li>
+          <li>{t('image.tips.upload4')}</li>
+        </ul>
+      )
+    }
+  ];
 
   const items: CollapseProps['items'] = [
     {
@@ -67,9 +84,9 @@ export const Tips = () => {
       >
         <Collapse
           accordion
-          items={items}
+          items={hardened ? hardenedItems : items}
           bordered={false}
-          defaultActiveKey={['1']}
+          defaultActiveKey={[hardened ? 'upload' : '1']}
           style={{ backgroundColor: 'transparent' }}
         />
       </Modal>

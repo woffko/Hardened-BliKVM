@@ -161,6 +161,84 @@ fn root_entries(root: &Path) -> Vec<String> {
 }
 
 #[test]
+fn publication_policy_rejects_before_publish_and_on_idempotent_retry() {
+    let (signing, trust) = keys();
+    let payload = payload();
+    let manifest = manifest(&payload);
+    let archive = bundle(&signing, &manifest, &payload);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    let quota = StageQuota {
+        max_slots: 1,
+        max_payload_bytes: 1024,
+    };
+    let stage = |accept: &dyn Fn(&bli_kvm_update_verifier::VerifiedApplicationBundle) -> bool| {
+        stager.stage_reader_with_policy(
+            archive.as_slice(),
+            archive.len() as u64,
+            &trust,
+            quota,
+            accept,
+        )
+    };
+    let reject = |verified: &bli_kvm_update_verifier::VerifiedApplicationBundle| {
+        assert_eq!(verified.manifest, manifest);
+        // A local floor above this valid signed bundle is a publication refusal.
+        verified.manifest.sequence > manifest.sequence
+    };
+    assert!(matches!(
+        stage(&reject),
+        Err(ApplicationStageError::PolicyRejected)
+    ));
+    assert!(root_entries(slots.path()).is_empty());
+
+    let published = stage(&|_| true).unwrap();
+    let receipt = fs::read(published.slot_path.join(SLOT_RECEIPT_PATH)).unwrap();
+    assert!(matches!(
+        stage(&reject),
+        Err(ApplicationStageError::PolicyRejected)
+    ));
+    assert_eq!(root_entries(slots.path()), vec![published.slot_id.clone()]);
+    assert_eq!(
+        fs::read(published.slot_path.join(SLOT_RECEIPT_PATH)).unwrap(),
+        receipt
+    );
+    assert_eq!(
+        stage(&|_| true).unwrap().disposition,
+        StageDisposition::AlreadyPresent
+    );
+}
+
+#[test]
+fn publication_policy_never_receives_unverified_archive() {
+    let (signing, trust) = keys();
+    let original = payload();
+    let manifest = manifest(&original);
+    let mut corrupted = original.clone();
+    corrupted.get_mut("bin/bli-kvm-server").unwrap().1[0] ^= 1;
+    let foreign = SigningKey::from_bytes(&[93; 32]);
+    let slots = tempfile::tempdir().unwrap();
+    let stager = ApplicationSlotStager::open(slots.path()).unwrap();
+    for archive in [
+        bundle(&signing, &manifest, &corrupted),
+        bundle(&foreign, &manifest, &original),
+    ] {
+        let result = stager.stage_reader_with_policy(
+            archive.as_slice(),
+            archive.len() as u64,
+            &trust,
+            StageQuota {
+                max_slots: 1,
+                max_payload_bytes: 1024,
+            },
+            |_| panic!("policy must not observe unauthenticated bundle contents"),
+        );
+        assert!(matches!(result, Err(ApplicationStageError::Verify(_))));
+        assert!(root_entries(slots.path()).is_empty());
+    }
+}
+
+#[test]
 fn stages_one_readonly_exact_slot_and_is_idempotent() {
     let (signing, trust) = keys();
     let payload = payload();

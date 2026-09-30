@@ -12,7 +12,12 @@ export type FeatureStatus = {
   evidence: EvidenceLevel;
 };
 
-export type VideoTransport = 'mjpeg' | 'h264_direct' | 'web_rtc_janus' | 'web_rtc_native';
+export type VideoTransport =
+  | 'mjpeg'
+  | 'h264_direct'
+  | 'web_rtc_janus'
+  | 'web_rtc_native'
+  | 'web_rtc_janus_h264';
 export type HidMode = 'keyboard' | 'absolute_mouse' | 'relative_mouse';
 export type PowerAction = 'power_short' | 'power_long' | 'reset';
 export type VirtualMediaMode = 'cd_rom' | 'removable_disk';
@@ -37,7 +42,7 @@ export type CapabilityManifest = {
     maxWidth: number | null;
     maxHeight: number | null;
     audio: FeatureStatus;
-    settings: ('fps' | 'quality')[];
+    settings: ('fps' | 'quality' | 'resolution' | 'frame_detect')[];
   };
   hid: {
     status: FeatureStatus;
@@ -61,8 +66,15 @@ export type CapabilityManifest = {
     status: FeatureStatus;
     readOnlyRootfs: boolean;
     maintenanceWriteMode: boolean;
+    actions: FeatureStatus;
     signedApplicationUpdates: FeatureStatus;
     signedSystemUpdates: FeatureStatus;
     automaticRollback: FeatureStatus;
+  };
+  network: {
+    status: FeatureStatus;
+    dns: FeatureStatus;
+    ipv6: FeatureStatus;
+    wol: FeatureStatus;
   };
 };

@@ -1,0 +1,48 @@
+[Unit]
+Description=Hardened BliKVM PicoClaw configuration helper session
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=local-fs.target
+
+[Service]
+Type=simple
+# Runs as the PicoClaw runtime's own dynamic user and touches only that
+# user's home: configuration, the secret store and the chat history.
+DynamicUser=yes
+User=hardened-blikvm-picoclaw
+StateDirectory=hardened-blikvm-picoclaw
+StateDirectoryMode=0700
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --picoclaw --peer-user hardened-blikvm-server
+UMask=0077
+TimeoutStopSec=10s
+TasksMax=32
+MemoryMax=128M
+LimitNOFILE=256
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictAddressFamilies=AF_UNIX

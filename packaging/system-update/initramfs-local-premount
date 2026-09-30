@@ -1,0 +1,48 @@
+#!/bin/sh
+# RAW system update step (docs/design/system-raw-update-v1.md): before the
+# root is mounted, write a staged root image, or restore the backup of a new
+# root that did not come up. The data partition is the root's /mnt entry;
+# without an apply record on it nothing is mounted read-write. Any failure
+# continues the normal boot.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+. /scripts/functions
+
+[ -x /sbin/bli-kvm-system-update ] || exit 0
+root=$(resolve_device "$ROOT") || exit 0
+[ -b "$root" ] || exit 0
+
+base=/run/hardened-system-update
+mkdir -p "$base/root" "$base/data"
+mount -t ext4 -o ro "$root" "$base/root" || exit 0
+spec=$(awk '$1 !~ /^#/ && $2 == "/mnt" { print $1; exit }' "$base/root/etc/fstab" 2>/dev/null)
+umount "$base/root"
+[ -n "$spec" ] || exit 0
+data=$(resolve_device "$spec") || exit 0
+[ -b "$data" ] || exit 0
+
+mount -t ext4 -o ro "$data" "$base/data" || exit 0
+if [ ! -f "$base/data/.hardened-system-update/apply.json" ]; then
+  umount "$base/data"
+  exit 0
+fi
+umount "$base/data"
+e2fsck -p "$data" >/dev/null 2>&1
+if ! mount -t ext4 -o rw,noatime "$data" "$base/data"; then
+  log_warning_msg "hardened system update: the data partition did not mount"
+  exit 0
+fi
+log_begin_msg "hardened system update: checking the staged update"
+/sbin/bli-kvm-system-update boot --staging "$base/data/.hardened-system-update" --device "$root"
+status=$?
+log_end_msg
+sync
+umount "$base/data"
+if [ "$status" = 10 ]; then
+  log_success_msg "hardened system update: the root partition changed; rebooting"
+  sync
+  reboot -f || echo b > /proc/sysrq-trigger
+fi
+exit 0

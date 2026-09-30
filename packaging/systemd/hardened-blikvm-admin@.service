@@ -1,0 +1,20 @@
+[Unit]
+Description=Hardened BliKVM administration helper session
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=local-fs.target
+
+[Service]
+Type=simple
+# Intentionally a root session: the terminal is a root shell on the KVM, the
+# same as the reference, offered only while the operator has switched it on
+# (docs/design/admin-features-v1.md). The helper refuses a switched-off
+# feature itself and serves one request per connection; the web server ends
+# the session with the operator's login.
+User=root
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-admin-helper --peer-user hardened-blikvm-server
+KillMode=control-group
+TasksMax=256
+LimitNOFILE=1024

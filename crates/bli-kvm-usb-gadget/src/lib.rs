@@ -53,6 +53,8 @@ pub enum GadgetError {
     InvalidImagePath,
     #[error("mass-storage image is not a regular file")]
     ImageMissing,
+    #[error("mass-storage image is too small for a CD-ROM")]
+    ImageTooSmall,
     #[error("gadget declares no functions")]
     NoFunctions,
     #[error("duplicate or unknown function name")]
@@ -219,9 +221,26 @@ fn validate_image_path(file: &Path) -> Result<(), GadgetError> {
     Ok(())
 }
 
+/// The kernel's mass-storage function refuses a CD-ROM image shorter than
+/// 300 blocks of 2048 bytes (`ETOOSMALL`); refusing it here names the reason.
+pub const MIN_CDROM_IMAGE_BYTES: u64 = 300 * 2048;
+
+fn validate_mass_storage(config: &MassStorageConfig) -> Result<(), GadgetError> {
+    validate_image_path(&config.file)?;
+    if config.cdrom {
+        let size = std::fs::metadata(&config.file)
+            .map(|metadata| metadata.len())
+            .map_err(|_| GadgetError::ImageMissing)?;
+        if size < MIN_CDROM_IMAGE_BYTES {
+            return Err(GadgetError::ImageTooSmall);
+        }
+    }
+    Ok(())
+}
+
 fn validate_function(function: &Function) -> Result<(), GadgetError> {
     match function {
-        Function::MassStorage(config) => validate_image_path(&config.file),
+        Function::MassStorage(config) => validate_mass_storage(config),
         Function::Hid(config) => {
             if !HID_FUNCTIONS.contains(&config.name.as_str()) {
                 return Err(GadgetError::InvalidFunction);
@@ -1098,6 +1117,34 @@ mod tests {
         assert_eq!(
             apply(directory.path(), &invalid),
             Err(GadgetError::ImageMissing)
+        );
+
+        // A CD-ROM needs 300 blocks of 2048 bytes; the kernel would answer
+        // ETOOSMALL, so the gadget refuses it first and names the reason.
+        let small = directory.path().join("small.iso");
+        std::fs::write(&small, vec![0_u8; (MIN_CDROM_IMAGE_BYTES - 2048) as usize]).unwrap();
+        let cdrom = |file: &Path| {
+            Function::MassStorage(MassStorageConfig {
+                file: file.to_path_buf(),
+                read_only: true,
+                cdrom: true,
+                removable: true,
+            })
+        };
+        let mut invalid = spec(&image);
+        invalid.functions = vec![cdrom(&small)];
+        assert_eq!(
+            apply(directory.path(), &invalid),
+            Err(GadgetError::ImageTooSmall)
+        );
+        let large = directory.path().join("large.iso");
+        std::fs::write(&large, vec![0_u8; MIN_CDROM_IMAGE_BYTES as usize]).unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let mut valid = spec(&image);
+        valid.functions = vec![cdrom(&large)];
+        assert_ne!(
+            apply(elsewhere.path(), &valid),
+            Err(GadgetError::ImageTooSmall)
         );
 
         let mut invalid = spec(&image);

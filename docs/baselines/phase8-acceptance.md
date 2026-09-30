@@ -1,15 +1,31 @@
 # Phase 8 acceptance audit (host-side)
 
 Audit of the canonical plan against its real artifacts, produced by
-`tools/phase8_acceptance_report.py`. The tool walks an explicit manifest of host
-artifacts and device receipts: a device item is only `recorded` when a receipt
-matches the pinned probe and marker, everything else stays `unrun`, and the
-overall status stays `incomplete` while any gate is open. Nothing here is
-inferred from code, commits or intent, and this document is not a release
-acceptance.
+`tools/phase8_acceptance_report.py`. The schema-v2 tool walks an explicit
+manifest of host artifacts and device receipts. A device item is only `passed`
+when its lexically newest receipt matches the pinned probe, explicit success
+marker and exact private release context. A newer failure, malformed receipt or
+context mismatch cannot fall back to an older success. Nothing is inferred from
+code, commits or intent, and this document is not itself release acceptance.
 
-Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
-(`overall=incomplete`, `hostMissing=0`, `deviceUnrun=6`).
+The report requires a private mode-0600 context file:
+
+```json
+{
+  "acceptanceRunId": "release-acceptance-unique-id",
+  "reviewedSourceCommit": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
+Every newly produced device receipt for that run must embed the same object as
+`evidenceContext`. Existing schema-v1 receipts remain historical and cannot
+complete a new release. Run the audit with
+`--release-context evidence/private/<context>.json`; the command exits with 1
+while any phase remains incomplete and 2 for malformed input.
+
+The earlier generated reports, including the report that once stated
+`overall=complete`, predate this contract and are historical only. A fresh bound
+schema-v2 report has not yet completed.
 
 ## Complete phases
 
@@ -18,7 +34,7 @@ Latest generated report: `evidence/private/phase8-acceptance-20260915-h.json`
   test; topology capture recorded
   (`evidence/private/device-kvm-topology-20260915-a.json`).
 - **Phase 1 — read-only platform API.** Server routes plus the route-drift guard
-  `tools/test_plan_route_drift.py`; 72 routes as of 2026-09-19.
+  `tools/test_plan_route_drift.py`; 117 routes as of 2026-09-28.
 - **Phase 4 — video gates (partly).** Two-client probe and soak receipts
   recorded (`video-two-client-probe-20260913-a.json`,
   `video-soak-probe-20260913-a.json`); the frame-timing probe is added and

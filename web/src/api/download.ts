@@ -16,6 +16,11 @@ export function imageEnabled() {
   return http.get('/api/download/image/enabled');
 }
 
+// The board's refusals for a file, asked before the file is sent.
+export function checkUpload(name: string, size: number) {
+  return http.post('/api/download/file/check', { name, size });
+}
+
 export function getRemoteImageDownloadEnabled() {
   return http.get('/api/download/image/remote/enabled');
 }

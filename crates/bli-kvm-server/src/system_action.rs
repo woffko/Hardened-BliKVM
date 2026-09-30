@@ -148,6 +148,21 @@ pub(crate) async fn reboot(
     dispatch(state, session, SystemActionKind::Reboot, body).await
 }
 
+/// Reboots for an operation the operator already confirmed (installing or
+/// rolling back a system update), through the same owner profile.
+pub(crate) async fn confirmed_reboot(
+    state: AppState,
+    session: crate::auth::session::Session,
+) -> AppResult<Json<ApiResponse<SystemActionOutcome>>> {
+    dispatch(
+        state,
+        session,
+        SystemActionKind::Reboot,
+        SystemActionBody { confirm: true },
+    )
+    .await
+}
+
 pub(crate) async fn shutdown(
     State(state): State<AppState>,
     Extension(CurrentSession(session)): Extension<CurrentSession>,

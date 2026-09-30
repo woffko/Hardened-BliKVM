@@ -17,11 +17,22 @@ class FocusConfirmationSingletonTests(unittest.TestCase):
             source,
             re.compile(r"^let pendingConfirmation: Promise<boolean> \| null = null;", re.MULTILINE),
         )
-        self.assertIn("if (confirmedGlobal) {", source)
+        self.assertIn("if (confirmedGlobal) return true;", source)
         self.assertIn("if (pendingConfirmation) {", source)
         self.assertIn("confirmedGlobal = true;", source)
         self.assertIn("pendingConfirmation = pending;", source)
         self.assertIn("pendingConfirmation = null;", source)
+        self.assertIn("requestConfirmation", source)
+        self.assertIn("disableControl", source)
+
+    def test_input_does_not_reopen_the_modal_after_cancel(self) -> None:
+        source = HOOK.read_text(encoding="utf-8")
+        ensure_start = source.index("const ensureConfirmed")
+        request_start = source.index("const requestConfirmation")
+        ensure = source[ensure_start:request_start]
+        self.assertNotIn("Modal.confirm", ensure)
+        self.assertIn("async () => confirmedGlobal", ensure)
+        self.assertIn("setConfirmed(false)", source)
 
     def test_confirmation_does_not_capture_a_stale_value(self) -> None:
         source = HOOK.read_text(encoding="utf-8")

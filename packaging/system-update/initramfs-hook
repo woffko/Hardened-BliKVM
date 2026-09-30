@@ -1,0 +1,20 @@
+#!/bin/sh
+# Copies the RAW system update step into the initramfs
+# (docs/design/system-raw-update-v1.md). The step runs only when the data
+# partition holds an apply record; a missing tool here only disables it.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+helper=/usr/libexec/hardened-blikvm/bli-kvm-system-update
+[ -x "$helper" ] || exit 0
+for tool in zstd e2fsck resize2fs tune2fs tar; do
+  path=$(command -v "$tool") || {
+    echo "hardened-blikvm-system-update: $tool is missing; the step stays off" >&2
+    exit 0
+  }
+  copy_exec "$path"
+done
+copy_exec "$helper" /sbin

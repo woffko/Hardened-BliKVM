@@ -155,6 +155,11 @@ export function getHostname() {
   return http.get('/api/hostname');
 }
 
+// set Hostname
+export function setHostname(hostname: string) {
+  return http.post('/api/vm/hostname', { hostname });
+}
+
 // get mDNS state
 export function getMdnsState() {
   return http.get('/api/vm/mdns');
@@ -181,11 +186,17 @@ export function setHidOnly(enabled: boolean) {
 }
 
 // enable / disable TLS
+export function getTLS() {
+  return http.get('/api/vm/tls');
+}
+
 export function setTLS(enabled: boolean) {
   return http.post('/api/vm/tls', { enabled });
 }
 
 // reboot
 export function reboot() {
-  return http.post('/api/vm/system/reboot');
+  // The confirmation dialog in Device settings is the operator's explicit
+  // confirmation, which the server requires.
+  return http.post('/api/vm/system/reboot', { confirm: true });
 }

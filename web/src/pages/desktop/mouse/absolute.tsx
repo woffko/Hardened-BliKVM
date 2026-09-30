@@ -363,11 +363,11 @@ export const Absolute = () => {
       const clientDeltaY = touch.clientY - lastTouchPosRef.current.y;
       const deltaX = rect.width > 0 ? clientDeltaX / rect.width : 0;
       const deltaY = rect.height > 0 ? clientDeltaY / rect.height : 0;
-      panViewportByTouchDelta(clientDeltaX, clientDeltaY);
       lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
 
       const currentX = lastPosRef.current.x / HID_ABSOLUTE_MAX;
       const currentY = lastPosRef.current.y / HID_ABSOLUTE_MAX;
+      followCursor(clientDeltaX, clientDeltaY, rect, currentX, currentY);
       const finalX = Math.max(0, Math.min(1, currentX + deltaX));
       const finalY = Math.max(0, Math.min(1, currentY + deltaY));
 
@@ -390,12 +390,41 @@ export const Absolute = () => {
       return { x, y, xRatio: finalX, yRatio: finalY };
     }
 
-    function panViewportByTouchDelta(deltaX: number, deltaY: number) {
+    // Follow the cursor like the RustAdmin/RustDesk mouse mode: the cursor
+    // moves on its own until it passes the centre of the visible area in the
+    // direction of travel, then the image scrolls under it; once the image
+    // edge meets the view edge the scroll is clamped and the cursor moves on
+    // towards the edge.
+    function followCursor(
+      deltaX: number,
+      deltaY: number,
+      screenRect: DOMRect,
+      xRatio: number,
+      yRatio: number
+    ) {
       if (!scrollContainer) return;
       if (deltaX === 0 && deltaY === 0) return;
 
-      scrollContainer.scrollLeft += deltaX;
-      scrollContainer.scrollTop += deltaY;
+      const view = scrollContainer.getBoundingClientRect();
+      const cursorX = screenRect.left + screenRect.width * xRatio;
+      const cursorY = screenRect.top + screenRect.height * yRatio;
+      const centerX = view.left + view.width / 2;
+      const centerY = view.top + view.height / 2;
+      const maxLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth);
+      const maxTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+
+      if (
+        (deltaX > 0 && cursorX + deltaX > centerX) ||
+        (deltaX < 0 && cursorX + deltaX < centerX)
+      ) {
+        scrollContainer.scrollLeft = clamp(scrollContainer.scrollLeft + deltaX, 0, maxLeft);
+      }
+      if (
+        (deltaY > 0 && cursorY + deltaY > centerY) ||
+        (deltaY < 0 && cursorY + deltaY < centerY)
+      ) {
+        scrollContainer.scrollTop = clamp(scrollContainer.scrollTop + deltaY, 0, maxTop);
+      }
     }
 
     function startPinchZoom(touches: TouchList) {

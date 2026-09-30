@@ -4,14 +4,17 @@
 //! broker. This crate intentionally contains no device paths, shell commands,
 //! network listeners, or credentials.
 
+mod admin_features;
 mod capabilities;
 mod control;
 mod control_v2;
 mod diagnostics;
+mod firewall;
 mod inventory;
 mod platform;
 mod video_settings;
 
+pub use admin_features::{ADMIN_FEATURES_PATH, AdminFeatureSwitches};
 pub use capabilities::{
     Availability, BoardCapabilities, CapabilityError, CapabilityManifest, EvidenceLevel,
     FeatureStatus, HidCapabilities, HidMode, NetworkCapabilities, PlatformIdentity, PowerAction,
@@ -23,17 +26,23 @@ pub use control::{
     VirtualMediaCommand, VirtualMediaControlMode,
 };
 pub use control_v2::{
-    AcceptPostBootRequest, AtxConfirmation, ControlV2ValidationError, HID_LEASE_MAX_TTL_SECONDS,
-    HidLeaseRequest, MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
+    AcceptPostBootRequest, AdminFeature, AtxConfirmation, ControlV2ValidationError,
+    FirewallRulesFamily, HID_LEASE_MAX_TTL_SECONDS, HidLeaseRequest, Ipv4Change, Ipv6Change,
+    MAX_FIREWALL_RULES_BYTES, MAX_FIREWALL_RULES_CHUNK, MAX_IPV4_DNS_SERVERS, MAX_WIFI_NETWORKS,
+    MAX_WIFI_PROFILES, MediaObserveRequest, MediaRequest, NetworkWriteRequest, NetworkWriteTarget,
     PlatformControlRequestV2, SystemActionKind, SystemActionWireRequest,
     TARGET_ATTESTATION_MAX_TTL_SECONDS, TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation,
-    TargetRelease,
+    TargetRelease, WifiProfileAction, valid_hostname, valid_wifi_password, valid_wifi_profile_id,
+    valid_wifi_ssid,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,
     DiagnosticComponents, DiagnosticHistory, DiagnosticHistoryReason, DiagnosticHistoryState,
     DiagnosticMetricState, DiagnosticRtc, DiagnosticTemperature, DiagnosticsAvailability,
     DiagnosticsCurrent, DiagnosticsView, DiagnosticsViewError,
+};
+pub use firewall::{
+    FirewallChangeRequest, FirewallConfirmRequest, FirewallMode, FirewallModeStatus,
 };
 pub use inventory::{
     ComponentObservation, InventoryBackend, InventoryError, RUNTIME_INVENTORY_SCHEMA_VERSION,

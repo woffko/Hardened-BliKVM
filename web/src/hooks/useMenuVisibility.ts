@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 
-import { getMenuDisabledItems, getMenuDisplayMode } from '@/lib/localstorage.ts';
+import { getAdminFeatures } from '@/api/admin.ts';
+import {
+  getMenuDisabledItems,
+  getMenuDisplayMode,
+  setMenuDisabledItems as storeMenuDisabledItems
+} from '@/lib/localstorage.ts';
 import {
   menuDisabledItemsAtom,
   menuDisplayModeAtom,
@@ -61,6 +66,28 @@ export function useMenuVisibility(): MenuVisibilityState {
 
     const items = getMenuDisabledItems();
     setMenuDisabledItems(items);
+
+    // Features switched on the server show in the menu exactly while their
+    // switch is on, whichever browser changed it.
+    getAdminFeatures()
+      .then((rsp) => {
+        if (rsp.code !== 0 || !rsp.data) return;
+        const server: [string, boolean][] = [
+          ['terminal', rsp.data.terminal],
+          ['script', rsp.data.scripts],
+          ['picoclaw', rsp.data.picoclaw]
+        ];
+        setMenuDisabledItems((current) => {
+          let next = current;
+          for (const [key, enabled] of server) {
+            if (typeof enabled !== 'boolean') continue;
+            next = enabled ? next.filter((item) => item !== key) : [...new Set([...next, key])];
+          }
+          storeMenuDisabledItems(next);
+          return next;
+        });
+      })
+      .catch(() => undefined);
 
     if (displayMode === 'off') {
       setIsMenuExpanded(false);

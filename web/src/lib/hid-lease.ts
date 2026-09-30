@@ -1,6 +1,8 @@
 import * as api from '@/api/restricted-control.ts';
 
 const OPERATION_ID_BYTES = 16;
+/** The server holds manual input back while the AI assistant has control. */
+export const ASSISTANT_ACTIVE = 'assistant_active';
 const RENEW_FRACTION = 0.5;
 
 export function newOperationId(): string {
@@ -17,6 +19,8 @@ export class HidLeaseSession {
   private leaseId: string | null = null;
   private ttlSeconds = 0;
   private renewTimer: ReturnType<typeof setTimeout> | null = null;
+  private generation = 0;
+  private requests = new Set<AbortController>();
 
   /**
    * The broker admits a lease only while the session's target attestation is
@@ -26,31 +30,55 @@ export class HidLeaseSession {
   constructor(private readonly attest: () => Promise<void>) {}
 
   async start(ttlSeconds: number): Promise<void> {
+    const generation = ++this.generation;
     await this.attest();
-    const response = await api.acquireLease(newOperationId(), ttlSeconds);
+    this.requireGeneration(generation);
+    const response = await this.request((signal) =>
+      api.acquireLease(newOperationId(), ttlSeconds, signal)
+    );
+    if (generation !== this.generation) {
+      if (response.data.applied && response.data.leaseId) {
+        void api.releaseLease(newOperationId(), response.data.leaseId).catch(() => undefined);
+      }
+      throw new DOMException('HID lease start was cancelled', 'AbortError');
+    }
     if (!response.data.applied || !response.data.leaseId) {
-      throw new Error('HID lease was not granted');
+      throw new Error(response.data.rejection ?? 'HID lease was not granted');
     }
     this.leaseId = response.data.leaseId;
     this.scheduleRenew(response.data.ttlSeconds ?? ttlSeconds);
   }
 
   async report(report: api.HidReport): Promise<void> {
-    if (!this.leaseId) {
+    const generation = this.generation;
+    const leaseId = this.leaseId;
+    if (!leaseId) {
       throw new Error('HID lease is not active');
     }
-    await api.reportHid(newOperationId(), this.leaseId, report);
+    const response = await this.request((signal) =>
+      api.reportHid(newOperationId(), leaseId, report, signal)
+    );
+    this.requireGeneration(generation);
+    if (!response.data.applied) {
+      // The lease is still live; only this report was held back.
+      if (response.data.rejection === ASSISTANT_ACTIVE) throw new Error(ASSISTANT_ACTIVE);
+      this.invalidateLease();
+      throw new Error(response.data.rejection ?? 'HID report was not applied');
+    }
   }
 
   async stop(): Promise<void> {
-    if (this.renewTimer !== null) {
-      clearTimeout(this.renewTimer);
-      this.renewTimer = null;
-    }
+    this.generation += 1;
+    this.clearRenewTimer();
+    for (const request of this.requests) request.abort();
+    this.requests.clear();
     const leaseId = this.leaseId;
     this.leaseId = null;
     if (leaseId) {
-      await api.releaseLease(newOperationId(), leaseId);
+      const response = await api.releaseLease(newOperationId(), leaseId);
+      if (!response.data.applied) {
+        throw new Error(response.data.rejection ?? 'HID lease release was not applied');
+      }
     }
   }
 
@@ -63,22 +91,55 @@ export class HidLeaseSession {
   }
 
   private async renew(): Promise<void> {
+    const generation = this.generation;
     const leaseId = this.leaseId;
     if (!leaseId) {
       return;
     }
     try {
       await this.attest();
-      const response = await api.renewLease(newOperationId(), leaseId, this.ttlSeconds);
-      if (response.data.applied) {
-        this.scheduleRenew(response.data.ttlSeconds ?? this.ttlSeconds);
-      } else {
-        this.leaseId = null;
+      this.requireGeneration(generation);
+      const response = await this.request((signal) =>
+        api.renewLease(newOperationId(), leaseId, this.ttlSeconds, signal)
+      );
+      this.requireGeneration(generation);
+      if (!response.data.applied) {
+        throw new Error(response.data.rejection ?? 'HID lease renewal was not applied');
       }
+      this.scheduleRenew(response.data.ttlSeconds ?? this.ttlSeconds);
     } catch {
-      // A failed renewal could be a lapsed confirmation, so the next report
-      // re-confirms and re-acquires instead of reporting into a dead session.
-      this.leaseId = null;
+      if (generation === this.generation) {
+        this.invalidateLease();
+        void api.releaseLease(newOperationId(), leaseId).catch(() => undefined);
+      }
+    }
+  }
+
+  private async request<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    this.requests.add(controller);
+    try {
+      return await run(controller.signal);
+    } finally {
+      this.requests.delete(controller);
+    }
+  }
+
+  private requireGeneration(generation: number): void {
+    if (generation !== this.generation) {
+      throw new DOMException('HID lease operation was cancelled', 'AbortError');
+    }
+  }
+
+  private invalidateLease(): void {
+    this.leaseId = null;
+    this.clearRenewTimer();
+  }
+
+  private clearRenewTimer(): void {
+    if (this.renewTimer !== null) {
+      clearTimeout(this.renewTimer);
+      this.renewTimer = null;
     }
   }
 }

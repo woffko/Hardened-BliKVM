@@ -1,47 +1,49 @@
+import { useRef } from 'react';
 import { message, Tooltip } from 'antd';
-import { useAtom } from 'jotai';
 import { CheckIcon, CircleHelpIcon, RatioIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { updateScreen } from '@/api/vm';
 import { Resolution as TypeResolution } from '@/types';
-import { setResolution as setCookie } from '@/lib/localstorage';
-import { resolutionAtom } from '@/jotai/screen.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
+
+import { ResolutionList } from './constants.ts';
 
 // The reviewed unit always passes a resolution, so there is no "auto" entry;
 // the four modes below are the ones the owner can enforce.
-const resolutions: TypeResolution[] = [
-  { width: 1920, height: 1080 },
-  { width: 1280, height: 720 },
-  { width: 800, height: 600 },
-  { width: 640, height: 480 }
-];
-
-export const Resolution = () => {
+export const Resolution = ({
+  resolution,
+  refresh
+}: {
+  resolution: TypeResolution;
+  refresh: () => Promise<{ requestedResolution?: string }>;
+}) => {
   const { t } = useTranslation();
-  const [resolution, setResolution] = useAtom(resolutionAtom);
+  const updating = useRef(false);
 
   async function update(item: TypeResolution) {
+    if (updating.current) return;
+    updating.current = true;
     try {
       const rsp = await updateScreen('resolution', item.height);
-      if (rsp.code !== 0) {
-        message.error(rsp.msg || 'Failed to update resolution');
+      if (rsp.code !== 0 || rsp.data?.applied !== true || rsp.data?.rejection != null) {
+        message.error(rsp.data?.rejection || rsp.msg || 'Failed to update resolution');
         return;
       }
 
-      setResolution(item);
-      setCookie(item);
+      const observed = await refresh();
+      if (observed.requestedResolution !== `${item.width}x${item.height}`)
+        throw new Error('Resolution read-back did not match the request');
     } catch (err) {
-      console.error(err);
-      const msg = (err as { response?: { data?: { msg?: string } } }).response?.data?.msg;
-      message.error(msg || 'Failed to update resolution');
+      message.error(err instanceof Error ? err.message : 'Failed to update resolution');
+    } finally {
+      updating.current = false;
     }
   }
 
   const content = (
     <>
-      {resolutions.map((res) => (
+      {ResolutionList.map((res) => (
         <div
           key={res.height}
           className="flex cursor-pointer select-none items-center rounded py-1.5 pl-1 pr-5 hover:bg-neutral-700/70"

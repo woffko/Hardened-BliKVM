@@ -25,6 +25,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod protected_root;
+
+/// Require a root-to-leaf chain of directories owned by UID 0 and not
+/// writable by group or others, with no symbolic links.
+pub fn validate_protected_directory(path: &Path) -> Result<(), ApplicationStageError> {
+    protected_root::validate(path)
+}
+
 pub const SLOT_METADATA_DIRECTORY: &str = ".hardened-blikvm";
 pub const SLOT_RECEIPT_PATH: &str = ".hardened-blikvm/receipt.json";
 pub const SLOT_MANIFEST_PATH: &str = ".hardened-blikvm/manifest.json";
@@ -39,6 +47,23 @@ const MAX_SLOT_RECEIPT_BYTES: u64 = 4 * 1024;
 const MAX_TREE_ENTRIES: usize = MAX_PAYLOAD_FILES * 2 + 16;
 const LOCK_ACQUIRE_ATTEMPTS: usize = 40;
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
+
+/// Open identities from one verified published slot. Keep the stager/manager
+/// lock alive and do not garbage-collect the slot while consuming these handles.
+#[derive(Debug)]
+pub struct VerifiedSlotFiles {
+    slot: StagedApplication,
+    files: BTreeMap<String, File>,
+}
+
+impl VerifiedSlotFiles {
+    pub fn slot(&self) -> &StagedApplication {
+        &self.slot
+    }
+    pub fn files(&self) -> &BTreeMap<String, File> {
+        &self.files
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageDisposition {
@@ -135,6 +160,8 @@ pub enum ApplicationStageError {
     InvalidQuota,
     #[error("application staging quota would be exceeded")]
     QuotaExceeded,
+    #[error("verified application archive was rejected by publication policy")]
+    PolicyRejected,
     #[error("application archive verification failed")]
     Verify(#[from] UpdateVerifyError),
     #[error("application archive extraction failed")]
@@ -175,9 +202,26 @@ pub struct ApplicationSlotStager {
     root: PathBuf,
     root_directory: File,
     identity: RootIdentity,
+    protected_root: bool,
 }
 
 impl ApplicationSlotStager {
+    /// Open a separate root-owned execution store, never the update user's
+    /// journal/slot root. Every ancestor must be root-owned and non-writable by
+    /// group/other. Use the reader staging APIs with independently loaded trust
+    /// to copy and verify artifacts; this does not authorize startup or rollback.
+    pub fn open_protected(root: impl Into<PathBuf>) -> Result<Self, ApplicationStageError> {
+        let root = root.into();
+        if effective_uid() != 0 {
+            return Err(ApplicationStageError::UnsafeRoot);
+        }
+        protected_root::validate(&root)?;
+        let mut stager = Self::open(root)?;
+        stager.protected_root = true;
+        stager.validate_root()?;
+        Ok(stager)
+    }
+
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, ApplicationStageError> {
         let root = root.into();
         let identity = validate_root_path(&root)?;
@@ -194,6 +238,7 @@ impl ApplicationSlotStager {
             root,
             root_directory,
             identity,
+            protected_root: false,
         };
         stager.validate_root()?;
         Ok(stager)
@@ -214,7 +259,7 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeDeletionState);
         }
         let (snapshot, archive_size) = self.snapshot_source(source.as_ref())?;
-        self.stage_snapshot(snapshot, archive_size, trust_root, None)
+        self.stage_snapshot(snapshot, archive_size, trust_root, None, |_| true)
     }
 
     /// Stage a complete, length-delimited archive without accepting a source path.
@@ -233,7 +278,7 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeDeletionState);
         }
         let (snapshot, archive_size) = self.snapshot_reader(source, archive_size)?;
-        self.stage_snapshot(snapshot, archive_size, trust_root, None)
+        self.stage_snapshot(snapshot, archive_size, trust_root, None, |_| true)
     }
 
     /// Apply a logical storage quota to new slots, while allowing a verified
@@ -246,6 +291,22 @@ impl ApplicationSlotStager {
         trust_root: &ApplicationTrustRoot,
         quota: StageQuota,
     ) -> Result<StagedApplication, ApplicationStageError> {
+        self.stage_reader_with_policy(source, archive_size, trust_root, quota, |_| true)
+    }
+
+    /// Evaluate local policy against the authenticated archive before extracting
+    /// or accepting an existing slot. Rejection leaves existing slots unchanged.
+    /// Policy and trust must come from the caller's trusted configuration, not
+    /// archive claims or unauthenticated IPC fields. This is publication policy,
+    /// not activation authority or a durable anti-rollback floor.
+    pub fn stage_reader_with_policy(
+        &self,
+        source: impl Read,
+        archive_size: u64,
+        trust_root: &ApplicationTrustRoot,
+        quota: StageQuota,
+        accept: impl FnOnce(&VerifiedApplicationBundle) -> bool,
+    ) -> Result<StagedApplication, ApplicationStageError> {
         quota.validate()?;
         self.validate_root()?;
         let (markers, tombstones) = self.collect_deletion_state()?;
@@ -253,7 +314,7 @@ impl ApplicationSlotStager {
             return Err(ApplicationStageError::UnsafeDeletionState);
         }
         let (snapshot, archive_size) = self.snapshot_reader(source, archive_size)?;
-        self.stage_snapshot(snapshot, archive_size, trust_root, Some(quota))
+        self.stage_snapshot(snapshot, archive_size, trust_root, Some(quota), accept)
     }
 
     fn stage_snapshot(
@@ -262,8 +323,12 @@ impl ApplicationSlotStager {
         archive_size: u64,
         trust_root: &ApplicationTrustRoot,
         quota: Option<StageQuota>,
+        accept: impl FnOnce(&VerifiedApplicationBundle) -> bool,
     ) -> Result<StagedApplication, ApplicationStageError> {
         let verified = verify_application_reader(&mut snapshot, archive_size, trust_root)?;
+        if !accept(&verified) {
+            return Err(ApplicationStageError::PolicyRejected);
+        }
         let slot_id = slot_id(&verified);
         let slot_path = self.root.join(&slot_id);
         if let Some(existing) = self.validate_if_present(&slot_path, &verified, trust_root)? {
@@ -493,6 +558,48 @@ impl ApplicationSlotStager {
         ))
     }
 
+    /// Verify once, then pin and revalidate a bounded selection of signed files.
+    /// Relative names must match manifest entries exactly; metadata is excluded.
+    pub fn open_verified_files(
+        &self,
+        slot_id: &str,
+        paths: &[&str],
+        trust_root: &ApplicationTrustRoot,
+    ) -> Result<VerifiedSlotFiles, ApplicationStageError> {
+        if paths.is_empty() || paths.len() > MAX_PAYLOAD_FILES {
+            return Err(ApplicationStageError::UnsafeExistingSlot);
+        }
+        let slot = self.inspect_slot(slot_id, trust_root)?;
+        let anchored_root =
+            PathBuf::from(format!("/proc/self/fd/{}", self.root_directory.as_raw_fd()));
+        let directory = open_immutable_directory(&anchored_root.join(slot_id), self.identity)?;
+        let mut files = BTreeMap::new();
+        for &relative in paths {
+            if files.contains_key(relative) {
+                return Err(ApplicationStageError::UnsafeExistingSlot);
+            }
+            let expected = slot
+                .manifest
+                .files
+                .iter()
+                .find(|file| file.path == relative)
+                .ok_or(ApplicationStageError::UnsafeExistingSlot)?;
+            let mut parent = directory.try_clone()?;
+            let mut components = relative.split('/').peekable();
+            while let Some(component) = components.next() {
+                let anchored =
+                    PathBuf::from(format!("/proc/self/fd/{}", parent.as_raw_fd())).join(component);
+                if components.peek().is_some() {
+                    parent = open_immutable_directory(&anchored, self.identity)?;
+                } else {
+                    let file = validate_payload_file(&anchored, expected, self.identity)?;
+                    files.insert(relative.to_owned(), file);
+                }
+            }
+        }
+        Ok(VerifiedSlotFiles { slot, files })
+    }
+
     fn with_current_protected(
         &self,
         protected_slot_ids: &BTreeSet<String>,
@@ -611,6 +718,9 @@ impl ApplicationSlotStager {
     }
 
     fn validate_root(&self) -> Result<(), ApplicationStageError> {
+        if self.protected_root {
+            protected_root::validate(&self.root)?;
+        }
         if validate_root_path(&self.root)? != self.identity
             || identity_from_metadata(&self.root_directory.metadata()?) != self.identity
         {
@@ -1738,7 +1848,7 @@ fn validate_payload_file(
     path: &Path,
     expected: &ApplicationFile,
     root_identity: RootIdentity,
-) -> Result<(), ApplicationStageError> {
+) -> Result<File, ApplicationStageError> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
@@ -1775,7 +1885,28 @@ fn validate_payload_file(
     if total != expected.size || hex_lower(hasher.finalize().as_ref()) != expected.sha256 {
         return Err(ApplicationStageError::UnsafeExistingSlot);
     }
-    Ok(())
+    file.rewind()?;
+    Ok(file)
+}
+
+fn open_immutable_directory(
+    path: &Path,
+    identity: RootIdentity,
+) -> Result<File, ApplicationStageError> {
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| ApplicationStageError::UnsafeExistingSlot)?;
+    let metadata = directory.metadata()?;
+    if !metadata.is_dir()
+        || metadata.dev() != identity.device
+        || metadata.uid() != identity.owner
+        || metadata.permissions().mode() & 0o7777 != 0o555
+    {
+        return Err(ApplicationStageError::UnsafeExistingSlot);
+    }
+    Ok(directory)
 }
 
 fn acquire_slot_root_lock(root_directory: &File) -> Result<(), ApplicationStageError> {

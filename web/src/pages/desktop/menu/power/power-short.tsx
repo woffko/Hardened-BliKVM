@@ -29,7 +29,7 @@ export const PowerShort = ({ showConfirm, isLoading, setIsLoading }: PowerShortP
 
   return (
     <>
-      {showConfirm ? (
+      {showConfirm || restricted ? (
         <Popconfirm
           placement="bottomLeft"
           title={t('power.powerConfirm')}

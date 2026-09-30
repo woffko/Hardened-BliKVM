@@ -5,7 +5,12 @@ import { useAtomValue } from 'jotai';
 import { GripVerticalIcon } from 'lucide-react';
 import Draggable, { DraggableData, DraggableEvent } from 'react-draggable';
 
-import { isAvailable, supportsMenuItem, type CapabilityMenuItem } from '@/lib/capabilities.ts';
+import {
+  isAvailable,
+  supportsMenuItem,
+  supportsRestrictedControls,
+  type CapabilityMenuItem
+} from '@/lib/capabilities.ts';
 import { HARDENED_LOGO_SRC, HARDENED_NAME, HARDENED_SHORT_NAME } from '@/lib/hardened.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { menuDisabledItemsAtom } from '@/jotai/settings.ts';
@@ -22,6 +27,7 @@ import { Mouse } from './mouse';
 import { Collapse, Expand } from './operations';
 import { Picoclaw } from './picoclaw';
 import { Power } from './power';
+import { RemoteControl } from './remote-control.tsx';
 import { Screen } from './screen';
 import { Script } from './script';
 import { Settings } from './settings';
@@ -34,6 +40,7 @@ export const Menu = () => {
 
   const capabilities = useAtomValue(capabilitiesAtom);
   const hidAvailable = Boolean(capabilities && isAvailable(capabilities.hid.status));
+  const restrictedHid = supportsRestrictedControls(capabilities);
   const menuDisabledItems = useAtomValue(menuDisabledItemsAtom);
 
   const {
@@ -112,6 +119,7 @@ export const Menu = () => {
             <Divider type="vertical" />
 
             <Screen />
+            {restrictedHid && <RemoteControl />}
             {hidAvailable && <LocalKeyboardButton />}
             {hidAvailable && <Keyboard />}
             {hidAvailable && <Mouse />}

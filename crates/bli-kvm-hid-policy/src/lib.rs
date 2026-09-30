@@ -146,6 +146,7 @@ impl HidControlPolicy {
         }
         self.engine
             .renew(identity, now, ttl)
+            .await
             .map_or_else(map_error, |()| HidDecision::Applied)
     }
 

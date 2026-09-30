@@ -1,0 +1,56 @@
+[Unit]
+Description=Hardened BliKVM WebRTC media gateway (Janus streaming only)
+Documentation=https://github.com/woffko/Hardened-BliKVM
+After=network-online.target
+Wants=network-online.target
+# Janus falls back to built-in defaults (all plugins, HTTP on every address)
+# when its configuration is missing; never start without the reviewed one.
+ConditionPathExists=/etc/hardened-blikvm-janus/janus.jcfg
+
+[Service]
+Type=simple
+DynamicUser=yes
+UMask=0077
+ExecStart=/usr/bin/janus --configs-folder=/etc/hardened-blikvm-janus --disable-colors
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+MemoryMax=192M
+TasksMax=64
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectSystem=strict
+# libwebsockets opens an IPv6 socket for its loopback listener.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Only the loopback signaling port and the WebRTC media range may be bound,
+# even if a configuration regression enabled another transport.
+SocketBindDeny=any
+SocketBindAllow=tcp:8188
+SocketBindAllow=udp:20000-20099
+SocketBindAllow=udp:5004
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,68 @@
+[Unit]
+Description=Hardened BliKVM VP8 encoder for the WebRTC video path
+Documentation=https://github.com/woffko/Hardened-BliKVM
+Requires=hardened-blikvm-ustreamer.service
+After=hardened-blikvm-ustreamer.service hardened-blikvm-janus.service
+Wants=hardened-blikvm-janus.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+# Read access to the uStreamer socket, which is group hardened-blikvm; as the
+# primary group it also owns the demand socket below (chown is filtered).
+Group=hardened-blikvm
+SupplementaryGroups=hardened-blikvm
+UMask=0077
+# The web server holds this socket open while a WebRTC viewer is connected;
+# without one the encoder leaves the capture stream and takes no CPU. The
+# socket is group hardened-blikvm, mode 0660.
+RuntimeDirectory=hardened-blikvm-vp8
+RuntimeDirectoryMode=0755
+Environment=BLI_KVM_VP8_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock
+Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
+Environment=BLI_KVM_VP8_RTP_PORT=5004
+Environment=BLI_KVM_VP8_MAX_FPS=30
+Environment=BLI_KVM_VP8_KBPS=2500
+Environment=BLI_KVM_VP8_THREADS=3
+EnvironmentFile=-/etc/hardened-blikvm/video-encoder.env
+ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=5s
+# Keep one core for HID, the owner and the MJPEG path under full motion.
+CPUQuota=250%
+MemoryMax=160M
+TasksMax=16
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateNetwork=no
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

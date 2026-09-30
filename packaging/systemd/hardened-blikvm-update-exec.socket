@@ -1,0 +1,19 @@
+[Unit]
+Description=Hardened BliKVM native execution helper for the update coordinator
+Documentation=https://github.com/woffko/Hardened-BliKVM
+
+[Socket]
+# The directory is root-owned; only the update coordinator may connect. The
+# helper additionally authenticates the peer UID with SO_PEERCRED.
+ListenStream=/run/hardened-blikvm-exec-api/exec.sock
+Accept=yes
+SocketUser=hardened-blikvm-update
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0755
+Backlog=1
+MaxConnections=1
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

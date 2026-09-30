@@ -24,6 +24,8 @@ type IPv6Config = {
 };
 
 type IPv6State = {
+  interface?: string;
+  ipv6?: { source: string; defaultState: string; interfaces: Record<string, string> };
   mode: IPv6Mode;
   enabled: boolean;
   active: boolean;
@@ -39,6 +41,7 @@ type IPv6State = {
 type IPv6Props = {
   showFooter?: boolean;
   disabled?: boolean;
+  readOnly?: boolean;
   onStatusChange?: (status: NetworkSectionStatus) => void;
 };
 
@@ -150,8 +153,9 @@ const EditableInfoRow = ({
 };
 
 export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
-  ({ showFooter = true, disabled = false, onStatusChange }, ref) => {
+  ({ showFooter = true, disabled = false, readOnly = false, onStatusChange }, ref) => {
     const { t } = useTranslation();
+    const [interfaceName, setInterfaceName] = useState('');
 
     const [mode, setMode] = useState<IPv6Mode>('disabled');
     const [originalMode, setOriginalMode] = useState<IPv6Mode>('disabled');
@@ -179,11 +183,11 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
         try {
           const rsp = await api.getIPv6();
           if (rsp.code !== 0) {
-            setError(rsp.msg);
-            return;
+            throw new Error(rsp.msg || t('settings.network.ipv6.loadFailed'));
           }
 
           const data = rsp.data as IPv6State;
+          setInterfaceName(data.interface || '');
           const fetchedMode = data.mode || 'disabled';
           const config = data.config || {};
           const fetchedAddress = normalizeIPv6(config.address || '');
@@ -204,8 +208,10 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
           setOriginalAddress(fetchedAddress);
           setOriginalPrefix(fetchedPrefix);
           setOriginalRouter(fetchedRouter);
+          return true;
         } catch {
           setError(t('settings.network.ipv6.loadFailed'));
+          return false;
         } finally {
           if (showLoading) setIsLoading(false);
         }
@@ -218,6 +224,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
     }, [getIPv6]);
 
     async function save(): Promise<NetworkSectionResult> {
+      if (readOnly) return { changed: false, error: true };
       if (isSaving) return { changed: false };
       if (!hasChanges && !needsApply) return { changed: false };
 
@@ -249,7 +256,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
           mode,
           mode === 'manual'
             ? {
-                interface: 'eth0',
+                interface: interfaceName || 'eth0',
                 address: normalizedAddress,
                 prefix: Number(trimmedPrefix),
                 gateway: normalizedRouter
@@ -265,7 +272,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
         setOriginalAddress(normalizedAddress);
         setOriginalPrefix(trimmedPrefix);
         setOriginalRouter(normalizedRouter);
-        await getIPv6(false);
+        if (!(await getIPv6(false))) return { changed: true, error: true };
         setMessage(t('settings.network.ipv6.saved'));
         return { changed: true };
       } catch (err) {
@@ -293,6 +300,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
           normalizedRouter !== originalRouter));
     const needsApply = status === 'needs-apply';
     const canSave =
+      !readOnly &&
       (hasChanges || needsApply) &&
       !isLoading &&
       !isSaving &&
@@ -336,7 +344,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
     }, [onStatusChange, statusSnapshot]);
 
     return (
-      <div className="flex flex-col space-y-5">
+      <fieldset disabled={readOnly} className="flex min-w-0 flex-col space-y-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
           <div className="flex flex-col space-y-1">
             <span>{t('settings.network.ipv6.title')}</span>
@@ -347,7 +355,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
 
           <Segmented
             className="max-w-full overflow-x-auto"
-            disabled={disabled || isLoading || isSaving}
+            disabled={readOnly || disabled || isLoading || isSaving}
             value={mode}
             onChange={(val) => {
               setMode(val as IPv6Mode);
@@ -365,7 +373,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
         </div>
 
         <Panel title={t('settings.network.ipv6.status')}>
-          <InfoRow label={t('settings.network.ipv6.interface')} value="eth0" />
+          <InfoRow label={t('settings.network.ipv6.interface')} value={interfaceName || 'eth0'} />
           <InfoRow label={t('settings.network.ipv6.state')} value={statusMessage} />
           <InfoRow label={t('settings.network.ipv6.router')} value={gateway} />
           <InfoRow
@@ -380,7 +388,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
             <EditableInfoRow
               label={t('settings.network.ipv6.ipAddress')}
               value={address}
-              placeholder="fd00:1234:abcd:2::132"
+              placeholder="2001:db8::132"
               status={address.trim() && !isValidIPv6(normalizedAddress) ? 'error' : undefined}
               onChange={(value) => {
                 setAddress(value);
@@ -430,7 +438,7 @@ export const IPv6 = forwardRef<NetworkSectionHandle, IPv6Props>(
             </Button>
           </div>
         )}
-      </div>
+      </fieldset>
     );
   }
 );

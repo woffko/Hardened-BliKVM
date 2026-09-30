@@ -38,6 +38,10 @@ export function getStatus() {
   return http.get('/api/system/firewall');
 }
 
+export function setNativeMode(mode: 'baseline' | 'disabled') {
+  return http.post('/api/system/firewall', { mode });
+}
+
 export function setMode(mode: FirewallMode) {
   return http.post('/api/system/firewall', { mode });
 }

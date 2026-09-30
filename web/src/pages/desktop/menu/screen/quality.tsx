@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+import { message } from 'antd';
 import { useAtomValue } from 'jotai';
 import { CheckIcon, SquareActivityIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -7,16 +9,17 @@ import { setQuality as setCookie } from '@/lib/localstorage.ts';
 import { videoModeAtom } from '@/jotai/screen.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
 
-import { BitRateMap, QualityMap } from './constants.ts';
+import { QualityMap } from './constants.ts';
 
 type QualityProps = {
   quality: number;
-  setQuality: (quality: number) => void;
+  refresh: () => Promise<{ quality?: number }>;
 };
 
-export const Quality = ({ quality, setQuality }: QualityProps) => {
+export const Quality = ({ quality, refresh }: QualityProps) => {
   const { t } = useTranslation();
   const videoMode = useAtomValue(videoModeAtom);
+  const updating = useRef(false);
 
   const qualityList = [
     { key: 1, label: t('screen.qualityLossless') },
@@ -26,15 +29,25 @@ export const Quality = ({ quality, setQuality }: QualityProps) => {
   ];
 
   async function update(key: number) {
-    const value = videoMode === 'mjpeg' ? QualityMap.get(key)! : BitRateMap.get(key)!;
-
-    const rsp = await updateScreen('quality', value);
-    if (rsp.code !== 0) {
+    const value = QualityMap.get(key);
+    if (updating.current || value === undefined) return;
+    if (videoMode !== 'mjpeg') {
+      message.error('JPEG quality is only available for MJPEG');
       return;
     }
-
-    setQuality(key);
-    setCookie(key);
+    updating.current = true;
+    try {
+      const rsp = await updateScreen('quality', value);
+      if (rsp.code !== 0 || rsp.data?.applied !== true || rsp.data?.rejection != null)
+        throw new Error(rsp.data?.rejection || 'Quality update was refused');
+      if ((await refresh()).quality !== value)
+        throw new Error('Quality read-back did not match the request');
+      setCookie(key);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Unable to update quality');
+    } finally {
+      updating.current = false;
+    }
   }
 
   const content = (

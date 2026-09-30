@@ -91,13 +91,14 @@ try {
     return screen instanceof HTMLImageElement && screen.naturalWidth > 0;
   });
 
-  phase = "key";
-  await page.keyboard.press("KeyA");
-
-  phase = "confirm";
+  phase = "enable-control";
+  await page.getByRole("button", { name: "Enable remote control" }).click();
   const confirm = page.getByRole("button", { name: "Confirm and control" });
   await confirm.waitFor({ state: "visible", timeout: 5000 });
   await confirm.click();
+
+  phase = "key";
+  await page.keyboard.press("KeyA");
 
   phase = "settle";
   await page.waitForTimeout(1500);

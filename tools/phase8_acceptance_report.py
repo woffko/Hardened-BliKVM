@@ -3,11 +3,12 @@
 
 The report walks an explicit, reviewed manifest: the host artifacts each
 canonical phase must ship and the device receipts each gate must have produced.
-A phase is only `complete` when every host artifact exists and every device item
-matches a recorded receipt with the expected marker. A missing receipt is
-reported as `unrun`; it is never inferred from code, commit messages or earlier
-work. Nothing here proves a device behaviour by itself, and the tool reads only
-the receipt files it names, never credentials or cookies.
+A phase is only `complete` when every host artifact exists and the newest receipt
+for every device item has the expected success marker and exact reviewed-release
+context. A missing receipt is reported as `unrun`; an older success cannot mask
+a newer failure, and success is never inferred from code, commit messages or
+earlier work. Nothing here proves a device behaviour by itself, and the tool
+reads only the receipt files it names, never credentials or cookies.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,9 @@ from tools.capture_pikvm_baseline import write_json_0600_atomic
 from tools import stage_device_prototype as prototype
 
 MAX_RECEIPT_BYTES = 1_048_576
+MAX_RELEASE_CONTEXT_BYTES = 4096
+SOURCE_COMMIT = re.compile(r"[a-f0-9]{40}")
+RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{7,79}")
 
 
 def _marker(path: str) -> tuple[str, Any]:
@@ -263,22 +268,27 @@ PHASES: tuple[dict[str, Any], ...] = (
             {
                 "name": "board daemon fan preflight",
                 "glob": "boardd-fan-preflight-*.json",
+                "marker": "result=passed",
             },
             {
                 "name": "fan gate",
                 "glob": "boardd-fan-gate-*.json",
+                "marker": "result=passed",
             },
             {
                 "name": "panel gate",
                 "glob": "boardd-panel-gate-*.json",
+                "marker": "result=passed",
             },
             {
                 "name": "activity LED gate",
                 "glob": "boardd-led-gate-*.json",
+                "marker": "result=passed",
             },
             {
                 "name": "display button gate",
                 "glob": "boardd-button-gate-*.json",
+                "marker": "result=passed",
             },
             {
                 "name": "KVMD retirement",
@@ -316,10 +326,12 @@ PHASES: tuple[dict[str, Any], ...] = (
             {
                 "name": "system action end-to-end gate",
                 "glob": "system-action-gate-*.json",
+                "marker": "result=passed",
             },
             {
                 "name": "network write gate",
                 "glob": "network-write-gate-*.json",
+                "marker": "result=passed",
             },
         ),
     },
@@ -340,10 +352,13 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "name": "signed application update commit cycle",
                 "glob": "persistent-write-*-commit-*.json",
                 "probe": "persistent-write-commit-cycle",
+                "marker": "result=passed",
             },
             {
                 "name": "slot serving cutover",
                 "glob": "update-slot-serving-*.json",
+                "probe": "hardened-blikvm-slot-serving-gate",
+                "marker": "result=passed",
             },
         ),
     },
@@ -361,15 +376,19 @@ PHASES: tuple[dict[str, Any], ...] = (
                 "name": "GUI parity capture",
                 "glob": "gui-parity-ours-auth-*.json",
                 "probe": "hardened-blikvm-gui-parity",
+                "marker": "result=passed",
             },
             {
                 "name": "GUI parity comparison",
                 "glob": "gui-parity-compare-*.json",
                 "probe": "hardened-blikvm-gui-parity-compare",
+                "marker": "result=passed",
             },
             {
                 "name": "vendor replacement summary",
                 "glob": "vendor-replacement-*.json",
+                "probe": "hardened-blikvm-vendor-replacement",
+                "marker": "result=passed",
             },
         ),
     },
@@ -395,48 +414,78 @@ def audit_host(root: Path, paths: tuple[str, ...]) -> dict[str, Any]:
     return {"present": present, "missing": missing}
 
 
-def audit_device(evidence: Path, items: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+def validate_release_context(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {
+        "acceptanceRunId",
+        "reviewedSourceCommit",
+    }:
+        raise ValueError("invalid release context fields")
+    run_id = value.get("acceptanceRunId")
+    source_commit = value.get("reviewedSourceCommit")
+    if not isinstance(run_id, str) or RUN_ID.fullmatch(run_id) is None:
+        raise ValueError("invalid acceptance run identifier")
+    if not isinstance(source_commit, str) or SOURCE_COMMIT.fullmatch(source_commit) is None:
+        raise ValueError("invalid reviewed source commit")
+    return {
+        "acceptanceRunId": run_id,
+        "reviewedSourceCommit": source_commit,
+    }
+
+
+def read_release_context(path: Path) -> dict[str, str]:
+    if path.stat().st_size > MAX_RELEASE_CONTEXT_BYTES:
+        raise ValueError("release context exceeds the size limit")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return validate_release_context(value)
+
+
+def audit_device(
+    evidence: Path,
+    items: tuple[dict[str, Any], ...],
+    release_context: dict[str, str],
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for item in items:
         matches = sorted(glob.glob(str(evidence / item["glob"])))
         status = "unrun"
         detail = ""
         matched_file = ""
-        for candidate in reversed(matches):
-            path = Path(candidate)
+        if matches:
+            path = Path(matches[-1])
+            matched_file = path.name
             try:
                 if path.stat().st_size > MAX_RECEIPT_BYTES:
-                    detail = "receipt exceeds the size limit"
-                    continue
+                    raise ValueError("receipt exceeds the size limit")
                 document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError):
-                detail = "receipt is unreadable"
-                continue
-            if not isinstance(document, dict):
-                detail = "receipt is not an object"
-                continue
-            expected = item.get("probe")
-            if expected and document.get("probe") != expected and document.get("gate") != expected:
-                detail = f"probe is {document.get('probe') or document.get('gate')!r}"
-                continue
-            required = item.get("require", ())
-            missing = next(
-                (key for key in required if _read_marker(document, key) is None), None
-            )
-            if missing is not None:
-                detail = f"receipt is missing {missing}"
-                continue
-            marker = item.get("marker")
-            if marker:
+                if not isinstance(document, dict):
+                    raise ValueError("receipt is not an object")
+                expected = item.get("probe")
+                if expected and document.get("probe") != expected and document.get("gate") != expected:
+                    raise ValueError(
+                        f"probe is {document.get('probe') or document.get('gate')!r}"
+                    )
+                required = item.get("require", ())
+                missing = next(
+                    (key for key in required if _read_marker(document, key) is None), None
+                )
+                if missing is not None:
+                    raise ValueError(f"receipt is missing {missing}")
+                marker = item.get("marker")
+                if not marker:
+                    raise ValueError("manifest item has no explicit success marker")
                 key, want = _marker(marker)
                 got = _read_marker(document, key)
                 if got != want:
+                    status = "failed"
                     detail = f"marker {key}={got!r}, expected {want!r}"
-                    continue
-            status = "recorded"
-            matched_file = path.name
-            detail = ""
-            break
+                elif document.get("evidenceContext") != release_context:
+                    status = "unbound"
+                    detail = "receipt is not bound to the reviewed release context"
+                else:
+                    status = "passed"
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+                status = "invalid"
+                detail = str(error) or "receipt is unreadable"
         results.append(
             {
                 "name": item["name"],
@@ -450,12 +499,16 @@ def audit_device(evidence: Path, items: tuple[dict[str, Any], ...]) -> list[dict
     return results
 
 
-def build_report(root: Path, evidence: Path) -> dict[str, Any]:
+def build_report(
+    root: Path,
+    evidence: Path,
+    release_context: dict[str, str],
+) -> dict[str, Any]:
     phases: list[dict[str, Any]] = []
     for spec in PHASES:
         host = audit_host(root, spec["host"])
-        device = audit_device(evidence, spec["device"])
-        complete = not host["missing"] and all(item["status"] == "recorded" for item in device)
+        device = audit_device(evidence, spec["device"], release_context)
+        complete = not host["missing"] and all(item["status"] == "passed" for item in device)
         phases.append(
             {
                 "phase": spec["phase"],
@@ -466,12 +519,13 @@ def build_report(root: Path, evidence: Path) -> dict[str, Any]:
             }
         )
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "probe": "hardened-blikvm-phase8-acceptance",
         "overall": "complete"
         if all(phase["status"] == "complete" for phase in phases)
         else "incomplete",
         "phases": phases,
+        "evidenceContext": release_context,
         "notAudited": NOT_AUDITED,
         "policy": {
             "credentialsRead": False,
@@ -487,6 +541,7 @@ def parse_args() -> argparse.Namespace:
     _ = parser.add_argument("--output", required=True)
     _ = parser.add_argument("--root", default=".")
     _ = parser.add_argument("--evidence", default="evidence/private")
+    _ = parser.add_argument("--release-context", required=True)
     return parser.parse_args()
 
 
@@ -496,17 +551,19 @@ def execute(args: argparse.Namespace) -> int:
     evidence = Path(args.evidence)
     if not evidence.is_absolute():
         evidence = root / evidence
-    report = build_report(root, evidence)
+    context_path = prototype.validate_private_file(args.release_context)
+    release_context = read_release_context(context_path)
+    report = build_report(root, evidence, release_context)
     write_json_0600_atomic(output, report)
     unrun = sum(
-        1 for phase in report["phases"] for item in phase["device"] if item["status"] != "recorded"
+        1 for phase in report["phases"] for item in phase["device"] if item["status"] != "passed"
     )
     missing = sum(len(phase["host"]["missing"]) for phase in report["phases"])
     print(
         f"phase8_acceptance={output} overall={report['overall']} "
         f"hostMissing={missing} deviceUnrun={unrun}"
     )
-    return 0
+    return 0 if report["overall"] == "complete" else 1
 
 
 def main() -> int:

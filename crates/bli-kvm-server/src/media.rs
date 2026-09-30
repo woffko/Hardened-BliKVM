@@ -126,14 +126,22 @@ pub(crate) async fn virtual_media(
                 rejection: Some(rejection_name(code)),
             },
             ControlResponse::MediaState { .. }
+            | ControlResponse::HidReconciliationState { .. }
             | ControlResponse::BoardStatus { .. }
             | ControlResponse::VideoState { .. }
             | ControlResponse::MdnsState { .. }
             | ControlResponse::MouseJigglerState { .. }
             | ControlResponse::HidOnlyState { .. }
+            | ControlResponse::AdminFeatureState { .. }
+            | ControlResponse::SshState { .. }
+            | ControlResponse::NetworkInfo { .. }
             | ControlResponse::WifiState { .. }
+            | ControlResponse::WifiNetworks { .. }
+            | ControlResponse::WifiProfiles { .. }
             | ControlResponse::TlsState { .. }
+            | ControlResponse::FirewallModeState { .. }
             | ControlResponse::FirewallState { .. }
+            | ControlResponse::FirewallRules { .. }
             | ControlResponse::TailscaleState { .. } => VirtualMediaOutcome {
                 applied: false,
                 rejection: Some("invalid_state"),
@@ -159,14 +167,7 @@ pub(crate) async fn media_catalog(
                 "virtual media catalog is not enabled".into(),
             ));
         }
-        let Some(path) = state.options.media_catalog.as_ref() else {
-            return Err(AppError::ServiceUnavailable(
-                "virtual media catalog is not configured".into(),
-            ));
-        };
-        let catalog = bli_kvm_media_catalog::MediaCatalog::open(path).map_err(|_| {
-            AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
-        })?;
+        let catalog = reconciled_catalog(&state)?;
         Ok(Json(ApiResponse::ok(MediaCatalogView {
             images: catalog.summaries(),
         })))
@@ -232,6 +233,87 @@ pub(crate) struct MediaObserved {
 }
 
 #[cfg(feature = "restricted-control-surface")]
+/// Opens the catalog after dropping entries whose file is gone from the image
+/// store (a card written from another board, a file removed by hand), so the
+/// dialog never offers an image the owner cannot attach.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) fn reconciled_catalog(
+    state: &AppState,
+) -> AppResult<bli_kvm_media_catalog::MediaCatalog> {
+    let path = storage_catalog_path(state)?;
+    let open = || {
+        bli_kvm_media_catalog::MediaCatalog::open(path).map_err(|_| {
+            AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
+        })
+    };
+    let catalog = open()?;
+    let Some(directory) = state.options.media_directory.as_deref() else {
+        return Ok(catalog);
+    };
+    if state.options.media_store_must_be_mounted && !store_is_mounted(directory) {
+        eprintln!("media: the image store is not mounted; the catalog is left as it is");
+        return Ok(catalog);
+    }
+    // Only a file that is positively not there drops its entry; any other
+    // failure to look keeps it.
+    let missing: Vec<String> = catalog
+        .summaries()
+        .into_iter()
+        .map(|entry| entry.image_name)
+        .filter(|name| entry_is_gone(&directory.join(name)))
+        .collect();
+    if missing.is_empty() {
+        return Ok(catalog);
+    }
+    for name in &missing {
+        match bli_kvm_media_catalog::MediaCatalog::remove_image(path, name) {
+            Ok(_) => eprintln!("media: dropped the catalog entry {name}: its file is gone"),
+            Err(error) => eprintln!("media: could not drop the catalog entry {name}: {error:?}"),
+        }
+    }
+    open()
+}
+
+/// Whether a catalog entry's file is positively gone: not there, or not a
+/// regular file. A file that cannot be looked at (an I/O error, no access)
+/// keeps its entry.
+#[cfg(feature = "restricted-control-surface")]
+fn entry_is_gone(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) => !metadata.is_file(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// Whether the image store is a filesystem of its own: its device differs from
+/// its parent directory's, and the directory can be read.
+#[cfg(feature = "restricted-control-surface")]
+fn store_is_mounted(directory: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(parent) = directory.parent() else {
+        return false;
+    };
+    match (std::fs::metadata(directory), std::fs::metadata(parent)) {
+        (Ok(store), Ok(above)) => {
+            store.dev() != above.dev() && std::fs::read_dir(directory).is_ok()
+        }
+        _ => false,
+    }
+}
+
+/// The image attached to the target now, if any.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn attached_image(
+    state: &AppState,
+    session_token: &str,
+) -> AppResult<Option<String>> {
+    Ok(observe_media(state, session_token)
+        .await?
+        .file
+        .filter(|name| !name.is_empty()))
+}
+
+#[cfg(feature = "restricted-control-surface")]
 fn storage_catalog_path(state: &AppState) -> AppResult<&std::path::Path> {
     state.options.media_catalog.as_deref().ok_or_else(|| {
         AppError::ServiceUnavailable("virtual media catalog is not configured".into())
@@ -250,6 +332,15 @@ fn storage_operation_id(session_token: &str, domain: &[u8]) -> String {
         .take(16)
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// For the inventory: whether an image is attached, if the owner answers.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn observe(state: &AppState, session_token: &str) -> Option<bool> {
+    observe_media(state, session_token)
+        .await
+        .ok()
+        .map(|observed| observed.file.is_some())
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -354,10 +445,7 @@ pub(crate) async fn storage_images(
                 "virtual media control is not enabled".into(),
             ));
         }
-        let catalog = bli_kvm_media_catalog::MediaCatalog::open(storage_catalog_path(&state)?)
-            .map_err(|_| {
-                AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
-            })?;
+        let catalog = reconciled_catalog(&state)?;
         Ok(Json(ApiResponse::ok(StorageImagesView {
             files: catalog
                 .summaries()
@@ -428,10 +516,7 @@ pub(crate) async fn storage_mount(
         let command = if body.file.is_empty() {
             bli_kvm_core::VirtualMediaCommand::SetConnected { connected: false }
         } else {
-            let catalog = bli_kvm_media_catalog::MediaCatalog::open(storage_catalog_path(&state)?)
-                .map_err(|_| {
-                    AppError::ServiceUnavailable("virtual media catalog is unavailable".into())
-                })?;
+            let catalog = reconciled_catalog(&state)?;
             let Some(entry) = catalog.find_by_name(&body.file) else {
                 return Err(AppError::BadRequest(
                     "image is not present in the catalog".into(),
@@ -547,5 +632,28 @@ pub(crate) async fn storage_delete(
         Err(AppError::ServiceUnavailable(
             "virtual media control is not available".into(),
         ))
+    }
+}
+
+#[cfg(all(test, feature = "restricted-control-surface"))]
+mod store_tests {
+    use super::*;
+
+    #[test]
+    fn an_unmounted_or_unreadable_store_drops_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        // A plain directory shares its parent's filesystem: not a mounted store.
+        assert!(!store_is_mounted(dir.path()));
+        // A separate filesystem is one.
+        assert!(store_is_mounted(std::path::Path::new("/proc")));
+        assert!(!store_is_mounted(&dir.path().join("missing")));
+
+        std::fs::write(dir.path().join("there.img"), b"x").unwrap();
+        assert!(!entry_is_gone(&dir.path().join("there.img")));
+        assert!(entry_is_gone(&dir.path().join("gone.img")));
+        assert!(entry_is_gone(dir.path()), "a directory is not an image");
+        // A name that cannot be looked at keeps its entry (a name that is too
+        // long is an error other than "not found").
+        assert!(!entry_is_gone(&dir.path().join("x".repeat(300))));
     }
 }

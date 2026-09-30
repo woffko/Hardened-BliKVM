@@ -1,5 +1,5 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -euo pipefail
 umask 022
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -10,7 +10,7 @@ bundle_name=hardened-blikvm-prototype-0.1.0-dev-aarch64
 # The shipped build carries the board profile: the Rust gadget (media + HID),
 # the reviewed native ATX GPIO executor and the privileged system-action
 # profile, so the signed slot serves our board arrangement.
-cargo_features=${BLI_KVM_CARGO_FEATURES:-restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile,system-action-profile}
+cargo_features=${BLI_KVM_CARGO_FEATURES:-restricted-control-surface,gadget-media-profile,gadget-hid-profile,chardev-atx-profile,system-action-profile,network-write-profile}
 
 for directory in "$target_dir" "$output_dir" "$pnpm_store"; do
   case "$directory" in
@@ -38,12 +38,19 @@ atx_live_gate_binary="$release_dir/bli-kvm-atx-live-gate"
 media_isolated_gate_binary="$release_dir/bli-kvm-media-isolated-gate"
 update_supervisor_binary="$release_dir/bli-kvm-update-supervisor"
 update_health_reporter_binary="$release_dir/bli-kvm-update-health-reporter"
+update_exec_helper_binary="$release_dir/bli-kvm-update-exec-helper"
+scripts/verify-aarch64-elf.sh "$update_exec_helper_binary"
+admin_helper_binary="$release_dir/bli-kvm-admin-helper"
+scripts/verify-aarch64-elf.sh "$admin_helper_binary"
+system_update_binary="$release_dir/bli-kvm-system-update"
+scripts/verify-aarch64-elf.sh "$system_update_binary"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
-temp_root=$(mktemp -d /tmp/hardened-blikvm-bundle.XXXXXX)
+mkdir -p -- "$output_dir"
+temp_root=$(mktemp -d "$output_dir/.hardened-blikvm-bundle.XXXXXX")
 cleanup() {
   case "$temp_root" in
-    /tmp/hardened-blikvm-bundle.*) rm -rf -- "$temp_root" ;;
+    "$output_dir"/.hardened-blikvm-bundle.*) rm -rf -- "$temp_root" ;;
     *) echo "refusing unsafe temporary cleanup" >&2 ;;
   esac
 }
@@ -59,6 +66,9 @@ install -d -m 0755 \
   "$stage/share/sysusers.d" \
   "$stage/share/tmpfiles.d" \
   "$stage/share/udev" \
+  "$stage/share/picoclaw" \
+  "$stage/share/tailscale" \
+  "$stage/share/system-update" \
   "$stage/share/docs"
 install -m 0755 "$server_binary" "$stage/bin/bli-kvm-server"
 install -m 0755 "$broker_binary" "$stage/libexec/bli-kvm-platform-broker"
@@ -71,6 +81,9 @@ install -m 0755 "$atx_live_gate_binary" "$stage/libexec/bli-kvm-atx-live-gate"
 install -m 0755 "$media_isolated_gate_binary" "$stage/libexec/bli-kvm-media-isolated-gate"
 install -m 0755 "$update_supervisor_binary" "$stage/libexec/bli-kvm-update-supervisor"
 install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-health-reporter"
+install -m 0755 "$update_exec_helper_binary" "$stage/libexec/bli-kvm-update-exec-helper"
+install -m 0755 "$admin_helper_binary" "$stage/libexec/bli-kvm-admin-helper"
+install -m 0755 "$system_update_binary" "$stage/libexec/bli-kvm-system-update"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
@@ -104,21 +117,56 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-update-apply-confirmed.service \
   packaging/systemd/hardened-blikvm-server-current.service \
   packaging/systemd/hardened-blikvm-server-candidate.service \
+  packaging/systemd/hardened-blikvm-update-exec.socket \
+  packaging/systemd/hardened-blikvm-update-exec@.service \
+  packaging/systemd/hardened-blikvm-update-native-boot.service \
+  packaging/systemd/hardened-blikvm-hid-gadget.service \
+  packaging/systemd/hardened-blikvm-admin.socket \
+  packaging/systemd/hardened-blikvm-admin@.service \
+  packaging/systemd/hardened-blikvm-image-download.socket \
+  packaging/systemd/hardened-blikvm-image-download@.service \
+  packaging/systemd/hardened-blikvm-picoclaw.service \
+  packaging/systemd/hardened-blikvm-picoclaw-api.socket \
+  packaging/systemd/hardened-blikvm-picoclaw-api@.service \
+  packaging/systemd/hardened-blikvm-system-update-booted.service \
   "$stage/share/systemd/"
+install -d -m 0755 "$stage/share/systemd/native"
+install -m 0644 packaging/systemd/native/*.service "$stage/share/systemd/native/"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-update-watchdog.timer \
   packaging/systemd/hardened-blikvm-update-confirm.socket \
   "$stage/share/systemd/"
+install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-owner.service.d"
+install -m 0644 \
+  packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf \
+  "$stage/share/systemd/hardened-blikvm-board-owner.service.d/"
+bash "$project_root/scripts/stage-application-update-profile.sh" "$stage"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \
   packaging/tmpfiles.d/hardened-blikvm-gadget.conf \
+  packaging/tmpfiles.d/hardened-blikvm-video.conf \
   "$stage/share/tmpfiles.d/"
 install -m 0644 \
   packaging/udev/99-hardened-blikvm-video.rules \
   "$stage/share/udev/"
+install -m 0644 \
+  packaging/picoclaw/AGENT.md \
+  packaging/picoclaw/AGENT_KVM.md \
+  "$stage/share/picoclaw/"
+# Tailscale's apt repository key (fingerprint
+# 2596A99EAAB33821893C0A79458CA832957F5868), for the admin helper's install.
+install -m 0644 \
+  packaging/tailscale/tailscale-archive-keyring.asc \
+  "$stage/share/tailscale/"
+# RAW system update: the system trust root and the initramfs step.
+install -m 0644 packaging/system-update/system-trust.json "$stage/share/system-update/"
+install -m 0755 \
+  packaging/system-update/initramfs-hook \
+  packaging/system-update/initramfs-local-premount \
+  "$stage/share/system-update/"
 install -m 0644 LICENSE "$stage/LICENSE"
 install -m 0644 packaging/PROTOTYPE-README.md "$stage/README.md"
 install -m 0644 docs/architecture.md "$stage/share/docs/architecture.md"
@@ -161,6 +209,9 @@ atx_live_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-atx-live-gate" | cut -d ' 
 media_isolated_gate_sha=$(sha256sum "$stage/libexec/bli-kvm-media-isolated-gate" | cut -d ' ' -f 1)
 update_supervisor_sha=$(sha256sum "$stage/libexec/bli-kvm-update-supervisor" | cut -d ' ' -f 1)
 update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-reporter" | cut -d ' ' -f 1)
+update_exec_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-update-exec-helper" | cut -d ' ' -f 1)
+admin_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-admin-helper" | cut -d ' ' -f 1)
+system_update_sha=$(sha256sum "$stage/libexec/bli-kvm-system-update" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
 pnpm_lock_sha=$(sha256sum web/pnpm-lock.yaml | cut -d ' ' -f 1)
 web_tree_sha=$(
@@ -177,6 +228,9 @@ atx_live_gate_size=$(wc -c < "$stage/libexec/bli-kvm-atx-live-gate" | tr -d ' ')
 media_isolated_gate_size=$(wc -c < "$stage/libexec/bli-kvm-media-isolated-gate" | tr -d ' ')
 update_supervisor_size=$(wc -c < "$stage/libexec/bli-kvm-update-supervisor" | tr -d ' ')
 update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-reporter" | tr -d ' ')
+update_exec_helper_size=$(wc -c < "$stage/libexec/bli-kvm-update-exec-helper" | tr -d ' ')
+admin_helper_size=$(wc -c < "$stage/libexec/bli-kvm-admin-helper" | tr -d ' ')
+system_update_size=$(wc -c < "$stage/libexec/bli-kvm-system-update" | tr -d ' ')
 
 source_state=uncommitted-development-checkpoint
 source_commit=
@@ -198,6 +252,9 @@ jq -n \
   --arg media_isolated_gate_sha "$media_isolated_gate_sha" \
   --arg update_supervisor_sha "$update_supervisor_sha" \
   --arg update_health_reporter_sha "$update_health_reporter_sha" \
+  --arg update_exec_helper_sha "$update_exec_helper_sha" \
+  --arg admin_helper_sha "$admin_helper_sha" \
+  --arg system_update_sha "$system_update_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
@@ -213,6 +270,9 @@ jq -n \
   --argjson media_isolated_gate_size "$media_isolated_gate_size" \
   --argjson update_supervisor_size "$update_supervisor_size" \
   --argjson update_health_reporter_size "$update_health_reporter_size" \
+  --argjson update_exec_helper_size "$update_exec_helper_size" \
+  --argjson admin_helper_size "$admin_helper_size" \
+  --argjson system_update_size "$system_update_size" \
   '{
     schemaVersion: 1,
     product: "Hardened BliKVM",
@@ -233,6 +293,9 @@ jq -n \
       mediaIsolatedGate: {path: "libexec/bli-kvm-media-isolated-gate", sha256: $media_isolated_gate_sha, size: $media_isolated_gate_size},
       updateSupervisor: {path: "libexec/bli-kvm-update-supervisor", sha256: $update_supervisor_sha, size: $update_supervisor_size},
       updateHealthReporter: {path: "libexec/bli-kvm-update-health-reporter", sha256: $update_health_reporter_sha, size: $update_health_reporter_size},
+      updateExecHelper: {path: "libexec/bli-kvm-update-exec-helper", sha256: $update_exec_helper_sha, size: $update_exec_helper_size},
+      adminHelper: {path: "libexec/bli-kvm-admin-helper", sha256: $admin_helper_sha, size: $admin_helper_size},
+      systemUpdate: {path: "libexec/bli-kvm-system-update", sha256: $system_update_sha, size: $system_update_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
     },
     locks: {cargo: $cargo_lock_sha, pnpm: $pnpm_lock_sha}
@@ -257,6 +320,9 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-atx-live-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-media-isolated-gate")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-supervisor")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-exec-helper")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-admin-helper")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-system-update")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755
@@ -264,7 +330,7 @@ test "$(stat -c '%a' "$stage/share/web/index.html")" = 644
 
 mkdir -p "$output_dir"
 archive="$output_dir/$bundle_name.tar.gz"
-temporary_archive=$(mktemp "$output_dir/.${bundle_name}.XXXXXX.tar.gz")
+temporary_archive=$(mktemp "$temp_root/.${bundle_name}.XXXXXX.tar.gz")
 tar \
   --sort=name \
   --mtime=@0 \

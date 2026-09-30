@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 httparse.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 
 [dev-dependencies]
 tempfile.workspace = true

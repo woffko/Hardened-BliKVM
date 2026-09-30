@@ -136,6 +136,10 @@ assert.equal(eligible(slot("3"), pending), false);
 assert.equal(currentIntent(intent, fixture()), true);
 assert.equal(currentIntent(intent, { ...fixture(), generation: "11" }), false);
 assert.equal(validActivation(activation, slot("3").slotId), true);
+assert.equal(
+  validActivation({ ...activation, phase: "prepared" }, slot("3").slotId),
+  true,
+);
 for (const invalid of [
   null,
   {},

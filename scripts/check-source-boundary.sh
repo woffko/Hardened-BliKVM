@@ -41,6 +41,27 @@ while IFS= read -r path; do
         exit 1
       fi
       ;;
+    image/jpeg)
+      # Synthetic ffmpeg testsrc2 frames for the VP8 pipeline's decoder tests.
+      case "$path" in
+        crates/bli-kvm-video-encoder/tests/fixtures/testsrc-64x48-420.jpg|crates/bli-kvm-video-encoder/tests/fixtures/testsrc-64x48-422.jpg) ;;
+        *)
+          echo "unexpected JPEG source asset: $path" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    application/pgp-keys)
+      # Tailscale's public apt repository key, fingerprint
+      # 2596A99EAAB33821893C0A79458CA832957F5868.
+      case "$path" in
+        packaging/tailscale/tailscale-archive-keyring.asc) ;;
+        *)
+          echo "unexpected key file: $path" >&2
+          exit 1
+          ;;
+      esac
+      ;;
     image/svg+xml)
       case "$path" in
         *.svg) ;;
@@ -86,6 +107,12 @@ private_ip_matches=$(
 )
 private_ip_matches=$(printf '%s\n' "$private_ip_matches" \
   | rg -v '^\./tools/test_capture_pikvm_baseline\.py:' || true)
+# These complete, path-bound lines define the public RFC1918 ranges, not a
+# device address. Anchor the entire line so another literal cannot hide beside
+# an allowed definition. Do not exempt either firewall source file as a whole.
+private_ip_matches=$(printf '%s\n' "$private_ip_matches" \
+  | rg -v '^\./crates/bli-kvm-control-broker/src/firewall_rules\.rs:[0-9]+:const LOCAL_V4: &str = "\{ 10[.]0[.]0[.]0/8, 172[.]16[.]0[.]0/12, 192[.]168[.]0[.]0/16, 169[.]254[.]0[.]0/16 \}";$' \
+  | rg -v '^\./crates/bli-kvm-control-broker/src/firewall_observation\.rs:[0-9]+:    json!\(\{"set":\[\{"prefix":\{"addr":"10[.]0[.]0[.]0","len":8\}\}, \{"prefix":\{"addr":"172[.]16[.]0[.]0","len":12\}\}, \{"prefix":\{"addr":"192[.]168[.]0[.]0","len":16\}\}, \{"prefix":\{"addr":"169[.]254[.]0[.]0","len":16\}\}\]\}\)$' || true)
 if [ -n "$private_ip_matches" ]; then
   printf '%s\n' "$private_ip_matches" >&2
   echo "private IPv4 literal in Git-visible source" >&2

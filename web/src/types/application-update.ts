@@ -13,7 +13,8 @@ export type ApplicationUploadReceipt = {
 };
 
 export type ApplicationActivationReceipt = {
-  phase: 'awaiting_health';
+  // Native profile reports admission; the coordinator then stops this server.
+  phase: 'prepared' | 'awaiting_health';
   receipt: { operationId: string; targetSlotId: string };
 };
 

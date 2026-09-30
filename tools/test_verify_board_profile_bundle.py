@@ -42,12 +42,16 @@ def build_bundle(root: Path, mutate: dict[str, object] | None = None) -> Path:
     files["MANIFEST.json"] = json.dumps(manifest).encode()
 
     tampered = mutate.get("tamper")
-    lines = []
+    lines: list[str] = []
     for name, data in files.items():
+        if mutate.get("omit_checksum") == name:
+            continue
         recorded = sha256(data)
         if tampered == name:
             recorded = "0" * 64
         lines.append(f"{recorded}  ./{name}")
+        if mutate.get("duplicate_checksum") == name:
+            lines.append(f"{recorded}  ./{name}")
     files["SHA256SUMS"] = ("\n".join(sorted(lines)) + "\n").encode()
 
     bundle = root / "bundle.tar.gz"
@@ -56,10 +60,21 @@ def build_bundle(root: Path, mutate: dict[str, object] | None = None) -> Path:
             info = tarfile.TarInfo(f"{root_value}/{name}")
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
+            if mutate.get("duplicate_member") == name:
+                archive.addfile(info, io.BytesIO(data))
     return bundle
 
 
 class VerifyBoardProfileBundleTests(unittest.TestCase):
+    def test_incomplete_or_ambiguous_integrity_inventory_is_rejected(self) -> None:
+        for mutation in ("omit_checksum", "duplicate_checksum", "duplicate_member"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                bundle = build_bundle(
+                    Path(directory), {mutation: "libexec/bli-kvm-server"}
+                )
+                with self.assertRaises(ValueError):
+                    verifier.verify_bundle(bundle, "")
+
     def test_valid_bundle_verifies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle = build_bundle(Path(directory))

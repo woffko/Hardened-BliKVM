@@ -23,6 +23,94 @@ pub struct TargetRelease {
     pub target_binding: [u8; 32],
 }
 
+/// Largest rule listing the owner serves in chunks.
+pub const MAX_FIREWALL_RULES_BYTES: usize = 64 * 1024;
+/// Largest rule chunk in one control response.
+pub const MAX_FIREWALL_RULES_CHUNK: usize = 2048;
+
+/// The reference's rule views: IPv4 and IPv6 (their tables plus the dual-stack
+/// `inet` ones) and the whole nft ruleset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirewallRulesFamily {
+    Ipv4,
+    Ipv6,
+    Nft,
+}
+
+/// The most networks a scan answer carries, and saved profiles a list does:
+/// both keep one control message within its 4 KiB.
+pub const MAX_WIFI_NETWORKS: usize = 20;
+pub const MAX_WIFI_PROFILES: usize = 16;
+
+/// What the operator does with a saved WiFi profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WifiProfileAction {
+    Connect,
+    Forget,
+    AutoconnectOn,
+    AutoconnectOff,
+}
+
+/// A WiFi network name: 1 to 32 bytes without control characters.
+pub fn valid_wifi_ssid(ssid: &str) -> bool {
+    (1..=32).contains(&ssid.len()) && !ssid.chars().any(char::is_control)
+}
+
+/// A WPA passphrase (8 to 63 printable characters) or a 64-digit hex key;
+/// an empty password stands for an open network.
+pub fn valid_wifi_password(password: &str) -> bool {
+    password.is_empty()
+        || ((8..=63).contains(&password.len()) && !password.chars().any(char::is_control))
+        || (password.len() == 64 && password.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// A NetworkManager profile UUID in its canonical lowercase or uppercase
+/// hyphenated form.
+pub fn valid_wifi_profile_id(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Administration features that stay off until the operator switches them on
+/// (`docs/design/admin-features-v1.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminFeature {
+    Terminal,
+    Scripts,
+    RemoteDownload,
+    Picoclaw,
+    RawSystemUpdate,
+}
+
+impl AdminFeature {
+    pub const ALL: [Self; 5] = [
+        Self::Terminal,
+        Self::Scripts,
+        Self::RemoteDownload,
+        Self::Picoclaw,
+        Self::RawSystemUpdate,
+    ];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Scripts => "scripts",
+            Self::RemoteDownload => "remote_download",
+            Self::Picoclaw => "picoclaw",
+            Self::RawSystemUpdate => "raw_system_update",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HidLeaseRequest {
@@ -207,15 +295,71 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back whether HID-only mode is on.
     HidOnlyState {},
+    /// Switch one administration feature on or off.
+    AdminFeature {
+        feature: AdminFeature,
+        enabled: bool,
+    },
+    /// Read back the administration feature switches.
+    AdminFeatureState {},
+    /// Enable and start, or stop and disable, the OpenSSH server.
+    Ssh {
+        enabled: bool,
+    },
+    /// Read back the OpenSSH server state.
+    SshState {},
+    /// The connected interfaces' IPv4 addressing and DNS.
+    NetworkInfo {},
+    /// Set one interface to DHCP, or to manual DNS with an optional static
+    /// address; an addressing change reverts unless confirmed.
+    Ipv4Set {
+        change: Ipv4Change,
+    },
+    /// Keep the addressing change that is waiting for confirmation.
+    Ipv4Confirm {},
+    /// Set one interface's IPv6 mode.
+    Ipv6Set {
+        change: Ipv6Change,
+    },
+    /// Rename the device (RFC 1123 host label).
+    Hostname {
+        name: String,
+    },
     /// Read the WiFi device state.
     WifiState {},
-    /// Connect to a WiFi network through NetworkManager.
+    /// The networks in range; `rescan` asks NetworkManager for a new scan,
+    /// whose results arrive a few seconds later.
+    WifiScan {
+        rescan: bool,
+    },
+    /// The saved WiFi profiles.
+    WifiSaved {},
+    /// Connect to a WiFi network through NetworkManager; `hidden` for a
+    /// network that does not announce its name.
     WifiConnect {
         ssid: String,
         password: String,
+        #[serde(default)]
+        hidden: bool,
     },
-    /// Disconnect the profile the owner brought up.
+    /// Disconnect the WiFi device.
     WifiDisconnect {},
+    /// Act on a saved WiFi profile.
+    WifiProfile {
+        id: String,
+        action: WifiProfileAction,
+    },
+    /// Switch the WiFi radio on or off.
+    WifiRadio {
+        enabled: bool,
+    },
+    /// Make WiFi (or Ethernet) the main connection; the other stays up as a
+    /// backup. Reverted unless confirmed within a minute.
+    WifiPreferred {
+        enabled: bool,
+    },
+    /// Keep the main-connection change.
+    WifiPreferredConfirm {},
     /// Read the HTTPS redirect state and the public certificate.
     TlsState {},
     /// Switch the HTTP listener between serving and redirecting to HTTPS.
@@ -228,6 +372,19 @@ pub enum PlatformControlRequestV2 {
     FirewallBaseline {
         enabled: bool,
     },
+    FirewallModeChange {
+        request: crate::FirewallChangeRequest,
+    },
+    FirewallModeConfirm {
+        request: crate::FirewallConfirmRequest,
+    },
+    FirewallModeStatus {},
+    /// Read the kernel's current rules for one address family, in bounded
+    /// chunks the caller reassembles.
+    FirewallRules {
+        family: FirewallRulesFamily,
+        offset: u32,
+    },
     /// Write one reviewed test line through the system log.
     SystemLogTest {},
     /// Read the Tailscale surface state.
@@ -238,6 +395,8 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read-only board status from the daemon that owns the board lines.
     BoardStatus {},
+    /// Read pending HID release obligations without actuating or acquiring a lease.
+    HidReconciliationState {},
     /// Reviewed post-boot acceptance: only the owner holds the journal, so the
     /// operator attests the guards and the owner closes the pending record.
     AcceptPostBoot {
@@ -247,6 +406,8 @@ pub enum PlatformControlRequestV2 {
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ControlV2ValidationError {
+    #[error("firewall operation identity or timestamp is invalid")]
+    InvalidFirewallOperation,
     #[error("session binding is invalid")]
     InvalidSessionBinding,
     #[error("target binding is invalid")]
@@ -271,6 +432,151 @@ pub enum ControlV2ValidationError {
     InvalidMediaTimestamp,
     #[error("video-settings change is invalid")]
     InvalidVideoSettings,
+    #[error("IPv4 change is invalid")]
+    InvalidIpv4Change,
+    #[error("hostname is invalid")]
+    InvalidHostname,
+    #[error("firewall rules offset is out of range")]
+    InvalidFirewallRulesOffset,
+    #[error("WiFi network or profile is invalid")]
+    InvalidWifiNetwork,
+}
+
+/// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
+/// address, prefix and optional router.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ipv6Change {
+    pub interface: String,
+    pub mode: String,
+    pub address: Option<String>,
+    pub prefix: Option<u8>,
+    pub gateway: Option<String>,
+}
+
+impl Ipv6Change {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        use std::net::Ipv6Addr;
+        let invalid = ControlV2ValidationError::InvalidIpv4Change;
+        let interface_ok = (1..=15).contains(&self.interface.len())
+            && self
+                .interface
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+        if !interface_ok {
+            return Err(invalid);
+        }
+        match self.mode.as_str() {
+            "disabled" | "slaac" | "dhcpv6" => {
+                if self.address.is_none() && self.prefix.is_none() && self.gateway.is_none() {
+                    Ok(())
+                } else {
+                    Err(invalid)
+                }
+            }
+            "manual" => {
+                let address = self
+                    .address
+                    .as_deref()
+                    .and_then(|value| value.parse::<Ipv6Addr>().ok())
+                    .ok_or(invalid)?;
+                let prefix_ok = self
+                    .prefix
+                    .is_some_and(|prefix| (1..=128).contains(&prefix));
+                let gateway_ok = self
+                    .gateway
+                    .as_deref()
+                    .is_none_or(|value| value.parse::<Ipv6Addr>().is_ok());
+                if prefix_ok && gateway_ok && !address.is_unspecified() && !address.is_multicast() {
+                    Ok(())
+                } else {
+                    Err(invalid)
+                }
+            }
+            _ => Err(invalid),
+        }
+    }
+}
+
+/// One RFC 1123 host label: letters, digits and inner hyphens, 1-63 bytes.
+pub fn valid_hostname(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// One IPv4 change: DHCP, or manual DNS servers with an optional static
+/// address, prefix and router.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ipv4Change {
+    pub interface: String,
+    pub dhcp: bool,
+    pub dns: Vec<String>,
+    pub address: Option<String>,
+    pub prefix: Option<u8>,
+    pub gateway: Option<String>,
+}
+
+pub const MAX_IPV4_DNS_SERVERS: usize = 3;
+
+impl Ipv4Change {
+    pub fn validate(&self) -> Result<(), ControlV2ValidationError> {
+        use std::net::{IpAddr, Ipv4Addr};
+        let invalid = ControlV2ValidationError::InvalidIpv4Change;
+        let interface_ok = (1..=15).contains(&self.interface.len())
+            && self
+                .interface
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+        if !interface_ok || self.dns.len() > MAX_IPV4_DNS_SERVERS {
+            return Err(invalid);
+        }
+        if self
+            .dns
+            .iter()
+            .any(|server| server.parse::<IpAddr>().is_err())
+        {
+            return Err(invalid);
+        }
+        let address = self.address.as_deref().map(str::parse::<Ipv4Addr>);
+        let gateway = self.gateway.as_deref().map(str::parse::<Ipv4Addr>);
+        if self.dhcp {
+            return if self.dns.is_empty()
+                && self.address.is_none()
+                && self.prefix.is_none()
+                && self.gateway.is_none()
+            {
+                Ok(())
+            } else {
+                Err(invalid)
+            };
+        }
+        if self.dns.is_empty() {
+            return Err(invalid);
+        }
+        match (address, self.prefix, gateway) {
+            (None, None, None) => Ok(()),
+            (Some(Ok(address)), Some(prefix @ 1..=30), Some(Ok(gateway))) => {
+                let mask = u32::MAX << (32 - u32::from(prefix));
+                let (address, gateway) = (u32::from(address), u32::from(gateway));
+                let host = address & !mask;
+                if address & mask == gateway & mask
+                    && address != gateway
+                    && host != 0
+                    && host != !mask
+                {
+                    Ok(())
+                } else {
+                    Err(invalid)
+                }
+            }
+            _ => Err(invalid),
+        }
+    }
 }
 
 impl PlatformControlRequestV2 {
@@ -294,17 +600,61 @@ impl PlatformControlRequestV2 {
             Self::MouseJigglerState {} => Ok(()),
             Self::HidOnly { .. } => Ok(()),
             Self::HidOnlyState {} => Ok(()),
+            Self::AdminFeature { .. } => Ok(()),
+            Self::AdminFeatureState {} => Ok(()),
+            Self::Ssh { .. } => Ok(()),
+            Self::SshState {} => Ok(()),
+            Self::NetworkInfo {} => Ok(()),
+            Self::Ipv4Set { change } => change.validate(),
+            Self::Ipv4Confirm {} => Ok(()),
+            Self::Ipv6Set { change } => change.validate(),
+            Self::Hostname { name } => {
+                if valid_hostname(name) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidHostname)
+                }
+            }
             Self::WifiState {} => Ok(()),
-            Self::WifiConnect { .. } => Ok(()),
+            Self::WifiScan { .. } => Ok(()),
+            Self::WifiSaved {} => Ok(()),
+            Self::WifiConnect { ssid, password, .. } => {
+                if valid_wifi_ssid(ssid) && valid_wifi_password(password) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidWifiNetwork)
+                }
+            }
             Self::WifiDisconnect {} => Ok(()),
+            Self::WifiProfile { id, .. } => {
+                if valid_wifi_profile_id(id) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidWifiNetwork)
+                }
+            }
+            Self::WifiRadio { .. } => Ok(()),
+            Self::WifiPreferred { .. } => Ok(()),
+            Self::WifiPreferredConfirm {} => Ok(()),
             Self::TlsState {} => Ok(()),
             Self::TlsSet { .. } => Ok(()),
             Self::FirewallState {} => Ok(()),
             Self::FirewallBaseline { .. } => Ok(()),
+            Self::FirewallModeChange { request } => request.validate(),
+            Self::FirewallModeConfirm { request } => request.validate(),
+            Self::FirewallModeStatus {} => Ok(()),
+            Self::FirewallRules { offset, .. } => {
+                if *offset as usize > MAX_FIREWALL_RULES_BYTES {
+                    Err(ControlV2ValidationError::InvalidFirewallRulesOffset)
+                } else {
+                    Ok(())
+                }
+            }
             Self::SystemLogTest {} => Ok(()),
             Self::TailscaleStatus {} => Ok(()),
             Self::TailscaleAction { .. } => Ok(()),
             Self::BoardStatus {} => Ok(()),
+            Self::HidReconciliationState {} => Ok(()),
             Self::AcceptPostBoot { .. } => Ok(()),
         }
     }
@@ -653,5 +1003,59 @@ mod tests {
             .validate(),
             Err(ControlV2ValidationError::InvalidConfirmationTimestamp)
         );
+    }
+
+    #[test]
+    fn wifi_requests_bound_names_passwords_and_profile_ids() {
+        let connect = |ssid: &str, password: &str| PlatformControlRequestV2::WifiConnect {
+            ssid: ssid.into(),
+            password: password.into(),
+            hidden: false,
+        };
+        for valid in [
+            connect("HomeNet", ""),
+            connect("HomeNet", "eight888"),
+            connect(&"n".repeat(32), &"p".repeat(63)),
+            connect("Café", &"ab".repeat(32)),
+        ] {
+            assert_eq!(valid.validate(), Ok(()));
+        }
+        for invalid in [
+            connect("", "eight888"),
+            connect(&"n".repeat(33), "eight888"),
+            connect("line\nbreak", "eight888"),
+            connect("HomeNet", "short"),
+            connect("HomeNet", &"p".repeat(64)),
+            connect("HomeNet", "tab\tinside"),
+        ] {
+            assert_eq!(
+                invalid.validate(),
+                Err(ControlV2ValidationError::InvalidWifiNetwork)
+            );
+        }
+        let profile = |id: &str| PlatformControlRequestV2::WifiProfile {
+            id: id.into(),
+            action: WifiProfileAction::Forget,
+        };
+        assert_eq!(
+            profile("0123abcd-0123-4567-89ab-0123456789ab").validate(),
+            Ok(())
+        );
+        for id in [
+            "",
+            "hardened-blikvm-wifi-0123abcd",
+            "../0123-4567-89ab-0123456789ab.x",
+        ] {
+            assert_eq!(
+                profile(id).validate(),
+                Err(ControlV2ValidationError::InvalidWifiNetwork)
+            );
+        }
+        // Older clients omit `hidden`.
+        let decoded: PlatformControlRequestV2 = serde_json::from_str(
+            r#"{"type":"wifi_connect","ssid":"HomeNet","password":"eight888"}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded, connect("HomeNet", "eight888"));
     }
 }

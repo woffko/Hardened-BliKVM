@@ -17,7 +17,13 @@ Group=hardened-blikvm
 UMask=0077
 StateDirectory=hardened-blikvm
 StateDirectoryMode=0700
+# The firewall mode surface (BLI_KVM_FIREWALL_MODES=1) follows the owner's
+# reviewed configuration in the same operator-supplied file.
+EnvironmentFile=-/etc/hardened-blikvm/firewall.env
 Environment=BLI_KVM_BIND=127.0.0.1:18080
+Environment=BLI_KVM_ADMIN_SOCKET=/run/hardened-blikvm-admin/admin.sock
+Environment=BLI_KVM_DOWNLOAD_SOCKET=/run/hardened-blikvm-download-api/download.sock
+Environment=BLI_KVM_PICOCLAW_SOCKET=/run/hardened-blikvm-picoclaw-api/picoclaw.sock
 Environment=BLI_KVM_WEB_ROOT=/var/lib/hardened-blikvm-slots/current/share/web
 Environment=BLI_KVM_STATE_DIR=/var/lib/hardened-blikvm
 Environment=BLI_KVM_BROKER_SOCKET=/run/hardened-blikvm/platform-broker.sock
@@ -27,6 +33,11 @@ Environment=BLI_KVM_MEDIA_CONTROLS=1
 Environment=BLI_KVM_MEDIA_CATALOG=/etc/hardened-blikvm-gadget/catalog.json
 Environment=BLI_KVM_MEDIA_DIRECTORY=/var/lib/hardened-blikvm-gadget/images
 Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
+# nginx takes the MJPEG stream from this socket: its buffer stays small,
+# while nginx's loopback TCP receive buffer grew to megabytes of old frames.
+Environment=BLI_KVM_STREAM_SOCKET=/run/hardened-blikvm-stream/mjpeg.sock
+RuntimeDirectory=hardened-blikvm-stream
+RuntimeDirectoryMode=0755
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0
 LoadCredential=application-health-token:/run/hardened-blikvm-update/health-token
@@ -34,8 +45,15 @@ ExecStart=/var/lib/hardened-blikvm-slots/current/bin/bli-kvm-server
 ExecStartPost=/usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter --health-endpoint 127.0.0.1:18080 --confirm-socket /run/hardened-blikvm-update-confirm/confirm.sock --credential-directory /run/hardened-blikvm-candidate-credentials/%n
 Restart=no
 TimeoutStartSec=15s
-TimeoutStopSec=10s
+# Allow the server's 20-second HTTP/WebSocket drain to report its result.
+TimeoutStopSec=30s
 
+# The server streams uploads to disk and relays only the newest video frame,
+# so it stays in a few megabytes (1.7 MB idle on the 1 GB board). The limit
+# keeps a leak or a flood of requests from taking the whole board; it is at
+# least four times the peak measured through a GUI walk, a media upload and
+# the video views (audit 2026-09-29, R1).
+MemoryMax=192M
 NoNewPrivileges=yes
 PrivateDevices=yes
 PrivateTmp=yes

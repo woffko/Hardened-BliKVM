@@ -4,15 +4,16 @@
 //! The network server is the only intended caller. It supplies the
 //! authenticated session identity, a stable hashed target identity, a fresh
 //! focus nonce, and the operator's confirmation time. The opaque bindings are
-//! deterministic for one confirmation and cannot be supplied by a client.
-//! This crate never enables HID; the broker still gates every mutation.
+//! stable for one authenticated session and target while the focus binding is
+//! refreshed by every confirmation. Clients cannot supply any binding. This
+//! crate never enables HID; the broker still gates every mutation.
 
 use bli_kvm_core::TargetAttestation;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const MAX_FOCUS_CONFIRMATION_AGE_MS: u64 = 15_000;
-const DOMAIN: &[u8] = b"hardened-blikvm-hid-focus-v1";
+const DOMAIN: &[u8] = b"hardened-blikvm-hid-focus-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FocusConfirmation {
@@ -83,14 +84,14 @@ pub fn derive_focus_bindings(
     }
 
     let session_binding = u64::from_be_bytes(
-        derive(confirmation, b"session")[..8]
+        derive_session(confirmation)[..8]
             .try_into()
             .map_err(|_| FocusError::DegenerateBindings)?,
     );
-    let target_binding: [u8; 32] = derive(confirmation, b"target")[..32]
+    let target_binding: [u8; 32] = derive_target(confirmation)[..32]
         .try_into()
         .map_err(|_| FocusError::DegenerateBindings)?;
-    let focus_binding: [u8; 16] = derive(confirmation, b"focus")[..16]
+    let focus_binding: [u8; 16] = derive_focus(confirmation)[..16]
         .try_into()
         .map_err(|_| FocusError::DegenerateBindings)?;
 
@@ -108,11 +109,29 @@ pub fn derive_focus_bindings(
     })
 }
 
-fn derive(confirmation: &FocusConfirmation, binding: &[u8]) -> [u8; 32] {
+fn binding_hasher(binding: &[u8]) -> Sha256 {
     let mut hasher = Sha256::new();
     hasher.update(DOMAIN);
     hasher.update((binding.len() as u64).to_be_bytes());
     hasher.update(binding);
+    hasher
+}
+
+fn derive_session(confirmation: &FocusConfirmation) -> [u8; 32] {
+    let mut hasher = binding_hasher(b"session");
+    hasher.update(confirmation.session_id.to_be_bytes());
+    hasher.finalize().into()
+}
+
+fn derive_target(confirmation: &FocusConfirmation) -> [u8; 32] {
+    let mut hasher = binding_hasher(b"target");
+    hasher.update(confirmation.session_id.to_be_bytes());
+    hasher.update(confirmation.target_id);
+    hasher.finalize().into()
+}
+
+fn derive_focus(confirmation: &FocusConfirmation) -> [u8; 32] {
+    let mut hasher = binding_hasher(b"focus");
     hasher.update(confirmation.session_id.to_be_bytes());
     hasher.update(confirmation.target_id);
     hasher.update(confirmation.focus_nonce);
@@ -150,20 +169,39 @@ mod tests {
     }
 
     #[test]
-    fn every_input_changes_the_bindings() {
+    fn focus_refresh_changes_only_the_focus_binding() {
+        let base = derive_focus_bindings(&confirmation(), 1_500).unwrap();
+        let mut changed = confirmation();
+        changed.focus_nonce = [0x23; 16];
+        let refreshed = derive_focus_bindings(&changed, 1_500).unwrap();
+        assert_eq!(base.session_binding, refreshed.session_binding);
+        assert_eq!(base.target_binding, refreshed.target_binding);
+        assert_ne!(base.focus_binding, refreshed.focus_binding);
+
+        let mut changed = confirmation();
+        changed.confirmed_at_unix_ms = 1_001;
+        let refreshed = derive_focus_bindings(&changed, 1_500).unwrap();
+        assert_eq!(base.session_binding, refreshed.session_binding);
+        assert_eq!(base.target_binding, refreshed.target_binding);
+        assert_ne!(base.focus_binding, refreshed.focus_binding);
+    }
+
+    #[test]
+    fn session_and_target_changes_update_the_lease_identity() {
         let base = derive_focus_bindings(&confirmation(), 1_500).unwrap();
         let mut changed = confirmation();
         changed.session_id = 8;
-        assert_ne!(base, derive_focus_bindings(&changed, 1_500).unwrap());
+        let other_session = derive_focus_bindings(&changed, 1_500).unwrap();
+        assert_ne!(base.session_binding, other_session.session_binding);
+        assert_ne!(base.target_binding, other_session.target_binding);
+        assert_ne!(base.focus_binding, other_session.focus_binding);
+
         let mut changed = confirmation();
         changed.target_id = [0x12; 16];
-        assert_ne!(base, derive_focus_bindings(&changed, 1_500).unwrap());
-        let mut changed = confirmation();
-        changed.focus_nonce = [0x23; 16];
-        assert_ne!(base, derive_focus_bindings(&changed, 1_500).unwrap());
-        let mut changed = confirmation();
-        changed.confirmed_at_unix_ms = 1_001;
-        assert_ne!(base, derive_focus_bindings(&changed, 1_500).unwrap());
+        let other_target = derive_focus_bindings(&changed, 1_500).unwrap();
+        assert_eq!(base.session_binding, other_target.session_binding);
+        assert_ne!(base.target_binding, other_target.target_binding);
+        assert_ne!(base.focus_binding, other_target.focus_binding);
     }
 
     #[test]

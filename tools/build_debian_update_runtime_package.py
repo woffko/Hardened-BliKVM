@@ -23,8 +23,8 @@ from tools import stage_device_prototype as prototype
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev9"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev34"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -98,9 +98,99 @@ FILE_MAP = {
         "usr/share/doc/hardened-blikvm-update-runtime/application-activation-v1.md"
     ),
 }
+# Native profile (dev11): the root helper and native boot units are installed
+# but not enabled; managed-unit replacements are examples only, because they
+# would otherwise shadow the runtime package's base units.
+FILE_MAP.update({
+    "libexec/bli-kvm-update-exec-helper": (
+        "usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper"
+    ),
+    "share/systemd/hardened-blikvm-update-exec.socket": (
+        "lib/systemd/system/hardened-blikvm-update-exec.socket"
+    ),
+    "share/systemd/hardened-blikvm-update-exec@.service": (
+        "lib/systemd/system/hardened-blikvm-update-exec@.service"
+    ),
+    "share/systemd/hardened-blikvm-update-native-boot.service": (
+        "lib/systemd/system/hardened-blikvm-update-native-boot.service"
+    ),
+    # dev20: root administration helper, used only while switched on.
+    "libexec/bli-kvm-admin-helper": (
+        "usr/libexec/hardened-blikvm/bli-kvm-admin-helper"
+    ),
+    "share/systemd/hardened-blikvm-admin.socket": (
+        "lib/systemd/system/hardened-blikvm-admin.socket"
+    ),
+    "share/systemd/hardened-blikvm-admin@.service": (
+        "lib/systemd/system/hardened-blikvm-admin@.service"
+    ),
+    # dev23: unprivileged remote image download, used only while switched on.
+    "share/systemd/hardened-blikvm-image-download.socket": (
+        "lib/systemd/system/hardened-blikvm-image-download.socket"
+    ),
+    "share/systemd/hardened-blikvm-image-download@.service": (
+        "lib/systemd/system/hardened-blikvm-image-download@.service"
+    ),
+    # dev24: PicoClaw runtime and configuration helper, default off.
+    "share/systemd/hardened-blikvm-picoclaw.service": (
+        "lib/systemd/system/hardened-blikvm-picoclaw.service"
+    ),
+    "share/systemd/hardened-blikvm-picoclaw-api.socket": (
+        "lib/systemd/system/hardened-blikvm-picoclaw-api.socket"
+    ),
+    "share/systemd/hardened-blikvm-picoclaw-api@.service": (
+        "lib/systemd/system/hardened-blikvm-picoclaw-api@.service"
+    ),
+    "share/picoclaw/AGENT.md": "usr/share/hardened-blikvm/picoclaw/AGENT.md",
+    "share/picoclaw/AGENT_KVM.md": "usr/share/hardened-blikvm/picoclaw/AGENT_KVM.md",
+    # dev25: Tailscale's apt repository key for the admin helper's install.
+    "share/tailscale/tailscale-archive-keyring.asc": (
+        "usr/share/hardened-blikvm/tailscale/tailscale-archive-keyring.asc"
+    ),
+    # dev26: RAW system update step, trust root and first-boot report; the
+    # initramfs files take effect only when the initramfs is next built.
+    "libexec/bli-kvm-system-update": (
+        "usr/libexec/hardened-blikvm/bli-kvm-system-update"
+    ),
+    "share/systemd/hardened-blikvm-system-update-booted.service": (
+        "lib/systemd/system/hardened-blikvm-system-update-booted.service"
+    ),
+    "share/system-update/system-trust.json": (
+        "usr/share/hardened-blikvm/system-update/system-trust.json"
+    ),
+    "share/system-update/initramfs-hook": (
+        "usr/share/initramfs-tools/hooks/hardened-blikvm-system-update"
+    ),
+    "share/system-update/initramfs-local-premount": (
+        "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update"
+    ),
+    # dev19: HID gadget functions before the owner (cold-boot HID access).
+    "share/systemd/hardened-blikvm-hid-gadget.service": (
+        "lib/systemd/system/hardened-blikvm-hid-gadget.service"
+    ),
+})
+NATIVE_PROFILE_UNITS = (
+    "board-owner", "board-video-proxy", "boardd", "server-current", "server-candidate",
+    "update-activation@",
+)
+FILE_MAP.update({
+    f"share/systemd/native/hardened-blikvm-{unit}.service":
+    f"usr/share/doc/{PACKAGE_NAME}/examples/native/hardened-blikvm-{unit}.service"
+    for unit in NATIVE_PROFILE_UNITS
+})
+FILE_MAP.update({
+    f"share/systemd/hardened-blikvm-{role}.service.d/94-application-update.conf":
+    f"usr/share/doc/{PACKAGE_NAME}/examples/hardened-blikvm-{role}.service.d/94-application-update.conf"
+    for role in ("board-server", "server-candidate", "server-current")
+})
 EXECUTABLE_DESTINATIONS = {
     "usr/libexec/hardened-blikvm/bli-kvm-update-supervisor",
     "usr/libexec/hardened-blikvm/bli-kvm-update-health-reporter",
+    "usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper",
+    "usr/libexec/hardened-blikvm/bli-kvm-admin-helper",
+    "usr/libexec/hardened-blikvm/bli-kvm-system-update",
+    "usr/share/initramfs-tools/hooks/hardened-blikvm-system-update",
+    "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update",
 }
 ACTIVE_CONFIGURATION_PREFIXES = (
     "etc/",
@@ -119,6 +209,28 @@ def file_map(version: str) -> dict[str, str]:
         raise BuildError("unsupported update package version")
     revision = SUPPORTED_PACKAGE_VERSIONS.index(version) + 1
     introduced = {
+        "bli-kvm-update-exec-helper": 11,
+        "hardened-blikvm-update-exec.socket": 11,
+        "hardened-blikvm-update-exec@.service": 11,
+        "hardened-blikvm-update-native-boot.service": 11,
+        "hardened-blikvm-hid-gadget.service": 19,
+        "bli-kvm-admin-helper": 20,
+        "hardened-blikvm-admin.socket": 20,
+        "hardened-blikvm-admin@.service": 20,
+        "hardened-blikvm-image-download.socket": 23,
+        "hardened-blikvm-image-download@.service": 23,
+        "hardened-blikvm-picoclaw.service": 24,
+        "hardened-blikvm-picoclaw-api.socket": 24,
+        "hardened-blikvm-picoclaw-api@.service": 24,
+        "AGENT.md": 24,
+        "AGENT_KVM.md": 24,
+        "tailscale-archive-keyring.asc": 25,
+        "bli-kvm-system-update": 26,
+        "hardened-blikvm-system-update-booted.service": 26,
+        "system-trust.json": 26,
+        "initramfs-hook": 26,
+        "initramfs-local-premount": 26,
+        "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,
         "hardened-blikvm-update-upload.socket": 8,
@@ -127,8 +239,14 @@ def file_map(version: str) -> dict[str, str]:
         "hardened-blikvm-update-status.socket": 6,
         "hardened-blikvm-update-status@.service": 6,
     }
+    def since(source: str) -> int:
+        # Native examples share base-unit names, so they are keyed by directory.
+        if source.startswith("share/systemd/native/"):
+            return 11
+        return introduced.get(source.rsplit("/", 1)[-1], 1)
+
     return {source: destination for source, destination in FILE_MAP.items()
-            if revision >= introduced.get(source.rsplit("/", 1)[-1], 1)}
+            if revision >= since(source)}
 
 
 def parse_args() -> tuple[str, str, str]:
@@ -168,7 +286,9 @@ def package_manifest(
         "slotRootCreated": False,
         "httpRouteIncluded": False,
         "guiRouteIncluded": False,
-        "systemUpdateIncluded": False,
+        # dev26 carries the RAW system update step, inert until the operator
+        # switches it on and the initramfs is rebuilt.
+        "systemUpdateIncluded": SUPPORTED_PACKAGE_VERSIONS.index(version) >= 25,
         "hardwareMutationIncluded": False,
     }
 

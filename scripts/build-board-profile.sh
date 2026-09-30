@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Build the board-owner test bundle (test builds only).
 #
 # This bundle contains the feature-gated server and the board-owner control
@@ -7,7 +7,7 @@
 # timing template. It is never a release artifact: shipped builds keep the
 # gadget and GPIO profiles compiled out, and the ATX timings are supplied by
 # the operator at the physical gate.
-set -eu
+set -euo pipefail
 umask 022
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -39,10 +39,12 @@ boardd_binary="$release_dir/bli-kvm-boardd"
 video_proxy_binary="$release_dir/bli-kvm-video-proxy"
 bench_gate_binary="$release_dir/bli-kvm-atx-gpio-bench-gate"
 
-temp_root=$(mktemp -d /tmp/hardened-blikvm-board-profile.XXXXXX)
+# Keep staging on the selected artifact volume rather than the host rootfs.
+mkdir -p "$output_dir"
+temp_root=$(mktemp -d "$output_dir/.${bundle_name}.stage.XXXXXX")
 cleanup() {
   case "$temp_root" in
-    /tmp/hardened-blikvm-board-profile.*) rm -rf -- "$temp_root" ;;
+    "$output_dir/.${bundle_name}.stage."*) rm -rf -- "$temp_root" ;;
     *) echo "refusing unsafe temporary cleanup" >&2 ;;
   esac
 }
@@ -73,10 +75,7 @@ install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-owner.service.d"
 install -m 0644 \
   packaging/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf \
   "$stage/share/systemd/hardened-blikvm-board-owner.service.d/"
-install -d -m 0755 "$stage/share/systemd/hardened-blikvm-board-server.service.d"
-install -m 0644 \
-  packaging/systemd/hardened-blikvm-board-server.service.d/94-application-update.conf \
-  "$stage/share/systemd/hardened-blikvm-board-server.service.d/"
+bash "$project_root/scripts/stage-application-update-profile.sh" "$stage"
 install -d -m 0755 "$stage/share/systemd/systemd-journald.service.d"
 install -m 0644 \
   packaging/systemd/systemd-journald.service.d/99-hardened-blikvm-persistent-journal.conf \
@@ -179,7 +178,7 @@ chmod 0644 "$stage/MANIFEST.json"
 
 mkdir -p "$output_dir"
 archive="$output_dir/$bundle_name.tar.gz"
-temporary_archive=$(mktemp "$output_dir/.${bundle_name}.XXXXXX.tar.gz")
+temporary_archive=$(mktemp "$temp_root/.${bundle_name}.XXXXXX.tar.gz")
 tar \
   --sort=name \
   --mtime=@0 \

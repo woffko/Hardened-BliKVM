@@ -100,13 +100,21 @@ pub(crate) async fn application_power(
             rejection: Some(rejection_name(code)),
         },
         ControlResponse::BoardStatus { .. }
+        | ControlResponse::HidReconciliationState { .. }
         | ControlResponse::VideoState { .. }
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::AdminFeatureState { .. }
+        | ControlResponse::SshState { .. }
+        | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
+        | ControlResponse::WifiNetworks { .. }
+        | ControlResponse::WifiProfiles { .. }
         | ControlResponse::TlsState { .. }
+        | ControlResponse::FirewallModeState { .. }
         | ControlResponse::FirewallState { .. }
+        | ControlResponse::FirewallRules { .. }
         | ControlResponse::TailscaleState { .. } => AtxResponse {
             applied: false,
             rejection: Some("internal"),

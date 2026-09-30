@@ -4,15 +4,15 @@ Status: supersedes the E0-E5 ordering for the remaining work. The reference is
 the stand at `https://<reference-address>`; its interface surface was extracted from the
 served JavaScript bundle and is the source of truth for what parity means.
 
-> **Current status: complete (2026-09-19, late).** The authoritative, final
-> state is the "Completion addendum (2026-09-19, late)" at the end of this
-> document. The phase sections and the "Status snapshot" above/below are the
-> historical plan and interim snapshots written while the work was in progress;
-> where they disagree with the addendum, the addendum wins:
-> `phase8_acceptance_report.py` = `overall=complete`, `deviceUnrun=0`, the
-> device update cycle ran end to end (seq13 -> seq14, generation 4, floor 14),
-> serving is `hardened-blikvm-server-current.service`, and `/api/diagnostics`
-> returns 200.
+> **Current status: reopened after corrective audit (2026-09-20).** The
+> "Completion addendum (2026-09-19, late)" is retained as historical evidence
+> of the checks that ran, but it is not proof of current reference parity. The
+> corrective audit found gaps in HID lease continuity, confirmation handling,
+> firewall contracts and restore semantics, video controls and H.264 delivery,
+> release reproducibility, full-card image production, RAW system update, and
+> the acceptance harness itself. The current evidence and required gates are
+> tracked in `docs/baselines/corrective-parity-audit-20260920.md`; completion
+> must be established by fresh receipts after those gates are repaired.
 
 ## Reference surface (evidence)
 
@@ -194,9 +194,11 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
   (the owner refuses media attach and the media capability follows),
   `hidOnly` (the owner persists the switch and refuses every virtual-media
   command except a detach while it is on, with `GET`/`POST /api/vm/hid-only`
-  and a switch in the device section). The read-only `autostart` list is
-  surfaced with the network link (both live in the device section and the link
-  switches the shared settings tab to `system`), and the `hdmi` entry is gone
+  and a switch in the device section). The read-only `autostart` list and its
+  network link were removed from the device section on 2026-09-28: the
+  reference 2.0.42 shows neither (its autostart editor is commented out), and
+  the operator took the entry for the scripts switch, which is
+  Appearance > Menu Bar > Scripts in both. The `hdmi` entry is gone
   with the reason recorded: the board captures HDMI and has no HDMI output or
   hotplug control to toggle.
 - **P1.1 (evidence, 2026-09-19)**: the HDMI bridge is a plain **USB2 UVC dongle**
@@ -347,8 +349,8 @@ including the firewall page, the mDNS and mouse-jiggler toggles and the panel
 
 
 Reference mapping, kept here for the sections that are still open: `device`
-carries `autostart`, `hidOnly`, `mouseJiggler`, `mdns` and the `network` link,
-while `hdmi`, `disk` and `advanced` stay hidden with a documented reason;
+carries `hidOnly`, `mouseJiggler` and `mdns`, while `autostart`, `hdmi`,
+`disk` and `advanced` stay hidden with a documented reason;
 `network` carries `dns`, `ipv6`, `tls` and `wifi`; `system.firewall` is the
 reference baseline model over the owner and nftables, installed only with the
 operator's approval and hidden and fail-closed until then, with the gate
@@ -611,11 +613,13 @@ weakened; one owner per gadget, ATX and video line; every change reversible.
 
 ## Completion addendum (2026-09-19, late)
 
-> Chronological checkpoints from the final work session. Some middle paragraphs
+> Historical chronological checkpoints from the prior work session. This
+> addendum records what was observed by the old acceptance harness; it was
+> superseded by the corrective audit on 2026-09-20 and no longer defines the
+> product completion state. Some middle paragraphs
 > state problems that later paragraphs resolved (for example `/api/diagnostics`
 > was 503 and the upload was quota/503-limited before the upload fix and the
-> activation). The **final state is the last paragraph**, and the top-of-document
-> status note points here.
+> activation).
 
 Panel: the operator confirmed the status screen content on the device and asked
 for a single font size, between the small address size and the double numeric

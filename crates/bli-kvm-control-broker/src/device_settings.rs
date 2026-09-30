@@ -119,7 +119,7 @@ fn render_mdns(text: &str, enabled: bool) -> String {
     rendered
 }
 
-fn write_conf(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write_conf(path: &Path, text: &str) -> Result<(), String> {
     // The sandbox grants this file, not its directory, so the reviewed
     // configuration is rewritten in place; the caller keeps the previous
     // contents and restores them when the follow-up step fails.

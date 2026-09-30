@@ -25,6 +25,26 @@ use bli_kvm_usb_gadget::{Function, GadgetSpec, MassStorageConfig};
 #[cfg(feature = "gadget-media-profile")]
 use std::path::PathBuf;
 
+/// Why the backend could not apply a media command, so the operator is told
+/// more than "rejected".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaBackendFailure {
+    /// The selected image's file is not in the image store.
+    ImageMissing,
+    /// The image is shorter than a CD-ROM needs.
+    ImageTooSmall,
+    Other,
+}
+
+#[cfg(feature = "gadget-media-profile")]
+fn gadget_failure(error: &bli_kvm_usb_gadget::GadgetError) -> MediaBackendFailure {
+    match error {
+        bli_kvm_usb_gadget::GadgetError::ImageMissing => MediaBackendFailure::ImageMissing,
+        bli_kvm_usb_gadget::GadgetError::ImageTooSmall => MediaBackendFailure::ImageTooSmall,
+        _ => MediaBackendFailure::Other,
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum MediaTransitionError {
     #[error("media policy journal failed")]
@@ -63,11 +83,16 @@ impl KvmdMediaExecutor {
         })
     }
 
-    async fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
+    async fn execute(
+        &self,
+        command: &VirtualMediaCommand,
+        catalog: &MediaCatalog,
+    ) -> Result<(), MediaBackendFailure> {
         self.client
             .execute(command, catalog, &self.credentials)
             .await
-            .is_ok()
+            .map(|_| ())
+            .map_err(|_| MediaBackendFailure::Other)
     }
 }
 
@@ -232,32 +257,30 @@ impl GadgetMediaExecutor {
         image_id: u64,
         mode: bli_kvm_core::VirtualMediaControlMode,
         writable: bool,
-    ) -> bool {
+    ) -> Result<(), MediaBackendFailure> {
         let Ok(selection) = catalog.resolve(image_id, mode, writable) else {
-            return false;
+            return Err(MediaBackendFailure::Other);
         };
         let selected = SelectedImage {
             path: self.config.image_directory.join(selection.image_name()),
             read_only: !selection.writable(),
             cdrom: selection.mode() == bli_kvm_core::VirtualMediaControlMode::CdRom,
         };
-        if self.state_present()
-            && self.has_mass_storage()
-            && bli_kvm_usb_gadget::set_lun_file(&self.config.configfs_root, &selected.path).is_err()
-        {
-            return false;
+        if self.state_present() && self.has_mass_storage() {
+            bli_kvm_usb_gadget::set_lun_file(&self.config.configfs_root, &selected.path)
+                .map_err(|error| gadget_failure(&error))?;
         }
         match self.selected.lock() {
             Ok(mut guard) => *guard = Some(selected),
-            Err(_) => return false,
+            Err(_) => return Err(MediaBackendFailure::Other),
         }
-        true
+        Ok(())
     }
 
-    fn set_connected(&self, connected: bool) -> bool {
+    fn set_connected(&self, connected: bool) -> Result<(), MediaBackendFailure> {
         if !connected {
             if !self.state_present() || !self.has_mass_storage() {
-                return true;
+                return Ok(());
             }
             // The gadget also owns the pinned HID functions, so an eject drops
             // the drive and leaves the keyboard and mouse bound.
@@ -265,10 +288,10 @@ impl GadgetMediaExecutor {
                 &self.config.configfs_root,
                 &self.hid_spec(),
             )
-            .is_ok();
+            .map_err(|error| gadget_failure(&error));
         }
         let Some(selected) = self.current_selection() else {
-            return false;
+            return Err(MediaBackendFailure::Other);
         };
         let spec = self.spec(&selected);
         // A gadget kept up for HID is extended in place; a cold gadget is built
@@ -278,15 +301,12 @@ impl GadgetMediaExecutor {
         } else {
             bli_kvm_usb_gadget::apply(&self.config.configfs_root, &spec)
         };
-        match result {
-            Ok(()) => true,
-            Err(error) => {
-                // The board owner has no other channel to explain a failed
-                // attach; the operator log is the diagnostic surface.
-                eprintln!("media: gadget apply failed: {error:?}");
-                false
-            }
-        }
+        result.map_err(|error| {
+            // The operator log keeps the detail; the answer names the reason
+            // when it is one the operator can act on.
+            eprintln!("media: gadget apply failed: {error:?}");
+            gadget_failure(&error)
+        })
     }
 
     fn state(&self) -> Result<MediaState, MediaTransitionError> {
@@ -328,7 +348,7 @@ impl GadgetMediaExecutor {
         })
     }
 
-    fn reconnect(&self) -> bool {
+    fn reconnect(&self) -> Result<(), MediaBackendFailure> {
         // Rebuild the function when the selection is known: that covers a
         // gadget left torn by a failed swap and a stale controller after an
         // eject, and it re-enumerates cleanly for the target.
@@ -339,17 +359,16 @@ impl GadgetMediaExecutor {
                 &self.config.configfs_root,
                 &self.spec(&selected),
             ) {
-                Ok(()) => return true,
+                Ok(()) => return Ok(()),
                 Err(error) => eprintln!("media: gadget reconnect failed: {error:?}"),
             }
         }
-        match bli_kvm_usb_gadget::reconnect(&self.config.configfs_root, &self.config.udc) {
-            Ok(()) => true,
-            Err(error) => {
+        bli_kvm_usb_gadget::reconnect(&self.config.configfs_root, &self.config.udc).map_err(
+            |error| {
                 eprintln!("media: gadget rebind failed: {error:?}");
-                false
-            }
-        }
+                gadget_failure(&error)
+            },
+        )
     }
 
     fn mount(
@@ -358,12 +377,12 @@ impl GadgetMediaExecutor {
         image_id: u64,
         mode: bli_kvm_core::VirtualMediaControlMode,
         writable: bool,
-    ) -> bool {
+    ) -> Result<(), MediaBackendFailure> {
         // A LUN that still has a backing file open refuses attribute writes
         // (the kernel returns EBUSY for `ro`, `cdrom` and `file`), so drop the
         // gadget and rebuild it for the new selection instead of patching it.
         let Ok(selection) = catalog.resolve(image_id, mode, writable) else {
-            return false;
+            return Err(MediaBackendFailure::Other);
         };
         let selected = SelectedImage {
             path: self.config.image_directory.join(selection.image_name()),
@@ -382,16 +401,20 @@ impl GadgetMediaExecutor {
         };
         if let Err(error) = result {
             eprintln!("media: gadget mount failed: {error:?}");
-            return false;
+            return Err(gadget_failure(&error));
         }
         match self.selected.lock() {
             Ok(mut guard) => *guard = Some(selected),
-            Err(_) => return false,
+            Err(_) => return Err(MediaBackendFailure::Other),
         }
-        true
+        Ok(())
     }
 
-    fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
+    fn execute(
+        &self,
+        command: &VirtualMediaCommand,
+        catalog: &MediaCatalog,
+    ) -> Result<(), MediaBackendFailure> {
         match command {
             VirtualMediaCommand::Select {
                 image_id,
@@ -441,14 +464,24 @@ impl MediaExecutor {
         }
     }
 
-    async fn execute(&self, command: &VirtualMediaCommand, catalog: &MediaCatalog) -> bool {
+    async fn execute(
+        &self,
+        command: &VirtualMediaCommand,
+        catalog: &MediaCatalog,
+    ) -> Result<(), MediaBackendFailure> {
         match self {
             #[cfg(feature = "kvmd-media-profile")]
             MediaExecutor::Kvmd(executor) => executor.execute(command, catalog).await,
             #[cfg(feature = "gadget-media-profile")]
             MediaExecutor::Gadget(executor) => executor.execute(command, catalog),
             #[cfg(test)]
-            MediaExecutor::Test { applied, .. } => *applied,
+            MediaExecutor::Test { applied, .. } => {
+                if *applied {
+                    Ok(())
+                } else {
+                    Err(MediaBackendFailure::Other)
+                }
+            }
         }
     }
 }
@@ -459,7 +492,7 @@ pub enum MediaTransitionOutcome {
     Noop,
     ReplayedApplied,
     ReplayedRejected,
-    BackendFailed,
+    BackendFailed(MediaBackendFailure),
     Rejected(MediaRejection),
 }
 
@@ -560,17 +593,16 @@ impl MediaTransitionEngine {
                 self.refresh_catalog();
                 let operation_id = operation.operation_id();
                 let command = operation.command();
-                let applied = self.executor.execute(&command, &self.catalog).await;
-                let completion = if applied {
+                let result = self.executor.execute(&command, &self.catalog).await;
+                let completion = if result.is_ok() {
                     MediaCompletion::Applied
                 } else {
                     MediaCompletion::Rejected
                 };
                 self.policy.complete(operation_id, completion, now_ms)?;
-                if applied {
-                    Ok(MediaTransitionOutcome::Applied)
-                } else {
-                    Ok(MediaTransitionOutcome::BackendFailed)
+                match result {
+                    Ok(()) => Ok(MediaTransitionOutcome::Applied),
+                    Err(failure) => Ok(MediaTransitionOutcome::BackendFailed(failure)),
                 }
             }
         }
@@ -831,38 +863,58 @@ mod tests {
                 connected: false,
             }
         );
-        assert!(!executor.execute(
-            &VirtualMediaCommand::SetConnected { connected: true },
-            &catalog
-        ));
-        assert!(executor.execute(
-            &VirtualMediaCommand::Select {
-                image_id: 7,
-                mode: VirtualMediaControlMode::RemovableDisk,
-                writable: false,
-            },
-            &catalog
-        ));
-        assert!(executor.execute(
-            &VirtualMediaCommand::SetConnected { connected: true },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: true },
+                    &catalog
+                )
+                .is_err()
+        );
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Select {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: true },
+                    &catalog
+                )
+                .is_ok()
+        );
         let state = executor.observe().unwrap();
         assert!(state.online);
         assert!(state.connected);
-        assert!(executor.execute(
-            &VirtualMediaCommand::SetConnected { connected: false },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: false },
+                    &catalog
+                )
+                .is_ok()
+        );
         assert!(!executor.observe().unwrap().connected);
-        assert!(!executor.execute(
-            &VirtualMediaCommand::Select {
-                image_id: 99,
-                mode: VirtualMediaControlMode::RemovableDisk,
-                writable: false,
-            },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Select {
+                        image_id: 99,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_err()
+        );
     }
 
     #[cfg(feature = "gadget-media-profile")]
@@ -906,19 +958,49 @@ mod tests {
 
         // Selection is catalog-only; the missing file must fail the attach and
         // must not leave a half-created gadget behind.
-        assert!(executor.execute(
-            &VirtualMediaCommand::Select {
-                image_id: 7,
-                mode: VirtualMediaControlMode::RemovableDisk,
-                writable: false,
-            },
-            &catalog
-        ));
-        assert!(!executor.execute(
-            &VirtualMediaCommand::SetConnected { connected: true },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Select {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
+        assert_eq!(
+            executor.execute(
+                &VirtualMediaCommand::SetConnected { connected: true },
+                &catalog
+            ),
+            Err(MediaBackendFailure::ImageMissing)
+        );
         assert!(!executor.observe().unwrap().connected);
+        assert!(!configfs.join("hardened").exists());
+
+        // Back, but shorter than a CD-ROM needs: the reason is named too.
+        std::fs::write(&image, b"image").unwrap();
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Select {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::CdRom,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
+        assert_eq!(
+            executor.execute(
+                &VirtualMediaCommand::SetConnected { connected: true },
+                &catalog
+            ),
+            Err(MediaBackendFailure::ImageTooSmall)
+        );
         assert!(!configfs.join("hardened").exists());
     }
 
@@ -928,7 +1010,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let image_dir = directory.path().join("images");
         std::fs::create_dir_all(&image_dir).unwrap();
-        std::fs::write(image_dir.join("kubuntu.img"), b"image").unwrap();
+        // Large enough for a CD-ROM as well.
+        std::fs::write(
+            image_dir.join("kubuntu.img"),
+            vec![0_u8; bli_kvm_usb_gadget::MIN_CDROM_IMAGE_BYTES as usize],
+        )
+        .unwrap();
         let catalog_path = image_dir.join("catalog.json");
         std::fs::write(
             &catalog_path,
@@ -957,59 +1044,83 @@ mod tests {
             bcd_device: 0x0100,
         });
 
-        assert!(executor.execute(
-            &VirtualMediaCommand::Mount {
-                image_id: 7,
-                mode: VirtualMediaControlMode::RemovableDisk,
-                writable: false,
-            },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Mount {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
         let state = executor.state().unwrap();
         assert_eq!(state.file.as_deref(), Some("kubuntu.img"));
         assert!(state.connected);
         assert!(!state.cdrom);
         assert!(!state.writable);
 
-        assert!(executor.execute(&VirtualMediaCommand::Reconnect, &catalog));
+        assert!(
+            executor
+                .execute(&VirtualMediaCommand::Reconnect, &catalog)
+                .is_ok()
+        );
         let after = executor.state().unwrap();
         assert!(after.connected);
         assert_eq!(after.file.as_deref(), Some("kubuntu.img"));
 
-        assert!(executor.execute(
-            &VirtualMediaCommand::Mount {
-                image_id: 7,
-                mode: VirtualMediaControlMode::CdRom,
-                writable: false,
-            },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Mount {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::CdRom,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
         let cdrom = executor.state().unwrap();
         assert!(cdrom.cdrom);
         assert!(cdrom.connected);
 
         // Eject, then mount a different mode: the executor must drop and
         // rebuild the mass-storage function instead of patching a busy LUN.
-        assert!(executor.execute(
-            &VirtualMediaCommand::SetConnected { connected: false },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: false },
+                    &catalog
+                )
+                .is_ok()
+        );
         assert_eq!(executor.state().unwrap().file, None);
-        assert!(executor.execute(
-            &VirtualMediaCommand::Mount {
-                image_id: 7,
-                mode: VirtualMediaControlMode::RemovableDisk,
-                writable: false,
-            },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Mount {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
         let after = executor.state().unwrap();
         assert!(after.connected);
         assert!(!after.cdrom);
         assert_eq!(after.file.as_deref(), Some("kubuntu.img"));
 
         // Reconnect keeps the selection and re-enumerates.
-        assert!(executor.execute(&VirtualMediaCommand::Reconnect, &catalog));
+        assert!(
+            executor
+                .execute(&VirtualMediaCommand::Reconnect, &catalog)
+                .is_ok()
+        );
         let reconnected = executor.state().unwrap();
         assert!(reconnected.connected);
         assert_eq!(reconnected.file.as_deref(), Some("kubuntu.img"));
@@ -1050,18 +1161,26 @@ mod tests {
             bcd_device: 0x0100,
         });
 
-        assert!(executor.execute(
-            &VirtualMediaCommand::Select {
-                image_id: 7,
-                mode: VirtualMediaControlMode::RemovableDisk,
-                writable: false,
-            },
-            &catalog
-        ));
-        assert!(executor.execute(
-            &VirtualMediaCommand::SetConnected { connected: true },
-            &catalog
-        ));
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::Select {
+                        image_id: 7,
+                        mode: VirtualMediaControlMode::RemovableDisk,
+                        writable: false,
+                    },
+                    &catalog
+                )
+                .is_ok()
+        );
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: true },
+                    &catalog
+                )
+                .is_ok()
+        );
         let state = bli_kvm_usb_gadget::observe(&configfs).unwrap();
         assert!(state.present);
         assert_eq!(
@@ -1123,7 +1242,7 @@ mod tests {
                 )
                 .await
                 .unwrap(),
-            MediaTransitionOutcome::BackendFailed
+            MediaTransitionOutcome::BackendFailed(MediaBackendFailure::Other)
         );
     }
 
@@ -1263,7 +1382,7 @@ mod tests {
                 )
                 .await
                 .unwrap(),
-            MediaTransitionOutcome::BackendFailed
+            MediaTransitionOutcome::BackendFailed(MediaBackendFailure::Other)
         );
         assert_eq!(
             engine

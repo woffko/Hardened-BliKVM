@@ -1,0 +1,10 @@
+{
+  "fanLine": 269,
+  "fanPwmPeriodMs": 40,
+  "display": true,
+  "led": true,
+  "button": true,
+  "atxPowerLed": true,
+  "atxHddLed": true,
+  "externalRtc": false
+}

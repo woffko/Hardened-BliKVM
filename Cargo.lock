@@ -118,6 +118,22 @@ name = "bli-kvm-activity-led-policy"
 version = "0.1.0"
 
 [[package]]
+name = "bli-kvm-admin-helper"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-core",
+ "bli-kvm-media-catalog",
+ "bli-kvm-system-image-verifier",
+ "bli-kvm-system-raw-update",
+ "libc",
+ "nix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "bli-kvm-atx-gpio-bench-gate"
 version = "0.1.0"
 dependencies = [
@@ -191,6 +207,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -244,6 +261,7 @@ dependencies = [
  "bli-kvm-usb-gadget",
  "libc",
  "rand_core 0.6.4",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -285,6 +303,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -723,6 +742,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64",
+ "bli-kvm-admin-helper",
  "bli-kvm-broker-client",
  "bli-kvm-broker-protocol",
  "bli-kvm-control-client",
@@ -735,8 +755,10 @@ dependencies = [
  "bli-kvm-update-protocol",
  "bli-kvm-video-client",
  "bytes",
+ "futures-util",
  "http-body",
  "http-body-util",
+ "libc",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
@@ -744,6 +766,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-http",
 ]
@@ -816,6 +839,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-system-raw-update"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-system-image-verifier",
+ "ed25519-dalek",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-update-client"
 version = "0.1.0"
 dependencies = [
@@ -823,6 +861,20 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "bli-kvm-update-exec-helper"
+version = "0.1.0"
+dependencies = [
+ "bli-kvm-update-runtime",
+ "bli-kvm-update-stager",
+ "bli-kvm-update-verifier",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -866,19 +918,32 @@ dependencies = [
 name = "bli-kvm-update-runtime"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-boardd",
+ "bli-kvm-control-protocol",
+ "bli-kvm-core",
  "bli-kvm-update-manager",
+ "bli-kvm-update-protocol",
  "bli-kvm-update-stager",
  "bli-kvm-update-verifier",
+ "bli-kvm-video-proxy",
+ "bytes",
  "ed25519-dalek",
+ "http",
+ "http-body-util",
+ "httparse",
+ "hyper",
+ "hyper-util",
  "libc",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "subtle",
  "tar",
  "tempfile",
  "thiserror",
+ "tokio",
  "zeroize",
 ]
 
@@ -971,6 +1036,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-video-encoder"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "sha2",
+ "thiserror",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "bli-kvm-video-proxy"
 version = "0.1.0"
 dependencies = [
@@ -1003,6 +1078,16 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
+name = "cc"
+version = "1.2.55"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b26a0954ae34af09b50f0de26458fa95369a0d478d8236d3f93082b219bd29"
+dependencies = [
+ "find-msvc-tools",
+ "shlex",
+]
 
 [[package]]
 name = "cfg-if"
@@ -1219,6 +1304,12 @@ dependencies = [
  "cfg-if",
  "libc",
 ]
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "form_urlencoded"
@@ -1749,6 +1840,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "shlex"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
 name = "signal-hook"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1889,6 +1986,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys",
@@ -2135,3 +2233,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zune-core"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
+
+[[package]]
+name = "zune-jpeg"
+version = "0.4.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713"
+dependencies = [
+ "zune-core",
+]

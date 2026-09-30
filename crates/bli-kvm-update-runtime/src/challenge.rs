@@ -1,6 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions, Permissions},
     io::{Read, Write},
+    os::fd::AsRawFd,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -108,7 +109,62 @@ pub struct HealthChallengeStore {
     identity: RuntimeIdentity,
 }
 
+impl Drop for HealthChallengeStore {
+    fn drop(&mut self) {
+        // flock belongs to the open file description. A child forked by any
+        // thread before its exec shares that description, so closing only our
+        // descriptor can leave the runtime locked after the store is gone.
+        // Unlock the description explicitly; the descriptor closes afterwards.
+        // SAFETY: the descriptor belongs to a live File; flock takes no pointers.
+        unsafe {
+            libc::flock(self.root_directory.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+/// Validated file presence for one exact journal-bound challenge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChallengePresence {
+    Absent,
+    StateOnly,
+    TokenOnly,
+    Complete,
+}
+
 impl HealthChallengeStore {
+    /// Bind a trusted native coordinator to the complete stored challenge pair.
+    /// The manager independently checks journal identity and the fresh clock.
+    pub(crate) fn native_confirmation_request(
+        &self,
+        operation_id: [u8; 16],
+        target_slot_id: &str,
+        clock: ClockSnapshot,
+    ) -> Result<bli_kvm_update_manager::ActivationRequest, UpdateRuntimeError> {
+        let loaded = self.load_required()?;
+        if loaded.operation_id != operation_id || loaded.document.target_slot_id != target_slot_id {
+            return Err(UpdateRuntimeError::InvalidChallengeState);
+        }
+        Ok(bli_kvm_update_manager::ActivationRequest {
+            operation_id,
+            target_slot_id: target_slot_id.to_owned(),
+            health_binding: loaded.health_binding,
+            clock,
+        })
+    }
+
+    /// Native idle admission cannot silently discard credentials or legacy work.
+    /// Inspect node presence even when only one challenge file survived a crash.
+    pub(crate) fn require_empty_native_runtime(&self) -> Result<(), UpdateRuntimeError> {
+        self.validate_root()?;
+        if self.confirmed_apply_request()?.is_some() {
+            return Err(UpdateRuntimeError::InvalidApplyRequest);
+        }
+        if self.nodes_present()? != (false, false) {
+            return Err(UpdateRuntimeError::ChallengeExists);
+        }
+        Ok(())
+    }
+
     pub(crate) fn confirmed_apply_request(
         &self,
     ) -> Result<Option<ConfirmedApplyRequest>, UpdateRuntimeError> {
@@ -172,6 +228,19 @@ impl HealthChallengeStore {
         if identity_from_metadata(&root_directory.metadata()?) != identity {
             return Err(UpdateRuntimeError::UnsafeRuntimeRoot);
         }
+        // Separate managers may share this runtime despite having different
+        // slot/state locks. Hold an advisory lock on the already validated
+        // directory inode; never truncate or create a replaceable lock file.
+        // SAFETY: the descriptor belongs to a live File; flock takes no pointers.
+        // LOCK_NB prevents cross-manager lock-order waits. File drop releases it.
+        if unsafe { libc::flock(root_directory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = std::io::Error::last_os_error();
+            return Err(if error.kind() == std::io::ErrorKind::WouldBlock {
+                UpdateRuntimeError::RuntimeBusy
+            } else {
+                error.into()
+            });
+        }
         Ok(Self {
             state_path: root.join(STATE_FILE_NAME),
             token_path: root.join(TOKEN_FILE_NAME),
@@ -186,6 +255,19 @@ impl HealthChallengeStore {
         target_slot_id: &str,
         clock: ClockSnapshot,
         deadline_monotonic_ms: u64,
+    ) -> Result<IssuedHealthChallenge, UpdateRuntimeError> {
+        self.issue_after_admission(target_slot_id, clock, deadline_monotonic_ms, |_| Ok(()))
+    }
+
+    /// Generate identity in memory, then let the trusted caller durably admit
+    /// it before any credential file is published. An ambiguous admission error
+    /// leaves no newly published files; the caller must inspect its journal.
+    pub(crate) fn issue_after_admission(
+        &self,
+        target_slot_id: &str,
+        clock: ClockSnapshot,
+        deadline_monotonic_ms: u64,
+        admit: impl FnOnce(&IssuedHealthChallenge) -> Result<(), UpdateRuntimeError>,
     ) -> Result<IssuedHealthChallenge, UpdateRuntimeError> {
         self.validate_root()?;
         if !valid_slot_id(target_slot_id)
@@ -231,7 +313,17 @@ impl HealthChallengeStore {
             token.zeroize();
             return Err(UpdateRuntimeError::Serialization);
         }
+        let issued = IssuedHealthChallenge {
+            operation_id,
+            health_binding,
+            target_slot_id: target_slot_id.to_string(),
+            boot_id: clock.boot_id,
+            issued_monotonic_ms: clock.monotonic_ms,
+            deadline_monotonic_ms,
+            credential_path: self.token_path.clone(),
+        };
         let result = (|| {
+            admit(&issued)?;
             self.write_noclobber(&self.token_path, &token, 0o400)?;
             if let Err(error) = self.write_noclobber(&self.state_path, &state_bytes, 0o600) {
                 let _ = self.remove_safe_file(&self.token_path, 0o400, TOKEN_BYTES);
@@ -244,15 +336,7 @@ impl HealthChallengeStore {
             {
                 return Err(UpdateRuntimeError::InvalidChallengeState);
             }
-            Ok(IssuedHealthChallenge {
-                operation_id,
-                health_binding,
-                target_slot_id: target_slot_id.to_string(),
-                boot_id: clock.boot_id,
-                issued_monotonic_ms: clock.monotonic_ms,
-                deadline_monotonic_ms,
-                credential_path: self.token_path.clone(),
-            })
+            Ok(issued)
         })();
         token.zeroize();
         result
@@ -322,6 +406,73 @@ impl HealthChallengeStore {
         self.consume(operation_id)
     }
 
+    /// Inspect surviving evidence without changing it. The caller supplies the
+    /// authoritative journal identity and holds manager/slot locks. The result
+    /// grants neither confirmation nor cleanup authority.
+    pub fn inspect_exact(
+        &self,
+        operation_id: [u8; 16],
+        health_binding: [u8; 32],
+        target_slot_id: &str,
+    ) -> Result<ChallengePresence, UpdateRuntimeError> {
+        self.validate_root()?;
+        if operation_id == [0; 16] || health_binding == [0; 32] || !valid_slot_id(target_slot_id) {
+            return Err(UpdateRuntimeError::InvalidChallengeState);
+        }
+        let (state_present, token_present) = self.nodes_present()?;
+        if state_present {
+            let loaded = self.load_document()?;
+            if loaded.operation_id != operation_id
+                || loaded.document.target_slot_id != target_slot_id
+                || !bool::from(loaded.health_binding.ct_eq(&health_binding))
+            {
+                return Err(UpdateRuntimeError::OperationMismatch);
+            }
+        }
+        if token_present {
+            let mut token = self.read_safe_token()?;
+            let observed: [u8; 32] = Sha256::digest(token).into();
+            token.zeroize();
+            if !bool::from(observed.ct_eq(&health_binding)) {
+                return Err(UpdateRuntimeError::InvalidChallengeState);
+            }
+        }
+        Ok(match (state_present, token_present) {
+            (false, false) => ChallengePresence::Absent,
+            (true, false) => ChallengePresence::StateOnly,
+            (false, true) => ChallengePresence::TokenOnly,
+            (true, true) => ChallengePresence::Complete,
+        })
+    }
+
+    /// Idempotent cleanup of one completed operation. The caller must hold
+    /// manager/slot locks and validate durable completion before calling.
+    /// All surviving evidence is checked before either file is removed.
+    pub fn consume_exact(
+        &self,
+        operation_id: [u8; 16],
+        health_binding: [u8; 32],
+        target_slot_id: &str,
+    ) -> Result<bool, UpdateRuntimeError> {
+        let presence = self.inspect_exact(operation_id, health_binding, target_slot_id)?;
+        if matches!(
+            presence,
+            ChallengePresence::TokenOnly | ChallengePresence::Complete
+        ) {
+            self.remove_safe_file(&self.token_path, 0o400, TOKEN_BYTES)?;
+        }
+        if matches!(
+            presence,
+            ChallengePresence::StateOnly | ChallengePresence::Complete
+        ) {
+            self.remove_safe_file(&self.state_path, 0o600, MAX_STATE_BYTES)?;
+        }
+        // A previous attempt may have unlinked the final file but failed its
+        // directory sync. Replaying an empty pair must finish that durability step.
+        self.root_directory.sync_all()?;
+        Ok(presence != ChallengePresence::Absent)
+    }
+
     pub fn clear_incomplete_for_recovery(&self) -> Result<bool, UpdateRuntimeError> {
         self.validate_root()?;
         let presence = self.nodes_present()?;
@@ -357,6 +508,17 @@ impl HealthChallengeStore {
         if self.nodes_present()? != (true, true) {
             return Err(UpdateRuntimeError::ChallengeMissing);
         }
+        let loaded = self.load_document()?;
+        let mut token = self.read_safe_token()?;
+        let observed_binding: [u8; 32] = Sha256::digest(token).into();
+        token.zeroize();
+        if !bool::from(observed_binding.ct_eq(&loaded.health_binding)) {
+            return Err(UpdateRuntimeError::InvalidChallengeState);
+        }
+        Ok(loaded)
+    }
+
+    fn load_document(&self) -> Result<LoadedChallenge, UpdateRuntimeError> {
         let state_bytes = self.read_safe_file(&self.state_path, 0o600, MAX_STATE_BYTES)?;
         let document: ChallengeDocument = serde_json::from_slice(&state_bytes)
             .map_err(|_| UpdateRuntimeError::InvalidChallengeState)?;
@@ -370,12 +532,6 @@ impl HealthChallengeStore {
             || boot_id.iter().all(|byte| *byte == 0)
             || document.deadline_monotonic_ms <= document.issued_monotonic_ms
         {
-            return Err(UpdateRuntimeError::InvalidChallengeState);
-        }
-        let mut token = self.read_safe_token()?;
-        let observed_binding: [u8; 32] = Sha256::digest(token).into();
-        token.zeroize();
-        if !bool::from(observed_binding.ct_eq(&health_binding)) {
             return Err(UpdateRuntimeError::InvalidChallengeState);
         }
         Ok(LoadedChallenge {
@@ -599,7 +755,7 @@ fn encode_hex(bytes: &[u8]) -> String {
     value
 }
 
-fn decode_array<const N: usize>(value: &str) -> Result<[u8; N], UpdateRuntimeError> {
+pub(crate) fn decode_array<const N: usize>(value: &str) -> Result<[u8; N], UpdateRuntimeError> {
     if value.len() != N * 2 {
         return Err(UpdateRuntimeError::InvalidChallengeState);
     }
@@ -792,5 +948,194 @@ mod tests {
             HealthChallengeStore::open(linked),
             Err(UpdateRuntimeError::UnsafeRuntimeRoot)
         ));
+    }
+
+    #[test]
+    fn exact_cleanup_replays_each_partial_file_state_after_reopen() {
+        for (state_present, token_present) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
+            let runtime = tempfile::tempdir().unwrap();
+            let store = HealthChallengeStore::open(runtime.path()).unwrap();
+            let issued = store.issue(&slot_id(2, b'b'), clock(1, 10), 100).unwrap();
+            if !state_present {
+                fs::remove_file(&store.state_path).unwrap();
+            }
+            if !token_present {
+                fs::remove_file(&store.token_path).unwrap();
+            }
+            drop(store);
+            let reopened = HealthChallengeStore::open(runtime.path()).unwrap();
+            let before_state = fs::read(&reopened.state_path).ok();
+            let before_token = fs::read(&reopened.token_path).ok();
+            let expected = match (state_present, token_present) {
+                (true, true) => ChallengePresence::Complete,
+                (true, false) => ChallengePresence::StateOnly,
+                (false, true) => ChallengePresence::TokenOnly,
+                (false, false) => ChallengePresence::Absent,
+            };
+            assert_eq!(
+                reopened
+                    .inspect_exact(
+                        issued.operation_id,
+                        issued.health_binding,
+                        &issued.target_slot_id
+                    )
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(fs::read(&reopened.state_path).ok(), before_state);
+            assert_eq!(fs::read(&reopened.token_path).ok(), before_token);
+            assert_eq!(
+                reopened
+                    .consume_exact(
+                        issued.operation_id,
+                        issued.health_binding,
+                        &issued.target_slot_id
+                    )
+                    .unwrap(),
+                state_present || token_present
+            );
+            assert!(
+                !reopened
+                    .consume_exact(
+                        issued.operation_id,
+                        issued.health_binding,
+                        &issued.target_slot_id
+                    )
+                    .unwrap()
+            );
+            assert_eq!(reopened.status().unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn runtime_lock_excludes_other_stores_and_releases_without_changing_credentials() {
+        let runtime = tempfile::tempdir().unwrap();
+        let separate = tempfile::tempdir().unwrap();
+        let owner = HealthChallengeStore::open(runtime.path()).unwrap();
+        let issued = owner.issue(&slot_id(2, b'b'), clock(1, 10), 100).unwrap();
+        let state = fs::read(&owner.state_path).unwrap();
+        let token = fs::read(&owner.token_path).unwrap();
+        for _ in 0..2 {
+            assert!(matches!(
+                HealthChallengeStore::open(runtime.path()),
+                Err(UpdateRuntimeError::RuntimeBusy)
+            ));
+            assert_eq!(fs::read(&owner.state_path).unwrap(), state);
+            assert_eq!(fs::read(&owner.token_path).unwrap(), token);
+        }
+        let independent = HealthChallengeStore::open(separate.path()).unwrap();
+        independent.require_empty_native_runtime().unwrap();
+        assert_eq!(fs::read_dir(runtime.path()).unwrap().count(), 2);
+        drop(owner);
+        let reopened = HealthChallengeStore::open(runtime.path()).unwrap();
+        assert_eq!(
+            reopened
+                .inspect_exact(
+                    issued.operation_id,
+                    issued.health_binding,
+                    &issued.target_slot_id
+                )
+                .unwrap(),
+            ChallengePresence::Complete
+        );
+        assert_eq!(fs::read(&reopened.state_path).unwrap(), state);
+        assert_eq!(fs::read(&reopened.token_path).unwrap(), token);
+    }
+
+    #[test]
+    fn admission_precedes_publication_and_refusal_leaves_no_credentials() {
+        let runtime = tempfile::tempdir().unwrap();
+        let store = HealthChallengeStore::open(runtime.path()).unwrap();
+        let target = slot_id(2, b'b');
+        let rejected = store.issue_after_admission(&target, clock(1, 10), 100, |issued| {
+            assert_eq!(store.nodes_present().unwrap(), (false, false));
+            assert_eq!(issued.target_slot_id, target);
+            Err(UpdateRuntimeError::SupervisorStateMismatch)
+        });
+        assert!(matches!(
+            rejected,
+            Err(UpdateRuntimeError::SupervisorStateMismatch)
+        ));
+        assert_eq!(store.nodes_present().unwrap(), (false, false));
+        let mut admitted = None;
+        let issued = store
+            .issue_after_admission(&target, clock(1, 10), 100, |identity| {
+                assert_eq!(store.nodes_present().unwrap(), (false, false));
+                admitted = Some((identity.operation_id, identity.health_binding));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(admitted, Some((issued.operation_id, issued.health_binding)));
+        assert_eq!(
+            store
+                .inspect_exact(issued.operation_id, issued.health_binding, &target)
+                .unwrap(),
+            ChallengePresence::Complete
+        );
+    }
+
+    #[test]
+    fn exact_cleanup_preserves_newer_or_mismatched_surviving_evidence() {
+        for presence in [(true, true), (true, false), (false, true)] {
+            let runtime = tempfile::tempdir().unwrap();
+            let store = HealthChallengeStore::open(runtime.path()).unwrap();
+            let old = store.issue(&slot_id(2, b'b'), clock(1, 10), 100).unwrap();
+            store.consume(old.operation_id).unwrap();
+            let new = store.issue(&slot_id(3, b'c'), clock(2, 10), 100).unwrap();
+            if !presence.0 {
+                fs::remove_file(&store.state_path).unwrap();
+            }
+            if !presence.1 {
+                fs::remove_file(&store.token_path).unwrap();
+            }
+            let before_state = fs::read(&store.state_path).ok();
+            let before_token = fs::read(&store.token_path).ok();
+            assert!(
+                store
+                    .consume_exact(old.operation_id, old.health_binding, &old.target_slot_id)
+                    .is_err()
+            );
+            assert_eq!(fs::read(&store.state_path).ok(), before_state);
+            assert_eq!(fs::read(&store.token_path).ok(), before_token);
+            assert!(
+                store
+                    .consume_exact(new.operation_id, new.health_binding, &new.target_slot_id)
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn exact_cleanup_checks_all_evidence_before_deletion() {
+        for damage in 0..4 {
+            let runtime = tempfile::tempdir().unwrap();
+            let store = HealthChallengeStore::open(runtime.path()).unwrap();
+            let issued = store.issue(&slot_id(2, b'b'), clock(1, 10), 100).unwrap();
+            match damage {
+                0 => fs::write(&store.state_path, b"{}").unwrap(),
+                1 => {
+                    fs::set_permissions(&store.token_path, Permissions::from_mode(0o600)).unwrap();
+                    fs::write(&store.token_path, [9; 32]).unwrap();
+                    fs::set_permissions(&store.token_path, Permissions::from_mode(0o400)).unwrap();
+                }
+                2 => {
+                    fs::rename(&store.token_path, runtime.path().join("saved-token")).unwrap();
+                    symlink(runtime.path().join("saved-token"), &store.token_path).unwrap();
+                }
+                _ => fs::set_permissions(&store.state_path, Permissions::from_mode(0o644)).unwrap(),
+            }
+            assert!(
+                store
+                    .consume_exact(
+                        issued.operation_id,
+                        issued.health_binding,
+                        &issued.target_slot_id
+                    )
+                    .is_err()
+            );
+            assert_eq!(store.nodes_present().unwrap(), (true, true));
+        }
     }
 }

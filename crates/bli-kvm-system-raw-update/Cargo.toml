@@ -1,0 +1,25 @@
+[package]
+name = "bli-kvm-system-raw-update"
+description = "RAW system update for the Hardened BliKVM card layout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-system-image-verifier = { path = "../bli-kvm-system-image-verifier" }
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true, features = ["signature"] }
+tempfile.workspace = true
+
+[[bin]]
+name = "bli-kvm-system-update"
+path = "src/main.rs"

@@ -6,7 +6,7 @@ import { useSetAtom } from 'jotai';
 import { DownloadIcon, XCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { downloadImage, imageEnabled, statusImage } from '@/api/download.ts';
+import { checkUpload, downloadImage, imageEnabled, statusImage } from '@/api/download.ts';
 import { getCsrfToken } from '@/lib/cookie.ts';
 import { notifyImageListChanged } from '@/lib/image-events.ts';
 import { isKeyboardEnableAtom } from '@/jotai/keyboard.ts';
@@ -17,6 +17,10 @@ type TransferStatus = '' | 'idle' | 'in_progress' | 'complete' | 'failed' | 'can
 type AbortReason = 'cancel' | 'stall';
 
 const TRANSFER_STALL_TIMEOUT_MS = 90_000;
+
+function formatGiB(bytes: number) {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+}
 
 function isAllowedLocalImage(file: File | null) {
   if (!file) return false;
@@ -34,6 +38,9 @@ export const DownloadImage = () => {
   const [log, setLog] = useState('');
   const [diskEnabled, setDiskEnabled] = useState(false);
   const [remoteEnabled, setRemoteEnabled] = useState(false);
+  // The image store's free space and the largest upload, from the board.
+  const [storeFree, setStoreFree] = useState<number | null>(null);
+  const [maxUpload, setMaxUpload] = useState<number | null>(null);
   const [popoverKey, setPopoverKey] = useState(0);
   const [activeTransfer, setActiveTransfer] = useState<TransferKind | null>(null);
 
@@ -115,15 +122,35 @@ export const DownloadImage = () => {
   }
 
   function checkDiskEnabled() {
-    imageEnabled()
+    return imageEnabled()
       .then((res) => {
         setDiskEnabled(res.data.enabled);
         setRemoteEnabled(res.data.remoteEnabled === true);
+        const free = typeof res.data.freeBytes === 'number' ? res.data.freeBytes : null;
+        const max = typeof res.data.maxUploadBytes === 'number' ? res.data.maxUploadBytes : null;
+        setStoreFree(free);
+        setMaxUpload(max);
+        return { free, max };
       })
       .catch(() => {
         setDiskEnabled(false);
         setRemoteEnabled(false);
+        setStoreFree(null);
+        setMaxUpload(null);
+        return { free: null, max: null };
       });
+  }
+
+  // Checked before sending: a proxy may not pass the board's early refusal
+  // on, and the browser would only see the connection drop.
+  function sizeRefusal(file: File, free: number | null, max: number | null) {
+    if (max !== null && file.size > max) {
+      return t('download.tooLarge', { size: formatGiB(file.size), max: formatGiB(max) });
+    }
+    if (free !== null && file.size > free) {
+      return t('download.noSpace', { size: formatGiB(file.size), free: formatGiB(free) });
+    }
+    return '';
   }
 
   function handleOpenChange(open: boolean) {
@@ -159,9 +186,12 @@ export const DownloadImage = () => {
     }
   }
 
+  // The board's status covers the remote download only; a local upload is
+  // followed by its own request, and an "idle" here does not end it.
   function getDownloadStatus() {
+    if (activeTransferRef.current === 'local') return;
     statusImage().then((rsp) => {
-      if (rsp.code !== 0 || !rsp.data?.status) {
+      if (rsp.code !== 0 || !rsp.data?.status || activeTransferRef.current === 'local') {
         return;
       }
 
@@ -197,15 +227,6 @@ export const DownloadImage = () => {
           setInput('');
           setDownloadStatus('complete');
           setLog(t('download.complete'));
-          notifyImageListChanged();
-          return;
-        }
-
-        if (previousStatus === 'in_progress' && previousTransfer === 'local') {
-          setDownloadStatus('complete');
-          setLog(t('download.uploadComplete'));
-          setSelectedFile(null);
-          clearFileInput();
           notifyImageListChanged();
           return;
         }
@@ -255,8 +276,9 @@ export const DownloadImage = () => {
       clearFileInput();
       return;
     }
-    setDownloadStatus('idle');
-    setLog('');
+    const refusal = file ? sizeRefusal(file, storeFree, maxUpload) : '';
+    setDownloadStatus(refusal ? 'failed' : 'idle');
+    setLog(refusal);
     setSelectedFile(file);
     setActiveTransferKind(null);
     stopStatusPolling();
@@ -277,6 +299,14 @@ export const DownloadImage = () => {
       return;
     }
 
+    const { free, max } = await checkDiskEnabled();
+    const refusal = sizeRefusal(file, free, max) || (await boardRefusal(file));
+    if (refusal) {
+      setDownloadStatus('failed');
+      setLog(refusal);
+      return;
+    }
+
     setActiveTransferKind('local');
     lastProgressMarkerRef.current = '';
     setDownloadStatus('in_progress');
@@ -285,7 +315,7 @@ export const DownloadImage = () => {
 
     const formData = new FormData();
     formData.append('file', file);
-    startStatusPolling();
+    stopStatusPolling();
     resetStallWatchdog();
 
     try {
@@ -312,6 +342,30 @@ export const DownloadImage = () => {
 
       failTransfer(error instanceof Error && error.message ? error.message : t('download.failed'));
     }
+  }
+
+  // The board refuses a name, size or attached image before the file is sent:
+  // a refusal while a large body is still arriving may never reach the page.
+  async function boardRefusal(file: File) {
+    try {
+      const rsp = await checkUpload(file.name, file.size);
+      return rsp.code === 0 ? '' : uploadErrorText(rsp.msg);
+    } catch {
+      return t('download.uploadFailed');
+    }
+  }
+
+  // The board's reasons, in the operator's language where they are known.
+  function uploadErrorText(msg: string | undefined) {
+    if (msg === 'the image store on the board is not writable')
+      return t('download.storeNotWritable');
+    if (msg === 'detach the drive before replacing its image') return t('download.detachFirst');
+    if (msg === 'the image store does not have enough free space') return t('download.storeFull');
+    if (msg === 'image name is invalid') return t('download.nameInvalid');
+    if (msg === 'only .img and .iso images are accepted') return t('download.NoISO');
+    if (msg === 'upload is too large') return t('download.tooLargeAny');
+    if (msg === 'the file is empty') return t('download.fileEmpty');
+    return msg || t('download.uploadFailed');
   }
 
   function uploadFileWithProgress(file: File, formData: FormData) {
@@ -344,7 +398,7 @@ export const DownloadImage = () => {
           resolve();
           return;
         }
-        reject(new Error(body?.msg || t('download.uploadFailed')));
+        reject(new Error(uploadErrorText(body?.msg)));
       };
 
       xhr.onerror = () => {
@@ -496,20 +550,38 @@ export const DownloadImage = () => {
                   className="hidden"
                 />
               </div>
-              <Button
-                type="primary"
-                className="h-10 border-2"
-                onClick={() => upload(selectedFile)}
-                disabled={status === 'in_progress' || status === 'complete' || !selectedFile}
-              >
-                {t('download.ok')}
-              </Button>
-              {status === 'in_progress' && activeTransfer === 'local' && (
-                <Button danger icon={<XCircleIcon size={14} />} onClick={cancelTransfer}>
+              {status === 'in_progress' && activeTransfer === 'local' ? (
+                // In the upload button's place, so the narrow menu keeps it in view.
+                <Button
+                  danger
+                  className="h-10 border-2"
+                  icon={<XCircleIcon size={14} />}
+                  onClick={cancelTransfer}
+                  data-upload-cancel
+                >
                   {t('download.cancel')}
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  className="h-10 border-2"
+                  onClick={() => upload(selectedFile)}
+                  disabled={
+                    status === 'in_progress' ||
+                    status === 'complete' ||
+                    !selectedFile ||
+                    sizeRefusal(selectedFile, storeFree, maxUpload) !== ''
+                  }
+                >
+                  {t('download.ok')}
                 </Button>
               )}
             </div>
+            {storeFree !== null && (
+              <div className="pt-1 text-xs text-neutral-500" data-store-free={storeFree}>
+                {t('download.storeFree', { free: formatGiB(storeFree) })}
+              </div>
+            )}
           </div>
         </>
       )}

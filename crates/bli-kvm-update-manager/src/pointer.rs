@@ -21,8 +21,9 @@ struct PointerIdentity {
     owner: u32,
 }
 
+/// Atomic `current` link in a directory owned by the effective user.
 #[derive(Debug)]
-pub(crate) struct PointerStore {
+pub struct PointerStore {
     root: PathBuf,
     current: PathBuf,
     temporary: PathBuf,
@@ -31,7 +32,7 @@ pub(crate) struct PointerStore {
 }
 
 impl PointerStore {
-    pub(crate) fn open(root: PathBuf) -> Result<Self, UpdateManagerError> {
+    pub fn open(root: PathBuf) -> Result<Self, UpdateManagerError> {
         let identity = validate_directory(&root)?;
         let root_directory = OpenOptions::new()
             .read(true)
@@ -62,7 +63,7 @@ impl PointerStore {
         self.identity.device
     }
 
-    pub(crate) fn read(&self) -> Result<Option<String>, UpdateManagerError> {
+    pub fn read(&self) -> Result<Option<String>, UpdateManagerError> {
         self.validate_root()?;
         let metadata = match fs::symlink_metadata(&self.current) {
             Ok(metadata) => metadata,
@@ -87,7 +88,7 @@ impl PointerStore {
         Ok(Some(target.to_string()))
     }
 
-    pub(crate) fn switch(&self, target_slot_id: &str) -> Result<(), UpdateManagerError> {
+    pub fn switch(&self, target_slot_id: &str) -> Result<(), UpdateManagerError> {
         if !valid_slot_id(target_slot_id) {
             return Err(UpdateManagerError::InvalidSlotId);
         }

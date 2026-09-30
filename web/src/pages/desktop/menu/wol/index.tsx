@@ -119,6 +119,12 @@ export const Wol = () => {
           setLog(rsp.msg);
           return;
         }
+        // The hardened server reports a refused wake in the body.
+        if (rsp.data?.applied === false) {
+          setStatus('failed');
+          setLog(rsp.data.rejection ?? 'Wake-on-LAN was not sent');
+          return;
+        }
 
         setStatus('success');
         setLog(t('wol.sent'));

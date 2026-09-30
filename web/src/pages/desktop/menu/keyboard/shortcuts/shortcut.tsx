@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { KeyboardReport } from '@/lib/keyboard.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 import { Kbd, KbdGroup } from '@/components/ui/kbd.tsx';
 
 import type { Shortcut as ShortcutInterface } from './types.ts';
@@ -12,6 +13,7 @@ type ShortcutProps = {
 
 export const Shortcut = ({ shortcut }: ShortcutProps) => {
   const [isLoading, setIsLoading] = useState(false);
+  const { restricted, reportHid } = useHidLease();
 
   async function sendShortcut() {
     const keyboard = new KeyboardReport();
@@ -26,6 +28,11 @@ export const Shortcut = ({ shortcut }: ShortcutProps) => {
   }
 
   function send(report: Uint8Array) {
+    // The hardened board accepts key reports only through the HID lease.
+    if (restricted) {
+      reportHid({ mode: 'keyboard', data: Array.from(report) });
+      return;
+    }
     const data = new Uint8Array([MessageEvent.Keyboard, ...report]);
     client.send(data);
   }

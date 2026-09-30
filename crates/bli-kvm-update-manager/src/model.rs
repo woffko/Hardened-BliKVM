@@ -3,9 +3,14 @@ use std::collections::BTreeSet;
 use bli_kvm_update_stager::StagedApplication;
 use serde::{Deserialize, Serialize};
 
-use crate::{RollbackReason, UpdateManagerError};
+use crate::{
+    NativeRecoveryCompletion, NativeRollbackIntent, NativeRollbackPhase, RollbackReason,
+    UpdateManagerError,
+};
 
 pub(crate) const JOURNAL_SCHEMA_VERSION: u32 = 1;
+pub(crate) const NATIVE_JOURNAL_SCHEMA_VERSION: u32 = 2;
+pub(crate) const NATIVE_LIFECYCLE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const MAX_HISTORY_RECORDS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +77,8 @@ pub(crate) struct OperationRecord {
     pub(crate) target_slot_id: String,
     pub(crate) health_binding: String,
     pub(crate) outcome: OperationOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) native_completion: Option<NativeRecoveryCompletion>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +93,10 @@ pub(crate) struct JournalDocument {
     pub(crate) pending: Option<PendingActivation>,
     pub(crate) history: Vec<OperationRecord>,
     pub(crate) last_rollback: Option<RollbackReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) native_rollback: Option<NativeRollbackIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) native_completion: Option<NativeRecoveryCompletion>,
 }
 
 impl JournalDocument {
@@ -100,11 +111,23 @@ impl JournalDocument {
             pending: None,
             history: Vec::new(),
             last_rollback: None,
+            native_rollback: None,
+            native_completion: None,
         }
     }
 
     pub(crate) fn validate(&self) -> Result<(), UpdateManagerError> {
-        if self.schema_version != JOURNAL_SCHEMA_VERSION
+        if ![
+            JOURNAL_SCHEMA_VERSION,
+            NATIVE_JOURNAL_SCHEMA_VERSION,
+            NATIVE_LIFECYCLE_SCHEMA_VERSION,
+        ]
+        .contains(&self.schema_version)
+            || (self.schema_version == JOURNAL_SCHEMA_VERSION
+                && (self.native_rollback.is_some() || self.native_completion.is_some()))
+            || (self.schema_version == NATIVE_JOURNAL_SCHEMA_VERSION
+                && (self.native_rollback.is_some() == self.native_completion.is_some()))
+            || (self.native_rollback.is_some() && self.native_completion.is_some())
             || self.generation == 0
             || !self.active.validate()
             || !self.confirmed.validate()
@@ -114,6 +137,20 @@ impl JournalDocument {
         {
             return Err(UpdateManagerError::InvalidJournal);
         }
+        if let Some(intent) = &self.native_rollback {
+            let pending = self
+                .pending
+                .as_ref()
+                .ok_or(UpdateManagerError::InvalidJournal)?;
+            if intent.operation_id != pending.operation_id
+                || intent.intent_generation == 0
+                || intent.intent_generation > self.generation
+                || (intent.reason == RollbackReason::HealthChallengeLost
+                    && self.schema_version != NATIVE_LIFECYCLE_SCHEMA_VERSION)
+            {
+                return Err(UpdateManagerError::InvalidJournal);
+            }
+        }
 
         let mut operation_ids = BTreeSet::new();
         for record in &self.history {
@@ -121,6 +158,58 @@ impl JournalDocument {
                 || !valid_nonzero_hex(&record.health_binding, 64)
                 || !valid_slot_id(&record.target_slot_id)
                 || !operation_ids.insert(record.operation_id.as_str())
+            {
+                return Err(UpdateManagerError::InvalidJournal);
+            }
+            if let Some(completion) = &record.native_completion {
+                let intent = &completion.intent;
+                if self.schema_version != NATIVE_LIFECYCLE_SCHEMA_VERSION
+                    || intent.phase != NativeRollbackPhase::Restoring
+                    || intent.intent_generation == 0
+                    || intent.intent_generation >= completion.completion_generation
+                    || completion.completion_generation >= self.generation
+                    || !valid_slot_id(&completion.confirmed_slot_id)
+                    || completion.confirmed_slot_id == completion.failed_target_slot_id
+                    || intent.operation_id != record.operation_id
+                    || completion.failed_target_slot_id != record.target_slot_id
+                    || completion.health_binding != record.health_binding
+                    || record.outcome
+                        != (OperationOutcome::RolledBack {
+                            reason: intent.reason,
+                        })
+                    || self
+                        .native_completion
+                        .as_ref()
+                        .is_some_and(|current| current.intent.operation_id == intent.operation_id)
+                {
+                    return Err(UpdateManagerError::InvalidJournal);
+                }
+            }
+        }
+
+        if let Some(completion) = &self.native_completion {
+            let intent = &completion.intent;
+            if intent.phase != NativeRollbackPhase::Restoring
+                || (intent.reason == RollbackReason::HealthChallengeLost
+                    && self.schema_version != NATIVE_LIFECYCLE_SCHEMA_VERSION)
+                || intent.intent_generation == 0
+                || intent.intent_generation >= completion.completion_generation
+                || completion.completion_generation != self.generation
+                || completion.confirmed_slot_id != self.confirmed.slot_id
+                || !valid_slot_id(&completion.failed_target_slot_id)
+                || completion.failed_target_slot_id == completion.confirmed_slot_id
+                || self.pending.is_some()
+                || self.previous.is_some()
+                || self.last_rollback != Some(intent.reason)
+                || !self.history.iter().any(|record| {
+                    record.operation_id == intent.operation_id
+                        && record.target_slot_id == completion.failed_target_slot_id
+                        && record.health_binding == completion.health_binding
+                        && record.outcome
+                            == OperationOutcome::RolledBack {
+                                reason: intent.reason,
+                            }
+                })
             {
                 return Err(UpdateManagerError::InvalidJournal);
             }
@@ -137,11 +226,19 @@ impl JournalDocument {
                     || pending.previous.slot_id == pending.target.slot_id
                     || pending.previous != self.confirmed
                     || pending.target.sequence <= self.floor_sequence
-                    || match pending.phase {
-                        PendingPhase::Prepared => self.active != pending.previous,
-                        PendingPhase::AwaitingHealth => {
-                            self.active != pending.target
-                                || self.previous.as_ref() != Some(&pending.previous)
+                    || if self
+                        .native_rollback
+                        .as_ref()
+                        .is_some_and(|intent| intent.phase == NativeRollbackPhase::Restoring)
+                    {
+                        self.active != pending.previous || self.previous.is_some()
+                    } else {
+                        match pending.phase {
+                            PendingPhase::Prepared => self.active != pending.previous,
+                            PendingPhase::AwaitingHealth => {
+                                self.active != pending.target
+                                    || self.previous.as_ref() != Some(&pending.previous)
+                            }
                         }
                     }
                 {
@@ -153,7 +250,14 @@ impl JournalDocument {
                         && record.health_binding == pending.health_binding
                         && record.outcome == OperationOutcome::Pending
                 });
-                if matching.count() != 1 {
+                if matching.count() != 1
+                    || self
+                        .history
+                        .iter()
+                        .filter(|record| record.outcome == OperationOutcome::Pending)
+                        .count()
+                        != 1
+                {
                     return Err(UpdateManagerError::InvalidJournal);
                 }
             }
@@ -180,6 +284,93 @@ impl JournalDocument {
         Ok(previous)
     }
 
+    /// Reserve serialization capacity for a complete native attempt, including
+    /// failure recovery and receipt archival. No state is written here. Use the
+    /// widest generation encoding and longest currently supported reason so
+    /// decimal growth cannot consume the reserved space later.
+    pub(crate) fn validate_native_activation_capacity(&self) -> Result<(), UpdateManagerError> {
+        self.generation
+            .checked_add(5)
+            .ok_or(UpdateManagerError::GenerationExhausted)?;
+        let pending = self
+            .pending
+            .as_ref()
+            .ok_or(UpdateManagerError::InvalidJournal)?;
+        if self.schema_version != NATIVE_LIFECYCLE_SCHEMA_VERSION
+            || pending.phase != PendingPhase::Prepared
+            || self.native_rollback.is_some()
+            || self.native_completion.is_some()
+        {
+            return Err(UpdateManagerError::InvalidJournal);
+        }
+        let mut probe = self.clone();
+        probe.generation = u64::MAX - 5;
+        probe.last_rollback = Some(RollbackReason::ExplicitHealthFailure);
+        let _ = crate::journal::encode_document(&probe)?;
+        probe.generation += 1;
+        probe.active = pending.target.clone();
+        probe.previous = Some(pending.previous.clone());
+        probe
+            .pending
+            .as_mut()
+            .ok_or(UpdateManagerError::InvalidJournal)?
+            .phase = PendingPhase::AwaitingHealth;
+        let _ = crate::journal::encode_document(&probe)?;
+
+        let mut confirmed = probe.clone();
+        confirmed.generation += 1;
+        confirmed.confirmed = pending.target.clone();
+        confirmed.floor_sequence = pending.target.sequence;
+        confirmed.pending = None;
+        confirmed.last_rollback = None;
+        confirmed.complete_operation(&pending.operation_id, OperationOutcome::Confirmed)?;
+        let _ = crate::journal::encode_document(&confirmed)?;
+
+        probe.generation += 1;
+        let mut intent = NativeRollbackIntent {
+            operation_id: pending.operation_id.clone(),
+            intent_generation: probe.generation,
+            reason: RollbackReason::ExplicitHealthFailure,
+            phase: NativeRollbackPhase::RollbackPending,
+        };
+        probe.native_rollback = Some(intent.clone());
+        let _ = crate::journal::encode_document(&probe)?;
+        probe.generation += 1;
+        probe.active = pending.previous.clone();
+        probe.previous = None;
+        intent.phase = NativeRollbackPhase::Restoring;
+        probe.native_rollback = Some(intent.clone());
+        let _ = crate::journal::encode_document(&probe)?;
+        probe.generation += 1;
+        probe.pending = None;
+        probe.native_rollback = None;
+        probe.complete_operation(
+            &pending.operation_id,
+            OperationOutcome::RolledBack {
+                reason: intent.reason,
+            },
+        )?;
+        let receipt = NativeRecoveryCompletion {
+            intent,
+            completion_generation: probe.generation,
+            failed_target_slot_id: pending.target.slot_id.clone(),
+            confirmed_slot_id: pending.previous.slot_id.clone(),
+            health_binding: pending.health_binding.clone(),
+        };
+        probe.native_completion = Some(receipt.clone());
+        let _ = crate::journal::encode_document(&probe)?;
+        probe.generation += 1;
+        probe.native_completion = None;
+        probe
+            .history
+            .iter_mut()
+            .find(|record| record.operation_id == pending.operation_id)
+            .ok_or(UpdateManagerError::InvalidJournal)?
+            .native_completion = Some(receipt);
+        let _ = crate::journal::encode_document(&probe)?;
+        Ok(())
+    }
+
     pub(crate) fn find_record(&self, operation_id: &str) -> Option<&OperationRecord> {
         self.history
             .iter()
@@ -200,6 +391,7 @@ impl JournalDocument {
             target_slot_id,
             health_binding,
             outcome: OperationOutcome::Pending,
+            native_completion: None,
         });
         Ok(())
     }

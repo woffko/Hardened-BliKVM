@@ -13,6 +13,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/storage.ts';
+import { commandFailed, commandReason } from '@/lib/command-result.ts';
 import { IMAGE_LIST_CHANGED_EVENT } from '@/lib/image-events.ts';
 import { client } from '@/lib/websocket.ts';
 
@@ -108,9 +109,9 @@ export const Images = ({ isOpen, cdrom, setCdrom, setIsMounted }: ImagesProps) =
     api
       .mountImage(filename, nextCdrom)
       .then((rsp) => {
-        if (rsp.code !== 0) {
+        if (commandFailed(rsp)) {
           console.log(rsp.msg);
-          openNotification(isMounted, rsp.msg);
+          openNotification(isMounted, commandReason(rsp));
           return;
         }
 
@@ -172,10 +173,10 @@ export const Images = ({ isOpen, cdrom, setCdrom, setIsMounted }: ImagesProps) =
     api
       .reconnectUsbGadget()
       .then((rsp) => {
-        if (rsp.code !== 0) {
+        if (commandFailed(rsp)) {
           notify.open({
             message: t('image.usbReconnectFailed'),
-            description: rsp.msg || t('image.mountDesc'),
+            description: commandReason(rsp) || t('image.mountDesc'),
             duration: 10
           });
           return;

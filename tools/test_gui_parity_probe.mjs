@@ -53,6 +53,19 @@ test("gui_parity_probe extracts bounded menu labels from a local page", (t) => {
     `gui-parity-probe-selftest-${process.pid}.json`,
   );
   const outputPath = path.resolve(output);
+  const contextPath = path.resolve(
+    "evidence",
+    "private",
+    `gui-parity-context-selftest-${process.pid}.json`,
+  );
+  fs.writeFileSync(
+    contextPath,
+    `${JSON.stringify({
+      acceptanceRunId: "gui-parity-selftest-0001",
+      reviewedSourceCommit: "a".repeat(40),
+    })}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
   try {
     const result = spawnSync(
       process.execPath,
@@ -62,6 +75,10 @@ test("gui_parity_probe extracts bounded menu labels from a local page", (t) => {
         executablePath,
         pathToFileURL(fixture).href,
         outputPath,
+        "",
+        "ours",
+        contextPath,
+        "fixture-source-revision",
       ],
       { encoding: "utf8", timeout: 60_000 },
     );
@@ -69,6 +86,11 @@ test("gui_parity_probe extracts bounded menu labels from a local page", (t) => {
 
     const receipt = JSON.parse(fs.readFileSync(outputPath, "utf8"));
     assert.equal(receipt.probe, "hardened-blikvm-gui-parity");
+    assert.equal(receipt.schemaVersion, 2);
+    assert.equal(receipt.result, "passed");
+    assert.equal(receipt.targetRole, "ours");
+    assert.equal(receipt.coverage.settingsTabs, "complete");
+    assert.equal(receipt.capabilitiesRequest.outcome, "not_applicable");
     assert.equal(receipt.title, "Fixture");
     assert.ok(
       receipt.menuLabels.includes("Images"),
@@ -91,5 +113,6 @@ test("gui_parity_probe extracts bounded menu labels from a local page", (t) => {
   } finally {
     fs.rmSync(fixture, { force: true });
     fs.rmSync(outputPath, { force: true });
+    fs.rmSync(contextPath, { force: true });
   }
 });

@@ -37,11 +37,87 @@ pub enum ControlRejectionCode {
     BackendUnavailable,
     BackendRejected,
     Internal,
+    /// The selected image's file is not in the image store.
+    ImageMissing,
+    /// The image is shorter than a CD-ROM needs.
+    ImageTooSmall,
 }
+
+/// One connected interface as NetworkManager reports it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkInterfaceInfo {
+    pub name: String,
+    /// `ethernet` or `wifi`.
+    pub kind: String,
+    /// `auto` (DHCP) or `manual`.
+    pub method: String,
+    pub address: String,
+    pub prefix: u8,
+    pub gateway: String,
+    /// The resolvers in use.
+    pub dns: Vec<String>,
+    /// The resolvers DHCP offered.
+    pub dhcp_dns: Vec<String>,
+    /// Whether the configured resolvers replace the DHCP ones.
+    pub manual_dns: bool,
+    pub search: Vec<String>,
+    /// `disabled`, `slaac`, `dhcpv6` or `manual`.
+    #[serde(default)]
+    pub ipv6_mode: String,
+    /// Addresses in use, as `address/prefix`.
+    #[serde(default)]
+    pub ipv6_addresses: Vec<String>,
+    #[serde(default)]
+    pub ipv6_gateway: String,
+    /// The configured manual address (`address/prefix`) and router.
+    #[serde(default)]
+    pub ipv6_manual_address: String,
+    #[serde(default)]
+    pub ipv6_manual_gateway: String,
+}
+
+/// One network in range: its name, the strongest signal heard for it in
+/// percent, its security (`open`, `wpa2`, `wpa3`, `wpa2_wpa3`, `wep`,
+/// `enterprise` or `other`), channel, and whether the board uses it now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub signal: u8,
+    pub security: String,
+    pub channel: u16,
+    pub in_use: bool,
+}
+
+/// One saved WiFi profile. Its password never leaves the owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WifiProfileView {
+    pub id: String,
+    pub ssid: String,
+    pub autoconnect: bool,
+    pub active: bool,
+}
+
+/// The security labels a network or connection can carry.
+pub const WIFI_SECURITY_LABELS: [&str; 7] = [
+    "open",
+    "wpa2",
+    "wpa3",
+    "wpa2_wpa3",
+    "wep",
+    "enterprise",
+    "other",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    /// Ledger observation only; zero does not prove physical endpoint health.
+    HidReconciliationState {
+        pending_releases: u64,
+    },
     Applied,
     LeaseGranted {
         lease_id: [u8; 16],
@@ -62,6 +138,8 @@ pub enum ControlResponse {
     VideoState {
         fps: u16,
         quality: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolution: Option<String>,
     },
     /// Whether the device name is published over mDNS.
     MdnsState {
@@ -76,6 +154,25 @@ pub enum ControlResponse {
     HidOnlyState {
         enabled: bool,
     },
+    /// The connected interfaces and a pending addressing revert, if any.
+    NetworkInfo {
+        interfaces: Vec<NetworkInterfaceInfo>,
+        revert_in_seconds: u32,
+    },
+    /// The OpenSSH server: enabled at boot and running now.
+    SshState {
+        enabled: bool,
+        active: bool,
+    },
+    /// The persisted administration feature switches.
+    AdminFeatureState {
+        terminal: bool,
+        scripts: bool,
+        remote_download: bool,
+        picoclaw: bool,
+        #[serde(default)]
+        raw_system_update: bool,
+    },
     /// The WiFi device state the owner observed.
     WifiState {
         available: bool,
@@ -83,6 +180,44 @@ pub enum ControlResponse {
         interface: Option<String>,
         ssid: Option<String>,
         state: String,
+        #[serde(default)]
+        radio: bool,
+        /// The connected network's signal in percent.
+        #[serde(default)]
+        signal: Option<u8>,
+        #[serde(default)]
+        security: Option<String>,
+        /// The connected network's IPv4 address, as `address/prefix`.
+        #[serde(default)]
+        address: Option<String>,
+        #[serde(default)]
+        gateway: Option<String>,
+        /// At most three resolvers.
+        #[serde(default)]
+        dns: Vec<String>,
+        /// A global IPv6 address, as `address/prefix`.
+        #[serde(default)]
+        ipv6: Option<String>,
+        #[serde(default)]
+        hw_address: Option<String>,
+        #[serde(default)]
+        channel: Option<u16>,
+        #[serde(default)]
+        rate_mbps: Option<u32>,
+        /// WiFi is the main connection and Ethernet the backup.
+        #[serde(default)]
+        wifi_preferred: bool,
+        /// Seconds until an unconfirmed main-connection change is reverted.
+        #[serde(default)]
+        revert_in_seconds: u32,
+    },
+    /// The networks in range, strongest first, one entry per name.
+    WifiNetworks {
+        networks: Vec<WifiNetwork>,
+    },
+    /// The saved WiFi profiles.
+    WifiProfiles {
+        profiles: Vec<WifiProfileView>,
     },
     /// The HTTPS redirect state and the public certificate the front serves.
     TlsState {
@@ -103,6 +238,9 @@ pub enum ControlResponse {
         message: String,
     },
     /// The reviewed firewall baseline state.
+    FirewallModeState {
+        status: bli_kvm_core::FirewallModeStatus,
+    },
     FirewallState {
         backend_available: bool,
         baseline_active: bool,
@@ -112,7 +250,17 @@ pub enum ControlResponse {
         nft_detail: String,
         iptables_installed: bool,
         ip6tables_installed: bool,
+        /// A bounded preview; `FirewallRules` serves the complete listing.
         rules_nft: String,
+        #[serde(default)]
+        https_port: u16,
+    },
+    /// One chunk of a rule listing: `total` bytes in all, this chunk starting
+    /// at `offset`.
+    FirewallRules {
+        total: u32,
+        offset: u32,
+        chunk: String,
     },
     Rejected {
         code: ControlRejectionCode,
@@ -305,6 +453,77 @@ pub fn encode_response_v2(
 }
 
 fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolError> {
+    if let ControlResponse::VideoState {
+        resolution: Some(resolution),
+        ..
+    } = response
+        && !bli_kvm_core::reviewed_resolution(resolution)
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::FirewallModeState { status } = response {
+        match (
+            status.pending_operation_id,
+            status.confirmation_deadline_unix_ms,
+        ) {
+            (None, None) if !status.recovery_required => {}
+            (Some(operation), Some(deadline)) if operation != [0; 16] && deadline > 0 => {}
+            _ => return Err(ControlProtocolError::InvalidControlResponse),
+        }
+    }
+    if let ControlResponse::FirewallRules {
+        total,
+        offset,
+        chunk,
+    } = response
+        && (chunk.len() > bli_kvm_core::MAX_FIREWALL_RULES_CHUNK
+            || *total as usize > bli_kvm_core::MAX_FIREWALL_RULES_BYTES
+            || u64::from(*offset) + chunk.len() as u64 > u64::from(*total))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::WifiNetworks { networks } = response
+        && (networks.len() > bli_kvm_core::MAX_WIFI_NETWORKS
+            || networks.iter().any(|network| {
+                !bli_kvm_core::valid_wifi_ssid(&network.ssid)
+                    || network.signal > 100
+                    || !WIFI_SECURITY_LABELS.contains(&network.security.as_str())
+            }))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::WifiProfiles { profiles } = response
+        && (profiles.len() > bli_kvm_core::MAX_WIFI_PROFILES
+            || profiles.iter().any(|profile| {
+                !bli_kvm_core::valid_wifi_profile_id(&profile.id)
+                    || (!profile.ssid.is_empty() && !bli_kvm_core::valid_wifi_ssid(&profile.ssid))
+            }))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::WifiState {
+        signal,
+        security,
+        address,
+        gateway,
+        dns,
+        ipv6,
+        hw_address,
+        ..
+    } = response
+        && (signal.is_some_and(|signal| signal > 100)
+            || security
+                .as_deref()
+                .is_some_and(|security| !WIFI_SECURITY_LABELS.contains(&security))
+            || dns.len() > 3
+            || [address, gateway, ipv6, hw_address]
+                .into_iter()
+                .flatten()
+                .chain(dns)
+                .any(|value| value.is_empty() || value.len() > 64))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
     if let ControlResponse::LeaseGranted { lease_id } = response
         && lease_id.iter().all(|byte| *byte == 0)
     {
@@ -429,6 +648,39 @@ mod tests {
                 Err(ControlProtocolError::InvalidOperationId)
             );
         }
+    }
+
+    #[test]
+    fn firewall_status_rejects_inconsistent_pending_metadata() {
+        let mut status = bli_kvm_core::FirewallModeStatus {
+            mode: bli_kvm_core::FirewallMode::Restricted,
+            pending_operation_id: Some([1; 16]),
+            confirmation_deadline_unix_ms: Some(60_100),
+            recovery_required: false,
+            configuration_ready: true,
+        };
+        assert!(
+            validate_response(&ControlResponse::FirewallModeState {
+                status: status.clone()
+            })
+            .is_ok()
+        );
+        status.confirmation_deadline_unix_ms = None;
+        assert!(
+            validate_response(&ControlResponse::FirewallModeState {
+                status: status.clone()
+            })
+            .is_err()
+        );
+        status.pending_operation_id = None;
+        assert!(
+            validate_response(&ControlResponse::FirewallModeState {
+                status: status.clone()
+            })
+            .is_ok()
+        );
+        status.recovery_required = true;
+        assert!(validate_response(&ControlResponse::FirewallModeState { status }).is_err());
     }
 
     #[test]
@@ -670,6 +922,76 @@ mod tests {
             };
             assert!(encode_response_v2(&invalid).is_err(), "{file}");
         }
+    }
+
+    #[test]
+    fn wifi_lists_fit_one_message_and_reject_unsafe_entries() {
+        let envelope = |response| ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 26,
+            operation_id: OPERATION_ID.into(),
+            response,
+        };
+        // The longest names JSON can make: every byte escaped.
+        let widest = "\"".repeat(32);
+        let network = WifiNetwork {
+            ssid: widest.clone(),
+            signal: 100,
+            security: "wpa2_wpa3".into(),
+            channel: 165,
+            in_use: false,
+        };
+        let scan = envelope(ControlResponse::WifiNetworks {
+            networks: vec![network.clone(); bli_kvm_core::MAX_WIFI_NETWORKS],
+        });
+        let json = encode_response_v2(&scan).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), scan);
+        let profile = WifiProfileView {
+            id: "0123abcd-0123-4567-89ab-0123456789ab".into(),
+            ssid: widest,
+            autoconnect: true,
+            active: false,
+        };
+        let saved = envelope(ControlResponse::WifiProfiles {
+            profiles: vec![profile.clone(); bli_kvm_core::MAX_WIFI_PROFILES],
+        });
+        let json = encode_response_v2(&saved).unwrap();
+        assert_eq!(decode_response_v2(&json).unwrap(), saved);
+
+        let too_many = envelope(ControlResponse::WifiNetworks {
+            networks: vec![network.clone(); bli_kvm_core::MAX_WIFI_NETWORKS + 1],
+        });
+        assert!(encode_response_v2(&too_many).is_err());
+        for bad in [
+            WifiNetwork {
+                ssid: String::new(),
+                ..network.clone()
+            },
+            WifiNetwork {
+                ssid: "line\nbreak".into(),
+                ..network.clone()
+            },
+            WifiNetwork {
+                signal: 101,
+                ..network.clone()
+            },
+            WifiNetwork {
+                security: "wpa-psk".into(),
+                ..network.clone()
+            },
+        ] {
+            let invalid = envelope(ControlResponse::WifiNetworks {
+                networks: vec![bad],
+            });
+            assert!(encode_response_v2(&invalid).is_err());
+        }
+        let invalid = envelope(ControlResponse::WifiProfiles {
+            profiles: vec![WifiProfileView {
+                id: "../system-connections".into(),
+                ..profile
+            }],
+        });
+        assert!(encode_response_v2(&invalid).is_err());
     }
 
     #[test]

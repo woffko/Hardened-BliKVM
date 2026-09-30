@@ -92,6 +92,8 @@ pub enum VideoTransport {
     H264Direct,
     WebRtcJanus,
     WebRtcNative,
+    /// H.264 (x264) through the same Janus gateway as VP8.
+    WebRtcJanusH264,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +117,8 @@ pub enum VideoSetting {
     Fps,
     Quality,
     Resolution,
+    /// The reference's MJPEG frame detect: identical frames are not sent.
+    FrameDetect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

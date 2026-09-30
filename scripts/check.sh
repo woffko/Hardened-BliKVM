@@ -8,6 +8,21 @@ pnpm_web() {
 }
 
 cargo fmt --all -- --check
+# The VP8 encoder links a pinned static libvpx; build the host copy once per
+# target directory so all-feature checks and encoder tests can link it.
+target_root=${CARGO_TARGET_DIR:-$PWD/target}
+case "$target_root" in /*) ;; *) target_root=$PWD/$target_root ;; esac
+BLI_KVM_LIBVPX_DIR="$target_root/libvpx-1.15.2-host"
+if [ ! -f "$BLI_KVM_LIBVPX_DIR/lib/libvpx.a" ]; then
+  scripts/build-libvpx.sh host "$BLI_KVM_LIBVPX_DIR"
+fi
+export BLI_KVM_LIBVPX_DIR
+# The H.264 WebRTC encoder links a pinned static x264 the same way.
+BLI_KVM_X264_DIR="$target_root/x264-165-host"
+if [ ! -f "$BLI_KVM_X264_DIR/lib/libx264.a" ]; then
+  scripts/build-x264.sh host "$BLI_KVM_X264_DIR"
+fi
+export BLI_KVM_X264_DIR
 cargo check --workspace --all-targets --locked
 cargo check --workspace --all-targets --all-features --locked
 cargo check -p bli-kvm-media-transition --lib --locked --no-default-features --features gadget-media-profile
@@ -33,8 +48,21 @@ cargo test -p bli-kvm-media-transition --all-targets --locked --features gadget-
 cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hid-profile
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver
+cargo test -p bli-kvm-video-encoder --all-targets --locked --features h264
+sh -n scripts/build-libvpx.sh
+sh -n scripts/build-x264.sh
+sh -n tools/device/deploy_native_profile.sh
+sh -n tools/device/deploy_vp8.sh
+sh -n tools/image/build_sd_image.sh
+sh -n tools/image/hardened-blikvm-firstboot.sh
+sh -n tools/image/hardened-blikvm-grow-image-store.sh
+sh -n packaging/system-update/initramfs-hook
+sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
+cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
+python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264 -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export -- -D warnings
@@ -53,17 +81,19 @@ cargo clippy -p bli-kvm-atx-gpio-executor --all-targets --locked --features char
 cargo clippy -p bli-kvm-server --all-targets --locked --features restricted-control-surface -- -D warnings
 
 sh -n scripts/build-aarch64.sh
-sh -n scripts/build-board-profile.sh
+bash -n scripts/build-board-profile.sh
 sh -n scripts/build-hid-transition-profile.sh
-sh -n scripts/build-prototype-bundle.sh
+bash -n scripts/build-prototype-bundle.sh
 sh -n scripts/check-source-boundary.sh
 sh -n scripts/check.sh
 sh -n scripts/rust-lld-linker.sh
 sh -n scripts/rustc-remap-wrapper.sh
 sh -n scripts/verify-systemd-units.sh
+python3 tools/render_native_profile.py --check
 sh -n scripts/verify-aarch64-elf.sh
 
 scripts/check-source-boundary.sh
+python3 -B -m unittest tools.test_source_boundary
 scripts/verify-systemd-units.sh
 python3 -B tools/verify_persistent_status_ordering.py
 python3 -B tools/verify_persistent_write_ordering.py
@@ -95,20 +125,44 @@ node --test tools/test_gui_parity_probe.mjs
 node --test tools/test_gui_parity_app.mjs
 node --test tools/test_restricted_power_probe.mjs
 node --test tools/test_restricted_keyboard_probe.mjs
+node --test tools/test_hid_report_queue.mjs
+node --test tools/test_command_result.mjs
+node --test tools/test_hid_text.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs
 node --check tools/playwright/device_application_write.mjs
 node --check tools/playwright/device_application_upload_failures.mjs
 node --check tools/playwright/gui_parity_probe.mjs
+node --check tools/playwright/raw_system_update_probe.mjs
+node --check tools/playwright/raw_system_update_device_test.mjs
+node --check tools/playwright/firewall_modes_device_probe.mjs
+node --check tools/playwright/firewall_page_device_test.mjs
+node --check tools/playwright/gui_walk_device.mjs
+node --check tools/playwright/media_gui_device_test.mjs
+node --check tools/playwright/terminal_run.mjs
+node --check tools/playwright/terminal_put.mjs
 node --check tools/playwright/virtual_media_acceptance.mjs
 node --check tools/playwright/restricted_power_probe.mjs
+node --check tools/playwright/restricted_control_gui_probe.mjs
+node --check tools/playwright/restricted_control_virtual_keyboard_probe.mjs
+node --check tools/playwright/restricted_control_lifecycle.mjs
+node --check tools/playwright/network_contract.mjs
+node --check tools/playwright/firewall_modes_contract.mjs
+node --check tools/playwright/webrtc_unavailable_contract.mjs
+node --check tools/playwright/csp_contract.mjs
+node --check tools/playwright/wifi_contract.mjs
+node --check tools/playwright/vp8_webrtc_probe.mjs
+node --check tools/playwright/video_settings_contract.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
 python3 -m unittest \
   tools/test_capture_pikvm_baseline.py \
   tools/test_packaging_boundaries.py \
+  tools/test_build_sd_image.py \
+  tools/test_build_scripts_guard.py \
+  tools/test_web_api_routes.py \
   tools/test_hid_credential_service.py \
   tools/test_hid_transition_service.py \
   tools/test_build_hid_transition_profile.py \
@@ -174,6 +228,7 @@ python3 -m unittest \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
+  tools/test_prototype_archive.py \
   tools/test_build_debian_update_runtime_package.py \
   tools/test_stage_device_update_runtime_package.py \
   tools/test_stage_device_update_trust_config.py \
@@ -243,8 +298,14 @@ python3 -m unittest \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
+  tools/test_build_system_raw_bundle.py \
   -v
 python3 -m py_compile \
+  tools/device/owner_lock_probe.py \
+  tools/device/safe_writes_probe.py \
+  tools/device/wifi_via_api.py \
+  tools/device/stream_latency_probe.py \
+  tools/device/hid_latency_probe.py \
   tools/capture_pikvm_baseline.py \
   tools/capture_ssh_preflight.py \
   tools/capture_rtc_baseline.py \
@@ -349,6 +410,7 @@ python3 -m py_compile \
   tools/plan_board_profile_handoff.py \
   tools/stage_device_board_profile_gate.py \
   tools/compare_gui_parity.py \
+  tools/test_compare_gui_parity.py \
   tools/capture_device_kvm_topology.py \
   tools/check_device_log_health.py \
   tools/license_inventory.py \
@@ -399,6 +461,7 @@ python3 -m py_compile \
   tools/test_capture_debian_runtime_retain_preflight.py \
   tools/test_capture_debian_runtime_retained.py \
   tools/test_build_debian_runtime_package.py \
+  tools/test_prototype_archive.py \
   tools/test_build_debian_update_runtime_package.py \
   tools/test_stage_device_update_runtime_package.py \
   tools/test_stage_device_update_trust_config.py \
@@ -433,7 +496,9 @@ python3 -m py_compile \
   tools/test_stage_device_diagnostic_collector.py \
   tools/test_stage_device_tls_browser.py \
   tools/test_build_update_test_fixture.py \
-  tools/test_build_system_image_test_fixture.py
+  tools/test_build_system_image_test_fixture.py \
+  tools/build_system_raw_bundle.py \
+  tools/test_build_system_raw_bundle.py
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
 node --check tools/playwright/local_application_upload.mjs
@@ -667,6 +732,7 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_capture_debian_runtime_retain_preflight.py \
     tools/test_capture_debian_runtime_retained.py \
     tools/test_build_debian_runtime_package.py \
+    tools/test_prototype_archive.py \
     tools/test_build_debian_update_runtime_package.py \
     tools/test_stage_device_update_runtime_package.py \
     tools/test_stage_device_update_trust_config.py \
@@ -708,7 +774,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_stage_device_diagnostic_collector.py \
     tools/test_stage_device_tls_browser.py \
     tools/test_build_update_test_fixture.py \
-    tools/test_build_system_image_test_fixture.py
+    tools/test_build_system_image_test_fixture.py \
+    tools/build_system_raw_bundle.py \
+    tools/test_build_system_raw_bundle.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1
@@ -721,11 +789,19 @@ node tools/playwright/local_application_upload.mjs
 node tools/playwright/local_upload_logout.mjs
 pnpm_web build
 pnpm_web lint
+node tools/playwright/restricted_control_lifecycle.mjs
+node tools/playwright/network_contract.mjs
+node tools/playwright/firewall_modes_contract.mjs
+node tools/playwright/webrtc_unavailable_contract.mjs
+node tools/playwright/csp_contract.mjs
+node tools/playwright/wifi_contract.mjs
+node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
 pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_gui_parity_app.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'

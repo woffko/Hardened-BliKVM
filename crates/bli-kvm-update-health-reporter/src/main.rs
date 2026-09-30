@@ -11,7 +11,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::ExitCode,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use thiserror::Error;
@@ -244,16 +244,34 @@ fn wait_until_healthy(endpoint: SocketAddr) -> Result<(), ReporterError> {
 fn health_once(endpoint: SocketAddr) -> Result<(), ReporterError> {
     let mut stream = TcpStream::connect_timeout(&endpoint, IO_TIMEOUT)
         .map_err(|_| ReporterError::CandidateNotReady)?;
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     stream
         .write_all(b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")?;
     let mut response = Vec::with_capacity(1024);
-    stream
-        .take((MAX_RESPONSE_BYTES + 1) as u64)
-        .read_to_end(&mut response)?;
-    if response.len() > MAX_RESPONSE_BYTES {
-        return Err(ReporterError::InvalidHealthResponse);
+    let deadline = Instant::now() + IO_TIMEOUT;
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or(ReporterError::CandidateNotReady)?;
+        stream.set_read_timeout(Some(remaining))?;
+        let capacity = buffer.len().min(MAX_RESPONSE_BYTES + 1 - response.len());
+        let count = match stream.read(&mut buffer[..capacity]) {
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if Instant::now() >= deadline {
+            return Err(ReporterError::CandidateNotReady);
+        }
+        if count == 0 {
+            break;
+        }
+        response.extend_from_slice(&buffer[..count]);
+        if response.len() > MAX_RESPONSE_BYTES {
+            return Err(ReporterError::InvalidHealthResponse);
+        }
     }
     validate_health_response(&response)
 }
@@ -452,6 +470,60 @@ mod tests {
             validate_health_response(response),
             Err(ReporterError::InvalidHealthResponse)
         ));
+    }
+
+    #[test]
+    fn slow_health_response_cannot_extend_the_read_deadline() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut request = [0_u8; 256];
+            assert!(socket.read(&mut request).unwrap() > 0);
+            let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"code\":0,\"data\":{\"status\":\"ok\",\"backend\":\"rust\",\"platformId\":\"bli-h616-pikvm\"}}";
+            socket.write_all(response).unwrap();
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(100));
+                if socket.write_all(b" ").is_err() {
+                    break;
+                }
+            }
+        });
+        let started = std::time::Instant::now();
+        let result = health_once(endpoint);
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        assert!(
+            result.is_err(),
+            "a slowly completed response must not confirm health"
+        );
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "elapsed: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn health_response_size_limit_includes_headers_and_body() {
+        for length in [MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES + 1] {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let endpoint = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+                let mut request = [0_u8; 256];
+                assert!(socket.read(&mut request).unwrap() > 0);
+                let mut response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"code\":0,\"data\":{\"status\":\"ok\",\"backend\":\"rust\",\"platformId\":\"bli-h616-pikvm\"}}".to_vec();
+                response.resize(length, b' ');
+                socket.write_all(&response).unwrap();
+            });
+            let result = health_once(endpoint);
+            server.join().unwrap();
+            assert_eq!(result.is_ok(), length == MAX_RESPONSE_BYTES);
+        }
     }
 
     #[test]

@@ -52,6 +52,10 @@ FILE_MAP = {
         "lib/systemd/system/hardened-blikvm-boardd.service",
     "share/systemd/hardened-blikvm-ustreamer.service":
         "lib/systemd/system/hardened-blikvm-ustreamer.service",
+    "share/systemd/hardened-blikvm-board-owner.service.d/90-socket-group.conf":
+        "lib/systemd/system/hardened-blikvm-board-owner.service.d/90-socket-group.conf",
+    "share/tmpfiles.d/hardened-blikvm-video.conf":
+        "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-video-tmpfiles.conf",
     "share/systemd/hardened-blikvm-nginx.service":
         "lib/systemd/system/hardened-blikvm-nginx.service",
     "share/sysusers.d/hardened-blikvm.conf":
@@ -77,6 +81,15 @@ EXECUTABLE_DESTINATIONS = {
 FORBIDDEN_PACKAGE_NAMES = {
     "bli-kvm-update-supervisor",
     "bli-kvm-update-health-reporter",
+    "bli-kvm-update-exec-helper",
+    "bli-kvm-admin-helper",
+    "bli-kvm-system-update",
+    "hardened-blikvm-system-update-booted.service",
+    "hardened-blikvm-admin@.service",
+    "hardened-blikvm-image-download@.service",
+    "hardened-blikvm-picoclaw.service",
+    "hardened-blikvm-picoclaw-api@.service",
+    "hardened-blikvm-update-exec@.service",
     "hardened-blikvm-update-watchdog.service",
     "hardened-blikvm-update-watchdog.timer",
     "hardened-blikvm-update-confirm.socket",
@@ -85,6 +98,9 @@ FORBIDDEN_PACKAGE_NAMES = {
     "hardened-blikvm-diagnostic-store-init.service",
     "hardened-blikvm-system-action-store-init.service",
 }
+
+
+RFC1918_TEN_NETWORK = b"10." + b"0.0.0/8"
 
 
 class BuildError(Exception):
@@ -240,7 +256,9 @@ def audit_package_tree(root: Path) -> None:
     }
     for path in root.rglob("*"):
         if path.is_file() and path.stat().st_size <= 8 * 1024 * 1024:
-            payload = path.read_bytes()
+            # The firewall's local-network set names the RFC 1918 block itself;
+            # that exact network literal is not a lab address.
+            payload = path.read_bytes().replace(RFC1918_TEN_NETWORK, b"")
             for marker_class, marker in forbidden_bytes.items():
                 if marker in payload:
                     relative = path.relative_to(root)

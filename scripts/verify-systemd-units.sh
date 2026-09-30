@@ -36,6 +36,12 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagno
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-diagnostic-persistence-gate"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-action-maintenance"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-boardd"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-admin-helper"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-update"
+# The PicoClaw runtime is downloaded at run time, not packaged.
+install -d -m 0755 "$test_root/var/lib/hardened-blikvm-picoclaw-runtime"
+install -m 0755 /bin/true "$test_root/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
 install -m 0755 /bin/true "$test_root/usr/bin/ustreamer"
 install -m 0755 /bin/true "$test_root/usr/bin/systemctl"
 install -m 0755 /bin/true "$test_root/usr/bin/install"
@@ -118,7 +124,56 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-diagnostic-store-inspect.service \
   hardened-blikvm-diagnostic-persistence-gate.service \
   hardened-blikvm-system-action-store-init.service \
-  hardened-blikvm-system-action-store-inspect.service
+  hardened-blikvm-system-action-store-inspect.service \
+  hardened-blikvm-update-exec.socket \
+  hardened-blikvm-update-exec@.service \
+  hardened-blikvm-update-native-boot.service \
+  hardened-blikvm-admin.socket \
+  hardened-blikvm-admin@.service \
+  hardened-blikvm-image-download.socket \
+  hardened-blikvm-image-download@.service \
+  hardened-blikvm-picoclaw.service \
+  hardened-blikvm-picoclaw-api.socket \
+  hardened-blikvm-picoclaw-api@.service \
+  hardened-blikvm-system-update-booted.service
+
+# Native profile: the rendered replacements override the managed base units
+# and must verify on their own, with no legacy recover/confirm dependency.
+native_root="$test_root/native"
+install -d -m 0755 "$native_root"
+# Copy every entry but the native root itself; copying the whole tree into
+# its own subdirectory aborts when readdir happens to return it first.
+find "$test_root" -mindepth 1 -maxdepth 1 ! -name native \
+  -exec cp -a {} "$native_root/" \; 2>/dev/null
+install -m 0644 "$project_root"/packaging/systemd/native/*.service \
+  "$native_root/usr/lib/systemd/system/"
+install -d -m 0755 \
+  "$native_root/var/lib/hardened-blikvm-exec/current/bin" \
+  "$native_root/var/lib/hardened-blikvm-exec/current/libexec" \
+  "$native_root/var/lib/hardened-blikvm-exec/current/share/web"
+for binary in bin/bli-kvm-server libexec/bli-kvm-control-broker \
+  libexec/bli-kvm-video-proxy libexec/bli-kvm-boardd; do
+  install -m 0755 /bin/true "$native_root/var/lib/hardened-blikvm-exec/current/$binary"
+done
+: > "$native_root/var/lib/hardened-blikvm-exec/current/share/web/index.html"
+systemd-analyze verify --root="$native_root" \
+  hardened-blikvm-board-owner.service \
+  hardened-blikvm-board-video-proxy.service \
+  hardened-blikvm-boardd.service \
+  hardened-blikvm-server-current.service \
+  hardened-blikvm-server-candidate.service \
+  hardened-blikvm-update-activation.socket \
+  hardened-blikvm-update-activation@.service \
+  hardened-blikvm-update-exec.socket \
+  hardened-blikvm-update-exec@.service \
+  hardened-blikvm-update-native-boot.service \
+  hardened-blikvm-hid-gadget.service
+for unit in "$project_root"/packaging/systemd/native/*.service; do
+  if grep -Eq 'update-(recover|confirm)|health-reporter|^\[Install\]' "$unit"; then
+    echo "native unit keeps legacy update authority or install links: $unit" >&2
+    exit 1
+  fi
+done
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-platform-broker.service" \
   "$project_root/packaging/systemd/hardened-blikvm-control-broker.service" \
@@ -150,7 +205,12 @@ systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-diagnostic-persistence-gate.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-init.service" \
   "$project_root/packaging/systemd/hardened-blikvm-system-action-store-inspect.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-update-native-boot.service" \
+  "$project_root/packaging/systemd/hardened-blikvm-hid-gadget.service" \
   >/dev/null
+# Root boundaries with required capabilities: public TLS termination and the
+# native execution helper (systemd control, DAC and ptrace identity reads).
 systemd-analyze security --offline=yes --threshold=22 --no-pager \
+  "$project_root/packaging/systemd/hardened-blikvm-update-exec@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
   >/dev/null

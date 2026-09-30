@@ -23,6 +23,8 @@ class DebianRuntimePackageTests(unittest.TestCase):
             "usr/libexec/hardened-blikvm/bli-kvm-control-broker",
             "lib/systemd/system/hardened-blikvm-server.service",
             "lib/systemd/system/hardened-blikvm-nginx.service",
+            "lib/systemd/system/hardened-blikvm-board-owner.service.d/90-socket-group.conf",
+            "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-video-tmpfiles.conf",
             "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-sysusers.conf",
             "usr/share/doc/hardened-blikvm-runtime/examples/hardened-blikvm-nginx.conf",
         ):
@@ -108,6 +110,21 @@ class DebianRuntimePackageTests(unittest.TestCase):
             (web / "index.html").write_bytes(b"Nano" + b"KVM")
             with self.assertRaises(package.BuildError):
                 package.audit_package_tree(root)
+
+    def test_only_the_exact_rfc1918_ten_network_literal_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            web = root / "usr/share/hardened-blikvm/web"
+            web.mkdir(parents=True)
+            (web / "index.html").write_text("Hardened BliKVM")
+            binary = root / "usr/libexec/hardened-blikvm/bli-kvm-control-broker"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"{ " + package.RFC1918_TEN_NETWORK + b" }")
+            package.audit_package_tree(root)
+            for leaked in (b"10." + b"0.1.2", b"10." + b"0.0.0/16", b"10." + b"0.9.1"):
+                binary.write_bytes(b"{ " + package.RFC1918_TEN_NETWORK + b" } " + leaked)
+                with self.assertRaises(package.BuildError):
+                    package.audit_package_tree(root)
 
     def test_direct_entrypoint_loads_project_package(self) -> None:
         result = subprocess.run(

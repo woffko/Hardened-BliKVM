@@ -56,23 +56,28 @@ enum CliCommand {
     AckConfirmedApply,
     AckConfirmedApplyCredential,
     ValidateConfig,
+    InspectRecovery,
     Status,
     StatusSocket(String),
     UploadSocket(String, PathBuf),
-    ActivationSocket(String),
+    ActivationSocket(String, bool),
     Stage(PathBuf),
     GarbageCollect(usize),
     Initialize(String),
     Activate(String),
     WatchdogOnce,
     ConfirmStdin,
+    MigrateNativeIdle,
+    BootNative,
 }
 
 fn main() -> ExitCode {
     match run(env::args_os()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Hardened BliKVM update supervisor failed: {error}");
+            // The debug form names the failing stage (for example a composition
+            // error variant); it carries no credentials or payload bytes.
+            eprintln!("Hardened BliKVM update supervisor failed: {error} ({error:?})");
             ExitCode::from(error.exit_code())
         }
     }
@@ -89,6 +94,7 @@ impl SupervisorCliError {
             Self::InvalidConfig => 12,
             Self::Manager(error) => manager_runtime_exit_code(error),
             Self::Runtime(UpdateRuntimeError::Manager(error)) => manager_runtime_exit_code(error),
+            Self::Runtime(UpdateRuntimeError::RuntimeBusy) => 66,
             Self::Runtime(UpdateRuntimeError::InvalidHealthResponseLength) => 32,
             Self::Runtime(UpdateRuntimeError::ChallengeMissing) => 33,
             Self::Runtime(UpdateRuntimeError::OperationMismatch) => 34,
@@ -148,8 +154,8 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
         upload_socket::serve_stdin(&config_path, peer_user, spool)?;
         return Ok(());
     }
-    if let CliCommand::ActivationSocket(peer_user) = &command {
-        return activation_socket::serve_stdin(&config_path, peer_user);
+    if let CliCommand::ActivationSocket(peer_user, native) = &command {
+        return activation_socket::serve_stdin(&config_path, peer_user, *native);
     }
     let config = load_config(&config_path)?;
     let receipt = match command {
@@ -181,6 +187,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                 config.health_timeout_ms,
             )?;
             match command {
+                CliCommand::InspectRecovery => {
+                    recovery_inspection_receipt(&manager.inspect_recovery()?)
+                }
                 CliCommand::GarbageCollect(retain) => {
                     let collected = manager.garbage_collect(retain)?;
                     json!({
@@ -213,6 +222,16 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                             )
                         }
                         CliCommand::WatchdogOnce => watchdog_receipt(supervisor.watchdog_once()?),
+                        CliCommand::MigrateNativeIdle => {
+                            // Explicit operator opt-in; no service is started.
+                            let generation = supervisor.inspect_recovery()?.generation;
+                            json!({
+                                "command": "migrate_native_idle",
+                                "result": "native_idle",
+                                "generation": supervisor.migrate_native_idle(generation)?,
+                            })
+                        }
+                        CliCommand::BootNative => boot_native_receipt(&supervisor)?,
                         CliCommand::ConfirmStdin => {
                             let stdin = io::stdin();
                             let mut locked = stdin.lock();
@@ -230,8 +249,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), SupervisorCl
                         CliCommand::Stage(_)
                         | CliCommand::StatusSocket(_)
                         | CliCommand::UploadSocket(_, _)
-                        | CliCommand::ActivationSocket(_)
+                        | CliCommand::ActivationSocket(_, _)
                         | CliCommand::GarbageCollect(_)
+                        | CliCommand::InspectRecovery
                         | CliCommand::ValidateConfig => {
                             unreachable!("command handled before supervisor creation")
                         }
@@ -271,6 +291,7 @@ fn parse_arguments(
         "ack-confirmed-apply" => CliCommand::AckConfirmedApply,
         "ack-confirmed-apply-credential" => CliCommand::AckConfirmedApplyCredential,
         "validate-config" => CliCommand::ValidateConfig,
+        "inspect-recovery" => CliCommand::InspectRecovery,
         "status" => CliCommand::Status,
         "status-socket" | "upload-socket" | "activation-socket" => {
             if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--peer-user")) {
@@ -286,7 +307,14 @@ fn parse_arguments(
             if command == "status-socket" {
                 CliCommand::StatusSocket(user)
             } else if command == "activation-socket" {
-                CliCommand::ActivationSocket(user)
+                // Only the native profile unit passes this flag; it has no
+                // legacy OnSuccess apply dispatch and a composition-sized timeout.
+                let native = match arguments.next() {
+                    None => false,
+                    Some(flag) if flag == "--native-profile" => true,
+                    Some(_) => return Err(SupervisorCliError::InvalidArguments),
+                };
+                CliCommand::ActivationSocket(user, native)
             } else {
                 if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--spool-root")) {
                     return Err(SupervisorCliError::InvalidArguments);
@@ -303,6 +331,8 @@ fn parse_arguments(
             }
         }
         "watchdog-once" => CliCommand::WatchdogOnce,
+        "migrate-native-idle" => CliCommand::MigrateNativeIdle,
+        "boot-native" => CliCommand::BootNative,
         "confirm-stdin" => CliCommand::ConfirmStdin,
         "gc" => {
             let retain = arguments
@@ -334,6 +364,82 @@ fn parse_arguments(
         return Err(SupervisorCliError::InvalidArguments);
     }
     Ok((config, command))
+}
+
+// Explicit allowlist: inspection is not current health, startup authority or a
+// credential export. In particular, never serialize a completion health binding.
+/// Start or recover the native composition through the root execution helper.
+/// The generation is read under the manager locks this process holds.
+fn boot_native_receipt(supervisor: &UpdateSupervisor) -> Result<Value, SupervisorCliError> {
+    use bli_kvm_update_runtime::{
+        NativeBootOutcome,
+        native_exec_client::{EXECUTION_SOCKET, ExecutionClient},
+    };
+    let generation = supervisor.inspect_recovery()?.generation;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let mut client = ExecutionClient::connect(std::path::Path::new(EXECUTION_SOCKET), deadline)?;
+    let probes = client.clone();
+    let outcome =
+        supervisor.boot_native_composition(generation, &mut client, deadline, |unit, _, _| {
+            probes.probe(unit)
+        })?;
+    Ok(match outcome {
+        NativeBootOutcome::Ready(observation) => json!({
+            "command": "boot_native",
+            "result": "ready",
+            "generation": generation,
+            "slotId": observation.slot_id,
+            // A restored composition is archived once it runs, so a GUI update
+            // is admitted again without an operator step.
+            "archivedGeneration": supervisor.archive_native_completion()?,
+        }),
+        NativeBootOutcome::AwaitingHealth(pending) => json!({
+            "command": "boot_native",
+            "result": "awaiting_health",
+            "generation": generation,
+            "targetSlotId": pending.target_slot_id,
+        }),
+    })
+}
+
+fn recovery_inspection_receipt(inspection: &bli_kvm_update_manager::RecoveryInspection) -> Value {
+    use bli_kvm_update_manager::RecoverySelection;
+    let intent = |value: &bli_kvm_update_manager::NativeRollbackIntent| {
+        json!({
+            "operationId": value.operation_id,
+            "intentGeneration": value.intent_generation,
+            "reason": rollback_reason(value.reason),
+            "phase": value.phase,
+        })
+    };
+    json!({
+        "command": "inspect_recovery",
+        "schemaVersion": inspection.schema_version,
+        "generation": inspection.generation,
+        "confirmedSlotId": inspection.confirmed_slot_id,
+        "selection": match inspection.selection {
+            RecoverySelection::Confirmed => "confirmed",
+            RecoverySelection::PendingTarget => "pending_target",
+            RecoverySelection::Other => "other",
+            RecoverySelection::Missing => "missing",
+            RecoverySelection::Unsafe => "unsafe",
+        },
+        "pending": inspection.pending.as_ref().map(|pending| json!({
+            "operationId": pending.operation_id,
+            "targetSlotId": pending.target_slot_id,
+            "previousSlotId": pending.previous_slot_id,
+            "bootId": pending.boot_id,
+            "deadlineMonotonicMs": pending.deadline_monotonic_ms,
+            "phase": pending_phase(pending.phase),
+        })),
+        "rollbackIntent": inspection.rollback_intent.as_ref().map(intent),
+        "completion": inspection.completion.as_ref().map(|completion| json!({
+            "intent": intent(&completion.intent),
+            "completionGeneration": completion.completion_generation,
+            "failedTargetSlotId": completion.failed_target_slot_id,
+            "confirmedSlotId": completion.confirmed_slot_id,
+        })),
+    })
 }
 
 fn status_receipt(status: &ManagerStatus) -> Value {
@@ -484,6 +590,48 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_receipt_omits_completion_binding_and_is_not_health() {
+        use bli_kvm_update_manager::{
+            NativeRecoveryCompletion, NativeRollbackIntent, NativeRollbackPhase,
+            RecoveryInspection, RecoverySelection,
+        };
+        let intent = NativeRollbackIntent {
+            operation_id: "11".repeat(16),
+            intent_generation: 4,
+            reason: RollbackReason::HealthTimeout,
+            phase: NativeRollbackPhase::Restoring,
+        };
+        let inspection = RecoveryInspection {
+            schema_version: 3,
+            generation: 6,
+            confirmed_slot_id: "confirmed-slot".into(),
+            pending: None,
+            selection: RecoverySelection::Confirmed,
+            rollback_intent: None,
+            completion: Some(NativeRecoveryCompletion {
+                intent,
+                completion_generation: 6,
+                failed_target_slot_id: "failed-slot".into(),
+                confirmed_slot_id: "confirmed-slot".into(),
+                health_binding: "42".repeat(32),
+            }),
+        };
+        let receipt = recovery_inspection_receipt(&inspection);
+        assert_eq!(receipt["command"], "inspect_recovery");
+        assert_eq!(receipt["schemaVersion"], 3);
+        assert_eq!(receipt["completion"]["intent"]["phase"], "restoring");
+        assert_eq!(receipt["completion"].as_object().unwrap().len(), 4);
+        assert!(receipt.get("healthy").is_none());
+        assert!(!receipt.to_string().contains(&"42".repeat(32)));
+        let args = ["supervisor", "--config", "/config.json", "inspect-recovery"];
+        assert_eq!(
+            parse_arguments(args.map(OsString::from)).unwrap().1,
+            CliCommand::InspectRecovery
+        );
+        assert!(parse_arguments(args.into_iter().chain(["extra"]).map(OsString::from)).is_err());
+    }
 
     #[test]
     fn accepts_only_fixed_commands_and_nonsecret_positional_values() {

@@ -498,8 +498,10 @@ mod tests {
             refusing.set_dns(&["1.1.1.1".to_string()]),
             NetworkWriteOutcome::Refused
         );
-        let mut broken = RecordingWriter::default();
-        broken.fail = Some(NetworkWriteError::Unavailable);
+        let broken = RecordingWriter {
+            fail: Some(NetworkWriteError::Unavailable),
+            ..Default::default()
+        };
         let state = NetworkWriteState::new(broken, true);
         assert_eq!(
             state.set_ipv6("wlan0", false),

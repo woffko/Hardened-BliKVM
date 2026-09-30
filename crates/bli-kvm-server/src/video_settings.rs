@@ -40,6 +40,9 @@ pub(crate) struct ScreenBody {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScreenOutcome {
+    /// Configured capture mode; independent from observed frame dimensions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_resolution: Option<String>,
     pub applied: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rejection: Option<&'static str>,
@@ -48,7 +51,7 @@ pub(crate) struct ScreenOutcome {
     /// The rate the bridge actually delivers, read from the engine. Absent when
     /// the engine cannot be reached; never made up from the requested value.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub captured_fps: Option<u16>,
+    pub captured_fps: Option<f64>,
     /// The current capture frame size and queued rate, read from the same
     /// engine state so the interface can show what the stream really carries.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,7 +59,7 @@ pub(crate) struct ScreenOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub queued_fps: Option<u16>,
+    pub queued_fps: Option<f64>,
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -115,6 +118,7 @@ fn change_from_body(body: &ScreenBody) -> Result<VideoSettingsChange, &'static s
 fn outcome(response: ControlResponse) -> ScreenOutcome {
     match response {
         ControlResponse::Applied => ScreenOutcome {
+            requested_resolution: None,
             applied: true,
             rejection: None,
             fps: 0,
@@ -124,7 +128,12 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             height: None,
             queued_fps: None,
         },
-        ControlResponse::VideoState { fps, quality } => ScreenOutcome {
+        ControlResponse::VideoState {
+            fps,
+            quality,
+            resolution,
+        } => ScreenOutcome {
+            requested_resolution: resolution,
             applied: true,
             rejection: None,
             fps,
@@ -135,6 +144,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             queued_fps: None,
         },
         ControlResponse::Rejected { code } => ScreenOutcome {
+            requested_resolution: None,
             applied: false,
             rejection: Some(rejection_name(code)),
             fps: 0,
@@ -145,6 +155,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             queued_fps: None,
         },
         _ => ScreenOutcome {
+            requested_resolution: None,
             applied: false,
             rejection: Some("unexpected_response"),
             fps: 0,
@@ -167,6 +178,7 @@ pub(crate) async fn update_screen(
         Ok(change) => change,
         Err(rejection) => {
             return Ok(Json(ApiResponse::ok(ScreenOutcome {
+                requested_resolution: None,
                 applied: false,
                 rejection: Some(rejection),
                 fps: 0,
@@ -305,16 +317,90 @@ mod tests {
     #[test]
     fn renders_the_owner_state_and_rejection() {
         let applied = outcome(ControlResponse::VideoState {
+            resolution: Some("1280x720".into()),
             fps: 24,
             quality: 80,
         });
         assert!(applied.applied);
         assert_eq!((applied.fps, applied.quality), (24, 80));
         assert_eq!(applied.captured_fps, None);
+        assert_eq!(applied.requested_resolution.as_deref(), Some("1280x720"));
+        assert_eq!((applied.width, applied.height), (None, None));
         let rejected = outcome(ControlResponse::Rejected {
             code: bli_kvm_control_protocol::ControlRejectionCode::CapabilityDisabled,
         });
         assert!(!rejected.applied);
         assert_eq!(rejected.rejection, Some("capability_disabled"));
     }
+}
+
+/// The reference's frame detect switch (`POST /api/stream/mjpeg/detect`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct FrameDetectBody {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+/// The reference pauses frame detect around a resolution change.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrameDetectStopBody {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub duration: i64,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn update_frame_detect(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<FrameDetectBody>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "video settings are not configured".into(),
+        ));
+    };
+    let change = VideoSettingsChange::new(None, None).with_frame_detect(body.enabled);
+    match control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::VideoSettings { change },
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?
+    {
+        ControlResponse::Applied | ControlResponse::VideoState { .. } => {
+            Ok(Json(ApiResponse::ok(())))
+        }
+        ControlResponse::Rejected { code } => Err(AppError::BadRequest(format!(
+            "frame detect was refused: {}",
+            rejection_name(code)
+        ))),
+        _ => Err(AppError::ServiceUnavailable(
+            "video settings are unavailable".into(),
+        )),
+    }
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn update_frame_detect(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<FrameDetectBody>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    Err(AppError::ServiceUnavailable(
+        "video settings are not configured".into(),
+    ))
+}
+
+/// The streamer only drops frames identical to the previous one, so a new
+/// resolution is sent at once; pausing the detection is not needed and would
+/// cost two streamer restarts. Answered as done, as the reference does.
+pub(crate) async fn stop_frame_detect(
+    Json(_body): Json<FrameDetectStopBody>,
+) -> Json<ApiResponse<()>> {
+    Json(ApiResponse::ok(()))
 }

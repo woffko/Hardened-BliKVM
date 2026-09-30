@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Popconfirm, Popover } from 'antd';
+import { useAtomValue } from 'jotai';
 import { CircleStopIcon, EllipsisIcon, LoaderIcon, RotateCwIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/extensions/tailscale.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 
 import { Memory } from './memory.tsx';
 import { Swap } from './swap.tsx';
@@ -21,6 +23,10 @@ export const Header = ({ state, onSuccess }: HeaderProps) => {
   const { t } = useTranslation();
 
   const [loading, setLoading] = useState<Loading>('');
+  // The memory limit and swap file exist for the reference's 256 MB board;
+  // this board has neither setting.
+  const capabilities = useAtomValue(capabilitiesAtom);
+  const referenceBoard = capabilities?.platform.id !== 'bli-h616-pikvm';
 
   function restart() {
     if (loading !== '') return;
@@ -93,8 +99,8 @@ export const Header = ({ state, onSuccess }: HeaderProps) => {
           <Popover
             content={
               <div className="flex min-w-[250px] flex-col">
-                <Memory />
-                <Swap />
+                {referenceBoard && <Memory />}
+                {referenceBoard && <Swap />}
                 <Uninstall onSuccess={onSuccess} />
               </div>
             }

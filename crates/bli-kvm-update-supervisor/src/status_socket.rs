@@ -177,7 +177,7 @@ fn read_status(path: &Path) -> Result<ApplicationUpdateStatus, SupervisorCliErro
         config.system_sequence,
         config.health_timeout_ms,
     )?;
-    let status = manager.status()?;
+    let status = manager.observed_status()?;
     let slot = |id: &str| -> Result<ApplicationSlotVersion, SupervisorCliError> {
         let verified = manager.inspect_slot(id)?;
         Ok(ApplicationSlotVersion {

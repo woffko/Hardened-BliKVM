@@ -39,6 +39,9 @@ scripts/verify-aarch64-elf.sh \
   "$release_dir/bli-kvm-control-broker" \
   "$release_dir/bli-kvm-update-supervisor" \
   "$release_dir/bli-kvm-update-health-reporter" \
+  "$release_dir/bli-kvm-update-exec-helper" \
+  "$release_dir/bli-kvm-admin-helper" \
+  "$release_dir/bli-kvm-system-update" \
   "$release_dir/bli-kvm-update-trust-config"
 sha256sum \
   "$release_dir/bli-kvm-server" \
@@ -47,4 +50,7 @@ sha256sum \
   "$release_dir/bli-kvm-control-broker" \
   "$release_dir/bli-kvm-update-supervisor" \
   "$release_dir/bli-kvm-update-health-reporter" \
+  "$release_dir/bli-kvm-update-exec-helper" \
+  "$release_dir/bli-kvm-admin-helper" \
+  "$release_dir/bli-kvm-system-update" \
   "$release_dir/bli-kvm-update-trust-config"

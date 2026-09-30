@@ -162,6 +162,19 @@ pub struct NativeBoardObservations {
     pub external_rtc_seconds: Option<i64>,
     pub external_rtc_offset_seconds: Option<i64>,
     pub power_led: Option<bool>,
+    /// Signal state reported by the running capture engine.
+    pub video_online: Option<bool>,
+    /// USB device controller bound (the gadget is online) and enumerated by
+    /// the target host (connected).
+    pub hid_online: Option<bool>,
+    pub hid_connected: Option<bool>,
+    /// The owner's ATX surface answered.
+    pub power_online: Option<bool>,
+    /// The owner's virtual-media surface: enabled, answering, and an image
+    /// attached.
+    pub media_enabled: Option<bool>,
+    pub media_online: Option<bool>,
+    pub media_connected: Option<bool>,
 }
 
 /// Build the inventory of the native board profile.
@@ -175,10 +188,25 @@ pub fn native_board_inventory(observations: NativeBoardObservations) -> RuntimeI
         platform_id: PLATFORM_ID.into(),
         backend: InventoryBackend::Native,
         versions: RuntimeVersions::default(),
-        video: ComponentObservation::default(),
-        hid: ComponentObservation::default(),
-        power: ComponentObservation::default(),
-        virtual_media: ComponentObservation::default(),
+        video: ComponentObservation {
+            online: observations.video_online,
+            ..ComponentObservation::default()
+        },
+        hid: ComponentObservation {
+            online: observations.hid_online,
+            connected: observations.hid_connected,
+            ..ComponentObservation::default()
+        },
+        power: ComponentObservation {
+            online: observations.power_online,
+            ..ComponentObservation::default()
+        },
+        virtual_media: ComponentObservation {
+            enabled: observations.media_enabled,
+            online: observations.media_online,
+            connected: observations.media_connected,
+            ..ComponentObservation::default()
+        },
         thermal: ThermalObservation {
             temperature_millidegrees_celsius: observations.thermal_millidegrees_celsius,
         },
@@ -202,8 +230,11 @@ mod native_tests {
             external_rtc_seconds: Some(1_789_655_576),
             external_rtc_offset_seconds: Some(-49),
             power_led: Some(true),
+            video_online: Some(true),
+            ..NativeBoardObservations::default()
         });
         inventory.validate().unwrap();
+        assert_eq!(inventory.video.online, Some(true));
         assert_eq!(inventory.backend, InventoryBackend::Native);
         assert_eq!(inventory.platform_id, "bli-h616-pikvm");
         assert_eq!(inventory.power_led, Some(true));

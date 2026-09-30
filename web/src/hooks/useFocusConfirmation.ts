@@ -17,11 +17,12 @@ const CONFIRM_BODY =
  */
 let confirmedGlobal = false;
 let pendingConfirmation: Promise<boolean> | null = null;
+let pendingResolve: ((confirmed: boolean) => void) | null = null;
+let pendingModal: { destroy: () => void } | null = null;
 
 /**
- * Requires an explicit operator confirmation before any restricted HID or
- * power action. The confirmation is requested at most once at a time and is
- * never re-requested while it is being decided.
+ * Requires an explicit operator confirmation before restricted HID control.
+ * Power actions use their own action-specific confirmation.
  */
 export function useFocusConfirmation() {
   const [confirmed, setConfirmed] = useAtom(focusConfirmedAtom);
@@ -32,15 +33,18 @@ export function useFocusConfirmation() {
     }
   }, [confirmed]);
 
-  const ensureConfirmed = useCallback(async () => {
-    if (confirmedGlobal) {
-      return true;
-    }
+  // Input handlers are passive: only the explicit enable action may open the
+  // confirmation modal. This also makes Cancel sticky across queued reports.
+  const ensureConfirmed = useCallback(async () => confirmedGlobal, []);
+
+  const requestConfirmation = useCallback(async () => {
+    if (confirmedGlobal) return true;
     if (pendingConfirmation) {
       return pendingConfirmation;
     }
     const pending = new Promise<boolean>((resolve) => {
-      Modal.confirm({
+      pendingResolve = resolve;
+      pendingModal = Modal.confirm({
         title: CONFIRM_TITLE,
         content: CONFIRM_BODY,
         okText: 'Confirm and control',
@@ -50,14 +54,29 @@ export function useFocusConfirmation() {
           setConfirmed(true);
           resolve(true);
         },
-        onCancel: () => resolve(false)
+        onCancel: () => {
+          confirmedGlobal = false;
+          setConfirmed(false);
+          resolve(false);
+        }
       });
     }).finally(() => {
-      pendingConfirmation = null;
+      if (pendingConfirmation === pending) {
+        pendingConfirmation = null;
+        pendingResolve = null;
+        pendingModal = null;
+      }
     });
     pendingConfirmation = pending;
     return pending;
   }, [setConfirmed]);
 
-  return { confirmed, ensureConfirmed };
+  const disableControl = useCallback(() => {
+    confirmedGlobal = false;
+    setConfirmed(false);
+    pendingModal?.destroy();
+    pendingResolve?.(false);
+  }, [setConfirmed]);
+
+  return { confirmed, ensureConfirmed, requestConfirmation, disableControl };
 }
