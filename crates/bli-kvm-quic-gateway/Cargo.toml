@@ -1,0 +1,18 @@
+[package]
+name = "bli-kvm-quic-gateway"
+description = "QUIC and TLS front of the Hardened BliKVM QUIC transport"
+version.workspace = true
+edition.workspace = true
+# wtransport needs a newer compiler than the rest of the workspace declares.
+rust-version = "1.88"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bli-kvm-quic-protocol = { path = "../bli-kvm-quic-protocol" }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "signal"] }
+wtransport = { version = "0.7.2", default-features = false, features = ["quinn", "ring", "self-signed"] }
+
+[dev-dependencies]
+tempfile.workspace = true
