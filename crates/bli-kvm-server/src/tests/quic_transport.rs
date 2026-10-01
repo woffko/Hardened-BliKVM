@@ -451,7 +451,6 @@ async fn another_user_and_another_protocol_are_not_served() {
 
 /// The board owner's control socket: answers each request with what
 /// `answer` makes of it, and records the requests.
-#[cfg(feature = "restricted-control-surface")]
 fn owner(
     socket: &std::path::Path,
     mut answer: impl FnMut(
@@ -590,6 +589,436 @@ async fn a_switch_the_owner_refuses_is_reported_and_no_link_means_no_feature() {
     )
     .await;
     assert!(manifest["data"]["board"]["features"]["network_quic"].is_null());
+}
+
+/// The owner as the lease path meets it: a target attestation and every
+/// lease request are applied, an acquire grants the lease `[0x55; 16]`.
+fn hid_owner(
+    socket: &std::path::Path,
+) -> std::sync::Arc<std::sync::Mutex<Vec<bli_kvm_core::PlatformControlRequestV2>>> {
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::{HidLeaseRequest, PlatformControlRequestV2 as Request};
+    owner(socket, |request| match request {
+        Request::HidLease {
+            lease: HidLeaseRequest::Acquire { .. },
+        } => ControlResponse::LeaseGranted {
+            lease_id: [0x55; 16],
+        },
+        _ => ControlResponse::Applied,
+    })
+}
+
+const LEASE: &str = "55555555555555555555555555555555";
+
+/// The lease requests the owner has seen, without the attestations.
+fn lease_requests(
+    seen: &std::sync::Mutex<Vec<bli_kvm_core::PlatformControlRequestV2>>,
+) -> Vec<bli_kvm_core::HidLeaseRequest> {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .filter_map(|request| match request {
+            bli_kvm_core::PlatformControlRequestV2::HidLease { lease } => Some(lease.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !check() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// A board with an owner for the HID lease, a logged-in page and a gateway
+/// on the link with one session of that page.
+async fn board_with_input() -> (
+    tempfile::TempDir,
+    PathBuf,
+    Page,
+    Gateway,
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<bli_kvm_core::PlatformControlRequestV2>>>,
+) {
+    let root = tempdir().unwrap();
+    let socket = root.path().join("link.sock");
+    let control = root.path().join("control.sock");
+    let seen = hid_owner(&control);
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        quic_link_socket: Some(socket.clone()),
+        control_socket: Some(control),
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let page = Page { app, cookie, csrf };
+    let mut gateway = Gateway::greeted(&socket, &"12".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    (root, socket, page, gateway, session, seen)
+}
+
+impl Page {
+    /// The operator confirms the target and the focus, as the page does
+    /// before it acquires a lease.
+    async fn confirm_focus(&self) {
+        let challenge =
+            self.call(Method::GET, "/api/hid/focus", Value::Null).await["data"]["challenge"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+        let confirmed = self
+            .call(
+                Method::POST,
+                "/api/hid/focus",
+                serde_json::json!({
+                    "operationId": "0123456789abcdef0123456789abcdef",
+                    "challenge": challenge,
+                    "targetId": "11".repeat(16),
+                    "operatorConfirmed": true,
+                }),
+            )
+            .await;
+        assert_eq!(confirmed["data"]["attested"], true, "{confirmed}");
+    }
+
+    /// A request over HTTPS with its status, the way the page sees both.
+    async fn post(&self, uri: &str, body: Value) -> (StatusCode, Value) {
+        let mut request = json_request(Method::POST, uri, body);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, self.cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", self.csrf.parse().unwrap());
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+}
+
+impl Gateway {
+    /// A lease request from a session's input stream, and its answer.
+    async fn lease(&mut self, id: u64, session: &str, request: Value) -> Value {
+        self.say(&GatewayToServer::Lease {
+            id,
+            session: session.into(),
+            request,
+        })
+        .await;
+        match self.hear().await {
+            Some(ServerToGateway::LeaseAnswer {
+                id: answered,
+                response,
+            }) => {
+                assert_eq!(answered, id);
+                response
+            }
+            other => panic!("no lease answer: {other:?}"),
+        }
+    }
+}
+
+fn operation(number: u32) -> String {
+    format!("{number:032x}")
+}
+
+fn key_report(number: u32, code: u8) -> Value {
+    serde_json::json!({
+        "action": "report",
+        "operationId": operation(number),
+        "leaseId": LEASE,
+        "report": { "mode": "keyboard", "data": [0, 0, code, 0, 0, 0, 0, 0] },
+    })
+}
+
+/// A lease request from a QUIC session is served by the code behind
+/// `/api/hid/lease`, for the web session the token belonged to: the answers
+/// are that API's, the owner sees the same requests, and their order is kept.
+#[tokio::test]
+async fn a_lease_request_over_the_link_is_served_like_the_apis() {
+    use bli_kvm_core::{HidLeaseRequest, HidReport};
+    let (_root, _socket, page, mut gateway, session, seen) = board_with_input().await;
+    page.confirm_focus().await;
+
+    let acquired = gateway
+        .lease(
+            2,
+            &session,
+            serde_json::json!({ "action": "acquire", "operationId": operation(1), "ttlSeconds": 30 }),
+        )
+        .await;
+    assert_eq!(
+        acquired,
+        serde_json::json!({
+            "status": 200,
+            "body": {
+                "code": 0,
+                "msg": "success",
+                "data": { "applied": true, "leaseId": LEASE, "ttlSeconds": 30 },
+            },
+        })
+    );
+    // Forty key reports, one after the other: every one reaches the owner,
+    // in the order the session sent them.
+    let codes: Vec<u8> = (4..44).collect();
+    for (index, code) in codes.iter().enumerate() {
+        let answer = gateway
+            .lease(
+                10 + index as u64,
+                &session,
+                key_report(100 + index as u32, *code),
+            )
+            .await;
+        assert_eq!(answer["status"], 200, "{answer}");
+        assert_eq!(answer["body"]["data"]["applied"], true, "{answer}");
+    }
+    let released = gateway
+        .lease(
+            90,
+            &session,
+            serde_json::json!({ "action": "release", "operationId": operation(2), "leaseId": LEASE }),
+        )
+        .await;
+    assert_eq!(released["body"]["data"]["applied"], true, "{released}");
+
+    let requests = lease_requests(&seen);
+    assert_eq!(requests.len(), codes.len() + 2);
+    let HidLeaseRequest::Acquire {
+        session_binding,
+        target_binding,
+        ttl_seconds: 30,
+    } = requests[0]
+    else {
+        panic!("not an acquire: {:?}", requests[0]);
+    };
+    let reported: Vec<u8> = requests[1..=codes.len()]
+        .iter()
+        .map(|request| match request {
+            HidLeaseRequest::Report {
+                lease_id,
+                session_binding: session,
+                target_binding: target,
+                report: HidReport::Keyboard { data },
+            } => {
+                assert_eq!(*lease_id, [0x55; 16]);
+                // The bindings of the page's own confirmation.
+                assert_eq!((*session, *target), (session_binding, target_binding));
+                data[2]
+            }
+            other => panic!("not a key report: {other:?}"),
+        })
+        .collect();
+    assert_eq!(reported, codes);
+    assert!(matches!(
+        requests.last(),
+        Some(HidLeaseRequest::Release { lease_id, .. }) if *lease_id == [0x55; 16]
+    ));
+
+    // The lease is the web session's, whichever transport took it: the
+    // HTTPS route renews and reports under the one acquired over the link.
+    let again = gateway
+        .lease(
+            91,
+            &session,
+            serde_json::json!({ "action": "acquire", "operationId": operation(3), "ttlSeconds": 30 }),
+        )
+        .await;
+    assert_eq!(again["body"]["data"]["leaseId"], LEASE);
+    let (status, over_https) = page.post("/api/hid/lease", key_report(4, 9)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(over_https["data"]["applied"], true, "{over_https}");
+}
+
+/// Without a confirmation of the target the link gets what HTTPS gives, word
+/// for word, and nothing reaches the owner.
+#[tokio::test]
+async fn without_a_confirmation_the_link_refuses_as_https_does() {
+    let (_root, _socket, page, mut gateway, session, seen) = board_with_input().await;
+    let requests = [
+        serde_json::json!({ "action": "acquire", "operationId": operation(1), "ttlSeconds": 30 }),
+        key_report(2, 4),
+        serde_json::json!({ "action": "renew", "operationId": operation(3), "leaseId": LEASE, "ttlSeconds": 30 }),
+        serde_json::json!({ "action": "release", "operationId": operation(4), "leaseId": LEASE }),
+        // An operation id that is none.
+        serde_json::json!({ "action": "acquire", "operationId": "short", "ttlSeconds": 30 }),
+    ];
+    for (index, request) in requests.into_iter().enumerate() {
+        let (status, body) = page.post("/api/hid/lease", request.clone()).await;
+        let over_the_link = gateway.lease(10 + index as u64, &session, request).await;
+        assert_eq!(
+            over_the_link,
+            serde_json::json!({ "status": status.as_u16(), "body": body }),
+        );
+        assert_eq!(body["code"], -1, "{body}");
+    }
+    assert_eq!(
+        gateway.lease(20, &session, key_report(5, 4)).await["body"]["msg"],
+        "a current focus confirmation is required"
+    );
+    // What is no lease request is refused with the status HTTPS answers.
+    for request in [
+        serde_json::json!({ "action": "reboot" }),
+        serde_json::json!({ "action": "acquire", "operationId": operation(6), "ttlSeconds": 30, "more": 1 }),
+        serde_json::json!([1, 2]),
+    ] {
+        let (status, _) = page.post("/api/hid/lease", request.clone()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(gateway.lease(30, &session, request).await["status"], 422);
+    }
+    // A session the gateway only claims to have is nobody's.
+    let unknown = gateway.lease(40, &"ab".repeat(16), key_report(7, 4)).await;
+    assert_eq!(unknown["status"], 401);
+    assert!(lease_requests(&seen).is_empty(), "the owner was asked");
+}
+
+/// A QUIC session that ends gives back the lease it took, like a client that
+/// vanished: when its connection closes, and when the link goes. It gives
+/// back nothing it did not take, and nothing twice.
+#[tokio::test]
+async fn a_quic_session_that_ends_gives_its_lease_back() {
+    use bli_kvm_core::HidLeaseRequest;
+    let acquire = |number: u32| serde_json::json!({ "action": "acquire", "operationId": operation(number), "ttlSeconds": 30 });
+    let releases = |seen: &std::sync::Mutex<Vec<bli_kvm_core::PlatformControlRequestV2>>| {
+        lease_requests(seen)
+            .iter()
+            .filter(|request| matches!(request, HidLeaseRequest::Release { lease_id, .. } if *lease_id == [0x55; 16]))
+            .count()
+    };
+
+    // The session's connection closes.
+    let (_root, _socket, page, mut gateway, session, seen) = board_with_input().await;
+    page.confirm_focus().await;
+    assert_eq!(gateway.lease(2, &session, acquire(1)).await["status"], 200);
+    assert_eq!(releases(&seen), 0);
+    gateway
+        .say(&GatewayToServer::Closed {
+            session: session.clone(),
+        })
+        .await;
+    eventually("the lease was not given back", || releases(&seen) == 1).await;
+    // The session is gone: its next request is nobody's.
+    assert_eq!(
+        gateway.lease(3, &session, key_report(2, 4)).await["status"],
+        401
+    );
+
+    // The link goes.
+    let (_root, _socket, page, mut gateway, session, seen) = board_with_input().await;
+    page.confirm_focus().await;
+    assert_eq!(gateway.lease(2, &session, acquire(1)).await["status"], 200);
+    drop(gateway);
+    eventually("the lease was not given back", || releases(&seen) == 1).await;
+
+    // A lease the session gave back itself is not given back again.
+    let (_root, _socket, page, mut gateway, session, seen) = board_with_input().await;
+    page.confirm_focus().await;
+    assert_eq!(gateway.lease(2, &session, acquire(1)).await["status"], 200);
+    let released = gateway
+        .lease(
+            3,
+            &session,
+            serde_json::json!({ "action": "release", "operationId": operation(2), "leaseId": LEASE }),
+        )
+        .await;
+    assert_eq!(released["body"]["data"]["applied"], true);
+    gateway
+        .say(&GatewayToServer::Closed {
+            session: session.clone(),
+        })
+        .await;
+    // The next answer shows the server has worked through the close.
+    assert_eq!(
+        gateway.lease(4, &session, key_report(3, 4)).await["status"],
+        401
+    );
+    assert_eq!(releases(&seen), 1);
+
+    // A lease taken over HTTPS is not the QUIC session's to give back.
+    let (_root, _socket, page, mut gateway, session, seen) = board_with_input().await;
+    page.confirm_focus().await;
+    let (_, over_https) = page.post("/api/hid/lease", acquire(1)).await;
+    assert_eq!(over_https["data"]["leaseId"], LEASE);
+    gateway
+        .say(&GatewayToServer::Closed {
+            session: session.clone(),
+        })
+        .await;
+    assert_eq!(
+        gateway.lease(5, &session, key_report(4, 4)).await["status"],
+        401
+    );
+    assert_eq!(releases(&seen), 0);
+}
+
+/// Another login of the same operator, as a page of its own.
+async fn another_page(app: &Router) -> Page {
+    let login = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/auth/login",
+            serde_json::json!({ "username": "operator", "password": "initial password" }),
+        ))
+        .await
+        .unwrap();
+    let cookie = login.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let csrf = json_body(login).await["data"]["csrfToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    Page {
+        app: app.clone(),
+        cookie,
+        csrf,
+    }
+}
+
+/// A lease request over the link is the web session's activity, as a request
+/// over HTTPS is: it keeps the idle lock away, and a session that has ended
+/// is refused.
+#[tokio::test]
+async fn a_lease_request_over_the_link_counts_for_the_web_session() {
+    let (_root, _socket, page, mut gateway, session, _seen) = board_with_input().await;
+    // The lock's time is also the lifetime of the session that sets it. Two
+    // other logins keep their lifetime and are judged by their activity
+    // alone: the page with the QUIC session, and one that does nothing.
+    let idle = another_page(&page.app).await;
+    let setter = another_page(&page.app).await;
+    let (status, _) =
+        set_session_lock(&page.app, &setter.cookie, Some(&setter.csrf), 1, false).await;
+    assert_eq!(status, StatusCode::OK);
+    // Longer than the lock, with a request over the link every 300 ms and
+    // none over HTTPS.
+    for index in 0..6 {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let answer = gateway
+            .lease(10 + index, &session, key_report(index as u32, 4))
+            .await;
+        assert_eq!(answer["status"], 200, "{answer}");
+    }
+    let (status, _) = page.post("/api/hid/lease", key_report(50, 4)).await;
+    assert_eq!(status, StatusCode::OK, "the session was locked meanwhile");
+    let (status, _) = idle.post("/api/hid/lease", key_report(51, 4)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "the idle session lives");
+
+    page.call(Method::POST, "/api/auth/logout", Value::Null)
+        .await;
+    assert_eq!(
+        gateway.lease(30, &session, key_report(52, 4)).await["status"],
+        401
+    );
 }
 
 /// The gateway itself, on the board's link, the way its unit runs it.

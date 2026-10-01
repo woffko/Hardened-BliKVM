@@ -65,8 +65,10 @@ impl ApiResponse<()> {
     }
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> axum::response::Response {
+impl AppError {
+    /// The status and the body this error is answered with. Another
+    /// transport that serves the same API answers with the same two.
+    pub(crate) fn parts(self) -> (StatusCode, ApiResponse<()>) {
         let (status, code, message) = match self {
             AppError::BadRequest(message) => (StatusCode::OK, -1, message),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, -401, "unauthorized".into()),
@@ -88,7 +90,14 @@ impl IntoResponse for AppError {
                 "internal server error".into(),
             ),
         };
-        (status, Json(ApiResponse::<()>::error(code, message))).into_response()
+        (status, ApiResponse::<()>::error(code, message))
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, body) = self.parts();
+        (status, Json(body)).into_response()
     }
 }
 

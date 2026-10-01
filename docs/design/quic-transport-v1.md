@@ -364,6 +364,24 @@ to. Order is the stream's. The page keeps one mouse report in flight and
 never drops a keyboard report, as today. A QUIC session that ends releases
 the lease like a client that vanished.
 
+- **The answer** is the API's own: its status and its body, as
+  `{"status": 200, "body": {"code": 0, "msg": "success", "data": {...}}}`. A
+  request without a current confirmation of the target gets the words HTTPS
+  gives (`a current focus confirmation is required`); what is no lease
+  request gets 422; a session whose web session has ended gets 401.
+- **The web session** is checked for every request, and the request counts
+  as its activity for the idle lock, as a request over HTTPS does. The
+  confirmation of the target stays on HTTPS (`/api/hid/focus`).
+- **The lease** is the web session's, whichever transport took it. The
+  server remembers which QUIC session acquired it and gives it back when
+  that session's connection closes, when the link goes, or when another
+  gateway takes the place; it gives back nothing the session did not take
+  and nothing that a later acquire has replaced.
+- **Order**: the server works through the lease requests of a link one at a
+  time, in the order they arrived, and a session's release on its end waits
+  behind the requests it made. A request that has reached the owner is
+  finished and accounted for even if the link ends meanwhile.
+
 ## Switches, Settings, failures, firewall
 
 - **The board's switch** is the gateway unit's enablement, applied by the

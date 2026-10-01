@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{Extension, Json, extract::State};
+use axum::{Extension, Json, extract::State, http::StatusCode};
 use bli_kvm_quic_protocol::{
     PROTOCOL,
     link::{self, EndReason, GatewayToServer, RedeemRefusal, ServerToGateway},
@@ -45,6 +45,10 @@ const SWEEP: Duration = Duration::from_secs(1);
 const CERTIFICATE_MARGIN_MS: u64 = 60_000;
 /// Messages waiting to be written to the gateway.
 const OUTBOX: usize = 256;
+/// Lease requests of all sessions waiting for the owner. The gateway sends
+/// one per session and waits for its answer, so this is never reached by a
+/// gateway that keeps to the protocol.
+const LEASE_QUEUE: usize = 64;
 
 struct Gateway {
     /// Which connection this is: a later one replaces an earlier one.
@@ -61,13 +65,35 @@ struct Token {
     expires: Instant,
 }
 
+/// A QUIC session that is open.
+struct Open {
+    /// The web session it stands for.
+    web: Session,
+    /// The HID lease it acquired over its input stream and has not released.
+    lease: Option<String>,
+}
+
+/// A lease that a session which ended had taken: the web session's token and
+/// the lease's id.
+type HeldLease = (String, String);
+
 #[derive(Default)]
 struct Inner {
     generations: u64,
     gateway: Option<Gateway>,
     tokens: HashMap<String, Token>,
-    /// Session reference to the web session it stands for.
-    sessions: HashMap<String, Session>,
+    /// By session reference.
+    sessions: HashMap<String, Open>,
+}
+
+impl Inner {
+    /// Forgets every session and says which leases they held.
+    fn drop_sessions(&mut self) -> Vec<HeldLease> {
+        self.sessions
+            .drain()
+            .filter_map(|(_, open)| Some((open.web.token, open.lease?)))
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -157,27 +183,58 @@ impl QuicTransport {
         let open = inner
             .sessions
             .values()
-            .filter(|session| session.token == entry.session.token)
+            .filter(|open| open.web.token == entry.session.token)
             .count();
         if open >= MAX_SESSIONS_PER_WEB_SESSION {
             return Err(RedeemRefusal::Sessions);
         }
         let reference = random_hex(16);
-        inner.sessions.insert(reference.clone(), entry.session);
+        inner.sessions.insert(
+            reference.clone(),
+            Open {
+                web: entry.session,
+                lease: None,
+            },
+        );
         Ok(reference)
     }
 
-    fn closed(&self, reference: &str) {
-        self.inner.lock().unwrap().sessions.remove(reference);
+    /// The session's connection is gone; the answer is the lease it held.
+    fn closed(&self, reference: &str) -> Option<HeldLease> {
+        let open = self.inner.lock().unwrap().sessions.remove(reference)?;
+        Some((open.web.token, open.lease?))
+    }
+
+    /// The web session a QUIC session stands for.
+    fn web_session(&self, reference: &str) -> Option<Session> {
+        self.inner
+            .lock()
+            .unwrap()
+            .sessions
+            .get(reference)
+            .map(|open| open.web.clone())
+    }
+
+    /// Notes the lease a session acquired, or (`None`) that it gave it back.
+    /// `false` if the session is no longer there.
+    fn note_lease(&self, reference: &str, lease: Option<String>) -> bool {
+        match self.inner.lock().unwrap().sessions.get_mut(reference) {
+            Some(open) => {
+                open.lease = lease;
+                true
+            }
+            None => false,
+        }
     }
 
     /// The sessions whose web session has ended, taken out of the table.
+    /// Whatever ended the web session has released its lease.
     fn take_ended(&self) -> Vec<String> {
         let mut inner = self.inner.lock().unwrap();
         let ended: Vec<String> = inner
             .sessions
             .iter()
-            .filter(|(_, session)| !session.is_active())
+            .filter(|(_, open)| !open.web.is_active())
             .map(|(reference, _)| reference.clone())
             .collect();
         for reference in &ended {
@@ -187,12 +244,13 @@ impl QuicTransport {
     }
 
     /// A gateway said hello on a new connection; an earlier one is replaced
-    /// and its sessions are forgotten.
-    fn connected(&self, hello: Hello, outbox: mpsc::Sender<Vec<u8>>) -> u64 {
+    /// and its sessions are forgotten. The answer is the connection's
+    /// generation and the leases those sessions held.
+    fn connected(&self, hello: Hello, outbox: mpsc::Sender<Vec<u8>>) -> (u64, Vec<HeldLease>) {
         let mut inner = self.inner.lock().unwrap();
         inner.generations += 1;
         let generation = inner.generations;
-        inner.sessions.clear();
+        let held = inner.drop_sessions();
         inner.tokens.clear();
         inner.gateway = Some(Gateway {
             generation,
@@ -202,7 +260,7 @@ impl QuicTransport {
             port: hello.port,
             outbox,
         });
-        generation
+        (generation, held)
     }
 
     /// The gateway presents a new certificate from now on.
@@ -220,7 +278,9 @@ impl QuicTransport {
         }
     }
 
-    fn disconnected(&self, generation: u64) {
+    /// The connection of this generation is gone; the answer is the leases
+    /// its sessions held.
+    fn disconnected(&self, generation: u64) -> Vec<HeldLease> {
         let mut inner = self.inner.lock().unwrap();
         if inner
             .gateway
@@ -228,9 +288,10 @@ impl QuicTransport {
             .is_some_and(|gateway| gateway.generation == generation)
         {
             inner.gateway = None;
-            inner.sessions.clear();
             inner.tokens.clear();
+            return inner.drop_sessions();
         }
+        Vec::new()
     }
 
     fn send(&self, generation: u64, message: &ServerToGateway) -> bool {
@@ -298,7 +359,7 @@ pub(crate) fn listen(state: &AppState) {
     let _in_runtime = runtime.enter();
     match bind(&path, state.options.quic_link_uid) {
         Ok((listener, peer)) => {
-            runtime.spawn(accept(transport, listener, peer));
+            runtime.spawn(accept(state.clone(), transport, listener, peer));
         }
         Err(reason) => {
             eprintln!("quic link: {reason}; the QUIC transport stays unavailable");
@@ -334,7 +395,7 @@ fn bind(path: &Path, peer: Option<u32>) -> Result<(UnixListener, u32), String> {
     Ok((listener, peer.unwrap_or(own)))
 }
 
-async fn accept(transport: Arc<QuicTransport>, listener: UnixListener, peer: u32) {
+async fn accept(state: AppState, transport: Arc<QuicTransport>, listener: UnixListener, peer: u32) {
     loop {
         let Ok((stream, _)) = listener.accept().await else {
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -342,7 +403,7 @@ async fn accept(transport: Arc<QuicTransport>, listener: UnixListener, peer: u32
         };
         match stream.peer_cred() {
             Ok(credentials) if credentials.uid() == peer => {
-                tokio::spawn(serve(Arc::clone(&transport), stream));
+                tokio::spawn(serve(state.clone(), Arc::clone(&transport), stream));
             }
             Ok(credentials) => {
                 eprintln!(
@@ -364,8 +425,100 @@ async fn read_message(reader: &mut tokio::net::unix::OwnedReadHalf) -> Option<Ga
     link::decode(&body).ok()
 }
 
+/// What the sessions of one gateway connection ask of the HID lease, in the
+/// order it arrived.
+enum Job {
+    /// A request from a session's input stream.
+    Lease {
+        id: u64,
+        session: String,
+        request: serde_json::Value,
+    },
+    /// A session that held the lease is gone.
+    Release(HeldLease),
+}
+
+/// An answer of the lease API as the link carries it: the status and the
+/// body the HTTPS route would have given.
+fn lease_answer(status: StatusCode, body: impl Serialize) -> serde_json::Value {
+    serde_json::json!({
+        "status": status.as_u16(),
+        "body": serde_json::to_value(body).unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn lease_refusal(error: AppError) -> serde_json::Value {
+    let (status, body) = error.parts();
+    lease_answer(status, body)
+}
+
+/// Serves one lease request of a QUIC session for the web session it stands
+/// for, with the code behind `POST /api/hid/lease`.
+async fn serve_lease(
+    state: &AppState,
+    transport: &QuicTransport,
+    reference: &str,
+    request: serde_json::Value,
+) -> serde_json::Value {
+    let Some(web) = transport.web_session(reference) else {
+        return lease_refusal(AppError::Unauthorized);
+    };
+    // As for a request over HTTPS: it counts as the session's activity, and
+    // a session that has ended is refused.
+    let Some(session) = state.sessions.validate(&web.token).await else {
+        return lease_refusal(AppError::Unauthorized);
+    };
+    let Ok(request) = serde_json::from_value::<crate::hid::HidLeaseBody>(request) else {
+        return lease_answer(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            ApiResponse::<()>::error(-422, "the request is not a lease request"),
+        );
+    };
+    let releases = matches!(request, crate::hid::HidLeaseBody::Release { .. });
+    match crate::hid::serve_lease(state, &session, request).await {
+        Ok(response) => {
+            if let Some(lease) = response.lease_id.as_ref() {
+                // A session that went away meanwhile cannot give it back.
+                if !transport.note_lease(reference, Some(lease.clone())) {
+                    crate::hid::release_lease_if_current(state, &session.token, lease).await;
+                }
+            } else if releases && response.applied {
+                transport.note_lease(reference, None);
+            }
+            lease_answer(StatusCode::OK, ApiResponse::ok(response))
+        }
+        Err(error) => lease_refusal(error),
+    }
+}
+
+/// Works through the lease requests of one gateway connection, one at a
+/// time. It is a task of its own: a request that has reached the owner is
+/// finished and accounted for even if the link ends meanwhile.
+async fn lease_worker(
+    state: AppState,
+    transport: Arc<QuicTransport>,
+    generation: u64,
+    mut jobs: mpsc::Receiver<Job>,
+) {
+    while let Some(job) = jobs.recv().await {
+        match job {
+            Job::Lease {
+                id,
+                session,
+                request,
+            } => {
+                let response = serve_lease(&state, &transport, &session, request).await;
+                transport.send(generation, &ServerToGateway::LeaseAnswer { id, response });
+            }
+            Job::Release((token, lease)) => {
+                crate::hid::release_lease_if_current(&state, &token, &lease).await;
+            }
+        }
+    }
+}
+
 /// One connection of the gateway, from its hello to its end.
-async fn serve(transport: Arc<QuicTransport>, stream: UnixStream) {
+async fn serve(state: AppState, transport: Arc<QuicTransport>, stream: UnixStream) {
     let (mut reader, mut writer) = stream.into_split();
     let Some((protocol, hello)) = read_message(&mut reader).await.and_then(valid_hello) else {
         return;
@@ -381,8 +534,27 @@ async fn serve(transport: Arc<QuicTransport>, stream: UnixStream) {
         return;
     }
     let (outbox, mut queued) = mpsc::channel::<Vec<u8>>(OUTBOX);
-    let generation = transport.connected(hello, outbox);
+    let (generation, replaced) = transport.connected(hello, outbox);
     eprintln!("quic link: the gateway is connected");
+    let (jobs, waiting) = mpsc::channel::<Job>(LEASE_QUEUE);
+    tokio::spawn(lease_worker(
+        state.clone(),
+        Arc::clone(&transport),
+        generation,
+        waiting,
+    ));
+    // A session that ends gives its lease back behind the requests it made.
+    let release = |held: HeldLease| {
+        if let Err(mpsc::error::TrySendError::Full(Job::Release((token, lease)))) =
+            jobs.try_send(Job::Release(held))
+        {
+            let state = state.clone();
+            tokio::spawn(async move {
+                crate::hid::release_lease_if_current(&state, &token, &lease).await;
+            });
+        }
+    };
+    replaced.into_iter().for_each(&release);
 
     let write = async {
         while let Some(bytes) = queued.recv().await {
@@ -416,17 +588,34 @@ async fn serve(transport: Arc<QuicTransport>, stream: UnixStream) {
                     };
                     transport.send(generation, &answer);
                 }
-                GatewayToServer::Closed { session } => transport.closed(&session),
-                // Input and the picture are not served over the link yet.
-                GatewayToServer::Lease { id, .. } => {
-                    transport.send(
-                        generation,
-                        &ServerToGateway::LeaseAnswer {
-                            id,
-                            response: serde_json::json!({ "code": -1, "msg": "not served" }),
-                        },
-                    );
+                GatewayToServer::Closed { session } => {
+                    if let Some(held) = transport.closed(&session) {
+                        release(held);
+                    }
                 }
+                GatewayToServer::Lease {
+                    id,
+                    session,
+                    request,
+                } => {
+                    let job = Job::Lease {
+                        id,
+                        session,
+                        request,
+                    };
+                    if jobs.try_send(job).is_err() {
+                        transport.send(
+                            generation,
+                            &ServerToGateway::LeaseAnswer {
+                                id,
+                                response: lease_refusal(AppError::ServiceUnavailable(
+                                    "too many lease requests are waiting".into(),
+                                )),
+                            },
+                        );
+                    }
+                }
+                // The picture is not served over the link yet.
                 GatewayToServer::Video { id, .. } => {
                     transport.send(
                         generation,
@@ -461,7 +650,10 @@ async fn serve(transport: Arc<QuicTransport>, stream: UnixStream) {
         () = read => {}
         () = sweep => {}
     }
-    transport.disconnected(generation);
+    transport
+        .disconnected(generation)
+        .into_iter()
+        .for_each(&release);
     eprintln!("quic link: the gateway is disconnected");
 }
 
@@ -770,7 +962,7 @@ mod tests {
         // A later connection replaces it; the earlier one hears nothing more
         // and cannot take the later one's place away by leaving.
         let (outbox, mut second) = mpsc::channel(8);
-        let later = transport.connected(
+        let (later, _) = transport.connected(
             Hello {
                 certificate: "cd".repeat(32),
                 not_before: 1,
@@ -786,5 +978,59 @@ mod tests {
         assert!(second.recv().await.is_some());
         transport.disconnected(later);
         assert_eq!(transport.port(), None);
+    }
+
+    /// A session that ends says which lease it held, once, whatever ends
+    /// it: its own connection, the link, or a gateway that takes the place.
+    #[tokio::test]
+    async fn a_session_that_ends_names_the_lease_it_held() {
+        let (transport, session, _queued) = transport_with_gateway().await;
+        let open = |transport: &QuicTransport| {
+            let token = transport.grant(&session, page_time()).ok().unwrap().token;
+            transport.redeem(&token).unwrap()
+        };
+        let lease = || Some("5a".repeat(16));
+        let held = (session.token.clone(), "5a".repeat(16));
+
+        // Its own connection ends: with a lease, after giving it back, and
+        // without ever having had one.
+        let with = open(&transport);
+        assert!(transport.note_lease(&with, lease()));
+        assert_eq!(transport.web_session(&with).unwrap().token, session.token);
+        assert_eq!(transport.closed(&with), Some(held.clone()));
+        assert_eq!(transport.closed(&with), None);
+        assert!(!transport.note_lease(&with, lease()), "the session is gone");
+        assert!(transport.web_session(&with).is_none());
+        let returned = open(&transport);
+        assert!(transport.note_lease(&returned, lease()));
+        assert!(transport.note_lease(&returned, None));
+        assert_eq!(transport.closed(&returned), None);
+        let without = open(&transport);
+        assert_eq!(transport.closed(&without), None);
+
+        // The link ends.
+        let generation = transport.inner.lock().unwrap().generations;
+        let first = open(&transport);
+        let _second = open(&transport);
+        assert!(transport.note_lease(&first, lease()));
+        assert_eq!(transport.disconnected(generation), vec![held.clone()]);
+        assert!(transport.disconnected(generation).is_empty());
+
+        // Another gateway takes the place.
+        let (transport, session, _queued) = transport_with_gateway().await;
+        let token = transport.grant(&session, page_time()).ok().unwrap().token;
+        let reference = transport.redeem(&token).unwrap();
+        assert!(transport.note_lease(&reference, lease()));
+        let (outbox, _later) = mpsc::channel(8);
+        let (_, replaced) = transport.connected(
+            Hello {
+                certificate: "ef".repeat(32),
+                not_before: 1,
+                not_after: 2,
+                port: 443,
+            },
+            outbox,
+        );
+        assert_eq!(replaced, vec![(session.token.clone(), "5a".repeat(16))]);
     }
 }
