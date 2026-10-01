@@ -91,6 +91,8 @@ const en = {
       qualityHigh: 'High',
       qualityMedium: 'Medium',
       qualityLow: 'Low',
+      qualityVeryHigh: 'Very high',
+      megabitsPerSecond: '{{value}} Mbit/s',
       frameDetect: 'Frame Detect',
       frameDetectTip:
         "Calculate the difference between frames. Stop transmitting video stream when no changes are detected on the remote host's screen.",

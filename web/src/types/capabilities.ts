@@ -42,7 +42,7 @@ export type CapabilityManifest = {
     maxWidth: number | null;
     maxHeight: number | null;
     audio: FeatureStatus;
-    settings: ('fps' | 'quality' | 'resolution' | 'frame_detect')[];
+    settings: ('fps' | 'quality' | 'resolution' | 'frame_detect' | 'webrtc_bitrate')[];
   };
   hid: {
     status: FeatureStatus;

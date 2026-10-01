@@ -93,6 +93,8 @@ const ru = {
       qualityHigh: 'Высокий',
       qualityMedium: 'Средний',
       qualityLow: 'Низкий',
+      qualityVeryHigh: 'Очень высокий',
+      megabitsPerSecond: '{{value}} Мбит/с',
       frameDetect: 'Экономия трафика',
       frameDetectTip:
         'Вычисляет разницу между кадрами и прекращает передачу видеопотока, если на экране удаленного узла не обнаружено никаких изменений.',

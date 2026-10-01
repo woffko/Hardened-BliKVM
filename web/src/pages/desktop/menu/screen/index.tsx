@@ -16,6 +16,7 @@ import { Quality } from './quality';
 import { Resolution } from './resolution';
 import { Scale } from './scale';
 import { VideoMode } from './video-mode';
+import { WebrtcQuality } from './webrtc-quality';
 
 export const Screen = () => {
   const { t } = useTranslation();
@@ -27,6 +28,7 @@ export const Screen = () => {
   const videoMode = useAtomValue(videoModeAtom);
   const [fps, setFps] = useState(30);
   const [quality, setQuality] = useState(2);
+  const [webrtcKbps, setWebrtcKbps] = useState<number | undefined>(undefined);
   const [requestedResolution, setRequestedResolution] = useState<
     (typeof ResolutionList)[number] | undefined
   >();
@@ -44,6 +46,7 @@ export const Screen = () => {
     fps: number;
     quality?: number;
     requestedResolution?: string;
+    webrtcKbps?: number;
   }> => {
     const rsp = await getScreen();
     if (!mounted.current) throw new Error('Screen settings closed');
@@ -64,6 +67,9 @@ export const Screen = () => {
     setRequestedResolution(resolution);
     const qualityEntry = [...QualityMap.entries()].find(([, value]) => value === data.quality);
     setQuality(qualityEntry?.[0] ?? 0);
+    const webrtc =
+      typeof data.webrtcKbps === 'number' && data.webrtcKbps > 0 ? data.webrtcKbps : undefined;
+    setWebrtcKbps(webrtc);
     const measured = (value: unknown) =>
       typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
     setCapturedFps(measured(data.capturedFps));
@@ -77,7 +83,8 @@ export const Screen = () => {
     return {
       quality: typeof data.quality === 'number' ? data.quality : undefined,
       fps: data.fps,
-      requestedResolution: resolution ? `${resolution.width}x${resolution.height}` : undefined
+      requestedResolution: resolution ? `${resolution.width}x${resolution.height}` : undefined,
+      webrtcKbps: webrtc
     };
   }, []);
 
@@ -116,6 +123,11 @@ export const Screen = () => {
       {isWritable && loaded && videoSettings.includes('resolution') && requestedResolution && (
         <Resolution resolution={requestedResolution} refresh={refreshAfterChange} />
       )}
+      {isWritable &&
+        loaded &&
+        (videoMode === 'vp8' || videoMode === 'h264') &&
+        videoSettings.includes('webrtc_bitrate') &&
+        webrtcKbps !== undefined && <WebrtcQuality kbps={webrtcKbps} refresh={refresh} />}
       {isWritable && loaded && quality > 0 && videoSettings.includes('quality') && (
         <Quality quality={quality} refresh={refreshAfterChange} />
       )}
