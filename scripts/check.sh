@@ -172,6 +172,7 @@ node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
 node --check tools/playwright/quic_transport_contract.mjs
+node --check tools/playwright/quic_transport_device_probe.mjs
 node --check tools/playwright/touch_reach_device_probe.mjs
 node --check tools/playwright/wifi_contract.mjs
 node --check tools/playwright/vp8_webrtc_probe.mjs
