@@ -530,6 +530,78 @@ host: its wall clock is stepped forward by about 3.6 s every half minute
 clock is sometimes 3.6 s too long. Spans are taken from the monotonic clock,
 and numbers that matter come from the board's own clock.
 
+## Phase Q2: input
+
+What is tested:
+
+- **Server** (`src/tests/quic_transport.rs`): a lease request over the link
+  is served like the API's (forty key reports reach the owner in order,
+  under the bindings of the page's own confirmation, and HTTPS reports under
+  the lease the link acquired); without a confirmation the link refuses in
+  the words HTTPS gives, for every kind of request; what is no lease request
+  gets 422 and an unknown session 401; a session that ends gives its lease
+  back (its connection closes, the link goes), gives nothing back twice and
+  nothing that HTTPS took; a request over the link keeps the idle lock away
+  while a login that does nothing is locked.
+- **Gateway** (`src/input.rs`, `tests/sessions.rs`): the queue's rules by
+  themselves (order, keys never merged, positions and relative movements
+  merged, buttons, the wheel and another lease kept apart, the bounds), and
+  against a page and a server: sixty key reports written at once arrive in
+  order; a busy server gets the newest position only and its answer answers
+  all twenty; what was written before the stream closed is passed on, and
+  the stream can be opened again; what is no request ends the session; a
+  server that does not answer costs one request 3 s.
+- **Page** (`tools/playwright/quic_input_contract.mjs`, the built page with
+  the real gateway and a played server): the lease goes over the session and
+  nothing of it over HTTPS, only the confirmation of the target; a burst of
+  typing arrives whole and in order; a refusal turns control off; control
+  enabled over HTTPS stays there when a session opens and moves when it is
+  enabled again; a lost session turns control off and HTTPS serves the next
+  time; an ended web session sends the page to the login. The contract of
+  the standard path (`restricted_control_lifecycle.mjs`) is unchanged.
+- **Everything of our own on the way**
+  (`tools/playwright/quic_input_stack_contract.mjs`): a page of the server's
+  origin, the real gateway, the real web server and a stand-in for the board
+  owner that takes 20 ms over a report. Sixty key reports written at once
+  reach the owner in order; of twenty positions between two keys fewer reach
+  it, the newest last, and all twenty-two requests are answered; a session
+  that closes, and a gateway that stops, give the lease back; a request
+  without a confirmation gets the same answer over both transports.
+
+### A report and its answer, on the host
+
+`tools/playwright/quic_input_latency.mjs`: headless Chromium 149 on the
+development host, the optimized builds of the server and the gateway, the
+stand-in owner answering at once, 400 key reports one after the other for
+each transport and path, after 10 that are not counted. The path is the
+loopback interface, directly and through the relays of `tools/net`. The
+standard path here is HTTP/1.1 to the server, without the TLS and the nginx
+of a board. Receipt: `evidence/private/quic-input-latency-host-20261002-a.json`.
+
+| Path | Standard: median, 95th, 99th, longest | QUIC: median, 95th, 99th, longest |
+| --- | --- | --- |
+| direct | 4.0, 4.9, 6.1, 6.9 ms | 1.0, 1.5, 1.7, 3.2 ms |
+| through the relays, nothing added | 7.1, 8.0, 9.9, 10.7 ms | 1.2, 1.6, 1.9, 4.5 ms |
+| 50 ms each way | 103.5, 104.8, 105.3, 105.5 ms | 102.6, 103.8, 104.1, 104.3 ms |
+| 50 ms each way, 2% loss | 103.6, 105.3, 504.5, 504.9 ms | 102.7, 104.5, 335.2, 357.2 ms |
+
+- On a path without delay a report over QUIC is answered in a quarter of the
+  time: the page writes one small message to an open stream instead of
+  making an HTTP request. With the delay of a real distance the two differ
+  by a millisecond: both need one round trip.
+- Loss: the UDP relay dropped 2% of the datagrams each way, so the QUIC
+  numbers are measured: a lost packet costs about 250 ms at this distance.
+  The TCP relay cannot lose a segment; it stalls a direction for one
+  retransmission instead, by default what Linux takes to repair the loss of
+  the only segment in flight (twice the round trip plus 200 ms, 400 ms
+  here), so the standard path's numbers under loss are that model's. In both
+  cases one report in about twenty-five is hit, which is why the 95th
+  percentile does not show it and the 99th does.
+- Input over QUIC is one ordered stream: a lost packet holds the reports
+  behind it, as TCP does. What QUIC changes for input is the cost of a
+  report on a good path and of a loss on a bad one; it does not remove the
+  wait for a retransmission.
+
 ## Changes against the plan
 
 | Plan | Now | Why |
