@@ -28,7 +28,7 @@ use bli_kvm_video_encoder::{
     engine::{Codec, Engine, EngineSettings},
     h264::H264Preset,
     mjpeg::MjpegReader,
-    yuv::{I420Frame, JpegToI420, scale_two_thirds},
+    yuv::{I420Frame, JpegBackend, JpegToI420, scale_two_thirds},
 };
 
 const STREAM_REQUEST: &[u8] =
@@ -392,19 +392,50 @@ fn bench(settings: &Settings, count: usize) -> Result<(), String> {
     }
     drop(reader);
     let mut rows = Vec::new();
+    let mut decoder_rows = Vec::new();
     for scale in [Scale::Full, Scale::TwoThirds] {
-        let mut converter = JpegToI420::default();
-        let mut full = I420Frame::default();
-        let (mut decode, mut convert) = (Duration::ZERO, Duration::ZERO);
-        let mut frames = Vec::with_capacity(jpegs.len());
-        for jpeg in &jpegs {
-            let start = Instant::now();
-            let (frame, decoded) = prepare(&mut converter, jpeg, scale, &mut full)
-                .ok_or("a capture frame did not decode")?;
-            decode += decoded;
-            convert += start.elapsed().saturating_sub(decoded);
-            frames.push(frame);
+        // Every decoder built in prepares the same frames; the encoders get
+        // the preferred decoder's (the first).
+        let mut decoders: Vec<(String, JpegToI420)> = Vec::new();
+        for backend in JpegBackend::available() {
+            decoders.push((
+                backend.name().to_string(),
+                JpegToI420::with_backend(backend, false),
+            ));
+            #[cfg(feature = "turbojpeg")]
+            if backend == JpegBackend::Turbo {
+                decoders.push((
+                    format!("{} fast IDCT", backend.name()),
+                    JpegToI420::with_backend(backend, true),
+                ));
+            }
         }
+        let mut prepared: Option<(Vec<I420Frame>, Duration, Duration)> = None;
+        for (name, mut converter) in decoders {
+            let mut full = I420Frame::default();
+            let (mut decode, mut convert) = (Duration::ZERO, Duration::ZERO);
+            let mut frames = Vec::with_capacity(jpegs.len());
+            for jpeg in &jpegs {
+                let start = Instant::now();
+                let (frame, decoded) = prepare(&mut converter, jpeg, scale, &mut full)
+                    .ok_or("a capture frame did not decode")?;
+                decode += decoded;
+                convert += start.elapsed().saturating_sub(decoded);
+                frames.push(frame);
+            }
+            decoder_rows.push(format!(
+                "{{\"decoder\":\"{}\",\"width\":{},\"height\":{},\"decodeMs\":{},\"convertMs\":{}}}",
+                name,
+                frames[0].width,
+                frames[0].height,
+                millis(decode, frames.len()),
+                millis(convert, frames.len()),
+            ));
+            if prepared.is_none() {
+                prepared = Some((frames, decode, convert));
+            }
+        }
+        let (frames, decode, convert) = prepared.ok_or("no JPEG decoder is built in")?;
         let (width, height) = (frames[0].width, frames[0].height);
         let prepare_ms = millis(decode + convert, frames.len());
         let codecs = [
@@ -447,8 +478,9 @@ fn bench(settings: &Settings, count: usize) -> Result<(), String> {
         }
     }
     println!(
-        "{{\"frames\":{},\"results\":[{}]}}",
+        "{{\"frames\":{},\"decoders\":[{}],\"results\":[{}]}}",
         jpegs.len(),
+        decoder_rows.join(","),
         rows.join(",")
     );
     Ok(())

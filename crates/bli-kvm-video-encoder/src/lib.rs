@@ -14,6 +14,8 @@ pub mod h264;
 pub mod mjpeg;
 pub mod rtp;
 pub mod slot;
+#[cfg(feature = "turbojpeg")]
+pub mod turbo;
 #[cfg(feature = "vp8")]
 pub mod vp8;
 pub mod yuv;

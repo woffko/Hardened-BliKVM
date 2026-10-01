@@ -23,6 +23,12 @@ if [ ! -f "$BLI_KVM_X264_DIR/lib/libx264.a" ]; then
   scripts/build-x264.sh host "$BLI_KVM_X264_DIR"
 fi
 export BLI_KVM_X264_DIR
+# The encoder decodes capture frames with a pinned static libjpeg-turbo.
+BLI_KVM_LIBJPEG_TURBO_DIR="$target_root/libjpeg-turbo-3.2.0-host"
+if [ ! -f "$BLI_KVM_LIBJPEG_TURBO_DIR/lib/libturbojpeg.a" ]; then
+  scripts/build-libjpeg-turbo.sh host "$BLI_KVM_LIBJPEG_TURBO_DIR"
+fi
+export BLI_KVM_LIBJPEG_TURBO_DIR
 cargo check --workspace --all-targets --locked
 cargo check --workspace --all-targets --all-features --locked
 cargo check -p bli-kvm-media-transition --lib --locked --no-default-features --features gadget-media-profile
@@ -49,6 +55,11 @@ cargo test -p bli-kvm-hid-transition --all-targets --locked --features gadget-hi
 cargo test -p bli-kvm-atx-transition --all-targets --locked --features gpio-atx-profile
 cargo test -p bli-kvm-atx-gpio-executor --all-targets --locked --features chardev-driver
 cargo test -p bli-kvm-video-encoder --all-targets --locked --features h264
+cargo test -p bli-kvm-video-encoder --all-targets --locked --features h264,turbojpeg
+cargo test -p bli-kvm-video-encoder --all-targets --locked --no-default-features --features h264,turbojpeg
+# Randomly damaged capture frames through libjpeg-turbo, as on the board.
+BK_JPEG_DAMAGE_FRAMES=20000 cargo test -p bli-kvm-video-encoder --release --lib --locked \
+  --features h264,turbojpeg damaged_frames_never_crash
 sh -n scripts/build-libvpx.sh
 sh -n scripts/build-x264.sh
 sh -n tools/device/deploy_native_profile.sh
@@ -63,6 +74,7 @@ cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
 python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264 -- -D warnings
+cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264,turbojpeg -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-broker-client --all-targets --locked --features diagnostic-export -- -D warnings
 cargo clippy -p bli-kvm-platform-broker --all-targets --locked --features diagnostic-export -- -D warnings

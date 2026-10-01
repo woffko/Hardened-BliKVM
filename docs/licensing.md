@@ -62,3 +62,18 @@ not satisfy this gate.
 The pure recovery-input validator enforces evidence completeness and an
 explicit reviewed clearance state. It does not infer legal sufficiency from a
 repository license or automatically approve an SPDX expression.
+
+## Native libraries of the video encoder
+
+`bli-kvm-video-encoder` links three pinned static C libraries, each built from
+a release archive checked by SHA-256 (`scripts/build-*.sh`), whose license
+texts are installed with the encoder under
+`/usr/share/doc/hardened-blikvm-video-encoder/`:
+
+- libvpx 1.15.2 (VP8): BSD-3-Clause with the WebM patent grant;
+- x264 build 165 (H.264): GPL-2.0-or-later;
+- libjpeg-turbo 3.2.0 (decoding the capture's JPEG frames): the IJG License,
+  BSD-3-Clause and zlib. As the IJG License asks of binary distributions:
+  this software is based in part on the work of the Independent JPEG Group.
+
+All three are compatible with the project's GPL-3.0-only.

@@ -48,4 +48,29 @@ fn main() {
             println!("cargo:rustc-link-lib=m");
         }
     }
+    println!("cargo:rerun-if-env-changed=BLI_KVM_LIBJPEG_TURBO_DIR");
+    println!("cargo:rerun-if-changed=native/jpeg_shim.c");
+    #[cfg(feature = "turbojpeg")]
+    {
+        let root =
+            std::path::PathBuf::from(std::env::var_os("BLI_KVM_LIBJPEG_TURBO_DIR").expect(
+                "BLI_KVM_LIBJPEG_TURBO_DIR must name a scripts/build-libjpeg-turbo.sh output",
+            ));
+        assert!(
+            root.is_absolute(),
+            "BLI_KVM_LIBJPEG_TURBO_DIR must be absolute"
+        );
+        cc::Build::new()
+            .file("native/jpeg_shim.c")
+            .include(root.join("include"))
+            .warnings(true)
+            .extra_warnings(true)
+            .warnings_into_errors(true)
+            .compile("bk_jpeg_shim");
+        println!(
+            "cargo:rustc-link-search=native={}",
+            root.join("lib").display()
+        );
+        println!("cargo:rustc-link-lib=static=turbojpeg");
+    }
 }

@@ -10,6 +10,13 @@ links = "bk_vp8"
 build = "build.rs"
 
 [features]
+default = ["zune"]
+# Decodes capture frames with zune-jpeg (pure Rust), the fallback decoder.
+zune = ["dep:zune-jpeg"]
+# Decodes capture frames with the pinned static libjpeg-turbo from
+# BLI_KVM_LIBJPEG_TURBO_DIR (scripts/build-libjpeg-turbo.sh); preferred when
+# built in.
+turbojpeg = ["dep:cc"]
 # Links the pinned static libvpx from BLI_KVM_LIBVPX_DIR (scripts/build-libvpx.sh).
 vp8 = ["dep:cc"]
 # Links the pinned static x264 from BLI_KVM_X264_DIR (scripts/build-x264.sh).
@@ -18,7 +25,7 @@ h264 = ["vp8"]
 [dependencies]
 sha2.workspace = true
 thiserror.workspace = true
-zune-jpeg = { version = "=0.4.21", default-features = false, features = ["std", "neon"] }
+zune-jpeg = { version = "=0.4.21", default-features = false, features = ["std", "neon"], optional = true }
 
 [build-dependencies]
 cc = { version = "=1.2.55", optional = true }
