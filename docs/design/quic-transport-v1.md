@@ -442,6 +442,46 @@ signalling, and everything when the browser's choice is Standard.
   after a timeout, an ended session tried again, no question to the server)
   made it fail.
 
+### On the board (Q1.8, 2026-10-01)
+
+Update-runtime `0.1.0~dev35` and slot 61 (`0.1.0-alpha.6`), firewall
+Baseline, headless Chromium 149 on the development host, wired network.
+`tools/playwright/quic_transport_device_probe.mjs` ran twice; the receipts
+are `evidence/private/quic-transport-device-20261001-a.json` and `-b.json`.
+
+| What | First run | Second run |
+| --- | --- | --- |
+| Switching on in Settings until QUIC is offered: the owner enables and starts the unit, the gateway reaches the link | 3.1 s | 3.0 s |
+| The page's session, from choosing QUIC to the first answered ping | 366 ms | 400 ms |
+| A session by itself: session request, connection ready, welcome | 224, 31, 25 ms | 189, 27, 5 ms |
+| Pings answered in 60 s, four a second | 235 of 235 | 235 of 235 |
+| Round trip by the page's clock: median, 95th percentile, longest | 2.0, 23.1, 28.1 ms | 3.4, 24.6, 32.5 ms |
+| Round trip as the gateway's QUIC stack measures it on the board: median, 95th percentile, longest | 2.8, 17.8, 20.4 ms | 3.3, 5.4, 5.6 ms |
+| Packets lost | 0 | 0 |
+| The page's own session, looked at every second | connected 60 of 60 | connected 60 of 60 |
+| From the logout until the sessions are told they end | 0.70 s | 0.81 s |
+| Switching off until the state reads off | 2.1 s | 2.1 s |
+| The port afterwards, for a page that holds the certificate's hash | no answer | no answer |
+| A session request afterwards | `unavailable` | `unavailable` |
+
+- The gateway with two sessions pinging: 2.9 MiB resident (0.75 MiB charged
+  to its unit), one thread, 0.66 s of processor time in 45 s (1.5% of a
+  core). Its only capability is `CAP_NET_BIND_SERVICE`, the system call
+  filter is on, and it listens on UDP 443 for IPv6 and IPv4.
+- Most of opening a session is the session request, about 0.2 s: the server
+  asks the owner for the firewall mode each time. The QUIC and TLS handshake
+  with the WebTransport request takes about 30 ms.
+- The page was sent to the login 0.7 to 0.8 s after the logout: the server
+  looks at its sessions once a second.
+- The development host's monotonic clock ran at 0.970 of real time during
+  the probes, so the spans taken by the page's clock read 3% short; the
+  gateway's own round trips are not affected.
+- The GUI walk passed on the desktop and the phone layout (21 steps each,
+  `GET /api/transport` among them, no failed request, no page error).
+- Afterwards: the unit disabled and stopped, nothing listening on UDP 443,
+  the administration switches, the firewall mode, the video settings and the
+  WebRTC quality as they were found.
+
 A lesson for every test and probe that measures time on the development
 host: its wall clock is stepped forward by about 3.6 s every half minute
 (and its monotonic clock runs about 10% slow), so a span taken from the wall
