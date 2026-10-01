@@ -71,6 +71,8 @@ struct Open {
     web: Session,
     /// The HID lease it acquired over its input stream and has not released.
     lease: Option<String>,
+    /// While it watches: the H.264 encoder's demand, held for it.
+    video: Option<crate::webrtc::DemandGuard>,
 }
 
 /// A lease that a session which ended had taken: the web session's token and
@@ -194,6 +196,7 @@ impl QuicTransport {
             Open {
                 web: entry.session,
                 lease: None,
+                video: None,
             },
         );
         Ok(reference)
@@ -221,6 +224,19 @@ impl QuicTransport {
         match self.inner.lock().unwrap().sessions.get_mut(reference) {
             Some(open) => {
                 open.lease = lease;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Holds the encoder's demand for a session that watches, or (`None`)
+    /// lets it go. `false` if the session is no longer there; the demand is
+    /// then let go with the guard.
+    fn set_video(&self, reference: &str, video: Option<crate::webrtc::DemandGuard>) -> bool {
+        match self.inner.lock().unwrap().sessions.get_mut(reference) {
+            Some(open) => {
+                open.video = video;
                 true
             }
             None => false,
@@ -425,7 +441,7 @@ async fn read_message(reader: &mut tokio::net::unix::OwnedReadHalf) -> Option<Ga
     link::decode(&body).ok()
 }
 
-/// What the sessions of one gateway connection ask of the HID lease, in the
+/// What the sessions of one gateway connection ask of the server, in the
 /// order it arrived.
 enum Job {
     /// A request from a session's input stream.
@@ -436,6 +452,45 @@ enum Job {
     },
     /// A session that held the lease is gone.
     Release(HeldLease),
+    /// A session asks for the picture, or gives it up.
+    Video {
+        id: u64,
+        session: String,
+        subscribe: bool,
+    },
+}
+
+/// Holds the H.264 encoder's demand for a session that watches, as the
+/// WebRTC signalling does for its viewer, with the quality the operator
+/// chose; or lets it go. The reason there is no picture: the session is not
+/// one of a live web session, this board has no H.264 encoder, or the
+/// encoder could not be reached.
+async fn serve_video(
+    state: &AppState,
+    transport: &QuicTransport,
+    reference: &str,
+    subscribe: bool,
+) -> Result<(), &'static str> {
+    let web = transport.web_session(reference).ok_or("session")?;
+    state.sessions.validate(&web.token).await.ok_or("session")?;
+    if !subscribe {
+        transport.set_video(reference, None);
+        return Ok(());
+    }
+    let gateway = state
+        .webrtc
+        .as_ref()
+        .filter(|gateway| gateway.h264_demand.is_some())
+        .ok_or("unavailable")?;
+    let demand = gateway
+        .hold_demand(crate::webrtc::StreamCodec::H264)
+        .await
+        .ok_or("encoder")?;
+    if transport.set_video(reference, Some(demand)) {
+        Ok(())
+    } else {
+        Err("session")
+    }
 }
 
 /// An answer of the lease API as the link carries it: the status and the
@@ -491,10 +546,11 @@ async fn serve_lease(
     }
 }
 
-/// Works through the lease requests of one gateway connection, one at a
-/// time. It is a task of its own: a request that has reached the owner is
-/// finished and accounted for even if the link ends meanwhile.
-async fn lease_worker(
+/// Works through what the sessions of one gateway connection ask, one
+/// request at a time. It is a task of its own: a lease request that has
+/// reached the owner is finished and accounted for even if the link ends
+/// meanwhile.
+async fn session_worker(
     state: AppState,
     transport: Arc<QuicTransport>,
     generation: u64,
@@ -512,6 +568,21 @@ async fn lease_worker(
             }
             Job::Release((token, lease)) => {
                 crate::hid::release_lease_if_current(&state, &token, &lease).await;
+            }
+            Job::Video {
+                id,
+                session,
+                subscribe,
+            } => {
+                let served = serve_video(&state, &transport, &session, subscribe).await;
+                transport.send(
+                    generation,
+                    &ServerToGateway::VideoAnswer {
+                        id,
+                        ok: served.is_ok(),
+                        reason: served.err().map(str::to_owned),
+                    },
+                );
             }
         }
     }
@@ -537,7 +608,7 @@ async fn serve(state: AppState, transport: Arc<QuicTransport>, stream: UnixStrea
     let (generation, replaced) = transport.connected(hello, outbox);
     eprintln!("quic link: the gateway is connected");
     let (jobs, waiting) = mpsc::channel::<Job>(LEASE_QUEUE);
-    tokio::spawn(lease_worker(
+    tokio::spawn(session_worker(
         state.clone(),
         Arc::clone(&transport),
         generation,
@@ -615,16 +686,26 @@ async fn serve(state: AppState, transport: Arc<QuicTransport>, stream: UnixStrea
                         );
                     }
                 }
-                // The picture is not served over the link yet.
-                GatewayToServer::Video { id, .. } => {
-                    transport.send(
-                        generation,
-                        &ServerToGateway::VideoAnswer {
-                            id,
-                            ok: false,
-                            reason: Some("not_served".into()),
-                        },
-                    );
+                GatewayToServer::Video {
+                    id,
+                    session,
+                    subscribe,
+                } => {
+                    let job = Job::Video {
+                        id,
+                        session,
+                        subscribe,
+                    };
+                    if jobs.try_send(job).is_err() {
+                        transport.send(
+                            generation,
+                            &ServerToGateway::VideoAnswer {
+                                id,
+                                ok: false,
+                                reason: Some("busy".into()),
+                            },
+                        );
+                    }
                 }
             }
         }

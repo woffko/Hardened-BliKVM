@@ -1021,6 +1021,244 @@ async fn a_lease_request_over_the_link_counts_for_the_web_session() {
     );
 }
 
+impl Gateway {
+    /// A session asks for the picture, or gives it up: the server's answer.
+    async fn video(&mut self, id: u64, session: &str, subscribe: bool) -> ServerToGateway {
+        self.say(&GatewayToServer::Video {
+            id,
+            session: session.into(),
+            subscribe,
+        })
+        .await;
+        self.hear().await.unwrap()
+    }
+}
+
+/// The H.264 encoder's demand socket: each connection's lines, and its end.
+struct Demand(tokio::net::UnixListener);
+
+impl Demand {
+    async fn held(&self) -> tokio::io::Lines<tokio::io::BufReader<UnixStream>> {
+        use tokio::io::AsyncBufReadExt;
+        let (connection, _) = timeout(PATIENCE, self.0.accept())
+            .await
+            .expect("no demand was signalled")
+            .unwrap();
+        tokio::io::BufReader::new(connection).lines()
+    }
+
+    async fn idle(&self) {
+        assert!(
+            timeout(Duration::from_millis(200), self.0.accept())
+                .await
+                .is_err(),
+            "demand was signalled"
+        );
+    }
+}
+
+async fn line(lines: &mut tokio::io::Lines<tokio::io::BufReader<UnixStream>>) -> Option<String> {
+    timeout(PATIENCE, lines.next_line())
+        .await
+        .expect("the demand connection said nothing")
+        .unwrap()
+}
+
+fn video_answer(id: u64, reason: Option<&str>) -> ServerToGateway {
+    ServerToGateway::VideoAnswer {
+        id,
+        ok: reason.is_none(),
+        reason: reason.map(str::to_owned),
+    }
+}
+
+/// A session that asks for the picture holds the H.264 encoder's demand, as
+/// a WebRTC viewer's signalling does, for as long as it watches: until it
+/// gives the picture up, its connection closes, its web session ends, or the
+/// link goes.
+#[tokio::test]
+async fn a_video_subscription_holds_the_encoders_demand() {
+    let root = tempdir().unwrap();
+    let socket = root.path().join("link.sock");
+    let demand_path = root.path().join("h264.sock");
+    let demand = Demand(tokio::net::UnixListener::bind(&demand_path).unwrap());
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        quic_link_socket: Some(socket.clone()),
+        webrtc_janus: Some("127.0.0.1:8188".parse().unwrap()),
+        webrtc_h264_demand_socket: Some(demand_path),
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let page = Page { app, cookie, csrf };
+    let mut gateway = Gateway::greeted(&socket, &"9a".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    demand.idle().await;
+
+    // It watches: the codec and the quality, as for a WebRTC viewer.
+    gateway
+        .say(&GatewayToServer::Video {
+            id: 2,
+            session: session.clone(),
+            subscribe: true,
+        })
+        .await;
+    let mut held = demand.held().await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(gateway.hear().await.unwrap(), video_answer(2, None));
+    // It gives the picture up: the demand ends.
+    assert_eq!(
+        gateway.video(3, &session, false).await,
+        video_answer(3, None)
+    );
+    assert_eq!(line(&mut held).await, None);
+
+    // Asked twice, it holds one demand: the earlier one is let go.
+    assert_eq!(
+        gateway.video(4, &session, true).await,
+        video_answer(4, None)
+    );
+    let mut first = demand.held().await;
+    assert_eq!(
+        gateway.video(5, &session, true).await,
+        video_answer(5, None)
+    );
+    let mut second = demand.held().await;
+    assert_eq!(line(&mut first).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut first).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut first).await, None);
+    assert_eq!(line(&mut second).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut second).await.as_deref(), Some("kbps 2500"));
+
+    // Its connection closes.
+    gateway
+        .say(&GatewayToServer::Closed {
+            session: session.clone(),
+        })
+        .await;
+    assert_eq!(line(&mut second).await, None);
+    // The session is gone: it is nobody's to watch for.
+    assert_eq!(
+        gateway.video(6, &session, true).await,
+        video_answer(6, Some("session"))
+    );
+    demand.idle().await;
+
+    // The web session ends.
+    let session = session_of(gateway.redeem(7, &page.token().await).await);
+    assert_eq!(
+        gateway.video(8, &session, true).await,
+        video_answer(8, None)
+    );
+    let mut held = demand.held().await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
+    page.call(Method::POST, "/api/auth/logout", Value::Null)
+        .await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut held).await, None);
+
+    // The link goes.
+    let (_root, socket, page) = board(|options| {
+        options.webrtc_janus = Some("127.0.0.1:8188".parse().unwrap());
+        options.webrtc_h264_demand_socket = Some(root.path().join("h264.sock"));
+    })
+    .await;
+    let mut gateway = Gateway::greeted(&socket, &"9b".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    assert_eq!(
+        gateway.video(2, &session, true).await,
+        video_answer(2, None)
+    );
+    let mut held = demand.held().await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    drop(gateway);
+    assert_eq!(line(&mut held).await, None);
+}
+
+/// Without an H.264 encoder, or with one that cannot be reached, the session
+/// is told so and nothing else changes.
+#[tokio::test]
+async fn without_an_encoder_there_is_no_picture() {
+    // No encoder is provisioned.
+    let (_root, socket, page) = board(|_| {}).await;
+    let mut gateway = Gateway::greeted(&socket, &"9c".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    assert_eq!(
+        gateway.video(2, &session, true).await,
+        video_answer(2, Some("unavailable"))
+    );
+    // Giving up what one does not have is no error.
+    assert_eq!(
+        gateway.video(3, &session, false).await,
+        video_answer(3, None)
+    );
+    assert_eq!(
+        gateway.video(4, &"ab".repeat(16), true).await,
+        video_answer(4, Some("session"))
+    );
+
+    // One is provisioned, and its socket is not there.
+    let root = tempdir().unwrap();
+    let (_other, socket, page) = board(|options| {
+        options.webrtc_janus = Some("127.0.0.1:8188".parse().unwrap());
+        options.webrtc_h264_demand_socket = Some(root.path().join("missing.sock"));
+    })
+    .await;
+    let mut gateway = Gateway::greeted(&socket, &"9d".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    assert_eq!(
+        gateway.video(2, &session, true).await,
+        video_answer(2, Some("encoder"))
+    );
+    // The session is as it was: its lease requests are still served.
+    assert_eq!(
+        gateway.lease(3, &session, key_report(1, 4)).await["status"],
+        503
+    );
+}
+
+/// The quality the operator chooses reaches the encoder over the demand a
+/// QUIC session holds, as it does over a WebRTC viewer's.
+#[cfg(feature = "restricted-control-surface")]
+#[tokio::test]
+async fn the_quality_reaches_the_encoder_over_a_quic_sessions_demand() {
+    let root = tempdir().unwrap();
+    let socket = root.path().join("link.sock");
+    let demand_path = root.path().join("h264.sock");
+    let demand = Demand(tokio::net::UnixListener::bind(&demand_path).unwrap());
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        quic_link_socket: Some(socket.clone()),
+        restricted_controls_enabled: true,
+        video_controls_enabled: true,
+        control_socket: Some(root.path().join("control.sock")),
+        webrtc_janus: Some("127.0.0.1:8188".parse().unwrap()),
+        webrtc_h264_demand_socket: Some(demand_path),
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let page = Page { app, cookie, csrf };
+    let mut gateway = Gateway::greeted(&socket, &"9e".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    assert_eq!(
+        gateway.video(2, &session, true).await,
+        video_answer(2, None)
+    );
+    let mut held = demand.held().await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    let (_, changed) = page
+        .post(
+            "/api/vm/screen",
+            serde_json::json!({ "type": "webrtc_kbps", "value": 8000 }),
+        )
+        .await;
+    assert_eq!(changed["data"]["applied"], true, "{changed}");
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 8000"));
+}
+
 /// The gateway itself, on the board's link, the way its unit runs it.
 struct RealGateway {
     port: u16,

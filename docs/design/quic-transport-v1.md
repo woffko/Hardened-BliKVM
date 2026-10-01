@@ -377,7 +377,14 @@ The H.264 encoder unit gains the frame socket
   now count as such, so two no longer follow each other when the two clocks
   meet.
 - The server holds the demand and sets the quality for a QUIC viewer as for
-  a WebRTC viewer.
+  a WebRTC viewer: when a session asks for the picture over the link, the
+  server opens a demand connection of the H.264 encoder for it (the codec's
+  name, then the operator's quality, then every change of it) and keeps it
+  until the session gives the picture up, its connection closes, its web
+  session ends or the link goes. A session that asks twice holds one
+  demand. The answer names why there is no picture: `session` (it is not one
+  of a live web session), `unavailable` (this board has no H.264 encoder
+  with a demand socket) or `encoder` (it could not be reached).
 
 ## Input
 
