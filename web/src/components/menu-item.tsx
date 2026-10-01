@@ -1,5 +1,6 @@
 import { MouseEvent, ReactNode, useState } from 'react';
 import { Popover, Tooltip } from 'antd';
+import clsx from 'clsx';
 import { useSetAtom } from 'jotai';
 
 import { submenuOpenCountAtom } from '@/jotai/settings.ts';
@@ -105,7 +106,13 @@ export const MenuItem = ({
           className={
             className
               ? className
-              : 'flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded text-neutral-300 hover:bg-neutral-700/80 hover:text-white'
+              : clsx(
+                  'flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded',
+                  // The open menu's icon takes the accent.
+                  isPopoverOpen
+                    ? 'bg-accent/20 text-accent-text'
+                    : 'text-neutral-300 hover:bg-neutral-700/80 hover:text-white'
+                )
           }
         >
           {icon}

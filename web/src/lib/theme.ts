@@ -5,7 +5,8 @@
 // theme turns Tailwind's neutral scale around and makes `white` the dark
 // contrast colour; an element with the `theme-fixed` class keeps the dark
 // values (what lies over the video, the always-light virtual keyboard). The
-// accent replaces Tailwind's blue shades and antd's primary colour.
+// accent replaces Tailwind's blue shades and antd's primary colour, and tints
+// what is selected (settings tabs, segments, the open menu).
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 export const LIGHT_QUERY = '(prefers-color-scheme: light)';

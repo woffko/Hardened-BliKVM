@@ -124,6 +124,23 @@ try {
       return probe ? getComputedStyle(probe).color : "";
     });
     assert.ok(primary, "a selected segment is styled");
+    // Selected things show the accent: the settings tab (tinted, its text in
+    // the darker shade on light) and the selected segments.
+    await page.waitForTimeout(400);
+    const selected = await page.evaluate(() => {
+      const tab = document.querySelector('[data-settings-tab="appearance"]');
+      const segment = document.querySelector(
+        ".ant-modal-body .ant-segmented-item-selected",
+      );
+      return {
+        tabBackground: getComputedStyle(tab).backgroundColor,
+        tabColor: getComputedStyle(tab).color,
+        segment: segment ? getComputedStyle(segment).backgroundColor : "",
+      };
+    });
+    assert.equal(selected.tabBackground, "rgba(139, 92, 246, 0.15)");
+    assert.equal(selected.tabColor, "rgb(124, 58, 237)");
+    assert.equal(selected.segment, "rgba(139, 92, 246, 0.28)");
     // The Submenu Icons switch is on by default: a checked antd switch takes
     // the primary colour.
     await page.waitForTimeout(800); // the switch's colour transition

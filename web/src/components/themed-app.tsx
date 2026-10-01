@@ -25,10 +25,16 @@ export const ThemedApp = () => {
   useLayoutEffect(() => applyTheme(resolved, accent), [resolved, accent]);
 
   const primary = ACCENTS[accent]?.primary;
+  const [red, green, blue] = (ACCENTS[accent] ?? ACCENTS.blue).shades['500'].split(' ');
   const themeConfig = {
     algorithm: resolved === 'light' ? theme.defaultAlgorithm : theme.darkAlgorithm,
     token: primary ? { colorPrimary: primary } : undefined,
     components: {
+      // The selected segment (theme, layout, menu bar mode, ...) takes the
+      // accent, tinted so that its text stays readable in both themes.
+      Segmented: {
+        itemSelectedBg: `rgba(${red}, ${green}, ${blue}, 0.28)`
+      },
       Collapse: {
         headerPadding: 0,
         contentPadding: 0

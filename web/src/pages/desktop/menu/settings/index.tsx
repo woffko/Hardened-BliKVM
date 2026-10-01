@@ -212,7 +212,9 @@ export const Settings = () => {
                     isTouchLayout
                       ? 'flex min-w-[72px] flex-col items-center justify-center px-2 py-2'
                       : 'flex items-center space-x-2 p-2 sm:px-3',
-                    currentTab === tab.id ? 'bg-neutral-700/50' : 'hover:bg-neutral-700/50'
+                    currentTab === tab.id
+                      ? 'bg-accent/15 text-accent-text'
+                      : 'hover:bg-neutral-700/50'
                   )}
                   onClick={() => changeTab(tab.id)}
                 >

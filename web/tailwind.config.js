@@ -22,6 +22,11 @@ export default {
           900: 'rgb(var(--color-neutral-900) / <alpha-value>)',
           950: 'rgb(var(--color-neutral-950) / <alpha-value>)'
         },
+        // The accent as such: `bg-accent/15`, `text-accent-text`.
+        accent: {
+          DEFAULT: 'rgb(var(--color-accent-500) / <alpha-value>)',
+          text: 'rgb(var(--color-accent-text) / <alpha-value>)'
+        },
         blue: {
           50: 'rgb(var(--color-accent-50) / <alpha-value>)',
           200: 'rgb(var(--color-accent-200) / <alpha-value>)',

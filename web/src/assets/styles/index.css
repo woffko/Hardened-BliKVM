@@ -29,6 +29,8 @@
   --color-accent-400: 96 165 250;
   --color-accent-500: 59 130 246;
   --color-accent-600: 37 99 235;
+  /* Accent for text and icons: the lighter shade on dark, the darker on light. */
+  --color-accent-text: var(--color-accent-400);
   color-scheme: dark;
 }
 
@@ -45,6 +47,7 @@
   --color-neutral-900: 245 245 245;
   --color-neutral-950: 250 250 250;
   --color-white: 0 0 0;
+  --color-accent-text: var(--color-accent-600);
   color-scheme: light;
 }
 
