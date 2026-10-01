@@ -14,16 +14,29 @@ export type ToVideoWorker =
   | { type: 'begin' }
   | { type: 'datagram'; data: ArrayBuffer }
   | { type: 'keyframe'; data: ArrayBuffer }
-  /** A ping answered: its round trip, and the board's clock in the answer. */
-  | { type: 'pong'; roundTripMs: number; boardMicros: number };
+  /**
+   * A ping answered: its round trip, the board's clock in the answer, and
+   * when the answer arrived, as `performance.timeOrigin + performance.now()`
+   * of the page (a time the worker can place on its own clock).
+   */
+  | { type: 'pong'; roundTripMs: number; boardMicros: number; at: number };
 
 export type VideoStats = {
   /** Frames drawn since the picture began, and in the last second. */
   frames: number;
   framesPerSecond: number;
-  /** Capture to drawing by the board's clock, over the last second. */
+  /**
+   * Capture to drawing by the board's clock, of the frames whose age became
+   * known since the last report: a frame's age is known once a ping after
+   * it has been answered.
+   */
   ageMedianMs: number | null;
   ageP95Ms: number | null;
+  /**
+   * From a frame's arrival (its first fragment, or its key frame's stream)
+   * to its drawing, over the last second: what the page itself adds.
+   */
+  waitMedianMs: number | null;
   /** Frames given up or impossible to decode, and key-frame requests made. */
   dropped: number;
   requests: number;
@@ -46,6 +59,8 @@ const STATS_MS = 1000;
  * started again from a key frame rather than show a picture that grows old.
  */
 const MAX_DECODE_QUEUE = 12;
+/** Frames that may wait for a ping to tell their age. */
+const MAX_UNAGED = 256;
 
 const scope = self as unknown as {
   postMessage(message: FromVideoWorker): void;
@@ -60,12 +75,41 @@ let decoder: VideoDecoder | null = null;
 let configured: string | null = null;
 let frames = 0;
 let resets = 0;
-let lastSecond: { at: number; age: number | null }[] = [];
+/** The frames of the last second: when they were drawn, and how long after they arrived. */
+let drawn: { at: number; wait: number | null }[] = [];
+/** When the frames the decoder has began to arrive, by their capture time. */
+const received = new Map<number, number>();
+/**
+ * Frames drawn after the newest answered ping: when, and their capture time
+ * on the board's clock. The board's time at their drawing is read between
+ * two pings, so their age waits for the next one.
+ */
+let unaged: { at: number; capture: number }[] = [];
+/** The ages that became known since the last report. */
+let aged: number[] = [];
+/**
+ * For a probe that wants numbers over a span of its own: it reads this from
+ * the worker twice and takes the difference. Counted since the worker began.
+ */
+const AGE_BUCKETS = 5000;
+const WAIT_BUCKETS = 10000;
+const probe = {
+  /** Frames drawn. */
+  frames: 0,
+  /** How old the frames were when drawn: a count for every millisecond, the last for all that were older. */
+  ages: new Uint32Array(AGE_BUCKETS + 1),
+  /** From arrival to drawing: a count for every tenth of a millisecond. */
+  waits: new Uint32Array(WAIT_BUCKETS + 1),
+  /** The capture time of the newest frame drawn, microseconds of the board's clock. */
+  lastCaptureMicros: 0
+};
+(self as unknown as { quicVideoProbe: typeof probe }).quicVideoProbe = probe;
 
 function closeDecoder() {
   const old = decoder;
   decoder = null;
   configured = null;
+  received.clear();
   if (old && old.state !== 'closed') {
     try {
       old.close();
@@ -89,11 +133,47 @@ function draw(frame: VideoFrame) {
     }
     context.drawImage(frame, 0, 0);
   }
-  // The frame's timestamp is its capture time on the board's clock.
-  const board = clock.at(now);
   frames += 1;
-  lastSecond.push({ at: now, age: board === null ? null : board - frame.timestamp / 1000 });
+  // The frame's timestamp is its capture time on the board's clock.
+  const arrived = received.get(frame.timestamp);
+  received.delete(frame.timestamp);
+  const wait = arrived === undefined ? null : now - arrived;
+  drawn.push({ at: now, wait });
+  if (wait !== null) {
+    probe.waits[Math.min(WAIT_BUCKETS, Math.max(0, Math.round(wait * 10)))] += 1;
+  }
+  probe.frames = frames;
+  probe.lastCaptureMicros = frame.timestamp;
+  unaged.push({ at: now, capture: frame.timestamp / 1000 });
+  if (unaged.length > MAX_UNAGED) settleAges();
   frame.close();
+}
+
+function age(value: number) {
+  aged.push(value);
+  probe.ages[Math.min(AGE_BUCKETS, Math.max(0, Math.round(value)))] += 1;
+}
+
+/** Tells the age of the frames that the pings enclose by now. */
+function settleAges() {
+  const span = clock.span();
+  let settled = 0;
+  if (span) {
+    for (; settled < unaged.length; settled += 1) {
+      const frame = unaged[settled];
+      if (frame.at > span.to) break;
+      const board = clock.between(frame.at);
+      // Drawn before the first ping was answered: its age is not known.
+      if (board !== null) age(board - frame.capture);
+    }
+  }
+  unaged = unaged.slice(settled);
+  // The pings do not come: the newest of them say what they can.
+  while (unaged.length > MAX_UNAGED) {
+    const frame = unaged.shift();
+    const board = frame ? clock.at(frame.at) : null;
+    if (frame && board !== null) age(board - frame.capture);
+  }
 }
 
 function failed() {
@@ -125,6 +205,7 @@ function decode(frame: ReceivedFrame) {
     }
     if (!decoder || decoder.state !== 'configured') return;
     if (!frame.key && decoder.decodeQueueSize >= MAX_DECODE_QUEUE) return failed();
+    received.set(frame.captureMicros, frame.receivedAt);
     decoder.decode(
       new EncodedVideoChunk({
         type: frame.key ? 'key' : 'delta',
@@ -150,17 +231,20 @@ setInterval(() => handle(receiver.poll(performance.now())), POLL_MS);
 
 setInterval(() => {
   const now = performance.now();
-  lastSecond = lastSecond.filter((entry) => now - entry.at <= STATS_MS);
-  const ages = lastSecond
-    .map((entry) => entry.age)
-    .filter((age): age is number => age !== null)
+  drawn = drawn.filter((frame) => now - frame.at <= STATS_MS);
+  const known = aged.sort((left, right) => left - right);
+  aged = [];
+  const waits = drawn
+    .map((frame) => frame.wait)
+    .filter((wait): wait is number => wait !== null)
     .sort((left, right) => left - right);
   scope.postMessage({
     type: 'stats',
     frames,
-    framesPerSecond: lastSecond.length,
-    ageMedianMs: ages.length ? percentile(ages, 0.5) : null,
-    ageP95Ms: ages.length ? percentile(ages, 0.95) : null,
+    framesPerSecond: drawn.length,
+    ageMedianMs: known.length ? percentile(known, 0.5) : null,
+    ageP95Ms: known.length ? percentile(known, 0.95) : null,
+    waitMedianMs: waits.length ? percentile(waits, 0.5) : null,
     dropped: receiver.counters.dropped,
     requests: receiver.counters.requests,
     resets,
@@ -179,6 +263,7 @@ scope.onmessage = (event) => {
     case 'begin':
       receiver.reset();
       clock.reset();
+      unaged = [];
       closeDecoder();
       break;
     case 'datagram':
@@ -187,10 +272,17 @@ scope.onmessage = (event) => {
     case 'keyframe':
       handle(receiver.keyFrame(new Uint8Array(message.data), now));
       break;
-    case 'pong':
-      // The answer has just arrived: the middle of its round trip was half
-      // of it ago.
-      clock.sample(now - message.roundTripMs / 2, message.boardMicros / 1000, message.roundTripMs);
+    case 'pong': {
+      // When the answer arrived, on this worker's clock; the middle of its
+      // round trip was half of it before.
+      const arrived = message.at - performance.timeOrigin;
+      clock.sample(
+        arrived - message.roundTripMs / 2,
+        message.boardMicros / 1000,
+        message.roundTripMs
+      );
+      settleAges();
       break;
+    }
   }
 };

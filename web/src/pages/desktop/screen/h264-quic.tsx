@@ -75,6 +75,7 @@ export const H264Quic = () => {
             framesPerSecond: message.framesPerSecond,
             ageMedianMs: message.ageMedianMs,
             ageP95Ms: message.ageP95Ms,
+            waitMedianMs: message.waitMedianMs,
             dropped: message.dropped,
             requests: message.requests,
             resets: message.resets,
@@ -85,6 +86,7 @@ export const H264Quic = () => {
           canvas.dataset.quicFps = String(message.framesPerSecond);
           canvas.dataset.quicAgeMedian = message.ageMedianMs?.toFixed(1) ?? '';
           canvas.dataset.quicAgeP95 = message.ageP95Ms?.toFixed(1) ?? '';
+          canvas.dataset.quicWaitMedian = message.waitMedianMs?.toFixed(1) ?? '';
           canvas.dataset.quicDropped = String(message.dropped);
           canvas.dataset.quicRequests = String(message.requests);
           canvas.dataset.quicResets = String(message.resets);
@@ -101,7 +103,7 @@ export const H264Quic = () => {
         const data = buffer(bytes);
         post({ type: 'keyframe', data }, [data]);
       },
-      pong: (roundTripMs, boardMicros) => post({ type: 'pong', roundTripMs, boardMicros })
+      pong: (roundTripMs, boardMicros, at) => post({ type: 'pong', roundTripMs, boardMicros, at })
     });
     return () => {
       quicSession.unwatch();

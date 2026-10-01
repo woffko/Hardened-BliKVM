@@ -143,6 +143,9 @@ node --test tools/test_command_result.mjs
 node --test tools/test_hid_text.mjs
 node --test tools/test_sticky_modifiers.mjs
 node --test tools/test_quic_messages.mjs
+# The picture's receiver: reassembly, the chain, recovery, and 100000 random
+# and damaged datagrams and streams; the board's clock; the codec string.
+node --test tools/test_quic_video_receiver.mjs tools/test_quic_board_clock.mjs tools/test_quic_h264.mjs
 node --test tools/test_impair_proxies.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
@@ -180,6 +183,7 @@ node --check tools/playwright/quic_stack_rig.mjs
 node --check tools/playwright/quic_input_stack_contract.mjs
 node --check tools/playwright/quic_input_latency.mjs
 node --check tools/playwright/quic_input_device_probe.mjs
+node --check tools/playwright/quic_video_contract.mjs
 node --check tools/net/udp_impair_proxy.mjs
 node --check tools/net/tcp_impair_proxy.mjs
 node --check tools/playwright/touch_reach_device_probe.mjs
@@ -837,12 +841,17 @@ cargo build --locked -p bli-kvm-quic-gateway -p bli-kvm-server
 BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" node tools/playwright/quic_transport_contract.mjs
 BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" node tools/playwright/quic_input_contract.mjs
 BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_SERVER="$target_root/debug/bli-kvm-server" node tools/playwright/quic_input_stack_contract.mjs
+# The picture: the encoder's own x264 engine behind a frame socket, the
+# gateway, a relay that loses datagrams, and Chromium's decoder.
+cargo build --locked -p bli-kvm-video-encoder --features h264 --example h264_frame_source
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAME_SOURCE="$target_root/debug/examples/h264_frame_source" node tools/playwright/quic_video_contract.mjs
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 pnpm_web exec prettier --check '../tools/net/*.mjs'
 pnpm_web exec prettier --check '../tools/test_impair_proxies.mjs'
+pnpm_web exec prettier --check '../tools/test_quic_video_receiver.mjs' '../tools/test_quic_board_clock.mjs' '../tools/test_quic_h264.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
 pnpm_web exec prettier --check '../tools/test_status_outage_audit.mjs'
 pnpm_web exec prettier --check '../tools/test_gui_parity_probe.mjs'

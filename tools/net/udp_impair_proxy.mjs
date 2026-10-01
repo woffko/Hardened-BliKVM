@@ -12,7 +12,8 @@
 //        [--delay-ms N] [--jitter-ms N] [--loss P] [--seed N]
 // It prints one JSON line when it listens, and its counters as one JSON line
 // when it ends (SIGINT or SIGTERM). `startUdpProxy` does the same from a
-// script.
+// script, which may also change the impairment while the relay runs
+// (`impair`).
 import dgram from "node:dgram";
 import { pathToFileURL } from "node:url";
 
@@ -38,6 +39,12 @@ export function endpoint(value) {
   return { host: match[1].replace(/^\[|\]$/g, ""), port: Number(match[2]) };
 }
 
+function checked({ delayMs, jitterMs, loss }) {
+  if (!(loss >= 0 && loss < 1)) throw new Error("loss must be in [0, 1)");
+  if (!(delayMs >= 0 && jitterMs >= 0)) throw new Error("times must be >= 0");
+  return { delayMs, jitterMs, loss };
+}
+
 /**
  * Starts the relay. `loss` is a probability from 0 to 1 and applies to each
  * direction; `delayMs` is added each way, `jitterMs` is the width of a
@@ -51,8 +58,7 @@ export async function startUdpProxy({
   loss = 0,
   seed = 1,
 }) {
-  if (!(loss >= 0 && loss < 1)) throw new Error("loss must be in [0, 1)");
-  if (!(delayMs >= 0 && jitterMs >= 0)) throw new Error("times must be >= 0");
+  let impairment = checked({ delayMs, jitterMs, loss });
   // One generator for each direction, so what is lost one way does not
   // depend on how the two directions happen to interleave.
   const random = {
@@ -71,6 +77,7 @@ export async function startUdpProxy({
 
   const pass = (direction, datagram, send) => {
     const counter = counters[direction];
+    const { delayMs, jitterMs, loss } = impairment;
     counter.received += 1;
     if (loss > 0 && random[direction]() < loss) {
       counter.dropped += 1;
@@ -133,6 +140,13 @@ export async function startUdpProxy({
   return {
     port: front.address().port,
     counters: () => structuredClone(counters),
+    /**
+     * Changes the impairment for the datagrams that arrive from now on;
+     * what is not named stays as it is.
+     */
+    impair(changes) {
+      impairment = checked({ ...impairment, ...changes });
+    },
     async close() {
       closed = true;
       clearInterval(sweep);

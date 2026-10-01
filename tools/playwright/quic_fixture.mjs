@@ -41,6 +41,7 @@ export async function launch() {
 }
 
 export const CHOICE_KEY = "hardened-blikvm-transport";
+export const VIDEO_MODE_KEY = "hardened-blikvm-video-mode";
 export const PATIENCE = 15000;
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Spans are measured on the monotonic clock: a host whose wall clock is
@@ -57,12 +58,122 @@ export async function until(what, condition, patience = PATIENCE) {
   }
 }
 
+/**
+ * The encoder's frame socket without a board: a moving test picture from the
+ * encoder's own x264 engine (the encoder crate's `h264_frame_source`). The
+ * frame's number stands in the picture's top-left corner as sixteen squares
+ * of 16 pixels, least significant bit first, white for one.
+ */
+export async function startFrameSource(
+  socketPath,
+  { width = 640, height = 360, fps = 30, kbps = 800, keyEveryMs = 2000 } = {},
+) {
+  const file =
+    process.env.BLI_KVM_H264_FRAME_SOURCE ??
+    path.resolve("target/debug/examples/h264_frame_source");
+  assert.ok(fs.existsSync(file), `the frame source is not built: ${file}`);
+  const child = spawn(
+    file,
+    [socketPath, width, height, fps, kbps, keyEveryMs].map(String),
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let said = "";
+  let exited = false;
+  child.stdout.on("data", (chunk) => (said += chunk));
+  child.stderr.on("data", (chunk) => (said += chunk));
+  child.once("exit", () => (exited = true));
+  await until("the frame source listens", () => {
+    assert.ok(!exited, `the frame source ended: ${said}`);
+    return said.includes("listening");
+  });
+  return {
+    width,
+    height,
+    fps,
+    stop: () =>
+      new Promise((resolve) => {
+        if (exited) return resolve();
+        child.once("exit", resolve);
+        child.kill("SIGKILL");
+      }),
+  };
+}
+
+/**
+ * The frame's number as the picture of `startFrameSource` shows it, read
+ * from a screenshot of the canvas; `null` while a square is neither black
+ * nor white (no picture yet).
+ */
+export async function frameNumber(page) {
+  const box = await page.locator("#screen").boundingBox();
+  if (!box || box.width < 256 || box.height < 16) return null;
+  const png = await page.screenshot({
+    clip: { x: box.x, y: box.y, width: 256, height: 16 },
+  });
+  // Decoded in the page: the middle of each square.
+  return page.evaluate(async (base64) => {
+    const image = await createImageBitmap(
+      new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
+        type: "image/png",
+      }),
+    );
+    const canvas = new OffscreenCanvas(256, 16);
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    let number = 0;
+    for (let bit = 0; bit < 16; bit += 1) {
+      const [red, green, blue] = context.getImageData(
+        bit * 16 + 8,
+        8,
+        1,
+        1,
+      ).data;
+      const light = (red + green + blue) / 3;
+      if (light > 180) number |= 1 << bit;
+      else if (light > 75) return null;
+    }
+    return number;
+  }, png.toString("base64"));
+}
+
+/**
+ * What the picture's worker counts for the probes (`quicVideoProbe` in
+ * `video.worker.ts`): the frames drawn, their ages by the millisecond, the
+ * page's own delay by the tenth of a millisecond, and the newest frame's
+ * capture time. `null` while the page has no such worker.
+ */
+export async function videoProbe(page) {
+  for (const worker of page.workers()) {
+    const found = await worker
+      .evaluate(() =>
+        self.quicVideoProbe
+          ? {
+              frames: self.quicVideoProbe.frames,
+              ages: Array.from(self.quicVideoProbe.ages),
+              waits: Array.from(self.quicVideoProbe.waits),
+              lastCaptureMicros: self.quicVideoProbe.lastCaptureMicros,
+            }
+          : null,
+      )
+      .catch(() => null);
+    if (found) return found;
+  }
+  return null;
+}
+
 // The board as the page and the gateway see it: the transport API of the web
 // server, its side of the link, and the gateway's unit.
 export class Board {
-  /** `port`: the page's TCP port, and so the gateway's UDP port. */
-  constructor(port) {
+  /**
+   * `port`: the page's TCP port, and so the UDP port the page connects to.
+   * `gatewayPort`: where the gateway listens, when a relay stands between
+   * the page and it. `frameSocket`: the encoder's frame socket, when the
+   * board has an H.264 picture.
+   */
+  constructor(port, { gatewayPort = port, frameSocket = null } = {}) {
     this.port = port;
+    this.gatewayPort = gatewayPort;
+    this.frameSocket = frameSocket;
     this.directory = fs.mkdtempSync(path.join(os.tmpdir(), "quic-contract-"));
     this.socketPath = path.join(this.directory, "link.sock");
     // The switch, and what the firewall mode does to the port.
@@ -92,6 +203,11 @@ export class Board {
     this.leases = [];
     this.leaseDelayMs = 0;
     this.leaseAnswer = null;
+    // The sessions the server holds the encoder's demand for, what was asked
+    // about the picture, and why the server would not have one.
+    this.watching = new Set();
+    this.videoRequests = [];
+    this.videoRefusal = null;
     this.link = net.createServer((socket) => this.serve(socket));
   }
 
@@ -125,6 +241,7 @@ export class Board {
       this.hello = null;
       this.tokens.clear();
       this.sessions = [];
+      this.watching.clear();
     };
     socket.on("close", gone);
     socket.on("error", gone);
@@ -153,6 +270,25 @@ export class Board {
       case "closed":
         this.closed.push(message.session);
         this.sessions = this.sessions.filter((one) => one !== message.session);
+        this.watching.delete(message.session);
+        break;
+      case "video":
+        this.videoRequests.push({
+          session: message.session,
+          subscribe: message.subscribe,
+        });
+        if (message.subscribe && this.videoRefusal) {
+          this.say({
+            t: "video_answer",
+            id: message.id,
+            ok: false,
+            reason: this.videoRefusal,
+          });
+          break;
+        }
+        if (message.subscribe) this.watching.add(message.session);
+        else this.watching.delete(message.session);
+        this.say({ t: "video_answer", id: message.id, ok: true });
         break;
       case "lease":
         this.leases.push({
@@ -209,8 +345,11 @@ export class Board {
     assert.equal(this.child, null, "the gateway is already running");
     this.child = spawn(GATEWAY, [], {
       env: {
-        BLI_KVM_QUIC_BIND: `127.0.0.1:${this.port}`,
+        BLI_KVM_QUIC_BIND: `127.0.0.1:${this.gatewayPort}`,
         BLI_KVM_QUIC_LINK_SOCKET: this.socketPath,
+        ...(this.frameSocket
+          ? { BLI_KVM_QUIC_FRAME_SOCKET: this.frameSocket }
+          : {}),
       },
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -239,7 +378,8 @@ export class Board {
         active: this.child !== null,
         connected: this.hello !== null,
         blocked: this.blocked,
-        ...(this.hello ? { port: this.hello.port } : {}),
+        // The port the page reaches the gateway on: its own.
+        ...(this.hello ? { port: this.port } : {}),
       },
     };
   }
@@ -255,7 +395,7 @@ export class Board {
     if (!this.unknownToken) this.tokens.add(token);
     const grant = {
       granted: true,
-      port: this.hello.port,
+      port: this.port,
       certificateSha256: this.wrongHash
         ? "0".repeat(64)
         : this.hello.certificateSha256,
@@ -272,6 +412,14 @@ export class Board {
       evidence: "source_verified",
     });
     const manifest = defaultManifest({
+      ...(this.frameSocket
+        ? {
+            video: {
+              ...defaultManifest().video,
+              transports: ["mjpeg", "web_rtc_janus", "web_rtc_janus_h264"],
+            },
+          }
+        : {}),
       board: {
         features: {
           network_quic: feature("read_write"),
@@ -324,7 +472,7 @@ export async function openPage(
   browser,
   app,
   board,
-  { choice = "standard", mobile = false, prepare } = {},
+  { choice = "standard", videoMode = null, mobile = false, prepare } = {},
 ) {
   const context = await browser.newContext(
     mobile
@@ -346,6 +494,15 @@ export async function openPage(
     },
     [CHOICE_KEY, choice],
   );
+  if (videoMode) {
+    await context.addInitScript(
+      ([key, value]) => {
+        if (localStorage.getItem(key) === null)
+          localStorage.setItem(key, value);
+      },
+      [VIDEO_MODE_KEY, videoMode],
+    );
+  }
   if (prepare) await prepare(context);
   const page = await context.newPage();
   page.setDefaultTimeout(PATIENCE);

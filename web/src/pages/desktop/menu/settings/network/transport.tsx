@@ -190,6 +190,7 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
   // QUIC can be left at any time; it can be chosen when nothing hinders it.
   const quicIsOffered = choice === 'quic' || (quic !== null && hindrance === null);
 
+  const counters = choice === 'quic' && status.state === 'connected' ? status.counters : null;
   const statusText =
     choice !== 'quic' || status.state === 'off'
       ? t('settings.network.transport.status.standard')
@@ -266,6 +267,11 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
           }
           data-testid="transport-status"
           data-state={choice === 'quic' ? status.state : 'off'}
+          // What the gateway counts for this session, for the probes.
+          data-frames-sent={counters?.framesSent}
+          data-frames-dropped={counters?.framesDropped}
+          data-key-frames={counters?.keyFrames}
+          data-packets-lost={counters?.packetsLost}
         >
           {statusText}
         </span>

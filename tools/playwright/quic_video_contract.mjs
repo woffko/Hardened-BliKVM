@@ -1,0 +1,492 @@
+// The picture over the QUIC transport, through the built page, the host's
+// build of the gateway, a played server (quic_fixture.mjs) and the encoder's
+// own x264 engine behind a frame socket (the encoder crate's
+// h264_frame_source). A UDP relay (tools/net/udp_impair_proxy.mjs) stands
+// between the page and the gateway, and loses datagrams when told to.
+//
+// With QUIC chosen and H.264 the Screen menu's mode, headless Chromium
+// decodes the stream with WebCodecs: the frame's number is read back from
+// the canvas. Under loss the picture goes on, never shows an older frame
+// after a newer one, and asks for a bounded number of key frames; without
+// loss it asks for none. Where the picture cannot be had over the session,
+// H.264 stays on WebRTC and Settings says why.
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { startUdpProxy } from "../net/udp_impair_proxy.mjs";
+import { startApp } from "./app_harness.mjs";
+import {
+  Board,
+  connected,
+  frameNumber,
+  launch,
+  now,
+  openPage,
+  openSettings,
+  sleep,
+  startFrameSource,
+  until,
+  videoProbe,
+} from "./quic_fixture.mjs";
+import { freePort } from "./quic_stack_rig.mjs";
+
+/** The source's rate, and the least that counts as the whole picture. */
+const FPS = 30;
+const WHOLE_FPS = 24;
+/** Each way, while the path is bad. */
+const LOSS = 0.03;
+const LOSSY_MS = 8000;
+
+const browser = await launch();
+const app = await startApp();
+const PORT = Number(new URL(app.baseUrl).port);
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), "quic-video-"));
+const frameSocket = path.join(directory, "frames.sock");
+let source = await startFrameSource(frameSocket, { fps: FPS });
+// The page reaches the gateway on its own port, where the relay listens.
+const gatewayPort = await freePort();
+const relay = await startUdpProxy({
+  listen: { host: "127.0.0.1", port: PORT },
+  target: { host: "127.0.0.1", port: gatewayPort },
+  seed: 20261002,
+});
+const board = new Board(PORT, { gatewayPort, frameSocket });
+await board.listen();
+board.enabled = true;
+board.startGateway();
+await board.gatewayOnTheLink();
+// The menu bar stays where it is: this contract opens it late in a page's
+// life, and is not about its hiding.
+const MENU_KEY = "hardened-blikvm-menu-auto-hide";
+const open = ({ prepare, ...options } = {}) =>
+  openPage(browser, app, board, {
+    choice: "quic",
+    videoMode: "h264",
+    ...options,
+    prepare: async (context) => {
+      await context.addInitScript(
+        ([key, value]) => localStorage.setItem(key, value),
+        [MENU_KEY, "always"],
+      );
+      if (prepare) await prepare(context);
+    },
+  });
+
+/**
+ * The picture's counters as its canvas carries them; `null` while H.264 is
+ * not drawn from the session.
+ */
+const stats = (page) =>
+  page.evaluate(() => {
+    const canvas = document.querySelector(
+      'canvas#screen[data-video-transport="quic"]',
+    );
+    if (!canvas || canvas.dataset.quicFrames === undefined) return null;
+    const number = (value) => (value ? Number(value) : null);
+    return {
+      frames: Number(canvas.dataset.quicFrames),
+      fps: Number(canvas.dataset.quicFps),
+      ageMedian: number(canvas.dataset.quicAgeMedian),
+      ageP95: number(canvas.dataset.quicAgeP95),
+      waitMedian: number(canvas.dataset.quicWaitMedian),
+      dropped: Number(canvas.dataset.quicDropped),
+      requests: Number(canvas.dataset.quicRequests),
+      resets: Number(canvas.dataset.quicResets),
+    };
+  });
+const playing = (page, frames = 45) =>
+  until("the picture comes over the session", async () => {
+    const seen = await stats(page);
+    return seen && seen.frames >= frames ? seen : null;
+  });
+/** WebRTC serves H.264: its video element is the screen. */
+const onWebRtc = async (page) => {
+  await page.locator("video#screen").waitFor({ state: "attached" });
+  assert.equal(await stats(page), null);
+};
+const videoLine = (page) => page.locator('[data-testid="transport-video"]');
+const videoLineSays = (page, state) =>
+  page.waitForFunction(
+    (wanted) =>
+      document
+        .querySelector('[data-testid="transport-video"]')
+        ?.getAttribute("data-video") === wanted,
+    state,
+  );
+async function closeSettings(page) {
+  await page.keyboard.press("Escape");
+  await page
+    .locator('[data-testid="transport-settings"]')
+    .waitFor({ state: "detached" });
+}
+/** What the Screen menu calls its H.264 mode. */
+async function menuEntry(page) {
+  await page.locator("svg.lucide-monitor").first().click();
+  await page.getByText("Video Mode", { exact: true }).hover();
+  const entry = page.locator('[data-video-mode-name="h264"]');
+  await entry.waitFor();
+  const text = await entry.innerText();
+  // A click on the screen closes the menu; remote control is off.
+  await page.mouse.click(640, 560);
+  await entry.waitFor({ state: "hidden" });
+  return text;
+}
+const subscriptions = () =>
+  board.videoRequests.filter((request) => request.subscribe);
+// Ends a scenario: the page leaves, as a closed tab does, and what its
+// sessions held is given back.
+async function finish(page, context) {
+  await page.goto("about:blank");
+  await until("the page's sessions are closed", () =>
+    board.sessions.length === 0 && board.watching.size === 0 ? true : null,
+  );
+  await context.close();
+  await sleep(100);
+  board.videoRequests.length = 0;
+}
+
+try {
+  // The picture comes over the session and is the encoder's: the frame's
+  // number moves on at the source's rate, nothing is lost or asked for, and
+  // the page says what serves the picture.
+  {
+    const { context, page, errors } = await open();
+    const first = await playing(page);
+    assert.deepEqual(subscriptions(), [
+      { session: board.sessions[0], subscribe: true },
+    ]);
+    assert.equal(board.watching.size, 1);
+    assert.equal(await page.locator("video#screen").count(), 0);
+
+    const numberBefore = await frameNumber(page);
+    const readAt = now();
+    await sleep(2000);
+    const numberAfter = await frameNumber(page);
+    const seconds = (now() - readAt) / 1000;
+    assert.ok(numberBefore !== null && numberAfter !== null, "no picture");
+    const advanced = numberAfter - numberBefore;
+    assert.ok(
+      advanced >= seconds * FPS * 0.7 && advanced <= seconds * FPS * 1.3,
+      `the picture moved ${advanced} frames in ${seconds.toFixed(2)} s`,
+    );
+
+    const later = await stats(page);
+    assert.ok(later.frames > first.frames);
+    assert.ok(later.fps >= WHOLE_FPS, `${later.fps} frames a second`);
+    assert.equal(later.requests, 0);
+    assert.equal(later.dropped, 0);
+    assert.equal(later.resets, 0);
+    // A frame's age by the board's clock: there is one, and it is short.
+    assert.ok(
+      later.ageMedian !== null &&
+        later.ageMedian > -5 &&
+        later.ageMedian < 500 &&
+        later.ageP95 >= later.ageMedian,
+      `frame age ${later.ageMedian} ms, ${later.ageP95} ms`,
+    );
+
+    // What the worker counts for the probes: an age for the frames that a
+    // ping has enclosed, the page's own delay for every frame, and the
+    // capture time of the newest, which moves on with the board's clock.
+    const sum = (counts) => counts.reduce((total, count) => total + count, 0);
+    const probed = await videoProbe(page);
+    await sleep(1000);
+    const probedLater = await videoProbe(page);
+    // The canvas says once a second what the worker counts all the time.
+    const drawn = (await stats(page)).frames + 2 * FPS;
+    assert.ok(probedLater.frames > probed.frames);
+    assert.equal(sum(probedLater.waits), probedLater.frames);
+    assert.ok(
+      sum(probedLater.waits) >= later.frames && sum(probedLater.waits) <= drawn,
+      `${sum(probedLater.waits)} delays for ${drawn} frames`,
+    );
+    assert.ok(
+      sum(probedLater.ages) >= later.frames - FPS &&
+        sum(probedLater.ages) <= drawn,
+      `${sum(probedLater.ages)} ages for ${drawn} frames`,
+    );
+    const captured =
+      (probedLater.lastCaptureMicros - probed.lastCaptureMicros) / 1e6;
+    assert.ok(
+      captured > 0.7 && captured < 1.6,
+      `the newest frame was captured ${captured} s after the one a second ago`,
+    );
+    // The page adds little: a frame is drawn within milliseconds of arriving.
+    assert.ok(
+      later.waitMedian !== null &&
+        later.waitMedian >= 0 &&
+        later.waitMedian < 100,
+      `${later.waitMedian} ms from arrival to drawing`,
+    );
+
+    assert.equal(await menuEntry(page), "H.264 (QUIC)");
+    await openSettings(page);
+    await connected(page);
+    // The gateway's own count of this session's frames.
+    const status = page.locator('[data-testid="transport-status"]');
+    await page.waitForFunction(
+      () =>
+        Number(
+          document
+            .querySelector('[data-testid="transport-status"]')
+            ?.getAttribute("data-frames-sent"),
+        ) > 60,
+    );
+    assert.equal(await status.getAttribute("data-frames-dropped"), "0");
+    assert.ok(Number(await status.getAttribute("data-key-frames")) >= 1);
+    await videoLineSays(page, "quic");
+    assert.match(
+      await videoLine(page).innerText(),
+      /^H\.264 video is using this session: 640x360, \d+ frames a second, a frame is \d+ ms old when it is decoded\.$/,
+    );
+    assert.equal(
+      await page.locator('[data-testid="transport-video-retry"]').count(),
+      0,
+    );
+
+    // The browser's choice back to Standard: the session ends, what the
+    // server held for it is given back, and WebRTC serves H.264.
+    await page
+      .locator('[data-testid="transport-choice"] label', {
+        hasText: "Standard",
+      })
+      .click();
+    await onWebRtc(page);
+    await until("the session is closed", () =>
+      board.sessions.length === 0 && board.watching.size === 0 ? true : null,
+    );
+    assert.equal(await videoLine(page).count(), 0);
+    await closeSettings(page);
+    assert.equal(await menuEntry(page), "H.264 (WebRTC)");
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // A path that loses datagrams: the picture goes on and never steps back,
+  // key frames are asked for no faster than the encoder makes them, and
+  // once the path is clean again the picture is whole and nothing more is
+  // asked for.
+  {
+    const { context, page, errors } = await open();
+    const before = await playing(page, 60);
+    assert.equal(before.requests, 0);
+    const lostBefore = relay.counters().toClient.dropped;
+    const numbers = [];
+    relay.impair({ loss: LOSS });
+    const started = now();
+    while (now() - started < LOSSY_MS) {
+      numbers.push(await frameNumber(page));
+      await sleep(200);
+    }
+    relay.impair({ loss: 0 });
+    const atEnd = await stats(page);
+    const lost = relay.counters().toClient.dropped - lostBefore;
+    // What the loss broke last is still being mended: the picture is whole
+    // once a second passes at the full rate with nothing given up or asked
+    // for.
+    let previous = null;
+    const whole = await until("the picture is whole again", async () => {
+      await sleep(1100);
+      const seen = await stats(page);
+      const calm =
+        previous !== null &&
+        seen.fps >= WHOLE_FPS &&
+        seen.requests === previous.requests &&
+        seen.dropped === previous.dropped;
+      previous = seen;
+      return calm ? seen : null;
+    });
+    const seconds = (now() - started) / 1000;
+
+    assert.ok(lost > 0, "the relay lost nothing");
+    // Every picture drawn was a whole frame, and none older than the last.
+    assert.ok(
+      numbers.every((number) => number !== null),
+      `a picture was not a frame: ${numbers}`,
+    );
+    assert.deepEqual(
+      numbers,
+      [...numbers].sort((left, right) => left - right),
+      "the picture stepped back",
+    );
+    assert.ok(
+      numbers.at(-1) - numbers[0] >= (LOSSY_MS / 1000) * FPS * 0.5,
+      `the picture stood still: ${numbers}`,
+    );
+    assert.ok(
+      atEnd.frames - before.frames >= (LOSSY_MS / 1000) * 5,
+      `${atEnd.frames - before.frames} frames were drawn under loss`,
+    );
+    // The loss broke the chain more than once. A round of recovery ends with
+    // a key frame, and the encoder makes one on request no more often than
+    // every half second; a request is repeated only after a second without
+    // one. The last round ends within a second of the loss.
+    const rounds = 2 * (LOSSY_MS / 1000 + 1) + 1;
+    assert.ok(whole.requests >= 2, `${whole.requests} key-frame requests`);
+    assert.ok(
+      whole.requests <= rounds,
+      `${whole.requests} key-frame requests, more than ${rounds}`,
+    );
+    assert.ok(whole.dropped > 0);
+    console.log(
+      `${LOSS * 100}% loss for ${(LOSSY_MS / 1000).toFixed(0)} s: ` +
+        `${lost} datagrams lost towards the page, ` +
+        `${atEnd.frames - before.frames} frames drawn, ` +
+        `${whole.dropped} given up, ${whole.requests} key-frame requests, ` +
+        `whole and calm again ${(seconds - LOSSY_MS / 1000).toFixed(1)} s after it`,
+    );
+
+    // Clean again: nothing more is given up or asked for.
+    await sleep(2500);
+    const settled = await stats(page);
+    assert.equal(settled.requests, whole.requests);
+    assert.equal(settled.dropped, whole.dropped);
+    assert.ok(settled.fps >= WHOLE_FPS, `${settled.fps} frames a second`);
+    // The status line counts the page's own requests.
+    await openSettings(page);
+    await page.waitForFunction(
+      (requests) =>
+        document
+          .querySelector('[data-testid="transport-status"]')
+          ?.textContent.endsWith(`key-frame requests ${requests}.`),
+      settled.requests,
+    );
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // The gateway is started again: the page opens a new session, asks for
+  // the picture on it, and the picture goes on.
+  {
+    const { context, page, errors } = await open();
+    const before = await playing(page);
+    const firstSession = board.sessions[0];
+    await board.stopGateway();
+    board.startGateway();
+    await board.gatewayOnTheLink();
+    await until("the picture is back on a new session", async () => {
+      const seen = await stats(page);
+      return seen &&
+        seen.frames >= before.frames + 45 &&
+        subscriptions().length === 2
+        ? true
+        : null;
+    });
+    assert.notEqual(board.sessions[0], firstSession);
+    assert.equal(subscriptions()[1].session, board.sessions[0]);
+    assert.equal(board.watching.size, 1);
+    assert.equal(await page.locator("video#screen").count(), 0);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // The server has no H.264 for a QUIC session: H.264 stays on WebRTC,
+  // Settings says so and offers another attempt, which succeeds once the
+  // server has one.
+  {
+    board.videoRefusal = "unavailable";
+    const { context, page, errors } = await open();
+    await onWebRtc(page);
+    assert.equal(board.watching.size, 0);
+    assert.equal(await menuEntry(page), "H.264 (WebRTC)");
+    await openSettings(page);
+    // The session itself is open, and serves input.
+    await connected(page);
+    await videoLineSays(page, "webrtc");
+    assert.equal(
+      await videoLine(page).innerText(),
+      "H.264 video stays on WebRTC: this device serves no H.264 over QUIC.",
+    );
+    board.videoRefusal = null;
+    await page.locator('[data-testid="transport-video-retry"]').click();
+    await videoLineSays(page, "quic");
+    await playing(page);
+    assert.equal(
+      await page.locator('[data-testid="transport-video-retry"]').count(),
+      0,
+    );
+    assert.equal(board.watching.size, 1);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // The encoder goes away: the gateway waits for it, then says the picture
+  // has stopped, and lets the server's demand go. The page goes on with
+  // WebRTC; with the encoder back, another attempt has the picture again.
+  {
+    const { context, page, errors } = await open();
+    await playing(page);
+    await source.stop();
+    await onWebRtc(page);
+    await until("the server's demand is let go", () =>
+      board.watching.size === 0 ? true : null,
+    );
+    await openSettings(page);
+    await videoLineSays(page, "webrtc");
+    assert.equal(
+      await videoLine(page).innerText(),
+      "H.264 video stays on WebRTC: the H.264 encoder did not answer.",
+    );
+    source = await startFrameSource(frameSocket, { fps: FPS });
+    await page.locator('[data-testid="transport-video-retry"]').click();
+    await videoLineSays(page, "quic");
+    const again = await playing(page);
+    assert.ok(again.fps > 0);
+    assert.notEqual(await frameNumber(page), null);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // A browser without an H.264 decoder in WebCodecs: the session is used,
+  // the picture is not asked for over it, and Settings says why.
+  {
+    const { context, page, errors } = await open({
+      prepare: (context) =>
+        context.addInitScript(() => {
+          delete window.VideoDecoder;
+        }),
+    });
+    await onWebRtc(page);
+    await openSettings(page);
+    await connected(page);
+    await videoLineSays(page, "decoder");
+    assert.equal(
+      await videoLine(page).innerText(),
+      "This browser cannot decode H.264 with WebCodecs: H.264 video stays on WebRTC.",
+    );
+    assert.equal(
+      await page.locator('[data-testid="transport-video-retry"]').count(),
+      0,
+    );
+    await closeSettings(page);
+    assert.equal(await menuEntry(page), "H.264 (WebRTC)");
+    assert.deepEqual(board.videoRequests, []);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // MJPEG keeps its path whatever the browser's choice.
+  {
+    const { context, page, errors } = await open({ videoMode: "mjpeg" });
+    await page.locator("img#screen").waitFor({ state: "attached" });
+    await openSettings(page);
+    await connected(page);
+    await videoLineSays(page, "other");
+    assert.deepEqual(board.videoRequests, []);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  console.log("quic video contract: ok");
+} catch (error) {
+  if (board.stderr) console.error(`gateway:\n${board.stderr}`);
+  throw error;
+} finally {
+  await browser.close();
+  await board.close();
+  await relay.close();
+  await source.stop();
+  app.server.close();
+  fs.rmSync(directory, { recursive: true, force: true });
+}

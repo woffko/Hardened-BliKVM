@@ -252,9 +252,10 @@ server answers `clock` instead.
    restarting.
 
 Limits: 8 connections, 2 per web session; 64 tokens waiting, the oldest
-giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s. A
-gateway that connects anew replaces the one before it, and the sessions and
-tokens of that one are forgotten.
+giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s,
+and every 250 ms while it watches the picture (for the board's clock, see
+"Receiver"). A gateway that connects anew replaces the one before it, and
+the sessions and tokens of that one are forgotten.
 
 A gateway that stops leaves the link before it closes its connections and
 lets them drain (up to 2 s): from that moment the server answers
@@ -333,9 +334,22 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
   than the gap ends it.
 - WebCodecs `VideoDecoder`, tuned for latency, draws to the `#screen` canvas;
   the picture's size follows the stream.
-- The board's clock is estimated from the pings (offset and rate, from the
-  samples with the shortest round trip); a frame's age is the time from its
-  capture to its decoding by that estimate.
+- **The age of a frame** is the time from its capture to its drawing, by
+  the board's clock. The page learns that clock from its pings: an answer
+  carries the board's time, which is taken for the middle of the round
+  trip. Only the pings with the shortest round trips count (within 2 ms of
+  the fastest of the last twenty), and they are kept as points. The board's
+  time at a frame's drawing is read between the two points around it, so a
+  frame's age is known once the next ping has been answered, and neither
+  the offset between the two clocks nor their rates need to be known. While
+  the picture is watched the page pings four times a second.
+
+  The first version drew one line through two minutes of pings, which is
+  right for a steady clock. The development host's is not: its monotonic
+  clock ran at 0.970 to 0.978 of the true rate and changed its rate every
+  8 to 16 s (measured against `CLOCK_MONOTONIC_RAW`), which puts such a line
+  off by tens of milliseconds. Between two pings 250 ms apart the same clock
+  is off by less than 1 ms (`tools/test_quic_board_clock.mjs` plays it).
 
 **In the page** (`web/src/lib/quic`):
 
@@ -355,9 +369,18 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
   4 MiB and its header. A stream that ends in a reset was overtaken by a
   newer key frame and is not one.
 - The worker reports once a second: frames drawn, frames in the last
-  second, the age of a frame as median and 95th percentile over that second,
-  frames given up, key-frame requests made, decoder restarts. The canvas
-  carries them as `data-quic-*` attributes for the probes.
+  second, the age of the frames whose age became known since the last
+  report as median and 95th percentile, the page's own share (from a
+  frame's arrival, with its first fragment or its key frame's stream, to its
+  drawing), frames given up, key-frame requests made, decoder restarts. The
+  canvas carries them as `data-quic-*` attributes, and the status line
+  carries what the gateway counts for the session (`data-frames-sent`,
+  `data-frames-dropped`, `data-key-frames`, `data-packets-lost`).
+- For a probe that measures a span of its own the worker keeps counts since
+  it began (`quicVideoProbe` on its global): the frames drawn, their ages
+  by the millisecond, the page's share by the tenth of a millisecond, and
+  the capture time of the newest frame, which gives the span by the board's
+  clock. A probe reads them twice and takes the difference.
 
 ## Gateway, sending
 
@@ -727,6 +750,65 @@ transports cost on the real network, without the owner and the HID gadget:
 On the local network a report over QUIC is answered in about a seventh of
 the time HTTPS takes. An applied report adds the owner's work to both
 alike.
+
+## Phase Q3: the picture
+
+What is tested:
+
+- **Frame format** (`bli-kvm-quic-protocol`, `frame.rs`): the header and the
+  record header keep the documented layout; what cannot be is refused; a
+  frame is cut into equal fragments and a rest, and a fragment whose length
+  does not fit its frame is recognised.
+- **Encoder** (`src/frames.rs`, `tests/frame_socket.rs`): a client gets
+  records from the next key frame on; a key frame on request is made once
+  per cooldown; a client that does not read loses its queue and holds nobody
+  up; only the admitted user is served, and no more than four clients; the
+  frames are numbered from the stream's first key frame; and the encoder's
+  own process, fed a capture stream, serves numbered H.264 frames and a key
+  frame on request.
+- **Server** (`src/tests/quic_transport.rs`): a subscription over the link
+  holds the encoder's demand and its end lets it go, as does the end of the
+  session; without an encoder there is no picture, with the reason; the
+  quality reaches the encoder over a QUIC session's demand.
+- **Gateway** (`tests/sessions.rs`): the picture is key frames on streams
+  and delta frames as datagrams; a page that lost a frame gets a key frame
+  and nothing before it; a newer key frame overtakes one that is still on
+  its way; a frame without room is dropped whole; the page is told why
+  there is no picture; two sessions share the encoder's frames.
+- **Receiver** (`tools/test_quic_video_receiver.mjs`, the page's module
+  without a browser): the header as the gateway writes it; fragments in any
+  order and duplicates; frames held for the one before them and for their
+  key frame; a contradicting fragment; a frame that stops arriving; a pause
+  longer than the deadline before a fragmented frame does not count against
+  it, one inside it does; the recovery schedule; a failing decoder; the
+  bounds in frames and bytes; old frames, old key frames and another
+  stream; and 100000 random and damaged datagrams and streams, after each
+  of which the bounds hold and no frame has left its chain. The board's
+  clock (`tools/test_quic_board_clock.mjs`) and the codec string
+  (`tools/test_quic_h264.mjs`) have their own.
+- **Page** (`tools/playwright/quic_video_contract.mjs`): the built page, the
+  real gateway, a played server, the encoder's own x264 engine behind a
+  frame socket (`examples/h264_frame_source.rs`: a picture that carries its
+  frame's number) and a UDP relay between the page and the gateway.
+  Headless Chromium decodes the stream: the number read back from the
+  canvas moves on at the source's rate, nothing is given up or asked for on
+  a clean path, and the menu and Settings say what serves the picture. With
+  3% of the datagrams lost each way for 8 s the picture goes on, no picture
+  is older than the one before it, and key frames are asked for no faster
+  than the encoder makes them (two a second); once the path is clean the
+  picture is whole again and nothing more is asked for. The counters the
+  worker keeps for the probes agree with what was drawn. A gateway that is
+  started again gets a new session and a new subscription. A server without
+  H.264 for the session, an encoder that goes away, and a browser without
+  an H.264 decoder leave H.264 on WebRTC with the reason in Settings, and
+  "Retry" has the picture back where another attempt can help. MJPEG is not
+  touched by the choice.
+
+  Eight runs of the lossy part on the development host (640x360, 30 frames
+  a second): 12 to 17 datagrams lost towards the page, 174 to 215 of 240
+  frames drawn, 20 to 32 given up, 4 to 8 key-frame requests; the picture
+  was whole again, with a second in which nothing was given up or asked
+  for, 2.3 to 2.5 s after the loss ended.
 
 ## Changes against the plan
 

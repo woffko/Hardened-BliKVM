@@ -133,6 +133,34 @@ test("delay is added each way and loss takes its share each way", async (t) => {
   assert.deepEqual(again.counters().toTarget, counters.toTarget);
 });
 
+test("the impairment can change while the relay runs", async (t) => {
+  const echo = await udpEcho();
+  t.after(() => echo.close());
+  const proxy = await startUdpProxy({
+    listen: { host: "127.0.0.1", port: 0 },
+    target: { host: "127.0.0.1", port: echo.address().port },
+    seed: 7,
+  });
+  t.after(() => proxy.close());
+  assert.equal((await exchange(proxy.port, 300, 300)).length, 300);
+  proxy.impair({ loss: 0.2 });
+  const lossy = await exchange(proxy.port, 1000, 300);
+  const dropped = () =>
+    proxy.counters().toTarget.dropped + proxy.counters().toClient.dropped;
+  const lost = dropped();
+  assert.equal(lossy.length, 1000 - lost);
+  assert.ok(lost > 250 && lost < 470, `lost ${lost}`);
+  proxy.impair({ loss: 0, delayMs: 20 });
+  const late = await exchange(proxy.port, 300, 300);
+  assert.equal(late.length, 300);
+  assert.equal(dropped(), lost);
+  assert.ok(
+    late.every((entry) => entry.ms >= 39),
+    "an echo came back early",
+  );
+  assert.throws(() => proxy.impair({ loss: 1 }), /loss must be/);
+});
+
 async function tcpEcho() {
   const server = net.createServer((socket) => socket.pipe(socket));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

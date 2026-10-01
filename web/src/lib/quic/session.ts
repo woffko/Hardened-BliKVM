@@ -60,8 +60,11 @@ export type VideoSink = {
   datagram(bytes: Uint8Array): void;
   /** A key frame as its stream delivered it: the header and the frame. */
   keyFrame(bytes: Uint8Array): void;
-  /** A ping answered: its round trip, and the board's clock in the answer. */
-  pong(roundTripMs: number, boardMicros: number): void;
+  /**
+   * A ping answered: its round trip, the board's clock in the answer, and
+   * when the answer arrived (`performance.timeOrigin + performance.now()`).
+   */
+  pong(roundTripMs: number, boardMicros: number, at: number): void;
 };
 
 export type QuicStatus =
@@ -84,6 +87,11 @@ const CONNECT_TIMEOUT_MS = 5000;
  */
 const REFUSED_WITHIN_MS = 2000;
 const PING_INTERVAL_MS = 2000;
+/**
+ * While the picture is watched, the board's clock is asked for this often:
+ * the age of a frame is read between two answers.
+ */
+const CLOCK_PING_INTERVAL_MS = 250;
 /** A session whose pings stay unanswered this long is lost. */
 const PONG_TIMEOUT_MS = 6000;
 /** A key frame's stream may carry this much: a header and the largest frame. */
@@ -532,20 +540,31 @@ class QuicSession {
       let roundTripMs: number | null = null;
       let counters: GatewayCounters | null = null;
 
+      // Pings that ask for the board's clock only.
+      const clockPings = new Set<number>();
+
       const finish = (ended: Ended) => {
         if (done) return;
         done = true;
         clearInterval(pinger);
+        clearInterval(clockPinger);
         resolve(ended);
       };
-      const ping = () => {
-        if (performance.now() - lastPong > PONG_TIMEOUT_MS) return finish('lost');
+      const send = () => {
         pingId += 1;
         open.writer
           .write(encodeMessage({ t: 'ping', id: pingId, pageTime: performance.now() }))
           .catch(() => finish('lost'));
+        return pingId;
+      };
+      const ping = () => {
+        if (performance.now() - lastPong > PONG_TIMEOUT_MS) return finish('lost');
+        send();
       };
       const pinger = setInterval(ping, PING_INTERVAL_MS);
+      const clockPinger = setInterval(() => {
+        if (this.open === open && this.sink) clockPings.add(send());
+      }, CLOCK_PING_INTERVAL_MS);
       ping();
 
       const publish = () => {
@@ -558,12 +577,17 @@ class QuicSession {
           const message = await nextMessage(open);
           if (!message) return finish('lost');
           switch (message.t) {
-            case 'pong':
+            case 'pong': {
               lastPong = performance.now();
-              roundTripMs = lastPong - message.pageTime;
-              if (this.open === open) this.sink?.pong(roundTripMs, message.boardTime);
+              const trip = lastPong - message.pageTime;
+              if (this.open === open) {
+                this.sink?.pong(trip, message.boardTime, performance.timeOrigin + lastPong);
+              }
+              if (clockPings.delete(message.id)) break;
+              roundTripMs = trip;
               publish();
               break;
+            }
             case 'video':
               if (this.open !== open || !this.sink) break;
               if (message.state === 'started') {

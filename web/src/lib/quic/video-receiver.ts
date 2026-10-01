@@ -26,6 +26,11 @@ export type ReceivedFrame = {
   stream: number;
   frame: number;
   captureMicros: number;
+  /**
+   * When the frame began to arrive, by the time the caller gave: with its
+   * first fragment, or with its key frame's stream.
+   */
+  receivedAt: number;
   /** The encoded frame, Annex B. */
   data: Uint8Array;
 };
@@ -158,6 +163,7 @@ export class VideoReceiver {
       stream: header.stream,
       frame: header.frame,
       captureMicros: header.captureMicros,
+      receivedAt: now,
       data: bytes.subarray(HEADER_BYTES)
     };
     this.counters.delivered += 1;
@@ -312,6 +318,7 @@ export class VideoReceiver {
         stream: next.header.stream,
         frame: next.header.frame,
         captureMicros: next.header.captureMicros,
+        receivedAt: next.firstAt,
         data: next.complete
       });
     }
