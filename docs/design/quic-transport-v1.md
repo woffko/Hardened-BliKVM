@@ -134,3 +134,171 @@ What the runs say beyond the numbers:
 Not checked: Firefox and Safari (neither is installed on the development
 host).
 
+## Threat model of the new listener
+
+| Who | What they can try | What stops it |
+| --- | --- | --- |
+| Anyone who reaches UDP 443 | handshake floods, amplification, many connections | off by default; QUIC address validation before any state is kept; at most 8 connections; 5 s to present a token; the unit's memory limit; closed in the Restricted and Paranoid firewall modes |
+| Anyone who reaches UDP 443 | malformed packets against the QUIC and TLS code | a memory-safe stack; a process of its own without files, devices or the owner's and broker's sockets; a crash ends QUIC only, HTTPS and the lease are untouched |
+| A web page in the operator's browser | open a session to the board | it has no token: one is issued only to the authenticated session with its CSRF token, once, for 30 s; the gateway also refuses a foreign `Origin` |
+| Someone on the path | pose as the board on UDP 443 | the certificate's hash comes over the HTTPS session; TLS 1.3 only |
+| Someone who replays a captured token | reuse it | single use, 30 s, bound to the web session |
+| A taken-over gateway process | act on the board | it can only speak the server link's closed protocol: redeem tokens it was given, pass lease requests of sessions it serves (the server applies the lease rules), read the frames every viewer gets. It cannot issue tokens, reach the owner or read a password |
+| An authenticated page | exhaust the gateway or the encoder | bounded queues and message sizes; key-frame requests limited by the schedule and by the encoder's cooldown |
+
+Tokens, their hashes, report contents and frame data never reach a log.
+
+## Processes
+
+- **`bli-kvm-quic-gateway`** (`hardened-blikvm-quic.service`, system user
+  `hardened-blikvm-quic`), installed by the update-runtime package in
+  `/usr/libexec/hardened-blikvm`. It runs only while the board's switch is
+  on. One thread. Sandbox like the video proxy's, except that it may bind
+  UDP 443 (handed over by a socket unit, or with `CAP_NET_BIND_SERVICE` and
+  nothing else) and talk to the network on it.
+- **Server link**: a Unix socket in the server's runtime directory that
+  accepts only the gateway's user (peer credentials). The gateway connects
+  and keeps one connection; it reconnects when the server restarts, and its
+  QUIC sessions end with the server's.
+- **Frame socket**: a Unix socket of the H.264 encoder unit, open to the
+  gateway's group.
+- Crate **`bli-kvm-quic-protocol`**: the messages of the page, of the server
+  link and of the frame socket, with their limits; no dependency beyond
+  `serde`. The gateway, the server and the encoder use it.
+
+## Certificate
+
+ECDSA P-256, made in memory at start, valid for 13 days from one hour
+before. After 7 days the gateway makes a new one and reloads the endpoint's
+configuration: sessions that are open go on, new ones get the new
+certificate. No private key reaches a disk. The server learns the hash over
+the link and gives it to the page with the token. The page sends its clock
+with the request; if the certificate would not be valid by that clock, the
+server answers `clock` instead.
+
+## Session
+
+1. `POST /api/transport/quic/session` with the page's clock (authenticated,
+   CSRF). Answer: port, certificate hash, token (256 random bits, single
+   use, 30 s, bound to the web session), or the reason there is none:
+   `off`, `blocked`, `unavailable`, `clock`.
+2. The page opens `https://<host>:<port>/kvm` with the hash. The gateway
+   validates the address before keeping state, refuses a foreign `Origin`
+   and any other path.
+3. The page opens the control stream and sends `hello` with the protocol
+   number (1) and the token. The gateway redeems the token over the server
+   link and gets an opaque session reference. Without a redeemed token after
+   5 s the connection is closed.
+4. The session has the web session's rights and ends with it: logout,
+   expiry, session lock, password change, the switch going off, the server
+   restarting.
+
+Limits: 8 connections, 2 per web session; idle timeout 30 s; keep-alive
+5 s; the page pings every 2 s.
+
+## Messages
+
+Control and input messages are JSON objects, each preceded by its length as
+two bytes (at most 4096); unknown fields and types are refused.
+
+**Control stream** (opened by the page):
+
+| From | Message |
+| --- | --- |
+| page | `hello` (protocol, token); `ping` (id, page time); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
+| gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, datagrams sent and lost, frames dropped, key frames sent), every 2 s; `closing` (reason) |
+
+**Input stream** (opened by the page): each message is a request of the HID
+lease API as the page sends it to `/api/hid/lease` today (acquire, renew,
+report, release) with a sequence number, and each answer is that API's
+answer with the same number.
+
+**Frames.** Every key frame travels on a unidirectional stream of its own,
+opened by the gateway; if a newer key frame is ready before an older one is
+through, the older stream is reset. A delta frame travels as datagrams. Both
+begin with the same 32-byte header, integers big-endian:
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | version (1) |
+| 1 | 1 | kind: 1 key frame, 2 delta fragment |
+| 2 | 1 | codec: 1 H.264, Annex B |
+| 3 | 1 | reserved, zero |
+| 4 | 2 | fragment index (zero for a key frame) |
+| 6 | 2 | fragment count (one for a key frame) |
+| 8 | 4 | stream id: new after an encoder restart or a change of size |
+| 12 | 4 | frame id, rising by one within a stream |
+| 16 | 4 | reference: the id of the key frame this frame depends on (its own for a key frame) |
+| 20 | 4 | size of the complete frame |
+| 24 | 8 | capture time, microseconds of the board's monotonic clock |
+
+A datagram is at most 1200 bytes and never more than the path's live limit.
+
+## Receiver (the page's decoder worker)
+
+- Fragments in any order; an exact duplicate is ignored; a fragment that
+  contradicts what is known of its frame discards the frame. At most 4
+  frames and 2 MiB pending.
+- A frame without a new fragment for 120 ms, or older than 1 s, is given up.
+- A frame is decoded only if it continues the chain: its stream is the
+  current one, its reference is the last decoded key frame, and its id
+  follows the last decoded frame. Otherwise it waits for its key frame or is
+  dropped.
+- A gap, a frame given up or a decoder error starts recovery: one `keyframe`
+  request, repeated after 1, 2 and 4 s, then none for 10 s; a key frame newer
+  than the gap ends it.
+- WebCodecs `VideoDecoder`, tuned for latency, draws to the `#screen` canvas;
+  the picture's size follows the stream.
+- The board's clock is estimated from the pings (offset and rate, from the
+  samples with the shortest round trip); a frame's age is the time from its
+  capture to its decoding by that estimate.
+
+## Gateway, sending
+
+- A frame's fragments are handed to the endpoint together. If the endpoint's
+  datagram buffer has no room for the whole frame, the frame is dropped and
+  counted, and the session then needs a key frame, like after a loss.
+- The gateway asks the encoder for a key frame when a session subscribes,
+  when it dropped a frame for it, or when the page asks; one key frame
+  answers every session that waits for one.
+
+## Encoder
+
+The H.264 encoder unit gains the frame socket. A client receives records
+(the header above without the fragment fields, then the frame) from the next
+key frame on. A client that does not read loses its queue and starts again
+from a key frame; it never holds the encoder up. A key frame on request is
+made at most once per cooldown. Janus keeps its RTP and its periodic key
+frames. The server holds the demand and sets the quality for a QUIC viewer
+as for a WebRTC viewer.
+
+## Input
+
+The server stays the only authority: a lease request from the link is served
+by the code behind `/api/hid/lease`, for the web session the token belonged
+to. Order is the stream's. The page keeps one mouse report in flight and
+never drops a keyboard report, as today. A QUIC session that ends releases
+the lease like a client that vanished.
+
+## Switches, Settings, failures, firewall
+
+As in the plan: the board's switch `quic_transport` (default off, kept by
+the owner, written to the switch file only while on); Settings > Network >
+Transport with the switch, this browser's choice (Standard by default) and
+the status line; the failure table; no firewall rule, `quicBlocked` in the
+firewall status for Restricted and Paranoid. The Content-Security-Policy is
+unchanged.
+
+## What stays on HTTPS
+
+The page and its login, the whole API including the session request above,
+settings, media and image transfers, the terminal, MJPEG, the WebRTC
+signalling, and everything when the browser's choice is Standard.
+
+## Changes against the plan
+
+| Plan | Now | Why |
+| --- | --- | --- |
+| Q0.3 on a high UDP port | on UDP 443 | the page's policy admits only its own origin |
+| Key frames on one stream | one stream per key frame | a newer key frame can replace one that is still in transit |
+| 15% of a core at 8 Mbit/s | holds for frames sent as bursts | the cost is per wake-up, not per byte; measured both ways |
