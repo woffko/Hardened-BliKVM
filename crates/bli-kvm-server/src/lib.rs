@@ -387,6 +387,16 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 bli_kvm_core::VideoSetting::Resolution,
                 bli_kvm_core::VideoSetting::FrameDetect,
             ];
+            // The WebRTC encoders take their bitrate over the demand socket.
+            if options.webrtc_janus.is_some()
+                && (options.webrtc_demand_socket.is_some()
+                    || options.webrtc_h264_demand_socket.is_some())
+            {
+                manifest
+                    .video
+                    .settings
+                    .push(bli_kvm_core::VideoSetting::WebrtcBitrate);
+            }
         }
         if options.network_writes_enabled {
             manifest.network.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -413,6 +423,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 janus,
                 options.webrtc_demand_socket.clone(),
                 options.webrtc_h264_demand_socket.clone(),
+                webrtc::load_bitrate(&options.state_dir),
             )
         }),
         update_activation: options
@@ -1510,12 +1521,13 @@ mod tests {
             seen.iter()
                 .all(|request| request["janus"] == "create" || request["session_id"] == 11)
         );
-        // The viewer left, so the demand connection closed after naming VP8.
+        // The viewer left, so the demand connection closed after naming VP8
+        // and the bitrate (the default, nothing was chosen).
         let asked = tokio::time::timeout(std::time::Duration::from_secs(5), demand)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(asked, b"vp8\n");
+        assert_eq!(asked, b"vp8\nkbps 2500\n");
         server.abort();
     }
 
@@ -2031,6 +2043,59 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let (_, body) = session_lock_state(&app, &cookie, None).await;
         assert_eq!(body["data"]["duration"], 3600);
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn the_webrtc_quality_is_offered_checked_and_kept() {
+        let root = tempdir().unwrap();
+        let state_dir = root.path().join("account");
+        let options = ServerOptions {
+            state_dir: state_dir.clone(),
+            restricted_controls_enabled: true,
+            video_controls_enabled: true,
+            control_socket: Some(root.path().join("control.sock")),
+            webrtc_janus: Some("127.0.0.1:8188".parse().unwrap()),
+            webrtc_h264_demand_socket: Some(root.path().join("h264.sock")),
+            ..ServerOptions::default()
+        };
+        let app = app_with_options(options);
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let response = app
+            .clone()
+            .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+            .await
+            .unwrap();
+        let settings = json_body(response).await["data"]["video"]["settings"].clone();
+        assert!(
+            settings
+                .as_array()
+                .unwrap()
+                .contains(&Value::from("webrtc_bitrate")),
+            "{settings}"
+        );
+        let post = |value: i64| {
+            let mut request = json_request(
+                Method::POST,
+                "/api/vm/screen",
+                serde_json::json!({"type": "webrtc_kbps", "value": value}),
+            );
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            request
+        };
+        let body = json_body(app.clone().oneshot(post(5000)).await.unwrap()).await;
+        assert_eq!(body["data"]["applied"], true, "{body}");
+        assert_eq!(body["data"]["webrtcKbps"], 5000);
+        let body = json_body(app.clone().oneshot(post(3000)).await.unwrap()).await;
+        assert_eq!(body["data"]["applied"], false);
+        assert_eq!(body["data"]["rejection"], "value_out_of_range");
+        // Kept for the next start of the server.
+        assert_eq!(webrtc::load_bitrate(&state_dir), 5000);
     }
 
     #[tokio::test]

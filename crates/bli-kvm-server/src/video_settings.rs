@@ -37,7 +37,7 @@ pub(crate) struct ScreenBody {
     pub value: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScreenOutcome {
     /// Configured capture mode; independent from observed frame dimensions.
@@ -60,6 +60,9 @@ pub(crate) struct ScreenOutcome {
     pub height: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queued_fps: Option<f64>,
+    /// The WebRTC encoders' target bitrate in kbit/s, when WebRTC is offered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webrtc_kbps: Option<u32>,
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -127,6 +130,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             width: None,
             height: None,
             queued_fps: None,
+            webrtc_kbps: None,
         },
         ControlResponse::VideoState {
             fps,
@@ -142,6 +146,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             width: None,
             height: None,
             queued_fps: None,
+            webrtc_kbps: None,
         },
         ControlResponse::Rejected { code } => ScreenOutcome {
             requested_resolution: None,
@@ -153,6 +158,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             width: None,
             height: None,
             queued_fps: None,
+            webrtc_kbps: None,
         },
         _ => ScreenOutcome {
             requested_resolution: None,
@@ -164,6 +170,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             width: None,
             height: None,
             queued_fps: None,
+            webrtc_kbps: None,
         },
     }
 }
@@ -174,6 +181,12 @@ pub(crate) async fn update_screen(
     Extension(CurrentSession(session)): Extension<CurrentSession>,
     Json(body): Json<ScreenBody>,
 ) -> AppResult<Json<ApiResponse<ScreenOutcome>>> {
+    // The WebRTC quality belongs to the server and its encoders, not to the
+    // owner's capture settings.
+    if body.kind == "webrtc_kbps" {
+        return set_webrtc_bitrate(&state, body.value)
+            .map(|outcome| Json(ApiResponse::ok(outcome)));
+    }
     let change = match change_from_body(&body) {
         Ok(change) => change,
         Err(rejection) => {
@@ -187,6 +200,7 @@ pub(crate) async fn update_screen(
                 width: None,
                 height: None,
                 queued_fps: None,
+                webrtc_kbps: None,
             })));
         }
     };
@@ -203,6 +217,39 @@ pub(crate) async fn update_screen(
         .await
         .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?;
     Ok(Json(ApiResponse::ok(outcome(response))))
+}
+
+/// Stores the chosen WebRTC bitrate and sends it to the encoders of every
+/// viewer; nothing restarts. Only the offered levels are accepted.
+#[cfg(feature = "restricted-control-surface")]
+fn set_webrtc_bitrate(state: &AppState, value: i64) -> AppResult<ScreenOutcome> {
+    let Some(gateway) = state.webrtc.as_ref() else {
+        return Ok(ScreenOutcome {
+            rejection: Some("unsupported_setting"),
+            ..ScreenOutcome::default()
+        });
+    };
+    let Some(kbps) = u32::try_from(value)
+        .ok()
+        .filter(|kbps| crate::webrtc::BITRATE_LEVELS_KBPS.contains(kbps))
+    else {
+        return Ok(ScreenOutcome {
+            rejection: Some("value_out_of_range"),
+            ..ScreenOutcome::default()
+        });
+    };
+    if let Err(error) = crate::webrtc::store_bitrate(&state.options.state_dir, kbps) {
+        eprintln!("webrtc: the bitrate could not be saved: {error}");
+        return Err(AppError::ServiceUnavailable(
+            "the WebRTC quality could not be saved".into(),
+        ));
+    }
+    gateway.bitrate.send_replace(kbps);
+    Ok(ScreenOutcome {
+        applied: true,
+        webrtc_kbps: Some(kbps),
+        ..ScreenOutcome::default()
+    })
 }
 
 /// Read back the settings the owner will run the engine with.
@@ -225,6 +272,10 @@ pub(crate) async fn screen_state(
         .await
         .map_err(|_| AppError::ServiceUnavailable("video settings are unavailable".into()))?;
     let mut outcome = outcome(response);
+    outcome.webrtc_kbps = state
+        .webrtc
+        .as_ref()
+        .map(|gateway| *gateway.bitrate.borrow());
     // Read the measured state only for an applied state and only when the engine
     // socket is configured; an unreachable engine simply omits the fields.
     if outcome.applied {

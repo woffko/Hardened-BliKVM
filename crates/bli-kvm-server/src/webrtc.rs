@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
     io::AsyncWriteExt,
@@ -55,6 +55,60 @@ pub(crate) struct WebRtcGateway {
     pub demand: Option<PathBuf>,
     /// The H.264 encoder's; set, H.264 is offered.
     pub h264_demand: Option<PathBuf>,
+    /// The encoders' target bitrate in kbit/s, sent to them over the demand
+    /// connections and changed through the Screen menu's quality.
+    pub bitrate: tokio::sync::watch::Sender<u32>,
+}
+
+/// The WebRTC qualities the Screen menu offers, in kbit/s.
+pub(crate) const BITRATE_LEVELS_KBPS: [u32; 4] = [1500, 2500, 5000, 8000];
+/// The encoder units' own bitrate (`BLI_KVM_VP8_KBPS`), until one is chosen.
+pub(crate) const DEFAULT_BITRATE_KBPS: u32 = 2500;
+/// The chosen quality survives server restarts and updates.
+const BITRATE_FILE: &str = "webrtc-bitrate.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedBitrate {
+    kbps: u32,
+}
+
+/// The chosen bitrate, or the default.
+pub(crate) fn load_bitrate(state_dir: &std::path::Path) -> u32 {
+    std::fs::read(state_dir.join(BITRATE_FILE))
+        .ok()
+        .filter(|bytes| bytes.len() <= 256)
+        .and_then(|bytes| serde_json::from_slice::<PersistedBitrate>(&bytes).ok())
+        .map(|persisted| persisted.kbps)
+        .filter(|kbps| BITRATE_LEVELS_KBPS.contains(kbps))
+        .unwrap_or(DEFAULT_BITRATE_KBPS)
+}
+
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn store_bitrate(state_dir: &std::path::Path, kbps: u32) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(state_dir)?;
+    let mut file = tempfile::Builder::new()
+        .prefix(".webrtc-bitrate-")
+        .tempfile_in(state_dir)?;
+    file.as_file()
+        .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(
+        &serde_json::to_vec(&PersistedBitrate { kbps }).map_err(std::io::Error::other)?,
+    )?;
+    file.as_file().sync_all()?;
+    file.persist(state_dir.join(BITRATE_FILE))
+        .map_err(|error| error.error)?;
+    Ok(())
+}
+
+/// Holds an encoder's demand connection; dropping it ends the demand.
+pub(crate) struct DemandGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for DemandGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// The codec a viewer asked for (`?codec=`).
@@ -90,6 +144,7 @@ impl WebRtcGateway {
         janus: SocketAddr,
         demand: Option<PathBuf>,
         h264_demand: Option<PathBuf>,
+        kbps: u32,
     ) -> Option<Arc<Self>> {
         janus.ip().is_loopback().then(|| {
             Arc::new(Self {
@@ -97,26 +152,44 @@ impl WebRtcGateway {
                 viewers: Arc::new(Semaphore::new(2)),
                 demand,
                 h264_demand,
+                bitrate: tokio::sync::watch::channel(kbps).0,
             })
         })
     }
 
-    /// Asks the codec's encoder to run while the returned connection is
-    /// held: it otherwise decodes and encodes every changed frame for nobody.
-    /// The first line names the codec. An encoder without the socket runs
-    /// anyway, so a failure only means no demand is signalled.
-    pub(crate) async fn hold_demand(&self, codec: StreamCodec) -> Option<UnixStream> {
+    /// Asks the codec's encoder to run while the returned guard is held: it
+    /// otherwise decodes and encodes every changed frame for nobody. The
+    /// first line names the codec, the next the bitrate, and a new `kbps`
+    /// line follows every change of the quality. An encoder without the
+    /// socket runs anyway, so a failure only means no demand is signalled.
+    pub(crate) async fn hold_demand(&self, codec: StreamCodec) -> Option<DemandGuard> {
         let socket = match codec {
             StreamCodec::Vp8 => self.demand.as_ref(),
             StreamCodec::H264 => self.h264_demand.as_ref(),
         }?;
         let codec = codec.name();
         let mut connection = UnixStream::connect(socket).await.ok()?;
+        let mut bitrate = self.bitrate.subscribe();
+        let kbps = *bitrate.borrow_and_update();
         connection
-            .write_all(format!("{codec}\n").as_bytes())
+            .write_all(format!("{codec}\nkbps {kbps}\n").as_bytes())
             .await
             .ok()?;
-        Some(connection)
+        Some(DemandGuard(tokio::spawn(async move {
+            while bitrate.changed().await.is_ok() {
+                let kbps = *bitrate.borrow_and_update();
+                if connection
+                    .write_all(format!("kbps {kbps}\n").as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            // The connection is the demand: it stays open until the guard
+            // is dropped.
+            std::future::pending::<()>().await;
+        })))
     }
 }
 
@@ -396,5 +469,50 @@ async fn exchange(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+
+    /// The encoder learns the bitrate when a viewer comes, and every later
+    /// change of the quality while the viewer stays; the guard ends the
+    /// demand.
+    #[tokio::test]
+    async fn the_demand_connection_carries_the_bitrate_and_its_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("demand.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let gateway =
+            WebRtcGateway::new("127.0.0.1:8188".parse().unwrap(), None, Some(socket), 2500)
+                .unwrap();
+        let (guard, accepted) =
+            tokio::join!(gateway.hold_demand(StreamCodec::H264), listener.accept());
+        let guard = guard.unwrap();
+        let mut lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("h264"));
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 2500")
+        );
+        gateway.bitrate.send_replace(8000);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000")
+        );
+        drop(guard);
+        assert_eq!(lines.next_line().await.unwrap(), None, "demand ended");
+    }
+
+    #[test]
+    fn the_chosen_bitrate_survives_a_restart_and_only_offered_levels_load() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(load_bitrate(directory.path()), DEFAULT_BITRATE_KBPS);
+        store_bitrate(directory.path(), 5000).unwrap();
+        assert_eq!(load_bitrate(directory.path()), 5000);
+        std::fs::write(directory.path().join(BITRATE_FILE), br#"{"kbps":123}"#).unwrap();
+        assert_eq!(load_bitrate(directory.path()), DEFAULT_BITRATE_KBPS);
     }
 }
