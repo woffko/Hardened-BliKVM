@@ -140,6 +140,7 @@ node --test tools/test_restricted_keyboard_probe.mjs
 node --test tools/test_hid_report_queue.mjs
 node --test tools/test_command_result.mjs
 node --test tools/test_hid_text.mjs
+node --test tools/test_sticky_modifiers.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs
@@ -167,6 +168,8 @@ node --check tools/playwright/menu_autohide_contract.mjs
 node --check tools/playwright/webrtc_quality_contract.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
+node --check tools/playwright/touch_screen_reach_contract.mjs
+node --check tools/playwright/touch_reach_device_probe.mjs
 node --check tools/playwright/wifi_contract.mjs
 node --check tools/playwright/vp8_webrtc_probe.mjs
 node --check tools/playwright/video_settings_contract.mjs
@@ -814,6 +817,7 @@ node tools/playwright/menu_autohide_contract.mjs
 node tools/playwright/webrtc_quality_contract.mjs
 node tools/playwright/theme_contract.mjs
 node tools/playwright/mobile_keys_contract.mjs
+node tools/playwright/touch_screen_reach_contract.mjs
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'

@@ -5,7 +5,7 @@
 // auto hide is unchanged and the screen keeps the whole page.
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
-import { startApp } from "./app_harness.mjs";
+import { screenArea, startApp } from "./app_harness.mjs";
 
 const { chromium } = await import(
   pathToFileURL(
@@ -51,16 +51,14 @@ async function open(mode, mobile) {
 
 const hidden = (page) =>
   page.getByTestId("menu-bar").getAttribute("data-hidden");
-// The room above the screen, once its 300 ms transition has settled.
-async function reserved(page) {
-  const read = () =>
-    page.evaluate(
-      () =>
-        getComputedStyle(document.getElementById("kvm-pointer-surface"))
-          .paddingTop,
-    );
+// Where the screen begins, once the 300 ms transition has settled: below
+// the visible bar. The screen always ends at the bottom of the page; room
+// kept at the top must not push its bottom edge out of the page.
+async function screenTop(page) {
   await page.waitForTimeout(450);
-  return await read();
+  const area = await screenArea(page);
+  assert.equal(area.bottom, area.page, "the screen ends at the page's bottom");
+  return area.top;
 }
 
 try {
@@ -68,15 +66,15 @@ try {
   {
     const { context, page, errors } = await open("auto", true);
     assert.equal(await hidden(page), "false");
-    assert.equal(await reserved(page), "50px");
+    assert.equal(await screenTop(page), 50);
     await page.waitForTimeout(HIDE_WAIT_MS);
     assert.equal(await hidden(page), "true", "auto hide on a phone");
-    assert.equal(await reserved(page), "0px");
+    assert.equal(await screenTop(page), 0);
     const tab = page.getByTestId("menu-reveal");
     assert.equal(await tab.count(), 1);
     await tab.tap();
     assert.equal(await hidden(page), "false");
-    assert.equal(await reserved(page), "50px");
+    assert.equal(await screenTop(page), 50);
     assert.equal(await page.getByTestId("menu-reveal").count(), 0);
     // A touch on the bar restarts the countdown.
     await page.waitForTimeout(3500);
@@ -93,7 +91,7 @@ try {
     const { context, page, errors } = await open("always", true);
     await page.waitForTimeout(HIDE_WAIT_MS);
     assert.equal(await hidden(page), "false");
-    assert.equal(await reserved(page), "50px");
+    assert.equal(await screenTop(page), 50);
     assert.equal(await page.getByTestId("menu-reveal").count(), 0);
     assert.deepEqual(errors, []);
     await context.close();
@@ -101,11 +99,11 @@ try {
   // Desktop, auto hide: as before, and the screen keeps the whole page.
   {
     const { context, page, errors } = await open("auto", false);
-    assert.equal(await reserved(page), "0px");
+    assert.equal(await screenTop(page), 0);
     await page.mouse.move(700, 600);
     await page.waitForTimeout(HIDE_WAIT_MS);
     assert.equal(await hidden(page), "true", "auto hide on the desktop");
-    assert.equal(await reserved(page), "0px");
+    assert.equal(await screenTop(page), 0);
     assert.equal(await page.getByTestId("menu-reveal").count(), 0);
     await page.getByTestId("menu-bar").hover({ force: true });
     assert.equal(await hidden(page), "false");

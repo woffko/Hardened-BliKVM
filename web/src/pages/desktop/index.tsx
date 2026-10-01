@@ -123,7 +123,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
               <Splitter.Panel min="45%">
                 <div
                   id="kvm-pointer-surface"
-                  className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-black transition-[padding] duration-300"
+                  className="relative box-border h-full min-h-0 w-full min-w-0 overflow-hidden bg-black transition-[padding] duration-300"
                   style={{
                     paddingTop: menuBarOccupiesTop ? MENU_BAR_RESERVED_PX : 0,
                     paddingBottom: keyboardsCoverBottom

@@ -24,6 +24,9 @@ const HID_ABSOLUTE_MAX = 0x7fff;
 const HID_ABSOLUTE_CENTER = Math.round(HID_ABSOLUTE_MAX / 2);
 const MIN_TOUCH_ZOOM = 0.1;
 const MAX_TOUCH_ZOOM = 4;
+// Distance kept between the cursor and the edge of the view when the view
+// shrinks over it.
+const CURSOR_VIEW_MARGIN = 48;
 
 export const Absolute = () => {
   const isTouchLayout = useIsTouchLayout();
@@ -138,6 +141,50 @@ export const Absolute = () => {
     touchTarget.addEventListener('touchmove', handleTouchMove, touchOptions);
     touchTarget.addEventListener('touchend', handleTouchEnd, touchOptions);
     touchTarget.addEventListener('touchcancel', handleTouchCancel, touchOptions);
+
+    // On a phone the room for the screen shrinks when a keyboard opens. A
+    // cursor that was in sight stays in sight: the image scrolls under it,
+    // as a page brings its focused field above the keyboard.
+    let lastView: DOMRect | null = null;
+    const viewObserver =
+      isTouchLayout && scrollContainer && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(keepCursorInView)
+        : null;
+    if (scrollContainer) viewObserver?.observe(scrollContainer);
+
+    function keepCursorInView() {
+      if (!scrollContainer) return;
+      const view = scrollContainer.getBoundingClientRect();
+      const previous = lastView;
+      lastView = view;
+      const rect = screenElement.getBoundingClientRect();
+      if (!previous || view.width <= 0 || view.height <= 0 || rect.height <= 0) return;
+
+      const cursorX = rect.left + (rect.width * lastPosRef.current.x) / HID_ABSOLUTE_MAX;
+      const cursorY = rect.top + (rect.height * lastPosRef.current.y) / HID_ABSOLUTE_MAX;
+      // The view's size is in fractions of a pixel and a scroll offset is
+      // not: between two steps of a resize the cursor may lag by a pixel.
+      const slack = 2;
+      const wasInSight =
+        cursorX >= previous.left - slack &&
+        cursorX <= previous.right + slack &&
+        cursorY >= previous.top - slack &&
+        cursorY <= previous.bottom + slack;
+      if (!wasInSight) return;
+
+      const marginX = Math.min(CURSOR_VIEW_MARGIN, view.width / 4);
+      const marginY = Math.min(CURSOR_VIEW_MARGIN, view.height / 4);
+      if (cursorY > view.bottom - marginY) {
+        scrollContainer.scrollTop += cursorY - (view.bottom - marginY);
+      } else if (cursorY < view.top + marginY) {
+        scrollContainer.scrollTop -= view.top + marginY - cursorY;
+      }
+      if (cursorX > view.right - marginX) {
+        scrollContainer.scrollLeft += cursorX - (view.right - marginX);
+      } else if (cursorX < view.left + marginX) {
+        scrollContainer.scrollLeft -= view.left + marginX - cursorX;
+      }
+    }
 
     // Mouse down event
     function handleMouseDown(e: MouseEvent) {
@@ -554,6 +601,7 @@ export const Absolute = () => {
       touchTarget.removeEventListener('touchmove', handleTouchMove);
       touchTarget.removeEventListener('touchend', handleTouchEnd);
       touchTarget.removeEventListener('touchcancel', handleTouchCancel);
+      viewObserver?.disconnect();
       for (const style of previousGestureStyles) {
         style.element.style.touchAction = style.touchAction;
         style.element.style.overscrollBehavior = style.overscrollBehavior;
@@ -565,7 +613,7 @@ export const Absolute = () => {
         clearTimeout(longPressTimerRef.current);
       }
     };
-  }, [resolution, scrollDirection, scrollInterval, setVideoScale]);
+  }, [isTouchLayout, resolution, scrollDirection, scrollInterval, setVideoScale]);
 
   // Mouse event handler
   function handleMouseEvent(event: MouseAbsoluteEvent) {

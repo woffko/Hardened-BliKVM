@@ -7,15 +7,22 @@ import {
   useRef,
   useState
 } from 'react';
-import { useAtom, useSetAtom } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
 import { textToKeyReports, type TextLayoutState } from '@/lib/hid-text.ts';
-import { KeyboardReport } from '@/lib/keyboard.ts';
-import { getModifierBit } from '@/lib/keymap.ts';
+import { getKeycode } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
+import {
+  DOUBLE_TAP_MS,
+  keyReport,
+  modifierBits,
+  StickyModifiers,
+  type ModifierModes
+} from '@/lib/sticky-modifiers.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.ts';
+import { focusConfirmedAtom } from '@/jotai/restricted-control.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import { MOBILE_LOCAL_KEYBOARD_INPUT_ID } from './controls.ts';
@@ -33,17 +40,19 @@ export const MobileLocalKeyboard = () => {
   const setIsKeyboardEnable = useSetAtom(isKeyboardEnableAtom);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const keyboardRef = useRef(new KeyboardReport());
   const queueRef = useRef(Promise.resolve());
   // Text of the active IME composition that has already been sent.
   const composingRef = useRef(false);
   const composedRef = useRef('');
   // Punctuation after a Russian word is sent at Russian layout positions.
   const layoutRef = useRef<TextLayoutState>({ script: 'latin' });
-  // Modifiers armed in the key helper; they go with the next key.
-  const [armed, setArmed] = useState<string[]>([]);
-  const armedRef = useRef<string[]>([]);
+  // The modifiers of the extra keys row, held on the target while pressed.
+  const modifiersRef = useRef(new StickyModifiers());
+  const [modifierModes, setModifierModes] = useState<ModifierModes>({});
+  // Releases waiting for a possible second tap, by modifier.
+  const releaseTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const { restricted, reportHid } = useHidLease();
+  const controlConfirmed = useAtomValue(focusConfirmedAtom);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -57,87 +66,113 @@ export const MobileLocalKeyboard = () => {
     input.blur();
   }, [isLocalKeyboardOpen]);
 
+  // Without control nothing is held on the target any more.
+  useEffect(() => {
+    if (!restricted || controlConfirmed) return;
+    for (const timer of releaseTimersRef.current.values()) clearTimeout(timer);
+    releaseTimersRef.current.clear();
+    if (modifiersRef.current.reset()) setModifierModes({});
+  }, [restricted, controlConfirmed]);
+
+  useEffect(() => {
+    const timers = releaseTimersRef.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+    };
+  }, []);
+
   function enqueue(action: () => void | Promise<void>) {
     queueRef.current = queueRef.current.then(action, action).catch(() => undefined);
   }
 
-  function sendReport(report: Uint8Array) {
+  function sendReport(report: number[]) {
     if (restricted) {
-      reportHid({ mode: 'keyboard', data: Array.from(report) });
+      reportHid({ mode: 'keyboard', data: report });
       return;
     }
-    const data = new Uint8Array([MessageEvent.Keyboard, ...report]);
-    client.send(data);
+    client.send(new Uint8Array([MessageEvent.Keyboard, ...report]));
   }
 
-  function setArmedModifiers(next: string[]) {
-    armedRef.current = next;
-    setArmed(next);
-  }
-
-  function toggleModifier(code: string) {
-    const current = armedRef.current;
-    setArmedModifiers(
-      current.includes(code) ? current.filter((item) => item !== code) : [...current, code]
-    );
-  }
-
-  // The armed modifiers, disarmed: they go with the key about to be sent.
-  function takeModifiers() {
-    const modifiers = armedRef.current;
-    if (modifiers.length) setArmedModifiers([]);
-    return modifiers;
-  }
-
-  function sendKey(code: string, modifiers: string[] = []) {
+  function sendReports(reports: number[][]) {
     enqueue(() => {
-      const keyboard = keyboardRef.current;
-      for (const modifier of modifiers) sendReport(keyboard.keyDown(modifier));
-      sendReport(keyboard.keyDown(code));
-      sendReport(keyboard.keyUp(code));
-      sendReport(keyboard.reset());
+      for (const report of reports) sendReport(report);
     });
   }
 
-  // A key pressed by the user, with the armed modifiers.
-  function pressKey(code: string) {
-    sendKey(code, takeModifiers());
+  function showModifiers() {
+    setModifierModes(modifiersRef.current.snapshot());
   }
 
-  function sendText(input: string) {
-    let text = input;
-    if (!text) return;
-    const modifiers = takeModifiers();
-    if (modifiers.length) {
-      // The first character goes with the armed modifiers (Ctrl, then "c"
-      // typed, is Ctrl+C), at its key position; the rest is plain text.
-      const [first, ...rest] = Array.from(text);
-      const bits = modifiers.reduce((all, code) => all | getModifierBit(code), 0);
-      const steps = textToKeyReports(first, layoutRef.current);
-      enqueue(() => {
-        for (const step of steps) {
-          sendReport(new Uint8Array([step.modifier | bits, 0, step.usage, 0, 0, 0, 0, 0]));
-          sendReport(new Uint8Array(8));
-        }
-      });
-      text = rest.join('');
-      if (!text) return;
+  // A tap on a modifier of the extra keys row: pressed on the target at
+  // once, released after the next key or by another tap (lib/sticky-modifiers).
+  function tapModifier(code: string) {
+    const modifiers = modifiersRef.current;
+    const timers = releaseTimersRef.current;
+    const before = modifiers.bits();
+    const tap = modifiers.tap(code, performance.now());
+    clearTimeout(timers.get(code));
+    timers.delete(code);
+    if (tap === 'releasing') {
+      timers.set(
+        code,
+        setTimeout(() => {
+          timers.delete(code);
+          if (!modifiers.release(code)) return;
+          showModifiers();
+          sendReports([keyReport(modifiers.bits())]);
+        }, DOUBLE_TAP_MS)
+      );
+      return;
     }
-    if (restricted) {
-      enqueue(() => {
-        for (const step of textToKeyReports(text, layoutRef.current)) {
-          reportHid({
-            mode: 'keyboard',
-            data: [step.modifier, 0, step.usage, 0, 0, 0, 0, 0]
-          });
-          reportHid({ mode: 'keyboard', data: [0, 0, 0, 0, 0, 0, 0, 0] });
-        }
+    showModifiers();
+    if (modifiers.bits() !== before) sendReports([keyReport(modifiers.bits())]);
+  }
+
+  function releaseModifiers() {
+    for (const timer of releaseTimersRef.current.values()) clearTimeout(timer);
+    releaseTimersRef.current.clear();
+    if (!modifiersRef.current.reset()) return;
+    showModifiers();
+    sendReports([keyReport(0)]);
+  }
+
+  // A key press with the pressed modifiers and, for a shortcut, its own; the
+  // one-shot modifiers are released with the key.
+  function pressKey(code: string, shortcut: string[] = []) {
+    const usage = getKeycode(code);
+    if (usage === undefined) return;
+    const modifiers = modifiersRef.current;
+    const held = modifiers.bits();
+    const down = held | modifierBits(shortcut);
+    const reports: number[][] = [];
+    // The modifiers of a shortcut go down before its key, as on a keyboard.
+    if (down !== held) reports.push(keyReport(down));
+    reports.push(keyReport(down, usage));
+    if (modifiers.consumeOneShot()) showModifiers();
+    reports.push(keyReport(modifiers.bits()));
+    sendReports(reports);
+  }
+
+  function sendText(text: string) {
+    if (!text) return;
+    const modifiers = modifiersRef.current;
+    if (!restricted && modifiers.bits() === 0) {
+      enqueue(async () => {
+        await paste(text, getPasteLanguage());
       });
       return;
     }
-    enqueue(async () => {
-      await paste(text, getPasteLanguage());
-    });
+    // Typed as key presses at the key positions of the text, with the pressed
+    // modifiers: Ctrl, then "c" on the system keyboard, is Ctrl+C.
+    const reports: number[][] = [];
+    let released = false;
+    for (const step of textToKeyReports(text, layoutRef.current)) {
+      reports.push(keyReport(step.modifier | modifiers.bits(), step.usage));
+      released = modifiers.consumeOneShot() || released;
+      reports.push(keyReport(modifiers.bits()));
+    }
+    if (released) showModifiers();
+    sendReports(reports);
   }
 
   function resetInputValue() {
@@ -157,7 +192,7 @@ export const MobileLocalKeyboard = () => {
       common += 1;
     }
     for (let index = common; index < previous.length; index += 1) {
-      sendKey('Backspace');
+      pressKey('Backspace');
     }
     const added = next.slice(common);
     if (added) sendText(added.replace(/\r\n/g, '\n'));
@@ -243,7 +278,7 @@ export const MobileLocalKeyboard = () => {
   function handleBlur() {
     composingRef.current = false;
     composedRef.current = '';
-    setArmedModifiers([]);
+    releaseModifiers();
     setIsLocalKeyboardOpen(false);
     setIsKeyboardEnable(true);
     resetInputValue();
@@ -275,10 +310,11 @@ export const MobileLocalKeyboard = () => {
       />
       {isLocalKeyboardOpen && (
         <KeyHelper
-          armed={armed}
-          onToggleModifier={toggleModifier}
-          onKey={pressKey}
-          onCombo={(modifiers, code) => sendKey(code, [...takeModifiers(), ...modifiers])}
+          modes={modifierModes}
+          isMac={storage.getKeyboardSystem() === 'mac'}
+          onModifier={tapModifier}
+          onKey={(code) => pressKey(code)}
+          onCombo={(modifiers, code) => pressKey(code, modifiers)}
           onClose={() => {
             setIsLocalKeyboardOpen(false);
             inputRef.current?.blur();

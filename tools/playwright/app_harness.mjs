@@ -97,6 +97,22 @@ export function shippedSecurityHeaders() {
   return headers;
 }
 
+// The part of the page the remote screen is laid out in (its scroll view),
+// with the page's height, in CSS pixels. Whatever covers the page (the menu
+// bar on a phone, a keyboard) must be left out of it: a part of it behind a
+// cover or beyond the page is a part of the screen nobody can see.
+export function screenArea(page) {
+  return page.evaluate(() => {
+    const view = document.querySelector("[data-kvm-screen-scroll]");
+    const area = view.getBoundingClientRect();
+    return {
+      top: Math.round(area.top),
+      bottom: Math.round(area.bottom),
+      page: window.innerHeight,
+    };
+  });
+}
+
 export async function startApp({
   dist,
   manifest = defaultManifest(),
