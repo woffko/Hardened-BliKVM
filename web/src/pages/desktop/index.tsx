@@ -23,6 +23,7 @@ import {
 } from '@/jotai/capabilities.ts';
 import { picoclawChatOpenAtom } from '@/jotai/picoclaw.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
+import { menuBarOccupiesTopAtom } from '@/jotai/settings.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 import { Head } from '@/components/head.tsx';
 
@@ -36,6 +37,10 @@ import { Sidebar as PicoclawSidebar } from './picoclaw';
 import { ActionOverlay } from './picoclaw/action-overlay.tsx';
 import { Screen } from './screen';
 import { VirtualKeyboard } from './virtual-keyboard';
+
+// Room the touch layout keeps above the screen while the menu bar shows:
+// its top offset (10px), its height (36px) and a small gap.
+const MENU_BAR_RESERVED_PX = 50;
 
 function getVideoMode(capabilities: Parameters<typeof normalizeVideoMode>[0]) {
   const isH264DirectSupported = window.location.protocol === 'https:' && !!window.VideoDecoder;
@@ -54,6 +59,7 @@ function getVideoMode(capabilities: Parameters<typeof normalizeVideoMode>[0]) {
 const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) => {
   const { t } = useTranslation();
   const isDesktopLayout = useIsDesktopLayout();
+  const menuBarOccupiesTop = useAtomValue(menuBarOccupiesTopAtom);
   const hidAvailable = isAvailable(capabilities.hid.status);
   const controlChannelAvailable =
     hidAvailable || capabilities.video.status.availability === 'read_write';
@@ -111,7 +117,8 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
               <Splitter.Panel min="45%">
                 <div
                   id="kvm-pointer-surface"
-                  className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-black"
+                  className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-black transition-[padding] duration-300"
+                  style={{ paddingTop: menuBarOccupiesTop ? MENU_BAR_RESERVED_PX : 0 }}
                 >
                   <Screen />
                   {controlChannelAvailable && <CaptureStatusOverlay status={captureStatus} />}

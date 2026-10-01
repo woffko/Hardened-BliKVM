@@ -21,6 +21,9 @@ export interface MenuVisibilityState {
   isMenuHidden: boolean;
   isMenuMoved: boolean;
   handleHovered: (hovered: boolean) => void;
+  /** A touch on the bar (or its reveal tab): show it and hide it again after
+   * the timeout, since touch screens have no hover to keep it open. */
+  handleTouched: () => void;
   handleMoved: () => void;
   setIsMenuExpanded: (expanded: boolean) => void;
 }
@@ -128,6 +131,11 @@ export function useMenuVisibility(): MenuVisibilityState {
     }
   }, []);
 
+  const handleTouched = useCallback(() => {
+    setIsMenuHidden(false);
+    startCountdown();
+  }, [startCountdown]);
+
   const handleMoved = useCallback(() => {
     if (!isMenuMoved) {
       setIsMenuMoved(true);
@@ -140,6 +148,7 @@ export function useMenuVisibility(): MenuVisibilityState {
     isMenuMoved,
     isInitialized,
     handleHovered,
+    handleTouched,
     handleMoved,
     setIsMenuExpanded
   };

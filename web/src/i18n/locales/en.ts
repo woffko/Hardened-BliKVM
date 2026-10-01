@@ -1168,7 +1168,8 @@ const en = {
     },
     menu: {
       collapse: 'Collapse Menu',
-      expand: 'Expand Menu'
+      expand: 'Expand Menu',
+      show: 'Show Menu'
     }
   }
 };
