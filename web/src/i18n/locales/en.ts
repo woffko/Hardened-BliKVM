@@ -624,6 +624,7 @@ const en = {
             reasons: {
               unavailable: 'this device serves no H.264 over QUIC.',
               encoder: 'the H.264 encoder did not answer.',
+              stalled: 'no frame came for ten seconds.',
               other: 'the picture could not be had over this session.'
             }
           },

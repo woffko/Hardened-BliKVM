@@ -12,6 +12,7 @@
 // H.264 stays on WebRTC and Settings says why.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { startUdpProxy } from "../net/udp_impair_proxy.mjs";
@@ -238,7 +239,7 @@ try {
     await videoLineSays(page, "quic");
     assert.match(
       await videoLine(page).innerText(),
-      /^H\.264 video is using this session: 640x360, \d+ frames a second, a frame is \d+ ms old when it is decoded\.$/,
+      /^H\.264 video is using this session: 640x360, \d+(\.\d)? frames a second, a frame is \d+ ms old when it is decoded\.$/,
     );
     assert.equal(
       await page.locator('[data-testid="transport-video-retry"]').count(),
@@ -320,9 +321,9 @@ try {
     );
     // The loss broke the chain more than once. A round of recovery ends with
     // a key frame, and the encoder makes one on request no more often than
-    // every half second; a request is repeated only after a second without
-    // one. The last round ends within a second of the loss.
-    const rounds = 2 * (LOSSY_MS / 1000 + 1) + 1;
+    // every quarter of a second; a request is repeated only after a second
+    // without one. The last round ends within a second of the loss.
+    const rounds = 4 * (LOSSY_MS / 1000 + 1) + 1;
     assert.ok(whole.requests >= 2, `${whole.requests} key-frame requests`);
     assert.ok(
       whole.requests <= rounds,
@@ -434,6 +435,46 @@ try {
     const again = await playing(page);
     assert.ok(again.fps > 0);
     assert.notEqual(await frameNumber(page), null);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // An encoder that is there and sends nothing (nobody holds its demand, or
+  // its capture gives nothing): after ten seconds without a frame the page
+  // goes on with WebRTC and says why; with frames coming, another attempt
+  // has the picture.
+  {
+    await source.stop();
+    fs.rmSync(frameSocket, { force: true });
+    const held = new Set();
+    const silent = net.createServer((socket) => {
+      held.add(socket);
+      socket.on("error", () => undefined);
+      socket.on("close", () => held.delete(socket));
+    });
+    await new Promise((resolve) => silent.listen(frameSocket, resolve));
+    const { context, page, errors } = await open();
+    await until("the gateway reaches the silent encoder", () =>
+      held.size > 0 ? true : null,
+    );
+    await page
+      .locator("video#screen")
+      .waitFor({ state: "attached", timeout: 25000 });
+    assert.equal(await stats(page), null);
+    await openSettings(page);
+    await connected(page);
+    await videoLineSays(page, "webrtc");
+    assert.equal(
+      await videoLine(page).innerText(),
+      "H.264 video stays on WebRTC: no frame came for ten seconds.",
+    );
+    for (const socket of held) socket.destroy();
+    await new Promise((resolve) => silent.close(resolve));
+    fs.rmSync(frameSocket, { force: true });
+    source = await startFrameSource(frameSocket, { fps: FPS });
+    await page.locator('[data-testid="transport-video-retry"]').click();
+    await videoLineSays(page, "quic");
+    await playing(page);
     assert.deepEqual(errors, []);
     await finish(page, context);
   }

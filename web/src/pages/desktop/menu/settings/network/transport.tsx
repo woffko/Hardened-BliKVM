@@ -144,7 +144,14 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
             text: t('settings.network.transport.video.quic', {
               width: video.width,
               height: video.height,
-              fps: videoStats?.framesPerSecond ?? 0,
+              // Whole frames from ten a second on; a tenth below, for a
+              // still screen's frame every two seconds.
+              fps:
+                videoStats === null
+                  ? 0
+                  : videoStats.frameRate >= 10
+                    ? Math.round(videoStats.frameRate)
+                    : videoStats.frameRate,
               age:
                 videoStats?.ageMedianMs === null || videoStats?.ageMedianMs === undefined
                   ? '-'
@@ -159,7 +166,9 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
                 state: 'webrtc',
                 text: t('settings.network.transport.video.kept', {
                   reason: t(
-                    quicVideo.kept === 'unavailable' || quicVideo.kept === 'encoder'
+                    quicVideo.kept === 'unavailable' ||
+                      quicVideo.kept === 'encoder' ||
+                      quicVideo.kept === 'stalled'
                       ? `settings.network.transport.video.reasons.${quicVideo.kept}`
                       : 'settings.network.transport.video.reasons.other'
                   )

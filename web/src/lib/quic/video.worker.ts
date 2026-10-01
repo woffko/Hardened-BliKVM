@@ -26,15 +26,20 @@ export type VideoStats = {
   frames: number;
   framesPerSecond: number;
   /**
+   * Frames a second over the last five seconds: a still screen gives a
+   * frame every two seconds, and a second then holds one or none.
+   */
+  frameRate: number;
+  /**
    * Capture to drawing by the board's clock, of the frames whose age became
-   * known since the last report: a frame's age is known once a ping after
-   * it has been answered.
+   * known in the last five seconds: a frame's age is known once a ping
+   * after it has been answered.
    */
   ageMedianMs: number | null;
   ageP95Ms: number | null;
   /**
    * From a frame's arrival (its first fragment, or its key frame's stream)
-   * to its drawing, over the last second: what the page itself adds.
+   * to its drawing, over the last five seconds: what the page itself adds.
    */
   waitMedianMs: number | null;
   /** Frames given up or impossible to decode, and key-frame requests made. */
@@ -54,6 +59,8 @@ export type FromVideoWorker =
 /** How often frames that wait are looked at, and a due request is made. */
 const POLL_MS = 20;
 const STATS_MS = 1000;
+/** What a report says about the frames covers this much of the past. */
+const WINDOW_MS = 5000;
 /**
  * Frames the decoder may have before it: one that falls further behind is
  * started again from a key frame rather than show a picture that grows old.
@@ -75,7 +82,7 @@ let decoder: VideoDecoder | null = null;
 let configured: string | null = null;
 let frames = 0;
 let resets = 0;
-/** The frames of the last second: when they were drawn, and how long after they arrived. */
+/** The frames of the last seconds: when they were drawn, and how long after they arrived. */
 let drawn: { at: number; wait: number | null }[] = [];
 /** When the frames the decoder has began to arrive, by their capture time. */
 const received = new Map<number, number>();
@@ -85,8 +92,8 @@ const received = new Map<number, number>();
  * two pings, so their age waits for the next one.
  */
 let unaged: { at: number; capture: number }[] = [];
-/** The ages that became known since the last report. */
-let aged: number[] = [];
+/** The ages that became known in the last seconds, and when. */
+let aged: { at: number; age: number }[] = [];
 /**
  * For a probe that wants numbers over a span of its own: it reads this from
  * the worker twice and takes the difference. Counted since the worker began.
@@ -150,7 +157,7 @@ function draw(frame: VideoFrame) {
 }
 
 function age(value: number) {
-  aged.push(value);
+  aged.push({ at: performance.now(), age: value });
   probe.ages[Math.min(AGE_BUCKETS, Math.max(0, Math.round(value)))] += 1;
 }
 
@@ -231,9 +238,9 @@ setInterval(() => handle(receiver.poll(performance.now())), POLL_MS);
 
 setInterval(() => {
   const now = performance.now();
-  drawn = drawn.filter((frame) => now - frame.at <= STATS_MS);
-  const known = aged.sort((left, right) => left - right);
-  aged = [];
+  drawn = drawn.filter((frame) => now - frame.at <= WINDOW_MS);
+  aged = aged.filter((frame) => now - frame.at <= WINDOW_MS);
+  const known = aged.map((frame) => frame.age).sort((left, right) => left - right);
   const waits = drawn
     .map((frame) => frame.wait)
     .filter((wait): wait is number => wait !== null)
@@ -241,7 +248,8 @@ setInterval(() => {
   scope.postMessage({
     type: 'stats',
     frames,
-    framesPerSecond: drawn.length,
+    framesPerSecond: drawn.filter((frame) => now - frame.at <= STATS_MS).length,
+    frameRate: Math.round((drawn.length * 10000) / WINDOW_MS) / 10,
     ageMedianMs: known.length ? percentile(known, 0.5) : null,
     ageP95Ms: known.length ? percentile(known, 0.95) : null,
     waitMedianMs: waits.length ? percentile(waits, 0.5) : null,
