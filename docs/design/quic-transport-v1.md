@@ -1,8 +1,8 @@
 # QUIC transport v1
 
 Status: design for `docs/baselines/work-plan-20261001-quic-transport.md`,
-written in its phase Q0, whose decision is still open. Nothing here is
-implemented yet.
+written in its phase Q0. Decision of Q0: **go** (the evidence is in "Phase Q0"
+below). Nothing here is implemented yet.
 
 The operator's request: a QUIC transport modelled on the RustAdmin client's,
 chosen in Settings next to today's transport ("Standard": HTTPS for the page,
@@ -133,6 +133,18 @@ What the runs say beyond the numbers:
 
 Not checked: Firefox and Safari (neither is installed on the development
 host).
+
+### Decision
+
+| Condition of Q0.5 | Result |
+| --- | --- |
+| Session from the board's own page with certificate hashes in Chromium | yes |
+| Datagram loss on the local network below 0.1% at 8 Mbit/s | 0, 0 and 0.004% |
+| Endpoint within 15% of a core and 32 MiB at 8 Mbit/s | 9.6% and 2.4 MiB when frames are sent as bursts, which is what the gateway does; 20.3% when every datagram has its own timer, which it must not do |
+| Static aarch64 build | yes |
+| Licence inventory | passes |
+
+**Go.**
 
 ## Threat model of the new listener
 
