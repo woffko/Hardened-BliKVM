@@ -602,6 +602,40 @@ of a board. Receipt: `evidence/private/quic-input-latency-host-20261002-a.json`.
   report on a good path and of a loss on a bad one; it does not remove the
   wait for a retransmission.
 
+### On the board, without remote control (Q2.5, 2026-10-02)
+
+Slot 62 (`0.1.0-alpha.7`) and the update-runtime package rebuilt with the
+gateway of this phase. `tools/playwright/quic_input_device_probe.mjs` never
+confirms a target and never asks for a lease: it sends reports under a lease
+that nobody was granted. Receipts:
+`evidence/private/quic-input-device-20261002-b.json` and `-c.json`.
+
+- The input stream opens: the first answer came 3.4 ms after the stream was
+  opened.
+- A report is refused over QUIC with the answer HTTPS gives, word for word:
+  status 200, `{"code": -1, "msg": "a current focus confirmation is
+  required"}`. What is no lease request gets 422 over both.
+- The page's Transport section says that keyboard and mouse use the session
+  once remote control is enabled.
+- The HID ledger did not change: the same bytes and the same time of
+  writing before the first run and after the last, with 836 refused
+  requests over HTTPS and as many over QUIC between them. No focus request
+  was made.
+- The switch was turned on through the API and is off again; nothing
+  listens on UDP 443.
+
+The refusal is made by the web server alone, so its time shows what the two
+transports cost on the real network, without the owner and the HID gadget:
+
+| Refused report to its answer | HTTPS (TLS, nginx): median, 95th, longest | QUIC: median, 95th, longest |
+| --- | --- | --- |
+| 200 each, taking turns | 15.7, 26.5, 74.9 ms | 2.5, 17.1, 24.0 ms |
+| 400 each, taking turns | 15.3, 25.8, 47.7 ms | 2.2, 16.3, 24.0 ms |
+
+On the local network a report over QUIC is answered in about a seventh of
+the time HTTPS takes. An applied report adds the owner's work to both
+alike.
+
 ## Changes against the plan
 
 | Plan | Now | Why |

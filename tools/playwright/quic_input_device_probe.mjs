@@ -325,7 +325,10 @@ try {
               : await post("/api/hid/lease", request);
           const took = performance.now() - started;
           if (index >= warmUp / 2) times[transport].push(took);
-          answers.add(JSON.stringify(answer));
+          // The same answer in one spelling, whichever transport gave it.
+          answers.add(
+            JSON.stringify({ status: answer.status, body: answer.body }),
+          );
         }
       }
       session.close();
