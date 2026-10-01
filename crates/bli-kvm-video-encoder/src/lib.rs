@@ -8,6 +8,7 @@
 pub mod demand;
 #[cfg(feature = "h264")]
 pub mod engine;
+pub mod frames;
 pub mod gate;
 #[cfg(feature = "h264")]
 pub mod h264;

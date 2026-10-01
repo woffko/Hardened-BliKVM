@@ -1,7 +1,8 @@
 //! WebRTC video feed for Janus: reads the uStreamer MJPEG stream, encodes
 //! changed frames with libvpx (VP8) or x264 (H.264) and sends RTP to a
-//! loopback UDP port. With a demand socket it works only while a WebRTC
-//! viewer is connected.
+//! loopback UDP port. With a demand socket it works only while a viewer is
+//! connected. The H.264 unit also hands every encoded frame to the frame
+//! socket, for the QUIC gateway.
 //!
 //! `bli-kvm-video-encoder bench [FRAMES]` instead reads that many frames from
 //! uStreamer into memory and measures every codec and size on them (plan
@@ -26,6 +27,7 @@ use bli_kvm_video_encoder::{
     FrameDecision, FrameGate, GatePolicy, LatestFrame,
     demand::{Demand, group_id},
     engine::{Codec, Engine, EngineSettings},
+    frames::{FrameHub, MonotonicBase, Numbering, user_id},
     h264::H264Preset,
     mjpeg::MjpegReader,
     yuv::{I420Frame, JpegBackend, JpegToI420, scale_two_thirds},
@@ -63,6 +65,9 @@ struct Settings {
     scale: Scale,
     demand: Option<PathBuf>,
     demand_group: String,
+    /// The frame socket, and the only user it serves.
+    frames: Option<PathBuf>,
+    frame_user: Option<String>,
 }
 
 /// After the last viewer leaves, the capture stream is kept this long.
@@ -132,6 +137,17 @@ fn settings() -> Result<Settings, String> {
         },
         demand_group: env::var("BLI_KVM_VP8_DEMAND_GROUP")
             .unwrap_or_else(|_| "hardened-blikvm".into()),
+        frames: match env::var_os("BLI_KVM_ENCODER_FRAME_SOCKET").map(PathBuf::from) {
+            Some(path) if !path.is_absolute() => {
+                return Err("BLI_KVM_ENCODER_FRAME_SOCKET must be absolute".into());
+            }
+            // The gateway's decoder is the browser's: H.264 only.
+            Some(_) if codec == Codec::Vp8 => {
+                return Err("BLI_KVM_ENCODER_FRAME_SOCKET needs an H.264 codec".into());
+            }
+            path => path,
+        },
+        frame_user: env::var("BLI_KVM_ENCODER_FRAME_USER").ok(),
     })
 }
 
@@ -229,6 +245,13 @@ fn convert_loop(
     }
 }
 
+/// A stream id for the frame socket: random, never zero.
+fn stream_id() -> Result<u32, String> {
+    let mut random = [0_u8; 4];
+    getrandom(&mut random)?;
+    Ok(u32::from_be_bytes(random).max(1))
+}
+
 fn session_ids() -> Result<(u32, u16), String> {
     let mut random = [0_u8; 6];
     getrandom(&mut random)?;
@@ -243,6 +266,7 @@ fn encode_loop(
     slot: &LatestFrame<Decoded>,
     rejected: &AtomicU32,
     demand: &Demand,
+    frames: Option<&FrameHub>,
     stop: &AtomicBool,
 ) -> Result<(), String> {
     let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|error| error.to_string())?;
@@ -259,6 +283,9 @@ fn encode_loop(
     let mut last_key: Option<Instant> = None;
     // The unit's bitrate until the server asks for another.
     let mut kbps = demand.kbps().unwrap_or(settings.engine.kbps);
+    // The frame socket's records: a stream is new with every encoder.
+    let clock = MonotonicBase::now();
+    let mut numbering = Numbering::new(stream_id()?);
     while !stop.load(Ordering::Relaxed) {
         stats.report(slot.replaced(), rejected.load(Ordering::Relaxed));
         let Some(decoded) = slot.take(Duration::from_millis(500)) else {
@@ -279,6 +306,7 @@ fn encode_loop(
             // A new size builds a new encoder but the same stream: the SSRC
             // stays and the sequence numbers go on where the last one ended.
             let next = engine.as_ref().map_or(sequence, Engine::next_sequence);
+            numbering = Numbering::new(stream_id()?);
             engine = Some(Engine::new(
                 EngineSettings {
                     kbps,
@@ -307,20 +335,41 @@ fn encode_loop(
             (decoded.at.saturating_duration_since(start).as_micros() as i64).max(last_pts + 1);
         last_pts = pts;
         // A new viewer starts from a key frame instead of the next periodic
-        // one, and a key frame follows at least every KEY_FRAME_EVERY.
+        // one, a key frame follows at least every KEY_FRAME_EVERY, and a
+        // client of the frame socket may ask for one.
         let force_key = demand.generation() != generation
-            || last_key.is_none_or(|last| last.elapsed() >= KEY_FRAME_EVERY);
+            || last_key.is_none_or(|last| last.elapsed() >= KEY_FRAME_EVERY)
+            || frames.is_some_and(|hub| hub.take_key_request(Instant::now()));
         generation = demand.generation();
         if force_key {
             last_key = Some(Instant::now());
         }
         let encode_start = Instant::now();
-        let packets = engine.encode(frame, pts, force_key)?;
+        let (packets, encoded) = engine.encode_frames(frame, pts, force_key)?;
         stats.encode += encode_start.elapsed();
         stats.frames += 1;
+        // The encoder makes key frames of its own at its interval: one of
+        // those counts like one that was asked for, or two would follow each
+        // other whenever the two clocks meet.
+        if encoded.iter().any(|output| output.key_frame) {
+            last_key = Some(Instant::now());
+        }
         for packet in packets {
             // Loss is tolerated: the next key frame repairs the view.
             let _ = socket.send(&packet);
+        }
+        if let Some(hub) = frames {
+            for output in &encoded {
+                if let Some(header) = numbering.next(
+                    output.key_frame,
+                    frame.width,
+                    frame.height,
+                    output.data.len(),
+                    clock.micros_at(decoded.at),
+                ) {
+                    hub.publish(&header, &output.data);
+                }
+            }
         }
     }
     Ok(())
@@ -541,6 +590,35 @@ fn main() -> ExitCode {
         }
         None => Demand::always(),
     };
+    // The frame socket serves the gateway's user and nobody else. A user
+    // that does not exist leaves it closed, and the encoder as it is.
+    let frames = match &settings.frames {
+        Some(path) => {
+            let admitted = match &settings.frame_user {
+                Some(name) => {
+                    let found = std::fs::read_to_string("/etc/passwd")
+                        .ok()
+                        .and_then(|users| user_id(&users, name));
+                    if found.is_none() {
+                        eprintln!(
+                            "bli-kvm-video-encoder: frame socket: user {name} does not exist; no frames are served"
+                        );
+                    }
+                    found.map(Some)
+                }
+                None => Some(None),
+            };
+            match admitted.map(|admitted| FrameHub::listen(path, admitted)) {
+                Some(Ok(hub)) => Some(hub),
+                Some(Err(error)) => {
+                    eprintln!("bli-kvm-video-encoder: frame socket: {error}");
+                    return ExitCode::from(2);
+                }
+                None => None,
+            }
+        }
+        None => None,
+    };
     let stop = Arc::new(AtomicBool::new(false));
     let captured = Arc::new(LatestFrame::new());
     let decoded = Arc::new(LatestFrame::new());
@@ -592,7 +670,14 @@ fn main() -> ExitCode {
             thread::spawn(move || convert_loop(&settings, &captured, &decoded, &rejected, &stop))
         })
         .collect();
-    let result = encode_loop(&settings, &decoded, &rejected, &demand, &stop);
+    let result = encode_loop(
+        &settings,
+        &decoded,
+        &rejected,
+        &demand,
+        frames.as_deref(),
+        &stop,
+    );
     // Any encoder failure ends the process; systemd restarts it with backoff.
     stop.store(true, Ordering::Relaxed);
     captured.close();

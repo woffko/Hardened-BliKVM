@@ -15,6 +15,10 @@
 //! | 16 | 4 | reference: the key frame this frame depends on |
 //! | 20 | 4 | size of the complete frame |
 //! | 24 | 8 | capture time, microseconds of the board's monotonic clock |
+//!
+//! On the encoder's frame socket a frame is one record: the same 32 bytes,
+//! with the picture's width and height where the fragment fields are, and
+//! then the whole frame.
 
 use thiserror::Error;
 
@@ -162,6 +166,91 @@ impl FrameHeader {
     }
 }
 
+/// The header of a record on the encoder's frame socket; the frame's bytes
+/// follow it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordHeader {
+    pub kind: Kind,
+    /// The size of the picture the stream decodes to.
+    pub width: u16,
+    pub height: u16,
+    pub stream: u32,
+    pub frame: u32,
+    pub reference: u32,
+    pub size: u32,
+    pub capture_micros: u64,
+}
+
+impl RecordHeader {
+    fn validate(&self) -> Result<(), FrameError> {
+        if self.stream == 0 || self.frame == 0 || self.reference == 0 {
+            return Err(FrameError::Identity);
+        }
+        if self.size == 0 || self.size > MAX_FRAME_BYTES || self.width == 0 || self.height == 0 {
+            return Err(FrameError::Size);
+        }
+        match self.kind {
+            Kind::Key if self.reference != self.frame => Err(FrameError::Identity),
+            // A delta frame depends on a key frame made before it.
+            Kind::Delta if self.reference >= self.frame => Err(FrameError::Identity),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn encode(&self) -> Result<[u8; HEADER_BYTES], FrameError> {
+        self.validate()?;
+        let mut out = [0u8; HEADER_BYTES];
+        out[0] = VERSION;
+        out[1] = match self.kind {
+            Kind::Key => KIND_KEY,
+            Kind::Delta => KIND_DELTA,
+        };
+        out[2] = CODEC_H264;
+        out[4..6].copy_from_slice(&self.width.to_be_bytes());
+        out[6..8].copy_from_slice(&self.height.to_be_bytes());
+        out[8..12].copy_from_slice(&self.stream.to_be_bytes());
+        out[12..16].copy_from_slice(&self.frame.to_be_bytes());
+        out[16..20].copy_from_slice(&self.reference.to_be_bytes());
+        out[20..24].copy_from_slice(&self.size.to_be_bytes());
+        out[24..32].copy_from_slice(&self.capture_micros.to_be_bytes());
+        Ok(out)
+    }
+
+    /// The header at the start of `bytes`; `size` bytes of frame follow it.
+    pub fn decode(bytes: &[u8]) -> Result<Self, FrameError> {
+        let header: &[u8; HEADER_BYTES] = bytes
+            .get(..HEADER_BYTES)
+            .and_then(|slice| slice.try_into().ok())
+            .ok_or(FrameError::Short)?;
+        if header[0] != VERSION || header[2] != CODEC_H264 || header[3] != 0 {
+            return Err(FrameError::Unknown);
+        }
+        let kind = match header[1] {
+            KIND_KEY => Kind::Key,
+            KIND_DELTA => Kind::Delta,
+            _ => return Err(FrameError::Unknown),
+        };
+        let u16_at = |at: usize| u16::from_be_bytes([header[at], header[at + 1]]);
+        let u32_at = |at: usize| {
+            u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+        };
+        let mut capture = [0u8; 8];
+        capture.copy_from_slice(&header[24..32]);
+        let decoded = Self {
+            kind,
+            width: u16_at(4),
+            height: u16_at(6),
+            stream: u32_at(8),
+            frame: u32_at(12),
+            reference: u32_at(16),
+            size: u32_at(20),
+            capture_micros: u64::from_be_bytes(capture),
+        };
+        decoded.validate()?;
+        Ok(decoded)
+    }
+}
+
 /// Cuts a delta frame into datagrams of at most `max_datagram` bytes. Every
 /// fragment but the last carries the same number of payload bytes, so a
 /// receiver can check each fragment's place by its length.
@@ -250,6 +339,56 @@ mod tests {
         assert_eq!(FrameHeader::decode(&bytes), Ok(header));
         let key = FrameHeader::key(5, 77, 123_456, 9);
         assert_eq!(FrameHeader::decode(&key.encode().unwrap()), Ok(key));
+    }
+
+    #[test]
+    fn a_record_header_round_trips_and_has_the_documented_layout() {
+        let header = RecordHeader {
+            kind: Kind::Delta,
+            width: 1920,
+            height: 1080,
+            stream: 0x0102_0304,
+            frame: 0x0a0b_0c0d,
+            reference: 0x0a0b_0c00,
+            size: 10_000,
+            capture_micros: 0x1122_3344_5566_7788,
+        };
+        let bytes = header.encode().unwrap();
+        assert_eq!(
+            bytes,
+            [
+                1, 2, 1, 0, 0x07, 0x80, 0x04, 0x38, 1, 2, 3, 4, 0x0a, 0x0b, 0x0c, 0x0d, 0x0a, 0x0b,
+                0x0c, 0, 0, 0, 0x27, 0x10, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
+            ]
+        );
+        assert_eq!(RecordHeader::decode(&bytes), Ok(header));
+        let key = RecordHeader {
+            kind: Kind::Key,
+            reference: header.frame,
+            ..header
+        };
+        assert_eq!(RecordHeader::decode(&key.encode().unwrap()), Ok(key));
+
+        assert_eq!(RecordHeader::decode(&bytes[..31]), Err(FrameError::Short));
+        for (at, value) in [(0usize, 2u8), (1, 3), (1, 0), (2, 2), (3, 1)] {
+            let mut damaged = bytes;
+            damaged[at] = value;
+            assert_eq!(RecordHeader::decode(&damaged), Err(FrameError::Unknown));
+        }
+        let refused = |change: fn(&mut RecordHeader)| {
+            let mut changed = header;
+            change(&mut changed);
+            changed.encode().is_err()
+        };
+        assert!(refused(|header| header.stream = 0));
+        assert!(refused(|header| header.frame = 0));
+        assert!(refused(|header| header.reference = 0));
+        assert!(refused(|header| header.reference = header.frame));
+        assert!(refused(|header| header.kind = Kind::Key));
+        assert!(refused(|header| header.size = 0));
+        assert!(refused(|header| header.size = MAX_FRAME_BYTES + 1));
+        assert!(refused(|header| header.width = 0));
+        assert!(refused(|header| header.height = 0));
     }
 
     #[test]

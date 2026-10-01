@@ -172,8 +172,8 @@ Tokens, their hashes, report contents and frame data never reach a log.
   accepts only the gateway's user (peer credentials). The gateway connects
   and keeps one connection; it reconnects when the server restarts, and its
   QUIC sessions end with the server's.
-- **Frame socket**: a Unix socket of the H.264 encoder unit, open to the
-  gateway's group.
+- **Frame socket**: a Unix socket of the H.264 encoder unit that serves the
+  gateway's user and nobody else.
 - Crate **`bli-kvm-quic-protocol`**: the messages of the page, of the server
   link and of the frame socket, with their limits; no dependency beyond
   `serde`. The gateway, the server and the encoder use it.
@@ -348,13 +348,36 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
 
 ## Encoder
 
-The H.264 encoder unit gains the frame socket. A client receives records
-(the header above without the fragment fields, then the frame) from the next
-key frame on. A client that does not read loses its queue and starts again
-from a key frame; it never holds the encoder up. A key frame on request is
-made at most once per cooldown. Janus keeps its RTP and its periodic key
-frames. The server holds the demand and sets the quality for a QUIC viewer
-as for a WebRTC viewer.
+The H.264 encoder unit gains the frame socket
+(`/run/hardened-blikvm-h264/frames.sock`, `src/frames.rs`).
+
+- **Who is served.** Any local process may connect; the encoder reads the
+  peer's user from the socket and serves only the gateway's
+  (`BLI_KVM_ENCODER_FRAME_USER`). On a board without that user the socket
+  stays closed. At most four clients are served at once.
+- **Records.** A client receives records from the next key frame on, each a
+  32-byte header and the whole frame. The header is the frame header above
+  with the picture's width and height (two bytes each) where the fragment
+  fields are.
+- **Ids.** A stream id is random, never zero, and new with every encoder: a
+  restart, or another size. A frame's id rises by one with every encoded
+  frame; a delta frame names the last key frame as its reference.
+- **Capture time** is the moment the capture frame was read, on the
+  system's monotonic clock, which every process of the board shares.
+- **A queue per client**: at most 90 records and 8 MiB. A client that does
+  not read loses its queue and starts again from a key frame, which is then
+  asked for; it never holds the encoder up, and one that takes no bytes for
+  5 s is dropped.
+- **Key frames.** A client asks for one by writing a byte. A key frame on
+  request is made at most once in 500 ms; a request inside that time waits
+  for its end, and a key frame made for any other reason answers it. A new
+  client counts as a request.
+- Janus keeps its RTP and its periodic key frames: one at least every 2 s
+  while the picture changes. The encoder's own key frames at its interval
+  now count as such, so two no longer follow each other when the two clocks
+  meet.
+- The server holds the demand and sets the quality for a QUIC viewer as for
+  a WebRTC viewer.
 
 ## Input
 
@@ -644,3 +667,4 @@ alike.
 | Key frames on one stream | one stream per key frame | a newer key frame can replace one that is still in transit |
 | 15% of a core at 8 Mbit/s | holds for frames sent as bursts | the cost is per wake-up, not per byte; measured both ways |
 | The switch as a key of the administration switch file | the gateway unit's enablement, like the SSH switch | one state that survives a reboot and is read from systemd; the switch file, which refuses unknown keys, keeps its format for older slots |
+| The frame socket open to the gateway's group | open to connect to, serving the gateway's user only | the gateway is in no group the other units share; the encoder checks who connects, as the server does on its link |

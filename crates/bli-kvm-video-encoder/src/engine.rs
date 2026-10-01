@@ -5,7 +5,7 @@ use crate::{
     H264Packetizer, Vp8Packetizer,
     h264::{H264Config, H264Encoder, H264Preset},
     rtp::RtpError,
-    vp8::{I420, Vp8Config, Vp8Encoder},
+    vp8::{EncodedFrame, I420, Vp8Config, Vp8Encoder},
     yuv::I420Frame,
 };
 
@@ -142,6 +142,17 @@ impl Engine {
         pts_us: i64,
         force_key: bool,
     ) -> Result<Vec<Vec<u8>>, String> {
+        Ok(self.encode_frames(frame, pts_us, force_key)?.0)
+    }
+
+    /// Encodes one frame taken at `pts_us`: its RTP packets, and the encoded
+    /// frames themselves (for H.264 one access unit in Annex B form, or none).
+    pub fn encode_frames(
+        &mut self,
+        frame: &I420Frame,
+        pts_us: i64,
+        force_key: bool,
+    ) -> Result<(Vec<Vec<u8>>, Vec<EncodedFrame>), String> {
         let planes = I420 {
             y: &frame.y,
             u: &frame.u,
@@ -157,26 +168,28 @@ impl Engine {
                 packets.append(&mut more);
             }
         };
-        match &mut self.encoder {
+        let frames = match &mut self.encoder {
             Encoder::Vp8(encoder, packetizer) => {
                 let duration = 1_000_000 / i64::from(self.fps);
-                for output in encoder
+                let frames = encoder
                     .encode(planes, pts_us, duration, force_key)
-                    .map_err(|error| error.to_string())?
-                {
+                    .map_err(|error| error.to_string())?;
+                for output in &frames {
                     add(packetizer.packetize(&output.data, timestamp));
                 }
+                frames
             }
             Encoder::H264(encoder, packetizer) => {
-                for output in encoder
+                let frames = encoder
                     .encode(planes, pts_us, force_key)
-                    .map_err(|error| error.to_string())?
-                {
+                    .map_err(|error| error.to_string())?;
+                for output in &frames {
                     add(packetizer.packetize(&output.data, timestamp));
                 }
+                frames
             }
-        }
-        Ok(packets)
+        };
+        Ok((packets, frames))
     }
 }
 

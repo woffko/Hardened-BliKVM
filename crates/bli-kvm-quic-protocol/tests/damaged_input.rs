@@ -3,7 +3,9 @@
 //! would refuse to encode.
 
 use bli_kvm_quic_protocol::{
-    frame::{self, FrameHeader, HEADER_BYTES, Kind, MAX_DATAGRAM_BYTES, MAX_FRAME_BYTES},
+    frame::{
+        self, FrameHeader, HEADER_BYTES, Kind, MAX_DATAGRAM_BYTES, MAX_FRAME_BYTES, RecordHeader,
+    },
     link::{self, GatewayToServer, MAX_LINK_MESSAGE_BYTES, ServerToGateway},
     page::{self, GatewayControl, InputRequest, MAX_MESSAGE_BYTES, MessageReader, PageControl},
 };
@@ -86,6 +88,52 @@ fn frame_headers_survive_random_and_damaged_bytes() {
                         assert!((1..=capacity).contains(&expected));
                     }
                 }
+            }
+        }
+    }
+    assert!(
+        accepted > CASES / 20,
+        "the damaged cases must include valid headers"
+    );
+}
+
+#[test]
+fn record_headers_survive_random_and_damaged_bytes() {
+    let mut random = Random(0x1f83_d9ab_fb41_bd6b);
+    let mut accepted = 0usize;
+    for case in 0..CASES {
+        let bytes = if case % 2 == 0 {
+            let length = random.below(HEADER_BYTES + 8);
+            random.bytes(length)
+        } else {
+            let frame = (random.next() as u32).max(2);
+            let key = random.below(4) == 0;
+            let header = RecordHeader {
+                kind: if key { Kind::Key } else { Kind::Delta },
+                width: random.below(4096) as u16 + 1,
+                height: random.below(2304) as u16 + 1,
+                stream: (random.next() as u32).max(1),
+                frame,
+                reference: if key {
+                    frame
+                } else {
+                    random.below(frame as usize - 1) as u32 + 1
+                },
+                size: random.below(MAX_FRAME_BYTES as usize) as u32 + 1,
+                capture_micros: random.next(),
+            };
+            damage(&mut random, header.encode().unwrap().to_vec())
+        };
+        if let Ok(header) = RecordHeader::decode(&bytes) {
+            accepted += 1;
+            // Whatever is accepted is a header this side would write itself,
+            // and announces no more than a frame may have.
+            assert_eq!(&header.encode().unwrap()[..], &bytes[..HEADER_BYTES]);
+            assert!((1..=MAX_FRAME_BYTES).contains(&header.size));
+            assert!(header.width > 0 && header.height > 0);
+            match header.kind {
+                Kind::Key => assert_eq!(header.reference, header.frame),
+                Kind::Delta => assert!(header.reference < header.frame),
             }
         }
     }

@@ -1108,8 +1108,10 @@ dependencies = [
 name = "bli-kvm-video-encoder"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-quic-protocol",
  "cc",
  "sha2",
+ "tempfile",
  "thiserror",
  "zune-jpeg",
 ]

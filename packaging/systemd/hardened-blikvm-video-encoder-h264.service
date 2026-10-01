@@ -19,6 +19,11 @@ UMask=0077
 RuntimeDirectory=hardened-blikvm-h264
 RuntimeDirectoryMode=0755
 Environment=BLI_KVM_VP8_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock
+# The QUIC gateway reads the encoded frames from this socket, and only its
+# user is served (docs/design/quic-transport-v1.md). On a board without that
+# user the socket stays closed and nothing else changes.
+Environment=BLI_KVM_ENCODER_FRAME_SOCKET=/run/hardened-blikvm-h264/frames.sock
+Environment=BLI_KVM_ENCODER_FRAME_USER=hardened-blikvm-quic
 Environment=BLI_KVM_ENCODER_CODEC=h264-ultrafast
 Environment=BLI_KVM_ENCODER_RTP_PORT=5006
 Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
