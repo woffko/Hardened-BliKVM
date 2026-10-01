@@ -179,6 +179,7 @@ node --check tools/playwright/quic_input_contract.mjs
 node --check tools/playwright/quic_stack_rig.mjs
 node --check tools/playwright/quic_input_stack_contract.mjs
 node --check tools/playwright/quic_input_latency.mjs
+node --check tools/playwright/quic_input_device_probe.mjs
 node --check tools/net/udp_impair_proxy.mjs
 node --check tools/net/tcp_impair_proxy.mjs
 node --check tools/playwright/touch_reach_device_probe.mjs
