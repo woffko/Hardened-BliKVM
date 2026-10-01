@@ -243,8 +243,8 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   | --- | --- | --- | --- | --- |
   | 1920x1080 4:2:2, 256 KB frames | zune-jpeg | 25.1 ms | 20.2 ms | 45.3 ms |
   | 1920x1080 4:2:2, 256 KB frames | libjpeg-turbo | 19.1 ms | 6.1 ms | 25.2 ms |
-  | quality 100, 355 KB frames | zune-jpeg | 45.8 ms | 21.4 ms | 67.2 ms |
-  | quality 100, 355 KB frames | libjpeg-turbo | 28.8 ms | 5.9 ms | 34.7 ms |
+  | busier screen, 355 KB frames | zune-jpeg | 45.8 ms | 21.4 ms | 67.2 ms |
+  | busier screen, 355 KB frames | libjpeg-turbo | 28.8 ms | 5.9 ms | 34.7 ms |
 
   At 1280x720 (decoded at 1920x1080, then scaled by two thirds) the totals
   are 27.7 against 48.1 ms. The fast IDCT saves about 1 ms and is not used.
@@ -263,11 +263,15 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   halving. 20000 randomly damaged frames run through the decoder in a
   release build in `check.sh`.
 - Live, with a WebRTC viewer (`stage-cpu-*-jpeg-*.txt`): the measurement
-  after the change ran with the capture settings the operator had chosen in
-  the meantime (60 frames/s, quality 100, frame detection off), which a
-  restart of uStreamer applied. The probe page then also pulls every MJPEG
-  frame, so nginx, the server and the video proxy take 40-50 % of a core
-  each and the encoders' stages slow down by contention (decode 35-84 ms,
-  convert 10-20 ms per frame). Those numbers are not comparable with the
-  earlier still-screen run (decode 26-49 ms, convert 20-29 ms); the bench
-  above is the controlled comparison.
+  after the change ran with the capture settings that had been changed
+  through the Screen menu on 2026-09-30 (60 frames/s, 1920x1080, frame
+  detection off), which the restart of uStreamer during the deployment put
+  in force, and with a changing screen. The settings file also carries
+  quality 100, which changes nothing here: the capture device compresses the
+  JPEG itself (uStreamer reports a hardware encoder with quality 0), which is
+  why the quality setting is not offered. With detection off every frame
+  reaches the probe page's MJPEG view too, so nginx, the server and the
+  video proxy take 40-50 % of a core each and the encoders' stages slow down
+  by contention (decode 35-84 ms, convert 10-20 ms per frame). Those numbers
+  are not comparable with the earlier still-screen run (decode 26-49 ms,
+  convert 20-29 ms); the bench above is the controlled comparison.
