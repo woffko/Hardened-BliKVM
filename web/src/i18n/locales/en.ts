@@ -607,6 +607,12 @@ const en = {
             connected:
               'The QUIC session is open: round trip {{ms}} ms, lost datagrams {{lost}}, key-frame requests {{keyFrames}}.'
           },
+          input: {
+            quic: 'Keyboard and mouse are using this session.',
+            standard:
+              'Keyboard and mouse still use the standard transport; they move to QUIC when remote control is enabled again.',
+            idle: 'Keyboard and mouse use this session once remote control is enabled.'
+          },
           reasons: {
             off: 'QUIC is switched off on this device.',
             unsupported: 'This browser has no WebTransport.',

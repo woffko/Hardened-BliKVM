@@ -43,6 +43,13 @@ export type GatewayControl =
   | ({ t: 'counters' } & GatewayCounters)
   | { t: 'closing'; reason: Closing };
 
+/** A request of the HID lease API on the input stream, with the page's number. */
+export type InputRequest = { seq: number; request: unknown };
+/** The lease API's answer to the request with the same number. */
+export type InputResponse = { seq: number; response: unknown };
+/** What the server answers a lease request with: the API's status and body. */
+export type InputAnswer = { status: number; body: unknown };
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 

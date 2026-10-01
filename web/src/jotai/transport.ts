@@ -8,3 +8,7 @@ export const transportChoiceAtom = atom<'standard' | 'quic'>(getTransportChoice(
 
 // What the QUIC session is doing; `off` while QUIC is not chosen.
 export const quicStatusAtom = atom<QuicStatus>({ state: 'off' });
+
+// What carries the keyboard and the mouse while remote control is on; `null`
+// while it is off. It is chosen when control is enabled.
+export const leaseTransportAtom = atom<'quic' | 'https' | null>(null);

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useAtomValue } from 'jotai';
+import { getDefaultStore, useAtomValue } from 'jotai';
 
 import type { HidReport } from '@/api/restricted-control.ts';
 import { supportsRestrictedControls } from '@/lib/capabilities.ts';
-import { ASSISTANT_ACTIVE, HidLeaseSession } from '@/lib/hid-lease.ts';
+import { ASSISTANT_ACTIVE, HidLeaseSession, httpsLease } from '@/lib/hid-lease.ts';
 import { MouseQueue } from '@/lib/hid-report-queue.ts';
+import { quicLease } from '@/lib/quic/lease.ts';
+import { quicSession } from '@/lib/quic/session.ts';
 import { ensureFocus, resetFocusConfirmation } from '@/lib/restricted-power.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
+import { leaseTransportAtom } from '@/jotai/transport.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 
 const LEASE_TTL_SECONDS = 30;
@@ -36,6 +39,7 @@ function cancelSharedSession() {
   const sessions = new Set([sharedSession, startingSession]);
   sharedSession = null;
   startingSession = null;
+  getDefaultStore().set(leaseTransportAtom, null);
   sharedQueue = Promise.resolve();
   for (const session of sessions) {
     if (session) void session.stop().catch(() => undefined);
@@ -95,7 +99,15 @@ export function useHidLease() {
 
       if (!sharedSession) {
         const platformId = current.platform.id;
-        const session = new HidLeaseSession(() => ensureFocus(platformId));
+        // The transport is chosen now, when control is enabled: the QUIC
+        // session if one is open, HTTPS otherwise. A session that is lost
+        // fails the lease's requests and turns control off, like any failure;
+        // enabling it again chooses anew.
+        const overQuic = quicSession.isOpen();
+        const session = new HidLeaseSession(
+          () => ensureFocus(platformId),
+          overQuic ? quicLease : httpsLease
+        );
         startingSession = session;
         try {
           await session.start(LEASE_TTL_SECONDS);
@@ -107,6 +119,7 @@ export function useHidLease() {
           return null;
         }
         sharedSession = session;
+        getDefaultStore().set(leaseTransportAtom, overQuic ? 'quic' : 'https');
       }
       return generation === queueGeneration ? sharedSession : null;
     },

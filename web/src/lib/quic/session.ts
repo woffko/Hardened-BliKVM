@@ -18,7 +18,9 @@ import {
   PROTOCOL,
   SESSION_PATH,
   type GatewayControl,
-  type GatewayCounters
+  type GatewayCounters,
+  type InputAnswer,
+  type InputResponse
 } from './messages.ts';
 
 export type QuicFailure =
@@ -60,6 +62,8 @@ const REFUSED_WITHIN_MS = 2000;
 const PING_INTERVAL_MS = 2000;
 /** A session whose pings stay unanswered this long is lost. */
 const PONG_TIMEOUT_MS = 6000;
+/** A request on the input stream waits this long for its answer, like one over HTTPS. */
+const INPUT_TIMEOUT_MS = 8000;
 /** After a lost session, before each attempt to come back. */
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000];
 /** Failures that waiting may cure: worth another attempt after a loss. */
@@ -70,6 +74,8 @@ type Open = {
   writer: WritableStreamDefaultWriter<Uint8Array>;
   reader: ReadableStreamDefaultReader<Uint8Array>;
   messages: MessageReader;
+  /** The input stream, opened when the first request is made. */
+  input: Promise<InputChannel> | null;
 };
 type Ended = 'lost' | 'session';
 
@@ -116,6 +122,96 @@ async function nextMessage(open: {
   }
 }
 
+/**
+ * The session's input stream: requests of the HID lease API, each answered
+ * under the number it was sent with. Requests leave in the order they are
+ * made; the gateway and the server keep that order.
+ */
+class InputChannel {
+  private seq = 0;
+  private failed: Error | null = null;
+  private readonly waiting = new Map<
+    number,
+    { resolve: (answer: InputAnswer) => void; reject: (error: Error) => void }
+  >();
+  private readonly messages = new MessageReader();
+  private readonly writer: WritableStreamDefaultWriter<Uint8Array>;
+
+  constructor(
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    reader: ReadableStreamDefaultReader<Uint8Array>
+  ) {
+    this.writer = writer;
+    void this.read(reader);
+  }
+
+  request(request: unknown, signal?: AbortSignal): Promise<InputAnswer> {
+    if (this.failed) return Promise.reject(this.failed);
+    if (signal?.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'));
+    this.seq = (this.seq + 1) >>> 0;
+    const seq = this.seq;
+    return new Promise((resolve, reject) => {
+      const settle = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', aborted);
+        this.waiting.delete(seq);
+      };
+      // An abandoned request may still be served, as one over HTTPS may.
+      const aborted = () => {
+        settle();
+        reject(new DOMException('aborted', 'AbortError'));
+      };
+      const timer = setTimeout(() => {
+        settle();
+        reject(new Error('the input request was not answered in time'));
+      }, INPUT_TIMEOUT_MS);
+      signal?.addEventListener('abort', aborted);
+      this.waiting.set(seq, {
+        resolve: (answer) => {
+          settle();
+          resolve(answer);
+        },
+        reject: (error) => {
+          settle();
+          reject(error);
+        }
+      });
+      this.writer
+        .write(encodeMessage({ seq, request }))
+        .catch(() => this.fail(new Error('the input stream is closed')));
+    });
+  }
+
+  /** Nothing more is answered: every request that waits fails. */
+  fail(error: Error): void {
+    this.failed ??= error;
+    for (const waiting of [...this.waiting.values()]) waiting.reject(this.failed);
+  }
+
+  private async read(reader: ReadableStreamDefaultReader<Uint8Array>) {
+    try {
+      for (;;) {
+        const message = this.messages.take<InputResponse>();
+        if (message) {
+          this.waiting.get(message.seq)?.resolve(message.response as InputAnswer);
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done || !value) break;
+        this.messages.push(value);
+      }
+    } catch {
+      // The stream or its session ended.
+    }
+    this.fail(new Error('the input stream is closed'));
+  }
+}
+
+async function openInput(transport: WebTransport): Promise<InputChannel> {
+  const stream = await transport.createBidirectionalStream();
+  return new InputChannel(stream.writable.getWriter(), stream.readable.getReader());
+}
+
 class QuicSession {
   /** The current run; a later start or a stop makes an earlier one stale. */
   private run = 0;
@@ -124,6 +220,28 @@ class QuicSession {
 
   getStatus(): QuicStatus {
     return this.status;
+  }
+
+  /** Whether a session is open: the HID lease can go over it. */
+  isOpen(): boolean {
+    return this.open !== null;
+  }
+
+  /**
+   * One request of the HID lease API over the session's input stream. It
+   * fails when the session is not open or ends before the answer.
+   */
+  async input(request: unknown, signal?: AbortSignal): Promise<InputAnswer> {
+    const open = this.open;
+    if (!open) throw new Error('the QUIC session is not open');
+    if (!open.input) {
+      const opening = openInput(open.transport);
+      open.input = opening;
+      opening.catch(() => {
+        if (open.input === opening) open.input = null;
+      });
+    }
+    return (await open.input).request(request, signal);
   }
 
   /** Opens the session, and keeps it open until `stop`. */
@@ -148,6 +266,10 @@ class QuicSession {
     const open = this.open;
     this.open = null;
     if (!open) return;
+    open.input?.then(
+      (input) => input.fail(new Error('the QUIC session ended')),
+      () => undefined
+    );
     open.writer.write(encodeMessage({ t: 'bye' })).catch(() => undefined);
     shut(open.transport);
   }
@@ -256,7 +378,8 @@ class QuicSession {
           transport,
           writer: stream.writable.getWriter(),
           reader: stream.readable.getReader(),
-          messages: new MessageReader()
+          messages: new MessageReader(),
+          input: null
         };
         await open.writer.write(
           encodeMessage({ t: 'hello', protocol: PROTOCOL, token: grant.token })

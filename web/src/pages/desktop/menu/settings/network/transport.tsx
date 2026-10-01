@@ -7,7 +7,7 @@ import * as api from '@/api/transport.ts';
 import { setTransportChoice } from '@/lib/localstorage.ts';
 import { pagePort } from '@/lib/quic/messages.ts';
 import { quicSession } from '@/lib/quic/session.ts';
-import { quicStatusAtom, transportChoiceAtom } from '@/jotai/transport.ts';
+import { leaseTransportAtom, quicStatusAtom, transportChoiceAtom } from '@/jotai/transport.ts';
 
 /** The port the gateway listens on when nothing else is configured. */
 const DEFAULT_QUIC_PORT = 443;
@@ -24,6 +24,7 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
   const { t } = useTranslation();
   const [choice, setChoice] = useAtom(transportChoiceAtom);
   const status = useAtomValue(quicStatusAtom);
+  const leaseTransport = useAtomValue(leaseTransportAtom);
   const [quic, setQuic] = useState<api.QuicState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -221,6 +222,21 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
           </Button>
         )}
       </div>
+      {choice === 'quic' && status.state === 'connected' && (
+        <span
+          className="text-xs text-neutral-500"
+          data-testid="transport-input"
+          data-input={leaseTransport ?? 'none'}
+        >
+          {t(
+            leaseTransport === 'quic'
+              ? 'settings.network.transport.input.quic'
+              : leaseTransport === 'https'
+                ? 'settings.network.transport.input.standard'
+                : 'settings.network.transport.input.idle'
+          )}
+        </span>
+      )}
       {(error || loadFailed) && (
         <span className="text-xs text-red-400" data-testid="transport-error">
           {error || t('settings.network.transport.loadFailed')}

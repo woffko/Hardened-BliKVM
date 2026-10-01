@@ -1,4 +1,42 @@
 import * as api from '@/api/restricted-control.ts';
+import type { ApiResponse } from '@/lib/http.ts';
+
+/**
+ * What carries the lease's requests to the server: the HTTPS API, or the
+ * QUIC session's input stream (`lib/quic/lease.ts`). The requests and the
+ * answers are the same either way.
+ */
+export type LeaseTransport = {
+  acquire(
+    operationId: string,
+    ttlSeconds: number,
+    signal?: AbortSignal
+  ): Promise<ApiResponse<api.LeaseGrant>>;
+  renew(
+    operationId: string,
+    leaseId: string,
+    ttlSeconds: number,
+    signal?: AbortSignal
+  ): Promise<ApiResponse<api.LeaseGrant>>;
+  report(
+    operationId: string,
+    leaseId: string,
+    report: api.HidReport,
+    signal?: AbortSignal
+  ): Promise<ApiResponse<api.LeaseGrant>>;
+  release(
+    operationId: string,
+    leaseId: string,
+    signal?: AbortSignal
+  ): Promise<ApiResponse<api.LeaseGrant>>;
+};
+
+export const httpsLease: LeaseTransport = {
+  acquire: api.acquireLease,
+  renew: api.renewLease,
+  report: api.reportHid,
+  release: api.releaseLease
+};
 
 const OPERATION_ID_BYTES = 16;
 /** The server holds manual input back while the AI assistant has control. */
@@ -27,18 +65,21 @@ export class HidLeaseSession {
    * live, and that attestation expires long before a lease acquired once would
    * end. The session therefore refreshes it before it acquires or renews.
    */
-  constructor(private readonly attest: () => Promise<void>) {}
+  constructor(
+    private readonly attest: () => Promise<void>,
+    private readonly transport: LeaseTransport = httpsLease
+  ) {}
 
   async start(ttlSeconds: number): Promise<void> {
     const generation = ++this.generation;
     await this.attest();
     this.requireGeneration(generation);
     const response = await this.request((signal) =>
-      api.acquireLease(newOperationId(), ttlSeconds, signal)
+      this.transport.acquire(newOperationId(), ttlSeconds, signal)
     );
     if (generation !== this.generation) {
       if (response.data.applied && response.data.leaseId) {
-        void api.releaseLease(newOperationId(), response.data.leaseId).catch(() => undefined);
+        void this.transport.release(newOperationId(), response.data.leaseId).catch(() => undefined);
       }
       throw new DOMException('HID lease start was cancelled', 'AbortError');
     }
@@ -56,7 +97,7 @@ export class HidLeaseSession {
       throw new Error('HID lease is not active');
     }
     const response = await this.request((signal) =>
-      api.reportHid(newOperationId(), leaseId, report, signal)
+      this.transport.report(newOperationId(), leaseId, report, signal)
     );
     this.requireGeneration(generation);
     if (!response.data.applied) {
@@ -75,7 +116,7 @@ export class HidLeaseSession {
     const leaseId = this.leaseId;
     this.leaseId = null;
     if (leaseId) {
-      const response = await api.releaseLease(newOperationId(), leaseId);
+      const response = await this.transport.release(newOperationId(), leaseId);
       if (!response.data.applied) {
         throw new Error(response.data.rejection ?? 'HID lease release was not applied');
       }
@@ -100,7 +141,7 @@ export class HidLeaseSession {
       await this.attest();
       this.requireGeneration(generation);
       const response = await this.request((signal) =>
-        api.renewLease(newOperationId(), leaseId, this.ttlSeconds, signal)
+        this.transport.renew(newOperationId(), leaseId, this.ttlSeconds, signal)
       );
       this.requireGeneration(generation);
       if (!response.data.applied) {
@@ -110,7 +151,7 @@ export class HidLeaseSession {
     } catch {
       if (generation === this.generation) {
         this.invalidateLease();
-        void api.releaseLease(newOperationId(), leaseId).catch(() => undefined);
+        void this.transport.release(newOperationId(), leaseId).catch(() => undefined);
       }
     }
   }
