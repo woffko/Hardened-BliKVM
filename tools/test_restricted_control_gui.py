@@ -28,7 +28,11 @@ class RestrictedControlGuiTests(unittest.TestCase):
         self.assertIn("RENEW_FRACTION = 0.5", lease)
         self.assertIn("scheduleRenew(response.data.ttlSeconds ?? ttlSeconds)", lease)
         self.assertIn("clearTimeout(this.renewTimer)", lease)
-        self.assertIn("api.releaseLease(newOperationId(), leaseId)", lease)
+        # The session releases through the transport it was given, and the
+        # transport it has unless told otherwise is the HTTPS API.
+        self.assertIn("this.transport.release(newOperationId(), leaseId)", lease)
+        self.assertIn("release: api.releaseLease", lease)
+        self.assertNotIn("api.releaseLease(", lease)
         self.assertRegex(lease, r"Math\.max\(1, Math\.floor\(ttlSeconds \* 1000 \* RENEW_FRACTION\)\)")
         operation_id = re.search(r"OPERATION_ID_BYTES = (\d+)", lease)
         self.assertEqual(operation_id.group(1) if operation_id else "", "16")
@@ -93,7 +97,13 @@ class RestrictedControlGuiTests(unittest.TestCase):
         # One shared session, and it refreshes the target attestation the
         # broker requires before every acquire and renewal.
         self.assertEqual(hook.count("new HidLeaseSession("), 1)
-        self.assertIn("new HidLeaseSession(() => ensureFocus(platformId))", hook)
+        self.assertRegex(
+            hook,
+            r"new HidLeaseSession\(\s*\(\) => ensureFocus\(platformId\),"
+            r"\s*overQuic \? quicLease : httpsLease\s*\)",
+        )
+        # The lease's transport is chosen once, when control is enabled.
+        self.assertEqual(hook.count("quicSession.isOpen()"), 1)
         self.assertIn("let consumers = 0;", hook)
         self.assertIn("consumers === 0", hook)
 
@@ -102,9 +112,33 @@ class RestrictedControlGuiTests(unittest.TestCase):
         # The broker admits a lease only while the target attestation is live,
         # and it expires long before an idle session would end.
         self.assertEqual(lease.count("await this.attest();"), 2)
-        self.assertIn("constructor(private readonly attest: () => Promise<void>) {}", lease)
+        self.assertRegex(
+            lease,
+            r"constructor\(\s*private readonly attest: \(\) => Promise<void>,"
+            r"\s*private readonly transport: LeaseTransport = httpsLease\s*\) \{\}",
+        )
         focus = (ROOT / "web/src/lib/restricted-power.ts").read_text()
         self.assertIn("FOCUS_TTL_MS = 15_000", focus)
+
+    def test_the_lease_over_quic_sends_the_same_requests(self) -> None:
+        lease = (ROOT / "web/src/lib/quic/lease.ts").read_text()
+        # The four requests of the lease API, with the fields the HTTPS API
+        # sends, over the session's input stream and nothing else.
+        for request in (
+            "{ action: 'acquire', operationId, ttlSeconds }",
+            "{ action: 'renew', operationId, leaseId, ttlSeconds }",
+            "{ action: 'report', operationId, leaseId, report }",
+            "{ action: 'release', operationId, leaseId }",
+        ):
+            self.assertIn(request, lease)
+        self.assertIn("quicSession.input(request, signal)", lease)
+        for other_way in ("import { http }", "fetch(", "acquireLease", "reportHid"):
+            self.assertNotIn(other_way, lease)
+        # Any status but 200 fails the request, as it does over HTTPS.
+        self.assertIn("if (answer.status !== 200)", lease)
+        # The operator's confirmation of the target stays on HTTPS.
+        focus = (ROOT / "web/src/lib/restricted-power.ts").read_text()
+        self.assertNotIn("quic", focus.lower())
 
     def test_mouse_coalescing_preserves_relative_wheel_and_button_semantics(self) -> None:
         hook = (ROOT / "web/src/hooks/useHidLease.ts").read_text()
