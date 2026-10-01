@@ -252,6 +252,30 @@ giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s. A
 gateway that connects anew replaces the one before it, and the sessions and
 tokens of that one are forgotten.
 
+A gateway that stops leaves the link before it closes its connections and
+lets them drain (up to 2 s): from that moment the server answers
+`unavailable`, instead of handing out tokens for an endpoint that no longer
+answers.
+
+**The page's side** (`web/src/lib/quic/session.ts`):
+
+- One session per page while QUIC is this browser's choice and the board
+  lists the feature. The standard transport is not touched by anything that
+  happens to it.
+- A connection that is turned down within 2 s was refused: the gateway may
+  just have replaced its certificate, so the page tries once more with a
+  fresh token and hash, and reports `handshake` if that fails too. One that
+  fails later had nobody answering and counts as a timeout, whoever gave up
+  first: Chromium ends an unanswered handshake after 4 s (five packets,
+  measured), the page after 5 s.
+- A session whose pings stay unanswered for 6 s, or whose connection closes,
+  is lost. The page tries again after 1, 2 and 4 s; attempts that find the
+  gateway absent, time out or are turned down count as tries, any other
+  answer ends them with its reason. After the third the page reports `lost`.
+- `closing` with the reason `session` ends the session for good: the page
+  does not try again, and asks the server at once, whose answer sends it to
+  the login.
+
 ## Messages
 
 Control and input messages are JSON objects, each preceded by its length as
@@ -344,11 +368,23 @@ the lease like a client that vanished.
   read back from systemd. The unit is installed disabled, so the switch is
   off by default and nothing listens on the port until the operator turns it
   on. The server issues a token only while the gateway is on the link.
-- **Settings > Network > Transport**, as in the plan: the switch, this
-  browser's choice (Standard by default) and the status line.
-- **Failures** as in the plan's table. One more reason for "offers only
-  Standard": the page was not loaded from the gateway's port (a forwarded
-  port, for instance), so its policy would not let it connect.
+- **Settings > Network > Transport**, as in the plan: the switch (switching
+  on asks first and names the UDP port), this browser's choice (Standard by
+  default, kept in the browser) and the status line. Switching the board's
+  switch off returns this browser to Standard.
+- **Failures** as in the plan's table:
+
+  | Reason | Where it comes from | The page |
+  | --- | --- | --- |
+  | switched off, `blocked`, no WebTransport | `GET /api/transport`, the browser | offers only Standard and says why |
+  | the gateway is switched on but not on the link | `GET /api/transport` | the same, and looks again every 2 s |
+  | not served from the gateway's port (a forwarded port) | the port in the answer | the same: the page's policy would not let it connect |
+  | `timeout`, `lost`, `unavailable` | the session | notice with "Retry"; Standard for this page load |
+  | `handshake`, `token`, `protocol`, `sessions`, `hello` | the gateway | notice with the reason; no retry by itself |
+  | `clock` | the session request | notice with the reason |
+
+  A notice is raised once per failure; Settings shows the same reason in the
+  status line, with "Retry" unless the page could never have a session.
 - **Firewall**: no rule; `quicBlocked` in the firewall status for Restricted
   and Paranoid.
 - The Content-Security-Policy is unchanged.
@@ -358,6 +394,55 @@ the lease like a client that vanished.
 The page and its login, the whole API including the session request above,
 settings, media and image transfers, the terminal, MJPEG, the WebRTC
 signalling, and everything when the browser's choice is Standard.
+
+## Phase Q1: what is tested
+
+- **Messages** (`bli-kvm-quic-protocol`): round trips with their documented
+  names, sizes at their limits, and 100000 damaged or random inputs for each
+  of the page's messages, the frame header and the link's messages: no
+  panic, no allocation beyond the bound. The page's own encoder and reader
+  have the same cases (`tools/test_quic_messages.mjs`).
+- **Gateway** (`tests/sessions.rs`, against a page made with wtransport's
+  client and a server that speaks the link): welcome and pings; a token is
+  redeemed once; what is not a proper hello is refused without asking the
+  server; a silent page is dropped after the hello timeout; a foreign origin
+  and another path are not admitted; the server ends a session; a lost link
+  ends every session and nobody is served until it is back; connections are
+  bounded; the certificate is replaced while open sessions go on; the IPv6
+  wildcard serves IPv4 pages; a gateway that stops leaves the link first.
+- **Server** (`src/tests/quic_transport.rs`): login and CSRF; the token's
+  life (single use, 30 s, bound to the web session, at most two sessions);
+  the clock answer; a logout ends the sessions; a gateway that leaves takes
+  its sessions and tokens with it; another user's process and another link
+  protocol are not served; the switch is the owner's. Two tests run the real
+  gateway on the real link: a page's session from token to logout, and
+  **the switch enforced twice**: off, nothing answers on the port for a page
+  that holds the certificate's hash, the server issues no token, and a token
+  from before opens nothing once the gateway is on again.
+- **Owner**: the switch enables and starts, or stops and disables, the unit,
+  and reports a unit that cannot be switched.
+- **Page** (`tools/playwright/quic_transport_contract.mjs`): the built page
+  under the shipped Content-Security-Policy against the host's build of the
+  gateway, bound to the UDP port with the number of the page's TCP port; the
+  server's side of the link and the transport API are played by the
+  contract. It covers: off by default with the reason; the question that
+  names the UDP port; a session with one token redeemed once; a reload; the
+  return to Standard; a session ended with the web session; a phone; token
+  refused; wrong certificate hash (one fresh attempt, no token reaches the
+  gateway); another protocol version; too many sessions; the clock; the
+  firewall mode; no WebTransport; a lost session that comes back; one lost
+  for good (three attempts, 1, 2 and 4 s apart); a port where nothing
+  answers; switching off (the gateway stops, the port answers nothing, the
+  browser returns to Standard). Each fault put into the page on purpose
+  (the retry schedule, the fresh attempt, QUIC always offered, no "Retry"
+  after a timeout, an ended session tried again, no question to the server)
+  made it fail.
+
+A lesson for every test and probe that measures time on the development
+host: its wall clock is stepped forward by about 3.6 s every half minute
+(and its monotonic clock runs about 10% slow), so a span taken from the wall
+clock is sometimes 3.6 s too long. Spans are taken from the monotonic clock,
+and numbers that matter come from the board's own clock.
 
 ## Changes against the plan
 

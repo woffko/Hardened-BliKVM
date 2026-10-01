@@ -20,7 +20,7 @@ use bli_kvm_quic_protocol::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    sync::{mpsc, oneshot},
+    sync::{Notify, mpsc, oneshot},
 };
 
 use crate::certificate::CertificateInfo;
@@ -48,6 +48,8 @@ struct Shared {
     port: u16,
     certificate: Mutex<CertificateInfo>,
     state: Mutex<State>,
+    /// The gateway is stopping: the link is closed and not looked for again.
+    leaving: Notify,
 }
 
 #[derive(Clone)]
@@ -61,6 +63,7 @@ impl Link {
             port,
             certificate: Mutex::new(certificate),
             state: Mutex::new(State::default()),
+            leaving: Notify::new(),
         }));
         tokio::spawn(link.clone().run());
         link
@@ -68,6 +71,12 @@ impl Link {
 
     pub fn is_up(&self) -> bool {
         self.0.state.lock().unwrap().outbox.is_some()
+    }
+
+    /// Closes the link for good. A gateway that stops does this first, so
+    /// the server issues no token for an endpoint that no longer answers.
+    pub fn leave(&self) {
+        self.0.leaving.notify_one();
     }
 
     fn hello(&self) -> GatewayToServer {
@@ -176,7 +185,13 @@ impl Link {
     async fn run(self) {
         let mut wait = RECONNECT_FIRST;
         loop {
-            let outcome = self.connection().await;
+            let outcome = tokio::select! {
+                outcome = self.connection() => outcome,
+                () = self.0.leaving.notified() => {
+                    self.drop_everything();
+                    return;
+                }
+            };
             self.drop_everything();
             let pause = match outcome {
                 // It was up: look for the restarted server soon.
@@ -191,7 +206,10 @@ impl Link {
                     pause
                 }
             };
-            tokio::time::sleep(pause).await;
+            tokio::select! {
+                () = tokio::time::sleep(pause) => {}
+                () = self.0.leaving.notified() => return,
+            }
         }
     }
 

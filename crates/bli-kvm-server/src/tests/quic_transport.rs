@@ -592,41 +592,54 @@ async fn a_switch_the_owner_refuses_is_reported_and_no_link_means_no_feature() {
     assert!(manifest["data"]["board"]["features"]["network_quic"].is_null());
 }
 
-/// The real gateway on the real link: a page gets a token over the API, opens
-/// the WebTransport session with the certificate's hash, is welcomed, has a
-/// ping answered, and is told when its web session ends.
-#[tokio::test]
-async fn a_page_opens_a_session_through_the_real_gateway_and_a_logout_ends_it() {
-    use bli_kvm_quic_protocol::{
-        PROTOCOL,
-        page::{self, Closing, GatewayControl, MessageReader, PageControl},
-    };
-    let (_root, socket, page) = board(|_| {}).await;
-    let gateway = bli_kvm_quic_gateway::Gateway::bind(bli_kvm_quic_gateway::config::Config {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        link_socket: socket,
-        counters_interval: Duration::from_millis(200),
-        ..Default::default()
-    })
-    .unwrap();
-    let port = gateway.local_addr().unwrap().port();
-    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(gateway.serve(async {
-        let _ = stopped.await;
-    }));
+/// The gateway itself, on the board's link, the way its unit runs it.
+struct RealGateway {
+    port: u16,
+    stop: tokio::sync::oneshot::Sender<()>,
+    served: tokio::task::JoinHandle<()>,
+}
 
-    // The gateway reaches the server by itself.
+impl RealGateway {
+    fn start(socket: PathBuf) -> Self {
+        let gateway = bli_kvm_quic_gateway::Gateway::bind(bli_kvm_quic_gateway::config::Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            link_socket: socket,
+            counters_interval: Duration::from_millis(200),
+            ..Default::default()
+        })
+        .unwrap();
+        let port = gateway.local_addr().unwrap().port();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(gateway.serve(async {
+            let _ = stopped.await;
+        }));
+        Self { port, stop, served }
+    }
+
+    /// The unit is stopped.
+    async fn stop(self) {
+        let _ = self.stop.send(());
+        timeout(PATIENCE, self.served).await.unwrap().unwrap();
+    }
+}
+
+/// What the session endpoint grants once the gateway has reached the server
+/// by itself.
+async fn granted(page: &Page) -> Value {
     let deadline = std::time::Instant::now() + PATIENCE;
-    let granted = loop {
+    loop {
         let answer = page.session(now_ms()).await;
         if answer["granted"] == true {
-            break answer;
+            return answer;
         }
         assert!(std::time::Instant::now() < deadline, "{answer}");
         tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    assert_eq!(granted["port"], port);
-    let certificate = granted["certificateSha256"].as_str().unwrap();
+    }
+}
+
+/// A page's connection to the gateway, made with the certificate's hash the
+/// way a browser makes it.
+async fn connect(port: u16, certificate: &str) -> Result<wtransport::Connection, String> {
     let mut digest = [0u8; 32];
     for (index, byte) in digest.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&certificate[index * 2..index * 2 + 2], 16).unwrap();
@@ -637,73 +650,184 @@ async fn a_page_opens_a_session_through_the_real_gateway_and_a_logout_ends_it() 
             .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(digest)])
             .build(),
     )
-    .unwrap();
-    let connection = timeout(
-        PATIENCE,
-        client.connect(
+    .map_err(|error| error.to_string())?;
+    client
+        .connect(
             wtransport::endpoint::ConnectOptions::builder(format!("https://127.0.0.1:{port}/kvm"))
                 .add_header("origin", format!("https://127.0.0.1:{port}"))
                 .build(),
-        ),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let (mut send, mut receive) = connection.open_bi().await.unwrap().await.unwrap();
-    let mut reader = MessageReader::new();
-    let hear = async |receive: &mut wtransport::RecvStream, reader: &mut MessageReader| {
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// A page's control stream.
+struct Control {
+    send: wtransport::SendStream,
+    receive: wtransport::RecvStream,
+    reader: bli_kvm_quic_protocol::page::MessageReader,
+}
+
+impl Control {
+    async fn open(connection: &wtransport::Connection) -> Self {
+        let (send, receive) = connection.open_bi().await.unwrap().await.unwrap();
+        Self {
+            send,
+            receive,
+            reader: bli_kvm_quic_protocol::page::MessageReader::new(),
+        }
+    }
+
+    async fn say(&mut self, message: &bli_kvm_quic_protocol::page::PageControl) {
+        self.send
+            .write_all(&bli_kvm_quic_protocol::page::encode(message).unwrap())
+            .await
+            .unwrap();
+    }
+
+    /// The next message that is not the periodic counters.
+    async fn hear(&mut self) -> bli_kvm_quic_protocol::page::GatewayControl {
+        use bli_kvm_quic_protocol::page::GatewayControl;
         let mut buffer = [0u8; 2048];
         loop {
-            match reader.take::<GatewayControl>().unwrap() {
+            match self.reader.take::<GatewayControl>().unwrap() {
                 Some(GatewayControl::Counters { .. }) => {}
                 Some(message) => return message,
                 None => {
-                    let count = timeout(PATIENCE, receive.read(&mut buffer))
+                    let count = timeout(PATIENCE, self.receive.read(&mut buffer))
                         .await
                         .unwrap()
                         .unwrap()
                         .unwrap();
-                    reader.push(&buffer[..count]);
+                    self.reader.push(&buffer[..count]);
                 }
             }
         }
+    }
+}
+
+/// The real gateway on the real link: a page gets a token over the API, opens
+/// the WebTransport session with the certificate's hash, is welcomed, has a
+/// ping answered, and is told when its web session ends.
+#[tokio::test]
+async fn a_page_opens_a_session_through_the_real_gateway_and_a_logout_ends_it() {
+    use bli_kvm_quic_protocol::{
+        PROTOCOL,
+        page::{Closing, GatewayControl, PageControl},
     };
-    let hello = PageControl::Hello {
-        protocol: PROTOCOL,
-        token: granted["token"].as_str().unwrap().to_owned(),
-    };
-    send.write_all(&page::encode(&hello).unwrap())
-        .await
-        .unwrap();
+    let (_root, socket, page) = board(|_| {}).await;
+    let gateway = RealGateway::start(socket);
+    let granted = granted(&page).await;
+    assert_eq!(granted["port"], gateway.port);
+    let connection = timeout(
+        PATIENCE,
+        connect(gateway.port, granted["certificateSha256"].as_str().unwrap()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let mut control = Control::open(&connection).await;
+    control
+        .say(&PageControl::Hello {
+            protocol: PROTOCOL,
+            token: granted["token"].as_str().unwrap().to_owned(),
+        })
+        .await;
     assert!(matches!(
-        hear(&mut receive, &mut reader).await,
+        control.hear().await,
         GatewayControl::Welcome {
             protocol: PROTOCOL,
             ..
         }
     ));
-    send.write_all(
-        &page::encode(&PageControl::Ping {
+    control
+        .say(&PageControl::Ping {
             id: 5,
             page_time: 2.5,
         })
-        .unwrap(),
-    )
-    .await
-    .unwrap();
+        .await;
     assert!(matches!(
-        hear(&mut receive, &mut reader).await,
+        control.hear().await,
         GatewayControl::Pong { id: 5, .. }
     ));
 
     page.call(Method::POST, "/api/auth/logout", Value::Null)
         .await;
     assert_eq!(
-        hear(&mut receive, &mut reader).await,
+        control.hear().await,
         GatewayControl::Closing {
             reason: Closing::Session
         }
     );
     timeout(PATIENCE, connection.closed()).await.unwrap();
-    let _ = stop.send(());
+    gateway.stop().await;
+}
+
+/// The switch is enforced twice. Off, the gateway's unit does not run, so
+/// nothing answers on its port, whatever the caller holds. And the server,
+/// which has lost the link, issues no token and honours none it issued
+/// before, even when the gateway is switched on again.
+#[tokio::test]
+async fn the_switch_is_enforced_twice() {
+    use bli_kvm_quic_protocol::{
+        PROTOCOL,
+        page::{GatewayControl, PageControl, Refusal},
+    };
+    let (_root, socket, page) = board(|_| {}).await;
+    let gateway = RealGateway::start(socket.clone());
+    let before = granted(&page).await;
+    let port = gateway.port;
+    let certificate = before["certificateSha256"].as_str().unwrap().to_owned();
+    let waiting = before["token"].as_str().unwrap().to_owned();
+    // On, the port answers a page that has the certificate's hash.
+    timeout(PATIENCE, connect(port, &certificate))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Off: the owner stops the unit.
+    gateway.stop().await;
+
+    // Once: the same page, with the same hash, gets no answer.
+    let answered = timeout(Duration::from_millis(1500), connect(port, &certificate)).await;
+    assert!(!matches!(answered, Ok(Ok(_))), "the port still answers");
+    // Twice: the server issues no token.
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        let answer = page.session(now_ms()).await;
+        if answer["granted"] == false {
+            assert_eq!(answer["reason"], "unavailable");
+            assert!(answer.get("token").is_none(), "{answer}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{answer}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // On again: a token from before the switch went off opens nothing.
+    let again = RealGateway::start(socket);
+    let after = granted(&page).await;
+    assert_ne!(after["certificateSha256"], certificate.as_str());
+    assert_ne!(after["token"], waiting.as_str());
+    let connection = timeout(
+        PATIENCE,
+        connect(again.port, after["certificateSha256"].as_str().unwrap()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let mut control = Control::open(&connection).await;
+    control
+        .say(&PageControl::Hello {
+            protocol: PROTOCOL,
+            token: waiting,
+        })
+        .await;
+    assert_eq!(
+        control.hear().await,
+        GatewayControl::Refused {
+            reason: Refusal::Token
+        }
+    );
+    again.stop().await;
 }

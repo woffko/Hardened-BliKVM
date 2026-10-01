@@ -18,7 +18,9 @@ case "$output" in /*) ;; *) echo "usage: $0 OUTPUT_DIR (absolute)" >&2; exit 2 ;
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/safe-output.sh"
 refuse_unsafe_output "$output" || exit 2
 
-sources=${BLI_KVM_THIRD_PARTY_SOURCES:-/mnt/d/debug/blikvm/hardened-blikvm/third-party-src}
+# The archive is kept with the other pinned sources when the caller says
+# where those are, and next to the output otherwise.
+sources=${BLI_KVM_THIRD_PARTY_SOURCES:-$(dirname -- "$output")/third-party-src}
 mkdir -p "$sources"
 archive="$sources/musl-$MUSL_VERSION.tar.gz"
 if [ ! -f "$archive" ]; then

@@ -50,6 +50,8 @@ struct Seen {
     tokens: HashSet<String>,
     /// Tokens answered with "too many sessions".
     crowded: HashSet<String>,
+    /// Connections of the link that the gateway closed.
+    left: usize,
 }
 
 /// The web server's side of the link.
@@ -78,6 +80,7 @@ impl Server {
                     tokio::select! {
                         read = reader.read_exact(&mut prefix) => {
                             if read.is_err() {
+                                state.lock().unwrap().left += 1;
                                 break;
                             }
                             let length = link::body_length(prefix).unwrap();
@@ -636,6 +639,29 @@ async fn a_lost_link_ends_every_session_and_nobody_is_served_until_it_is_back() 
         page.hear().await,
         Some(GatewayControl::Welcome { .. })
     ));
+}
+
+/// A gateway that stops leaves the link before its connections have drained:
+/// the server must not issue tokens for an endpoint that no longer answers.
+#[tokio::test]
+async fn a_gateway_that_stops_leaves_the_link_first() {
+    let mut board = Board::ready().await;
+    let token = board.server.token("5a");
+    // A session that does not close by itself keeps the endpoint busy.
+    let page = board.welcomed(&token).await;
+    assert_eq!(board.server.seen.lock().unwrap().left, 0);
+    let stopping = Instant::now();
+    board.stop.take().unwrap().send(()).unwrap();
+    eventually(|| (board.server.seen.lock().unwrap().left == 1).then_some(())).await;
+    assert!(
+        stopping.elapsed() < Duration::from_millis(500),
+        "the link stayed up for {:?}",
+        stopping.elapsed()
+    );
+    page.gone().await;
+    // It does not come back to the link.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(board.server.seen.lock().unwrap().hellos.len(), 1);
 }
 
 #[tokio::test]

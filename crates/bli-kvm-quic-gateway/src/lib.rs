@@ -148,6 +148,9 @@ impl Gateway {
                 () = &mut shutdown => break,
             }
         }
+        // The server hears first: while the connections are told and drain,
+        // it must not hand out a token for an endpoint that is going.
+        self.link.leave();
         self.endpoint.close(VarInt::from_u32(0), b"");
         let _ = tokio::time::timeout(Duration::from_secs(2), self.endpoint.wait_idle()).await;
     }
