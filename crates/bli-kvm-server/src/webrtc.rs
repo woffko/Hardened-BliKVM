@@ -20,7 +20,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, UnixStream},
     sync::Semaphore,
 };
@@ -162,35 +162,68 @@ impl WebRtcGateway {
     /// first line names the codec, the next the bitrate, and a new `kbps`
     /// line follows every change of the quality. An encoder without the
     /// socket runs anyway, so a failure only means no demand is signalled.
+    ///
+    /// The connection is the demand. An encoder that ends, to be started
+    /// again by its unit, takes it along: the guard then asks again until
+    /// the encoder is back, or its viewer would wait for a picture that
+    /// nobody makes.
     pub(crate) async fn hold_demand(&self, codec: StreamCodec) -> Option<DemandGuard> {
         let socket = match codec {
             StreamCodec::Vp8 => self.demand.as_ref(),
             StreamCodec::H264 => self.h264_demand.as_ref(),
-        }?;
+        }?
+        .clone();
         let codec = codec.name();
-        let mut connection = UnixStream::connect(socket).await.ok()?;
         let mut bitrate = self.bitrate.subscribe();
         let kbps = *bitrate.borrow_and_update();
-        connection
-            .write_all(format!("{codec}\nkbps {kbps}\n").as_bytes())
-            .await
-            .ok()?;
+        let mut connection = open_demand(&socket, codec, kbps).await?;
         Some(DemandGuard(tokio::spawn(async move {
-            while bitrate.changed().await.is_ok() {
-                let kbps = *bitrate.borrow_and_update();
-                if connection
-                    .write_all(format!("kbps {kbps}\n").as_bytes())
-                    .await
-                    .is_err()
-                {
-                    break;
+            // Nobody changes the quality once its sender is gone.
+            let mut quality_changes = true;
+            loop {
+                // The encoder never writes: its side ends when it does.
+                let mut ended = [0_u8; 1];
+                let lost = tokio::select! {
+                    changed = bitrate.changed(), if quality_changes => {
+                        if changed.is_err() {
+                            quality_changes = false;
+                            false
+                        } else {
+                            let kbps = *bitrate.borrow_and_update();
+                            connection
+                                .write_all(format!("kbps {kbps}\n").as_bytes())
+                                .await
+                                .is_err()
+                        }
+                    }
+                    read = connection.read(&mut ended) => !matches!(read, Ok(read) if read > 0),
+                };
+                if !lost {
+                    continue;
                 }
+                connection = loop {
+                    tokio::time::sleep(DEMAND_RETRY).await;
+                    let kbps = *bitrate.borrow_and_update();
+                    if let Some(connection) = open_demand(&socket, codec, kbps).await {
+                        break connection;
+                    }
+                };
             }
-            // The connection is the demand: it stays open until the guard
-            // is dropped.
-            std::future::pending::<()>().await;
         })))
     }
+}
+
+/// Between attempts to reach an encoder that went away.
+const DEMAND_RETRY: Duration = Duration::from_millis(500);
+
+/// A demand connection of the encoder behind `socket`, with its first lines.
+async fn open_demand(socket: &std::path::Path, codec: &str, kbps: u32) -> Option<UnixStream> {
+    let mut connection = UnixStream::connect(socket).await.ok()?;
+    connection
+        .write_all(format!("{codec}\nkbps {kbps}\n").as_bytes())
+        .await
+        .ok()?;
+    Some(connection)
 }
 
 #[derive(Debug, Deserialize)]

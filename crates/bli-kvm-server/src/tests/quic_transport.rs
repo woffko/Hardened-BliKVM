@@ -1177,6 +1177,57 @@ async fn a_video_subscription_holds_the_encoders_demand() {
     assert_eq!(line(&mut held).await, None);
 }
 
+/// An encoder that ends takes its demand connections along. Its unit starts
+/// it again; the server then holds the demand again, or the session would
+/// wait for a picture that nobody makes.
+#[tokio::test]
+async fn a_demand_is_held_again_when_the_encoder_comes_back() {
+    let root = tempdir().unwrap();
+    let demand_path = root.path().join("h264.sock");
+    let demand = Demand(tokio::net::UnixListener::bind(&demand_path).unwrap());
+    let path = demand_path.clone();
+    let (_root, socket, page) = board(move |options| {
+        options.webrtc_janus = Some("127.0.0.1:8188".parse().unwrap());
+        options.webrtc_h264_demand_socket = Some(path);
+    })
+    .await;
+    let mut gateway = Gateway::greeted(&socket, &"9c".repeat(32)).await;
+    let session = session_of(gateway.redeem(1, &page.token().await).await);
+    assert_eq!(
+        gateway.video(2, &session, true).await,
+        video_answer(2, None)
+    );
+    let mut held = demand.held().await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+
+    // The encoder ends: its side of the connection closes.
+    drop(held);
+    let mut again = demand.held().await;
+    assert_eq!(line(&mut again).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut again).await.as_deref(), Some("kbps 2500"));
+
+    // It is away for a while, its socket with it, and comes back.
+    drop(again);
+    drop(demand);
+    std::fs::remove_file(&demand_path).unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let demand = Demand(tokio::net::UnixListener::bind(&demand_path).unwrap());
+    let mut back = demand.held().await;
+    assert_eq!(line(&mut back).await.as_deref(), Some("h264"));
+    assert_eq!(line(&mut back).await.as_deref(), Some("kbps 2500"));
+
+    // The session gives the picture up: nothing is asked for any more.
+    assert_eq!(
+        gateway.video(3, &session, false).await,
+        video_answer(3, None)
+    );
+    assert_eq!(line(&mut back).await, None);
+    demand.idle().await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    demand.idle().await;
+}
+
 /// Without an H.264 encoder, or with one that cannot be reached, the session
 /// is told so and nothing else changes.
 #[tokio::test]
