@@ -1,12 +1,12 @@
 import { useEffect } from 'react';
 import { Button, notification } from 'antd';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import { supportsBoardFeature } from '@/lib/capabilities.ts';
 import { quicSession, type QuicFailure } from '@/lib/quic/session.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
-import { quicStatusAtom, transportChoiceAtom } from '@/jotai/transport.ts';
+import { quicStatusAtom, quicVideoGivenUpAtom, transportChoiceAtom } from '@/jotai/transport.ts';
 
 const NOTICE_KEY = 'quic-transport';
 /** Failures another attempt may cure: the notice offers one. */
@@ -23,6 +23,7 @@ export const QuicTransport = () => {
   const capabilities = useAtomValue(capabilitiesAtom);
   const choice = useAtomValue(transportChoiceAtom);
   const status = useAtomValue(quicStatusAtom);
+  const setVideoGivenUp = useSetAtom(quicVideoGivenUpAtom);
   const offered = supportsBoardFeature(capabilities, 'network_quic');
 
   useEffect(() => {
@@ -53,13 +54,17 @@ export const QuicTransport = () => {
         <Button
           size="small"
           data-testid="transport-notice-retry"
-          onClick={() => quicSession.start()}
+          onClick={() => {
+            // Another attempt for the session, and for the picture over it.
+            setVideoGivenUp(null);
+            quicSession.start();
+          }}
         >
           {t('settings.network.transport.retry')}
         </Button>
       ) : undefined
     });
-  }, [api, failure, t]);
+  }, [api, failure, setVideoGivenUp, t]);
 
   return <>{contextHolder}</>;
 };

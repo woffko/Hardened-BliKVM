@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Modal, Segmented, Switch } from 'antd';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/transport.ts';
 import { setTransportChoice } from '@/lib/localstorage.ts';
 import { pagePort } from '@/lib/quic/messages.ts';
 import { quicSession } from '@/lib/quic/session.ts';
-import { leaseTransportAtom, quicStatusAtom, transportChoiceAtom } from '@/jotai/transport.ts';
+import { videoModeAtom } from '@/jotai/screen.ts';
+import {
+  leaseTransportAtom,
+  quicStatusAtom,
+  quicVideoAtom,
+  quicVideoGivenUpAtom,
+  quicVideoStatsAtom,
+  transportChoiceAtom
+} from '@/jotai/transport.ts';
+import { useQuicVideo } from '@/hooks/useQuicVideo.ts';
 
 /** The port the gateway listens on when nothing else is configured. */
 const DEFAULT_QUIC_PORT = 443;
@@ -25,6 +34,11 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
   const [choice, setChoice] = useAtom(transportChoiceAtom);
   const status = useAtomValue(quicStatusAtom);
   const leaseTransport = useAtomValue(leaseTransportAtom);
+  const quicVideo = useQuicVideo();
+  const video = useAtomValue(quicVideoAtom);
+  const videoStats = useAtomValue(quicVideoStatsAtom);
+  const videoMode = useAtomValue(videoModeAtom);
+  const setVideoGivenUp = useSetAtom(quicVideoGivenUpAtom);
   const [quic, setQuic] = useState<api.QuicState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -111,7 +125,46 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
   function choose(next: 'standard' | 'quic') {
     setTransportChoice(next);
     setChoice(next);
+    setVideoGivenUp(null);
   }
+
+  // Another attempt: for the session, and for the picture over it.
+  function retry() {
+    setVideoGivenUp(null);
+    quicSession.start();
+  }
+
+  // What carries the H.264 picture, and why if it is not this session.
+  const videoLine =
+    videoMode !== 'h264'
+      ? { state: 'other', text: t('settings.network.transport.video.other') }
+      : quicVideo.use && video.state === 'playing'
+        ? {
+            state: 'quic',
+            text: t('settings.network.transport.video.quic', {
+              width: video.width,
+              height: video.height,
+              fps: videoStats?.framesPerSecond ?? 0,
+              age:
+                videoStats?.ageMedianMs === null || videoStats?.ageMedianMs === undefined
+                  ? '-'
+                  : videoStats.ageMedianMs.toFixed(0)
+            })
+          }
+        : quicVideo.use
+          ? { state: 'starting', text: t('settings.network.transport.video.starting') }
+          : quicVideo.kept === 'decoder'
+            ? { state: 'decoder', text: t('settings.network.transport.video.decoder') }
+            : {
+                state: 'webrtc',
+                text: t('settings.network.transport.video.kept', {
+                  reason: t(
+                    quicVideo.kept === 'unavailable' || quicVideo.kept === 'encoder'
+                      ? `settings.network.transport.video.reasons.${quicVideo.kept}`
+                      : 'settings.network.transport.video.reasons.other'
+                  )
+                })
+              };
 
   // Why this browser cannot use QUIC right now, if it cannot.
   const hindrance =
@@ -146,7 +199,7 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
           ? t('settings.network.transport.status.connected', {
               ms: status.roundTripMs === null ? '-' : status.roundTripMs.toFixed(1),
               lost: status.counters?.packetsLost ?? 0,
-              keyFrames: status.counters?.keyFrames ?? 0
+              keyFrames: videoStats?.requests ?? 0
             })
           : t('settings.network.transport.fallback', {
               reason: t(`settings.network.transport.reasons.${status.reason}`)
@@ -217,7 +270,7 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
           {statusText}
         </span>
         {canRetry && (
-          <Button size="small" data-testid="transport-retry" onClick={() => quicSession.start()}>
+          <Button size="small" data-testid="transport-retry" onClick={retry}>
             {t('settings.network.transport.retry')}
           </Button>
         )}
@@ -236,6 +289,26 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
                 : 'settings.network.transport.input.idle'
           )}
         </span>
+      )}
+      {choice === 'quic' && status.state === 'connected' && (
+        <div className="flex items-center justify-between gap-4">
+          <span
+            className="text-xs text-neutral-500"
+            data-testid="transport-video"
+            data-video={videoLine.state}
+          >
+            {videoLine.text}
+          </span>
+          {videoLine.state === 'webrtc' && (
+            <Button
+              size="small"
+              data-testid="transport-video-retry"
+              onClick={() => setVideoGivenUp(null)}
+            >
+              {t('settings.network.transport.retry')}
+            </Button>
+          )}
+        </div>
       )}
       {(error || loadFailed) && (
         <span className="text-xs text-red-400" data-testid="transport-error">

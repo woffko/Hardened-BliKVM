@@ -8,7 +8,7 @@
 import { getDefaultStore } from 'jotai';
 
 import { getTransport, requestQuicSession } from '@/api/transport.ts';
-import { quicStatusAtom } from '@/jotai/transport.ts';
+import { quicStatusAtom, quicVideoAtom } from '@/jotai/transport.ts';
 
 import {
   encodeMessage,
@@ -20,7 +20,8 @@ import {
   type GatewayControl,
   type GatewayCounters,
   type InputAnswer,
-  type InputResponse
+  type InputResponse,
+  type PageControl
 } from './messages.ts';
 
 export type QuicFailure =
@@ -39,6 +40,29 @@ export type QuicFailure =
   | 'protocol'
   | 'sessions'
   | 'hello';
+
+/** The picture over the session, as the page and the gateway have it. */
+export type QuicVideoStatus =
+  | { state: 'off' }
+  // Asked for; the first key frame has not been announced yet.
+  | { state: 'starting' }
+  | { state: 'playing'; stream: number; width: number; height: number }
+  // The gateway has no picture for this session, with its reason.
+  | { state: 'unavailable'; reason: string };
+
+/**
+ * Where the picture's bytes go: the decoder's worker. The session delivers
+ * and nothing more; what is put together and drawn is the worker's.
+ */
+export type VideoSink = {
+  /** A new session or subscription: nothing received before it counts. */
+  begin(): void;
+  datagram(bytes: Uint8Array): void;
+  /** A key frame as its stream delivered it: the header and the frame. */
+  keyFrame(bytes: Uint8Array): void;
+  /** A ping answered: its round trip, and the board's clock in the answer. */
+  pong(roundTripMs: number, boardMicros: number): void;
+};
 
 export type QuicStatus =
   | { state: 'off' }
@@ -62,6 +86,13 @@ const REFUSED_WITHIN_MS = 2000;
 const PING_INTERVAL_MS = 2000;
 /** A session whose pings stay unanswered this long is lost. */
 const PONG_TIMEOUT_MS = 6000;
+/** A key frame's stream may carry this much: a header and the largest frame. */
+const MAX_KEY_FRAME_BYTES = 32 + 4 * 1024 * 1024;
+/**
+ * Datagrams the browser keeps for the page to read. A frame's fragments
+ * arrive together; the default would drop most of them.
+ */
+const DATAGRAM_QUEUE = 4096;
 /** A request on the input stream waits this long for its answer, like one over HTTPS. */
 const INPUT_TIMEOUT_MS = 8000;
 /** After a lost session, before each attempt to come back. */
@@ -217,6 +248,8 @@ class QuicSession {
   private run = 0;
   private open: Open | null = null;
   private status: QuicStatus = { state: 'off' };
+  /** Where the picture goes while the page watches it. */
+  private sink: VideoSink | null = null;
 
   getStatus(): QuicStatus {
     return this.status;
@@ -244,6 +277,93 @@ class QuicSession {
     return (await open.input).request(request, signal);
   }
 
+  /**
+   * The page watches the picture: it is asked for now if a session is open,
+   * and again on every session that opens while the page watches.
+   */
+  watch(sink: VideoSink): void {
+    this.sink = sink;
+    if (this.open) this.subscribe(this.open);
+  }
+
+  unwatch(): void {
+    if (!this.sink) return;
+    this.sink = null;
+    this.setVideo({ state: 'off' });
+    this.say({ t: 'video', subscribe: false });
+  }
+
+  /** The decoder lost the chain: the gateway is asked for a key frame. */
+  requestKeyFrame(stream: number, lastFrame: number, dropped: number): void {
+    this.say({ t: 'keyframe', stream, lastFrame, dropped });
+  }
+
+  private say(message: PageControl): void {
+    this.open?.writer.write(encodeMessage(message)).catch(() => undefined);
+  }
+
+  private setVideo(video: QuicVideoStatus): void {
+    getDefaultStore().set(quicVideoAtom, video);
+  }
+
+  private subscribe(open: Open): void {
+    if (this.open !== open || !this.sink) return;
+    this.sink.begin();
+    this.setVideo({ state: 'starting' });
+    this.say({ t: 'video', subscribe: true });
+  }
+
+  /**
+   * Reads the session's datagrams and key-frame streams for as long as it
+   * lasts, and hands them to whoever watches.
+   */
+  private deliver(open: Open): void {
+    const transport = open.transport;
+    try {
+      transport.datagrams.incomingHighWaterMark = DATAGRAM_QUEUE;
+    } catch {
+      // The browser keeps its own limit.
+    }
+    const datagrams = async () => {
+      const reader = transport.datagrams.readable.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        if (this.open === open) this.sink?.datagram(value);
+      }
+    };
+    const keyFrame = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader();
+      const parts: Uint8Array[] = [];
+      let size = 0;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > MAX_KEY_FRAME_BYTES) return reader.cancel().catch(() => undefined);
+        parts.push(value);
+      }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const part of parts) {
+        bytes.set(part, offset);
+        offset += part.length;
+      }
+      if (this.open === open) this.sink?.keyFrame(bytes);
+    };
+    const streams = async () => {
+      const reader = transport.incomingUnidirectionalStreams.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        // A key frame that was overtaken ends in a reset: it is not one.
+        keyFrame(value as ReadableStream<Uint8Array>).catch(() => undefined);
+      }
+    };
+    datagrams().catch(() => undefined);
+    streams().catch(() => undefined);
+  }
+
   /** Opens the session, and keeps it open until `stop`. */
   start(): void {
     this.close();
@@ -255,6 +375,7 @@ class QuicSession {
     this.run += 1;
     this.close();
     this.set({ state: 'off' });
+    if (this.sink) this.setVideo({ state: 'off' });
   }
 
   private set(status: QuicStatus) {
@@ -283,6 +404,8 @@ class QuicSession {
     for (;;) {
       this.open = attempt;
       this.set({ state: 'connected', roundTripMs: null, counters: null });
+      this.deliver(attempt);
+      this.subscribe(attempt);
       const ended = await this.serve(attempt);
       if (run !== this.run) return;
       this.close();
@@ -438,7 +561,25 @@ class QuicSession {
             case 'pong':
               lastPong = performance.now();
               roundTripMs = lastPong - message.pageTime;
+              if (this.open === open) this.sink?.pong(roundTripMs, message.boardTime);
               publish();
+              break;
+            case 'video':
+              if (this.open !== open || !this.sink) break;
+              if (message.state === 'started') {
+                this.setVideo({
+                  state: 'playing',
+                  stream: message.stream ?? 0,
+                  width: message.width ?? 0,
+                  height: message.height ?? 0
+                });
+              } else {
+                // Stopped by the gateway, or never to be had: the reason.
+                this.setVideo({
+                  state: 'unavailable',
+                  reason: message.reason ?? message.state
+                });
+              }
               break;
             case 'counters':
               counters = {

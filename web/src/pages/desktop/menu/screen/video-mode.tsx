@@ -10,6 +10,7 @@ import { setVideoMode as setCookie } from '@/lib/localstorage.ts';
 import { browserSupportsWebRtc } from '@/lib/video-transport.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { videoModeAtom } from '@/jotai/screen.ts';
+import { useQuicVideo } from '@/hooks/useQuicVideo.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
 
 // Both WebRTC transports carry media over UDP, which Restricted and Paranoid
@@ -28,6 +29,10 @@ export const VideoMode = () => {
   const capabilities = useAtomValue(capabilitiesAtom);
   const videoMode = useAtomValue(videoModeAtom);
   const supportedModes = supportedUiVideoModes(capabilities);
+  // H.264 comes over the QUIC session when this browser uses QUIC and can
+  // have the picture there; the entry says which of the two serves it. The
+  // mode stays one of the WebRTC modes: WebRTC is what it falls back to.
+  const h264OverQuic = useQuicVideo().use;
 
   const [isDirectSupported, setIsDirectSupported] = useState<boolean | null>(null);
   const [isWebrtcBlocked, setIsWebrtcBlocked] = useState(false);
@@ -156,7 +161,9 @@ export const VideoMode = () => {
                 <div className="flex h-[14px] w-[20px] items-end text-blue-500">
                   {mode.key === videoMode && <CheckIcon size={15} />}
                 </div>
-                <span>{mode.name}</span>
+                <span data-video-mode-name={mode.key}>
+                  {mode.key === 'h264' && h264OverQuic ? 'H.264 (QUIC)' : mode.name}
+                </span>
               </div>
             </Tooltip>
           )

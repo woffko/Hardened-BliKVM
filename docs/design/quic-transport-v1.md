@@ -337,6 +337,28 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
   samples with the shortest round trip); a frame's age is the time from its
   capture to its decoding by that estimate.
 
+**In the page** (`web/src/lib/quic`):
+
+- `video-receiver.ts` holds the rules above and nothing else: no clock, no
+  decoder, no stream. The caller gives the time with every call and decodes
+  what comes back, so the rules are tested without a browser.
+- `video.worker.ts` is the worker: the receiver, the decoder and the canvas
+  the page handed over. The decoder is configured from the sequence
+  parameter set of each key frame (`h264.ts`), so the profile and the level
+  are the encoder's own. A decoder that reports an error, or has 12 frames
+  before it, is closed and started again from a key frame that is asked for:
+  a picture that falls behind is not shown late.
+- The session (`session.ts`) reads the datagrams and the key-frame streams
+  and hands their buffers to the worker; it keeps 4096 datagrams for the
+  page to read, because a frame's fragments arrive together and the
+  browser's default would drop most of them. A key frame's stream may carry
+  4 MiB and its header. A stream that ends in a reset was overtaken by a
+  newer key frame and is not one.
+- The worker reports once a second: frames drawn, frames in the last
+  second, the age of a frame as median and 95th percentile over that second,
+  frames given up, key-frame requests made, decoder restarts. The canvas
+  carries them as `data-quic-*` attributes for the probes.
+
 ## Gateway, sending
 
 - **One connection to the encoder** (`src/frames.rs`), held while any
@@ -483,6 +505,24 @@ the lease like a client that vanished.
 
   A notice is raised once per failure; Settings shows the same reason in the
   status line, with "Retry" unless the page could never have a session.
+- **The picture.** With QUIC chosen and H.264 the Screen menu's mode, the
+  picture comes over the session and the menu's entry reads "H.264 (QUIC)".
+  The page does not start WebRTC first and switch: it waits for the session,
+  which is asked for as soon as the page is there. H.264 stays on WebRTC,
+  and the entry reads "H.264 (WebRTC)", when
+  - this browser has no H.264 decoder in WebCodecs (asked once, with
+    `VideoDecoder.isConfigSupported`);
+  - the session failed, for the rest of this page load or until "Retry";
+  - the gateway has no picture for the session: `unavailable` with the
+    server's reason (`unavailable`: no H.264 encoder on this board;
+    `encoder`: it could not be reached), or `stopped` after an encoder that
+    gave nothing for 3 s.
+
+  Settings says which of them it is under the status line, with the
+  picture's size, its frames per second and the age of a frame while it
+  comes over the session, and with "Retry" when the gateway had no picture.
+  MJPEG and VP8 keep their paths whatever the choice. The status line's
+  key-frame requests are the page's own count.
 - **Firewall**: no rule; `quicBlocked` in the firewall status for Restricted
   and Paranoid.
 - The Content-Security-Policy is unchanged.
@@ -697,3 +737,4 @@ alike.
 | 15% of a core at 8 Mbit/s | holds for frames sent as bursts | the cost is per wake-up, not per byte; measured both ways |
 | The switch as a key of the administration switch file | the gateway unit's enablement, like the SSH switch | one state that survives a reboot and is read from systemd; the switch file, which refuses unknown keys, keeps its format for older slots |
 | The frame socket open to the gateway's group | open to connect to, serving the gateway's user only | the gateway is in no group the other units share; the encoder checks who connects, as the server does on its link |
+| The page receives in the existing decoder worker (`direct.worker.ts`) | a worker of its own, `web/src/lib/quic/video.worker.ts` | the existing worker belongs to the Direct mode, which this board does not offer, and speaks that mode's WebSocket records with a fixed codec; reassembly, the chain, recovery and the board's clock are another protocol, and the Direct mode stays as it was |

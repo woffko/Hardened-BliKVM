@@ -613,6 +613,20 @@ const en = {
               'Keyboard and mouse still use the standard transport; they move to QUIC when remote control is enabled again.',
             idle: 'Keyboard and mouse use this session once remote control is enabled.'
           },
+          video: {
+            quic: 'H.264 video is using this session: {{width}}x{{height}}, {{fps}} frames a second, a frame is {{age}} ms old when it is decoded.',
+            starting: 'H.264 video is starting over this session.',
+            decoder:
+              'This browser cannot decode H.264 with WebCodecs: H.264 video stays on WebRTC.',
+            kept: 'H.264 video stays on WebRTC: {{reason}}',
+            other:
+              'MJPEG and VP8 keep their own paths. Choose H.264 in the Screen menu to have the picture over this session.',
+            reasons: {
+              unavailable: 'this device serves no H.264 over QUIC.',
+              encoder: 'the H.264 encoder did not answer.',
+              other: 'the picture could not be had over this session.'
+            }
+          },
           reasons: {
             off: 'QUIC is switched off on this device.',
             unsupported: 'This browser has no WebTransport.',
