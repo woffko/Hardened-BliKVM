@@ -218,7 +218,7 @@ two bytes (at most 4096); unknown fields and types are refused.
 | From | Message |
 | --- | --- |
 | page | `hello` (protocol, token); `ping` (id, page time); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
-| gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, datagrams sent and lost, frames dropped, key frames sent), every 2 s; `closing` (reason) |
+| gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, packets lost, frames sent and dropped, key frames sent), every 2 s; `closing` (reason) |
 
 **Input stream** (opened by the page): each message is a request of the HID
 lease API as the page sends it to `/api/hid/lease` today (acquire, renew,

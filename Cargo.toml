@@ -75,6 +75,7 @@ members = [
   "crates/bli-kvm-kvmd-atx-client",
   "crates/bli-kvm-platform-bli",
   "crates/bli-kvm-platform-broker",
+  "crates/bli-kvm-quic-protocol",
   "crates/bli-kvm-video-client",
   "crates/bli-kvm-video-proxy",
   "crates/bli-kvm-server",

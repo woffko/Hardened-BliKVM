@@ -722,6 +722,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-quic-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-recovery-inputs"
 version = "0.1.0"
 dependencies = [
