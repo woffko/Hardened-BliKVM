@@ -129,9 +129,16 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
             self.assertIn("Environment=BLI_KVM_QUIC_LINK_SOCKET=/run/hardened-blikvm-quic-link/link.sock\n", text)
             self.assertIn("Environment=BLI_KVM_QUIC_LINK_USER=hardened-blikvm-quic\n", text)
             self.assertIn("RuntimeDirectory=hardened-blikvm-stream hardened-blikvm-quic-link\n", text)
-        users = Path("packaging/sysusers.d/hardened-blikvm.conf").read_text()
+        # Its user has a fragment of its own and no shared group; the
+        # runtime's pinned identities do not change.
+        users = Path("packaging/sysusers.d/hardened-blikvm-quic.conf").read_text()
         self.assertIn('u hardened-blikvm-quic - "Hardened BliKVM QUIC gateway"', users)
-        self.assertNotIn("m hardened-blikvm-quic", users)
+        self.assertNotIn("\nm ", users)
+        self.assertNotIn("\ng ", users)
+        self.assertNotIn("quic", Path("packaging/sysusers.d/hardened-blikvm.conf").read_text())
+        fragment = "usr/share/doc/hardened-blikvm-update-runtime/examples/hardened-blikvm-quic-sysusers.conf"
+        self.assertIn(fragment, package.file_map("0.1.0~dev35").values())
+        self.assertNotIn(fragment, package.file_map("0.1.0~dev34").values())
 
     def test_upload_units_start_at_dev8_with_stage_only_disk_spool(self) -> None:
         units = {

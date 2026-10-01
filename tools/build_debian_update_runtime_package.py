@@ -165,12 +165,16 @@ FILE_MAP.update({
         "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update"
     ),
     # dev35: the QUIC gateway, installed disabled; the board owner's switch
-    # enables it (docs/design/quic-transport-v1.md).
+    # enables it (docs/design/quic-transport-v1.md). Its user has a sysusers
+    # fragment of its own: the runtime's identities are a pinned set.
     "libexec/bli-kvm-quic-gateway": (
         "usr/libexec/hardened-blikvm/bli-kvm-quic-gateway"
     ),
     "share/systemd/hardened-blikvm-quic.service": (
         "lib/systemd/system/hardened-blikvm-quic.service"
+    ),
+    "share/sysusers.d/hardened-blikvm-quic.conf": (
+        "usr/share/doc/hardened-blikvm-update-runtime/examples/hardened-blikvm-quic-sysusers.conf"
     ),
     # dev19: HID gadget functions before the owner (cold-boot HID access).
     "share/systemd/hardened-blikvm-hid-gadget.service": (
@@ -242,6 +246,7 @@ def file_map(version: str) -> dict[str, str]:
         # The revision counts the supported versions: dev35 is the 32nd.
         "bli-kvm-quic-gateway": 32,
         "hardened-blikvm-quic.service": 32,
+        "hardened-blikvm-quic.conf": 32,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,

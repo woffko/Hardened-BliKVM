@@ -147,6 +147,7 @@ install -m 0644 \
 bash "$project_root/scripts/stage-application-update-profile.sh" "$stage"
 install -m 0644 \
   packaging/sysusers.d/hardened-blikvm.conf \
+  packaging/sysusers.d/hardened-blikvm-quic.conf \
   "$stage/share/sysusers.d/"
 install -m 0644 \
   packaging/tmpfiles.d/hardened-blikvm-update.conf \

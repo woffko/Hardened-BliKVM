@@ -55,6 +55,7 @@ install -m 0644 \
 install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-diagnostics.conf" \
+  "$project_root/packaging/sysusers.d/hardened-blikvm-quic.conf" \
   "$test_root/usr/lib/sysusers.d/"
 install -m 0644 \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \

@@ -184,8 +184,12 @@ Tokens, their hashes, report contents and frame data never reach a log.
   (`/lib/systemd/system/hardened-blikvm-quic.service`), disabled. The
   application slot does not carry them: its closed set of executables is part
   of the update trust path, and the slot's package refuses both by name.
-- The unit runs as `hardened-blikvm-quic`, a system user in no shared group
-  (`packaging/sysusers.d/hardened-blikvm.conf`). `SocketBindDeny=any` with
+- The unit runs as `hardened-blikvm-quic`, a system user in no shared group.
+  It has a sysusers fragment of its own
+  (`packaging/sysusers.d/hardened-blikvm-quic.conf`, shipped with the
+  package as an example and applied at installation), because the runtime's
+  identities are a pinned set (`tools/runtime_provisioning_policy.py`).
+  `SocketBindDeny=any` with
   `SocketBindAllow=udp:443` leaves it one port; 64 MiB and 16 tasks bound
   what it can take; the sockets of the owner, the broker and the helpers are
   out of its sight.
@@ -206,7 +210,7 @@ Tokens, their hashes, report contents and frame data never reach a log.
 - **SD image.** `tools/image/build_sd_image.sh` copies a board's root file
   system and installs nothing of the application itself, so an image has the
   gateway, its unit and its user when the source board has update-runtime
-  `0.1.0~dev35` and the user of the sysusers file. Three things follow:
+  `0.1.0~dev35` and the user of its sysusers fragment. Three things follow:
   - the board's switch is the unit's enablement, a link under
     `/etc/systemd/system/multi-user.target.wants`; the builder removes it,
     because the switch of the source board does not belong to a new card;
