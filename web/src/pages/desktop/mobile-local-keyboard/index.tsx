@@ -4,19 +4,22 @@ import {
   FormEvent,
   KeyboardEvent,
   useEffect,
-  useRef
+  useRef,
+  useState
 } from 'react';
 import { useAtom, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
 import { textToKeyReports, type TextLayoutState } from '@/lib/hid-text.ts';
 import { KeyboardReport } from '@/lib/keyboard.ts';
+import { getModifierBit } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import { MOBILE_LOCAL_KEYBOARD_INPUT_ID } from './controls.ts';
+import { KeyHelper } from './key-helper.tsx';
 
 const VALID_PASTE_LANGUAGES = new Set(['en', 'de', 'fr', 'ru', 'ko', 'ja']);
 
@@ -37,6 +40,9 @@ export const MobileLocalKeyboard = () => {
   const composedRef = useRef('');
   // Punctuation after a Russian word is sent at Russian layout positions.
   const layoutRef = useRef<TextLayoutState>({ script: 'latin' });
+  // Modifiers armed in the key helper; they go with the next key.
+  const [armed, setArmed] = useState<string[]>([]);
+  const armedRef = useRef<string[]>([]);
   const { restricted, reportHid } = useHidLease();
 
   useEffect(() => {
@@ -64,17 +70,59 @@ export const MobileLocalKeyboard = () => {
     client.send(data);
   }
 
-  function sendKey(code: string) {
+  function setArmedModifiers(next: string[]) {
+    armedRef.current = next;
+    setArmed(next);
+  }
+
+  function toggleModifier(code: string) {
+    const current = armedRef.current;
+    setArmedModifiers(
+      current.includes(code) ? current.filter((item) => item !== code) : [...current, code]
+    );
+  }
+
+  // The armed modifiers, disarmed: they go with the key about to be sent.
+  function takeModifiers() {
+    const modifiers = armedRef.current;
+    if (modifiers.length) setArmedModifiers([]);
+    return modifiers;
+  }
+
+  function sendKey(code: string, modifiers: string[] = []) {
     enqueue(() => {
       const keyboard = keyboardRef.current;
+      for (const modifier of modifiers) sendReport(keyboard.keyDown(modifier));
       sendReport(keyboard.keyDown(code));
       sendReport(keyboard.keyUp(code));
       sendReport(keyboard.reset());
     });
   }
 
-  function sendText(text: string) {
+  // A key pressed by the user, with the armed modifiers.
+  function pressKey(code: string) {
+    sendKey(code, takeModifiers());
+  }
+
+  function sendText(input: string) {
+    let text = input;
     if (!text) return;
+    const modifiers = takeModifiers();
+    if (modifiers.length) {
+      // The first character goes with the armed modifiers (Ctrl, then "c"
+      // typed, is Ctrl+C), at its key position; the rest is plain text.
+      const [first, ...rest] = Array.from(text);
+      const bits = modifiers.reduce((all, code) => all | getModifierBit(code), 0);
+      const steps = textToKeyReports(first, layoutRef.current);
+      enqueue(() => {
+        for (const step of steps) {
+          sendReport(new Uint8Array([step.modifier | bits, 0, step.usage, 0, 0, 0, 0, 0]));
+          sendReport(new Uint8Array(8));
+        }
+      });
+      text = rest.join('');
+      if (!text) return;
+    }
     if (restricted) {
       enqueue(() => {
         for (const step of textToKeyReports(text, layoutRef.current)) {
@@ -138,7 +186,7 @@ export const MobileLocalKeyboard = () => {
     if (composingRef.current || nativeEvent.isComposing) return;
     if (nativeEvent.inputType === 'deleteContentBackward') {
       event.preventDefault();
-      sendKey('Backspace');
+      pressKey('Backspace');
       resetInputValue();
       return;
     }
@@ -148,7 +196,7 @@ export const MobileLocalKeyboard = () => {
       nativeEvent.inputType === 'insertParagraph'
     ) {
       event.preventDefault();
-      sendKey('Enter');
+      pressKey('Enter');
       resetInputValue();
     }
   }
@@ -176,13 +224,13 @@ export const MobileLocalKeyboard = () => {
     if (composingRef.current || event.nativeEvent.isComposing) return;
     if (event.key === 'Backspace') {
       event.preventDefault();
-      sendKey('Backspace');
+      pressKey('Backspace');
       return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      sendKey('Enter');
+      pressKey('Enter');
       resetInputValue();
     }
   }
@@ -195,33 +243,48 @@ export const MobileLocalKeyboard = () => {
   function handleBlur() {
     composingRef.current = false;
     composedRef.current = '';
+    setArmedModifiers([]);
     setIsLocalKeyboardOpen(false);
     setIsKeyboardEnable(true);
     resetInputValue();
   }
 
   return (
-    <textarea
-      id={MOBILE_LOCAL_KEYBOARD_INPUT_ID}
-      ref={inputRef}
-      aria-label="Mobile local keyboard input"
-      autoCapitalize="off"
-      autoComplete="off"
-      autoCorrect="off"
-      className="fixed bottom-0 left-0 z-[1200] h-px w-px resize-none opacity-0"
-      inputMode="text"
-      rows={1}
-      spellCheck={false}
-      tabIndex={-1}
-      onBeforeInput={handleBeforeInput}
-      onCompositionStart={handleCompositionStart}
-      onCompositionUpdate={handleCompositionUpdate}
-      onCompositionEnd={handleCompositionEnd}
-      onFocus={handleFocus}
-      onInput={handleInput}
-      onKeyDown={handleKeyDown}
-      onBlur={handleBlur}
-      onPaste={handlePaste}
-    />
+    <>
+      <textarea
+        id={MOBILE_LOCAL_KEYBOARD_INPUT_ID}
+        ref={inputRef}
+        aria-label="Mobile local keyboard input"
+        autoCapitalize="off"
+        autoComplete="off"
+        autoCorrect="off"
+        className="fixed bottom-0 left-0 z-[1200] h-px w-px resize-none opacity-0"
+        inputMode="text"
+        rows={1}
+        spellCheck={false}
+        tabIndex={-1}
+        onBeforeInput={handleBeforeInput}
+        onCompositionStart={handleCompositionStart}
+        onCompositionUpdate={handleCompositionUpdate}
+        onCompositionEnd={handleCompositionEnd}
+        onFocus={handleFocus}
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+        onPaste={handlePaste}
+      />
+      {isLocalKeyboardOpen && (
+        <KeyHelper
+          armed={armed}
+          onToggleModifier={toggleModifier}
+          onKey={pressKey}
+          onCombo={(modifiers, code) => sendKey(code, [...takeModifiers(), ...modifiers])}
+          onClose={() => {
+            setIsLocalKeyboardOpen(false);
+            inputRef.current?.blur();
+          }}
+        />
+      )}
+    </>
   );
 };

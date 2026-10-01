@@ -21,6 +21,7 @@ import {
   capabilitiesErrorAtom,
   capabilitiesLoadingAtom
 } from '@/jotai/capabilities.ts';
+import { keyHelperHeightAtom, virtualKeyboardHeightAtom } from '@/jotai/keyboard.ts';
 import { picoclawChatOpenAtom } from '@/jotai/picoclaw.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
 import { menuBarOccupiesTopAtom } from '@/jotai/settings.ts';
@@ -60,6 +61,11 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
   const { t } = useTranslation();
   const isDesktopLayout = useIsDesktopLayout();
   const menuBarOccupiesTop = useAtomValue(menuBarOccupiesTopAtom);
+  // The touch keyboards cover the bottom of the page; the screen is laid out
+  // above them so the cursor can reach its bottom edge in sight.
+  const virtualKeyboardHeight = useAtomValue(virtualKeyboardHeightAtom);
+  const keyHelperHeight = useAtomValue(keyHelperHeightAtom);
+  const keyboardsCoverBottom = Math.max(virtualKeyboardHeight, keyHelperHeight);
   const hidAvailable = isAvailable(capabilities.hid.status);
   const controlChannelAvailable =
     hidAvailable || capabilities.video.status.availability === 'read_write';
@@ -118,7 +124,10 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
                 <div
                   id="kvm-pointer-surface"
                   className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-black transition-[padding] duration-300"
-                  style={{ paddingTop: menuBarOccupiesTop ? MENU_BAR_RESERVED_PX : 0 }}
+                  style={{
+                    paddingTop: menuBarOccupiesTop ? MENU_BAR_RESERVED_PX : 0,
+                    paddingBottom: keyboardsCoverBottom
+                  }}
                 >
                   <Screen />
                   {controlChannelAvailable && <CaptureStatusOverlay status={captureStatus} />}

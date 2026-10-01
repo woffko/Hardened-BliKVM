@@ -2,7 +2,7 @@ import type { ComponentType } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AppleOutlined, WindowsOutlined } from '@ant-design/icons';
 import clsx from 'clsx';
-import { useAtom } from 'jotai';
+import { useAtom, useSetAtom } from 'jotai';
 import { XIcon } from 'lucide-react';
 import type { KeyboardButtonTheme } from 'react-simple-keyboard';
 import * as SimpleKeyboard from 'react-simple-keyboard';
@@ -16,8 +16,9 @@ import { ConfigProvider, Segmented, Select, theme } from 'antd';
 import { getKeycode, getModifierBit } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
-import { isKeyboardOpenAtom } from '@/jotai/keyboard.ts';
+import { isKeyboardOpenAtom, virtualKeyboardHeightAtom } from '@/jotai/keyboard.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
+import { useReportHeight } from '@/hooks/useKeyboardInsets.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
 import {
@@ -62,6 +63,11 @@ export const VirtualKeyboard = () => {
   const { restricted, reportHid } = useHidLease();
 
   const keyboardRef = useRef<any>(null);
+  // On the touch layout the keyboard covers the bottom of the page; its
+  // height lets the screen be laid out above it.
+  const touchKeyboardRef = useRef<HTMLDivElement | null>(null);
+  const setTouchKeyboardHeight = useSetAtom(virtualKeyboardHeightAtom);
+  useReportHeight(touchKeyboardRef, !isDesktopLayout && isKeyboardOpen, setTouchKeyboardHeight);
 
   const systems = [
     { value: 'win', icon: <WindowsOutlined /> },
@@ -281,7 +287,11 @@ export const VirtualKeyboard = () => {
     if (!isKeyboardOpen) return null;
 
     return (
-      <div className="theme-fixed fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl">
+      <div
+        ref={touchKeyboardRef}
+        data-testid="touch-virtual-keyboard"
+        className="theme-fixed fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl"
+      >
         <div className="keyboard-header flex items-center justify-between gap-3 px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <select

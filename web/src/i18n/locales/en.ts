@@ -116,6 +116,12 @@ const en = {
       submit: 'Submit',
       local: 'Mobile keyboard',
       virtual: 'On-screen keyboard',
+      helper: {
+        title: 'Extra keys',
+        functionKeys: 'Function keys',
+        more: 'More keys',
+        close: 'Hide the keyboard'
+      },
       readClipboard: 'Read from Clipboard',
       clipboardPermissionDenied:
         'Clipboard permission denied. Please allow clipboard access in your browser.',
