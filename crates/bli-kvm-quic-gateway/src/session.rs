@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use tokio::sync::mpsc;
+
 use bli_kvm_quic_protocol::{
     PROTOCOL,
     frame::MAX_DATAGRAM_BYTES,
@@ -21,9 +23,12 @@ use tokio::time::timeout;
 use wtransport::{Connection, RecvStream, SendStream, VarInt, endpoint::IncomingSession};
 
 use crate::{
+    clock::monotonic_micros,
     config::Config,
+    frames::FrameSource,
     input::{self, Ended},
     link::Link,
+    video::{self, VideoControl, VideoCounters},
 };
 
 /// How long a refused or ended page gets to read why.
@@ -142,7 +147,13 @@ impl Control {
 
 /// Serves one incoming connection. `slot` keeps its place among the
 /// connections until this returns.
-pub async fn serve(incoming: IncomingSession, link: Link, config: Arc<Config>, slot: Slot) {
+pub async fn serve(
+    incoming: IncomingSession,
+    link: Link,
+    frames: FrameSource,
+    config: Arc<Config>,
+    slot: Slot,
+) {
     let _slot = slot;
     let peer = incoming.remote_address().to_string();
     let deadline = Instant::now() + config.hello_timeout;
@@ -172,7 +183,20 @@ pub async fn serve(incoming: IncomingSession, link: Link, config: Arc<Config>, s
             session.clone(),
             violation,
         )));
-        run(&connection, &mut control, &mut ended, violations, &config).await
+        let picture = Picture {
+            link: &link,
+            session: &session,
+            frames: &frames,
+        };
+        run(
+            &connection,
+            &mut control,
+            &mut ended,
+            violations,
+            picture,
+            &config,
+        )
+        .await
     } else {
         None
     };
@@ -267,34 +291,90 @@ async fn open(incoming: IncomingSession, link: &Link, peer: &str) -> Option<Open
 /// The session's life after its welcome. The answer is what the page is told
 /// when the gateway ends the session, or `None` when the page or its
 /// connection ended it.
+/// What a session needs to be given the picture.
+struct Picture<'a> {
+    link: &'a Link,
+    session: &'a str,
+    frames: &'a FrameSource,
+}
+
+fn video_state(state: VideoState, reason: Option<&str>) -> GatewayControl {
+    GatewayControl::Video {
+        state,
+        stream: None,
+        width: None,
+        height: None,
+        reason: reason.map(str::to_owned),
+    }
+}
+
 async fn run(
     connection: &Connection,
     control: &mut Control,
     ended: &mut tokio::sync::mpsc::Receiver<EndReason>,
     mut violations: tokio::sync::mpsc::Receiver<()>,
+    picture: Picture<'_>,
     config: &Config,
 ) -> Option<Closing> {
-    let started = Instant::now();
     let mut counters = tokio::time::interval(config.counters_interval);
     counters.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The picture: the task that sends it while the page watches, what it
+    // has to tell the page, and what it counted.
+    let mut watching: Option<AbortOnDrop> = None;
+    let video_control = Arc::new(VideoControl::default());
+    let video_counters = Arc::new(VideoCounters::default());
+    let (events, mut video_events) = mpsc::channel::<GatewayControl>(4);
     loop {
         tokio::select! {
             message = control.read() => {
                 let reply = match message {
+                    // The board's time is the system's monotonic clock, the
+                    // one a frame's capture time is given in.
                     Some(PageControl::Ping { id, page_time }) => GatewayControl::Pong {
                         id,
                         page_time,
-                        board_time: started.elapsed().as_micros() as u64,
+                        board_time: monotonic_micros(),
                     },
-                    // The picture is not served yet.
-                    Some(PageControl::Video { .. }) => GatewayControl::Video {
-                        state: VideoState::Unavailable,
-                        stream: None,
-                        width: None,
-                        height: None,
-                        reason: Some("not_served".into()),
-                    },
-                    Some(PageControl::Keyframe { .. }) => continue,
+                    Some(PageControl::Video { subscribe: true }) => {
+                        if watching.is_some() {
+                            // It watches already: it starts again from a key frame.
+                            video_control.page_needs_key.store(true, Ordering::Release);
+                            picture.frames.request_key();
+                            continue;
+                        }
+                        // The server holds the encoder's demand first.
+                        if let Err(reason) = picture.link.video(picture.session, true).await {
+                            video_state(VideoState::Unavailable, Some(&reason))
+                        } else if let Some(subscription) = picture.frames.subscribe().await {
+                            watching = Some(AbortOnDrop(tokio::spawn(video::serve(
+                                connection.clone(),
+                                subscription,
+                                Arc::clone(&video_control),
+                                Arc::clone(&video_counters),
+                                events.clone(),
+                            ))));
+                            // "started" follows with the first key frame.
+                            continue;
+                        } else {
+                            let _ = picture.link.video(picture.session, false).await;
+                            video_state(VideoState::Unavailable, Some("encoder"))
+                        }
+                    }
+                    Some(PageControl::Video { subscribe: false }) => {
+                        if watching.take().is_some() {
+                            let _ = picture.link.video(picture.session, false).await;
+                        }
+                        video_state(VideoState::Stopped, None)
+                    }
+                    // The page can decode nothing until a key frame comes:
+                    // one is asked for, and no delta frame is sent before it.
+                    Some(PageControl::Keyframe { .. }) => {
+                        if watching.is_some() {
+                            video_control.page_needs_key.store(true, Ordering::Release);
+                            picture.frames.request_key();
+                        }
+                        continue;
+                    }
                     Some(PageControl::Bye {}) => return None,
                     // A second hello, or what is not a message.
                     Some(PageControl::Hello { .. }) | None => {
@@ -313,14 +393,25 @@ async fn run(
             }
             // What came on the input stream was not a request.
             Some(()) = violations.recv() => return Some(Closing::Protocol),
+            Some(event) = video_events.recv() => {
+                // The encoder's socket ended: the page may ask again.
+                if matches!(event, GatewayControl::Video { state: VideoState::Stopped, .. })
+                    && watching.take().is_some()
+                {
+                    let _ = picture.link.video(picture.session, false).await;
+                }
+                if !control.write(&event).await {
+                    return None;
+                }
+            }
             _ = counters.tick() => {
                 let stats = connection.quic_connection().stats();
                 let message = GatewayControl::Counters {
                     round_trip_micros: u32::try_from(connection.rtt().as_micros()).unwrap_or(u32::MAX),
                     packets_lost: stats.path.lost_packets,
-                    frames_sent: 0,
-                    frames_dropped: 0,
-                    key_frames: 0,
+                    frames_sent: video_counters.frames_sent.load(Ordering::Relaxed),
+                    frames_dropped: video_counters.frames_dropped.load(Ordering::Relaxed),
+                    key_frames: video_counters.key_frames.load(Ordering::Relaxed),
                 };
                 if !control.write(&message).await {
                     return None;

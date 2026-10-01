@@ -15,6 +15,8 @@ Group=hardened-blikvm-quic
 UMask=0077
 Environment=BLI_KVM_QUIC_BIND=[::]:443
 Environment=BLI_KVM_QUIC_LINK_SOCKET=/run/hardened-blikvm-quic-link/link.sock
+# The H.264 encoder's frames; its socket serves this unit's user only.
+Environment=BLI_KVM_QUIC_FRAME_SOCKET=/run/hardened-blikvm-h264/frames.sock
 ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-quic-gateway
 Restart=on-failure
 RestartSec=2s

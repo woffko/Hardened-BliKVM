@@ -186,6 +186,27 @@ impl Link {
         }
     }
 
+    /// A session asks for the picture, or gives it up. The server holds the
+    /// encoder's demand for a session that watches; `Err` is its reason for
+    /// refusing, or `unavailable` if the link gave no answer.
+    pub async fn video(&self, session: &str, subscribe: bool) -> Result<(), String> {
+        let session = session.to_owned();
+        match self
+            .ask(|id| GatewayToServer::Video {
+                id,
+                session,
+                subscribe,
+            })
+            .await
+        {
+            Some(ServerToGateway::VideoAnswer { ok: true, .. }) => Ok(()),
+            Some(ServerToGateway::VideoAnswer { reason, .. }) => {
+                Err(reason.unwrap_or_else(|| "unavailable".into()))
+            }
+            _ => Err("unavailable".into()),
+        }
+    }
+
     /// A session's connection is gone.
     pub fn closed(&self, session: &str) {
         let known = self

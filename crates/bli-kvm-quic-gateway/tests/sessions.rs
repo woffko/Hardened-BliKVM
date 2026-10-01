@@ -4,14 +4,18 @@
 
 use std::{
     collections::HashSet,
-    path::PathBuf,
-    sync::{Arc, Mutex},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use bli_kvm_quic_gateway::{Gateway, config::Config};
 use bli_kvm_quic_protocol::{
     PROTOCOL,
+    frame::{self, FrameHeader, HEADER_BYTES, Kind, RecordHeader},
     link::{self, EndReason, GatewayToServer, RedeemRefusal, ServerToGateway},
     page::{
         self, Closing, GatewayControl, InputRequest, InputResponse, MessageReader, PageControl,
@@ -62,6 +66,11 @@ struct Seen {
     lease_delay: Duration,
     /// The server does not answer lease requests at all.
     lease_silent: bool,
+    /// What the sessions asked about the picture: the session, and whether
+    /// it wants it.
+    videos: Vec<(String, bool)>,
+    /// Why the server refuses the picture, if it does.
+    video_refusal: Option<String>,
 }
 
 /// The web server's side of the link.
@@ -144,7 +153,16 @@ impl Server {
                                         link::encode(&ServerToGateway::LeaseAnswer { id, response }).unwrap()
                                     })
                                 }
-                                GatewayToServer::Video { .. } => None,
+                                GatewayToServer::Video { id, session, subscribe } => {
+                                    let mut state = state.lock().unwrap();
+                                    state.videos.push((session, subscribe));
+                                    let refusal = state.video_refusal.clone().filter(|_| subscribe);
+                                    Some(link::encode(&ServerToGateway::VideoAnswer {
+                                        id,
+                                        ok: refusal.is_none(),
+                                        reason: refusal,
+                                    }).unwrap())
+                                }
                             };
                             if let Some(bytes) = answer
                                 && writer.write_all(&bytes).await.is_err()
@@ -406,16 +424,6 @@ async fn a_page_with_a_token_is_welcomed_and_its_pings_are_answered() {
             break;
         }
     }
-    // The picture is not served in this phase.
-    page.say(&PageControl::Video { subscribe: true }).await;
-    assert!(matches!(
-        page.hear_but_counters().await,
-        Some(GatewayControl::Video {
-            state: page::VideoState::Unavailable,
-            ..
-        })
-    ));
-
     page.say(&PageControl::Bye {}).await;
     page.gone().await;
     let closed = eventually(|| {
@@ -1059,4 +1067,506 @@ async fn a_request_the_server_does_not_answer_is_answered_as_unavailable() {
             response: answer_to(2)
         }
     );
+}
+
+/// The H.264 encoder's side of its frame socket.
+struct Encoder {
+    records: mpsc::UnboundedSender<Option<Vec<u8>>>,
+    /// Bytes the gateway wrote: one for every key frame it asked for.
+    asked: Arc<AtomicUsize>,
+    /// Connections the gateway made, and how many of them it closed.
+    connected: Arc<AtomicUsize>,
+    closed: Arc<AtomicUsize>,
+    stopped: Arc<tokio::sync::Notify>,
+}
+
+impl Encoder {
+    fn start(path: &Path) -> Self {
+        let listener = UnixListener::bind(path).unwrap();
+        let (records, mut waiting) = mpsc::unbounded_channel::<Option<Vec<u8>>>();
+        let asked = Arc::new(AtomicUsize::new(0));
+        let connected = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicUsize::new(0));
+        let (asks, connections, closes) = (
+            Arc::clone(&asked),
+            Arc::clone(&connected),
+            Arc::clone(&closed),
+        );
+        let stopped = Arc::new(tokio::sync::Notify::new());
+        let stop = Arc::clone(&stopped);
+        tokio::spawn(async move {
+            loop {
+                let stream = tokio::select! {
+                    accepted = listener.accept() => match accepted {
+                        Ok((stream, _)) => stream,
+                        Err(_) => return,
+                    },
+                    // The unit stops: the socket takes no more connections.
+                    () = stop.notified() => return,
+                };
+                connections.fetch_add(1, Ordering::SeqCst);
+                let (mut reader, mut writer) = stream.into_split();
+                loop {
+                    let mut byte = [0u8; 1];
+                    tokio::select! {
+                        read = reader.read(&mut byte) => match read {
+                            Ok(1) => {
+                                assert_eq!(byte[0], b'K');
+                                asks.fetch_add(1, Ordering::SeqCst);
+                            }
+                            _ => {
+                                closes.fetch_add(1, Ordering::SeqCst);
+                                break;
+                            }
+                        },
+                        record = waiting.recv() => match record {
+                            Some(Some(bytes)) => {
+                                if writer.write_all(&bytes).await.is_err() {
+                                    break;
+                                }
+                            }
+                            // The encoder hangs up, as when it restarts.
+                            Some(None) => break,
+                            None => return,
+                        },
+                        () = stop.notified() => return,
+                    }
+                }
+            }
+        });
+        Self {
+            records,
+            asked,
+            connected,
+            closed,
+            stopped,
+        }
+    }
+
+    /// The encoder's unit stops for good.
+    fn stop(&self) {
+        self.stopped.notify_one();
+    }
+
+    /// A frame of `size` bytes whose bytes tell which frame it is.
+    fn frame(frame: u32, size: usize) -> Vec<u8> {
+        (0..size)
+            .map(|index| (frame as usize * 7 + index) as u8)
+            .collect()
+    }
+
+    fn send(&self, kind: Kind, frame: u32, reference: u32, size: usize) {
+        let header = RecordHeader {
+            kind,
+            width: 1280,
+            height: 720,
+            stream: 77,
+            frame,
+            reference,
+            size: size as u32,
+            capture_micros: u64::from(frame) * 1000,
+        };
+        let mut record = header.encode().unwrap().to_vec();
+        record.extend(Self::frame(frame, size));
+        self.records.send(Some(record)).unwrap();
+    }
+
+    fn hang_up(&self) {
+        self.records.send(None).unwrap();
+    }
+
+    async fn asked(&self, count: usize) {
+        eventually(|| (self.asked.load(Ordering::SeqCst) >= count).then_some(())).await;
+    }
+}
+
+impl Board {
+    /// A board with an H.264 encoder's frame socket.
+    async fn with_encoder() -> (Self, Encoder) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("frames.sock");
+        let encoder = Encoder::start(&path);
+        let board = Self::start(|config| config.frame_socket = path, PROTOCOL).await;
+        board.server.hello(0).await;
+        // The socket's directory lives as long as the test's encoder.
+        std::mem::forget(directory);
+        (board, encoder)
+    }
+}
+
+impl Page {
+    /// The next key frame's stream, read to its end: its header and bytes.
+    async fn key_frame(&self) -> Result<(FrameHeader, Vec<u8>), String> {
+        let mut stream = timeout(PATIENCE, self.connection.accept_uni())
+            .await
+            .expect("no key frame stream came")
+            .map_err(|error| error.to_string())?;
+        let mut bytes = Vec::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            match timeout(PATIENCE, stream.read(&mut buffer))
+                .await
+                .expect("the key frame stream stalled")
+            {
+                Ok(Some(count)) => bytes.extend_from_slice(&buffer[..count]),
+                Ok(None) => break,
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        let header = FrameHeader::decode(&bytes).map_err(|error| error.to_string())?;
+        Ok((header, bytes[HEADER_BYTES..].to_vec()))
+    }
+
+    /// The datagrams of one delta frame, put together.
+    async fn delta_frame(&self) -> (FrameHeader, Vec<u8>) {
+        let mut parts: Vec<Option<Vec<u8>>> = Vec::new();
+        let mut first: Option<FrameHeader> = None;
+        loop {
+            let datagram = timeout(PATIENCE, self.connection.receive_datagram())
+                .await
+                .expect("no datagram came")
+                .unwrap();
+            let bytes = datagram.payload();
+            assert!(bytes.len() <= 1200, "a datagram of {} bytes", bytes.len());
+            let header = FrameHeader::decode(&bytes).unwrap();
+            assert_eq!(header.kind, Kind::Delta);
+            let known = *first.get_or_insert(header);
+            assert_eq!(
+                (header.stream, header.frame, header.reference, header.size),
+                (known.stream, known.frame, known.reference, known.size)
+            );
+            parts.resize(usize::from(header.fragment_count), None);
+            parts[usize::from(header.fragment_index)] = Some(bytes[HEADER_BYTES..].to_vec());
+            if parts.iter().all(Option::is_some) {
+                // Every fragment but the last has the same length.
+                let capacity = parts[0].as_ref().unwrap().len();
+                for (index, part) in parts.iter().enumerate() {
+                    let mut numbered = known;
+                    numbered.fragment_index = index as u16;
+                    assert_eq!(
+                        frame::expected_fragment_bytes(&numbered, capacity),
+                        Some(part.as_ref().unwrap().len())
+                    );
+                }
+                return (known, parts.into_iter().flatten().flatten().collect());
+            }
+        }
+    }
+
+    /// The next message that says something about the picture.
+    async fn video(&mut self) -> GatewayControl {
+        let found = async {
+            loop {
+                match self.hear().await {
+                    Some(message @ GatewayControl::Video { .. }) => return message,
+                    Some(GatewayControl::Counters { .. }) => {}
+                    other => panic!("no video message: {other:?}"),
+                }
+            }
+        };
+        timeout(PATIENCE * 2, found)
+            .await
+            .expect("the page was told nothing about the picture")
+    }
+
+    async fn counters(&mut self) -> (u64, u64, u64) {
+        loop {
+            if let Some(GatewayControl::Counters {
+                frames_sent,
+                frames_dropped,
+                key_frames,
+                ..
+            }) = self.hear().await
+            {
+                return (frames_sent, frames_dropped, key_frames);
+            }
+        }
+    }
+}
+
+fn started() -> GatewayControl {
+    GatewayControl::Video {
+        state: page::VideoState::Started,
+        stream: Some(77),
+        width: Some(1280),
+        height: Some(720),
+        reason: None,
+    }
+}
+
+fn video_state(state: page::VideoState, reason: Option<&str>) -> GatewayControl {
+    GatewayControl::Video {
+        state,
+        stream: None,
+        width: None,
+        height: None,
+        reason: reason.map(str::to_owned),
+    }
+}
+
+/// A session that watches gets the encoder's frames: a key frame whole on a
+/// stream of its own, a delta frame as datagrams, every one with the ids the
+/// encoder gave it.
+#[tokio::test]
+async fn the_picture_is_key_frames_on_streams_and_delta_frames_as_datagrams() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("6a")).await;
+    assert_eq!(
+        encoder.connected.load(Ordering::SeqCst),
+        0,
+        "nobody watches"
+    );
+    page.say(&PageControl::Video { subscribe: true }).await;
+    // The server holds the demand, and the encoder is asked for a key frame.
+    encoder.asked(1).await;
+    assert_eq!(
+        board.server.seen.lock().unwrap().videos,
+        vec![("session-1".to_string(), true)]
+    );
+
+    encoder.send(Kind::Key, 5, 5, 40_000);
+    assert_eq!(page.video().await, started());
+    let (key, bytes) = page.key_frame().await.unwrap();
+    assert_eq!(key, FrameHeader::key(77, 5, 40_000, 5000));
+    assert_eq!(bytes, Encoder::frame(5, 40_000));
+
+    // Delta frames of one datagram, of several, and of exactly two.
+    let limit = 1200 - HEADER_BYTES;
+    for (frame, size) in [
+        (6u32, 300usize),
+        (7, 9000),
+        (8, 2 * limit),
+        (9, 2 * limit + 1),
+    ] {
+        encoder.send(Kind::Delta, frame, 5, size);
+        let (header, bytes) = page.delta_frame().await;
+        assert_eq!(
+            (header.stream, header.frame, header.reference),
+            (77, frame, 5)
+        );
+        assert_eq!(header.capture_micros, u64::from(frame) * 1000);
+        assert_eq!(usize::from(header.fragment_count), size.div_ceil(limit));
+        assert_eq!(bytes, Encoder::frame(frame, size));
+    }
+    // The next key frame, of the same stream and size: no second "started".
+    encoder.send(Kind::Key, 10, 10, 2000);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 10);
+    encoder.send(Kind::Delta, 11, 10, 100);
+    assert_eq!(page.delta_frame().await.0.reference, 10);
+    assert_eq!(page.counters().await, (7, 0, 2));
+
+    // It gives the picture up: the server lets the demand go, and the
+    // gateway leaves the encoder's socket, which nobody watches any more.
+    page.say(&PageControl::Video { subscribe: false }).await;
+    assert_eq!(
+        page.video().await,
+        video_state(page::VideoState::Stopped, None)
+    );
+    eventually(|| (encoder.closed.load(Ordering::SeqCst) == 1).then_some(())).await;
+    assert_eq!(
+        board.server.seen.lock().unwrap().videos,
+        vec![
+            ("session-1".to_string(), true),
+            ("session-1".to_string(), false)
+        ]
+    );
+}
+
+/// A page that asks for a key frame gets no delta frame until one comes, and
+/// the encoder is asked for it.
+#[tokio::test]
+async fn a_page_that_lost_a_frame_gets_a_key_frame_and_nothing_before_it() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("6b")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    // Delta frames before the first key frame are not sent.
+    encoder.send(Kind::Delta, 2, 1, 500);
+    encoder.send(Kind::Key, 3, 3, 1000);
+    assert_eq!(page.video().await, started());
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 3);
+    encoder.send(Kind::Delta, 4, 3, 500);
+    assert_eq!(page.delta_frame().await.0.frame, 4);
+
+    page.say(&PageControl::Keyframe {
+        stream: 77,
+        last_frame: 4,
+        dropped: 1,
+    })
+    .await;
+    encoder.asked(2).await;
+    encoder.send(Kind::Delta, 5, 3, 500);
+    encoder.send(Kind::Delta, 6, 3, 500);
+    encoder.send(Kind::Key, 7, 7, 1000);
+    encoder.send(Kind::Delta, 8, 7, 500);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 7);
+    // The first datagram after the request is of the frame after the key
+    // frame: 5 and 6 were held back.
+    assert_eq!(page.delta_frame().await.0.frame, 8);
+    let (sent, dropped, keys) = page.counters().await;
+    assert_eq!((sent, dropped, keys), (4, 3, 2));
+
+    // Asking for the picture again while watching is the same request.
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(3).await;
+    assert_eq!(board.server.seen.lock().unwrap().videos.len(), 1);
+}
+
+/// A key frame that is still on its way when a newer one is ready gives way:
+/// its stream is reset, and the newer one arrives whole.
+#[tokio::test]
+async fn a_newer_key_frame_overtakes_one_that_is_still_on_its_way() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("6c")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    // More than the page lets a stream send before it reads.
+    encoder.send(Kind::Key, 1, 1, 3 * 1024 * 1024);
+    assert_eq!(page.video().await, started());
+    let mut first = timeout(PATIENCE, page.connection.accept_uni())
+        .await
+        .unwrap()
+        .unwrap();
+    encoder.send(Kind::Key, 2, 2, 5000);
+    // The second arrives whole while the first is not read.
+    let (second, bytes) = page.key_frame().await.unwrap();
+    assert_eq!(second.frame, 2);
+    assert_eq!(bytes, Encoder::frame(2, 5000));
+    // The first ends in a reset, not in its last byte.
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut read = 0usize;
+    let ending = loop {
+        match timeout(PATIENCE, first.read(&mut buffer)).await.unwrap() {
+            Ok(Some(count)) => read += count,
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error),
+        }
+    };
+    assert!(ending.is_err(), "the overtaken key frame arrived whole");
+    assert!(read < 3 * 1024 * 1024);
+}
+
+/// A delta frame that the endpoint has no room for is not sent in part: it
+/// is dropped whole, and the session starts again from a key frame.
+#[tokio::test]
+async fn a_frame_without_room_is_dropped_whole() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("6d")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 1000);
+    assert_eq!(page.video().await, started());
+    page.key_frame().await.unwrap();
+    // More than the endpoint's datagram buffer holds.
+    encoder.send(Kind::Delta, 2, 1, 600 * 1024);
+    encoder.asked(2).await;
+    encoder.send(Kind::Delta, 3, 1, 400);
+    encoder.send(Kind::Key, 4, 4, 1000);
+    encoder.send(Kind::Delta, 5, 4, 400);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 4);
+    // Nothing of frame 2, and frame 3 was held back with it.
+    assert_eq!(page.delta_frame().await.0.frame, 5);
+    assert_eq!(page.counters().await, (3, 2, 2));
+}
+
+/// Why there is no picture: the server refuses, there is no encoder, or the
+/// encoder went away. The page may ask again.
+#[tokio::test]
+async fn the_page_is_told_why_there_is_no_picture() {
+    // The server refuses: the encoder is not asked.
+    let (board, encoder) = Board::with_encoder().await;
+    board.server.seen.lock().unwrap().video_refusal = Some("unavailable".into());
+    let mut page = board.welcomed(&board.server.token("6e")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    assert_eq!(
+        page.video().await,
+        video_state(page::VideoState::Unavailable, Some("unavailable"))
+    );
+    assert_eq!(encoder.connected.load(Ordering::SeqCst), 0);
+    // It works once the server agrees.
+    board.server.seen.lock().unwrap().video_refusal = None;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 100);
+    assert_eq!(page.video().await, started());
+
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 1);
+
+    // The encoder restarts: it is found again, and the page notices nothing
+    // but the frames of the new connection.
+    encoder.hang_up();
+    eventually(|| (encoder.connected.load(Ordering::SeqCst) == 2).then_some(())).await;
+    encoder.send(Kind::Key, 9, 9, 100);
+    encoder.send(Kind::Delta, 10, 9, 50);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 9);
+    assert_eq!(page.delta_frame().await.0.frame, 10);
+    assert_eq!(board.server.seen.lock().unwrap().videos.len(), 2);
+
+    // The encoder stops for good: after a few seconds the page is told, and
+    // the server's demand is let go.
+    encoder.stop();
+    assert_eq!(
+        page.video().await,
+        video_state(page::VideoState::Stopped, Some("encoder"))
+    );
+    eventually(|| {
+        (board.server.seen.lock().unwrap().videos.last() == Some(&("session-1".into(), false)))
+            .then_some(())
+    })
+    .await;
+    // Asked again, it is told there is no encoder.
+    page.say(&PageControl::Video { subscribe: true }).await;
+    assert_eq!(
+        page.video().await,
+        video_state(page::VideoState::Unavailable, Some("encoder"))
+    );
+
+    // No encoder at all.
+    let board = Board::ready().await;
+    let mut page = board.welcomed(&board.server.token("6f")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    assert_eq!(
+        page.video().await,
+        video_state(page::VideoState::Unavailable, Some("encoder"))
+    );
+    assert_eq!(
+        board.server.seen.lock().unwrap().videos,
+        vec![
+            ("session-1".to_string(), true),
+            ("session-1".to_string(), false)
+        ]
+    );
+}
+
+/// Two sessions watch one encoder: one connection to its socket, every frame
+/// to both, and the second one starts from a key frame of its own asking.
+#[tokio::test]
+async fn two_sessions_share_the_encoders_frames() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut first = board.welcomed(&board.server.token("7a")).await;
+    first.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 800);
+    assert_eq!(first.video().await, started());
+    assert_eq!(first.key_frame().await.unwrap().0.frame, 1);
+
+    let mut second = board.welcomed(&board.server.token("7b")).await;
+    second.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(2).await;
+    assert_eq!(encoder.connected.load(Ordering::SeqCst), 1);
+    // A delta frame of the first one's chain is not for the newcomer.
+    encoder.send(Kind::Delta, 2, 1, 300);
+    assert_eq!(first.delta_frame().await.0.frame, 2);
+    encoder.send(Kind::Key, 3, 3, 800);
+    encoder.send(Kind::Delta, 4, 3, 300);
+    assert_eq!(second.video().await, started());
+    for page in [&first, &second] {
+        assert_eq!(page.key_frame().await.unwrap().0.frame, 3);
+        assert_eq!(page.delta_frame().await.0.frame, 4);
+    }
+    // One leaves; the other still watches, and the socket stays.
+    drop(first);
+    encoder.send(Kind::Delta, 5, 3, 300);
+    assert_eq!(second.delta_frame().await.0.frame, 5);
+    assert_eq!(encoder.closed.load(Ordering::SeqCst), 0);
 }

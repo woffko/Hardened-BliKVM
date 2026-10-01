@@ -10,6 +10,8 @@ repository.workspace = true
 
 [dependencies]
 bli-kvm-quic-protocol = { path = "../bli-kvm-quic-protocol" }
+# The system's monotonic clock, without unsafe code of our own.
+nix = { workspace = true, features = ["time"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "signal"] }
 wtransport = { version = "0.7.2", default-features = false, features = ["quinn", "ring", "self-signed"] }

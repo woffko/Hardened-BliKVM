@@ -6,10 +6,13 @@
 #![forbid(unsafe_code)]
 
 pub mod certificate;
+pub mod clock;
 pub mod config;
+pub mod frames;
 pub mod input;
 pub mod link;
 pub mod session;
+pub mod video;
 
 use std::{
     future::Future,
@@ -23,7 +26,7 @@ use wtransport::{
     endpoint::endpoint_side::Server, quinn,
 };
 
-use crate::{config::Config, link::Link, session::Slot};
+use crate::{config::Config, frames::FrameSource, link::Link, session::Slot};
 
 /// Streams a page may have open at once. HTTP/3 itself takes three
 /// unidirectional ones; the page opens the control and the input stream.
@@ -74,6 +77,7 @@ pub struct Gateway {
     bind: SocketAddr,
     config: Arc<Config>,
     link: Link,
+    frames: FrameSource,
 }
 
 impl Gateway {
@@ -100,11 +104,13 @@ impl Gateway {
             .map_err(|error| error.to_string())?
             .port();
         let link = Link::spawn(config.link_socket.clone(), port, certificate);
+        let frames = FrameSource::spawn(config.frame_socket.clone());
         Ok(Self {
             endpoint,
             bind,
             config: Arc::new(config),
             link,
+            frames,
         })
     }
 
@@ -141,6 +147,7 @@ impl Gateway {
                     tokio::spawn(session::serve(
                         incoming,
                         self.link.clone(),
+                        self.frames.clone(),
                         Arc::clone(&self.config),
                         slot,
                     ));

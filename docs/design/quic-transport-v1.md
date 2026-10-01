@@ -339,12 +339,34 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
 
 ## Gateway, sending
 
-- A frame's fragments are handed to the endpoint together. If the endpoint's
-  datagram buffer has no room for the whole frame, the frame is dropped and
-  counted, and the session then needs a key frame, like after a loss.
-- The gateway asks the encoder for a key frame when a session subscribes,
-  when it dropped a frame for it, or when the page asks; one key frame
+- **One connection to the encoder** (`src/frames.rs`), held while any
+  session watches; its records go to every session that does. An encoder
+  that restarts is found again, and the sessions notice no more than a new
+  stream. One that sends nothing for 3 s, connection after connection, is
+  not waited for: the sessions are told `stopped`, and the server's demand
+  is let go.
+- **A session that watches** (`src/video.rs`): the server is asked first and
+  holds the encoder's demand; then the session takes its place among the
+  watchers, which asks the encoder for a key frame. The page is told
+  `started`, with the stream and the picture's size, when the first key
+  frame of a stream goes out, and `unavailable` with the reason when the
+  server refuses or the encoder cannot be reached.
+- **A key frame** travels whole on a unidirectional stream of its own,
+  below the control and the input stream in priority. If a newer key frame
+  is ready before an older one is through, the older stream is reset.
+- **A delta frame** is cut into datagrams of at most 1200 bytes, never more
+  than the path's live limit. Its fragments are handed to the endpoint
+  together. If the endpoint's datagram buffer has no room for the whole
+  frame, nothing of it is sent, it is counted, and the session needs a key
+  frame, like after a loss.
+- **After a loss** (a frame without room, a frame that found the session's
+  queue of 8 full, or the page's `keyframe`) the session gets no delta frame
+  until the next key frame, and the encoder is asked for one. One key frame
   answers every session that waits for one.
+- **Counters**, every 2 s with the path's round trip and lost packets:
+  frames sent, frames dropped, key frames sent.
+- **The board's time** in a `pong` is the system's monotonic clock, the
+  clock of a frame's capture time.
 
 ## Encoder
 

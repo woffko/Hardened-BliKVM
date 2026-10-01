@@ -771,6 +771,7 @@ name = "bli-kvm-quic-gateway"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-quic-protocol",
+ "nix",
  "serde_json",
  "tempfile",
  "tokio",
