@@ -308,6 +308,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the OpenSSH server state.
     SshState {},
+    /// Enable and start, or stop and disable, the QUIC gateway.
+    Quic {
+        enabled: bool,
+    },
+    /// Read back the QUIC gateway's state.
+    QuicState {},
     /// The connected interfaces' IPv4 addressing and DNS.
     NetworkInfo {},
     /// Set one interface to DHCP, or to manual DNS with an optional static
@@ -604,6 +610,8 @@ impl PlatformControlRequestV2 {
             Self::AdminFeatureState {} => Ok(()),
             Self::Ssh { .. } => Ok(()),
             Self::SshState {} => Ok(()),
+            Self::Quic { .. } => Ok(()),
+            Self::QuicState {} => Ok(()),
             Self::NetworkInfo {} => Ok(()),
             Self::Ipv4Set { change } => change.validate(),
             Self::Ipv4Confirm {} => Ok(()),

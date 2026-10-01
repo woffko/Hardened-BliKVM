@@ -164,6 +164,11 @@ pub enum ControlResponse {
         enabled: bool,
         active: bool,
     },
+    /// The QUIC gateway: enabled at boot and running now.
+    QuicState {
+        enabled: bool,
+        active: bool,
+    },
     /// The persisted administration feature switches.
     AdminFeatureState {
         terminal: bool,

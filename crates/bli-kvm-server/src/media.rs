@@ -134,6 +134,7 @@ pub(crate) async fn virtual_media(
             | ControlResponse::HidOnlyState { .. }
             | ControlResponse::AdminFeatureState { .. }
             | ControlResponse::SshState { .. }
+            | ControlResponse::QuicState { .. }
             | ControlResponse::NetworkInfo { .. }
             | ControlResponse::WifiState { .. }
             | ControlResponse::WifiNetworks { .. }

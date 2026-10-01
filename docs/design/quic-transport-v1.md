@@ -294,12 +294,20 @@ the lease like a client that vanished.
 
 ## Switches, Settings, failures, firewall
 
-As in the plan: the board's switch `quic_transport` (default off, kept by
-the owner, written to the switch file only while on); Settings > Network >
-Transport with the switch, this browser's choice (Standard by default) and
-the status line; the failure table; no firewall rule, `quicBlocked` in the
-firewall status for Restricted and Paranoid. The Content-Security-Policy is
-unchanged.
+- **The board's switch** is the gateway unit's enablement, applied by the
+  owner like the SSH switch: on enables and starts
+  `hardened-blikvm-quic.service`, off stops and disables it, and the state is
+  read back from systemd. The unit is installed disabled, so the switch is
+  off by default and nothing listens on the port until the operator turns it
+  on. The server issues a token only while the gateway is on the link.
+- **Settings > Network > Transport**, as in the plan: the switch, this
+  browser's choice (Standard by default) and the status line.
+- **Failures** as in the plan's table. One more reason for "offers only
+  Standard": the page was not loaded from the gateway's port (a forwarded
+  port, for instance), so its policy would not let it connect.
+- **Firewall**: no rule; `quicBlocked` in the firewall status for Restricted
+  and Paranoid.
+- The Content-Security-Policy is unchanged.
 
 ## What stays on HTTPS
 
@@ -314,3 +322,4 @@ signalling, and everything when the browser's choice is Standard.
 | Q0.3 on a high UDP port | on UDP 443 | the page's policy admits only its own origin |
 | Key frames on one stream | one stream per key frame | a newer key frame can replace one that is still in transit |
 | 15% of a core at 8 Mbit/s | holds for frames sent as bursts | the cost is per wake-up, not per byte; measured both ways |
+| The switch as a key of the administration switch file | the gateway unit's enablement, like the SSH switch | one state that survives a reboot and is read from systemd; the switch file, which refuses unknown keys, keeps its format for older slots |

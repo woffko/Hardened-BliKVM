@@ -439,6 +439,10 @@ async fn board_state(
     state.with_ssh(crate::ssh_settings::SshSettings::open(Box::new(
         crate::tailscale::SystemTailscaleRunner,
     )));
+    // The QUIC transport's switch: enable/disable the gateway's unit.
+    state.with_quic(crate::quic_settings::QuicSettings::open(Box::new(
+        crate::tailscale::SystemTailscaleRunner,
+    )));
     // Administration features stay off until the operator switches them on.
     state.with_admin_features(crate::admin_features::AdminFeaturesState::open(
         bli_kvm_core::ADMIN_FEATURES_PATH,
@@ -1153,6 +1157,7 @@ where
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }

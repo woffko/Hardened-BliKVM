@@ -67,6 +67,7 @@ pub struct ControlV2State {
     hid_only: Option<crate::device_settings::HidOnlyState>,
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
+    quic: Option<crate::quic_settings::QuicSettings>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
     hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::SharedWifi>,
@@ -104,6 +105,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -224,6 +226,10 @@ impl ControlV2State {
         self.ssh = Some(ssh);
     }
 
+    pub fn with_quic(&mut self, quic: crate::quic_settings::QuicSettings) {
+        self.quic = Some(quic);
+    }
+
     pub fn with_admin_features(&mut self, features: crate::admin_features::AdminFeaturesState) {
         self.admin_features = Some(features);
     }
@@ -300,6 +306,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -335,6 +342,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -370,6 +378,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -419,6 +428,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -456,6 +466,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -499,6 +510,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -763,6 +775,7 @@ impl ControlV2State {
             hid_only: None,
             admin_features: None,
             ssh: None,
+            quic: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -893,6 +906,14 @@ impl ControlV2State {
             },
             PlatformControlRequestV2::SshState {} => match self.ssh.as_mut() {
                 Some(ssh) => ssh.state(),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::Quic { enabled } => match self.quic.as_mut() {
+                Some(quic) => quic.handle(*enabled),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::QuicState {} => match self.quic.as_mut() {
+                Some(quic) => quic.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {

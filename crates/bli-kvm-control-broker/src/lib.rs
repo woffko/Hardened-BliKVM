@@ -28,6 +28,7 @@ pub mod network_write;
     feature = "chardev-atx-profile"
 ))]
 mod profile;
+mod quic_settings;
 pub mod revert_journal;
 mod server;
 mod ssh_settings;

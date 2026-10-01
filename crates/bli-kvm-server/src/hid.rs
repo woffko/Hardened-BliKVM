@@ -252,6 +252,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -284,6 +285,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -566,6 +568,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -603,6 +606,7 @@ pub(crate) async fn hid_lease(
         | ControlResponse::HidOnlyState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
+        | ControlResponse::QuicState { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
