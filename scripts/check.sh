@@ -142,6 +142,7 @@ node --test tools/test_hid_report_queue.mjs
 node --test tools/test_command_result.mjs
 node --test tools/test_hid_text.mjs
 node --test tools/test_sticky_modifiers.mjs
+node --test tools/test_quic_messages.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
 node --test tools/test_video_frame_timing_probe.mjs

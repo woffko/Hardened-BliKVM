@@ -582,6 +582,47 @@ const en = {
           rebootOk: 'Apply and reboot',
           rebootCancel: 'Cancel'
         },
+        transport: {
+          title: 'Transport',
+          description:
+            'How this page talks to the device. The standard transport always stays available.',
+          device: 'QUIC on this device',
+          deviceDescription: 'Runs the QUIC gateway, which answers on UDP port {{port}}.',
+          enableTitle: 'Switch QUIC on?',
+          enableDescription:
+            'The device starts its QUIC gateway and answers on UDP port {{port}} to the networks the Firewall mode admits. Only a page that is signed in to this device can open a session.',
+          enableOk: 'Switch on',
+          cancel: 'Cancel',
+          switchFailed: 'The QUIC switch could not be changed.',
+          loadFailed: 'The state of the QUIC transport could not be read.',
+          browser: 'This browser uses',
+          standard: 'Standard',
+          quic: 'QUIC',
+          retry: 'Retry',
+          fallbackTitle: 'QUIC is not in use',
+          fallback: '{{reason}} The standard transport is used.',
+          status: {
+            standard: 'The standard transport is in use.',
+            connecting: 'QUIC: connecting...',
+            connected:
+              'The QUIC session is open: round trip {{ms}} ms, lost datagrams {{lost}}, key-frame requests {{keyFrames}}.'
+          },
+          reasons: {
+            off: 'QUIC is switched off on this device.',
+            unsupported: 'This browser has no WebTransport.',
+            blocked: 'The Firewall mode keeps the QUIC port closed.',
+            origin: 'This page is not served from the port the QUIC gateway answers on.',
+            unavailable: 'The QUIC gateway is not running.',
+            clock: "The device's clock and this browser's are too far apart.",
+            timeout: 'The device did not answer over QUIC in time.',
+            lost: 'The QUIC session was lost and did not come back.',
+            handshake: 'The QUIC connection was not accepted (certificate or limit).',
+            token: 'The session token was refused.',
+            protocol: 'The device speaks another version of the QUIC transport.',
+            sessions: 'This login already has its QUIC sessions open.',
+            hello: 'The device did not accept the greeting.'
+          }
+        },
         dns: {
           title: 'DNS',
           description: 'Configure DNS servers for BliKVM',

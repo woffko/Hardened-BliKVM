@@ -36,6 +36,7 @@ import { Mouse } from './mouse';
 import { Notification } from './notification.tsx';
 import { Sidebar as PicoclawSidebar } from './picoclaw';
 import { ActionOverlay } from './picoclaw/action-overlay.tsx';
+import { QuicTransport } from './quic-transport.tsx';
 import { Screen } from './screen';
 import { VirtualKeyboard } from './virtual-keyboard';
 
@@ -110,6 +111,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
       <Head title={t('head.desktop')} />
 
       {isDesktopLayout && <Notification />}
+      <QuicTransport />
 
       {videoMode && resolution && (
         <div className="relative flex h-full min-h-0 w-full min-w-0">

@@ -24,6 +24,7 @@ const MENU_DISABLED_ITEMS_KEY = `${STORAGE_PREFIX}-menu-disabled-items`;
 const MENU_AUTO_HIDE_KEY = `${STORAGE_PREFIX}-menu-auto-hide`;
 const THEME_MODE_KEY = `${STORAGE_PREFIX}-theme`;
 const ACCENT_KEY = `${STORAGE_PREFIX}-accent`;
+const TRANSPORT_KEY = `${STORAGE_PREFIX}-transport`;
 const LAYOUT_MODE_KEY = `${STORAGE_PREFIX}-layout-mode`;
 const POWER_CONFIRM_KEY = `${STORAGE_PREFIX}-power-confirm`;
 
@@ -319,6 +320,15 @@ export function getThemeMode(): string | null {
 
 export function setThemeMode(mode: string) {
   localStorage.setItem(THEME_MODE_KEY, mode);
+}
+
+// The transport this browser uses: today's (`standard`) unless QUIC was chosen.
+export function getTransportChoice(): 'standard' | 'quic' {
+  return localStorage.getItem(TRANSPORT_KEY) === 'quic' ? 'quic' : 'standard';
+}
+
+export function setTransportChoice(choice: 'standard' | 'quic') {
+  localStorage.setItem(TRANSPORT_KEY, choice);
 }
 
 export function getAccent(): string | null {
