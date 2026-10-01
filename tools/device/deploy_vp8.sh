@@ -8,6 +8,9 @@
 #   hardened-blikvm-video-encoder-h264.service  packaging/systemd (x264)
 #   60-hardened-blikvm-stream.conf         packaging/sysctl (MJPEG latency)
 #   hardened-blikvm-ustreamer.service      packaging/systemd (default rate)
+#   licenses/*                             license texts of the static libraries
+#                                          linked into the encoder (libvpx,
+#                                          x264, libjpeg-turbo; docs/licensing.md)
 # Usage: deploy_vp8.sh install|remove STAGING_DIR
 #
 # The server advertises VP8 only when BLI_KVM_JANUS_WS is set, which this
@@ -21,12 +24,19 @@ staging=${2:-}
 case "$action" in install|remove) ;; *) echo "usage: $0 install|remove DIR" >&2; exit 2 ;; esac
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 2; }
 units=/etc/systemd/system
+doc=/usr/share/doc/hardened-blikvm-video-encoder
 serving="hardened-blikvm-server-current hardened-blikvm-server-candidate"
 
 install_vp8() {
   case "$staging" in /*) ;; *) echo "staging directory must be absolute" >&2; exit 2 ;; esac
   command -v janus >/dev/null || { echo "the distribution janus package is required" >&2; exit 1; }
   install -m 0755 -o root -g root "$staging/bli-kvm-video-encoder" /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+  install -d -m 0755 -o root -g root "$doc"
+  for file in "$staging"/licenses/*; do
+    if [ -f "$file" ]; then
+      install -m 0644 -o root -g root "$file" "$doc/"
+    fi
+  done
   # Its own world-readable directory: /etc/hardened-blikvm is root-only and
   # the dynamic Janus user could not read its configuration there.
   rm -rf /etc/hardened-blikvm/janus
@@ -77,6 +87,7 @@ remove_vp8() {
   # Configuration from an earlier layout, unreadable for the dynamic user.
   rm -rf /etc/hardened-blikvm/janus
   rm -f /usr/libexec/hardened-blikvm/bli-kvm-video-encoder
+  rm -rf "$doc"
   systemctl daemon-reload
   for unit in $serving; do
     if systemctl is-active --quiet "$unit"; then
