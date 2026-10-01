@@ -225,3 +225,49 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   periodic key frames) received only the headers and decoded nothing, as
   the VP8 probe of the same minute did; with key frames every two seconds
   both decode at 1920x1080.
+
+## Frame preparation with libjpeg-turbo (2026-10-01)
+
+- Preparing a capture frame (decoding the JPEG, then 4:4:4 to I420) took
+  45 ms at 1920x1080 and was the slowest stage. The encoder now decodes with
+  libjpeg-turbo 3.2.0 (`scripts/build-libjpeg-turbo.sh`: pinned, signature
+  checked, NEON required) straight into Y, Cb and Cr planes at the frame's
+  own subsampling, so a 4:2:2 capture needs only its chroma rows averaged
+  for I420; with halving it scales by half in the IDCT. zune-jpeg stays as
+  the fallback feature (`zune`), and `bench` measures both decoders on the
+  same frames.
+- On the board (`jpeg-bench-*.txt`, 60 frames of the same capture, both
+  decoders in one run):
+
+  | capture | decoder | decode | convert | total |
+  | --- | --- | --- | --- | --- |
+  | 1920x1080 4:2:2, 256 KB frames | zune-jpeg | 25.1 ms | 20.2 ms | 45.3 ms |
+  | 1920x1080 4:2:2, 256 KB frames | libjpeg-turbo | 19.1 ms | 6.1 ms | 25.2 ms |
+  | quality 100, 355 KB frames | zune-jpeg | 45.8 ms | 21.4 ms | 67.2 ms |
+  | quality 100, 355 KB frames | libjpeg-turbo | 28.8 ms | 5.9 ms | 34.7 ms |
+
+  At 1280x720 (decoded at 1920x1080, then scaled by two thirds) the totals
+  are 27.7 against 48.1 ms. The fast IDCT saves about 1 ms and is not used.
+  With two converter threads, preparation no longer bounds any codec at
+  1920x1080: x264 ultrafast reaches 36 frames/s (bounded by its 28 ms of
+  encoding), VP8 25 frames/s, at the earlier capture settings.
+- Quality: luma matches the zune path within 70 dB, and 4:4:4 chroma
+  exactly. For subsampled frames the new chroma is closer to the source
+  picture (tests: 4:2:2 49.8 against 38.2 dB, 4:2:0 44.3 against 36.1 dB),
+  because zune-jpeg upsamples chroma before it is averaged back.
+- Two faults found while testing, both handled: a damaged frame could leave
+  the TurboJPEG decompressor's Huffman tables corrupt, so every later frame
+  failed ("Bogus Huffman table definition") until a restart, and the
+  decompressor is now recreated after any error; and the fast IDCT scaled
+  by half returned wrong chroma for 4:2:0 frames, so it is never used when
+  halving. 20000 randomly damaged frames run through the decoder in a
+  release build in `check.sh`.
+- Live, with a WebRTC viewer (`stage-cpu-*-jpeg-*.txt`): the measurement
+  after the change ran with the capture settings the operator had chosen in
+  the meantime (60 frames/s, quality 100, frame detection off), which a
+  restart of uStreamer applied. The probe page then also pulls every MJPEG
+  frame, so nginx, the server and the video proxy take 40-50 % of a core
+  each and the encoders' stages slow down by contention (decode 35-84 ms,
+  convert 10-20 ms per frame). Those numbers are not comparable with the
+  earlier still-screen run (decode 26-49 ms, convert 20-29 ms); the bench
+  above is the controlled comparison.
