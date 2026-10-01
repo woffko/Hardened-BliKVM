@@ -275,3 +275,23 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   by contention (decode 35-84 ms, convert 10-20 ms per frame). Those numbers
   are not comparable with the earlier still-screen run (decode 26-49 ms,
   convert 20-29 ms); the bench above is the controlled comparison.
+
+## WebRTC quality (2026-10-01, slot 58)
+
+- The Screen menu's Quality, in the H.264 and VP8 modes, sets the WebRTC
+  encoders' target bitrate: 1.5, 2.5, 5 or 8 Mbit/s (the units start at
+  2.5, `BLI_KVM_VP8_KBPS`). The server keeps the choice in its state
+  directory (`webrtc-bitrate.json`), offers `webrtc_bitrate` in the
+  capability manifest when an encoder demand socket is configured, and
+  reports it as `webrtcKbps` in `GET /api/vm/screen`; `POST /api/vm/screen`
+  with `type: webrtc_kbps` changes it.
+- Nothing restarts: every demand connection carries `kbps N` after the codec,
+  and another line whenever the choice changes while a viewer watches; the
+  encoder applies the last one to the running libvpx (`vpx_codec_enc_config_set`)
+  or x264 (`x264_encoder_reconfig`) encoder and keeps it across a capture size
+  change. An older encoder ignores the lines.
+- On the board (`webrtc-bitrate-seq58-*.txt`): an H.264 viewer started at the
+  stored 1.5 Mbit/s, moved to 5 Mbit/s mid-stream ("bitrate 5000 kbit/s" in
+  the encoder's journal) and the probe kept decoding.
+- MJPEG still offers no quality: the capture device compresses the JPEG
+  itself.
