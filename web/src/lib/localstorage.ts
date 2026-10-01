@@ -22,6 +22,8 @@ const KEYBOARD_LANGUAGE_KEY = `${STORAGE_PREFIX}-keyboard-language`;
 const SKIP_MODIFY_PASSWORD_KEY = `${STORAGE_PREFIX}-skip-modify-password`;
 const MENU_DISABLED_ITEMS_KEY = `${STORAGE_PREFIX}-menu-disabled-items`;
 const MENU_AUTO_HIDE_KEY = `${STORAGE_PREFIX}-menu-auto-hide`;
+const THEME_MODE_KEY = `${STORAGE_PREFIX}-theme`;
+const ACCENT_KEY = `${STORAGE_PREFIX}-accent`;
 const LAYOUT_MODE_KEY = `${STORAGE_PREFIX}-layout-mode`;
 const POWER_CONFIRM_KEY = `${STORAGE_PREFIX}-power-confirm`;
 
@@ -309,4 +311,20 @@ export function getPowerConfirm() {
 
 export function setPowerConfirm(enabled: boolean) {
   localStorage.setItem(POWER_CONFIRM_KEY, String(enabled));
+}
+
+export function getThemeMode(): string | null {
+  return localStorage.getItem(THEME_MODE_KEY);
+}
+
+export function setThemeMode(mode: string) {
+  localStorage.setItem(THEME_MODE_KEY, mode);
+}
+
+export function getAccent(): string | null {
+  return localStorage.getItem(ACCENT_KEY);
+}
+
+export function setAccent(accent: string) {
+  localStorage.setItem(ACCENT_KEY, accent);
 }

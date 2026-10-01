@@ -385,6 +385,23 @@ const en = {
         layoutModeDesc: 'Use the mobile/touch layout in this browser',
         layoutAuto: 'Auto',
         layoutMobile: 'Mobile view',
+        theme: 'Theme',
+        themeDesc: 'Colors of the interface in this browser',
+        themeDark: 'Dark',
+        themeLight: 'Light',
+        themeSystem: 'System',
+        accent: 'Accent color',
+        accentDesc: 'Color of buttons, switches and highlights',
+        accents: {
+          blue: 'Blue',
+          green: 'Green',
+          cyan: 'Cyan',
+          violet: 'Violet',
+          pink: 'Pink',
+          red: 'Red',
+          orange: 'Orange',
+          amber: 'Amber'
+        },
         menuBar: {
           title: 'Menu Bar',
           mode: 'Display Mode',

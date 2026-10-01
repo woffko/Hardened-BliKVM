@@ -165,6 +165,7 @@ node --check tools/playwright/webrtc_unavailable_contract.mjs
 node --check tools/playwright/csp_contract.mjs
 node --check tools/playwright/menu_autohide_contract.mjs
 node --check tools/playwright/webrtc_quality_contract.mjs
+node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/wifi_contract.mjs
 node --check tools/playwright/vp8_webrtc_probe.mjs
 node --check tools/playwright/video_settings_contract.mjs
@@ -810,6 +811,7 @@ node tools/playwright/webrtc_unavailable_contract.mjs
 node tools/playwright/csp_contract.mjs
 node tools/playwright/menu_autohide_contract.mjs
 node tools/playwright/webrtc_quality_contract.mjs
+node tools/playwright/theme_contract.mjs
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'

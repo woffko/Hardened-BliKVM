@@ -5,6 +5,7 @@ import { Language } from './language.tsx';
 import { LayoutMode } from './layout-mode.tsx';
 import { MenuIcons } from './menu-icons.tsx';
 import { MenuMode } from './menu-mode.tsx';
+import { Accent, Theme } from './theme.tsx';
 import { WebTitle } from './web-title.tsx';
 
 export const Appearance = () => {
@@ -19,6 +20,8 @@ export const Appearance = () => {
       <Language />
       <WebTitle />
       <LayoutMode />
+      <Theme />
+      <Accent />
 
       <Divider className="opacity-50" style={{ margin: '32px 0' }} />
 

@@ -1,26 +1,29 @@
 import React, { Suspense } from 'react';
-import { ConfigProvider, Spin, theme } from 'antd';
+import { Spin } from 'antd';
 import ReactDOM from 'react-dom/client';
 import { ErrorBoundary } from 'react-error-boundary';
 import { HelmetProvider } from 'react-helmet-async';
-import { RouterProvider } from 'react-router-dom';
 
 import { MainError } from './components/main-error.tsx';
-import { router } from './router';
+import { ThemedApp } from './components/themed-app.tsx';
+import { getAccent, getThemeMode } from './lib/localstorage.ts';
+import {
+  applyTheme,
+  LIGHT_QUERY,
+  normalizeAccent,
+  normalizeThemeMode,
+  resolveTheme
+} from './lib/theme.ts';
 
 import './i18n';
 import './assets/styles/index.css';
 
 const renderApp = () => {
-  const themeConfig = {
-    algorithm: theme.darkAlgorithm,
-    components: {
-      Collapse: {
-        headerPadding: 0,
-        contentPadding: 0
-      }
-    }
-  };
+  // Before the first paint, so the page does not flash the other theme.
+  applyTheme(
+    resolveTheme(normalizeThemeMode(getThemeMode()), window.matchMedia(LIGHT_QUERY).matches),
+    normalizeAccent(getAccent())
+  );
 
   return ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
@@ -33,9 +36,7 @@ const renderApp = () => {
       >
         <ErrorBoundary FallbackComponent={MainError}>
           <HelmetProvider>
-            <ConfigProvider theme={themeConfig}>
-              <RouterProvider router={router} />
-            </ConfigProvider>
+            <ThemedApp />
           </HelmetProvider>
         </ErrorBoundary>
       </Suspense>

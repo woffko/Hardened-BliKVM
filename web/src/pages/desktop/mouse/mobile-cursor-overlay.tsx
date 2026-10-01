@@ -138,7 +138,7 @@ export const MobileCursorOverlay = () => {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none fixed z-[900] transition-opacity duration-100"
+      className="theme-fixed pointer-events-none fixed z-[900] transition-opacity duration-100"
       style={{
         left: cursor.x,
         top: cursor.y,

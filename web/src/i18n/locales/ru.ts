@@ -385,6 +385,23 @@ const ru = {
         layoutModeDesc: 'Использовать мобильный/touch-интерфейс в этом браузере',
         layoutAuto: 'Авто',
         layoutMobile: 'Мобильный вид',
+        theme: 'Тема',
+        themeDesc: 'Цвета интерфейса в этом браузере',
+        themeDark: 'Тёмная',
+        themeLight: 'Светлая',
+        themeSystem: 'Как в системе',
+        accent: 'Акцентный цвет',
+        accentDesc: 'Цвет кнопок, переключателей и выделения',
+        accents: {
+          blue: 'Синий',
+          green: 'Зелёный',
+          cyan: 'Бирюзовый',
+          violet: 'Фиолетовый',
+          pink: 'Розовый',
+          red: 'Красный',
+          orange: 'Оранжевый',
+          amber: 'Янтарный'
+        },
         menuBar: {
           title: 'Строка меню',
           mode: 'Режим отображения',

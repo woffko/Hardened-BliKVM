@@ -145,7 +145,7 @@ export const Menu = () => {
             {isDesktopLayout && <Divider type="vertical" />}
 
             <div
-              className="flex h-[30px] w-[32px] select-none items-center justify-start overflow-hidden rounded bg-white sm:w-[98px] sm:justify-center"
+              className="flex h-[30px] w-[32px] select-none items-center justify-start overflow-hidden rounded bg-[#fff] sm:w-[98px] sm:justify-center"
               title={HARDENED_NAME}
             >
               <img

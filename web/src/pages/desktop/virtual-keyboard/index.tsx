@@ -281,7 +281,7 @@ export const VirtualKeyboard = () => {
     if (!isKeyboardOpen) return null;
 
     return (
-      <div className="fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl">
+      <div className="theme-fixed fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl">
         <div className="keyboard-header flex items-center justify-between gap-3 px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <select
@@ -362,7 +362,7 @@ export const VirtualKeyboard = () => {
       <Drawer.Portal>
         <Drawer.Content
           className={clsx(
-            'max-w-screen fixed bottom-0 left-0 right-0 z-[999] mx-auto overflow-hidden bg-white outline-none',
+            'theme-fixed max-w-screen fixed bottom-0 left-0 right-0 z-[999] mx-auto overflow-hidden bg-white outline-none',
             isDesktopLayout ? 'w-[820px] rounded' : 'w-screen rounded-t'
           )}
         >
