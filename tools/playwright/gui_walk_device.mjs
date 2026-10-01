@@ -128,6 +128,16 @@ const closeOverlays = async () => {
   await settle(500);
 };
 
+// On a phone the menu bar hides after five seconds without a touch; its tab
+// at the top edge brings it back.
+const revealMenu = async () => {
+  const tab = page.getByTestId("menu-reveal");
+  if (await tab.count()) {
+    await tab.click().catch(() => {});
+    await settle(500);
+  }
+};
+
 let result = "failed";
 try {
   const login = await context.request.post(`${baseUrl}/api/auth/login`, {
@@ -178,6 +188,7 @@ try {
     if (skip.has(label) || label === "settings") continue;
     step.step = `menu:${label}`;
     const item = bar.locator(":scope > *").nth(index);
+    await revealMenu();
     await item.locator("svg").first().click();
     await settle();
     if (!dialogs.has(label)) {
@@ -203,6 +214,7 @@ try {
 
   // Settings: every tab, and every section of System.
   step.step = "settings";
+  await revealMenu();
   await page.locator("svg.lucide-settings").first().click();
   await page.locator("[data-settings-tab]").first().waitFor();
   await settle();
