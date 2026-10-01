@@ -138,6 +138,10 @@ assemble() {
       "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
       "$gadget_state/hid-only.env" "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
+    # The QUIC switch is the enablement of the gateway unit, not a file of
+    # the board owner: a new card starts with the gateway disabled
+    # (docs/design/quic-transport-v1.md).
+    rm -f "$staging/etc/systemd/system/multi-user.target.wants/hardened-blikvm-quic.service"
     # Leftovers of earlier deployments on the source board; nothing refers to
     # them.
     rm -rf "$gadget_state"/kvmd-backup-* "$gadget_state"/unit-owner-* \

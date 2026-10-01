@@ -754,3 +754,11 @@ async fn the_certificate_is_replaced_and_open_sessions_go_on() {
             .is_ok()
     );
 }
+
+#[tokio::test]
+async fn the_ipv6_wildcard_also_serves_ipv4_pages() {
+    // Bound dual-stack, or to IPv4 alone where the host has no IPv6: a page
+    // that reaches the board over IPv4 is served either way.
+    let board = Board::start(|config| config.bind = "[::]:0".parse().unwrap(), PROTOCOL).await;
+    let _page = board.welcomed(&board.server.token("4a")).await;
+}

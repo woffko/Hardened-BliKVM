@@ -44,6 +44,8 @@ admin_helper_binary="$release_dir/bli-kvm-admin-helper"
 scripts/verify-aarch64-elf.sh "$admin_helper_binary"
 system_update_binary="$release_dir/bli-kvm-system-update"
 scripts/verify-aarch64-elf.sh "$system_update_binary"
+quic_gateway_binary="$release_dir/bli-kvm-quic-gateway"
+scripts/verify-aarch64-elf.sh "$quic_gateway_binary"
 scripts/verify-aarch64-elf.sh "$server_binary" "$broker_binary" "$video_proxy_binary" "$control_broker_binary" "$boardd_binary" "$hid_credential_gate_binary" "$hid_isolated_gate_binary" "$atx_live_gate_binary" "$media_isolated_gate_binary" "$update_supervisor_binary" "$update_health_reporter_binary"
 
 mkdir -p -- "$output_dir"
@@ -84,6 +86,7 @@ install -m 0755 "$update_health_reporter_binary" "$stage/libexec/bli-kvm-update-
 install -m 0755 "$update_exec_helper_binary" "$stage/libexec/bli-kvm-update-exec-helper"
 install -m 0755 "$admin_helper_binary" "$stage/libexec/bli-kvm-admin-helper"
 install -m 0755 "$system_update_binary" "$stage/libexec/bli-kvm-system-update"
+install -m 0755 "$quic_gateway_binary" "$stage/libexec/bli-kvm-quic-gateway"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
@@ -123,6 +126,7 @@ install -m 0644 \
   packaging/systemd/hardened-blikvm-hid-gadget.service \
   packaging/systemd/hardened-blikvm-admin.socket \
   packaging/systemd/hardened-blikvm-admin@.service \
+  packaging/systemd/hardened-blikvm-quic.service \
   packaging/systemd/hardened-blikvm-image-download.socket \
   packaging/systemd/hardened-blikvm-image-download@.service \
   packaging/systemd/hardened-blikvm-picoclaw.service \
@@ -212,6 +216,7 @@ update_health_reporter_sha=$(sha256sum "$stage/libexec/bli-kvm-update-health-rep
 update_exec_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-update-exec-helper" | cut -d ' ' -f 1)
 admin_helper_sha=$(sha256sum "$stage/libexec/bli-kvm-admin-helper" | cut -d ' ' -f 1)
 system_update_sha=$(sha256sum "$stage/libexec/bli-kvm-system-update" | cut -d ' ' -f 1)
+quic_gateway_sha=$(sha256sum "$stage/libexec/bli-kvm-quic-gateway" | cut -d ' ' -f 1)
 cargo_lock_sha=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
 pnpm_lock_sha=$(sha256sum web/pnpm-lock.yaml | cut -d ' ' -f 1)
 web_tree_sha=$(
@@ -231,6 +236,7 @@ update_health_reporter_size=$(wc -c < "$stage/libexec/bli-kvm-update-health-repo
 update_exec_helper_size=$(wc -c < "$stage/libexec/bli-kvm-update-exec-helper" | tr -d ' ')
 admin_helper_size=$(wc -c < "$stage/libexec/bli-kvm-admin-helper" | tr -d ' ')
 system_update_size=$(wc -c < "$stage/libexec/bli-kvm-system-update" | tr -d ' ')
+quic_gateway_size=$(wc -c < "$stage/libexec/bli-kvm-quic-gateway" | tr -d ' ')
 
 source_state=uncommitted-development-checkpoint
 source_commit=
@@ -255,6 +261,7 @@ jq -n \
   --arg update_exec_helper_sha "$update_exec_helper_sha" \
   --arg admin_helper_sha "$admin_helper_sha" \
   --arg system_update_sha "$system_update_sha" \
+  --arg quic_gateway_sha "$quic_gateway_sha" \
   --arg cargo_lock_sha "$cargo_lock_sha" \
   --arg pnpm_lock_sha "$pnpm_lock_sha" \
   --arg web_tree_sha "$web_tree_sha" \
@@ -273,6 +280,7 @@ jq -n \
   --argjson update_exec_helper_size "$update_exec_helper_size" \
   --argjson admin_helper_size "$admin_helper_size" \
   --argjson system_update_size "$system_update_size" \
+  --argjson quic_gateway_size "$quic_gateway_size" \
   '{
     schemaVersion: 1,
     product: "Hardened BliKVM",
@@ -296,6 +304,7 @@ jq -n \
       updateExecHelper: {path: "libexec/bli-kvm-update-exec-helper", sha256: $update_exec_helper_sha, size: $update_exec_helper_size},
       adminHelper: {path: "libexec/bli-kvm-admin-helper", sha256: $admin_helper_sha, size: $admin_helper_size},
       systemUpdate: {path: "libexec/bli-kvm-system-update", sha256: $system_update_sha, size: $system_update_size},
+      quicGateway: {path: "libexec/bli-kvm-quic-gateway", sha256: $quic_gateway_sha, size: $quic_gateway_size},
       web: {path: "share/web", treeSha256: $web_tree_sha}
     },
     locks: {cargo: $cargo_lock_sha, pnpm: $pnpm_lock_sha}
@@ -323,6 +332,7 @@ test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-health-reporter")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-update-exec-helper")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-admin-helper")" = 755
 test "$(stat -c '%a' "$stage/libexec/bli-kvm-system-update")" = 755
+test "$(stat -c '%a' "$stage/libexec/bli-kvm-quic-gateway")" = 755
 test "$(stat -c '%a' "$stage/MANIFEST.json")" = 644
 test "$(stat -c '%a' "$stage/SHA256SUMS")" = 644
 test "$(stat -c '%a' "$stage/share/web")" = 755

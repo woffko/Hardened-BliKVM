@@ -84,6 +84,55 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         for destination in examples:
             self.assertTrue(destination.startswith(f"usr/share/doc/{package.PACKAGE_NAME}/examples/native/"))
 
+    def test_quic_gateway_starts_at_dev35_disabled_and_confined(self) -> None:
+        installed = {
+            "usr/libexec/hardened-blikvm/bli-kvm-quic-gateway",
+            "lib/systemd/system/hardened-blikvm-quic.service",
+        }
+        self.assertTrue(installed <= set(package.file_map("0.1.0~dev35").values()))
+        self.assertIn("usr/libexec/hardened-blikvm/bli-kvm-quic-gateway",
+                      package.EXECUTABLE_DESTINATIONS)
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[:-1]:
+            self.assertFalse(installed & set(package.file_map(version).values()), version)
+        # The gateway is not the slot's: the application package must not carry it.
+        self.assertIn("bli-kvm-quic-gateway", runtime_package.FORBIDDEN_PACKAGE_NAMES)
+        self.assertIn("hardened-blikvm-quic.service", runtime_package.FORBIDDEN_PACKAGE_NAMES)
+        unit = Path("packaging/systemd/hardened-blikvm-quic.service").read_text()
+        for required in (
+            "User=hardened-blikvm-quic",
+            "ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-quic-gateway",
+            "Environment=BLI_KVM_QUIC_LINK_SOCKET=/run/hardened-blikvm-quic-link/link.sock",
+            "AmbientCapabilities=CAP_NET_BIND_SERVICE",
+            "CapabilityBoundingSet=CAP_NET_BIND_SERVICE",
+            "SocketBindDeny=any",
+            "SocketBindAllow=udp:443",
+            "NoNewPrivileges=yes",
+            "ProtectSystem=strict",
+            "MemoryMax=64M",
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+            "WantedBy=multi-user.target",
+        ):
+            self.assertIn(required, unit)
+        # It writes nothing, runs no hook and is nobody's dependency: off until
+        # the owner enables it.
+        for forbidden in ("ReadWritePaths=", "StateDirectory=", "RuntimeDirectory=", "ExecStartPre=",
+                          "ExecStartPost=", "User=root", "Group=hardened-blikvm\n"):
+            self.assertNotIn(forbidden, unit)
+        for other in Path("packaging/systemd").rglob("*"):
+            if other.is_file() and other.name != "hardened-blikvm-quic.service":
+                self.assertNotIn("hardened-blikvm-quic.service", other.read_text(), other.name)
+        # The serving units name the link and the only user admitted to it.
+        for server in ("hardened-blikvm-server-current.service", "hardened-blikvm-server-candidate.service",
+                       "native/hardened-blikvm-server-current.service",
+                       "native/hardened-blikvm-server-candidate.service"):
+            text = (Path("packaging/systemd") / server).read_text()
+            self.assertIn("Environment=BLI_KVM_QUIC_LINK_SOCKET=/run/hardened-blikvm-quic-link/link.sock\n", text)
+            self.assertIn("Environment=BLI_KVM_QUIC_LINK_USER=hardened-blikvm-quic\n", text)
+            self.assertIn("RuntimeDirectory=hardened-blikvm-stream hardened-blikvm-quic-link\n", text)
+        users = Path("packaging/sysusers.d/hardened-blikvm.conf").read_text()
+        self.assertIn('u hardened-blikvm-quic - "Hardened BliKVM QUIC gateway"', users)
+        self.assertNotIn("m hardened-blikvm-quic", users)
+
     def test_upload_units_start_at_dev8_with_stage_only_disk_spool(self) -> None:
         units = {
             "lib/systemd/system/hardened-blikvm-update-upload.socket",
@@ -129,7 +178,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev34")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev35")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -177,7 +226,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev34")
+        self.assertEqual(current["version"], "0.1.0~dev35")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertIs(previous["systemUpdateIncluded"], False)
         self.assertEqual(

@@ -93,6 +93,7 @@ cargo clippy -p bli-kvm-atx-gpio-executor --all-targets --locked --features char
 cargo clippy -p bli-kvm-server --all-targets --locked --features restricted-control-surface -- -D warnings
 
 sh -n scripts/build-aarch64.sh
+sh -n scripts/musl-headers.sh
 bash -n scripts/build-board-profile.sh
 sh -n scripts/build-hid-transition-profile.sh
 bash -n scripts/build-prototype-bundle.sh

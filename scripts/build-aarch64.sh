@@ -20,6 +20,18 @@ case "$rust_sysroot" in /*) ;; *) echo "Rust sysroot must be absolute" >&2; exit
 case "$cargo_home" in ""|/*) ;; *) echo "Cargo source root must be absolute" >&2; exit 1 ;; esac
 
 mkdir -p "$target_dir"
+# ring, in the QUIC gateway's TLS, compiles C and assembly for the board:
+# clang against the pinned musl headers, the way the encoder libraries are
+# built. Its objects carry no path of this machine.
+musl_headers="$target_dir/musl-1.2.5-headers"
+if [ ! -f "$musl_headers/include/stdint.h" ]; then
+  scripts/musl-headers.sh "$musl_headers"
+fi
+clang_resources=$(clang -print-resource-dir)
+CC_aarch64_unknown_linux_musl=clang
+AR_aarch64_unknown_linux_musl=llvm-ar-18
+CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-linux-musl --sysroot=$musl_headers -nostdinc -isystem $musl_headers/include -isystem $clang_resources/include -ffile-prefix-map=$target_dir=/target -ffile-prefix-map=${cargo_home:-/nonexistent}=/cargo -ffile-prefix-map=$project_root=/src"
+export CC_aarch64_unknown_linux_musl AR_aarch64_unknown_linux_musl CFLAGS_aarch64_unknown_linux_musl
 BLI_KVM_REMAP_PROJECT_ROOT="$project_root" \
 BLI_KVM_REMAP_RUST_SYSROOT="$rust_sysroot" \
 BLI_KVM_REMAP_CARGO_HOME="$cargo_home" \
@@ -42,6 +54,7 @@ scripts/verify-aarch64-elf.sh \
   "$release_dir/bli-kvm-update-exec-helper" \
   "$release_dir/bli-kvm-admin-helper" \
   "$release_dir/bli-kvm-system-update" \
+  "$release_dir/bli-kvm-quic-gateway" \
   "$release_dir/bli-kvm-update-trust-config"
 sha256sum \
   "$release_dir/bli-kvm-server" \
@@ -53,4 +66,5 @@ sha256sum \
   "$release_dir/bli-kvm-update-exec-helper" \
   "$release_dir/bli-kvm-admin-helper" \
   "$release_dir/bli-kvm-system-update" \
+  "$release_dir/bli-kvm-quic-gateway" \
   "$release_dir/bli-kvm-update-trust-config"

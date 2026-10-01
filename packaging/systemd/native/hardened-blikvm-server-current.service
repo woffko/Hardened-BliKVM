@@ -40,7 +40,12 @@ Environment=BLI_KVM_VIDEO_SOCKET=/run/hardened-blikvm-video/mjpeg.sock
 # nginx takes the MJPEG stream from this socket: its buffer stays small,
 # while nginx's loopback TCP receive buffer grew to megabytes of old frames.
 Environment=BLI_KVM_STREAM_SOCKET=/run/hardened-blikvm-stream/mjpeg.sock
-RuntimeDirectory=hardened-blikvm-stream
+# The QUIC gateway connects here; only its user's process is admitted
+# (docs/design/quic-transport-v1.md). Without that user the QUIC transport
+# stays unavailable and nothing else changes.
+Environment=BLI_KVM_QUIC_LINK_SOCKET=/run/hardened-blikvm-quic-link/link.sock
+Environment=BLI_KVM_QUIC_LINK_USER=hardened-blikvm-quic
+RuntimeDirectory=hardened-blikvm-stream hardened-blikvm-quic-link
 RuntimeDirectoryMode=0755
 Environment=BLI_KVM_SECURE_COOKIES=1
 Environment=BLI_KVM_ALLOW_MISSING_ORIGIN=0

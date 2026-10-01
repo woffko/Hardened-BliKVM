@@ -18,7 +18,8 @@ use std::{
 };
 
 use wtransport::{
-    Endpoint, Identity, ServerConfig, VarInt, endpoint::endpoint_side::Server, quinn,
+    Endpoint, Identity, ServerConfig, VarInt, config::Ipv6DualStackConfig,
+    endpoint::endpoint_side::Server, quinn,
 };
 
 use crate::{config::Config, link::Link, session::Slot};
@@ -35,7 +36,11 @@ const DATAGRAM_RECEIVE_BUFFER: usize = 16 * 1024;
 /// Room for the datagrams of a frame or two on their way out.
 const DATAGRAM_SEND_BUFFER: usize = 512 * 1024;
 
-fn server_config(config: &Config, identity: Identity) -> Result<ServerConfig, String> {
+fn server_config(
+    config: &Config,
+    bind: SocketAddr,
+    identity: Identity,
+) -> Result<ServerConfig, String> {
     let mut transport = quinn::TransportConfig::default();
     transport
         .max_idle_timeout(Some(
@@ -48,15 +53,24 @@ fn server_config(config: &Config, identity: Identity) -> Result<ServerConfig, St
         .receive_window(RECEIVE_WINDOW.into())
         .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER))
         .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER);
-    Ok(ServerConfig::builder()
-        .with_bind_address(config.bind)
-        .with_custom_transport(identity, transport)
-        .build())
+    let builder = ServerConfig::builder();
+    // The IPv6 wildcard also takes IPv4 peers; any other address is taken
+    // as it is written.
+    let builder = match bind {
+        SocketAddr::V6(address) if address.ip().is_unspecified() => {
+            builder.with_bind_address_v6(address, Ipv6DualStackConfig::Allow)
+        }
+        SocketAddr::V6(address) => builder.with_bind_address_v6(address, Ipv6DualStackConfig::Deny),
+        SocketAddr::V4(_) => builder.with_bind_address(bind),
+    };
+    Ok(builder.with_custom_transport(identity, transport).build())
 }
 
 /// A listening gateway.
 pub struct Gateway {
     endpoint: Endpoint<Server>,
+    /// The address the endpoint was bound to.
+    bind: SocketAddr,
     config: Arc<Config>,
     link: Link,
 }
@@ -65,9 +79,21 @@ impl Gateway {
     /// Binds the endpoint with a new certificate and starts the server link.
     pub fn bind(config: Config) -> Result<Self, String> {
         let (identity, certificate) = certificate::make(config.certificate_days)?;
-        let endpoint = Endpoint::server(server_config(&config, identity)?).map_err(|error| {
-            format!("the endpoint could not listen on {}: {error}", config.bind)
-        })?;
+        let mut bind = config.bind;
+        let first = Endpoint::server(server_config(&config, bind, identity.clone_identity())?);
+        let endpoint = match first {
+            Ok(endpoint) => endpoint,
+            // A board without IPv6 still has IPv4.
+            Err(_) if bind.is_ipv6() && bind.ip().is_unspecified() => {
+                bind = SocketAddr::from(([0, 0, 0, 0], bind.port()));
+                eprintln!("quic gateway: no IPv6 here; listening on {bind}");
+                Endpoint::server(server_config(&config, bind, identity)?)
+                    .map_err(|error| format!("the endpoint could not listen on {bind}: {error}"))?
+            }
+            Err(error) => {
+                return Err(format!("the endpoint could not listen on {bind}: {error}"));
+            }
+        };
         let port = endpoint
             .local_addr()
             .map_err(|error| error.to_string())?
@@ -75,6 +101,7 @@ impl Gateway {
         let link = Link::spawn(config.link_socket.clone(), port, certificate);
         Ok(Self {
             endpoint,
+            bind,
             config: Arc::new(config),
             link,
         })
@@ -130,7 +157,7 @@ impl Gateway {
     fn renew_certificate(&self) {
         let renewed =
             certificate::make(self.config.certificate_days).and_then(|(identity, info)| {
-                let config = server_config(&self.config, identity)?;
+                let config = server_config(&self.config, self.bind, identity)?;
                 self.endpoint
                     .reload_config(config, false)
                     .map_err(|error| error.to_string())?;

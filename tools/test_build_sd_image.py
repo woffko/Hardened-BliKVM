@@ -88,6 +88,21 @@ class BuildSdImageTests(unittest.TestCase):
         self.assertIn('-not -path "$staging/etc/hardened-blikvm/firewall-mode.json"', self.script)
         self.assertIn("source board state remains", self.script)
 
+    def test_the_quic_gateway_is_disabled_on_a_new_card(self) -> None:
+        # The board's QUIC switch is the unit's enablement: the link a source
+        # board with QUIC switched on carries must not reach the image.
+        self.assertIn(
+            'rm -f "$staging/etc/systemd/system/multi-user.target.wants/'
+            'hardened-blikvm-quic.service"',
+            self.script,
+        )
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-quic.service").read_text(encoding="utf-8")
+        self.assertIn("WantedBy=multi-user.target", unit)
+        # The gateway keeps nothing on disk, so the list of reviewed state
+        # under var/lib needs no entry for it.
+        self.assertNotIn("StateDirectory=", unit)
+        self.assertNotIn("hardened-blikvm-quic ", self.script.split('known_state="', 1)[1].split('"', 1)[0])
+
     def test_optional_feature_state_is_removed_and_var_lib_is_an_allowlist(self) -> None:
         for path in (
             '"$staging/var/lib/private/hardened-blikvm-picoclaw"',

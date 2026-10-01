@@ -166,8 +166,8 @@ Tokens, their hashes, report contents and frame data never reach a log.
   `hardened-blikvm-quic`), installed by the update-runtime package in
   `/usr/libexec/hardened-blikvm`. It runs only while the board's switch is
   on. One thread. Sandbox like the video proxy's, except that it may bind
-  UDP 443 (handed over by a socket unit, or with `CAP_NET_BIND_SERVICE` and
-  nothing else) and talk to the network on it.
+  UDP 443 (`CAP_NET_BIND_SERVICE` as its only capability, and the unit
+  admits no other port) and talk to the network on it.
 - **Server link**: a Unix socket in the server's runtime directory that
   accepts only the gateway's user (peer credentials). The gateway connects
   and keeps one connection; it reconnects when the server restarts, and its
@@ -177,6 +177,44 @@ Tokens, their hashes, report contents and frame data never reach a log.
 - Crate **`bli-kvm-quic-protocol`**: the messages of the page, of the server
   link and of the frame socket, with their limits; no dependency beyond
   `serde`. The gateway, the server and the encoder use it.
+
+## Packaging and build
+
+- The update-runtime package `0.1.0~dev35` installs the gateway and its unit
+  (`/lib/systemd/system/hardened-blikvm-quic.service`), disabled. The
+  application slot does not carry them: its closed set of executables is part
+  of the update trust path, and the slot's package refuses both by name.
+- The unit runs as `hardened-blikvm-quic`, a system user in no shared group
+  (`packaging/sysusers.d/hardened-blikvm.conf`). `SocketBindDeny=any` with
+  `SocketBindAllow=udp:443` leaves it one port; 64 MiB and 16 tasks bound
+  what it can take; the sockets of the owner, the broker and the helpers are
+  out of its sight.
+- The serving units (`hardened-blikvm-server-current` and `-candidate`, in
+  both profiles) create the link's runtime directory
+  `/run/hardened-blikvm-quic-link` and name the socket and the user that may
+  connect. A server without these settings has no QUIC transport: the feature
+  is absent from its manifest and Settings does not show the section. The
+  server takes the directory away when it stops, so the gateway finds the
+  socket again by path after every restart of the server.
+- The gateway listens on `[::]:443` for IPv6 and IPv4; on a board without
+  IPv6 it falls back to `0.0.0.0:443`.
+- `ring` compiles C and assembly for the board. `scripts/build-aarch64.sh`
+  gives it clang, the LLVM archiver and the headers of musl 1.2.5
+  (`scripts/musl-headers.sh`, the release the encoder library scripts pin by
+  hash); rustc links with `rust-lld` against the toolchain's own musl, as it
+  does for every other binary. No C toolchain for the board is installed.
+- **SD image.** `tools/image/build_sd_image.sh` copies a board's root file
+  system and installs nothing of the application itself, so an image has the
+  gateway, its unit and its user when the source board has update-runtime
+  `0.1.0~dev35` and the user of the sysusers file. Three things follow:
+  - the board's switch is the unit's enablement, a link under
+    `/etc/systemd/system/multi-user.target.wants`; the builder removes it,
+    because the switch of the source board does not belong to a new card;
+  - the gateway keeps nothing on disk (its certificate lives in memory), so
+    the builder's list of reviewed state under `/var/lib` needs no entry;
+  - the builder's check of the paths that units need has nothing to find:
+    the unit is not enabled in the image, and it names only paths under
+    `/run`.
 
 ## Certificate
 

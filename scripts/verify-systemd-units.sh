@@ -39,6 +39,7 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-boardd
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update-exec-helper"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-admin-helper"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-update"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-quic-gateway"
 # The PicoClaw runtime is downloaded at run time, not packaged.
 install -d -m 0755 "$test_root/var/lib/hardened-blikvm-picoclaw-runtime"
 install -m 0755 /bin/true "$test_root/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
@@ -135,7 +136,8 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-picoclaw.service \
   hardened-blikvm-picoclaw-api.socket \
   hardened-blikvm-picoclaw-api@.service \
-  hardened-blikvm-system-update-booted.service
+  hardened-blikvm-system-update-booted.service \
+  hardened-blikvm-quic.service
 
 # Native profile: the rendered replacements override the managed base units
 # and must verify on their own, with no legacy recover/confirm dependency.
