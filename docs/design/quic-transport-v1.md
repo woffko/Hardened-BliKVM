@@ -127,12 +127,15 @@ What the runs say beyond the numbers:
   the host's clock and so about 8% short). The delay variation above is what
   remains after the best straight line is taken out. The page therefore
   estimates the board's clock from its pings as an offset and a rate, and
-  never from one sample.
+  never from one sample. (Q3 found one rate too little as well: the host's
+  clock changes its rate within seconds. See "Receiver".)
 - The session request carries `Origin`; the gateway can and will refuse a
   foreign one.
 
-Not checked: Firefox and Safari (neither is installed on the development
-host).
+Not checked in Q0: Firefox and Safari. This note first said that neither was
+installed on the development host. That was wrong for Firefox (a Firefox
+snap had been there since 2026-09-28); it was checked in Q4, see "Browsers".
+Safari is not at hand.
 
 ### Decision
 
@@ -369,10 +372,12 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
   4 MiB and its header. A stream that ends in a reset was overtaken by a
   newer key frame and is not one.
 - The worker reports once a second: frames drawn, frames in the last
-  second, the age of the frames whose age became known since the last
-  report as median and 95th percentile, the page's own share (from a
-  frame's arrival, with its first fragment or its key frame's stream, to its
-  drawing), frames given up, key-frame requests made, decoder restarts. The
+  second and frames a second over the last five (a still screen gives one
+  frame every 2 s, and Settings shows the latter), the age of the frames
+  whose age became known in the last five seconds as median and 95th
+  percentile, the page's own share (from a frame's arrival, with its first
+  fragment or its key frame's stream, to its drawing), frames given up,
+  key-frame requests made, decoder restarts. The
   canvas carries them as `data-quic-*` attributes, and the status line
   carries what the gateway counts for the session (`data-frames-sent`,
   `data-frames-dropped`, `data-key-frames`, `data-packets-lost`).
@@ -436,9 +441,28 @@ The H.264 encoder unit gains the frame socket
   asked for; it never holds the encoder up, and one that takes no bytes for
   5 s is dropped.
 - **Key frames.** A client asks for one by writing a byte. A key frame on
-  request is made at most once in 500 ms; a request inside that time waits
+  request is made at most once in 250 ms; a request inside that time waits
   for its end, and a key frame made for any other reason answers it. A new
   client counts as a request.
+
+  250 ms is the reference's number. The first choice here was 500 ms; the
+  time sets the frame rate on a path that loses datagrams, because a
+  picture that lost a frame stands still until its key frame. On the host,
+  1920x1080 at 30 frames a second and 2.5 Mbit/s over 15 s: with 1% of the
+  datagrams lost 19 frames a second at 500 ms and 24 at 250 ms, with 3% lost
+  7 and 17.
+- **A still screen** gives the encoder a frame only every 2 s: it compares
+  the capture's frames and passes on what changed. For a key frame that is
+  due, and for a viewer that has just come, the capture loop lets its next
+  frame through, changed or not; the answer would otherwise wait up to 2 s
+  for the periodic frame.
+- **Threads.** The unit may run 40 tasks (it was 16). The process has six
+  threads of its own and x264 six; every viewer's demand takes one and
+  every client of the frame socket two. An encoder for another size is now
+  made after the old one is gone: made before, it doubled x264's threads
+  for a moment, the limit of 16 refused them on the board
+  (`fork rejected by pids controller` in the kernel's log), x264 could not
+  be opened and the process ended, to be started again by systemd.
 - Janus keeps its RTP and its periodic key frames: one at least every 2 s
   while the picture changes. The encoder's own key frames at its interval
   now count as such, so two no longer follow each other when the two clocks
@@ -452,6 +476,12 @@ The H.264 encoder unit gains the frame socket
   demand. The answer names why there is no picture: `session` (it is not one
   of a live web session), `unavailable` (this board has no H.264 encoder
   with a demand socket) or `encoder` (it could not be reached).
+- **An encoder that ends** (its unit starts it again 2 s later) takes its
+  demand connections along. The server notices the end of the connection
+  and asks again every 500 ms until the encoder is back, for a QUIC viewer
+  and a WebRTC viewer alike; before, a viewer went on waiting for an encoder
+  that had nobody to work for. The gateway finds the frame socket again by
+  itself.
 
 ## Input
 
@@ -539,7 +569,10 @@ the lease like a client that vanished.
   - the gateway has no picture for the session: `unavailable` with the
     server's reason (`unavailable`: no H.264 encoder on this board;
     `encoder`: it could not be reached), or `stopped` after an encoder that
-    gave nothing for 3 s.
+    could not be reached for 3 s;
+  - no frame was drawn for 10 s while the session was open (`stalled`): even
+    a still screen gives one every 2 s, so a picture that shows nothing for
+    that long is not coming, whatever holds it up.
 
   Settings says which of them it is under the status line, with the
   picture's size, its frames per second and the age of a frame while it
@@ -765,11 +798,13 @@ What is tested:
   up; only the admitted user is served, and no more than four clients; the
   frames are numbered from the stream's first key frame; and the encoder's
   own process, fed a capture stream, serves numbered H.264 frames and a key
-  frame on request.
+  frame on request, and on a still picture makes the key frame when it is
+  asked for, not 2 s later.
 - **Server** (`src/tests/quic_transport.rs`): a subscription over the link
   holds the encoder's demand and its end lets it go, as does the end of the
   session; without an encoder there is no picture, with the reason; the
-  quality reaches the encoder over a QUIC session's demand.
+  quality reaches the encoder over a QUIC session's demand; a demand is
+  held again when the encoder comes back.
 - **Gateway** (`tests/sessions.rs`): the picture is key frames on streams
   and delta frames as datagrams; a page that lost a frame gets a key frame
   and nothing before it; a newer key frame overtakes one that is still on
@@ -795,20 +830,53 @@ What is tested:
   a clean path, and the menu and Settings say what serves the picture. With
   3% of the datagrams lost each way for 8 s the picture goes on, no picture
   is older than the one before it, and key frames are asked for no faster
-  than the encoder makes them (two a second); once the path is clean the
+  than the encoder makes them (four a second); once the path is clean the
   picture is whole again and nothing more is asked for. The counters the
   worker keeps for the probes agree with what was drawn. A gateway that is
   started again gets a new session and a new subscription. A server without
-  H.264 for the session, an encoder that goes away, and a browser without
-  an H.264 decoder leave H.264 on WebRTC with the reason in Settings, and
-  "Retry" has the picture back where another attempt can help. MJPEG is not
-  touched by the choice.
+  H.264 for the session, an encoder that goes away, an encoder that is
+  there and sends nothing for ten seconds, and a browser without an H.264
+  decoder leave H.264 on WebRTC with the reason in Settings, and "Retry" has
+  the picture back where another attempt can help. MJPEG is not touched by
+  the choice.
 
   Eight runs of the lossy part on the development host (640x360, 30 frames
   a second): 12 to 17 datagrams lost towards the page, 174 to 215 of 240
   frames drawn, 20 to 32 given up, 4 to 8 key-frame requests; the picture
   was whole again, with a second in which nothing was given up or asked
   for, 2.3 to 2.5 s after the loss ended.
+
+### A moving picture, on the host
+
+`tools/playwright/quic_video_measure.mjs`: headless Chromium 149, the
+optimized builds of the gateway and of the frame source (the encoder's x264
+engine, ultrafast, on a picture that changes with every frame), 1920x1080 at
+30 frames a second and 2.5 Mbit/s, a key frame every 2 s and on request, the
+UDP relay between the page and the gateway, 60 s on each path after a
+warm-up. A frame's age runs from the moment the source took the picture to
+its drawing; the source, the gateway and the page share the host's clock
+here. A board's target gives such a picture only while somebody works on it.
+
+| Path | Frames a second | Age, median and 95th percentile | The page's share of it | Frames given up | Key-frame requests |
+| --- | --- | --- | --- | --- | --- |
+| the relay without impairment | 30.0 | 17 and 21 ms | 1.3 and 2.1 ms | 0 | 0 |
+| 1% of the datagrams lost each way | 23.0 (8 in the worst second) | 17 and 22 ms | 1.3 and 1.8 ms | 321 | 73 |
+| 3% lost each way | 18.3 (8 in the worst second) | 16 and 21 ms | 1.2 and 1.8 ms | 500 | 118 |
+| 50 ms added each way | 30.0 | 67 and 74 ms | 1.3 and 3.9 ms | 0 | 0 |
+
+- On a clean path every frame arrives, 17 ms after it was taken; the page
+  needs 1.3 ms of that from the frame's first datagram to its drawing, with
+  no jitter buffer in between.
+- Delay is added once: 50 ms each way make 67 ms.
+- Loss costs frames, not delay. A frame of about 10 KB travels as nine
+  datagrams, none is sent twice, and a frame that lost one is given up
+  together with the frames after it until a key frame comes: with 1% lost
+  the picture kept 23 of its 30 frames a second, with 3% lost 18. What is
+  shown is as fresh as on a clean path. This is the reference's behaviour
+  and decision 2 of the plan. A path that loses datagrams all the time is
+  served better by a transport that sends them again, as WebRTC does; one
+  parity fragment per frame would be the remedy within this design and is
+  not part of this plan.
 
 ## Changes against the plan
 

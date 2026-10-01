@@ -300,7 +300,8 @@ try {
   const opened = now();
   await until("the picture comes over the session", async () => {
     const seen = await stats(page);
-    if (seen && seen.frames >= 30) return true;
+    // A still screen gives a frame every two seconds.
+    if (seen && seen.frames >= 2) return true;
     // The page gave the picture to WebRTC: it says why in Settings.
     const fallen = await page.locator("video#screen").count();
     const notice = await page

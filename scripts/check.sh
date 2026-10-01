@@ -185,6 +185,8 @@ node --check tools/playwright/quic_input_latency.mjs
 node --check tools/playwright/quic_input_device_probe.mjs
 node --check tools/playwright/quic_video_contract.mjs
 node --check tools/playwright/quic_video_device_probe.mjs
+node --check tools/playwright/quic_video_measure.mjs
+node --check tools/device/quic_firefox_probe.mjs
 node --check tools/net/udp_impair_proxy.mjs
 node --check tools/net/tcp_impair_proxy.mjs
 node --check tools/playwright/touch_reach_device_probe.mjs
@@ -851,6 +853,7 @@ node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
 pnpm_web exec prettier --check '../tools/playwright/*.mjs'
 pnpm_web exec prettier --check '../tools/net/*.mjs'
+pnpm_web exec prettier --check '../tools/device/quic_firefox_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_impair_proxies.mjs'
 pnpm_web exec prettier --check '../tools/test_quic_video_receiver.mjs' '../tools/test_quic_board_clock.mjs' '../tools/test_quic_h264.mjs'
 pnpm_web exec prettier --check '../tools/test_application_update_ui.mjs'
