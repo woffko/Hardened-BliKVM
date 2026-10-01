@@ -38,6 +38,7 @@ unsafe extern "C" {
         emit: Emit,
         context: *mut c_void,
     ) -> i32;
+    fn bk_h264_set_bitrate(encoder: *mut RawEncoder, kbps: u32) -> i32;
     fn bk_h264_close(encoder: *mut RawEncoder);
 }
 
@@ -128,6 +129,19 @@ impl H264Encoder {
 
     pub fn config(&self) -> H264Config {
         self.config
+    }
+
+    /// Changes the target bitrate from the next frame on.
+    pub fn set_bitrate(&mut self, kbps: u32) -> Result<(), H264Error> {
+        // SAFETY: raw is a live encoder owned by self.
+        match unsafe { bk_h264_set_bitrate(self.raw, kbps) } {
+            0 => {
+                self.config.kbps = kbps;
+                Ok(())
+            }
+            -1 => Err(H264Error::InvalidConfig),
+            code => Err(H264Error::Codec(code)),
+        }
     }
 
     /// Encode one frame; returns zero or one access unit (Annex B).

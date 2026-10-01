@@ -111,6 +111,18 @@ impl Engine {
         })
     }
 
+    /// Changes the target bitrate of the running encoder; the stream goes on.
+    pub fn set_bitrate(&mut self, kbps: u32) -> Result<(), String> {
+        match &mut self.encoder {
+            Encoder::Vp8(encoder, _) => {
+                encoder.set_bitrate(kbps).map_err(|error| error.to_string())
+            }
+            Encoder::H264(encoder, _) => {
+                encoder.set_bitrate(kbps).map_err(|error| error.to_string())
+            }
+        }
+    }
+
     /// The sequence number the next RTP packet carries.
     pub fn next_sequence(&self) -> u16 {
         match &self.encoder {
@@ -218,6 +230,46 @@ mod tests {
                     .all(|packet| packet[1] & 0x7f == payload_type)
             );
             assert!(packets.last().unwrap()[1] & 0x80 != 0);
+        }
+    }
+
+    /// A raised bitrate reaches the running encoder: the same changing
+    /// frames make more bytes, and an out-of-range one is refused.
+    #[test]
+    fn the_bitrate_changes_while_encoding() {
+        let mut frame = I420Frame {
+            width: 160,
+            height: 96,
+            y: vec![0; 160 * 96],
+            u: vec![128; 80 * 48],
+            v: vec![128; 80 * 48],
+        };
+        for codec in [Codec::Vp8, Codec::H264(H264Preset::Ultrafast)] {
+            let settings = EngineSettings {
+                codec,
+                fps: 30,
+                kbps: 100,
+                threads: 1,
+            };
+            let mut engine = Engine::new(settings, 160, 96, 1, 0).unwrap();
+            let mut seed = 7_u32;
+            let mut bytes = |engine: &mut Engine, frames: i64, start: i64| -> usize {
+                let mut total = 0;
+                for index in start..start + frames {
+                    for value in frame.y.iter_mut() {
+                        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                        *value = (seed >> 16) as u8;
+                    }
+                    let packets = engine.encode(&frame, index * 33_333, index == 0).unwrap();
+                    total += packets.iter().map(Vec::len).sum::<usize>();
+                }
+                total
+            };
+            let low = bytes(&mut engine, 30, 0);
+            engine.set_bitrate(4000).unwrap();
+            let high = bytes(&mut engine, 30, 30);
+            assert!(high > low * 2, "{codec:?}: {low} then {high} bytes");
+            assert!(engine.set_bitrate(10).is_err(), "{codec:?}");
         }
     }
 }

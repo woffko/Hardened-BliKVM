@@ -257,6 +257,8 @@ fn encode_loop(
     let mut generation = demand.generation();
     let mut last_capture: Option<Instant> = None;
     let mut last_key: Option<Instant> = None;
+    // The unit's bitrate until the server asks for another.
+    let mut kbps = demand.kbps().unwrap_or(settings.engine.kbps);
     while !stop.load(Ordering::Relaxed) {
         stats.report(slot.replaced(), rejected.load(Ordering::Relaxed));
         let Some(decoded) = slot.take(Duration::from_millis(500)) else {
@@ -278,7 +280,10 @@ fn encode_loop(
             // stays and the sequence numbers go on where the last one ended.
             let next = engine.as_ref().map_or(sequence, Engine::next_sequence);
             engine = Some(Engine::new(
-                settings.engine,
+                EngineSettings {
+                    kbps,
+                    ..settings.engine
+                },
                 frame.width,
                 frame.height,
                 ssrc,
@@ -286,6 +291,18 @@ fn encode_loop(
             )?);
         }
         let engine = engine.as_mut().expect("engine was just created");
+        // The quality the operator picked reaches the running encoder.
+        if let Some(requested) = demand.kbps()
+            && requested != kbps
+        {
+            match engine.set_bitrate(requested) {
+                Ok(()) => {
+                    eprintln!("bli-kvm-video-encoder: bitrate {requested} kbit/s");
+                    kbps = requested;
+                }
+                Err(error) => eprintln!("bli-kvm-video-encoder: bitrate {requested}: {error}"),
+            }
+        }
         let pts =
             (decoded.at.saturating_duration_since(start).as_micros() as i64).max(last_pts + 1);
         last_pts = pts;

@@ -100,6 +100,18 @@ int bk_h264_encode(struct bk_h264 *enc, const uint8_t *y, const uint8_t *u,
   return 0;
 }
 
+// Changes the target bitrate of a running encoder: x264 applies it from the
+// next frame (rate control and the VBV bound move together).
+int bk_h264_set_bitrate(struct bk_h264 *enc, unsigned kbps) {
+  x264_param_t param;
+  if (enc == NULL || kbps < 64 || kbps > 20000) return -1;
+  x264_encoder_parameters(enc->encoder, &param);
+  param.rc.i_bitrate = (int)kbps;
+  param.rc.i_vbv_max_bitrate = (int)kbps;
+  param.rc.i_vbv_buffer_size = (int)kbps;
+  return x264_encoder_reconfig(enc->encoder, &param) == 0 ? 0 : -2;
+}
+
 void bk_h264_close(struct bk_h264 *enc) {
   if (enc == NULL) return;
   x264_encoder_close(enc->encoder);

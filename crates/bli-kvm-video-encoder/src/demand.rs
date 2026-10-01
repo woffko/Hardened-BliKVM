@@ -5,6 +5,10 @@
 //! on its first line. Without viewers the encoder leaves the capture stream,
 //! so it takes no CPU from the MJPEG path, TLS or HID. Every new viewer
 //! bumps a generation, which asks the encoder for a key frame.
+//!
+//! After the codec the server may send `kbps N` lines, at the start and
+//! whenever the operator picks another quality: the encoder takes the last one
+//! as its target bitrate without a restart.
 
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
@@ -17,6 +21,10 @@ use std::time::Duration;
 
 /// A codec name on the first line is at most this long.
 const MAX_REQUEST_BYTES: u64 = 16;
+/// A later line (`kbps N`) is at most this long.
+const MAX_LINE_BYTES: u64 = 32;
+/// Bitrates the encoders accept, in kbit/s.
+pub const KBPS_RANGE: std::ops::RangeInclusive<u32> = 64..=20_000;
 
 #[derive(Debug)]
 pub struct Demand {
@@ -24,6 +32,8 @@ pub struct Demand {
     viewers: Mutex<usize>,
     changed: Condvar,
     generation: AtomicU64,
+    /// The last bitrate the server asked for (0: none yet).
+    kbps: std::sync::atomic::AtomicU32,
 }
 
 impl Demand {
@@ -34,6 +44,7 @@ impl Demand {
             viewers: Mutex::new(0),
             changed: Condvar::new(),
             generation: AtomicU64::new(0),
+            kbps: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -60,6 +71,7 @@ impl Demand {
             viewers: Mutex::new(0),
             changed: Condvar::new(),
             generation: AtomicU64::new(0),
+            kbps: std::sync::atomic::AtomicU32::new(0),
         });
         let accepting = Arc::clone(&demand);
         thread::spawn(move || {
@@ -74,13 +86,38 @@ impl Demand {
     /// One viewer for as long as its connection stays open.
     fn serve(&self, connection: UnixStream) {
         self.add(1);
-        let mut reader = BufReader::new(io::Read::take(&connection, MAX_REQUEST_BYTES));
+        let mut reader = BufReader::new(&connection);
         let mut codec = String::new();
-        let _ = reader.read_line(&mut codec);
-        // Anything after the first line, or its end, is only waited for.
-        let mut rest = [0_u8; 64];
-        while matches!(io::Read::read(&mut &connection, &mut rest), Ok(read) if read > 0) {}
+        let _ = io::Read::take(&mut reader, MAX_REQUEST_BYTES).read_line(&mut codec);
+        // Then `kbps N` lines until the connection ends; a line that is too
+        // long or not understood is skipped.
+        loop {
+            let mut line = Vec::new();
+            match io::Read::take(&mut reader, MAX_LINE_BYTES).read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            if line.last() != Some(&b'\n') {
+                // Too long: drop the rest of it.
+                let mut rest = Vec::new();
+                if !matches!(reader.read_until(b'\n', &mut rest), Ok(read) if read > 0) {
+                    break;
+                }
+                continue;
+            }
+            if let Some(kbps) = parse_kbps(&line) {
+                self.kbps.store(kbps, Ordering::Relaxed);
+            }
+        }
         self.add(-1);
+    }
+
+    /// The bitrate the server last asked for, if it asked.
+    pub fn kbps(&self) -> Option<u32> {
+        match self.kbps.load(Ordering::Relaxed) {
+            0 => None,
+            kbps => Some(kbps),
+        }
     }
 
     fn add(&self, delta: isize) {
@@ -113,6 +150,13 @@ impl Demand {
                 .0;
         }
     }
+}
+
+/// `kbps N\n` with N in [`KBPS_RANGE`].
+fn parse_kbps(line: &[u8]) -> Option<u32> {
+    let text = std::str::from_utf8(line).ok()?.trim_end();
+    let kbps = text.strip_prefix("kbps ")?.parse::<u32>().ok()?;
+    KBPS_RANGE.contains(&kbps).then_some(kbps)
 }
 
 /// The numeric id of `name` in an `/etc/group` style file.
@@ -162,6 +206,30 @@ mod tests {
 
         let stop = AtomicBool::new(true);
         demand.wait_for_viewers(&stop);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn the_server_sets_the_bitrate_after_the_codec() {
+        let directory = tempfile_dir();
+        let path = directory.join("demand.sock");
+        let demand = Demand::listen(&path, None).unwrap();
+        assert_eq!(demand.kbps(), None);
+        let mut viewer = UnixStream::connect(&path).unwrap();
+        viewer.write_all(b"h264\nkbps 2500\n").unwrap();
+        wait_until(|| demand.kbps() == Some(2500));
+        // Not understood, out of range or too long: ignored.
+        viewer
+            .write_all(b"kbps lots\nkbps 9\nkbps 99999\n")
+            .unwrap();
+        viewer.write_all(&[b'x'; 100]).unwrap();
+        viewer.write_all(b"\nkbps 8000\n").unwrap();
+        wait_until(|| demand.kbps() == Some(8000));
+        assert!(demand.active());
+        drop(viewer);
+        wait_until(|| !demand.active());
+        // The last bitrate stays for the next viewer's encoder.
+        assert_eq!(demand.kbps(), Some(8000));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
