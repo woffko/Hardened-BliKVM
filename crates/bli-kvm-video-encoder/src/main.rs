@@ -70,6 +70,11 @@ struct Settings {
     frame_user: Option<String>,
 }
 
+/// A frame let through for a viewer that waits for a key frame is not
+/// followed by another for this long: the encoder takes the request when
+/// that frame reaches it.
+const KEY_ADMISSION_SPACING: Duration = Duration::from_millis(250);
+
 /// After the last viewer leaves, the capture stream is kept this long.
 const IDLE_GRACE: Duration = Duration::from_secs(2);
 /// A key frame at least this often, whatever the frame rate: frames come only
@@ -169,10 +174,13 @@ fn read_stream(
     gate: &mut FrameGate,
     slot: &LatestFrame<Captured>,
     demand: &Demand,
+    frames: Option<&FrameHub>,
     stop: &AtomicBool,
 ) -> io::Result<()> {
     let mut reader = open_capture(settings)?;
     let mut idle_since: Option<Instant> = None;
+    let mut generation = demand.generation();
+    let mut let_through: Option<Instant> = None;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -186,6 +194,20 @@ fn read_stream(
         let mut jpeg = Vec::new();
         reader.next_frame(&mut jpeg)?;
         let now = Instant::now();
+        // A viewer that has just come, and a client of the frame socket that
+        // asks for a key frame, are answered from the next captured frame,
+        // changed or not: on a still screen they would otherwise wait for
+        // the periodic one.
+        let waiting =
+            demand.generation() != generation || frames.is_some_and(|hub| hub.key_due(now));
+        if waiting
+            && let_through
+                .is_none_or(|at| now.saturating_duration_since(at) >= KEY_ADMISSION_SPACING)
+        {
+            generation = demand.generation();
+            let_through = Some(now);
+            gate.reset();
+        }
         if gate.admit(&jpeg, now) == FrameDecision::Encode {
             slot.publish(Captured { jpeg, at: now });
         }
@@ -305,7 +327,9 @@ fn encode_loop(
         {
             // A new size builds a new encoder but the same stream: the SSRC
             // stays and the sequence numbers go on where the last one ended.
-            let next = engine.as_ref().map_or(sequence, Engine::next_sequence);
+            // The old encoder goes first: two at once would have twice the
+            // threads, more than the unit may run.
+            let next = engine.take().map_or(sequence, |old| old.next_sequence());
             numbering = Numbering::new(stream_id()?);
             engine = Some(Engine::new(
                 EngineSettings {
@@ -624,10 +648,11 @@ fn main() -> ExitCode {
     let decoded = Arc::new(LatestFrame::new());
     let rejected = Arc::new(AtomicU32::new(0));
     let reader = {
-        let (settings, captured, demand, stop) = (
+        let (settings, captured, demand, frames, stop) = (
             Arc::clone(&settings),
             Arc::clone(&captured),
             Arc::clone(&demand),
+            frames.clone(),
             Arc::clone(&stop),
         );
         thread::spawn(move || {
@@ -641,7 +666,14 @@ fn main() -> ExitCode {
                     break;
                 }
                 let started = Instant::now();
-                if let Err(error) = read_stream(&settings, &mut gate, &captured, &demand, &stop) {
+                if let Err(error) = read_stream(
+                    &settings,
+                    &mut gate,
+                    &captured,
+                    &demand,
+                    frames.as_deref(),
+                    &stop,
+                ) {
                     eprintln!("bli-kvm-video-encoder: capture stream ended: {error}");
                 }
                 gate.reset();

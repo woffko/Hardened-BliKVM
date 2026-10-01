@@ -38,7 +38,10 @@ TimeoutStopSec=5s
 # Keep one core for HID, the owner and the MJPEG path under full motion.
 CPUQuota=250%
 MemoryMax=160M
-TasksMax=16
+# Six threads of its own, six of x264, one for every viewer's demand (two
+# WebRTC viewers, eight QUIC sessions) and two for every client of the frame
+# socket (four): 30.
+TasksMax=40
 NoNewPrivileges=yes
 PrivateDevices=yes
 PrivateNetwork=no

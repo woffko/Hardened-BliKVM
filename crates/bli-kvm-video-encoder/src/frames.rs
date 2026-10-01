@@ -37,7 +37,7 @@ const MAX_QUEUED_BYTES: usize = 8 * 1024 * 1024;
 /// Clients at once; the gateway is the only one there is.
 const MAX_CLIENTS: usize = 4;
 /// A key frame on request is made at most this often.
-pub const KEY_COOLDOWN: Duration = Duration::from_millis(500);
+pub const KEY_COOLDOWN: Duration = Duration::from_millis(250);
 /// The byte a client writes to ask for a key frame.
 pub const KEY_REQUEST: u8 = b'K';
 /// A client that takes no bytes for this long is gone.
@@ -183,6 +183,18 @@ impl FrameHub {
         *last = Some(now);
         self.key_wanted.store(false, Ordering::Relaxed);
         true
+    }
+
+    /// Whether a key frame that a client asked for can be made now. The
+    /// capture loop then lets its next frame through, changed or not: on a
+    /// still screen the answer would otherwise wait for the periodic frame.
+    pub fn key_due(&self, now: Instant) -> bool {
+        self.key_wanted.load(Ordering::Relaxed)
+            && !self
+                .last_key_on_request
+                .lock()
+                .expect("key request lock")
+                .is_some_and(|at| now.saturating_duration_since(at) < KEY_COOLDOWN)
     }
 
     fn want_key(&self) {
@@ -507,7 +519,9 @@ mod tests {
         let mut client = UnixStream::connect(&path).unwrap();
         wait_until("the client is not served", || hub.clients() == 1);
         let start = Instant::now();
+        assert!(hub.key_due(start), "for the new client");
         assert!(hub.take_key_request(start), "for the new client");
+        assert!(!hub.key_due(start));
         assert!(!hub.take_key_request(start), "one request, one key frame");
 
         // It asks again at once: the request waits for the cooldown.
@@ -515,7 +529,9 @@ mod tests {
         wait_until("the request did not arrive", || {
             hub.key_wanted.load(Ordering::Relaxed)
         });
+        assert!(!hub.key_due(start + KEY_COOLDOWN - Duration::from_millis(1)));
         assert!(!hub.take_key_request(start + KEY_COOLDOWN - Duration::from_millis(1)));
+        assert!(hub.key_due(start + KEY_COOLDOWN));
         assert!(hub.take_key_request(start + KEY_COOLDOWN));
         assert!(!hub.take_key_request(start + KEY_COOLDOWN * 3));
 

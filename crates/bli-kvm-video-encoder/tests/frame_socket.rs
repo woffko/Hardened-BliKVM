@@ -32,8 +32,9 @@ impl Drop for Encoder {
     }
 }
 
-/// uStreamer's side of its socket: the MJPEG stream, thirty frames a second.
-fn capture(path: &Path) {
+/// uStreamer's side of its socket: the MJPEG stream, thirty frames a second,
+/// the given pictures one after the other.
+fn capture(path: &Path, pictures: &'static [&'static [u8]]) {
     let listener = UnixListener::bind(path).unwrap();
     thread::spawn(move || {
         for mut connection in listener.incoming().flatten() {
@@ -51,7 +52,7 @@ fn capture(path: &Path) {
                 continue;
             }
             for index in 0.. {
-                let jpeg = FRAMES[index % FRAMES.len()];
+                let jpeg = pictures[index % pictures.len()];
                 let part = format!(
                     "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
                     jpeg.len()
@@ -84,15 +85,18 @@ fn has_nal(frame: &[u8], kind: u8) -> bool {
         .any(|window| window[..3] == [0, 0, 1] && window[3] & 0x1f == kind)
 }
 
-#[test]
-fn the_encoder_serves_numbered_frames_and_a_key_frame_on_request() {
+/// The encoder's own process on a capture stream of `pictures`, and a
+/// client of its frame socket.
+fn encoder_and_client(
+    pictures: &'static [&'static [u8]],
+) -> (tempfile::TempDir, UdpSocket, Encoder, UnixStream) {
     let directory = tempfile::tempdir().unwrap();
     let upstream = directory.path().join("ustreamer.sock");
     let socket = directory.path().join("frames.sock");
-    capture(&upstream);
+    capture(&upstream, pictures);
     // The RTP packets go to a port that takes them.
     let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let _encoder = Encoder(
+    let encoder = Encoder(
         Command::new(env!("CARGO_BIN_EXE_bli-kvm-video-encoder"))
             .env("BLI_KVM_USTREAMER_SOCKET", &upstream)
             .env("BLI_KVM_ENCODER_CODEC", "h264-ultrafast")
@@ -109,7 +113,7 @@ fn the_encoder_serves_numbered_frames_and_a_key_frame_on_request() {
             .unwrap(),
     );
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut client = loop {
+    let client = loop {
         match UnixStream::connect(&socket) {
             Ok(client) => break client,
             Err(_) => {
@@ -121,6 +125,12 @@ fn the_encoder_serves_numbered_frames_and_a_key_frame_on_request() {
     client
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
+    (directory, rtp, encoder, client)
+}
+
+#[test]
+fn the_encoder_serves_numbered_frames_and_a_key_frame_on_request() {
+    let (_directory, _rtp, _encoder, mut client) = encoder_and_client(&FRAMES);
 
     // The first record is a key frame with the stream's parameter sets.
     let (first, frame) = read_record(&mut client);
@@ -193,4 +203,41 @@ fn the_encoder_serves_numbered_frames_and_a_key_frame_on_request() {
         assert!(waited < 30, "no key frame came for the request");
     }
     assert_eq!(last.reference, last.frame);
+}
+
+/// A still screen gives the encoder a frame only every two seconds. A client
+/// that comes, and one that asks for a key frame, do not wait for it: the
+/// next captured frame is let through for them.
+#[test]
+fn on_a_still_picture_a_key_frame_comes_when_it_is_asked_for() {
+    let started = Instant::now();
+    let (_directory, _rtp, _encoder, mut client) = encoder_and_client(&FRAMES[..1]);
+    let (first, _) = read_record(&mut client);
+    assert_eq!(first.kind, Kind::Key);
+    let first_at = Instant::now();
+    // Without a request the next frame is the periodic one, two seconds
+    // after the first; every frame of a still picture is a key frame.
+    let (periodic, _) = read_record(&mut client);
+    assert_eq!(periodic.kind, Kind::Key);
+    let period = first_at.elapsed();
+    assert!(
+        period >= Duration::from_millis(1500),
+        "a still picture gave a frame after {period:?}"
+    );
+
+    // Asked for after the cooldown, and long before the next periodic one.
+    thread::sleep(KEY_COOLDOWN + Duration::from_millis(100));
+    let asked = Instant::now();
+    client.write_all(&[KEY_REQUEST]).unwrap();
+    let (answer, frame) = read_record(&mut client);
+    let waited = asked.elapsed();
+    assert_eq!(answer.kind, Kind::Key);
+    assert_eq!(answer.frame, periodic.frame + 1);
+    assert!(has_nal(&frame, 7) && has_nal(&frame, 5));
+    assert!(
+        waited < Duration::from_millis(900),
+        "the key frame came {waited:?} after it was asked for"
+    );
+    // The first one did not wait for a period either.
+    assert!(first_at.duration_since(started) < Duration::from_secs(8));
 }
