@@ -20,7 +20,11 @@ use bli_kvm_quic_protocol::{
 use tokio::time::timeout;
 use wtransport::{Connection, RecvStream, SendStream, VarInt, endpoint::IncomingSession};
 
-use crate::{config::Config, link::Link};
+use crate::{
+    config::Config,
+    input::{self, Ended},
+    link::Link,
+};
 
 /// How long a refused or ended page gets to read why.
 const FAREWELL: Duration = Duration::from_millis(500);
@@ -160,7 +164,15 @@ pub async fn serve(incoming: IncomingSession, link: Link, config: Arc<Config>, s
         max_datagram: largest_datagram(&connection),
     };
     let reason = if control.write(&welcome).await {
-        run(&connection, &mut control, &mut ended, &config).await
+        // The page's other stream, served beside the control stream.
+        let (violation, violations) = tokio::sync::mpsc::channel(1);
+        let _input = AbortOnDrop(tokio::spawn(serve_input(
+            connection.clone(),
+            link.clone(),
+            session.clone(),
+            violation,
+        )));
+        run(&connection, &mut control, &mut ended, violations, &config).await
     } else {
         None
     };
@@ -175,6 +187,32 @@ pub async fn serve(incoming: IncomingSession, link: Link, config: Arc<Config>, s
     connection.close(VarInt::from_u32(0), b"");
     link.closed(&session);
     eprintln!("quic gateway: session from {peer} ended");
+}
+
+/// Stops a task when the session that started it ends.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Serves the session's input stream: the next stream the page opens after
+/// its control stream. One is served at a time; a page that closed its
+/// input stream may open another.
+async fn serve_input(
+    connection: Connection,
+    link: Link,
+    session: String,
+    violation: tokio::sync::mpsc::Sender<()>,
+) {
+    while let Ok((send, receive)) = connection.accept_bi().await {
+        if input::serve(send, receive, &link, &session).await == Ended::Protocol {
+            let _ = violation.send(()).await;
+            return;
+        }
+    }
 }
 
 type Opened = (
@@ -233,6 +271,7 @@ async fn run(
     connection: &Connection,
     control: &mut Control,
     ended: &mut tokio::sync::mpsc::Receiver<EndReason>,
+    mut violations: tokio::sync::mpsc::Receiver<()>,
     config: &Config,
 ) -> Option<Closing> {
     let started = Instant::now();
@@ -272,6 +311,8 @@ async fn run(
                     Some(EndReason::Shutdown) | None => Closing::Shutdown,
                 });
             }
+            // What came on the input stream was not a request.
+            Some(()) = violations.recv() => return Some(Closing::Protocol),
             _ = counters.tick() => {
                 let stats = connection.quic_connection().stats();
                 let message = GatewayControl::Counters {

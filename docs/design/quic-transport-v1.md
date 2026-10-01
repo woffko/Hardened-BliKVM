@@ -381,6 +381,19 @@ the lease like a client that vanished.
   time, in the order they arrived, and a session's release on its end waits
   behind the requests it made. A request that has reached the owner is
   finished and accounted for even if the link ends meanwhile.
+- **The gateway** serves one input stream per session: the stream the page
+  opens after its control stream. It passes one request to the server at a
+  time and writes the server's answer back under the page's number; if the
+  server gives none within 3 s the page is told `503`. At most 32 requests
+  wait; beyond that the stream is not read, and the page is held by the
+  stream's window. A pointer movement that waits and is superseded before it
+  was sent is merged into the newer one (the newest absolute position, the
+  sum of relative movements while it fits a report), and the answer to the
+  one that was sent answers every request it stood for. Keyboard reports,
+  buttons, the wheel and reports under another lease are never merged and
+  never dropped. What is not a request ends the session with `protocol`.
+  What the page wrote before it closed the stream is still passed on; the
+  page may open the stream again.
 
 ## Switches, Settings, failures, firewall
 

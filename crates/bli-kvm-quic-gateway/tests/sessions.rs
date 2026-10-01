@@ -13,8 +13,12 @@ use bli_kvm_quic_gateway::{Gateway, config::Config};
 use bli_kvm_quic_protocol::{
     PROTOCOL,
     link::{self, EndReason, GatewayToServer, RedeemRefusal, ServerToGateway},
-    page::{self, Closing, GatewayControl, MessageReader, PageControl, Refusal},
+    page::{
+        self, Closing, GatewayControl, InputRequest, InputResponse, MessageReader, PageControl,
+        Refusal,
+    },
 };
+use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,
@@ -52,6 +56,12 @@ struct Seen {
     crowded: HashSet<String>,
     /// Connections of the link that the gateway closed.
     left: usize,
+    /// The lease requests, with the session each came from.
+    leases: Vec<(String, Value)>,
+    /// How long the server takes over a lease request.
+    lease_delay: Duration,
+    /// The server does not answer lease requests at all.
+    lease_silent: bool,
 }
 
 /// The web server's side of the link.
@@ -117,7 +127,24 @@ impl Server {
                                     state.lock().unwrap().closed.push(session);
                                     None
                                 }
-                                GatewayToServer::Lease { .. } | GatewayToServer::Video { .. } => None,
+                                GatewayToServer::Lease { id, session, request } => {
+                                    // One at a time, like the server: its answer names the
+                                    // request it is for.
+                                    let (delay, silent) = {
+                                        let mut state = state.lock().unwrap();
+                                        state.leases.push((session, request.clone()));
+                                        (state.lease_delay, state.lease_silent)
+                                    };
+                                    tokio::time::sleep(delay).await;
+                                    (!silent).then(|| {
+                                        let response = json!({
+                                            "status": 200,
+                                            "body": { "answerTo": request["operationId"] },
+                                        });
+                                        link::encode(&ServerToGateway::LeaseAnswer { id, response }).unwrap()
+                                    })
+                                }
+                                GatewayToServer::Video { .. } => None,
                             };
                             if let Some(bytes) = answer
                                 && writer.write_all(&bytes).await.is_err()
@@ -787,4 +814,249 @@ async fn the_ipv6_wildcard_also_serves_ipv4_pages() {
     // that reaches the board over IPv4 is served either way.
     let board = Board::start(|config| config.bind = "[::]:0".parse().unwrap(), PROTOCOL).await;
     let _page = board.welcomed(&board.server.token("4a")).await;
+}
+
+/// A page's input stream: the stream it opens after the control stream.
+struct Input {
+    send: SendStream,
+    receive: RecvStream,
+    reader: MessageReader,
+}
+
+impl Input {
+    async fn open(page: &Page) -> Self {
+        let (send, receive) = page.connection.open_bi().await.unwrap().await.unwrap();
+        Self {
+            send,
+            receive,
+            reader: MessageReader::new(),
+        }
+    }
+
+    /// Writes the requests in one piece, the way a page that does not wait
+    /// for answers would.
+    async fn say(&mut self, requests: &[(u32, Value)]) {
+        let mut bytes = Vec::new();
+        for (seq, request) in requests {
+            bytes.extend(
+                page::encode(&InputRequest {
+                    seq: *seq,
+                    request: request.clone(),
+                })
+                .unwrap(),
+            );
+        }
+        self.send.write_all(&bytes).await.unwrap();
+    }
+
+    async fn hear(&mut self) -> Option<InputResponse> {
+        let mut buffer = [0u8; 2048];
+        loop {
+            if let Some(message) = self.reader.take::<InputResponse>().unwrap() {
+                return Some(message);
+            }
+            let count = timeout(PATIENCE, self.receive.read(&mut buffer))
+                .await
+                .expect("the gateway did not answer")
+                .ok()??;
+            self.reader.push(&buffer[..count]);
+        }
+    }
+}
+
+fn operation(number: u32) -> String {
+    format!("{number:032x}")
+}
+
+fn key(number: u32, code: u8) -> Value {
+    json!({
+        "action": "report",
+        "operationId": operation(number),
+        "leaseId": "5a".repeat(16),
+        "report": { "mode": "keyboard", "data": [0, 0, code, 0, 0, 0, 0, 0] },
+    })
+}
+
+fn position(number: u32, x: u16) -> Value {
+    json!({
+        "action": "report",
+        "operationId": operation(number),
+        "leaseId": "5a".repeat(16),
+        "report": { "mode": "absolute_mouse", "data": [0, x & 0xff, x >> 8, 7, 0, 0] },
+    })
+}
+
+/// What the test server answers to a request.
+fn answer_to(number: u32) -> Value {
+    json!({ "status": 200, "body": { "answerTo": operation(number) } })
+}
+
+/// Requests of the lease API go to the server in the order the page sent
+/// them, for the page's session, and each comes back with the server's own
+/// answer under the page's number. No keyboard report is lost or merged.
+#[tokio::test]
+async fn input_requests_reach_the_server_in_order_and_are_answered() {
+    let board = Board::ready().await;
+    let page = board.welcomed(&board.server.token("1b")).await;
+    let mut input = Input::open(&page).await;
+    // Sixty key reports at once, more than wait at a time.
+    let requests: Vec<(u32, Value)> = (0..60)
+        .map(|index| (1000 + index, key(index, 4 + (index % 3) as u8)))
+        .collect();
+    input.say(&requests).await;
+    for (seq, _) in &requests {
+        assert_eq!(
+            input.hear().await,
+            Some(InputResponse {
+                seq: *seq,
+                response: answer_to(seq - 1000),
+            })
+        );
+    }
+    let seen = board.server.seen.lock().unwrap();
+    assert_eq!(seen.leases.len(), 60);
+    for (index, (session, request)) in seen.leases.iter().enumerate() {
+        assert_eq!(session, "session-1");
+        assert_eq!(request, &requests[index].1);
+    }
+}
+
+/// While the server is busy, positions of the pointer that a newer one
+/// supersedes are not sent: the newest goes, and its answer answers them
+/// all. Keys around them keep their place.
+#[tokio::test]
+async fn a_busy_server_gets_the_newest_position_only() {
+    let board = Board::ready().await;
+    board.server.seen.lock().unwrap().lease_delay = Duration::from_millis(150);
+    let page = board.welcomed(&board.server.token("2c")).await;
+    let mut input = Input::open(&page).await;
+    let mut requests = vec![(1, key(1, 4))];
+    requests.extend((0..20).map(|index| (10 + index, position(10 + index, 100 + index as u16))));
+    requests.push((50, key(50, 5)));
+    input.say(&requests).await;
+
+    assert_eq!(
+        input.hear().await.unwrap(),
+        InputResponse {
+            seq: 1,
+            response: answer_to(1)
+        }
+    );
+    // Twenty answers, all the newest position's.
+    for index in 0..20 {
+        assert_eq!(
+            input.hear().await.unwrap(),
+            InputResponse {
+                seq: 10 + index,
+                response: answer_to(29)
+            }
+        );
+    }
+    assert_eq!(
+        input.hear().await.unwrap(),
+        InputResponse {
+            seq: 50,
+            response: answer_to(50)
+        }
+    );
+    let seen = board.server.seen.lock().unwrap();
+    assert_eq!(
+        seen.leases
+            .iter()
+            .map(|(_, request)| request.clone())
+            .collect::<Vec<_>>(),
+        vec![key(1, 4), position(29, 119), key(50, 5)]
+    );
+}
+
+/// What a page wrote before it closed its input stream is still passed on,
+/// and a page may open the stream again.
+#[tokio::test]
+async fn a_closed_input_stream_is_served_to_its_end_and_can_be_opened_again() {
+    let board = Board::ready().await;
+    board.server.seen.lock().unwrap().lease_delay = Duration::from_millis(50);
+    let page = board.welcomed(&board.server.token("3d")).await;
+    let mut input = Input::open(&page).await;
+    let release =
+        json!({ "action": "release", "operationId": operation(3), "leaseId": "5a".repeat(16) });
+    input
+        .say(&[(1, key(1, 4)), (2, key(2, 5)), (3, release.clone())])
+        .await;
+    input.send.finish().await.unwrap();
+    eventually(|| (board.server.seen.lock().unwrap().leases.len() == 3).then_some(())).await;
+    assert_eq!(board.server.seen.lock().unwrap().leases[2].1, release);
+    for seq in 1..=3 {
+        assert_eq!(input.hear().await.unwrap().seq, seq);
+    }
+
+    let mut again = Input::open(&page).await;
+    again.say(&[(7, key(7, 6))]).await;
+    assert_eq!(
+        again.hear().await.unwrap(),
+        InputResponse {
+            seq: 7,
+            response: answer_to(7)
+        }
+    );
+    assert_eq!(board.server.seen.lock().unwrap().leases.len(), 4);
+}
+
+/// What is not a request ends the session, with the reason; nothing of it
+/// reaches the server.
+#[tokio::test]
+async fn what_is_not_an_input_request_ends_the_session() {
+    for garbage in [
+        // A message of no bytes, one that is too long, and one that is no request.
+        vec![0u8, 0],
+        vec![0xff, 0xff, 1, 2, 3],
+        page::encode(&json!({ "seq": 1, "request": {}, "more": true })).unwrap(),
+        page::encode(&json!({ "seq": "one", "request": {} })).unwrap(),
+    ] {
+        let board = Board::ready().await;
+        let mut page = board.welcomed(&board.server.token("4e")).await;
+        let mut input = Input::open(&page).await;
+        input.send.write_all(&garbage).await.unwrap();
+        assert_eq!(
+            page.hear_but_counters().await,
+            Some(GatewayControl::Closing {
+                reason: Closing::Protocol
+            }),
+            "{garbage:?}"
+        );
+        page.gone().await;
+        assert!(board.server.seen.lock().unwrap().leases.is_empty());
+    }
+}
+
+/// A server that does not answer costs the page one request's patience: it
+/// is told the service is unavailable and the stream goes on.
+#[tokio::test]
+async fn a_request_the_server_does_not_answer_is_answered_as_unavailable() {
+    let board = Board::ready().await;
+    board.server.seen.lock().unwrap().lease_silent = true;
+    let page = board.welcomed(&board.server.token("5f")).await;
+    let mut input = Input::open(&page).await;
+    input.say(&[(1, key(1, 4))]).await;
+    let started = Instant::now();
+    assert_eq!(
+        input.hear().await.unwrap(),
+        InputResponse {
+            seq: 1,
+            response: json!({ "status": 503, "body": { "code": -503, "msg": "service unavailable" } }),
+        }
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(2900),
+        "{:?}",
+        started.elapsed()
+    );
+    board.server.seen.lock().unwrap().lease_silent = false;
+    input.say(&[(2, key(2, 5))]).await;
+    assert_eq!(
+        input.hear().await.unwrap(),
+        InputResponse {
+            seq: 2,
+            response: answer_to(2)
+        }
+    );
 }

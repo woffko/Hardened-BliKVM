@@ -165,6 +165,27 @@ impl Link {
         }
     }
 
+    /// A request of the HID lease API from a session's input stream. The
+    /// answer is the server's, `None` if the link gave none in time.
+    pub async fn lease(
+        &self,
+        session: &str,
+        request: serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        let session = session.to_owned();
+        match self
+            .ask(|id| GatewayToServer::Lease {
+                id,
+                session,
+                request,
+            })
+            .await?
+        {
+            ServerToGateway::LeaseAnswer { response, .. } => Some(response),
+            _ => None,
+        }
+    }
+
     /// A session's connection is gone.
     pub fn closed(&self, session: &str) {
         let known = self
