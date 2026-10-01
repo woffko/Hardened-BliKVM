@@ -1,0 +1,790 @@
+//! The server's side of the QUIC transport
+//! (`docs/design/quic-transport-v1.md`).
+//!
+//! The gateway is the QUIC and TLS front; the authority stays here. A page
+//! asks for a session over HTTPS and receives the gateway's port, the hash of
+//! its certificate and a token; the gateway redeems that token over its link
+//! and gets a reference that stands for the page's web session. The session
+//! lives as long as the web session and the link do.
+
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use axum::{Extension, Json, extract::State};
+use bli_kvm_quic_protocol::{
+    PROTOCOL,
+    link::{self, EndReason, GatewayToServer, RedeemRefusal, ServerToGateway},
+};
+use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{UnixListener, UnixStream},
+    sync::mpsc,
+};
+
+use crate::{
+    AppState,
+    auth::{middleware::CurrentSession, session::Session},
+    error::{ApiResponse, AppError, AppResult},
+};
+
+/// How long a token may wait for its page to open the session.
+const TOKEN_SECONDS: u32 = 30;
+/// Tokens that may wait at once; a page asks for one and uses it at once.
+const MAX_TOKENS: usize = 64;
+/// QUIC sessions one web session may have open.
+const MAX_SESSIONS_PER_WEB_SESSION: usize = 2;
+/// How often the open sessions are checked against their web sessions.
+const SWEEP: Duration = Duration::from_secs(1);
+/// A certificate this close to its end is not handed to a page.
+const CERTIFICATE_MARGIN_MS: u64 = 60_000;
+/// Messages waiting to be written to the gateway.
+const OUTBOX: usize = 256;
+
+struct Gateway {
+    /// Which connection this is: a later one replaces an earlier one.
+    generation: u64,
+    certificate: String,
+    not_before: u64,
+    not_after: u64,
+    port: u16,
+    outbox: mpsc::Sender<Vec<u8>>,
+}
+
+struct Token {
+    session: Session,
+    expires: Instant,
+}
+
+#[derive(Default)]
+struct Inner {
+    generations: u64,
+    gateway: Option<Gateway>,
+    tokens: HashMap<String, Token>,
+    /// Session reference to the web session it stands for.
+    sessions: HashMap<String, Session>,
+}
+
+#[derive(Default)]
+pub(crate) struct QuicTransport {
+    inner: Mutex<Inner>,
+}
+
+/// Why a page gets no token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoToken {
+    /// No gateway is on the link: the switch is off, or the gateway is not
+    /// running or speaks another protocol.
+    Unavailable,
+    /// The certificate is not valid by the page's clock.
+    Clock,
+}
+
+struct Granted {
+    port: u16,
+    certificate: String,
+    token: String,
+}
+
+fn random_hex(bytes: usize) -> String {
+    let mut raw = vec![0u8; bytes];
+    OsRng.fill_bytes(&mut raw);
+    raw.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+impl QuicTransport {
+    /// The gateway's port while one is on the link.
+    fn port(&self) -> Option<u16> {
+        self.inner
+            .lock()
+            .unwrap()
+            .gateway
+            .as_ref()
+            .map(|gateway| gateway.port)
+    }
+
+    fn grant(&self, session: &Session, page_unix_ms: u64) -> Result<Granted, NoToken> {
+        let mut inner = self.inner.lock().unwrap();
+        let now = Instant::now();
+        inner.tokens.retain(|_, token| token.expires > now);
+        let gateway = inner.gateway.as_ref().ok_or(NoToken::Unavailable)?;
+        let valid_from = gateway.not_before.saturating_mul(1000);
+        let valid_until = gateway
+            .not_after
+            .saturating_mul(1000)
+            .saturating_sub(CERTIFICATE_MARGIN_MS);
+        if page_unix_ms < valid_from || page_unix_ms > valid_until {
+            return Err(NoToken::Clock);
+        }
+        let granted = Granted {
+            port: gateway.port,
+            certificate: gateway.certificate.clone(),
+            token: random_hex(32),
+        };
+        if inner.tokens.len() >= MAX_TOKENS {
+            // The oldest waiting token makes room.
+            if let Some(oldest) = inner
+                .tokens
+                .iter()
+                .min_by_key(|(_, token)| token.expires)
+                .map(|(key, _)| key.clone())
+            {
+                inner.tokens.remove(&oldest);
+            }
+        }
+        inner.tokens.insert(
+            granted.token.clone(),
+            Token {
+                session: session.clone(),
+                expires: now + Duration::from_secs(u64::from(TOKEN_SECONDS)),
+            },
+        );
+        Ok(granted)
+    }
+
+    /// Redeems a token once: the reference of the new session, or why not.
+    fn redeem(&self, token: &str) -> Result<String, RedeemRefusal> {
+        let mut inner = self.inner.lock().unwrap();
+        let entry = inner.tokens.remove(token).ok_or(RedeemRefusal::Token)?;
+        if entry.expires <= Instant::now() || !entry.session.is_active() {
+            return Err(RedeemRefusal::Token);
+        }
+        let open = inner
+            .sessions
+            .values()
+            .filter(|session| session.token == entry.session.token)
+            .count();
+        if open >= MAX_SESSIONS_PER_WEB_SESSION {
+            return Err(RedeemRefusal::Sessions);
+        }
+        let reference = random_hex(16);
+        inner.sessions.insert(reference.clone(), entry.session);
+        Ok(reference)
+    }
+
+    fn closed(&self, reference: &str) {
+        self.inner.lock().unwrap().sessions.remove(reference);
+    }
+
+    /// The sessions whose web session has ended, taken out of the table.
+    fn take_ended(&self) -> Vec<String> {
+        let mut inner = self.inner.lock().unwrap();
+        let ended: Vec<String> = inner
+            .sessions
+            .iter()
+            .filter(|(_, session)| !session.is_active())
+            .map(|(reference, _)| reference.clone())
+            .collect();
+        for reference in &ended {
+            inner.sessions.remove(reference);
+        }
+        ended
+    }
+
+    /// A gateway said hello on a new connection; an earlier one is replaced
+    /// and its sessions are forgotten.
+    fn connected(&self, hello: Hello, outbox: mpsc::Sender<Vec<u8>>) -> u64 {
+        let mut inner = self.inner.lock().unwrap();
+        inner.generations += 1;
+        let generation = inner.generations;
+        inner.sessions.clear();
+        inner.tokens.clear();
+        inner.gateway = Some(Gateway {
+            generation,
+            certificate: hello.certificate,
+            not_before: hello.not_before,
+            not_after: hello.not_after,
+            port: hello.port,
+            outbox,
+        });
+        generation
+    }
+
+    /// The gateway presents a new certificate from now on.
+    fn certificate_replaced(&self, generation: u64, hello: Hello) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(gateway) = inner.gateway.as_mut()
+            && gateway.generation == generation
+        {
+            gateway.certificate = hello.certificate;
+            gateway.not_before = hello.not_before;
+            gateway.not_after = hello.not_after;
+            gateway.port = hello.port;
+            // A token issued with the old hash would only fail at the page.
+            inner.tokens.clear();
+        }
+    }
+
+    fn disconnected(&self, generation: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner
+            .gateway
+            .as_ref()
+            .is_some_and(|gateway| gateway.generation == generation)
+        {
+            inner.gateway = None;
+            inner.sessions.clear();
+            inner.tokens.clear();
+        }
+    }
+
+    fn send(&self, generation: u64, message: &ServerToGateway) -> bool {
+        let Ok(bytes) = link::encode(message) else {
+            return false;
+        };
+        let inner = self.inner.lock().unwrap();
+        match &inner.gateway {
+            Some(gateway) if gateway.generation == generation => {
+                gateway.outbox.try_send(bytes).is_ok()
+            }
+            _ => false,
+        }
+    }
+}
+
+struct Hello {
+    certificate: String,
+    not_before: u64,
+    not_after: u64,
+    port: u16,
+}
+
+fn valid_hello(message: GatewayToServer) -> Option<(u16, Hello)> {
+    match message {
+        GatewayToServer::Hello {
+            protocol,
+            certificate_sha256,
+            not_before,
+            not_after,
+            port,
+        } if certificate_sha256.len() == 64
+            && certificate_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && not_before < not_after
+            && port != 0 =>
+        {
+            Some((
+                protocol,
+                Hello {
+                    certificate: certificate_sha256,
+                    not_before,
+                    not_after,
+                    port,
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Starts the link's listener if one is configured. A link that cannot be
+/// set up leaves the QUIC transport unavailable and everything else as it is.
+pub(crate) fn listen(state: &AppState) {
+    let (Some(path), Some(transport)) =
+        (state.options.quic_link_socket.clone(), state.quic.clone())
+    else {
+        return;
+    };
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        eprintln!("quic link: no runtime; the QUIC transport stays unavailable");
+        return;
+    };
+    let _in_runtime = runtime.enter();
+    match bind(&path, state.options.quic_link_uid) {
+        Ok((listener, peer)) => {
+            runtime.spawn(accept(transport, listener, peer));
+        }
+        Err(reason) => {
+            eprintln!("quic link: {reason}; the QUIC transport stays unavailable");
+        }
+    }
+}
+
+/// The listener and the only user whose process may connect to it: the
+/// configured one, or this server's own.
+fn bind(path: &Path, peer: Option<u32>) -> Result<(UnixListener, u32), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if !path.is_absolute() {
+        return Err("the link socket path must be absolute".into());
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("the old link socket could not be removed: {error}")),
+    }
+    let listener = std::os::unix::net::UnixListener::bind(path)
+        .map_err(|error| format!("the link socket could not be bound: {error}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    // The gateway is another user: the socket is open to connect to, and the
+    // peer's user is checked on every connection.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))
+        .map_err(|error| format!("the link socket's mode could not be set: {error}"))?;
+    let own = std::fs::metadata(path)
+        .map_err(|error| error.to_string())?
+        .uid();
+    let listener = UnixListener::from_std(listener).map_err(|error| error.to_string())?;
+    Ok((listener, peer.unwrap_or(own)))
+}
+
+async fn accept(transport: Arc<QuicTransport>, listener: UnixListener, peer: u32) {
+    loop {
+        let Ok((stream, _)) = listener.accept().await else {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
+        };
+        match stream.peer_cred() {
+            Ok(credentials) if credentials.uid() == peer => {
+                tokio::spawn(serve(Arc::clone(&transport), stream));
+            }
+            Ok(credentials) => {
+                eprintln!(
+                    "quic link: a connection of user {} was refused",
+                    credentials.uid()
+                );
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+async fn read_message(reader: &mut tokio::net::unix::OwnedReadHalf) -> Option<GatewayToServer> {
+    let mut prefix = [0u8; 4];
+    reader.read_exact(&mut prefix).await.ok()?;
+    let length = link::body_length(prefix).ok()?;
+    let mut body = vec![0u8; length];
+    reader.read_exact(&mut body).await.ok()?;
+    link::decode(&body).ok()
+}
+
+/// One connection of the gateway, from its hello to its end.
+async fn serve(transport: Arc<QuicTransport>, stream: UnixStream) {
+    let (mut reader, mut writer) = stream.into_split();
+    let Some((protocol, hello)) = read_message(&mut reader).await.and_then(valid_hello) else {
+        return;
+    };
+    let Ok(greeting) = link::encode(&ServerToGateway::Hello { protocol: PROTOCOL }) else {
+        return;
+    };
+    if writer.write_all(&greeting).await.is_err() {
+        return;
+    }
+    if protocol != PROTOCOL {
+        eprintln!("quic link: the gateway speaks link protocol {protocol}, not {PROTOCOL}");
+        return;
+    }
+    let (outbox, mut queued) = mpsc::channel::<Vec<u8>>(OUTBOX);
+    let generation = transport.connected(hello, outbox);
+    eprintln!("quic link: the gateway is connected");
+
+    let write = async {
+        while let Some(bytes) = queued.recv().await {
+            if writer.write_all(&bytes).await.is_err() {
+                break;
+            }
+        }
+    };
+    let read = async {
+        while let Some(message) = read_message(&mut reader).await {
+            match message {
+                GatewayToServer::Hello { .. } => match valid_hello(message) {
+                    Some((_, hello)) => transport.certificate_replaced(generation, hello),
+                    None => break,
+                },
+                GatewayToServer::Redeem { id, token, peer } => {
+                    let answer = match transport.redeem(&token) {
+                        Ok(session) => {
+                            eprintln!("quic link: a session was opened for {peer}");
+                            ServerToGateway::Redeemed {
+                                id,
+                                session: Some(session),
+                                refused: None,
+                            }
+                        }
+                        Err(refused) => ServerToGateway::Redeemed {
+                            id,
+                            session: None,
+                            refused: Some(refused),
+                        },
+                    };
+                    transport.send(generation, &answer);
+                }
+                GatewayToServer::Closed { session } => transport.closed(&session),
+                // Input and the picture are not served over the link yet.
+                GatewayToServer::Lease { id, .. } => {
+                    transport.send(
+                        generation,
+                        &ServerToGateway::LeaseAnswer {
+                            id,
+                            response: serde_json::json!({ "code": -1, "msg": "not served" }),
+                        },
+                    );
+                }
+                GatewayToServer::Video { id, .. } => {
+                    transport.send(
+                        generation,
+                        &ServerToGateway::VideoAnswer {
+                            id,
+                            ok: false,
+                            reason: Some("not_served".into()),
+                        },
+                    );
+                }
+            }
+        }
+    };
+    // A web session that ends takes its QUIC sessions with it.
+    let sweep = async {
+        let mut tick = tokio::time::interval(SWEEP);
+        loop {
+            tick.tick().await;
+            for session in transport.take_ended() {
+                transport.send(
+                    generation,
+                    &ServerToGateway::End {
+                        session,
+                        reason: EndReason::Session,
+                    },
+                );
+            }
+        }
+    };
+    tokio::select! {
+        () = write => {}
+        () = read => {}
+        () = sweep => {}
+    }
+    transport.disconnected(generation);
+    eprintln!("quic link: the gateway is disconnected");
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QuicView {
+    /// This installation has the link to a gateway configured.
+    supported: bool,
+    /// The board's switch: the gateway's unit is enabled, and running.
+    enabled: bool,
+    active: bool,
+    /// The gateway is on the link: a session can be asked for.
+    connected: bool,
+    /// The firewall mode keeps the gateway's port closed.
+    blocked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TransportView {
+    quic: QuicView,
+}
+
+#[cfg(feature = "restricted-control-surface")]
+const SWITCH_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Asks the owner about, or for, the gateway's unit.
+#[cfg(feature = "restricted-control-surface")]
+async fn owner(
+    state: &AppState,
+    session_token: &str,
+    request: bli_kvm_core::PlatformControlRequestV2,
+) -> AppResult<bli_kvm_control_protocol::ControlResponse> {
+    use sha2::{Digest, Sha256};
+    let unavailable = || AppError::ServiceUnavailable("the QUIC switch is unavailable".into());
+    let socket = state
+        .options
+        .control_socket
+        .as_ref()
+        .ok_or_else(unavailable)?;
+    let control = bli_kvm_control_client::ControlClient::with_timeout(socket, SWITCH_TIMEOUT)
+        .map_err(|_| unavailable())?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"hardened-blikvm-quic-v1");
+    hasher.update(session_token.as_bytes());
+    hasher.update(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|now| now.as_nanos() as u64)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
+    let operation: String = hasher
+        .finalize()
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    control
+        .execute_v2(operation, request)
+        .await
+        .map_err(|_| unavailable())
+}
+
+/// The switch as the owner reads it from systemd: enabled, and running.
+async fn switch(state: &AppState, session_token: &str) -> (bool, bool) {
+    #[cfg(feature = "restricted-control-surface")]
+    if state.options.restricted_controls_enabled
+        && let Ok(bli_kvm_control_protocol::ControlResponse::QuicState { enabled, active }) = owner(
+            state,
+            session_token,
+            bli_kvm_core::PlatformControlRequestV2::QuicState {},
+        )
+        .await
+    {
+        return (enabled, active);
+    }
+    let _ = (state, session_token);
+    (false, false)
+}
+
+async fn view(state: &AppState, session_token: &str) -> TransportView {
+    let port = state.quic.as_ref().and_then(|transport| transport.port());
+    let (enabled, active) = match state.quic {
+        Some(_) => switch(state, session_token).await,
+        None => (false, false),
+    };
+    TransportView {
+        quic: QuicView {
+            supported: state.quic.is_some(),
+            enabled,
+            active,
+            connected: port.is_some(),
+            blocked: crate::firewall_modes::quic_blocked_now(state).await,
+            port,
+        },
+    }
+}
+
+/// `GET /api/transport`: what the QUIC transport can do right now.
+pub(crate) async fn state(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> Json<ApiResponse<TransportView>> {
+    Json(ApiResponse::ok(view(&state, &session.token).await))
+}
+
+async fn set(state: &AppState, session_token: &str, enabled: bool) -> AppResult<TransportView> {
+    if state.quic.is_none() {
+        return Err(AppError::ServiceUnavailable(
+            "the QUIC transport is not installed".into(),
+        ));
+    }
+    #[cfg(feature = "restricted-control-surface")]
+    if state.options.restricted_controls_enabled {
+        return match owner(
+            state,
+            session_token,
+            bli_kvm_core::PlatformControlRequestV2::Quic { enabled },
+        )
+        .await?
+        {
+            bli_kvm_control_protocol::ControlResponse::Applied => {
+                Ok(view(state, session_token).await)
+            }
+            _ => Err(AppError::ServiceUnavailable(
+                "the QUIC gateway could not be switched".into(),
+            )),
+        };
+    }
+    let _ = (session_token, enabled);
+    Err(AppError::ServiceUnavailable(
+        "the QUIC switch is unavailable".into(),
+    ))
+}
+
+/// `POST /api/transport/quic/enable`.
+pub(crate) async fn enable(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<TransportView>>> {
+    Ok(Json(ApiResponse::ok(
+        set(&state, &session.token, true).await?,
+    )))
+}
+
+/// `POST /api/transport/quic/disable`.
+pub(crate) async fn disable(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<TransportView>>> {
+    Ok(Json(ApiResponse::ok(
+        set(&state, &session.token, false).await?,
+    )))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionBody {
+    /// The page's clock, milliseconds since 1970.
+    page_time: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionView {
+    granted: bool,
+    /// Why not: `unavailable`, `blocked` or `clock`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certificate_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_in_seconds: Option<u32>,
+}
+
+impl SessionView {
+    fn refused(reason: &'static str) -> Self {
+        Self {
+            granted: false,
+            reason: Some(reason),
+            port: None,
+            certificate_sha256: None,
+            token: None,
+            expires_in_seconds: None,
+        }
+    }
+}
+
+/// `POST /api/transport/quic/session`: the gateway's port, the hash of its
+/// certificate and a token for one session of this web session.
+pub(crate) async fn session(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<SessionBody>,
+) -> AppResult<Json<ApiResponse<SessionView>>> {
+    let Some(transport) = state.quic.as_ref() else {
+        return Ok(Json(ApiResponse::ok(SessionView::refused("unavailable"))));
+    };
+    if crate::firewall_modes::quic_blocked_now(&state).await {
+        return Ok(Json(ApiResponse::ok(SessionView::refused("blocked"))));
+    }
+    let view = match transport.grant(&session, body.page_time) {
+        Ok(granted) => SessionView {
+            granted: true,
+            reason: None,
+            port: Some(granted.port),
+            certificate_sha256: Some(granted.certificate),
+            token: Some(granted.token),
+            expires_in_seconds: Some(TOKEN_SECONDS),
+        },
+        Err(NoToken::Unavailable) => SessionView::refused("unavailable"),
+        Err(NoToken::Clock) => SessionView::refused("clock"),
+    };
+    Ok(Json(ApiResponse::ok(view)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::session::SessionStore;
+
+    async fn transport_with_gateway() -> (QuicTransport, Session, mpsc::Receiver<Vec<u8>>) {
+        let session = SessionStore::new().issue("operator", 900).await;
+        let transport = QuicTransport::default();
+        let (outbox, queued) = mpsc::channel(8);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        transport.connected(
+            Hello {
+                certificate: "ab".repeat(32),
+                not_before: now - 3600,
+                not_after: now + 12 * 24 * 3600,
+                port: 443,
+            },
+            outbox,
+        );
+        (transport, session, queued)
+    }
+
+    fn page_time() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    #[tokio::test]
+    async fn a_token_that_waited_too_long_is_worth_nothing() {
+        let (transport, session, _queued) = transport_with_gateway().await;
+        let granted = transport.grant(&session, page_time()).ok().unwrap();
+        transport
+            .inner
+            .lock()
+            .unwrap()
+            .tokens
+            .get_mut(&granted.token)
+            .unwrap()
+            .expires = Instant::now() - Duration::from_millis(1);
+        assert_eq!(transport.redeem(&granted.token), Err(RedeemRefusal::Token));
+        // It is gone, not merely refused: the next grant cleans up as well.
+        let fresh = transport.grant(&session, page_time()).ok().unwrap();
+        assert_eq!(transport.inner.lock().unwrap().tokens.len(), 1);
+        assert!(transport.redeem(&fresh.token).is_ok());
+    }
+
+    #[tokio::test]
+    async fn waiting_tokens_are_bounded_and_the_oldest_gives_way() {
+        let (transport, session, _queued) = transport_with_gateway().await;
+        let first = transport.grant(&session, page_time()).ok().unwrap().token;
+        for _ in 0..MAX_TOKENS {
+            assert!(transport.grant(&session, page_time()).is_ok());
+        }
+        assert_eq!(transport.inner.lock().unwrap().tokens.len(), MAX_TOKENS);
+        assert_eq!(transport.redeem(&first), Err(RedeemRefusal::Token));
+    }
+
+    #[tokio::test]
+    async fn a_token_of_a_session_that_ended_is_refused() {
+        let store = SessionStore::new();
+        let session = store.issue("operator", 900).await;
+        let (transport, _, _queued) = transport_with_gateway().await;
+        let granted = transport.grant(&session, page_time()).ok().unwrap();
+        let open = transport.grant(&session, page_time()).ok().unwrap();
+        let reference = transport.redeem(&open.token).unwrap();
+        store.revoke(&session.token).await;
+        assert_eq!(transport.redeem(&granted.token), Err(RedeemRefusal::Token));
+        assert_eq!(transport.take_ended(), vec![reference]);
+        assert!(transport.take_ended().is_empty());
+    }
+
+    #[tokio::test]
+    async fn messages_go_only_to_the_connection_that_is_current() {
+        let (transport, _session, mut first) = transport_with_gateway().await;
+        let generation = transport.inner.lock().unwrap().generations;
+        let message = ServerToGateway::Hello { protocol: PROTOCOL };
+        assert!(transport.send(generation, &message));
+        assert!(first.recv().await.is_some());
+        // A later connection replaces it; the earlier one hears nothing more
+        // and cannot take the later one's place away by leaving.
+        let (outbox, mut second) = mpsc::channel(8);
+        let later = transport.connected(
+            Hello {
+                certificate: "cd".repeat(32),
+                not_before: 1,
+                not_after: 2,
+                port: 443,
+            },
+            outbox,
+        );
+        assert!(!transport.send(generation, &message));
+        transport.disconnected(generation);
+        assert_eq!(transport.port(), Some(443));
+        assert!(transport.send(later, &message));
+        assert!(second.recv().await.is_some());
+        transport.disconnected(later);
+        assert_eq!(transport.port(), None);
+    }
+}

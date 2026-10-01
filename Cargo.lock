@@ -816,6 +816,8 @@ dependencies = [
  "bli-kvm-core",
  "bli-kvm-media-catalog",
  "bli-kvm-platform-bli",
+ "bli-kvm-quic-gateway",
+ "bli-kvm-quic-protocol",
  "bli-kvm-update-client",
  "bli-kvm-update-protocol",
  "bli-kvm-video-client",
@@ -824,6 +826,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "libc",
+ "nix",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
@@ -834,6 +837,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower",
  "tower-http",
+ "wtransport",
 ]
 
 [[package]]

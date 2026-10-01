@@ -193,7 +193,11 @@ server answers `clock` instead.
 1. `POST /api/transport/quic/session` with the page's clock (authenticated,
    CSRF). Answer: port, certificate hash, token (256 random bits, single
    use, 30 s, bound to the web session), or the reason there is none:
-   `off`, `blocked`, `unavailable`, `clock`.
+   `unavailable` (no gateway is on the link: the switch is off, or the
+   gateway is not running or speaks another link protocol), `blocked` (the
+   firewall mode) or `clock`. `GET /api/transport` tells the page which: the
+   switch as the owner reads it, whether the gateway is on the link, whether
+   the firewall mode closes the port, and the port.
 2. The page opens `https://<host>:<port>/kvm` with the hash. The gateway
    validates the address before keeping state, refuses a foreign `Origin`
    and any other path.
@@ -205,8 +209,10 @@ server answers `clock` instead.
    expiry, session lock, password change, the switch going off, the server
    restarting.
 
-Limits: 8 connections, 2 per web session; idle timeout 30 s; keep-alive
-5 s; the page pings every 2 s.
+Limits: 8 connections, 2 per web session; 64 tokens waiting, the oldest
+giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s. A
+gateway that connects anew replaces the one before it, and the sessions and
+tokens of that one are forgotten.
 
 ## Messages
 

@@ -47,6 +47,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    // The QUIC gateway's link exists only when its socket and its user are
+    // both named and the user exists; anything less leaves QUIC unavailable
+    // and the server as it is.
+    let (quic_link_socket, quic_link_uid) = match (
+        env::var_os("BLI_KVM_QUIC_LINK_SOCKET").map(PathBuf::from),
+        env::var("BLI_KVM_QUIC_LINK_USER").ok(),
+    ) {
+        (Some(socket), Some(user)) => match nix::unistd::User::from_name(&user) {
+            Ok(Some(found)) => (Some(socket), Some(found.uid.as_raw())),
+            _ => {
+                eprintln!(
+                    "quic link: user {user} does not exist; the QUIC transport stays unavailable"
+                );
+                (None, None)
+            }
+        },
+        _ => (None, None),
+    };
     let options = ServerOptions {
         web_root: Some(web_root),
         state_dir: PathBuf::from(env::var("BLI_KVM_STATE_DIR").unwrap_or_else(|_| "state".into())),
@@ -87,6 +105,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         picoclaw_mcp_url: Some(format!("http://{address}/internal/picoclaw/mcp")),
         media_directory: env::var_os("BLI_KVM_MEDIA_DIRECTORY").map(PathBuf::from),
         media_store_must_be_mounted: true,
+        quic_link_socket,
+        quic_link_uid,
         ..ServerOptions::default()
     };
 

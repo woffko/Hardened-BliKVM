@@ -46,6 +46,7 @@ mod network;
 mod network_ipv4;
 mod network_write;
 mod picoclaw;
+mod quic;
 mod remote_download;
 mod scripts;
 mod session_lock;
@@ -97,6 +98,8 @@ pub(crate) struct AppState {
     pub picoclaw: Option<Arc<picoclaw::Picoclaw>>,
     #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
     pub firewall_status: Arc<firewall_modes::StatusCache>,
+    /// The QUIC transport's tokens and sessions; absent without a link.
+    pub quic: Option<Arc<quic::QuicTransport>>,
     pub options: Arc<ServerOptions>,
 }
 
@@ -175,6 +178,12 @@ pub struct ServerOptions {
     /// filesystem of its own (the card's third partition). An unmounted store
     /// looks like an empty one, and must not empty the catalog.
     pub media_store_must_be_mounted: bool,
+    /// The socket the QUIC gateway connects to. No value keeps the QUIC
+    /// transport unavailable.
+    pub quic_link_socket: Option<PathBuf>,
+    /// The only user whose process may use that socket; no value means this
+    /// server's own user.
+    pub quic_link_uid: Option<u32>,
 }
 
 impl Default for ServerOptions {
@@ -213,6 +222,8 @@ impl Default for ServerOptions {
             firewall_modes_enabled: false,
             media_directory: None,
             media_store_must_be_mounted: false,
+            quic_link_socket: None,
+            quic_link_uid: None,
         }
     }
 }
@@ -410,6 +421,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 FeatureStatus::read_write(EvidenceLevel::SourceVerified),
             );
         }
+        // The QUIC transport exists when the gateway's link is configured;
+        // it stays switched off until the operator enables it.
+        if options.quic_link_socket.is_some() {
+            manifest.board.features.insert(
+                "network_quic".into(),
+                FeatureStatus::read_write(EvidenceLevel::SourceVerified),
+            );
+        }
     }
     manifest
         .validate()
@@ -488,8 +507,13 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             ))
         }),
         firewall_status: Arc::new(firewall_modes::StatusCache::default()),
+        quic: options
+            .quic_link_socket
+            .as_ref()
+            .map(|_| Arc::new(quic::QuicTransport::default())),
         options: Arc::new(options.clone()),
     };
+    quic::listen(&state);
 
     let public = Router::new()
         .route("/health", get(health))
@@ -529,6 +553,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route("/vm/ssh", get(ssh::state))
         .route("/vm/ssh/enable", post(ssh::enable))
         .route("/vm/ssh/disable", post(ssh::disable))
+        .route("/transport", get(quic::state))
+        .route("/transport/quic/enable", post(quic::enable))
+        .route("/transport/quic/disable", post(quic::disable))
+        .route("/transport/quic/session", post(quic::session))
         .route(
             "/vm/tls",
             get(device_settings::tls_state).post(device_settings::tls_update),
@@ -959,6 +987,7 @@ async fn security_headers(request: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     mod http_transport;
+    mod quic_transport;
     use std::{fs, net::SocketAddr};
 
     use axum::{

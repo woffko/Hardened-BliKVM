@@ -578,6 +578,25 @@ pub(crate) fn quic_blocked(mode: FirewallMode) -> bool {
     matches!(mode, FirewallMode::Restricted | FirewallMode::Paranoid)
 }
 
+/// Whether the mode in force keeps the QUIC gateway's port closed. Without
+/// firewall modes, or when the owner cannot be asked, it is not known to be.
+pub(crate) async fn quic_blocked_now(state: &AppState) -> bool {
+    #[cfg(feature = "restricted-control-surface")]
+    if state.options.restricted_controls_enabled
+        && state.options.firewall_modes_enabled
+        && let Ok(bli_kvm_control_protocol::ControlResponse::FirewallModeState { status }) =
+            execute(
+                state,
+                bli_kvm_core::PlatformControlRequestV2::FirewallModeStatus {},
+            )
+            .await
+    {
+        return quic_blocked(status.mode);
+    }
+    let _ = state;
+    false
+}
+
 #[cfg(test)]
 mod reference_tests {
     use super::{FirewallMode, media_admitted, quic_blocked};
