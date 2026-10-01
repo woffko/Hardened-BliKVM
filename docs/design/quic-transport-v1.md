@@ -43,3 +43,43 @@ updated together: one version, checked at connect); mouse movement as
 datagrams (HID reports stay ordered on the input stream under the lease, see
 "Input").
 
+## Phase Q0: what was proven
+
+### Crates
+
+Chosen: **`wtransport` 0.7.2** (MIT OR Apache-2.0), the WebTransport server
+over HTTP/3, on `quinn` 0.11.12, `rustls` 0.23.45 with `ring` 0.17.14, and
+`rcgen` 0.14.10 for the certificate.
+
+| | `wtransport` | `h3` + `h3-quinn` + `h3-webtransport` + `rcgen` |
+| --- | --- | --- |
+| Crates built for aarch64 | 110 | 67 |
+| Of them new to the workspace | 68 | 28 |
+| Last release | 2026-08-11 (three releases in 2026) | 2025-05-06, called experimental by its authors |
+| Server API | sessions, streams, datagrams, address validation, request refusal, configuration reload | lower level; sessions and datagrams assembled by the caller |
+| Client for tests | yes, with certificate hashes | no |
+
+`wtransport` costs 40 more crates (URL parsing with the Unicode tables, an
+X.509 parser, the native certificate store) that a server does not need and
+its features cannot leave out. It is chosen all the same: browsers changed
+their WebTransport handshake during 2025 and 2026 (Safari arrived in March
+2026) and only this library has kept up, and its narrower API leaves less of
+the protocol to this project. The whole stack is linked only into the
+gateway, a process of its own with nothing but its UDP port.
+
+Licences of the 68 new crates, all declared: MIT OR Apache-2.0 (and its
+spellings) 37, Unicode-3.0 18, MIT 5, ISC 2, Apache-2.0 OR ISC OR MIT 2,
+BSD-2-Clause 1, Apache-2.0 AND ISC 1 (`ring`), MIT OR Apache-2.0 OR Zlib 1,
+Zlib OR Apache-2.0 OR MIT 1. `tools/license_inventory.py` reports no package
+without a licence.
+
+Direct dependencies the gateway will add to the workspace:
+
+| Crate | Licence | Used for |
+| --- | --- | --- |
+| `wtransport` (features `quinn`, `ring`, `self-signed`) | MIT OR Apache-2.0 | the WebTransport endpoint; it re-exports `quinn` for the transport settings and counters, and makes the certificate through `rcgen` |
+
+The proof endpoint built for the host (2.7 MiB) and, with the project's
+recipe for C code (clang against musl 1.2.5 headers, `rust-lld`), statically
+for aarch64 (2.3 MiB, accepted by `scripts/verify-aarch64-elf.sh`).
+
