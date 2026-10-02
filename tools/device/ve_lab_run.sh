@@ -5,6 +5,12 @@
 #
 # usage: sh ve_lab_run.sh 'COMMAND' ['COMMAND'...]
 # Each argument is one command line; they run in order until one fails.
+#
+# With ve_memory_scan.py among the session's files, rule 9 of the lab is kept
+# here: a digest of the kernel's image is taken before the engine is handed
+# over and after it is back, and memory is read for the parameter sets the
+# bit writer was given. A piece of the kernel's image that changed ends the
+# run with status 79.
 set -u
 node=1c0e000.video-codec
 decoder=/sys/bus/platform/drivers/cedrus
@@ -20,6 +26,12 @@ restore() {
 trap restore EXIT
 trap 'exit 129' HUP INT TERM
 
+scan=
+if [ -f ./ve_memory_scan.py ] && command -v python3 > /dev/null; then
+  mkdir -p out
+  python3 ./ve_memory_scan.py digest > out/kernel-image.before && scan=yes
+fi
+
 found=$(basename "$(readlink "/sys/bus/platform/devices/$node/driver" 2>/dev/null)" 2>/dev/null)
 echo "the engine's driver as found: ${found:-none}"
 if [ "$found" = cedrus ]; then
@@ -34,4 +46,17 @@ for command in "$@"; do
   echo "+ $command"
   sh -c "$command" || { status=$?; echo "status $status"; break; }
 done
+
+restore
+trap - EXIT
+if [ -n "$scan" ]; then
+  python3 ./ve_memory_scan.py digest > out/kernel-image.after
+  changed=$(diff out/kernel-image.before out/kernel-image.after | grep -c '^>')
+  echo "kernel image: $changed of $(wc -l < out/kernel-image.after) pieces changed"
+  diff out/kernel-image.before out/kernel-image.after | grep '^>' | head -20
+  python3 ./ve_memory_scan.py > out/memory-scan.txt 2>&1
+  cat out/memory-scan.txt
+  rm -f out/kernel-image.before
+  [ "$changed" -eq 0 ] || status=79
+fi
 exit "$status"

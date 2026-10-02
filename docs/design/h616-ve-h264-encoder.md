@@ -5,14 +5,12 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, V2R.5): the engine answers, its encoder block is the
-newer map's and its bit writer works. In V2.1 it wrote its bits into the
-kernel's memory instead of the buffer it was given. That is explained: the
-encoder block of this generation takes its addresses in units of 256
-bytes. The vendor's encoder library, watched on the board without the
-engine, writes them so for the two parts whose encoder is this one's
-predecessor, and the place the bits went to is the given address shifted
-by eight bits. The lab tool has the form as a third hypothesis (`h6`).
+Status (2026-10-02, V2.1 again): the engine's bit writer puts its bytes
+into the buffer it is given. In V2.1 it had written them into the kernel's
+memory: the encoder block of this generation takes its addresses in units
+of 256 bytes, which the vendor's encoder library, watched on the board
+without the engine, showed for the two parts whose encoder is this one's
+predecessor. The lab tool has that form as its third hypothesis (`h6`).
 Nothing has been encoded yet.
 
 ## Sources
@@ -286,6 +284,11 @@ IDR frame with SPS and PPS before it whenever a key frame is asked for.
    `tools/device/ve_memory_scan.py` reads all of memory for what it was
    given. A find outside the session's buffers means the kernel's memory is
    damaged: nothing else is done on the board until it has been reset.
+   Since V2R the lab's run script does this itself, and also takes a digest
+   of the kernel's own image (its instructions and read-only data, in
+   pieces of 64 KiB) before the engine is handed to the lab module and
+   after it is back: the digest does not change by itself, so a piece that
+   differs is a write that went astray, and where.
 
 ### Test pictures
 
@@ -761,6 +764,30 @@ Receipts: `evidence/private/ve-trace-20261002-selftest`, `-first`,
 `-versions`, `-h6-matrix` (each run: the trace, what was asked and what
 came back, the library's own messages, the report).
 
+### V2.1 again, 2026-10-02: the bit writer's bytes are in the buffer
+
+With the stream buffer described in units of 256 bytes (`0xb80` =
+`0x00774100` for the buffer at `0x77410000`, `0xb84` = `0x007780ff`,
+`0xb8c` = `0x02000000`), and nothing else changed against the run that
+went astray:
+
+- SPS and PPS of a 320x240 stream, once: the 25 bytes are at the beginning
+  of the stream buffer, the rest of it is zero, `0xb90` reports 200 bits.
+- 700 times over: all 17500 bytes are there. The align trigger after the
+  last put (the library's way) hands the last portion to memory.
+- The same with the mode register's memory field at 2 (the H6 keeper's
+  value) and at 3 with bit 20 (what `cedrus` sets): no difference for the
+  bit writer. The mode register holds both (`0xc00200c7`, `0xc01300c7`).
+
+Rule 9 at work, in the run script from here on: the digest of the kernel's
+image was the same before and after every session (283 pieces), and the
+scan of all memory found the parameter sets at one place only, the stream
+buffer. (In the sessions that follow it also finds the first page of every
+stream file the session itself left on tmpfs.)
+
+Receipts: `evidence/private/ve-lab-v2-20261002-probe-after-reset`,
+`-bits-h6-a`, `-bits-h6-b`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
@@ -787,7 +814,9 @@ first.
   emulation prevention off. The status register reads `0x00000260` at rest.
 - The stream start register `0xb80` counts in units of 256 bytes: written
   with a buffer's address as it is, the bit writer's bytes went to that
-  value shifted left by eight bits (V2.1).
+  value shifted left by eight bits (V2.1); written with the address divided
+  by 256, they are in the buffer (V2.1 again).
+- The mode register's memory field does not matter to the bit writer.
 
 The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
 stream, the parameter sets go through the bit writer into the stream
