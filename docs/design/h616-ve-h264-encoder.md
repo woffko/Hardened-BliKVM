@@ -401,6 +401,16 @@ registered.
 
 Receipt: `evidence/private/ve-lab-v1-20261002-probe`.
 
+### V1.4, 2026-10-02: buffers
+
+Six buffers from the lab module, from 4 KiB to 16 MiB: each arrived zeroed,
+kept a pattern written through its mapping, and has a bus address inside
+the board's memory (the single page at `0x46df5000`, the others between
+`0x77000000` and `0x78c00000`, where the kernel's CMA area lies). The CMA
+total was the 131072 kB found before; closing the device freed them.
+
+Receipt: `evidence/private/ve-lab-v1-20261002-buffers`.
+
 ## The H616's register description
 
 Nothing yet: written from V1 on.
