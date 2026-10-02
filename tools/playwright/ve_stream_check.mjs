@@ -81,7 +81,13 @@ const server = http.createServer((request, response) => {
   if (picture) {
     const luma = Buffer.alloc(width * height);
     const file = fs.openSync(source, "r");
-    const read = fs.readSync(file, luma, 0, luma.length, Number(picture[1]) * frameBytes);
+    const read = fs.readSync(
+      file,
+      luma,
+      0,
+      luma.length,
+      Number(picture[1]) * frameBytes,
+    );
     fs.closeSync(file);
     response.writeHead(read === luma.length ? 200 : 404, {
       "Content-Type": "application/octet-stream",
@@ -147,7 +153,8 @@ async function decode({ codec, list, width, height }) {
     const index = results.length;
     const buffer = new Uint8Array(frame.allocationSize());
     const layout = await frame.copyTo(buffer);
-    const right = frame.displayWidth === width && frame.displayHeight === height;
+    const right =
+      frame.displayWidth === width && frame.displayHeight === height;
     let squares = 0;
     if (right) {
       const expected = new Uint8Array(
