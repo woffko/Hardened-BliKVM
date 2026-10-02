@@ -214,3 +214,15 @@ the end of that plan the locked graph has 313 packages, 80 of the workspace
 and 233 external, each with a declared licence expression (`ISC`,
 `BSD-2-Clause`, `Zlib` as one option and `Apache-2.0 AND ISC` for `ring`
 beside the ones above).
+
+## RustSec scan for 0.1.0-alpha.10 (2026-10-02)
+
+`cargo audit --deny warnings` on the lock of the release (313 packages)
+reports one advisory: RUSTSEC-2026-0009 in `time` 0.3.45, a stack exhaustion
+when input from outside is parsed with the RFC 2822 format; 0.3.47 fixes it.
+`time` comes with the QUIC stack (`wtransport`, `rcgen`, `x509-parser`,
+`asn1-rs`, `yasna`) and is linked only into `bli-kvm-quic-gateway`. Neither
+the gateway nor these crates parse that format: the gateway makes its own
+certificate and `x509-parser` only writes dates with it. The release ships
+the locked version; the lock moves to the fixed one with the next build of
+the update-runtime package, which carries the gateway.
