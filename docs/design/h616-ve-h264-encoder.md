@@ -633,6 +633,30 @@ image (`tools/test_packaging_boundaries.py` now also refuses the names of
 the trace and of the library in everything that is built for a board, and
 any vendor header or binary library among the tracked files).
 
+**V2R.2, how the library gets what it takes for an engine.** Its interface
+lets the caller supply both things it needs from outside: the engine's
+keeper (lock, reset, the wait for the interrupt, where the registers are,
+which engine this is, the offset taken off addresses) and the allocator
+(buffers, and the address of each for the engine). So nothing of the
+vendor's kernel is involved and no shim for its device: `tools/ve-trace`
+fills both tables (`vendor_ops.c`), records every call, and answers:
+
+- the registers are the closed window;
+- the engine's version is what the vendor's own keeper would compute from
+  this engine's registers: `0x0003301000012011`;
+- buffers come from an arena of this process, each with a made-up address
+  in a range chosen for the run. Nothing lives at those addresses. They
+  only have to be found again in what the library writes, and since the
+  range can be moved from run to run, the form in which an address is
+  written shows itself;
+- the interrupt "comes" when the library waits for it after it has started
+  an encode: the stand-in sets the finish status and a length.
+
+The library imports nothing that reaches outside its process but `fopen`
+and `printf`; `fopen` is answered by the trace program, recorded and
+refused. Its three companion libraries are replaced by empty ones of the
+same names.
+
 **V2R.3, the trace.** As the plan describes it, with the window being
 memory instead of the engine: the window is closed to the code under the
 trace; an access faults; the handler opens the window for reading and
@@ -648,6 +672,12 @@ on AArch64 (the handler keeps the word it replaces and puts it back without
 looking at it) and the processor's single-step flag on the development
 host.
 
+A session on the board (`tools/device/ve_trace_session.sh`) is carried by
+the lab's session script with its rules (a quiet board, nothing left
+behind), loads no module and does not touch the engine: `cedrus` stays
+bound and suspended throughout. Everything runs as the unprivileged user
+`nobody` with no new privileges.
+
 The stand-in (`model.c`) is the engine as V1.3 and V1.5 measured it: the
 reset values, the encoder's blocks reading zero until the encoder is
 selected, the bits each register holds, the bit writer's count, the status
@@ -660,7 +690,8 @@ value twice, one byte of a register, two registers in one instruction, a
 field of a register, a copy over four registers, a thousand accesses in a
 loop, an encode waited for and one polled for). All 2035 accesses came out
 of the trace complete and in order on the development host. The same proof
-on the board adds the breakpoint and the bit field (2037 accesses).
+on the board, which adds the breakpoint and the bit field (2037 accesses),
+is the first step of every session there.
 
 `ve_trace_report.py` reads a trace: calls, buffers, accesses by register
 name, the bytes the bit writer was given, the registers' state at every

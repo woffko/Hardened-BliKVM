@@ -76,6 +76,8 @@ sh -n tools/device/ve_lab_session.sh
 sh -n tools/device/ve_lab_run.sh
 sh -n tools/device/ve_module_check.sh
 sh -n scripts/build-ve-trace.sh
+sh -n tools/device/ve_trace_run.sh
+sh -n tools/device/ve_trace_session.sh
 python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \
   tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
