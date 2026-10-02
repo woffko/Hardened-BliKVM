@@ -5,13 +5,15 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, V2.1 again): the engine's bit writer puts its bytes
-into the buffer it is given. In V2.1 it had written them into the kernel's
-memory: the encoder block of this generation takes its addresses in units
-of 256 bytes, which the vendor's encoder library, watched on the board
-without the engine, showed for the two parts whose encoder is this one's
+Status (2026-10-02, gate V2 passed): the engine encodes key frames. A
+1920x1080 key frame takes it 7 ms, decodes in ffmpeg and Chromium, and is
+2 to 3 dB below x264's at the same QP. The way there: in V2.1 the engine
+wrote its bits into the kernel's memory instead of the buffer it was given;
+the encoder block of this generation takes its addresses in units of 256
+bytes, which the vendor's encoder library, watched on the board without
+the engine, showed for the two parts whose encoder is this one's
 predecessor. The lab tool has that form as its third hypothesis (`h6`).
-Nothing has been encoded yet.
+Next is V3: P frames and a stream.
 
 ## Sources
 
@@ -788,6 +790,69 @@ stream file the session itself left on tmpfs.)
 Receipts: `evidence/private/ve-lab-v2-20261002-probe-after-reset`,
 `-bits-h6-a`, `-bits-h6-b`.
 
+### V2.2, 2026-10-02: key frames
+
+The first encode: one key frame of `drag` at 320x240, QP 30, by the plan of
+`h6`. The engine finished with status 1 after 0.3 ms and reported 43368
+bits; the 5421 bytes decode in Chromium to 40.05 dB against the picture.
+
+Then one key frame of every sequence at each size, QP 30, each beside
+x264's key frame of the same picture at the same QP. The board's ffmpeg
+decoded every stream of the engine without a word of complaint and to the
+visible size (cropping is right at 1366x768 and 1920x1080); Chromium
+decoded the 1920x1080 ones to the same PSNR.
+
+| Size | Sequence | Engine, bytes | x264, bytes | Engine, dB | x264, dB | Difference | Engine, ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 320x240 | scroll | 23806 | 25414 | 33.91 | 36.39 | -2.48 | 0.3 |
+| 320x240 | drag | 5421 | 6656 | 40.05 | 41.99 | -1.94 | 0.3 |
+| 320x240 | motion | 3347 | 3604 | 35.81 | 38.89 | -3.08 | 0.3 |
+| 320x240 | pointer | 5421 | 6689 | 40.03 | 41.87 | -1.85 | 0.3 |
+| 1280x720 | scroll | 214718 | 226827 | 35.04 | 37.35 | -2.31 | 3.1 |
+| 1280x720 | drag | 69146 | 73201 | 39.78 | 42.15 | -2.37 | 3.1 |
+| 1280x720 | motion | 39138 | 35043 | 35.76 | 38.68 | -2.92 | 3.0 |
+| 1280x720 | pointer | 69535 | 73566 | 39.63 | 42.16 | -2.54 | 3.1 |
+| 1366x768 | scroll | 234996 | 248190 | 35.20 | 37.48 | -2.28 | 3.6 |
+| 1366x768 | drag | 78815 | 83197 | 39.80 | 42.18 | -2.39 | 3.6 |
+| 1366x768 | motion | 44772 | 40005 | 35.75 | 38.69 | -2.94 | 3.4 |
+| 1366x768 | pointer | 87889 | 90364 | 39.46 | 41.79 | -2.33 | 3.6 |
+| 1920x1080 | scroll | 344737 | 364204 | 36.48 | 38.69 | -2.21 | 7.0 |
+| 1920x1080 | drag | 145746 | 153192 | 40.09 | 42.50 | -2.41 | 7.0 |
+| 1920x1080 | motion | 88663 | 78559 | 35.75 | 38.69 | -2.94 | 6.7 |
+| 1920x1080 | pointer | 146531 | 153812 | 39.97 | 42.49 | -2.52 | 7.0 |
+
+What this says:
+
+- The form of the H5 and the H6 is this engine's: everything the plan of
+  `h6` writes for a key frame is taken as the library's traces say.
+- A 1920x1080 key frame takes the engine 7 ms, from the start trigger to
+  the interrupt. x264 on this board takes 28 to 47 ms for a frame.
+- At the same QP the engine's picture is 2 to 3 dB below x264's and its
+  frame mostly a little smaller: it quantises more coarsely than x264 does
+  at the same number. What that means at the same rate is V3.4's question.
+
+Two sentences of the plan were not followed, for these reasons:
+
+| The plan | Done | Why |
+| --- | --- | --- |
+| V2.2: with Bootlin's map, with the older one, then with what V1.5 suggests | only the form that the traces gave | the two maps write the encoder block's addresses as they are, and this engine takes them for 256 times that: an encode by either would write to places nobody chose (rule 8) |
+| The reference is x264 driven through the encoder crate's own wrapper | for a fixed QP: libx264 through the board's ffmpeg, with the product's preset, tune and profile, and a constant QP for every frame type | the product's wrapper sets a bitrate and has no constant QP; the comparisons at a bitrate (V3.4) use the wrapper as planned |
+
+Receipts: `evidence/private/ve-lab-v2-20261002-key-h6-a`, `-key-h6-b`,
+`-key-720p-768p-qp30`, `-key-1080p-qp30` (the streams of both encoders,
+the registers written, the status and time of every frame, ffmpeg's and
+Chromium's verdicts, the PSNR).
+
+### Gate V2: passed
+
+A 1920x1080 key frame of every sequence decodes in the board's ffmpeg and
+in Chromium, and its PSNR is within 3 dB of x264's key frame of the same
+picture at the same QP: 2.21, 2.41, 2.94 and 2.52 dB below. The run used
+the lab tool alone; no vendor code was on the board. After every session
+`cedrus` was bound and suspended, the kernel had said only the lab
+module's and the decoder's own lines, and the digest of its image was
+unchanged.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
@@ -816,7 +881,14 @@ first.
   with a buffer's address as it is, the bit writer's bytes went to that
   value shifted left by eight bits (V2.1); written with the address divided
   by 256, they are in the buffer (V2.1 again).
-- The mode register's memory field does not matter to the bit writer.
+- A key frame by the hypothesis below works at four sizes (V2.2): the
+  input stage's and the encoder block's registers of a key frame are as
+  the table says, the engine's reset and select before every frame
+  included. The interrupt comes, the status reads 1, `0xb90` holds the
+  length in bits, and `0xb50`, `0xb54` and `0xb58` hold statistics of the
+  frame.
+- The mode register's memory field does not matter to the bit writer; key
+  frames were encoded with it at 2.
 
 The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
 stream, the parameter sets go through the bit writer into the stream
