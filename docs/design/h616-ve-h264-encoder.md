@@ -998,6 +998,58 @@ frame's size in bytes either (V3.1, V3.4).
 
 Receipts: `evidence/private/ve-lab-v3-20261002-timing`, `-time-idle`.
 
+### V3.4, 2026-10-02: quality at a bitrate against the product's x264
+
+300 frames (ten seconds) of every sequence at 1920x1080 and 30 frames a
+second, one key frame, at four target rates: by the engine with the rate
+control of V3.5, and by the product's x264 with the product's settings
+(`ultrafast`, `zerolatency`, constrained baseline, three threads, rate and
+buffer as the unit sets them), driven through the encoder crate's own
+wrapper (`h264_reference`). Both streams decoded by the board's ffmpeg,
+every frame compared with its source; the PSNR is the mean over the 300
+frames.
+
+| Sequence | Target, kbit/s | Engine: kbit/s | x264: kbit/s | Engine, dB | x264, dB | Difference | Frames left out |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1500 | 1553 | 1309 | 32.42 | 29.64 | +2.78 | |
+| scroll | 2500 | 2543 | 1859 | 42.90 | 37.60 | +5.30 | |
+| scroll | 5000 | 5023 | 3041 | 54.32 | 50.91 | +3.41 | |
+| scroll | 8000 | 6714 | 3844 | 61.52 | 58.96 | +2.56 | |
+| drag | 1500 | 1539 | 1288 | 40.49 | 40.93 | -0.44 | |
+| drag | 2500 | 2567 | 2280 | 45.42 | 45.67 | -0.25 | |
+| drag | 5000 | 5136 | 4746 | 50.99 | 52.47 | -1.47 | |
+| drag | 8000 | 8209 | 7395 | 57.76 | 58.12 | -0.36 | |
+| motion | 1500 | 1631 | 1563 | 21.39 | 20.99 | +0.40 | 174 |
+| motion | 2500 | 2733 | 2601 | 22.63 | 22.90 | -0.27 | 80 |
+| motion | 5000 | 5012 | 5192 | 25.67 | 26.17 | -0.50 | |
+| motion | 8000 | 8190 | 8208 | 27.28 | 27.34 | -0.06 | |
+| pointer | 1500 | 1506 | 600 | 55.27 | 44.50 | +10.77 | |
+| pointer | 2500 | 2378 | 867 | 57.55 | 45.55 | +12.00 | |
+| pointer | 5000 | 2255 | 1347 | 64.95 | 46.05 | +18.90 | |
+| pointer | 8000 | 2313 | 1360 | 65.38 | 46.19 | +19.20 | |
+
+What this says:
+
+- At the rates the gate names, the engine is at most 0.36 dB below x264
+  at 8 Mbit/s and at most 0.27 dB below at 2.5 Mbit/s; on text and on a
+  still desktop it is far above, because it spends the rate it is given
+  where x264's rate control stays far below its target.
+- The engine's rate is at most 9.3% above its target in these ten
+  seconds, the first ten of a stream, in which the bucket fills. It is
+  below the target where the picture has no use for the bits: `pointer`
+  and `scroll` reach QP 0 at 5 and 8 Mbit/s.
+- On `motion` at 1.5 and 2.5 Mbit/s the rate is held by leaving out 174
+  and 80 of 300 frames: the picture moves in 13 and 22 steps a second
+  instead of 30. x264 keeps every frame there at about the same PSNR. In
+  the first runs, without this, the engine made 2984 and 3096 kbit/s.
+- Every frame the engine made took it 7.0 to 7.4 ms; x264 took 31 to 51
+  ms a frame on three cores.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-rates-b`, `-rates-c`
+(tool `437f748`), `-rates-d`, `-rates-e` (`motion` at 1.5 and 2.5 Mbit/s
+with frames left out, tool `8c48d2f`); the first attempt with a lowest QP
+of 10 is `-rates-a`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
