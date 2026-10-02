@@ -75,7 +75,7 @@ sh -n scripts/build-ve-lab.sh
 sh -n tools/device/ve_lab_session.sh
 sh -n tools/device/ve_lab_run.sh
 sh -n tools/device/ve_module_check.sh
-python3 -m py_compile tools/device/ve_probe_check.py
+python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate

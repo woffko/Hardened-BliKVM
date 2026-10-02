@@ -235,7 +235,14 @@ pub struct Hypothesis {
     pub clear_first: bool,
     /// Give a key frame its own reconstruction as its reference.
     pub key_references_itself: bool,
+    /// What is subtracted from a buffer's bus address before the engine is
+    /// given it: nothing, or the address at which the memory begins, as the
+    /// older generations count.
+    pub address_base: u32,
 }
+
+/// Where the board's memory begins.
+pub const MEMORY_BASE: u32 = 0x4000_0000;
 
 impl Hypothesis {
     /// The A10 to H3 generations, after jemk's `h264enc`.
@@ -252,6 +259,7 @@ impl Hypothesis {
         interrupts: 0xf,
         clear_first: false,
         key_references_itself: false,
+        address_base: 0,
     };
 
     /// The V3, V3s and S3, after Bootlin's encoder.
@@ -268,10 +276,18 @@ impl Hypothesis {
         interrupts: 0x3,
         clear_first: true,
         key_references_itself: true,
+        address_base: 0,
+    };
+
+    /// The newer map with addresses counted from the memory's beginning.
+    pub const V3S_RELATIVE: Hypothesis = Hypothesis {
+        name: "v3s-relative",
+        address_base: MEMORY_BASE,
+        ..Self::V3S
     };
 
     pub fn named(name: &str) -> Option<Hypothesis> {
-        [Self::OLDER, Self::V3S]
+        [Self::OLDER, Self::V3S, Self::V3S_RELATIVE]
             .into_iter()
             .find(|hypothesis| hypothesis.name == name)
     }

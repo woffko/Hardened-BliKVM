@@ -33,6 +33,10 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       buffers of several sizes: their addresses, and that they keep what is written
   bli-kvm-ve-lab masks MAP OUTPUT
       with the encoder selected as MAP says: which bits of its registers can be set; no trigger
+  bli-kvm-ve-lab bits MAP WIDTHxHEIGHT TIMES OUTPUT
+      SPS and PPS, TIMES times, through the engine's bit writer into the stream buffer; no encode
+  bli-kvm-ve-lab encode MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY QP STREAM OUTPUT
+      frames of SEQUENCE encoded by the engine into STREAM (Annex B)
 sequences: scroll, drag, motion, pointer";
 
 /// The commit the tool was built from, when the build says.
@@ -346,6 +350,200 @@ fn compare(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The registers of a range that are not zero.
+fn nonzero(engine: &mut dyn Engine, from: u32, to: u32) -> Value {
+    Value::Object(
+        lab::dump(engine, from, to)
+            .into_iter()
+            .filter(|(_, value)| *value != 0)
+            .map(|(reg, value)| (format!("{reg:#05x}"), json!(hex(value))))
+            .collect(),
+    )
+}
+
+/// Buffers are made for the largest picture of the lab, so that a small
+/// one has room many times its size.
+fn room_for(width: usize, height: usize) -> Stream {
+    stream(width.max(1920), height.max(1080), true)
+}
+
+fn bits(arguments: &[String]) -> Result<(), String> {
+    let [map, size, times, output] = arguments else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let (width, height) = parse_size(size)?;
+    let times = count(times, "TIMES")? as usize;
+    let stream = stream(width, height, true);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room_for(width, height))
+        .map_err(|error| error.to_string())?;
+    let result = session.put_parameter_sets(times);
+    let encoder = nonzero(session.engine(), 0xb00, 0xc00);
+    let top = nonzero(session.engine(), 0x000, 0x100);
+    let mut body = json!({
+        "map": hypothesis.name,
+        "width": width,
+        "height": height,
+        "times": times,
+        // The first 200 steps; the rest repeats them.
+        "steps": steps(&session.trace[..session.trace.len().min(200)]),
+        "encoderAfter": encoder,
+        "topAfter": top,
+        "unknownInterrupt": session.engine().unknown_interrupt,
+    });
+    let outcome = match &result {
+        Ok(report) => {
+            body["expected"] = json!(hex_bytes(&report.expected));
+            body["found"] = json!(hex_bytes(&report.found));
+            body["bitsReported"] = json!(report.bits);
+            body["bytesInBuffer"] = json!(
+                report
+                    .found
+                    .iter()
+                    .zip(&report.expected)
+                    .take_while(|(found, expected)| found == expected)
+                    .count()
+            );
+            body["status"] = json!(hex(report.status));
+            body["matches"] = json!(report.matches());
+            if report.matches() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the stream buffer does not hold the parameter sets ({} bits reported, {} expected)",
+                    report.bits,
+                    report.expected.len() * 8
+                ))
+            }
+        }
+        Err(error) => {
+            body["error"] = json!(error.to_string());
+            Err(error.to_string())
+        }
+    };
+    let closed = session
+        .close()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    receipt(output, "bits", body)?;
+    println!(
+        "bits: {}; receipt {output}",
+        if outcome.is_ok() {
+            "the parameter sets are in the buffer"
+        } else {
+            "failed"
+        }
+    );
+    outcome.and(closed)
+}
+
+fn encode(arguments: &[String]) -> Result<(), String> {
+    let [
+        map,
+        sequence,
+        size,
+        frames,
+        key_every,
+        qp,
+        stream_path,
+        output,
+    ] = arguments
+    else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let sequence: Sequence = sequence.parse()?;
+    let (width, height) = parse_size(size)?;
+    let frames = count(frames, "FRAMES")?;
+    let key_every = count(key_every, "KEY_EVERY")?;
+    let qp: i32 = qp
+        .parse()
+        .ok()
+        .filter(|qp| (10..=51).contains(qp))
+        .ok_or_else(|| format!("QP is a number from 10 to 51, not {qp}"))?;
+    let stream = stream(width, height, true);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room_for(width, height))
+        .map_err(|error| error.to_string())?;
+    let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
+    let mut out = BufWriter::new(file);
+    let mut picture = Picture::new(width, height);
+    let mut rows = Vec::new();
+    let mut failure = None;
+    let mut first_frame_steps = 0;
+    for frame in 0..frames {
+        render(sequence, frame, &mut picture);
+        match session.encode(&picture, frame % key_every == 0, qp) {
+            Ok(encoded) => {
+                out.write_all(&encoded.bytes)
+                    .map_err(|error| format!("{stream_path}: {error}"))?;
+                rows.push(json!({
+                    "key": encoded.key,
+                    "bytes": encoded.bytes.len(),
+                    "status": hex(encoded.status),
+                    "micros": encoded.time.as_micros() as u64,
+                }));
+            }
+            Err(error) => {
+                failure = Some(format!("frame {frame}: {error}"));
+            }
+        }
+        if frame == 0 {
+            first_frame_steps = session.trace.len();
+        }
+        if failure.is_some() {
+            break;
+        }
+    }
+    out.flush()
+        .map_err(|error| format!("{stream_path}: {error}"))?;
+    let input_stage = nonzero(session.engine(), 0xa00, 0xb00);
+    let encoder = nonzero(session.engine(), 0xb00, 0xc00);
+    let top = nonzero(session.engine(), 0x000, 0x100);
+    // The first frame's steps in full; of a failed later frame, its own.
+    let shown = if failure.is_some() && session.trace.len() > first_frame_steps {
+        let last = regs::select(&hypothesis).len();
+        let from = session.trace.len().saturating_sub(4096).max(last);
+        steps(&session.trace[from..])
+    } else {
+        steps(&session.trace[..first_frame_steps.min(session.trace.len())])
+    };
+    let body = json!({
+        "map": hypothesis.name,
+        "sequence": sequence.name(),
+        "width": width,
+        "height": height,
+        "qp": qp,
+        "keyEvery": key_every,
+        "codec": codec_string(&stream),
+        "frames": rows,
+        "error": failure,
+        "steps": shown,
+        "inputStageAfter": input_stage,
+        "encoderAfter": encoder,
+        "topAfter": top,
+        "unknownInterrupt": session.engine().unknown_interrupt,
+    });
+    let closed = session
+        .close()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    receipt(output, "encode", body)?;
+    match failure {
+        Some(failure) => {
+            println!("encode: {failure}; receipt {output}");
+            Err(failure)
+        }
+        None => {
+            println!("encode: {frames} frames in {stream_path}; receipt {output}");
+            closed
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let result = match arguments.first().map(String::as_str) {
@@ -355,6 +553,8 @@ fn main() -> ExitCode {
         Some("probe") => probe(&arguments[1..]),
         Some("buffers") => buffers(&arguments[1..]),
         Some("masks") => masks(&arguments[1..]),
+        Some("bits") => bits(&arguments[1..]),
+        Some("encode") => encode(&arguments[1..]),
         _ => Err(USAGE.into()),
     };
     match result {

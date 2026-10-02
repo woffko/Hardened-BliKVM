@@ -5,8 +5,10 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, V1): the engine answers and its encoder block is the
-newer map's; nothing has been encoded yet.
+Status (2026-10-02, V2.1): the engine answers, its encoder block is the
+newer map's and its bit writer works, but it wrote its bits into the
+kernel's memory instead of the buffer it was given. Work on the board has
+stopped until that is explained; nothing has been encoded.
 
 ## Sources
 
@@ -265,6 +267,14 @@ IDR frame with SPS and PPS before it whenever a key frame is asked for.
    not have before ends the session.
 7. A hang or reboot that is not understood stops the work on the board
    until it is explained in the record below; a second one ends the plan.
+8. (Since V2.1.) Rule 2 assumed that the engine writes where its address
+   registers say. It does not always. No experiment may make the engine
+   write to memory until it is known, by means that write nothing, where
+   that write goes.
+9. (Since V2.1.) After any session in which the engine could have written,
+   `tools/device/ve_memory_scan.py` reads all of memory for what it was
+   given. A find outside the session's buffers means the kernel's memory is
+   damaged: nothing else is done on the board until it has been reset.
 
 ### Test pictures
 
@@ -475,6 +485,65 @@ kernel's log had only the lab module's and the decoder's own lines. The
 first hypothesis for V2 is the V3s map; the older map is tried only for
 what it writes into the block, not for its select.
 
+### V2.1, 2026-10-02: the bit writer works, and writes to the wrong place
+
+Three sessions put SPS and PPS of a 320x240 stream through the engine's bit
+writer, once and then 8, 64 and 700 times over, with the encoder selected
+the newer way and the stream buffer described as both maps say: bit offset
+0 at `0xb88`, start at `0xb80` (`0x77410000`, 64 KiB into a lab buffer),
+end at `0xb84` (4 MiB above), size at `0xb8c` (`0x02000000` bits). Nothing
+was encoded.
+
+What the engine did:
+
+- **The bit writer is the maps'.** The status register `0xb1c` reads
+  `0x00000260` at rest: bit 9, "ready for bits", and two bits no map names.
+  Every put was taken, and `0xb90` counted exactly the bits that were put:
+  200 for one SPS and PPS, 140000 for 700 of them.
+- **Nothing arrived in the buffer.** Its first bytes stayed zero at every
+  length, and every guard kept its markers.
+- **The bytes went to physical `0x41000000`.** The next session's own
+  `sync` died in the kernel, before that session touched the engine,
+  calling an address made of bytes of the PPS. A scan of all memory
+  (`tools/device/ve_memory_scan.py`, reading only) then found the
+  parameter sets 16 MiB above the beginning of memory, 696 of the 700
+  repeats in a row: in the kernel's read-only data, which the kernel maps
+  from `0x40fa0000` to `0x413bffff` on this board. The engine writes its
+  bits to memory in portions (the last 100 bytes were not there, so a
+  portion is between 128 bytes and 1 KiB), but not at the address in
+  `0xb80`.
+- One more session gave the engine the same buffer's address counted from
+  the beginning of memory (`0x37410000`), as the older generations count.
+  The buffer stayed empty again. Whether that run also wrote to
+  `0x41000000` cannot be told: it would have written the same bytes.
+
+Why `0x41000000` is not known. It follows from neither address by dropping
+or adding bits. Sixteen MiB is four times the buffer's size and half its
+size in bits; that may be chance.
+
+What it did to the board. The engine overwrote 17 KiB of the kernel's
+tables. Two processes died in the kernel on pointers that hold bytes of the
+PPS (`sync` in `sync_fs_one_sb`, and `kswapd0` in `super_cache_count`).
+PID 1, the journal and the login service then hung in the kernel; the web
+interface went on serving. No write was waiting for the card (`Dirty` and
+`Writeback` were zero). The damage is in memory, and a reset removes it.
+The lab was not permitted to reset the board; the operator was told to.
+
+What follows:
+
+- Gate V2 is not reached, and by rule 7 the work on the board has stopped.
+- Rules 8 and 9 above. Markers around the buffers and the bounds registers
+  could not have caught this: the engine never came near the buffers.
+- Ways to the explanation that make the engine write nothing: reading, not
+  writing, the rest of the engine's register window and the state of the
+  SoC's IOMMU and memory bus after a reset; and watching the vendor's
+  library (V2R) without an engine at all, against a register window that is
+  plain memory, which shows how it describes the stream buffer to this
+  engine.
+
+Receipts: `evidence/private/ve-lab-v2-20261002-bits-a`, `-bits-b`,
+`-bits-c`, `-incident`.
+
 ## The H616's register description
 
 Shown on the board so far (V1). Everything else is still the hypothesis of
@@ -489,6 +558,11 @@ the maps above.
 - The registers of `0xa00` and `0xb00` and their writable bits are those of
   the table of V1.5. They read zero, and cannot be written, while the
   encoder is not selected.
-- The engine takes 32-bit bus addresses; the lab's buffers lie between
-  `0x40000000` and `0x80000000`. Whether it takes them as they are is shown
-  by its first write (V2.1).
+- The bit writer: bit 9 of the status register `0xb1c` says it is ready;
+  the bits go to `0xb20` and `0xb18` is written with 1 and the count from
+  bit 8; `0xb90` counts the bits written; bit 31 of `0xb04` switches
+  emulation prevention off. The status register reads `0x00000260` at rest.
+- **Where the engine writes its stream is not understood.** With the start
+  register `0xb80` naming a lab buffer, the bit writer's bytes went to
+  physical `0x41000000` (V2.1). Until this is explained, nothing that makes
+  the engine write may be run.

@@ -169,11 +169,22 @@ pub struct FakeEngine {
     interrupt: bool,
     /// Every write in order: the register file of a run.
     pub writes: Vec<(u32, u32)>,
+    /// What this engine adds to an address it is given: zero, or the
+    /// beginning of the memory for an engine that counts from there.
+    address_base: u32,
 }
 
 impl FakeEngine {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A stand-in that takes addresses counted from `base`.
+    pub fn counting_from(base: u32) -> Self {
+        Self {
+            address_base: base,
+            ..Self::default()
+        }
     }
 
     fn register(&self, reg: u32) -> u32 {
@@ -182,6 +193,7 @@ impl FakeEngine {
 
     /// The buffer an address lies in, and where in it.
     fn locate(&self, address: u32) -> Option<(usize, usize)> {
+        let address = address.checked_add(self.address_base)?;
         let index = address.checked_sub(FAKE_BASE)? / FAKE_SPACING;
         let offset = (address - FAKE_BASE) % FAKE_SPACING;
         let buffer = self.buffers.get(index as usize)?;

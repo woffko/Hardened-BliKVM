@@ -263,6 +263,25 @@ pub fn slice_header(stream: &Stream, slice: &Slice) -> Vec<HeaderOp> {
     unit.ops
 }
 
+/// What a bit writer makes of header steps: the bytes of the stream.
+pub fn bytes(ops: &[HeaderOp]) -> Vec<u8> {
+    let mut sink = crate::bits::BitSink::new();
+    for op in ops {
+        match *op {
+            HeaderOp::Start(byte) => {
+                sink.set_prevention(false);
+                sink.put(Put::new(0, 16));
+                sink.put(Put::new(1, 16));
+                sink.put(Put::new(byte as u32, 8));
+                sink.set_prevention(true);
+            }
+            HeaderOp::Bits(put) => sink.put(put),
+        }
+    }
+    sink.align();
+    sink.into_bytes()
+}
+
 /// The stop bit and alignment after a slice's data, given the bits written
 /// since the unit's header.
 pub fn slice_trailing(bits_in_unit: usize) -> Put {
@@ -455,6 +474,29 @@ mod tests {
         assert_eq!(source.bits(3), Some(0));
         assert_eq!(source.ue(), Some(1));
         assert_eq!(source.se(), Some(0));
+    }
+
+    #[test]
+    fn parameter_sets_are_whole_bytes_behind_start_codes() {
+        let stream = stream(1920, 1080);
+        let mut ops = sps(&stream);
+        let sps_bytes = bytes(&ops);
+        assert_eq!(sps_bytes[..5], [0, 0, 0, 1, 0x67]);
+        assert_eq!(sps_bytes[5..8], [66, 0xc0, 40]);
+        ops.extend(pps(&stream));
+        let both = bytes(&ops);
+        assert_eq!(both[..sps_bytes.len()], sps_bytes[..]);
+        assert_eq!(
+            both[sps_bytes.len()..sps_bytes.len() + 5],
+            [0, 0, 0, 1, 0x68]
+        );
+        // Nothing in a payload looks like a start code.
+        assert_eq!(
+            both.windows(3)
+                .filter(|window| *window == [0, 0, 1])
+                .count(),
+            2
+        );
     }
 
     #[test]

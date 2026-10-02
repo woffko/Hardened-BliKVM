@@ -64,6 +64,25 @@ struct Area {
     bytes: usize,
 }
 
+/// What the engine's bit writer made of the parameter sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderReport {
+    /// The bytes a bit writer should have made.
+    pub expected: Vec<u8>,
+    /// The beginning of the stream buffer afterwards, 32 bytes more than
+    /// were expected.
+    pub found: Vec<u8>,
+    /// The bits the engine says it has written.
+    pub bits: u32,
+    pub status: u32,
+}
+
+impl HeaderReport {
+    pub fn matches(&self) -> bool {
+        self.found.starts_with(&self.expected) && self.bits as usize == self.expected.len() * 8
+    }
+}
+
 /// One encoded frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Encoded {
@@ -134,7 +153,11 @@ impl<E: Engine> Session<E> {
         let second_subpixel = area(&mut engine, "sub-pixel 1", sizes.subpixel)?;
         let info = area(&mut engine, "macroblock info", sizes.macroblock_info)?;
         let extra = area(&mut engine, "extra", sizes.extra)?;
-        let at = |engine: &E, area: &Area| engine.address(area.buffer) + GUARD as u32;
+        // The address the engine is given: the buffer's, in the form the
+        // hypothesis says.
+        let at = |engine: &E, area: &Area| {
+            (engine.address(area.buffer) + GUARD as u32).wrapping_sub(hypothesis.address_base)
+        };
         let coded = stream.coded_width() * stream.coded_height();
         let reconstruction = |engine: &E, picture: &Area, subpixel: &Area| Reconstruction {
             luma: at(engine, picture),
@@ -210,6 +233,35 @@ impl<E: Engine> Session<E> {
             }
         }
         None
+    }
+
+    /// Puts SPS and PPS through the engine's bit writer, `times` times over,
+    /// and nothing else: the engine's first and smallest write to memory.
+    /// Parameter sets may be repeated in a stream; more of them show in
+    /// which portions the engine hands its bits to memory.
+    pub fn put_parameter_sets(&mut self, times: usize) -> Result<HeaderReport, Error> {
+        let mut header_ops = Vec::new();
+        for _ in 0..times.max(1) {
+            header_ops.extend(sps(&self.stream));
+            header_ops.extend(pps(&self.stream));
+        }
+        let expected = crate::headers::bytes(&header_ops);
+        let mut ops = regs::stream_buffer(&self.hypothesis, &self.buffers);
+        ops.extend(regs::headers(&self.hypothesis, &header_ops));
+        run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
+        let status = self.engine.read(regs::AVC_STATUS);
+        let bits = self.engine.read(regs::AVC_STREAM_LENGTH);
+        if let Some(buffer) = self.broken_guard() {
+            return Err(Error::Marker(buffer));
+        }
+        let found =
+            self.engine.bytes(self.output.buffer)[GUARD..GUARD + expected.len() + 32].to_vec();
+        Ok(HeaderReport {
+            expected,
+            found,
+            bits,
+            status,
+        })
     }
 
     /// Encodes `picture` as the stream's next frame. The first frame is a
@@ -403,6 +455,51 @@ mod tests {
         source.ue();
         assert_eq!(source.bits(8), Some(0));
         assert_eq!(source.ue(), Some(1));
+    }
+
+    #[test]
+    fn the_bit_writer_alone_writes_the_parameter_sets() {
+        let stream = stream(1920, 1080);
+        for hypothesis in [Hypothesis::OLDER, Hypothesis::V3S] {
+            let mut session =
+                Session::open(FakeEngine::new(), hypothesis, stream, &stream).unwrap();
+            let report = session.put_parameter_sets(1).unwrap();
+            assert!(report.matches(), "{report:?}");
+            assert_eq!(report.expected[..5], [0, 0, 0, 1, 0x67]);
+            let many = session.put_parameter_sets(40).unwrap();
+            assert!(many.matches());
+            assert_eq!(many.expected.len(), 40 * report.expected.len());
+            assert_eq!(report.found[report.expected.len()..], [0; 32]);
+            // Nothing was encoded.
+            assert_eq!(report.status & regs::STATUS_ENDED, 0);
+            assert!(
+                !session
+                    .engine()
+                    .writes
+                    .contains(&(regs::AVC_TRIGGER, regs::TRIGGER_START))
+            );
+        }
+    }
+
+    #[test]
+    fn addresses_are_given_in_the_form_the_hypothesis_says() {
+        let stream = stream(320, 240);
+        let mut picture = Picture::new(320, 240);
+        render(Sequence::Drag, 0, &mut picture);
+        // An engine that counts from the memory's beginning works with the
+        // hypothesis that says so, and with no other.
+        let engine = FakeEngine::counting_from(regs::MEMORY_BASE);
+        let mut session = Session::open(engine, Hypothesis::V3S_RELATIVE, stream, &stream).unwrap();
+        assert!(session.buffers().stream < regs::MEMORY_BASE);
+        assert!(session.put_parameter_sets(1).unwrap().matches());
+        assert!(session.encode(&picture, true, 30).is_ok());
+        let engine = FakeEngine::counting_from(regs::MEMORY_BASE);
+        let mut session = Session::open(engine, Hypothesis::V3S, stream, &stream).unwrap();
+        assert!(!session.put_parameter_sets(1).unwrap().matches());
+        assert!(matches!(
+            session.encode(&picture, true, 30),
+            Err(Error::Status(regs::STATUS_STALL))
+        ));
     }
 
     #[test]
