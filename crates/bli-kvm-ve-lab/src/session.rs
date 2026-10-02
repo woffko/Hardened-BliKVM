@@ -507,7 +507,27 @@ impl<E: Engine> Session<E> {
         }
     }
 
-    /// The first and the last byte of the part `from..to` of a filled work
+    /// Fills the stream buffer with the same pattern.
+    pub fn fill_stream_buffer(&mut self) {
+        let area = self.output;
+        let pattern: Vec<u8> = (0..area.bytes).map(filler).collect();
+        self.engine.bytes(area.buffer)[GUARD..GUARD + area.bytes].copy_from_slice(&pattern);
+    }
+
+    /// The bytes of the stream buffer.
+    pub fn stream_bytes(&self) -> usize {
+        self.output.bytes
+    }
+
+    /// From the next pass on the engine is told that the stream buffer
+    /// ends after `bytes` of it: how the lab sees what the engine does at
+    /// the end of a buffer while the buffer goes on. No more than the
+    /// buffer has.
+    pub fn tell_stream_bytes(&mut self, bytes: usize) {
+        self.buffers.stream_bytes = bytes.clamp(4096, self.output.bytes) as u32;
+    }
+
+    /// The first and the last byte of the part `from..to` of a filled
     /// buffer that no longer hold the pattern, counted from `from`; none
     /// if the engine wrote nothing there, or the buffer has no such part.
     pub fn written(&mut self, name: &str, from: usize, to: usize) -> Option<(usize, usize)> {
@@ -794,6 +814,17 @@ mod tests {
         for (name, bytes) in session.work_buffers() {
             assert_eq!(session.written(name, 0, bytes), None, "{name}");
         }
+        // The stream buffer is filled by its own request, and told shorter.
+        let whole = session.stream_bytes();
+        // Zeros are not the pattern.
+        assert!(session.written("stream", 0, whole).is_some());
+        session.fill_stream_buffer();
+        assert_eq!(session.written("stream", 0, whole), None);
+        assert_eq!(session.broken_guard(), None);
+        session.tell_stream_bytes(65536);
+        assert_eq!(session.buffers().stream_bytes, 65536);
+        session.tell_stream_bytes(usize::MAX);
+        assert_eq!(session.buffers().stream_bytes as usize, whole);
         // Somebody writes bytes 100 to 4999 of one buffer.
         let area = *session
             .areas

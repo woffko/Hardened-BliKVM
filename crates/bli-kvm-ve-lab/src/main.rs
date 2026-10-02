@@ -69,6 +69,11 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       a key frame and FRAMES P frames of a picture that changes everywhere are encoded,
       each P frame with both searches, and for every buffer the first and last byte
       that changed are given beside the sizes the open maps have for it
+  bli-kvm-ve-lab overflow MAP WIDTHxHEIGHT QP TOLD_BYTES STREAM OUTPUT
+      what the engine does at the end of its stream buffer: a key frame of a picture
+      that changes everywhere, with the engine told that the buffer ends after
+      TOLD_BYTES of it while the buffer goes on; then the engine is reset and the
+      same frame is encoded into the whole buffer and written to STREAM
   bli-kvm-ve-lab search MAP WIDTHxHEIGHT QP FRAMES STREAM OUTPUT [grain] [adjust=REG:CLEAR:SET...] RIGHT,DOWN...
       what the engine's search for motion finds: for every vector a key frame and
       FRAMES P frames of a page of text that moves RIGHT,DOWN pixels a frame, at QP;
@@ -853,6 +858,133 @@ fn extents(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// What the engine does when a frame is larger than the stream buffer it
+/// was told of. The lab's buffer is 4 MiB and its end has never been
+/// reached; a driver's is the size of a picture, and whoever gives the
+/// engine a picture and a QP decides how many bytes come out.
+fn overflow(arguments: &[String]) -> Result<(), String> {
+    let [map, size, qp, told, stream_path, output] = arguments else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let (width, height) = parse_size(size)?;
+    let qp: i32 = qp
+        .parse()
+        .ok()
+        .filter(|qp| (0..=51).contains(qp))
+        .ok_or_else(|| format!("QP is a number from 0 to 51, not {qp}"))?;
+    let told: usize = told
+        .parse()
+        .ok()
+        .filter(|told| *told >= 4096 && *told % 4096 == 0)
+        .ok_or("TOLD_BYTES is a multiple of 4096")?;
+    let stream = stream(&hypothesis, width, height, true);
+    let room = room_for(&hypothesis, width, height);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
+        .map_err(|error| error.to_string())?;
+    let whole = session.stream_bytes();
+    if told >= whole {
+        return Err(format!("TOLD_BYTES is less than the buffer's {whole}"));
+    }
+    let mut picture = Picture::new(width, height);
+    render(Sequence::Motion, 0, &mut picture);
+
+    // The frame into a buffer that is said to end early.
+    session.fill_stream_buffer();
+    session.tell_stream_bytes(told);
+    let short = session.pass(&picture, true, qp, true);
+    let status_after = session.engine().read(regs::AVC_STATUS);
+    let length_bits = session.engine().read(regs::AVC_STREAM_LENGTH);
+    let written = session.written("stream", 0, whole);
+    let beyond = session.written("stream", told, whole);
+    let first_steps = steps(&session.trace);
+    session.trace.clear();
+    println!(
+        "overflow: told {told} bytes: {}; length register {length_bits} bits; written {}; beyond the told end {}",
+        match &short {
+            Ok(encoded) => format!("a frame of {} bytes", encoded.bytes.len()),
+            Err(error) => error.to_string(),
+        },
+        match written {
+            Some((first, last)) => format!("bytes {first} to {last}"),
+            None => "nothing".into(),
+        },
+        match beyond {
+            Some((first, last)) => format!("bytes {} to {}", told + first, told + last),
+            None => "nothing".into(),
+        },
+    );
+    let mut failure = None;
+    if let Some(buffer) = session.broken_guard() {
+        failure = Some(format!("the engine wrote outside the {buffer} buffer"));
+    }
+
+    // The engine reset, and the same frame into the whole buffer.
+    let mut second_bytes = None;
+    if failure.is_none() {
+        let again = (|| -> Result<Vec<u8>, String> {
+            session
+                .engine()
+                .reset()
+                .map_err(|error| format!("reset: {error}"))?;
+            session.tell_stream_bytes(whole);
+            let encoded = session
+                .pass(&picture, true, qp, false)
+                .map_err(|error| error.to_string())?;
+            session.accept(&encoded);
+            Ok(encoded.bytes)
+        })();
+        match again {
+            Ok(bytes) => {
+                std::fs::write(stream_path, &bytes)
+                    .map_err(|error| format!("{stream_path}: {error}"))?;
+                println!(
+                    "overflow: after the reset the frame has {} bytes",
+                    bytes.len()
+                );
+                second_bytes = Some(bytes.len());
+            }
+            Err(error) => failure = Some(format!("after the reset: {error}")),
+        }
+    }
+    let body = json!({
+        "map": hypothesis.name,
+        "width": width,
+        "height": height,
+        "qp": qp,
+        "bufferBytes": whole,
+        "toldBytes": told,
+        "short": {
+            "outcome": match &short {
+                Ok(encoded) => json!({"frameBytes": encoded.bytes.len(), "status": hex(encoded.status)}),
+                Err(error) => json!({"error": error.to_string()}),
+            },
+            "statusRegisterAfter": hex(status_after),
+            "lengthRegisterBits": length_bits,
+            "firstWritten": written.map(|(first, _)| first),
+            "endWritten": written.map(|(_, last)| last + 1),
+            "firstWrittenBeyondTheToldEnd": beyond.map(|(first, _)| told + first),
+            "endWrittenBeyondTheToldEnd": beyond.map(|(_, last)| told + last + 1),
+            "steps": first_steps[first_steps.len().saturating_sub(12)..].to_vec(),
+        },
+        "frameBytesIntoTheWholeBuffer": second_bytes,
+        "error": failure,
+        "unknownInterrupt": session.engine().unknown_interrupt,
+    });
+    let closed = session
+        .close()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    receipt(output, "overflow", body)?;
+    match failure {
+        Some(failure) => {
+            println!("overflow: {failure}; receipt {output}");
+            Err(failure)
+        }
+        None => closed,
+    }
+}
+
 fn search(arguments: &[String]) -> Result<(), String> {
     let [map, size, qp, frames, stream_path, output, rest @ ..] = arguments else {
         return Err(USAGE.into());
@@ -1455,6 +1587,7 @@ fn main() -> ExitCode {
         Some("stream") => stream_run(&arguments[1..]),
         Some("search") => search(&arguments[1..]),
         Some("extents") => extents(&arguments[1..]),
+        Some("overflow") => overflow(&arguments[1..]),
         _ => Err(USAGE.into()),
     };
     match result {
