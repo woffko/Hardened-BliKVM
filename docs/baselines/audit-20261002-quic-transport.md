@@ -111,5 +111,19 @@ of a probe is left.
   and the mouse over QUIC, and the H.264 picture over QUIC with something
   moving on the target.
 - A check from an iPhone if it matters; Firefox on a phone likewise.
-- Whether QUIC becomes the default, and whether Restricted should admit UDP
-  443 from the local ranges.
+- Whether QUIC becomes the default.
+
+## After the plan (2026-10-02)
+
+- The operator decided the question the plan had left open: UDP 443 is to
+  be admitted. Restricted now accepts the QUIC port from the local ranges
+  and Paranoid keeps it closed (73840b9;
+  `docs/design/firewall-reference-contract.md`, and the last row of the
+  design note's changes). The owner recognises the Restricted rules of
+  earlier builds as a form of the same mode and replaces them at its start.
+  Shown on the host: the owner's tests with a played kernel, and the page's
+  contract in Restricted and Paranoid. The board's probe
+  (`tools/playwright/quic_firewall_device_probe.mjs`, 8dfd826) has not run
+  yet: it needs a slot with this change on the board.
+- The operator reported that the phone works. A check from the phone with
+  QUIC chosen under "This browser uses" is not recorded yet.
