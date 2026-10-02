@@ -1392,6 +1392,8 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         }
         // The search of the pass that is the frame.
         let mut sent_search = None;
+        // Whether the frame before this one was a key frame.
+        let after_key = keys.last().is_some_and(|last| *last + 1 == frame);
         let attempt = (|| -> Result<(Encoded, u32), String> {
             let qp = match control.as_mut() {
                 Some(control) => {
@@ -1424,7 +1426,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 .filter(|_| !best.key)
                 .and_then(|choice| choice.other(first_bits, costly));
             match (
-                rate::second_pass(passes_at_most, other.is_some(), higher.is_some()),
+                rate::second_pass(passes_at_most, other.is_some(), higher.is_some(), after_key),
                 other,
                 higher,
                 choice.as_mut(),

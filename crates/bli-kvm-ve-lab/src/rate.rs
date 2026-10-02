@@ -187,16 +187,23 @@ pub enum Second {
 
 /// What follows the first pass of a frame that may take `passes` passes:
 /// `other` says that the other search is due, `too_large` that the bucket
-/// has no room for the first pass. With three passes the other search
-/// comes first and a higher QP may follow it. With two, a frame that is
-/// due the other search and too large gets both at once: such a frame is
-/// where a wrong search shows first, and a control that only raised the QP
-/// would hide the cost the other search is chosen by.
-pub fn second_pass(passes: u32, other: bool, too_large: bool) -> Option<Second> {
+/// has no room for the first pass, `after_key` that the frame before was a
+/// key frame. With three passes the other search comes first and a higher
+/// QP may follow it. With two, a frame that is due the other search and
+/// too large gets both at once: such a frame is where a wrong search shows
+/// first, and a control that only raised the QP would hide the cost the
+/// other search is chosen by. Not so right after a key frame: there the
+/// bucket is full of the key frame, the engine's search begins anew and is
+/// no measure of the frames that follow (a page that moves down is found
+/// by the exact search in that one frame and costs twice with the wide
+/// one), and a frame that is left out because the other search made it
+/// larger costs the frames after it their reference.
+pub fn second_pass(passes: u32, other: bool, too_large: bool, after_key: bool) -> Option<Second> {
     match (passes, other, too_large) {
         (0 | 1, _, _) | (_, false, false) => None,
         (_, false, true) => Some(Second::Higher),
         (_, true, false) => Some(Second::Other),
+        (2, true, true) if after_key => Some(Second::Higher),
         (2, true, true) => Some(Second::OtherHigher),
         (_, true, true) => Some(Second::Other),
     }
@@ -357,17 +364,27 @@ mod tests {
     #[test]
     fn a_frame_that_is_too_large_and_due_the_other_search_gets_both_in_one_pass() {
         // One pass: the first is all there is.
-        for (other, too_large) in [(false, false), (true, false), (false, true), (true, true)] {
-            assert_eq!(second_pass(1, other, too_large), None);
+        for after_key in [false, true] {
+            for (other, too_large) in [(false, false), (true, false), (false, true), (true, true)] {
+                assert_eq!(second_pass(1, other, too_large, after_key), None);
+            }
+            for passes in [2, 3] {
+                assert_eq!(second_pass(passes, false, false, after_key), None);
+                assert_eq!(
+                    second_pass(passes, true, false, after_key),
+                    Some(Second::Other)
+                );
+                assert_eq!(
+                    second_pass(passes, false, true, after_key),
+                    Some(Second::Higher)
+                );
+            }
+            // Three: the other search, and a higher QP after it.
+            assert_eq!(second_pass(3, true, true, after_key), Some(Second::Other));
         }
-        for passes in [2, 3] {
-            assert_eq!(second_pass(passes, false, false), None);
-            assert_eq!(second_pass(passes, true, false), Some(Second::Other));
-            assert_eq!(second_pass(passes, false, true), Some(Second::Higher));
-        }
-        // Two: both at once. Three: the other search, and a higher QP after it.
-        assert_eq!(second_pass(2, true, true), Some(Second::OtherHigher));
-        assert_eq!(second_pass(3, true, true), Some(Second::Other));
+        // Two: both at once, but after a key frame the higher QP alone.
+        assert_eq!(second_pass(2, true, true, false), Some(Second::OtherHigher));
+        assert_eq!(second_pass(2, true, true, true), Some(Second::Higher));
         assert_eq!(PASSES, 2);
     }
 
