@@ -1234,6 +1234,11 @@ For that the lab has three sets of reconstruction buffers instead of two:
 the reference, and one for each of two passes, so that either pass can be
 the next frame's reference. A third pass writes over the pass that lost.
 
+(A frame was given at most two passes afterwards, and the last point above
+changed with it: "V3.3 again" has the rule as it is, and "V3.4 and V3.5
+with two passes a frame" the numbers that hold. The tables of this section
+were measured with up to three passes.)
+
 **A picture that rests comes back at the rate's pace.** After a second of
 motion the search does not follow (text moving 60 pixels a frame at
 8 Mbit/s), the picture needed 36 frames to be at 30 dB again and 50 to be
@@ -1604,6 +1609,96 @@ pictures, the buffers of ten sizes), `-extents-d` (the widths between 192
 and 256, buffers of a driver's sizes, the pattern in each kind of
 buffer), lab tool `69838cd`; `ve-lab-v3-20261003-noise` (pictures of
 noise), lab tool `266613f`.
+
+### V3.4 and V3.5 with two passes a frame, 2026-10-03
+
+The measures of "V3.5 again" once more with the rule above (map `h6`,
+`search=auto`, lab tool `266613f`); these are the numbers gate V3 is judged
+by.
+
+At QP 30 the four sequences are, frame for frame, the bytes of the runs
+with three passes (`scroll` 1700 kbit/s at 36.32 dB, `drag` 1921 at 41.91,
+`motion` 37,086 at 33.36, `pointer` 366 at 41.26): a fixed QP has no pass
+at a higher one. The still sequence does not drift: 41.36 dB in frames 30
+to 60, 41.22 dB in its last 30.
+
+At a bitrate, 300 frames, every frame decoded by the board's ffmpeg
+without a complaint, against the x264 numbers of V3.4:
+
+| Sequence | Target, kbit/s | Engine: kbit/s | x264: kbit/s | Engine, dB | x264, dB | Difference | Frames left out | Passes at a higher QP | With both searches | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1500 | 1659 | 1309 | 34.90 | 29.64 | +5.26 | | 16 | 71 | 150 |
+| scroll | 2500 | 2689 | 1859 | 46.17 | 37.60 | +8.57 | | 17 | 76 | 146 |
+| scroll | 5000 | 5116 | 3041 | 56.21 | 50.91 | +5.30 | | | 71 | 132 |
+| scroll | 8000 | 6351 | 3844 | 63.31 | 58.96 | +4.35 | | | 62 | 237 |
+| drag | 1500 | 1538 | 1288 | 40.66 | 40.93 | -0.27 | | | 74 | 130 |
+| drag | 2500 | 2567 | 2280 | 45.54 | 45.67 | -0.13 | | | 75 | 122 |
+| drag | 5000 | 5134 | 4746 | 50.99 | 52.47 | -1.48 | | | 75 | 108 |
+| drag | 8000 | 8219 | 7395 | 57.94 | 58.12 | -0.18 | | | 74 | 153 |
+| motion | 1500 | 1634 | 1563 | 21.31 | 20.99 | +0.32 | 158 | 1 | 75 | 137 |
+| motion | 2500 | 2737 | 2601 | 23.20 | 22.90 | +0.30 | 9 | 29 | 75 | 285 |
+| motion | 5000 | 5014 | 5192 | 25.74 | 26.17 | -0.43 | | | 75 | 0 |
+| motion | 8000 | 8190 | 8208 | 27.28 | 27.34 | -0.06 | | | 75 | 0 |
+| pointer | 1500 | 1538 | 600 | 56.88 | 44.50 | +12.38 | | 5 | 67 | 290 |
+| pointer | 2500 | 2498 | 867 | 58.18 | 45.55 | +12.63 | | | 61 | 299 |
+| pointer | 5000 | 2145 | 1347 | 65.32 | 46.05 | +19.27 | | | 11 | 0 |
+| pointer | 8000 | 2226 | 1360 | 65.59 | 46.19 | +19.40 | | | 5 | 0 |
+
+Eleven of the sixteen runs are, byte for byte, the runs with three
+passes. The other five are within 0.2 dB of them: `scroll` at 1.5 and
+2.5 Mbit/s 0.12 and 0.18 dB above, `pointer` at 1.5 Mbit/s 0.03 dB above,
+`motion` at 1.5 and 2.5 Mbit/s 0.01 dB below and above. No frame took a
+third pass. At the rates the gate names the engine is at most 0.18 dB
+below x264 at 8 Mbit/s and 0.13 dB below at 2.5 Mbit/s, both on `drag`.
+These are the first ten seconds of a stream: the rate is at most 10.6%
+above its target (`scroll` at 1.5 Mbit/s, the first key frame), and below
+it where the QP is 0 and the picture has no more bits to give: `pointer`
+at 5 and 8 Mbit/s and `scroll` at 8 Mbit/s, of which x264 makes less
+still.
+
+Text that moves every frame (300 frames; frames left out in brackets):
+
+| Text moves | Target, kbit/s | Engine, two passes, dB | Three passes ("V3.5 again"), dB | x264, dB | Difference to x264 | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- |
+| up 20 a frame | 2500 | 34.56 | 34.56 | 30.06 | +4.50 | 0 |
+| up 20 a frame | 8000 | 56.30 | 56.30 | 50.05 | +6.25 | 0 |
+| down 20 a frame | 2500 | 26.41 (2) | 27.63 (3) | 29.47 | -3.06 | 280 |
+| down 20 a frame | 8000 | 46.91 (2) | 47.41 (2) | 49.81 | -2.90 | 263 |
+| up 60 a frame | 2500 | 13.08 (244) | 13.08 (244) | 19.09 | -6.01 | 0 |
+| up 60 a frame | 8000 | 15.25 (124) | 15.25 (124) | 28.33 | -13.08 | 0 |
+| down 60 a frame | 2500 | 12.96 (246) | 12.96 (246) | 13.36 | -0.40 | 0 |
+| down 60 a frame | 8000 | 15.15 (126) | 15.15 (126) | 26.17 | -11.02 | 0 |
+| right 3 a frame | 2500 | 39.17 | 39.17 | | | 0 |
+| right 3 a frame | 8000 | 48.12 | 48.12 | | | 0 |
+
+Text that moves up, sideways or beyond the window is what it was with three
+passes; a page that scrolls down 20 pixels a frame is 1.2 and 0.5 dB below
+that, and 3.1 and 2.9 dB below x264, where three passes were 1.8 and 2.4
+below. In bursts of a second (30 frames moving, 60 resting, three of them)
+the picture comes back as fast as before: 15 frames after the motion ends
+it is at 30 dB again and 20 to 23 frames after it at 35 dB, at 8 Mbit/s,
+for a page that moves 60 pixels a frame up or down (means of the runs 30.73
+and 30.54 dB as with three passes; x264 36.50 and 30.39); at 2.5 Mbit/s
+21.27 dB (three passes 21.48, x264 20.28). The burst of a page that scrolls
+down 20 pixels a frame averages 50.88 dB at 8 Mbit/s against 53.95 with
+three passes.
+
+With a key frame every two seconds, as the product sends them, the four
+pictures that move at 2.5 Mbit/s are 28.12 (`scroll`), 25.74 (up 20),
+22.09 (down 20, one frame left out) and 31.12 dB (right 3) with two
+passes, and 28.08, 25.54, 22.96 and 31.12 dB with three in the same
+session: a 1920x1080 key frame every 60 frames takes much of 2.5 Mbit/s
+either way.
+
+Chromium (WebCodecs) decoded the 300 frames of every sequence at 2.5 and at
+8 Mbit/s, kept from the runs above: 300 of 300 in each of the eight
+streams, `avc1.42c028`, 1920x1080, and every frame's PSNR equal to
+ffmpeg's to the hundredth of a decibel, the frames that were left out and
+those sent with either search among them.
+
+Receipts: `evidence/private/ve-lab-v3-20261003-two-a` (the plan's
+sequences, with the kept streams and Chromium's verdicts), `-two-b` (text
+that moves, bursts, a key frame every two seconds).
 
 ## The H616's register description
 
