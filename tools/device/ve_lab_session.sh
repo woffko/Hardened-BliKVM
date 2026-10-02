@@ -6,9 +6,11 @@
 # project-memory-exec):
 #   tools/device/ve_lab_session.sh OUTPUT_DIR FILE... -- COMMAND [ARGUMENT...]
 #
-# The files are copied to a directory on the board's tmpfs, the command runs
-# there as root, and what it leaves in `out/` comes back into OUTPUT_DIR with
-# the session's log and the kernel's new lines. Around the command the board
+# The files are copied to a directory on the board's tmpfs (/tmp: /run does
+# not let a program run), the command runs
+# there as root with its arguments as given (shell syntax needs `sh -c`), and
+# what it leaves in `out/` comes back into OUTPUT_DIR with the session's log
+# and the kernel's new lines. Around the command the board
 # side of this script keeps the rules that need no knowledge of the
 # experiment:
 #
@@ -57,8 +59,8 @@ sshpass -d 3 ssh -M -S "$socket" -o ControlPersist=600 -o StrictHostKeyChecking=
   -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 -fN "root@$HOST"
 board() { ssh -S "$socket" "root@$HOST" "$@"; }
 
-directory=$(board 'mktemp -d /run/hardened-ve-lab.XXXXXX')
-case "$directory" in /run/hardened-ve-lab.*) ;; *) echo "no session directory" >&2; exit 1 ;; esac
+directory=$(board 'mktemp -d /tmp/hardened-ve-lab.XXXXXX')
+case "$directory" in /tmp/hardened-ve-lab.*) ;; *) echo "no session directory" >&2; exit 1 ;; esac
 # shellcheck disable=SC2086
 [ -z "$files" ] || scp -q -o ControlPath="$socket" $files "root@$HOST:$directory/"
 
@@ -134,7 +136,7 @@ fi
 say "watchdog armed"
 
 status=0
-sh -c "$*" >> "$log" 2>&1 || status=$?
+"$@" >> "$log" 2>&1 || status=$?
 say "command status $status"
 
 disarm
@@ -163,7 +165,7 @@ done
 status=0
 board "sh $directory/session.sh $directory $REQUIRE_QUIET '$MODULES' $quoted" > "$control/out.tar" || status=$?
 tar -xf "$control/out.tar" -C "$output" --strip-components=1 2>/dev/null || true
-remaining=$(board 'ls -d /run/hardened-ve-lab.* 2>/dev/null | wc -l')
+remaining=$(board 'ls -d /tmp/hardened-ve-lab.* 2>/dev/null | wc -l')
 [ "$remaining" = 0 ] || { echo "a session directory is left on the board" >&2; status=78; }
 echo "session status $status; results in $output"
 exit "$status"

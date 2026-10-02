@@ -6,8 +6,10 @@
 //! It is a lab instrument: no package, slot or image contains it.
 
 pub mod bits;
+pub mod device;
 pub mod engine;
 pub mod headers;
+pub mod lab;
 pub mod picture;
 pub mod psnr;
 pub mod regs;

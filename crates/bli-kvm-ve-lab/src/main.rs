@@ -8,14 +8,16 @@ use std::{
 };
 
 use bli_kvm_ve_lab::{
-    engine::FakeEngine,
+    device::Device,
+    engine::{Engine, FakeEngine, Step},
     headers::{Stream, codec_string},
+    lab,
     picture::{Picture, Sequence, parse_size, render},
     psnr,
-    regs::Hypothesis,
+    regs::{self, Hypothesis, Op},
     session::Session,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 const USAGE: &str = "usage:
   bli-kvm-ve-lab generate SEQUENCE WIDTHxHEIGHT FRAMES OUTPUT
@@ -24,7 +26,167 @@ const USAGE: &str = "usage:
       an Annex B stream from the stand-in through the plan of MAP (older, v3s)
   bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED
       luma PSNR of decoded frames (planar or NV12, visible size) against the sequence
+on the board, with the lab module loaded (each writes a receipt to OUTPUT):
+  bli-kvm-ve-lab probe OUTPUT
+      the engine's version and the registers of the blocks the open maps name; reads only
+  bli-kvm-ve-lab buffers OUTPUT
+      buffers of several sizes: their addresses, and that they keep what is written
+  bli-kvm-ve-lab masks MAP OUTPUT
+      with the encoder selected as MAP says: which bits of its registers can be set; no trigger
 sequences: scroll, drag, motion, pointer";
+
+/// The commit the tool was built from, when the build says.
+const COMMIT: &str = match option_env!("BLI_KVM_VE_LAB_COMMIT") {
+    Some(commit) => commit,
+    None => "unknown",
+};
+/// Where the board's memory begins and ends, for a plausibility check of the
+/// addresses the lab module gives: 1 GiB from 0x4000_0000.
+const MEMORY: std::ops::Range<u64> = 0x4000_0000..0x8000_0000;
+
+fn hex(value: u32) -> String {
+    format!("{value:#010x}")
+}
+
+fn receipt(output: &str, experiment: &str, body: Value) -> Result<(), String> {
+    let mut document = json!({
+        "schemaVersion": 1,
+        "experiment": experiment,
+        "toolCommit": COMMIT,
+    });
+    if let (Some(document), Some(body)) = (document.as_object_mut(), body.as_object()) {
+        document.extend(body.clone());
+    }
+    let text = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
+    std::fs::write(output, text + "\n").map_err(|error| format!("{output}: {error}"))
+}
+
+fn open_device() -> Result<Device, String> {
+    Device::open().map_err(|error| format!("{}: {error}", bli_kvm_ve_lab::device::DEVICE))
+}
+
+fn steps(trace: &[Step]) -> Vec<Value> {
+    trace
+        .iter()
+        .map(|step| match step.op {
+            Op::Write { reg, value } => json!(["write", hex(reg), hex(value)]),
+            Op::Update { reg, clear, set } => {
+                json!(["update", hex(reg), hex(clear), hex(set), step.read.map(hex)])
+            }
+            Op::Until { reg, mask } => json!(["until", hex(reg), hex(mask), step.read.map(hex)]),
+            Op::Wait => json!(["wait", step.read.map(hex)]),
+        })
+        .collect()
+}
+
+fn probe(arguments: &[String]) -> Result<(), String> {
+    let [output] = arguments else {
+        return Err(USAGE.into());
+    };
+    let mut device = open_device()?;
+    let mut blocks = serde_json::Map::new();
+    for (name, from, to) in lab::BLOCKS {
+        let to = to.min(device.window() as u32);
+        let registers: serde_json::Map<String, Value> = lab::dump(&mut device, from, to)
+            .into_iter()
+            .map(|(reg, value)| (format!("{reg:#05x}"), json!(hex(value))))
+            .collect();
+        blocks.insert(name.into(), Value::Object(registers));
+    }
+    let version = device.version();
+    receipt(
+        output,
+        "probe",
+        json!({
+            "versionRegister": hex(version),
+            "engineVersion": format!("{:#06x}", version >> 16),
+            "windowBytes": device.window(),
+            "blocks": blocks,
+        }),
+    )?;
+    println!("engine version {:#06x}; receipt {output}", version >> 16);
+    Ok(())
+}
+
+fn buffers(arguments: &[String]) -> Result<(), String> {
+    let [output] = arguments else {
+        return Err(USAGE.into());
+    };
+    let mut device = open_device()?;
+    let sizes = [4096, 65_536, 1 << 20, 4 << 20, 4 << 20, 16 << 20];
+    let checks = lab::check_buffers(&mut device, &sizes).map_err(|error| error.to_string())?;
+    let rows: Vec<Value> = checks
+        .iter()
+        .map(|check| {
+            let end = check.address as u64 + check.bytes as u64;
+            json!({
+                "bytes": check.bytes,
+                "address": hex(check.address),
+                "inMemory": MEMORY.contains(&(check.address as u64)) && end <= MEMORY.end,
+                "zeroed": check.zeroed,
+                "holds": check.holds,
+            })
+        })
+        .collect();
+    let good = rows
+        .iter()
+        .all(|row| row["inMemory"] == true && row["zeroed"] == true && row["holds"] == true);
+    receipt(output, "buffers", json!({"buffers": rows, "passed": good}))?;
+    println!("{} buffers, passed: {good}; receipt {output}", checks.len());
+    if good {
+        Ok(())
+    } else {
+        Err("a buffer failed its check".into())
+    }
+}
+
+fn masks(arguments: &[String]) -> Result<(), String> {
+    let [map, output] = arguments else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let mut device = open_device()?;
+    let mut trace = Vec::new();
+    let before = (device.read(regs::MODE), device.read(regs::RESET));
+    let rows = lab::probe_masks(&mut device, &hypothesis, &mut trace)
+        .map_err(|fault| fault.to_string())?;
+    let after = (device.read(regs::MODE), device.read(regs::RESET));
+    let table: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "register": format!("{:#05x}", row.reg),
+                "name": regs::name(row.reg),
+                "tried": hex(row.tried),
+                "before": hex(row.before),
+                "ones": hex(row.ones),
+                "zeros": hex(row.zeros),
+                "after": hex(row.after),
+            })
+        })
+        .collect();
+    receipt(
+        output,
+        "masks",
+        json!({
+            "map": hypothesis.name,
+            "modeBefore": hex(before.0),
+            "resetBefore": hex(before.1),
+            "modeAfter": hex(after.0),
+            "resetAfter": hex(after.1),
+            "selection": steps(&trace),
+            "registers": table,
+            "unknownInterrupt": device.unknown_interrupt,
+        }),
+    )?;
+    let holding = rows.iter().filter(|row| row.ones != 0).count();
+    println!(
+        "{} of {} registers hold bits; receipt {output}",
+        holding,
+        rows.len()
+    );
+    Ok(())
+}
 
 fn count(value: &str, what: &str) -> Result<u32, String> {
     value
@@ -190,6 +352,9 @@ fn main() -> ExitCode {
         Some("generate") => generate(&arguments[1..]),
         Some("standin") => standin(&arguments[1..]),
         Some("psnr") => compare(&arguments[1..]),
+        Some("probe") => probe(&arguments[1..]),
+        Some("buffers") => buffers(&arguments[1..]),
+        Some("masks") => masks(&arguments[1..]),
         _ => Err(USAGE.into()),
     };
     match result {

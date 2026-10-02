@@ -71,7 +71,9 @@ sh -n packaging/system-update/initramfs-hook
 # The scripts of the hardware H.264 plan's lab: the module build recipe, a
 # lab session on the board, and the check of the recipe's modules.
 sh -n scripts/build-ve-module.sh
+sh -n scripts/build-ve-lab.sh
 sh -n tools/device/ve_lab_session.sh
+sh -n tools/device/ve_lab_run.sh
 sh -n tools/device/ve_module_check.sh
 python3 -m py_compile tools/device/ve_probe_check.py
 sh -n packaging/system-update/initramfs-local-premount
