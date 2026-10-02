@@ -10,9 +10,8 @@ the newer map's and its bit writer works, but it wrote its bits into the
 kernel's memory instead of the buffer it was given. Work on the board has
 stopped until that is explained; nothing has been encoded. A candidate
 explanation is recorded below (the stream address counts in units of 256
-bytes), and the instrument that can confirm it without the engine writing
-anything, a trace of the vendor's encoder library against a stand-in, is
-built and proven on the development host.
+bytes). The vendor's encoder library has been watched on the board without
+the engine; what its traces say is being written down.
 
 ## Sources
 
@@ -697,6 +696,30 @@ is the first step of every session there.
 name, the bytes the bit writer was given, the registers' state at every
 start of an encode, and for every value written whether it names a place in
 a buffer under one of the three forms this engine's blocks are known to use.
+
+**V2R.4, the vendor's encoder under the trace.** Four sessions on the board
+on 2026-10-02, after the operator's power cycle (the board was first read:
+it had come up as it was before the incident, with the taint flags back at
+1024). Each began with the trace's own test. No session left a line in the
+kernel's log, a module, a file or a process; `cedrus` stayed bound and
+suspended.
+
+| Session | Runs | What came out |
+| --- | --- | --- |
+| `ve-trace-20261002-selftest` | the trace's own test | 2037 accesses complete and in order: the breakpoint works on the board |
+| `-first` | the library told this engine's identification | it reads `0x0f0`, finds zero, reads `0x0e4`, and makes no encoder: this build (its own log line says branch CedarC-v1.1.9, May 2017) does not know encoder `0x00012011` |
+| `-versions` | six identifications | it takes the H6's (`0x0e4` = `0x00012010`), the H5's (`0x0f0` = `0x1718` in the upper half), the V3s' (`0x1681`) and the H3's (`0x1680`), and encodes three frames with about 440 register accesses. Its log names two paths: the H5 and the H6 go one way, the V3s and the H3 the other. Which codec number its caller asks for does not matter |
+| `-h6-matrix` | the H6's run eleven times with one setting changed: the arena moved; an offset taken off addresses; 1920x1080, 1280x720, 1366x768; another QP; CABAC; high profile; its rate control on; forced key frames; its own tables fetched instead of given | below |
+
+A run is three frames of 320x240 at a fixed QP of 30 unless its setting
+says otherwise. The stand-in does not encode: the stream the library gets
+back is empty, and what it does with a real stream's statistics (its rate
+control) is seen only as far as the registers it writes before a frame.
+
+Receipts: `evidence/private/ve-trace-20261002-selftest`, `-first`,
+`-versions`, `-h6-matrix` (each run: the trace, what was asked and what
+came back, the library's own messages, the report).
+
 
 ## The H616's register description
 
