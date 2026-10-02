@@ -75,7 +75,9 @@ sh -n scripts/build-ve-lab.sh
 sh -n tools/device/ve_lab_session.sh
 sh -n tools/device/ve_lab_run.sh
 sh -n tools/device/ve_module_check.sh
-python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py
+sh -n scripts/build-ve-trace.sh
+python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \
+  tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
@@ -861,6 +863,11 @@ BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAM
 # software stand-in makes through the register plans of both open maps.
 cargo build --locked -p bli-kvm-ve-lab
 BLI_KVM_VE_LAB="$target_root/debug/bli-kvm-ve-lab" node tools/playwright/ve_standin_contract.mjs
+# The register trace of the same plan: behind the closed window this
+# project's own client must come out of the trace complete and in order, and
+# the report must read a trace made by hand.
+scripts/build-ve-trace.sh host "$target_root/ve-trace"
+python3 -B -m unittest tools/ve-trace/test_ve_trace_report.py
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'

@@ -10,8 +10,9 @@ the newer map's and its bit writer works, but it wrote its bits into the
 kernel's memory instead of the buffer it was given. Work on the board has
 stopped until that is explained; nothing has been encoded. A candidate
 explanation is recorded below (the stream address counts in units of 256
-bytes); what can confirm it without the engine writing anything is a trace
-of the vendor's encoder library against a stand-in.
+bytes), and the instrument that can confirm it without the engine writing
+anything, a trace of the vendor's encoder library against a stand-in, is
+built and proven on the development host.
 
 ## Sources
 
@@ -631,6 +632,40 @@ decompiled or read, and no file of it enters Git, a package, a slot or an
 image (`tools/test_packaging_boundaries.py` now also refuses the names of
 the trace and of the library in everything that is built for a board, and
 any vendor header or binary library among the tracked files).
+
+**V2R.3, the trace.** As the plan describes it, with the window being
+memory instead of the engine: the window is closed to the code under the
+trace; an access faults; the handler opens the window for reading and
+arranges for a stop behind that one instruction; if the instruction faults
+again it is a store, and the window is opened for writing too; the
+instruction runs against the window's memory; at the stop the window is
+closed again and the access is recorded: for a load the word at the
+faulting address, for a store every word that changed (or the word at the
+faulting address if none did). Then the stand-in is told, and what it
+answers is what the register reads from then on. No instruction is decoded
+or emulated. The stop is a breakpoint in the place of the next instruction
+on AArch64 (the handler keeps the word it replaces and puts it back without
+looking at it) and the processor's single-step flag on the development
+host.
+
+The stand-in (`model.c`) is the engine as V1.3 and V1.5 measured it: the
+reset values, the encoder's blocks reading zero until the encoder is
+selected, the bits each register holds, the bit writer's count, the status
+at rest. It encodes nothing.
+
+The proof (`selftest.c`, part of `scripts/check.sh`): a client of this
+project's own, built as a shared object like the library, touches the
+registers in every way a driver does (plain loads and stores, the same
+value twice, one byte of a register, two registers in one instruction, a
+field of a register, a copy over four registers, a thousand accesses in a
+loop, an encode waited for and one polled for). All 2035 accesses came out
+of the trace complete and in order on the development host. The same proof
+on the board adds the breakpoint and the bit field (2037 accesses).
+
+`ve_trace_report.py` reads a trace: calls, buffers, accesses by register
+name, the bytes the bit writer was given, the registers' state at every
+start of an encode, and for every value written whether it names a place in
+a buffer under one of the three forms this engine's blocks are known to use.
 
 ## The H616's register description
 
