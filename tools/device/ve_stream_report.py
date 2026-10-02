@@ -17,8 +17,10 @@ frames a second it held and the frames that began late, the time of a
 whole frame and the frames that took longer than the time between two, the
 rate and its windows, the frames that took two passes and three, of the
 frames that were decoded and
-compared the lowest PSNR and the number below the run's floor, and of a
-stream that repeats itself the frames unlike the frame a period before.
+compared the lowest PSNR and the number below the run's floor (and how many
+of those the rate control had left out: they show the picture before them),
+and of a stream that repeats itself the frames unlike the frame a period
+before.
 """
 
 import json
@@ -102,6 +104,8 @@ def rows(directory):
             "resets": run.get("resetsAfterTimeout"),
             "floor": engine.get("floorDb"),
             "below_floor": engine.get("belowFloor"),
+            "below_floor_frames": engine.get("firstBelowFloor"),
+            "left_out_frames": (run.get("passes") or {}).get("firstFramesLeftOut"),
             "slow": run.get("framesLongerThanAnInterval"),
             "period": (run.get("repeat") or run).get("period"),
             "unlike": (run.get("repeat") or run).get("framesUnlikeAPeriodBefore"),
@@ -111,6 +115,22 @@ def rows(directory):
             "late_db": mean(db[-30:]) if len(db) >= 90 else None,
             "error": run.get("error"),
         }
+
+
+def wrong_frames(row):
+    """Frames below the run's floor that the rate control did not leave out.
+
+    A frame that was left out shows the picture before it, which a moving
+    source is far from; where both lists are whole, such frames are told
+    apart from frames that are wrong.
+    """
+    if row["below_floor"] is None:
+        return "-"
+    below, left_out = row["below_floor_frames"], row["left_out_frames"]
+    if below is None or left_out is None or len(below) < row["below_floor"] or len(left_out) < row["left_out"]:
+        return f"{row['below_floor']} below {row['floor']:g}"
+    wrong = sorted(set(below) - set(left_out))
+    return f"{len(wrong)} wrong; {row['below_floor']} below {row['floor']:g}, {row['below_floor'] - len(wrong)} of them left out"
 
 
 def endurance(row):
@@ -136,7 +156,7 @@ def endurance(row):
         "-" if row["decoded"] is None else f"{row['decoded']}, {row['complaints']}",
         show(row["engine_db"]),
         show(row["engine_lowest_db"]),
-        "-" if row["below_floor"] is None else f"{row['below_floor']} below {row['floor']:g}",
+        wrong_frames(row),
         "-" if row["unlike"] is None else f"{row['unlike']} unlike {row['period']} before",
     ]
 

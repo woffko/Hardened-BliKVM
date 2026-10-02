@@ -460,7 +460,7 @@ fn compare(arguments: &[String]) -> Result<(), String> {
             "frames": values.len(),
             "floorDb": floor,
             "belowFloor": floor.map(|_| below.len()),
-            "firstBelowFloor": floor.map(|_| &below[..below.len().min(10)]),
+            "firstBelowFloor": floor.map(|_| &below[..below.len().min(1000)]),
             "exact": values.len() - finite.len(),
             "meanDb": mean,
             "lowestDb": if finite.is_empty() { None } else { Some(lowest) },
@@ -1492,6 +1492,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "framesWithTwo": frame_passes.iter().filter(|passes| **passes == 2).count(),
         "framesWithThree": frame_passes.iter().filter(|passes| **passes == 3).count(),
         "ofEveryFrame": frame_passes,
+        // Which frames were left out: a comparison with the source finds
+        // them far from their pictures, and they are not wrong frames.
+        "firstFramesLeftOut": &left_out[..left_out.len().min(1000)],
     });
     // What a stream that repeats itself was found to do.
     let repeat = json!({
