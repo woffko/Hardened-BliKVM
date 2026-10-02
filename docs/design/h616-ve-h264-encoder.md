@@ -1361,6 +1361,109 @@ text that moves 3 pixels a frame with the search chosen, exact and wide;
 lab tool `afa12d0`), `-auto-a` (the plan's sequences), `-auto-b` (text
 that moves, and the bursts; lab tool `f16a1e4`).
 
+### V3.1 again, 2026-10-03: what the engine writes, where it stops, and how small a picture may be
+
+Three things the lab had not measured, and that whoever gives the engine
+its memory must know. The lab's buffers are the larger of what the two
+open maps say, for a 1920x1080 picture whatever the picture's size: the
+sub-pixel buffer is ten times the newer map's size, and the guards only
+tell that the engine stayed inside that. No frame had reached the end of
+the stream buffer, which is 4 MiB here. And no P frame smaller than
+320x240 had been encoded.
+
+**What the engine writes into its work buffers.** A key frame and twelve
+P frames of the picture that changes everywhere, each P frame with both
+searches, through all three sets of buffers; the buffers begin as zeros,
+as in every run, and the last byte that is not zero afterwards is where
+the engine's writing ends (lab command `extents`):
+
+| Picture | Reconstructed luma: written, and the V3s map's size, the older map's | Chroma | Sub-pixel | Macroblock information |
+| --- | --- | --- | --- | --- |
+| 320x240 | 77,843 of 81,920, 81,920 | 40,704 of 40,960, 40,960 | 2,957 of 3,744, 20,480 | 618 of 4,096, 640 |
+| 640x480 | 309,426 of 327,680, 307,200 | 163,328 of 163,840, 163,840 | 9,755 of 11,040, 76,800 | 1,258 of 8,192, 1,280 |
+| 800x600 | 489,060 of 512,000, 486,400 | 255,488 of 256,000, 256,000 | 14,754 of 16,320, 121,600 | 1,578 of 8,192, 1,600 |
+| 1024x768 | 790,023 of 851,968, 786,432 | 393,216 of 393,216, 393,216 | 18,603 of 20,160, 196,608 | 2,026 of 8,192, 2,048 |
+| 1280x720 | 927,529 of 983,040, 942,080 | 490,752 of 491,520, 491,520 | 23,285 of 25,344, 235,520 | 2,543 of 12,288, 2,560 |
+| 1366x768 | 1,060,576 of 1,144,832, 1,056,768 | 528,384 of 528,384, 528,384 | 24,826 of 26,880, 264,192 | 2,734 of 12,288, 2,752 |
+| 1600x900 | 1,466,458 of 1,536,000, 1,484,800 | 767,232 of 819,200, 768,000 | 40,451 of 43,296, 371,200 | 3,178 of 16,384, 3,200 |
+| 1920x1080 | 2,097,856 of 2,211,840, 2,088,960 | 1,044,480 of 1,105,920, 1,044,480 | 48,208 of 51,040, 522,240 | 3,818 of 16,384, 3,840 |
+| 1920x1088 | 2,097,878 of 2,211,840, 2,088,960 | 1,044,480 of 1,105,920, 1,044,480 | 48,208 of 51,040, 522,240 | 3,818 of 16,384, 3,840 |
+
+- **The V3s map's sizes hold everywhere.** The engine writes three to five
+  lines of luma below the coded picture, which the older map's size does
+  not hold at six of these sizes; chroma is the coded picture's and
+  fills the V3s map's size to the byte at 1024x768 and 1366x768; the
+  sub-pixel plane is a tenth of what the older map allows for it; the
+  macroblock information is just under 32 bytes for every column of
+  macroblocks. The
+  buffer the older maps call extra (motion vectors) is never written: its
+  register is written zero, as the vendor's library does on the H6.
+- With a pattern in the buffers instead of zeros, which shows a written
+  zero too, the ends are the same to within a line (1920x1080: luma to
+  2,097,656, chroma to 1,044,480, sub-pixel to 48,208, macroblock
+  information to 3,824), and
+  every encode ends as it should, with the pattern in any one kind of
+  buffer or in all: **the engine does not depend on what its work buffers
+  held before.**
+- **Buffers of exactly a driver's sizes** (the V3s map's for the picture
+  itself, each in whole pages and a page more; lab option `tight`), with
+  the lab's guards right behind them: 25 passes at each of eleven sizes
+  from 256x256 to 1920x1088, 1920x64 among them, and no guard was touched.
+
+**Where the engine stops.** The engine is told that the stream buffer ends
+early while the buffer goes on behind (lab command `overflow`); the
+buffer is filled with a pattern first, and the frame is larger than what
+the engine was told of:
+
+| Picture, QP, the frame's bytes | Told, bytes | How the encode ended | Length register, bits | Written | Behind the told end |
+| --- | --- | --- | --- | --- | --- |
+| 1920x1080, 30, 88,663 | 65,536 | status 2, "stalled" | 524,294 | every byte of the told part | nothing |
+| 1920x1080, 30, 88,663 | 32,768 | status 2 | 262,150 | every byte | nothing |
+| 1920x1080, 30, 88,663 | 8,192 | status 2 | 65,539 | every byte | nothing |
+| 1920x1080, 20, 473,847 | 65,536 | status 2 | 524,293 | every byte | nothing |
+| 1920x1080, 30 | 4,096 | the bit writer is not ready after the first header bits (status `0x62`) | 16 | nothing | nothing |
+| 320x240, 10, 28,285 | 4,096 | the same | 16 | nothing | nothing |
+
+- **The engine honours the end of its stream buffer**: it fills the buffer
+  to its last byte, writes none behind it, raises its interrupt with the
+  stall bit, and stays there. After a reset the same frame goes into the
+  whole buffer and decodes.
+- The size register `0xb8c` counts in units of 65,536 bits (V1.5 saw its
+  mask): a buffer told smaller than 8 KiB is a buffer of no size, and the
+  engine stalls at the first bits of the headers.
+- That stall's interrupt comes before anybody waits for one. The lab
+  module kept it, and it answered the wait of the next encode; the lab
+  tool now asks for what the module keeps after every reset. A driver
+  forgets the interrupt of a frame when it resets the engine for the next.
+
+**How small a picture may be.** A key frame and four P frames at small
+sizes (the first run of `extents`, at 64x64, did not get past its first
+P frame):
+
+| Width | Heights | P frames |
+| --- | --- | --- |
+| 64, 80, 96, 112, 128, 144, 160, 176, 192 | the same as the width (176x144), and 64x1088 | the first does not end: the slice header's 68 bits are written and nothing more, status `0x80008260` (`0x8000a260` at 192x192) |
+| 208, 224, 240 | 64, and the same as the width | made |
+| 256 | 64, 96, 128, 256, 1088 | made |
+| 272, 320, 1920 | 64 (and 320x240) | made |
+
+**The engine does not finish a frame that refers to another when the
+picture is narrower than 13 macroblocks.** The key frame of every size is
+made, and the height does not matter from 64 lines on. What the engine
+waits for was not looked for: nothing of the product is that narrow, and
+a driver refuses such pictures (V4 takes none below 256 pixels of width).
+The stuck engine wrote nothing but the header; a reset ends it.
+
+Every session ended as every session does, with the kernel's image
+compared word by word and unchanged.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-extents` (the first run,
+with the pattern, at 64x64), `-extents-b` (the stream's end, and the
+interrupt that was kept), `-extents-c` (the stream's end again, small
+pictures, the buffers of ten sizes), `-extents-d` (the widths between 192
+and 256, buffers of a driver's sizes, the pattern in each kind of
+buffer); lab tool `69838cd`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
@@ -1415,6 +1518,20 @@ first.
 - A frame can be encoded any number of times against the same reference:
   a pass writes only the reconstruction it is given, and passes with the
   same registers and the same memory make the same bytes (V3.5, V3.6).
+- The engine fills its work buffers within the V3s map's sizes, three to
+  five lines of luma below the coded picture included, and does not depend
+  on what they held before; the register `0xb60` is written zero and
+  nothing is written for it (V3.1 again).
+- The end of the stream buffer is honoured (V3.1 again): at the byte
+  `0xb84` names, the engine stops, raises its interrupt with bit 1 of the
+  status ("stalled"), and has written nothing behind it; `0xb90` then
+  holds the buffer's bits and a few more, and the status register reads
+  `0x80001260` once the interrupt's bits are cleared. `0xb8c` counts in
+  units of 65,536 bits: a buffer of less than 8 KiB is none.
+- A frame that refers to another needs a picture of at least 13
+  macroblocks of width (208 pixels): narrower, the slice header is
+  written and the encode never ends (status `0x80008260`). Key frames of
+  any size are made (V3.1 again).
 
 The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
 stream, the parameter sets go through the bit writer into the stream
@@ -1474,7 +1591,9 @@ reset the engine and select the encoder, and then writes, in this order:
 - Main and high profile change only its headers; CABAC is bit 8 of `0xb04`.
 - Not known: what bit 27 of `0xb08` and bit 10 of `0xb04` mean; how the
   dynamic motion estimation decides, and why its window moves only one
-  way; what the keeper writes into the mode register for the
+  way; what the engine waits for in a P frame of a narrow picture, and
+  what bits 12, 13, 15 and 31 of the status register say; what the
+  keeper writes into the mode register for the
   encoder on this part (its memory interface field: the published keeper
   sets 2 on the H6, `cedrus` sets 3 and bit 20 for this board's decoders,
   and V2.1 ran with what the reset leaves, 0). The lab tool has all three
