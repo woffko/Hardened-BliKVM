@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import subprocess
 import unittest
 
 
@@ -3157,8 +3158,27 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertGreater(len(carriers), 20)
         for carrier in carriers:
             text = carrier.read_text(errors="replace")
-            for name in ("ve-lab", "ve_lab", "ve_hello", "ve_probe_test"):
+            # The register trace (tools/ve-trace) runs a vendor library as
+            # a black box; neither it nor that library's names may travel.
+            for name in (
+                "ve-lab",
+                "ve_lab",
+                "ve_hello",
+                "ve_probe_test",
+                "ve-trace",
+                "ve_trace",
+                "libvencoder",
+                "libcedarc",
+            ):
                 self.assertNotIn(name, text, carrier)
+        # The vendor's interface headers are read from a cache at build
+        # time and never live in the repository.
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+        ).stdout.split()
+        for header in ("vencoder.h", "veInterface.h", "sc_interface.h", "veAdapter.h", "memoryAdapter.h"):
+            self.assertFalse([path for path in tracked if path.endswith("/" + header)], header)
+        self.assertFalse([path for path in tracked if path.endswith((".so", ".ko", ".a"))])
 
 
 if __name__ == "__main__":

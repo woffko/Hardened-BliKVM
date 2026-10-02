@@ -5,10 +5,13 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, V2.1): the engine answers, its encoder block is the
-newer map's and its bit writer works, but it wrote its bits into the
+Status (2026-10-02, V2.1 and V2R): the engine answers, its encoder block is
+the newer map's and its bit writer works, but it wrote its bits into the
 kernel's memory instead of the buffer it was given. Work on the board has
-stopped until that is explained; nothing has been encoded.
+stopped until that is explained; nothing has been encoded. A candidate
+explanation is recorded below (the stream address counts in units of 256
+bytes); what can confirm it without the engine writing anything is a trace
+of the vendor's encoder library against a stand-in.
 
 ## Sources
 
@@ -19,6 +22,9 @@ stopped until that is explained; nothing has been encoded.
 | `bootlin/linux`, branch `cedrus/h264-encoding`: `cedrus_regs.h`, `cedrus_enc.c`, `cedrus_enc_h264.c` | GPL-2.0 | commit `4e94979` (2023-11-10) | the map of the V3, V3s and S3 with its fields, the encode sequence, the buffers and their sizes, the encoder's reset, the interrupt handling |
 | Linux 5.19, `drivers/staging/media/sunxi/cedrus` | GPL-2.0 | v5.19 | what a driver of this engine does at probe: interrupt, SRAM section, clocks, reset, runtime power |
 | The vendor kernel's `drivers/media/cedar-ve/cedar_ve.c` (`orangepi-xunlong/linux-orangepi`, branch `orange-pi-4.9-sun50iw9`) | GPL-2.0-or-later | read on 2026-10-02 | which bits of the top register mean encoder, input stage and JPEG decoder on the sun50i parts, where their interrupt status and enables are, and how the handler quiets them |
+| Linux 5.19.4, `drivers/staging/media/sunxi/cedrus/cedrus_regs.h` | GPL-2.0 | v5.19.4 | the forms in which this engine's decoder blocks take an address: as it is (the H.264 decoder's pictures), with its top four bits moved to the bottom (the H.264 decoder's stream), and in units of 256 bytes (the H.265 decoder's stream, its end, and its picture and side buffers) |
+| `Allwinner-Homlet/H6-CedarC`, `ve/veAw/veAw.c` and `ve/include/veAwTopRegDef.h` (the vendor's own publication of its user-space engine keeper for the H6; its decoder half only) | LGPL-2.1 (the files' notice) | commit `d92ffcb` (2018-03-29) | how the engine's version is put together where `0x0f0` reads zero: `0x0e0` (the decoder's) in the upper half of a 64-bit number and `0x0e4` (the encoder's) in the lower, `0x3101000012010` on the H6; that the H6's keeper takes nothing off a buffer's address before the engine gets it and tells chip id 0; the fields of the top level's mode, reset and status registers; how the memory type becomes the mode register's memory field |
+| The vendor's "Video Encoder API Guide" (R-E-17, V1.0, 2016), as shipped beside the library | documentation | | the order in which the encoder library is called and what its parameters mean |
 | linux-sunxi, "VE Register guide" | documentation | archived copy of 2025 | register names of the older generations |
 | Armbian forum, topic 26551 (September 2025) | a statement | | that the 32-bit generations' encoder code does not work on the H616 and T507 |
 | Allwinner's H616 brief | documentation | | H.264 encoding up to 4K at 25 frames a second |
@@ -33,9 +39,10 @@ and carries a licence that the source allows.
 1. Read and used: sources with an open licence (the table above) and public
    documentation. Register offsets and bit meanings are facts; where code is
    adapted, the file keeps the notice and the licence of its source.
-2. Watched, only if the operator approves it (plan, V2R): the vendor's
-   encoder library running on the test board as a black box, called through
-   its published interface. What is recorded is its traffic with the
+2. Watched, only if the operator approves it (plan, V2R; approved on
+   2026-10-02 in the form without an engine, see the lab record): the
+   vendor's encoder library as a black box, called through its published
+   interface. What is recorded is its traffic with what it takes for the
    hardware: which register it reads or writes, with which value, in which
    order, for which input. The register description is written from such
    traces in this project's own words.
@@ -54,8 +61,10 @@ Offsets are from the engine's base, `0x01c0e000` on the H616.
 
 | Offset | Register | What the sources say |
 | --- | --- | --- |
-| `0x000` | mode | bits 3:0 select the decoder (0 MPEG, 1 H.264, 4 H.265, 7 none); bit 6 enables the input stage and bit 7 the encoder (Bootlin, and the vendor kernel's interrupt handler for every part but the oldest); bit 5 is the JPEG decoder at `0xe00` on the sun50i parts (vendor kernel); bits 17:16 the memory interface width (3 for 128 bits), bit 20 the reconstruction write mode, bits 21 and 22 for pictures wider than 2048 |
-| `0x004` | reset | bit 24 resets the encoder, bit 16 the decoder, bit 0 everything; bits 8 and 9 read as "idle" (Bootlin) |
+| `0x000` | mode | bits 3:0 select the decoder (0 MPEG, 1 H.264, 4 H.265, 7 none); bit 6 enables the input stage and bit 7 the encoder (Bootlin, and the vendor kernel's interrupt handler for every part but the oldest); bit 5 is the JPEG decoder at `0xe00` on the sun50i parts (vendor kernel); bits 17:16 the memory interface width (3 for 128 bits), bit 20 the reconstruction write mode, bits 21 and 22 for pictures wider than 2048. The vendor's keeper for the H6 names the rest: bits 8 and 9 choose what two counters count, 10 and 11 gate the decoder's and the encoder's clock, 13 to 15 switch parts of the decoder off, 18 a memory self-test, 19 a macroblock counter, 4, 12, 26, 27 and 29 the compressed frame buffer format, 31 a RAM power-down. Its memory field: 0 for 16-bit DDR1, 1 for 32-bit DDR1 or 16-bit DDR2, 2 for 32-bit DDR2 or 16-bit DDR3, 3 for wider DDR3 with bit 20 set |
+| `0x004` | reset | bit 24 resets the encoder, bit 16 the decoder, bit 0 everything; bits 8 and 9 read as "idle" (Bootlin). The vendor's keeper for the H6: bit 8 "writes to memory finished", bit 9 the decoder's "sync idle", bit 10 the encoder's, bit 11 the JPEG decoder's; bit 17 masks the decoder's requests and bit 25 the encoder's; bit 18 resets a part of the decoder; bit 4 masks, and bit 5 clears, the memory synchroniser |
+| `0x01c` | status | bit 16: the memory synchroniser is idle (the vendor's keeper for the H6); the low bits are the older generations' interrupt flags, bit 8 a timeout enable |
+| `0x0e0`, `0x0e4` | identification | the decoder's and the encoder's, where `0x0f0` reads zero (the vendor's keeper for the H6) |
 | `0x0f0` | version | the engine's version in the upper 16 bits |
 
 Selecting the encoder, two forms:
@@ -544,6 +553,85 @@ What follows:
 Receipts: `evidence/private/ve-lab-v2-20261002-bits-a`, `-bits-b`,
 `-bits-c`, `-incident`.
 
+### V2.1 afterwards, 2026-10-02: a candidate explanation
+
+The record above says that `0x41000000` follows from neither address by
+dropping or adding bits. It does follow from both by a shift:
+
+    0x77410000 << 8 = 0x77_41000000, and its low 32 bits are 0x41000000
+    0x37410000 << 8 = 0x37_41000000, the same
+
+That is what an engine does that takes the register for the buffer's
+address in units of 256 bytes. This engine has such registers: Linux'
+`cedrus` writes every address of the H.265 decoder block that way (the
+stream, its end, the picture buffers), while the older H.264 decoder block
+beside it takes its addresses in two other forms. The H.264 encoder of the
+V3s takes its stream address as it is (Bootlin's driver); the H616's is a
+later revision of the same block (encoder identification `0x00012011`), in
+a part whose memory can lie above what 32 bits address.
+
+What fits:
+
+- Both sessions give one place, as the scan found only one.
+- The registers' bits (V1.5): the start register holds every bit but the
+  low two, the end register has its low two bits always set. In units of
+  256 bytes that is a start on a 1 KiB boundary and an end on the last byte
+  before one.
+- The end register read all ones after reset and was written `0x7780ffff`;
+  shifted, that is an end far above the start, so the bit writer never
+  thought its buffer full.
+
+What it does not show: the same form for the other address registers of the
+block (reference, reconstruction, sub-pixel, macroblock info), whose low
+two bits are also fixed, or for the input stage's, whose low four and three
+are. Each may have its own form, as in the decoder blocks.
+
+It stays a candidate until something that makes the engine write nothing
+confirms it (rule 8): the vendor's library, which must describe a stream
+buffer to this block, watched without an engine (below). If it holds, the
+first experiment afterwards can be made safe under both readings: a stream
+register written with a lab buffer's address divided by 256 names that
+buffer in units of 256 bytes, and as a plain address it names a place
+between `0x00400000` and `0x00800000`, far below this part's memory, which
+begins at `0x40000000`. That nothing else lives there is to be read from
+the board's own resource map before such a run.
+
+### V2R, 2026-10-02: the vendor's encoder without an engine
+
+**V2R.1, the operator's answers.** After the incident the operator was
+asked how to go on, and answered: read only on the board, and watch the
+vendor's library without the engine. Asked later where that library may
+run, the operator answered: on the test board only, not under an emulator
+on the development host; and that the vendor's own LGPL publication of its
+engine keeper for the H6 may be kept in the cache and read. That changes
+four sentences of the plan, for these reasons:
+
+| The plan | Now | Why |
+| --- | --- | --- |
+| V2R follows a missed gate V2 | the trace of V2R is used inside V2, as the way to the explanation that rule 8 asks for | no experiment that could reach gate V2 may run before the stray write is explained, and the library is the one source that must know how this block takes a stream address |
+| V2R.2: the library gets the engine through the lab module | the library gets no engine: a stand-in behind the register window | an engine that writes where it should not must not be driven by code whose writes are not yet known either |
+| V2R.3: the trace is proven first on the board | proven first on the development host, then on the board at the beginning of every session | the trace's method needs no engine; the host proves everything but the breakpoint, and the board proves that |
+| V2R.4: the rules for experiments apply to the vendor's runs | they apply to the lab's own experiments that follow | a run without an engine touches no hardware |
+
+The library: `libvencoder.so` for aarch64 and glibc from a public mirror of
+the vendor's CedarC package (`aodzip/libcedarc`, commit `e4246be`,
+`library/toolchain-sunxi-aarch64-glibc`; SHA-256 `68b7908b...9aa74`), with
+the interface headers of the same tree. It was built for another part of
+the vendor's range, and one library serves many: it asks its keeper which
+engine it drives. A second mirror (`CalvinXu17/libcedarc`, commit
+`e68d4a7`) carries a later build split into parts whose callable front
+exists only as source under a proprietary notice; that source is not read,
+and that build is not used.
+
+What is done with it: it is kept in a cache outside the repository, copied
+to the board's tmpfs for the length of a session, loaded there by the trace
+program as an unprivileged user, called, and unloaded; the session's
+directory is removed afterwards. It is not disassembled,
+decompiled or read, and no file of it enters Git, a package, a slot or an
+image (`tools/test_packaging_boundaries.py` now also refuses the names of
+the trace and of the library in everything that is built for a board, and
+any vendor header or binary library among the tracked files).
+
 ## The H616's register description
 
 Shown on the board so far (V1). Everything else is still the hypothesis of
@@ -555,6 +643,10 @@ the maps above.
   after power-on and `0xc00000c7` with the encoder selected.
 - `0x004` reads `0x00000300` when idle.
 - `0x0f0` reads zero; `0x0e0` = `0x00033010` and `0x0e4` = `0x00012011`.
+  The vendor's keeper for the H6 reads the same three registers and calls
+  the first the decoder's and the second the encoder's identification; the
+  H6 has `0x00031010` and `0x00012010`. This engine's encoder is one
+  revision on from the H6's.
 - The registers of `0xa00` and `0xb00` and their writable bits are those of
   the table of V1.5. They read zero, and cannot be written, while the
   encoder is not selected.
@@ -562,7 +654,8 @@ the maps above.
   the bits go to `0xb20` and `0xb18` is written with 1 and the count from
   bit 8; `0xb90` counts the bits written; bit 31 of `0xb04` switches
   emulation prevention off. The status register reads `0x00000260` at rest.
-- **Where the engine writes its stream is not understood.** With the start
+- **Where the engine writes its stream is not shown yet.** With the start
   register `0xb80` naming a lab buffer, the bit writer's bytes went to
-  physical `0x41000000` (V2.1). Until this is explained, nothing that makes
-  the engine write may be run.
+  physical `0x41000000` (V2.1). The candidate: the register counts in units
+  of 256 bytes ("V2.1 afterwards"). Until that is confirmed without a
+  write, nothing that makes the engine write may be run.
