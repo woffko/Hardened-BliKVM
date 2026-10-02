@@ -23,7 +23,7 @@ const USAGE: &str = "usage:
   bli-kvm-ve-lab generate SEQUENCE WIDTHxHEIGHT FRAMES OUTPUT
       NV12 frames of the visible size, one after the other
   bli-kvm-ve-lab standin MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY OUTPUT
-      an Annex B stream from the stand-in through the plan of MAP (older, v3s)
+      an Annex B stream from the stand-in through the plan of MAP (older, v3s, h6)
   bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED
       luma PSNR of decoded frames (planar or NV12, visible size) against the sequence
 on the board, with the lab module loaded (each writes a receipt to OUTPUT):
@@ -200,13 +200,13 @@ fn count(value: &str, what: &str) -> Result<u32, String> {
         .ok_or_else(|| format!("{what} is a number from 1 to 100000, not {value}"))
 }
 
-fn stream(width: usize, height: usize, deblocking: bool) -> Stream {
+fn stream(hypothesis: &Hypothesis, width: usize, height: usize, deblocking: bool) -> Stream {
     Stream {
         width: width as u32,
         height: height as u32,
         fps: 30,
         cabac: false,
-        chroma_qp_offset: 4,
+        chroma_qp_offset: hypothesis.chroma_qp_offset(),
         deblocking,
     }
 }
@@ -262,9 +262,10 @@ fn standin(arguments: &[String]) -> Result<(), String> {
     let frames = count(frames, "FRAMES")?;
     let key_every = count(key_every, "KEY_EVERY")?;
     // The stand-in's samples are exact; a deblocking filter has nothing to do.
-    let stream = stream(width, height, false);
-    let mut session = Session::open(FakeEngine::new(), hypothesis, stream, &stream)
-        .map_err(|error| error.to_string())?;
+    let stream = stream(&hypothesis, width, height, false);
+    let engine = FakeEngine::for_hypothesis(&hypothesis);
+    let mut session =
+        Session::open(engine, hypothesis, stream, &stream).map_err(|error| error.to_string())?;
     let file = File::create(output).map_err(|error| format!("{output}: {error}"))?;
     let mut out = BufWriter::new(file);
     let mut picture = Picture::new(width, height);
@@ -367,8 +368,8 @@ fn nonzero(engine: &mut dyn Engine, from: u32, to: u32) -> Value {
 
 /// Buffers are made for the largest picture of the lab, so that a small
 /// one has room many times its size.
-fn room_for(width: usize, height: usize) -> Stream {
-    stream(width.max(1920), height.max(1080), true)
+fn room_for(hypothesis: &Hypothesis, width: usize, height: usize) -> Stream {
+    stream(hypothesis, width.max(1920), height.max(1080), true)
 }
 
 fn bits(arguments: &[String]) -> Result<(), String> {
@@ -378,8 +379,9 @@ fn bits(arguments: &[String]) -> Result<(), String> {
     let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
     let (width, height) = parse_size(size)?;
     let times = count(times, "TIMES")? as usize;
-    let stream = stream(width, height, true);
-    let mut session = Session::open(open_device()?, hypothesis, stream, &room_for(width, height))
+    let stream = stream(&hypothesis, width, height, true);
+    let room = room_for(&hypothesis, width, height);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
         .map_err(|error| error.to_string())?;
     let result = session.put_parameter_sets(times);
     let encoder = nonzero(session.engine(), 0xb00, 0xc00);
@@ -465,8 +467,9 @@ fn encode(arguments: &[String]) -> Result<(), String> {
         .ok()
         .filter(|qp| (10..=51).contains(qp))
         .ok_or_else(|| format!("QP is a number from 10 to 51, not {qp}"))?;
-    let stream = stream(width, height, true);
-    let mut session = Session::open(open_device()?, hypothesis, stream, &room_for(width, height))
+    let stream = stream(&hypothesis, width, height, true);
+    let room = room_for(&hypothesis, width, height);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
         .map_err(|error| error.to_string())?;
     let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
     let mut out = BufWriter::new(file);

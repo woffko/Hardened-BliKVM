@@ -194,6 +194,10 @@ impl Engine for Device {
         wait.came != 0
     }
 
+    fn reset(&mut self) -> io::Result<()> {
+        Device::reset(self)
+    }
+
     fn allocate(&mut self, bytes: usize) -> io::Result<usize> {
         let mut alloc = Alloc {
             bytes: u32::try_from(bytes)

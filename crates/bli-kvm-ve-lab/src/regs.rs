@@ -1,7 +1,9 @@
 //! The engine's registers as the open sources describe them, and the plan of
-//! an encode as a list of register operations. Two hypotheses stand for the
-//! two open maps (`docs/design/h616-ve-h264-encoder.md`); each of their
-//! differences is a field, so that a lab run can change one at a time.
+//! an encode as a list of register operations. Hypotheses stand for the two
+//! open maps and for what the vendor's library was seen to write for the
+//! generation before this engine's (`docs/design/h616-ve-h264-encoder.md`);
+//! each of their differences is a field, so that a lab run can change one at
+//! a time.
 
 use crate::{
     bits::Put,
@@ -18,6 +20,10 @@ pub const MODE_INPUT_STAGE: u32 = 1 << 6;
 pub const MODE_ENCODER: u32 = 1 << 7;
 /// The memory interface bits both sources set for other engines.
 pub const MODE_MEMORY: u32 = 0x0013_0000;
+/// The memory interface field and the reconstruction write mode.
+pub const MODE_MEMORY_FIELD: u32 = 0x0013_0000;
+/// What the vendor's keeper sets on the H6: the field at 2.
+pub const MODE_MEMORY_H6: u32 = 2 << 16;
 pub const RESET_ENCODER: u32 = 1 << 24;
 pub const RESET_IDLE: u32 = (1 << 8) | (1 << 9);
 
@@ -25,9 +31,13 @@ pub const ISP_SIZE: u32 = 0xa00;
 pub const ISP_STRIDE: u32 = 0xa04;
 pub const ISP_CTRL: u32 = 0xa08;
 pub const ISP_STATUS: u32 = 0xa10;
+/// The input stride in macroblocks a second time (the vendor's library).
+pub const ISP_STRIDE_MBS: u32 = 0xa14;
 pub const ISP_SCALER_SIZE: u32 = 0xa2c;
 pub const ISP_INPUT_LUMA: u32 = 0xa78;
 pub const ISP_INPUT_CHROMA: u32 = 0xa7c;
+/// Where a second chroma plane would be.
+pub const ISP_INPUT_CHROMA2: u32 = 0xa80;
 
 pub const AVC_PARA0: u32 = 0xb04;
 pub const AVC_PARA1: u32 = 0xb08;
@@ -41,6 +51,7 @@ pub const AVC_OVERTIME_MB: u32 = 0xb24;
 pub const AVC_INTRA_REFRESH: u32 = 0xb28;
 pub const AVC_RC_INIT: u32 = 0xb2c;
 pub const AVC_RC_MAD_TH0: u32 = 0xb30;
+pub const AVC_RC_MAD_SUM: u32 = 0xb40;
 pub const AVC_DYNAMIC_ME0: u32 = 0xb48;
 pub const AVC_DYNAMIC_ME1: u32 = 0xb4c;
 pub const AVC_MAD: u32 = 0xb50;
@@ -64,9 +75,19 @@ pub const AVC_DEBLOCK: u32 = 0xbc4;
 
 pub const PARA0_P_SLICE: u32 = 1 << 4;
 pub const PARA0_CABAC: u32 = 1 << 8;
+/// Set by the vendor's library in every P frame of the newer generation;
+/// what it means is not known.
+pub const PARA0_NEWER_P: u32 = 1 << 10;
 pub const PARA0_NO_DEBLOCKING: u32 = 1 << 12;
 pub const PARA0_NO_PREVENTION: u32 = 1 << 31;
+pub const PARA1_DYNAMIC_ME: u32 = 1 << 8;
+/// Set by the vendor's library in every frame of the newer generation; what
+/// it means is not known.
+pub const PARA1_NEWER: u32 = 1 << 27;
 pub const TRIGGER_PUT_BITS: u32 = 1;
+/// Fills the stream up to a whole byte; the vendor's library ends headers
+/// that stand alone with it.
+pub const TRIGGER_ALIGN: u32 = 2;
 pub const TRIGGER_START: u32 = 8;
 pub const STATUS_FINISH: u32 = 1 << 0;
 pub const STATUS_STALL: u32 = 1 << 1;
@@ -83,9 +104,11 @@ pub fn name(reg: u32) -> &'static str {
         ISP_STRIDE => "isp.stride",
         ISP_CTRL => "isp.ctrl",
         ISP_STATUS => "isp.status",
+        ISP_STRIDE_MBS => "isp.stride_mbs",
         ISP_SCALER_SIZE => "isp.scaler_size",
         ISP_INPUT_LUMA => "isp.input_luma",
         ISP_INPUT_CHROMA => "isp.input_chroma",
+        ISP_INPUT_CHROMA2 => "isp.input_chroma2",
         AVC_PARA0 => "avc.para0",
         AVC_PARA1 => "avc.para1",
         AVC_PARA2 => "avc.para2",
@@ -101,7 +124,7 @@ pub fn name(reg: u32) -> &'static str {
         0xb34 => "avc.rc_mad_th1",
         0xb38 => "avc.rc_mad_th2",
         0xb3c => "avc.rc_mad_th3",
-        0xb40 => "avc.rc_mad_sum",
+        AVC_RC_MAD_SUM => "avc.rc_mad_sum",
         0xb44 => "avc.temporal_filter",
         AVC_DYNAMIC_ME0 => "avc.dynamic_me0",
         AVC_DYNAMIC_ME1 => "avc.dynamic_me1",
@@ -207,6 +230,10 @@ pub enum Para1 {
     TwoQps,
     /// The QP at 5:0 and the input stride divided by 48 at 13:10.
     StrideDiv48,
+    /// The same two fields, dynamic motion estimation on, bit 27 set, and
+    /// no chroma QP offset: what the vendor's library writes for the H5 and
+    /// the H6.
+    Newer,
 }
 
 /// One reading of the engine: every difference between the open maps is a
@@ -239,6 +266,27 @@ pub struct Hypothesis {
     /// given it: nothing, or the address at which the memory begins, as the
     /// older generations count.
     pub address_base: u32,
+    /// The encoder block's address registers hold the address shifted right
+    /// by this many bits: 0, or 8 for units of 256 bytes. The input stage's
+    /// registers hold the address as it is in every generation.
+    pub block_shift: u32,
+    /// The input stage is told the picture's size in units of 8 pixels
+    /// instead of macroblocks, its stride a second time, and where a second
+    /// chroma plane would be.
+    pub input_in_eighths: bool,
+    /// The order of a frame's writes is the vendor library's: input stage,
+    /// first parameters, stream, buffers, headers, last parameters, start.
+    /// Otherwise Bootlin's: stream, headers, input stage, buffers and
+    /// parameters, start.
+    pub input_first: bool,
+    /// The engine is reset and the encoder selected again before every
+    /// frame, as the vendor's library asks of its keeper.
+    pub reset_each_frame: bool,
+    /// Headers that stand alone end with the align trigger.
+    pub align_after_headers: bool,
+    /// What the select writes into the mode register's memory interface
+    /// field; none leaves what the reset left.
+    pub memory_mode: Option<u32>,
 }
 
 /// Where the board's memory begins.
@@ -260,6 +308,12 @@ impl Hypothesis {
         clear_first: false,
         key_references_itself: false,
         address_base: 0,
+        block_shift: 0,
+        input_in_eighths: false,
+        input_first: false,
+        reset_each_frame: false,
+        align_after_headers: false,
+        memory_mode: None,
     };
 
     /// The V3, V3s and S3, after Bootlin's encoder.
@@ -277,6 +331,12 @@ impl Hypothesis {
         clear_first: true,
         key_references_itself: true,
         address_base: 0,
+        block_shift: 0,
+        input_in_eighths: false,
+        input_first: false,
+        reset_each_frame: false,
+        align_after_headers: false,
+        memory_mode: None,
     };
 
     /// The newer map with addresses counted from the memory's beginning.
@@ -286,10 +346,68 @@ impl Hypothesis {
         ..Self::V3S
     };
 
+    /// The H5 and the H6, after what the vendor's encoder library wrote for
+    /// them behind the register trace (V2R). The H616's encoder is one
+    /// revision on from the H6's.
+    pub const H6: Hypothesis = Hypothesis {
+        name: "h6",
+        select: Select::EncoderBits,
+        reset_encoder: true,
+        wait_put_ready: true,
+        wait_idle_after_headers: false,
+        scaler_size: true,
+        para1: Para1::Newer,
+        me: 0x0001_1000,
+        extra_buffer: false,
+        interrupts: 0xf,
+        clear_first: true,
+        key_references_itself: true,
+        address_base: 0,
+        block_shift: 8,
+        input_in_eighths: true,
+        input_first: true,
+        reset_each_frame: true,
+        align_after_headers: true,
+        memory_mode: Some(MODE_MEMORY_H6),
+    };
+
+    /// The same with the memory interface field as the reset leaves it.
+    pub const H6_PLAIN_MODE: Hypothesis = Hypothesis {
+        name: "h6-plain-mode",
+        memory_mode: None,
+        ..Self::H6
+    };
+
+    /// The same with the field as `cedrus` sets it for this board's
+    /// decoders.
+    pub const H6_DECODER_MODE: Hypothesis = Hypothesis {
+        name: "h6-decoder-mode",
+        memory_mode: Some(MODE_MEMORY),
+        ..Self::H6
+    };
+
     pub fn named(name: &str) -> Option<Hypothesis> {
-        [Self::OLDER, Self::V3S, Self::V3S_RELATIVE]
-            .into_iter()
-            .find(|hypothesis| hypothesis.name == name)
+        [
+            Self::OLDER,
+            Self::V3S,
+            Self::V3S_RELATIVE,
+            Self::H6,
+            Self::H6_PLAIN_MODE,
+            Self::H6_DECODER_MODE,
+        ]
+        .into_iter()
+        .find(|hypothesis| hypothesis.name == name)
+    }
+
+    /// An address as an address register of the encoder block holds it.
+    pub fn block(&self, address: u32) -> u32 {
+        address >> self.block_shift
+    }
+
+    /// `chroma_qp_index_offset` of a stream this engine encodes: where the
+    /// parameters have no field for it, the vendor's library says none.
+    pub fn chroma_qp_offset(&self) -> i32 {
+        if self.para1 == Para1::Newer { 0 } else { 4 }
     }
 }
 
@@ -397,10 +515,17 @@ pub fn select(hypothesis: &Hypothesis) -> Vec<Op> {
                     set: 0,
                 });
             }
-            ops.push(Op::Update {
-                reg: MODE,
-                clear: 0,
-                set: MODE_ENCODER | MODE_INPUT_STAGE | MODE_DECODER_NONE,
+            ops.push(match hypothesis.memory_mode {
+                None => Op::Update {
+                    reg: MODE,
+                    clear: 0,
+                    set: MODE_ENCODER | MODE_INPUT_STAGE | MODE_DECODER_NONE,
+                },
+                Some(memory) => Op::Update {
+                    reg: MODE,
+                    clear: MODE_MEMORY_FIELD,
+                    set: memory | MODE_ENCODER | MODE_INPUT_STAGE | MODE_DECODER_NONE,
+                },
             });
             ops
         }
@@ -474,6 +599,20 @@ pub fn headers(hypothesis: &Hypothesis, header_ops: &[HeaderOp]) -> Vec<Op> {
     ops
 }
 
+/// The four registers that say where the engine writes the stream.
+fn stream_registers(hypothesis: &Hypothesis, buffers: &Buffers) -> [Op; 4] {
+    let write = |reg, value| Op::Write { reg, value };
+    [
+        write(AVC_STREAM_OFFSET, 0),
+        write(AVC_STREAM_START, hypothesis.block(buffers.stream)),
+        write(
+            AVC_STREAM_END,
+            hypothesis.block(buffers.stream + buffers.stream_bytes - 1),
+        ),
+        write(AVC_STREAM_MAX, buffers.stream_bytes * 8),
+    ]
+}
+
 /// Where the engine writes the stream, before the frame's headers.
 pub fn stream_buffer(hypothesis: &Hypothesis, buffers: &Buffers) -> Vec<Op> {
     let mut ops = Vec::new();
@@ -483,23 +622,8 @@ pub fn stream_buffer(hypothesis: &Hypothesis, buffers: &Buffers) -> Vec<Op> {
             value: 0,
         });
     }
-    ops.push(Op::Write {
-        reg: AVC_STREAM_OFFSET,
-        value: 0,
-    });
-    ops.push(Op::Write {
-        reg: AVC_STREAM_START,
-        value: buffers.stream,
-    });
-    ops.push(Op::Write {
-        reg: AVC_STREAM_END,
-        value: buffers.stream + buffers.stream_bytes - 1,
-    });
-    ops.push(Op::Write {
-        reg: AVC_STREAM_MAX,
-        value: buffers.stream_bytes * 8,
-    });
-    if hypothesis.clear_first {
+    ops.extend(stream_registers(hypothesis, buffers));
+    if hypothesis.clear_first && !hypothesis.input_first {
         for reg in [AVC_STREAM_LENGTH, AVC_HEADER_BITS, AVC_RESIDUAL_BITS] {
             ops.push(Op::Write { reg, value: 0 });
         }
@@ -507,36 +631,48 @@ pub fn stream_buffer(hypothesis: &Hypothesis, buffers: &Buffers) -> Vec<Op> {
     ops
 }
 
+/// The end of headers that stand alone, where the engine is asked for it.
+pub fn headers_end(hypothesis: &Hypothesis) -> Vec<Op> {
+    if hypothesis.align_after_headers {
+        vec![Op::Write {
+            reg: AVC_TRIGGER,
+            value: TRIGGER_ALIGN,
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
 /// The picture to encode: its size, stride, format and place.
 pub fn input(hypothesis: &Hypothesis, stream: &Stream, stride: u32, buffers: &Buffers) -> Vec<Op> {
-    let (columns, rows) = (stream.width_mbs(), stream.height_mbs());
-    let mut ops = vec![Op::Write {
-        reg: ISP_SIZE,
-        value: columns << 16 | rows,
-    }];
-    if hypothesis.scaler_size {
-        ops.push(Op::Write {
-            reg: ISP_SCALER_SIZE,
-            value: rows << 16 | columns,
-        });
+    let write = |reg, value| Op::Write { reg, value };
+    if hypothesis.input_in_eighths {
+        // The visible size in units of 8 pixels, and the stride twice.
+        let (width, height) = (stream.width.div_ceil(8), stream.height.div_ceil(8));
+        return vec![
+            write(ISP_SIZE, width << 16 | height),
+            write(ISP_STRIDE, (stride / 16) << 16),
+            write(ISP_STRIDE_MBS, stride / 16),
+            write(ISP_SCALER_SIZE, height << 16 | width),
+            write(ISP_CTRL, 0),
+            write(ISP_INPUT_LUMA, buffers.input_luma),
+            write(ISP_INPUT_CHROMA, buffers.input_chroma),
+            write(
+                ISP_INPUT_CHROMA2,
+                buffers.input_chroma + stride * stream.height / 4,
+            ),
+        ];
     }
-    ops.push(Op::Write {
-        reg: ISP_STRIDE,
-        value: (stride / 16) << 16,
-    });
+    let (columns, rows) = (stream.width_mbs(), stream.height_mbs());
+    let mut ops = vec![write(ISP_SIZE, columns << 16 | rows)];
+    if hypothesis.scaler_size {
+        ops.push(write(ISP_SCALER_SIZE, rows << 16 | columns));
+    }
+    ops.push(write(ISP_STRIDE, (stride / 16) << 16));
     // NV12, no rotation, BT.601.
-    ops.push(Op::Write {
-        reg: ISP_CTRL,
-        value: 0,
-    });
-    ops.push(Op::Write {
-        reg: ISP_INPUT_LUMA,
-        value: buffers.input_luma,
-    });
-    ops.push(Op::Write {
-        reg: ISP_INPUT_CHROMA,
-        value: buffers.input_chroma,
-    });
+    ops.push(write(ISP_CTRL, 0));
+    ops.push(write(ISP_INPUT_LUMA, buffers.input_luma));
+    ops.push(write(ISP_INPUT_CHROMA, buffers.input_chroma));
     ops
 }
 
@@ -554,34 +690,35 @@ pub fn encode(
     let own = buffers.reconstruction[(index % 2) as usize];
     let last = buffers.reconstruction[((index + 1) % 2) as usize];
     let write = |reg, value| Op::Write { reg, value };
+    let block = |reg, address| Op::Write {
+        reg,
+        value: hypothesis.block(address),
+    };
     let mut ops = vec![
-        write(AVC_MB_INFO, buffers.macroblock_info),
-        write(
-            AVC_MV_BUFFER,
-            if hypothesis.extra_buffer {
-                buffers.extra
-            } else {
-                0
-            },
-        ),
-        write(AVC_REC_LUMA, own.luma),
-        write(AVC_REC_CHROMA, own.chroma),
+        block(AVC_MB_INFO, buffers.macroblock_info),
+        if hypothesis.extra_buffer {
+            block(AVC_MV_BUFFER, buffers.extra)
+        } else {
+            write(AVC_MV_BUFFER, 0)
+        },
+        block(AVC_REC_LUMA, own.luma),
+        block(AVC_REC_CHROMA, own.chroma),
     ];
     if !slice.key {
-        ops.push(write(AVC_REF_LUMA, last.luma));
-        ops.push(write(AVC_REF_CHROMA, last.chroma));
+        ops.push(block(AVC_REF_LUMA, last.luma));
+        ops.push(block(AVC_REF_CHROMA, last.chroma));
     } else if hypothesis.key_references_itself {
-        ops.push(write(AVC_REF_LUMA, own.luma));
-        ops.push(write(AVC_REF_CHROMA, own.chroma));
+        ops.push(block(AVC_REF_LUMA, own.luma));
+        ops.push(block(AVC_REF_CHROMA, own.chroma));
     }
-    ops.push(write(AVC_SUBPIXEL_NEW, own.subpixel));
+    ops.push(block(AVC_SUBPIXEL_NEW, own.subpixel));
     if !slice.key || hypothesis.key_references_itself {
         let subpixel = if slice.key {
             own.subpixel
         } else {
             last.subpixel
         };
-        ops.push(write(AVC_SUBPIXEL_LAST, subpixel));
+        ops.push(block(AVC_SUBPIXEL_LAST, subpixel));
     }
     if hypothesis.clear_first {
         ops.push(write(AVC_DEBLOCK, 0));
@@ -611,6 +748,7 @@ pub fn encode(
         match hypothesis.para1 {
             Para1::TwoQps => chroma | qp << 8 | qp,
             Para1::StrideDiv48 => chroma | (stride / 16).div_ceil(48) << 10 | qp,
+            Para1::Newer => newer_para1(stride, qp),
         },
     ));
     if hypothesis.clear_first {
@@ -632,6 +770,121 @@ pub fn encode(
     ops.push(write(AVC_INT_EN, hypothesis.interrupts));
     ops.push(write(AVC_TRIGGER, TRIGGER_START));
     ops.push(Op::Wait);
+    ops
+}
+
+fn newer_para1(stride: u32, qp: u32) -> u32 {
+    PARA1_NEWER | PARA1_DYNAMIC_ME | (stride / 16).div_ceil(48) << 10 | qp
+}
+
+/// A whole frame in the order of the vendor's library for the H5 and the H6:
+/// the input stage; interrupts, status and the first parameters; the
+/// stream; the buffers; the headers through the bit writer; the last
+/// parameters; the start and the wait.
+fn frame_input_first(
+    hypothesis: &Hypothesis,
+    stream: &Stream,
+    stride: u32,
+    slice: &Slice,
+    index: u32,
+    buffers: &Buffers,
+    header_ops: &[HeaderOp],
+) -> Vec<Op> {
+    let own = buffers.reconstruction[(index % 2) as usize];
+    let last = if slice.key {
+        own
+    } else {
+        buffers.reconstruction[((index + 1) % 2) as usize]
+    };
+    let write = |reg, value| Op::Write { reg, value };
+    let block = |reg, address| Op::Write {
+        reg,
+        value: hypothesis.block(address),
+    };
+    let qp = slice.qp as u32 & 0x3f;
+    let columns = stride / 16;
+
+    let mut ops = input(hypothesis, stream, stride, buffers);
+    ops.push(Op::Update {
+        reg: AVC_INT_EN,
+        clear: 0,
+        set: hypothesis.interrupts,
+    });
+    // Written ones clear what an earlier frame left.
+    ops.push(Op::Update {
+        reg: AVC_STATUS,
+        clear: 0,
+        set: 0x7,
+    });
+    ops.push(Op::Update {
+        reg: AVC_PARA1,
+        clear: 0x3f | 0xf << 10,
+        set: qp | PARA1_DYNAMIC_ME | columns.div_ceil(48) << 10,
+    });
+    // The thresholds of the dynamic motion estimation grow with the width.
+    ops.push(write(
+        AVC_DYNAMIC_ME0,
+        ((columns * 6 / 10) << 16) | (columns / 10),
+    ));
+    ops.push(write(
+        AVC_DYNAMIC_ME1,
+        ((columns * 32 / 10) << 16) | (columns * 26 / 10),
+    ));
+    ops.push(write(AVC_RC_MAD_SUM, 0));
+    // No rate control in the engine: every frame has the QP it is given.
+    ops.push(write(AVC_RC_INIT, 0));
+    ops.extend(stream_registers(hypothesis, buffers));
+    ops.push(block(AVC_REF_LUMA, last.luma));
+    ops.push(block(AVC_REF_CHROMA, last.chroma));
+    ops.push(block(AVC_REC_LUMA, own.luma));
+    ops.push(block(AVC_REC_CHROMA, own.chroma));
+    ops.push(block(AVC_SUBPIXEL_LAST, last.subpixel));
+    ops.push(block(AVC_SUBPIXEL_NEW, own.subpixel));
+    ops.push(block(AVC_MB_INFO, buffers.macroblock_info));
+    ops.push(write(AVC_DEBLOCK, 0));
+    ops.push(write(AVC_INTRA_REFRESH, 0));
+    ops.extend(headers(hypothesis, header_ops));
+
+    let mut para0 = 0;
+    if !slice.key {
+        para0 |= PARA0_P_SLICE | PARA0_NEWER_P;
+    }
+    if stream.cabac {
+        para0 |= PARA0_CABAC;
+    }
+    if !stream.deblocking {
+        para0 |= PARA0_NO_DEBLOCKING;
+    }
+    ops.push(write(AVC_PARA0, para0));
+    ops.push(write(AVC_PARA1, newer_para1(stride, qp)));
+    ops.push(write(AVC_PARA2, 0));
+    ops.push(write(AVC_OVERTIME_MB, 0));
+    ops.push(write(AVC_MV_BUFFER, 0));
+    ops.push(write(AVC_ME, hypothesis.me));
+    ops.push(write(AVC_TRIGGER, TRIGGER_START));
+    ops.push(Op::Wait);
+    ops
+}
+
+/// Everything a frame needs, in the hypothesis' order.
+pub fn frame(
+    hypothesis: &Hypothesis,
+    stream: &Stream,
+    stride: u32,
+    slice: &Slice,
+    index: u32,
+    buffers: &Buffers,
+    header_ops: &[HeaderOp],
+) -> Vec<Op> {
+    if hypothesis.input_first {
+        return frame_input_first(
+            hypothesis, stream, stride, slice, index, buffers, header_ops,
+        );
+    }
+    let mut ops = stream_buffer(hypothesis, buffers);
+    ops.extend(headers(hypothesis, header_ops));
+    ops.extend(input(hypothesis, stream, stride, buffers));
+    ops.extend(encode(hypothesis, stream, stride, slice, index, buffers));
     ops
 }
 
@@ -1016,6 +1269,282 @@ mod tests {
                 mask: 0x300
             })
         );
+    }
+
+    /// The buffers of the vendor library's run for the H6 behind the trace
+    /// (320x240), at its made-up addresses.
+    const TRACED: Buffers = Buffers {
+        input_luma: 0x6b84_d000,
+        input_chroma: 0x6b86_1000,
+        stream: 0x6b00_0000,
+        stream_bytes: 0x0080_0000,
+        reconstruction: [
+            Reconstruction {
+                luma: 0x6b80_1000,
+                chroma: 0x6b81_5000,
+                subpixel: 0x6b83_f000,
+            },
+            Reconstruction {
+                luma: 0x6b82_0000,
+                chroma: 0x6b83_4000,
+                subpixel: 0x6b84_1000,
+            },
+        ],
+        macroblock_info: 0x6b84_3000,
+        extra: 0,
+    };
+
+    fn small() -> Stream {
+        Stream {
+            width: 320,
+            height: 240,
+            chroma_qp_offset: 0,
+            ..STREAM
+        }
+    }
+
+    /// A frame by the H6 hypothesis without its headers' puts: the writes,
+    /// and the three registers that are read and written back.
+    fn traced_frame(key: bool, index: u32) -> (Vec<(u32, u32)>, Vec<Op>) {
+        let ops = super::frame(
+            &Hypothesis::H6,
+            &small(),
+            320,
+            &slice(key),
+            index,
+            &TRACED,
+            &[],
+        );
+        assert_eq!(ops.last(), Some(&Op::Wait));
+        let updates = ops
+            .iter()
+            .copied()
+            .filter(|op| matches!(op, Op::Update { .. }))
+            .collect();
+        let written = ops
+            .iter()
+            .filter_map(|op| match *op {
+                Op::Write { reg, value } => Some((reg, value)),
+                _ => None,
+            })
+            .collect();
+        (written, updates)
+    }
+
+    #[test]
+    fn a_key_frame_as_the_vendors_library_writes_it_for_the_h6() {
+        // Register for register what the library wrote behind the trace:
+        // the picture in units of 8 pixels, the input's addresses as they
+        // are, the encoder block's in units of 256 bytes.
+        let (written, updates) = traced_frame(true, 0);
+        assert_eq!(
+            written,
+            [
+                (0xa00, 0x0028_001e),
+                (0xa04, 0x0014_0000),
+                (0xa14, 0x0000_0014),
+                (0xa2c, 0x001e_0028),
+                (0xa08, 0),
+                (0xa78, 0x6b84_d000),
+                (0xa7c, 0x6b86_1000),
+                (0xa80, 0x6b86_5b00),
+                (0xb48, 0x000c_0002),
+                (0xb4c, 0x0040_0034),
+                (0xb40, 0),
+                (0xb2c, 0),
+                (0xb88, 0),
+                (0xb80, 0x006b_0000),
+                (0xb84, 0x006b_7fff),
+                (0xb8c, 0x0400_0000),
+                (0xba0, 0x006b_8010),
+                (0xba4, 0x006b_8150),
+                (0xbb0, 0x006b_8010),
+                (0xbb4, 0x006b_8150),
+                (0xbb8, 0x006b_83f0),
+                (0xbbc, 0x006b_83f0),
+                (0xbc0, 0x006b_8430),
+                (0xbc4, 0),
+                (0xb28, 0),
+                (0xb04, 0),
+                (0xb08, 0x0800_051e),
+                (0xb0c, 0),
+                (0xb24, 0),
+                (0xb60, 0),
+                (0xb10, 0x0001_1000),
+                (0xb18, 8),
+            ]
+        );
+        // It read 0 and wrote 0xf; read 0x260 and wrote 0x267; read 0x1e
+        // and wrote 0x51e.
+        assert_eq!(
+            updates,
+            [
+                Op::Update {
+                    reg: 0xb14,
+                    clear: 0,
+                    set: 0xf
+                },
+                Op::Update {
+                    reg: 0xb1c,
+                    clear: 0,
+                    set: 7
+                },
+                Op::Update {
+                    reg: 0xb08,
+                    clear: 0x3c3f,
+                    set: 0x51e
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_p_frame_as_the_vendors_library_writes_it_for_the_h6() {
+        let (written, _) = traced_frame(false, 1);
+        // The reference is the frame before; the two sets take turns.
+        assert_eq!(
+            written[16..22],
+            [
+                (0xba0, 0x006b_8010),
+                (0xba4, 0x006b_8150),
+                (0xbb0, 0x006b_8200),
+                (0xbb4, 0x006b_8340),
+                (0xbb8, 0x006b_83f0),
+                (0xbbc, 0x006b_8410),
+            ]
+        );
+        assert!(written.contains(&(0xb04, 0x410)));
+        let stream = Stream {
+            cabac: true,
+            ..small()
+        };
+        let ops = super::frame(
+            &Hypothesis::H6,
+            &stream,
+            320,
+            &slice(false),
+            1,
+            &TRACED,
+            &[],
+        );
+        assert!(ops.contains(&Op::Write {
+            reg: AVC_PARA0,
+            value: 0x510
+        }));
+    }
+
+    #[test]
+    fn the_sizes_the_vendors_library_wrote_for_larger_pictures() {
+        let values = |width: u32, height: u32, stride: u32| {
+            let stream = Stream {
+                width,
+                height,
+                chroma_qp_offset: 0,
+                ..STREAM
+            };
+            let ops = super::frame(
+                &Hypothesis::H6,
+                &stream,
+                stride,
+                &slice(true),
+                0,
+                &TRACED,
+                &[],
+            );
+            let value = |wanted: u32| {
+                ops.iter()
+                    .rev()
+                    .find_map(|op| match *op {
+                        Op::Write { reg, value } if reg == wanted => Some(value),
+                        _ => None,
+                    })
+                    .unwrap()
+            };
+            [
+                value(0xa00),
+                value(0xa04),
+                value(0xa14),
+                value(0xa2c),
+                value(0xb08),
+                value(0xb48),
+                value(0xb4c),
+            ]
+        };
+        assert_eq!(
+            values(1920, 1080, 1920),
+            [
+                0x00f0_0087,
+                0x0078_0000,
+                0x78,
+                0x0087_00f0,
+                0x0800_0d1e,
+                0x0048_000c,
+                0x0180_0138
+            ]
+        );
+        assert_eq!(
+            values(1366, 768, 1376),
+            [
+                0x00ab_0060,
+                0x0056_0000,
+                0x56,
+                0x0060_00ab,
+                0x0800_091e,
+                0x0033_0008,
+                0x0113_00df
+            ]
+        );
+        assert_eq!(
+            values(1280, 720, 1280)[..5],
+            [0x00a0_005a, 0x0050_0000, 0x50, 0x005a_00a0, 0x0800_091e]
+        );
+    }
+
+    #[test]
+    fn headers_alone_end_with_the_align_trigger_on_the_newer_generation() {
+        assert_eq!(
+            writes(&stream_buffer(&Hypothesis::H6, &TRACED)),
+            [
+                (0xb18, 0),
+                (0xb88, 0),
+                (0xb80, 0x006b_0000),
+                (0xb84, 0x006b_7fff),
+                (0xb8c, 0x0400_0000),
+            ]
+        );
+        assert_eq!(writes(&headers_end(&Hypothesis::H6)), [(0xb18, 2)]);
+        assert!(headers_end(&Hypothesis::V3S).is_empty());
+        // No wait for the idle bits after the headers: the library reads
+        // the reset register nowhere.
+        let ops = headers(&Hypothesis::H6, &[HeaderOp::Start(0x67)]);
+        assert!(
+            !ops.iter()
+                .any(|op| matches!(op, Op::Until { reg: 0x004, .. }))
+        );
+    }
+
+    #[test]
+    fn the_select_can_set_the_memory_interface_field() {
+        assert_eq!(
+            select(&Hypothesis::H6).last(),
+            Some(&Op::Update {
+                reg: MODE,
+                clear: 0x0013_0000,
+                set: 0x0002_00c7
+            })
+        );
+        assert_eq!(
+            select(&Hypothesis::H6_DECODER_MODE).last(),
+            Some(&Op::Update {
+                reg: MODE,
+                clear: 0x0013_0000,
+                set: 0x0013_00c7
+            })
+        );
+        assert_eq!(select(&Hypothesis::H6_PLAIN_MODE), select(&Hypothesis::V3S));
+        assert_eq!(Hypothesis::named("h6"), Some(Hypothesis::H6));
+        assert_eq!(Hypothesis::H6.chroma_qp_offset(), 0);
+        assert_eq!(Hypothesis::V3S.chroma_qp_offset(), 4);
     }
 
     #[test]

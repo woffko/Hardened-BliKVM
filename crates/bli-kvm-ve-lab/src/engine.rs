@@ -20,6 +20,8 @@ pub trait Engine {
     fn write(&mut self, reg: u32, value: u32);
     /// Waits for the encoder's interrupt; false when the time runs out.
     fn wait(&mut self, timeout: Duration) -> bool;
+    /// Resets the engine: every register as after power-on. The buffers stay.
+    fn reset(&mut self) -> io::Result<()>;
     /// A buffer the engine can reach; the result names it below.
     fn allocate(&mut self, bytes: usize) -> io::Result<usize>;
     /// The buffer's address as the engine sees it.
@@ -158,6 +160,10 @@ const FAKE_SPACING: u32 = 0x0100_0000;
 /// collects what the bit writer is given, and "encodes" with the stand-in's
 /// slice data. It accepts both ways of selecting the encoder and refuses to
 /// start without one, or with an address that is not in a buffer.
+///
+/// It can also stand for the generation after the maps', as the vendor's
+/// library drives it: the encoder block's addresses in units of 256 bytes
+/// and the input's size in units of 8 pixels.
 #[derive(Debug, Default)]
 pub struct FakeEngine {
     registers: std::collections::BTreeMap<u32, u32>,
@@ -172,6 +178,8 @@ pub struct FakeEngine {
     /// What this engine adds to an address it is given: zero, or the
     /// beginning of the memory for an engine that counts from there.
     address_base: u32,
+    /// The newer generation's forms.
+    newer: bool,
 }
 
 impl FakeEngine {
@@ -184,6 +192,32 @@ impl FakeEngine {
         Self {
             address_base: base,
             ..Self::default()
+        }
+    }
+
+    /// A stand-in of the newer generation.
+    pub fn newer() -> Self {
+        Self {
+            newer: true,
+            ..Self::default()
+        }
+    }
+
+    /// The stand-in that a hypothesis is written for.
+    pub fn for_hypothesis(hypothesis: &regs::Hypothesis) -> Self {
+        if hypothesis.block_shift == 8 {
+            Self::newer()
+        } else {
+            Self::counting_from(hypothesis.address_base)
+        }
+    }
+
+    /// The address an address register of the encoder block names.
+    fn block(&self, value: u32) -> Option<u32> {
+        if self.newer {
+            value.checked_mul(256)
+        } else {
+            Some(value)
         }
     }
 
@@ -208,8 +242,13 @@ impl FakeEngine {
     /// Copies what the bit writer holds to the stream buffer. False when it
     /// does not fit between the buffer's start and end registers.
     fn mirror(&mut self) -> bool {
-        let start = self.register(regs::AVC_STREAM_START);
-        let end = self.register(regs::AVC_STREAM_END);
+        let start = self.block(self.register(regs::AVC_STREAM_START));
+        let end = self.block(self.register(regs::AVC_STREAM_END));
+        let (Some(start), Some(end)) = (start, end) else {
+            return false;
+        };
+        // The newer generation's end register names the last 256 bytes.
+        let end = if self.newer { end | 0xff } else { end };
         let Some((index, offset)) = self.locate(start) else {
             return false;
         };
@@ -249,11 +288,19 @@ impl FakeEngine {
         self.interrupt = true;
         let size = self.register(regs::ISP_SIZE);
         let (columns, rows) = ((size >> 16) as usize, (size & 0xffff) as usize);
+        // The newer generation is told units of 8 pixels.
+        let (columns, rows) = if self.newer {
+            (columns.div_ceil(2), rows.div_ceil(2))
+        } else {
+            (columns, rows)
+        };
         let stride = (self.register(regs::ISP_STRIDE) >> 16) as usize * 16;
         let key = self.register(regs::AVC_PARA0) & regs::PARA0_P_SLICE == 0;
         let luma = self.locate(self.register(regs::ISP_INPUT_LUMA));
         let chroma = self.locate(self.register(regs::ISP_INPUT_CHROMA));
-        let reconstruction = self.locate(self.register(regs::AVC_REC_LUMA));
+        let reconstruction = self
+            .block(self.register(regs::AVC_REC_LUMA))
+            .and_then(|address| self.locate(address));
         let (Some(luma), Some(chroma), Some(_)) = (luma, chroma, reconstruction) else {
             self.status |= regs::STATUS_STALL;
             return;
@@ -328,6 +375,15 @@ impl Engine for FakeEngine {
 
     fn wait(&mut self, _timeout: Duration) -> bool {
         std::mem::take(&mut self.interrupt)
+    }
+
+    fn reset(&mut self) -> io::Result<()> {
+        self.registers.clear();
+        self.sink = BitSink::new();
+        self.prevention = false;
+        self.status = 0;
+        self.interrupt = false;
+        Ok(())
     }
 
     fn allocate(&mut self, bytes: usize) -> io::Result<usize> {

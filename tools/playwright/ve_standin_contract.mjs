@@ -1,6 +1,7 @@
 // The lab tool of the hardware H.264 plan, without an engine: the streams
-// its software stand-in makes through the register plans of both open maps
-// must decode in Chromium, at every size the lab uses, to the very samples
+// its software stand-in makes through the register plans of both open maps,
+// and of the form the vendor's library uses for the newer generation, must
+// decode in Chromium, at every size the lab uses, to the very samples
 // of the pictures they were made from. That proves the stream's headers,
 // the plans' use of the bit writer, and the picture generator, before any
 // of them meets hardware.
@@ -32,14 +33,14 @@ const { chromium } = await import(
 );
 
 const SIZES = ["320x240", "1280x720", "1366x768", "1920x1080"];
-const MAPS = ["older", "v3s"];
+const MAPS = ["older", "v3s", "h6"];
 const FRAMES = 5;
 const KEY_EVERY = 3;
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ve-standin-"));
 const cases = [];
 for (const [index, size] of SIZES.entries()) {
-  // A different sequence at every size, and both maps at each.
+  // A different sequence at every size, and every map at each.
   const sequence = ["scroll", "drag", "motion", "pointer"][index];
   const source = `${sequence}-${size}.nv12`;
   execFileSync(tool, [
@@ -71,8 +72,10 @@ for (const [index, size] of SIZES.entries()) {
   }
 }
 // The two maps write the same bytes through different register traffic.
+// The newer generation's stream differs in one field of its PPS: it has no
+// chroma QP offset.
 for (const size of SIZES) {
-  const [older, v3s] = MAPS.map((map) =>
+  const [older, v3s, h6] = MAPS.map((map) =>
     fs.readFileSync(
       path.join(
         directory,
@@ -81,6 +84,8 @@ for (const size of SIZES) {
     ),
   );
   assert.ok(older.equals(v3s), `${size}: both maps make the same stream`);
+  assert.ok(!older.equals(h6), `${size}: the newer form has its own PPS`);
+  assert.equal(h6.length, older.length);
 }
 
 const server = http.createServer((request, response) => {

@@ -5,13 +5,15 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, V2.1 and V2R): the engine answers, its encoder block is
-the newer map's and its bit writer works, but it wrote its bits into the
-kernel's memory instead of the buffer it was given. Work on the board has
-stopped until that is explained; nothing has been encoded. A candidate
-explanation is recorded below (the stream address counts in units of 256
-bytes). The vendor's encoder library has been watched on the board without
-the engine; what its traces say is being written down.
+Status (2026-10-02, V2R.5): the engine answers, its encoder block is the
+newer map's and its bit writer works. In V2.1 it wrote its bits into the
+kernel's memory instead of the buffer it was given. That is explained: the
+encoder block of this generation takes its addresses in units of 256
+bytes. The vendor's encoder library, watched on the board without the
+engine, writes them so for the two parts whose encoder is this one's
+predecessor, and the place the bits went to is the given address shifted
+by eight bits. The lab tool has the form as a third hypothesis (`h6`).
+Nothing has been encoded yet.
 
 ## Sources
 
@@ -716,15 +718,55 @@ says otherwise. The stand-in does not encode: the stream the library gets
 back is empty, and what it does with a real stream's statistics (its rate
 control) is seen only as far as the registers it writes before a frame.
 
+**V2R.5, what the traces say.** The same library drives two generations
+of this encoder block, and tells them apart by the engine's
+identification:
+
+| | V3s, H3 | H5, H6 |
+| --- | --- | --- |
+| Every address register of the encoder block (`0xb80`, `0xb84`, `0xba0` to `0xbc0`) | the address as it is | the address divided by 256 |
+| The input stage's addresses (`0xa78`, `0xa7c`, `0xa80`) | as they are | as they are |
+| `0xa00`, `0xa2c`: the picture's size | in macroblocks | the visible size in units of 8 pixels, rounded up (1920x1080: 240 by 135; 1366x768: 171 by 96) |
+| `0xb08` for QP 30, a stride of 20 macroblocks | `0x0004051e`: the chroma QP offset 4 at 18:16 | `0x0800051e`: bit 27, no chroma QP offset |
+| `chroma_qp_index_offset` in its PPS | 4 | 0 |
+| `0xb10` | `0x00010004` (Bootlin's value) | `0x00011000` |
+| `0xb2c`, `0xb40` | not written at a fixed QP | written 0 |
+
+For the V3s it writes what Bootlin's driver writes, which makes the trace a
+check of itself. Moving the arena moved every address register by the same
+amount in its form (`0x6b...` to `0x53...`), so the forms are not chance.
+With an offset told by our allocator, the library gives the engine what the
+allocator calls the engine's address; the published keeper of the H6 tells
+none.
+
+The H616's encoder (`0x00012011`) is one revision on from the H6's
+(`0x00012010`), which the library drives exactly as the H5's. That, and
+where the bits of V2.1 went, is why the form of the H5 and the H6 is the
+lab's hypothesis for this engine from here on (`h6`); the description of
+that form is in "The H616's register description" below.
+
+The lab tool was taught: `Hypothesis::H6` writes, register for register and
+in the same order, what the library wrote for the H6 (tests in `regs.rs`
+hold the traced values of a key frame and a P frame at 320x240 and the
+size-dependent ones at 1280x720, 1366x768 and 1920x1080); its software
+stand-in has the newer generation's forms too, and Chromium decodes the
+stream it makes through this plan (`tools/playwright/ve_standin_contract.mjs`).
+
+The explanation of V2.1 is thereby confirmed by a means that made the
+engine write nothing (rule 8), and by rule 7 the work on the board goes
+on. The vendor's files were on the board's tmpfs for the length of each
+session only.
+
 Receipts: `evidence/private/ve-trace-20261002-selftest`, `-first`,
 `-versions`, `-h6-matrix` (each run: the trace, what was asked and what
 came back, the library's own messages, the report).
 
-
 ## The H616's register description
 
-Shown on the board so far (V1). Everything else is still the hypothesis of
-the maps above.
+Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
+form in which the vendor's library drives the H5 and the H6 (V2R.5). What
+an experiment confirms on this engine moves from the second list to the
+first.
 
 - The encoder is selected by bits 7 (encoder) and 6 (input stage) of the
   mode register `0x000`, with the decoder field at 7, after a pulse of bit
@@ -743,8 +785,69 @@ the maps above.
   the bits go to `0xb20` and `0xb18` is written with 1 and the count from
   bit 8; `0xb90` counts the bits written; bit 31 of `0xb04` switches
   emulation prevention off. The status register reads `0x00000260` at rest.
-- **Where the engine writes its stream is not shown yet.** With the start
-  register `0xb80` naming a lab buffer, the bit writer's bytes went to
-  physical `0x41000000` (V2.1). The candidate: the register counts in units
-  of 256 bytes ("V2.1 afterwards"). Until that is confirmed without a
-  write, nothing that makes the engine write may be run.
+- The stream start register `0xb80` counts in units of 256 bytes: written
+  with a buffer's address as it is, the bit writer's bytes went to that
+  value shifted left by eight bits (V2.1).
+
+The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
+stream, the parameter sets go through the bit writer into the stream
+buffer and are read back from it; per frame the library has its keeper
+reset the engine and select the encoder, and then writes, in this order:
+
+| Step | Registers | Values |
+| --- | --- | --- |
+| Input stage | `0xa00` | the visible width in units of 8 pixels at 31:16, the height at 15:0, both rounded up |
+| | `0xa04`, `0xa14` | the input stride in macroblocks, at 31:16 and at 15:0 |
+| | `0xa2c` | height at 26:16 and width at 10:0, in the same units of 8 pixels |
+| | `0xa08` | 0: NV12 |
+| | `0xa78`, `0xa7c`, `0xa80` | luma, chroma, and where a second chroma plane would be (chroma plus a quarter of the luma's size), as they are |
+| Interrupts, status | `0xb14`, `0xb1c` | read, and written back with `0xf` and with 7 set |
+| First parameters | `0xb08` | read, and written with the QP at 5:0, bit 8 (dynamic motion estimation) and the stride in macroblocks divided by 48, rounded up, at 13:10 |
+| | `0xb48`, `0xb4c` | thresholds that grow with the stride S in macroblocks: `(6S/10) << 16 \| S/10` and `(32S/10) << 16 \| 26S/10` |
+| | `0xb40`, `0xb2c` | 0 at a fixed QP |
+| Stream | `0xb88` | the bit offset at which this frame begins in the buffer (0 for the first; the library uses one large buffer for many frames) |
+| | `0xb80`, `0xb84` | start and last byte, divided by 256 |
+| | `0xb8c` | the offset plus the room in bits |
+| Buffers | `0xba0`, `0xba4` | reference luma and chroma, divided by 256; a key frame names its own reconstruction |
+| | `0xbb0`, `0xbb4` | reconstruction luma and chroma |
+| | `0xbb8`, `0xbbc` | the sub-pixel buffer of the last frame and of this one |
+| | `0xbc0` | macroblock info |
+| | `0xbc4`, `0xb28` | 0 |
+| Headers | `0xb04`, `0xb20`, `0xb18` | bit 31 of `0xb04` set for the four bytes of the start code and cleared for the unit's header byte and the slice header; before every put a read of `0xb1c` for bit 9 |
+| Last parameters | `0xb04` | 0 for a key frame, `0x410` for a P frame (bit 4, and bit 10, which no map explains); bit 8 more with CABAC |
+| | `0xb08` | bit 27 added to what it holds |
+| | `0xb0c`, `0xb24`, `0xb60` | 0 |
+| | `0xb10` | `0x00011000` |
+| Start | `0xb18` | 8 |
+| Afterwards | `0xb90`, `0xb1c`, `0xb50`, `0xb54`, `0xb58` | the length in bits; the status, written back to clear it; three statistics |
+
+- Headers that stand alone (the parameter sets at the beginning) end with
+  trigger 2 after the alignment bits; only then does the library read them
+  from the buffer. In V2.1 the last bytes of the bit writer's output were
+  not in memory; this trigger may be what hands them over.
+- The buffers' sizes are those of the V3s map: the library asks its
+  allocator for reconstruction and sub-pixel buffers of exactly Bootlin's
+  sizes at every picture size tried (3317760 and 51040 bytes at
+  1920x1080). Its macroblock info buffer is 128 bytes for every macroblock
+  of the width (15360), a little less than Bootlin's; the lab's is larger
+  than both.
+- The library's own headers: baseline profile without constraint flags,
+  picture order type 0 with an 8-bit counter, `frame_num` of 8 bits, no
+  VUI, deblocking controlled per slice and left on. The lab keeps its own
+  (the engine is given their bits either way); what it must share with the
+  library's is what the engine's slice data depends on: the entropy mode,
+  the QP as a difference from 26, no chroma QP offset, one reference.
+- With its rate control on, the library still gives every frame a QP of
+  its own at `0xb08`, and adds `0xb2c` (bit 31 for a key frame, bits 31 and
+  30 with a number that changes from frame to frame for the others),
+  three threshold registers `0xb30` to `0xb38`, and an address register
+  the maps do not have, `0xb9c` (divided by 256 like the others), for a
+  buffer of 12 bytes for every row of macroblocks and 500 more. The lab
+  does not use it: a frame is given its QP.
+- Main and high profile change only its headers; CABAC is bit 8 of `0xb04`.
+- Not known: what bit 27 of `0xb08`, bit 10 of `0xb04` and bit 12 of
+  `0xb10` mean; what the keeper writes into the mode register for the
+  encoder on this part (its memory interface field: the published keeper
+  sets 2 on the H6, `cedrus` sets 3 and bit 20 for this board's decoders,
+  and V2.1 ran with what the reset leaves, 0). The lab tool has all three
+  as variants of the hypothesis.

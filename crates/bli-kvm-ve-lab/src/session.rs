@@ -23,6 +23,8 @@ fn marker(position: usize) -> u8 {
 #[derive(Debug)]
 pub enum Error {
     Memory(io::Error),
+    /// The engine could not be reset.
+    Reset(io::Error),
     Fault(Fault),
     /// The encode ended with something other than "finished".
     Status(u32),
@@ -38,6 +40,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Memory(error) => write!(formatter, "no buffer: {error}"),
+            Self::Reset(error) => write!(formatter, "the engine was not reset: {error}"),
             Self::Fault(fault) => write!(formatter, "{fault}"),
             Self::Status(status) => write!(formatter, "the encode ended with status {status:#x}"),
             Self::Length(bits) => write!(formatter, "the engine reports {bits} bits"),
@@ -248,6 +251,7 @@ impl<E: Engine> Session<E> {
         let expected = crate::headers::bytes(&header_ops);
         let mut ops = regs::stream_buffer(&self.hypothesis, &self.buffers);
         ops.extend(regs::headers(&self.hypothesis, &header_ops));
+        ops.extend(regs::headers_end(&self.hypothesis));
         run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
         let status = self.engine.read(regs::AVC_STATUS);
         let bits = self.engine.read(regs::AVC_STREAM_LENGTH);
@@ -297,22 +301,20 @@ impl<E: Engine> Session<E> {
         }
         header_ops.extend(slice_header(&self.stream, &slice));
         let stride = width as u32;
-        let mut ops = regs::stream_buffer(&self.hypothesis, &self.buffers);
-        ops.extend(regs::headers(&self.hypothesis, &header_ops));
-        ops.extend(regs::input(
-            &self.hypothesis,
-            &self.stream,
-            stride,
-            &self.buffers,
-        ));
-        ops.extend(regs::encode(
+        if self.hypothesis.reset_each_frame {
+            self.engine.reset().map_err(Error::Reset)?;
+            let ops = regs::select(&self.hypothesis);
+            run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
+        }
+        let ops = regs::frame(
             &self.hypothesis,
             &self.stream,
             stride,
             &slice,
             self.index,
             &self.buffers,
-        ));
+            &header_ops,
+        );
         let outcome = run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
 
         let status = self.engine.read(regs::AVC_STATUS) & regs::STATUS_ENDED;
@@ -500,6 +502,70 @@ mod tests {
             session.encode(&picture, true, 30),
             Err(Error::Status(regs::STATUS_STALL))
         ));
+    }
+
+    #[test]
+    fn the_newer_generation_works_with_its_hypothesis_and_no_other() {
+        let stream = Stream {
+            chroma_qp_offset: 0,
+            ..stream(320, 240)
+        };
+        let mut picture = Picture::new(320, 240);
+        let mut session =
+            Session::open(FakeEngine::newer(), Hypothesis::H6, stream, &stream).unwrap();
+        // The encoder block is told units of 256 bytes, the input stage not.
+        let buffers = *session.buffers();
+        assert!(
+            session
+                .engine()
+                .writes
+                .iter()
+                .all(|(reg, _)| *reg != regs::AVC_STREAM_START)
+        );
+        let report = session.put_parameter_sets(3).unwrap();
+        assert!(report.matches(), "{report:?}");
+        assert!(
+            session
+                .engine()
+                .writes
+                .contains(&(regs::AVC_STREAM_START, buffers.stream >> 8))
+        );
+        assert_eq!(
+            session.engine().writes.last(),
+            Some(&(regs::AVC_TRIGGER, regs::TRIGGER_ALIGN))
+        );
+        let mut frames = Vec::new();
+        for frame in 0..3 {
+            render(Sequence::Drag, frame, &mut picture);
+            frames.push(session.encode(&picture, false, 30).unwrap());
+        }
+        assert!(session.broken_guard().is_none());
+        assert!(
+            session
+                .engine()
+                .writes
+                .contains(&(regs::ISP_INPUT_LUMA, buffers.input_luma))
+        );
+        let key = units(&frames[0].bytes);
+        let headers: Vec<u8> = key.iter().map(|unit| unit.0).collect();
+        assert_eq!(headers, [0x67, 0x68, 0x65]);
+        assert_eq!(units(&frames[2].bytes)[0].0, 0x41);
+        session.close().unwrap();
+
+        // The map's form on this engine: the stream register names no
+        // buffer, as on the board in V2.1.
+        let mut session =
+            Session::open(FakeEngine::newer(), Hypothesis::V3S, stream, &stream).unwrap();
+        assert!(!session.put_parameter_sets(1).unwrap().matches());
+        render(Sequence::Drag, 0, &mut picture);
+        assert!(matches!(
+            session.encode(&picture, true, 30),
+            Err(Error::Status(regs::STATUS_STALL))
+        ));
+        // And this engine's form on the maps' engine.
+        let mut session =
+            Session::open(FakeEngine::new(), Hypothesis::H6, stream, &stream).unwrap();
+        assert!(!session.put_parameter_sets(1).unwrap().matches());
     }
 
     #[test]
