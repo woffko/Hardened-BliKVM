@@ -878,6 +878,75 @@ here. A board's target gives such a picture only while somebody works on it.
   parity fragment per frame would be the remedy within this design and is
   not part of this plan.
 
+### On the board (Q3.6, 2026-10-02)
+
+Slot 64 `0.1.0-alpha.9` (source `5a43c90`), update-runtime `0.1.0~dev35`
+with the gateway of Q3.3, and the encoder of the same source deployed with
+`tools/device/deploy_vp8.sh`. Headless Chromium 149 on the development host,
+the board on the local network, `tools/playwright/quic_video_device_probe.mjs`
+for 60 s after a warm-up, at the source's 1920x1080 and the operator's
+2.5 Mbit/s. Remote control stayed off; the probe asks for no lease, and the
+HID ledger was the same file before and after.
+
+**The target's screen stood still during the probes.** The encoder then
+passes on one frame every 2 s, by turns a key frame on its stream and a
+delta frame of one datagram. These runs therefore show the picture's way
+through the board, the network and the page, and its timing; what a moving
+picture does under loss is what the host's table above shows. The relay
+(`tools/net`) ran on the development host, between the page and the board.
+
+| Path | Frames | Age, median and 95th percentile | The page's share | Given up | Key-frame requests | Round trip, packets the gateway lost |
+| --- | --- | --- | --- | --- | --- | --- |
+| direct | 32 in 64 s | 72 and 110 ms | 1.1 and 1.5 ms | 0 | 0 | 1.7 ms, 0 |
+| direct, again | 32 in 64 s | 93 and 112 ms | 1.1 and 1.6 ms | 0 | 0 | 1.9 ms, 0 |
+| relay, 1% lost each way | 31 in 62 s | 90 and 111 ms | 1.2 and 1.4 ms | 0 | 0 | 2.2 ms, 4 |
+| relay, 3% lost each way | 31 in 62 s | 91 and 115 ms | 1.1 and 1.5 ms | 0 | 0 | 2.6 ms, 17 |
+| relay, 50 ms each way | 31 in 62 s | 128 and 163 ms | 1.1 and 1.4 ms | 0 | 0 | 102.9 ms, 0 |
+| direct, a WebRTC viewer beside it | 25 in 49 s | 69 and 105 ms | 1.2 and 1.4 ms | 0 | 0 | 1.7 ms, 0 |
+
+- A frame is drawn 57 to 65 ms after the board took it when it is a delta
+  frame and 93 to 112 ms when it is a key frame (the second direct run,
+  whose receipt has every value: 15 and 17 frames). Half of the frames
+  being key frames, the median falls on one kind or the other. The time is
+  the encoder's preparation and encoding, as measured before for WebRTC
+  (`docs/design/h616-software-video-encoder.md`), and 1 ms in the page.
+- Lost packets cost nothing here: the gateway counted 4 and 17 of them, a
+  key frame's stream sent them again, and no delta frame happened to be
+  among them in a minute.
+- The first picture came 1.3 s after the page was opened while the encoder
+  was still on the capture stream, and 3.1 s when it had left it for want of
+  viewers and had to return.
+- **H.264 over WebRTC**, the same minute and the same still screen
+  (`vp8_webrtc_probe.mjs`): 32 frames decoded, none lost; a frame waited
+  26 ms in the jitter buffer and was decoded 28 ms after its first packet
+  arrived. Over QUIC the page draws it 1.1 ms after its first datagram: no
+  jitter buffer.
+- **Both viewers at once**: the QUIC page drew 25 frames in 49 s and the
+  WebRTC page decoded 16 in 30 s; the encoder was not started again and its
+  task limit was not reached.
+- **CPU and memory with one QUIC viewer** over 40 s of the direct run
+  (systemd's accounting, the board's clock): the gateway 0.5% of a core and
+  3.1 MiB (one thread), the H.264 encoder 10.7% of a core and 30.7 MiB, the
+  capture 6.5%, the board 95% idle. With a still screen the gateway has
+  almost nothing to send; for a stream of 2.5 Mbit/s its endpoint took 3.7%
+  of a core in Q0, and the encoder's load with a moving picture is the one
+  the video note has for WebRTC, since it is the same encoder.
+
+What the board showed that the host had not (fixed before these numbers):
+
+- x264 could not be opened when the first QUIC viewer came, and the encoder
+  ended: its unit's task limit (see "Encoder", threads).
+- After that the viewer waited for a picture that nobody made: the server's
+  demand had gone with the old process (see "Encoder", an encoder that
+  ends), and the page had no rule for a picture that shows nothing (see
+  "Switches, Settings, failures, firewall", `stalled`).
+- On the still screen the first picture and every key frame on request
+  waited up to 2 s (see "Encoder", a still screen), and Settings showed a
+  frame rate of 0 or 1 and an age only in every other second.
+
+Receipts: `evidence/private/quic-video-device-20261002-seq64-*.json`,
+`h264-webrtc-seq64-*.json`, `quic-q3-state-*.json`.
+
 ## Changes against the plan
 
 | Plan | Now | Why |
@@ -888,3 +957,4 @@ here. A board's target gives such a picture only while somebody works on it.
 | The switch as a key of the administration switch file | the gateway unit's enablement, like the SSH switch | one state that survives a reboot and is read from systemd; the switch file, which refuses unknown keys, keeps its format for older slots |
 | The frame socket open to the gateway's group | open to connect to, serving the gateway's user only | the gateway is in no group the other units share; the encoder checks who connects, as the server does on its link |
 | The page receives in the existing decoder worker (`direct.worker.ts`) | a worker of its own, `web/src/lib/quic/video.worker.ts` | the existing worker belongs to the Direct mode, which this board does not offer, and speaks that mode's WebSocket records with a fixed codec; reassembly, the chain, recovery and the board's clock are another protocol, and the Direct mode stays as it was |
+| Q3.6: the picture on the board at 1% and 3% loss | on the board with the still screen its target showed; a moving picture under the same loss on the host | the probes may not touch the target's keyboard or mouse, and nothing moved on its screen: one frame every 2 s, half of them on a stream, loses nothing in a minute |

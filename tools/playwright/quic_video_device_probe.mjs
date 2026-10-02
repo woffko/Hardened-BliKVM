@@ -141,6 +141,12 @@ function spread(before, after, unit) {
     p99: at(0.99),
     max: round(largest * unit),
     beyondRange: counts[counts.length - 1],
+    // Every value that occurred, with how often: "value": count.
+    values: Object.fromEntries(
+      counts
+        .map((count, index) => [String(round(index * unit)), count])
+        .filter(([, count]) => count > 0),
+    ),
   };
 }
 
