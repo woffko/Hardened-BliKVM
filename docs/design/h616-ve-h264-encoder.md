@@ -952,6 +952,30 @@ cost overruns nothing; a key frame every second fits; a picture that fits
 at no QP is held within 12% by leaving frames out. The numbers on the
 board are V3.4's.
 
+### V3.2, 2026-10-02: the stream a browser gets
+
+The lab's stream is the one the product's x264 makes today in everything
+a decoder is told: constrained baseline (profile 66 with the first two
+constraint flags), one reference frame, frames only, one slice a picture,
+picture order type 2, the level for the size and frame rate (4.0 for
+1920x1080 at 30, 3.2 for 1366x768), cropping where the picture is not
+whole macroblocks, and SPS and PPS before every key frame. A key frame is
+made whenever it is asked for.
+
+Chromium (WebCodecs) decoded three streams of 90 frames at 2.5 Mbit/s
+with a key frame asked for at frames 40 and 80:
+
+| Stream | Codec string | Frames, key frames | Decoded | Size | Mean PSNR, dB (ffmpeg's) |
+| --- | --- | --- | --- | --- | --- |
+| drag, 1920x1080 | `avc1.42c028` | 90, 3 | 90 | 1920x1080 | 42.53 (42.53) |
+| motion, 1920x1080, 23 frames left out | `avc1.42c028` | 90, 3 | 90 | 1920x1080 | 23.01 (23.01) |
+| scroll, 1366x768 | `avc1.42c020` | 90, 3 | 90 | 1366x768 | 33.75 (33.75) |
+
+The two decoders agree to the hundredth of a decibel, also on the frames
+of skipped macroblocks that the rate control put in.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-browser`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
