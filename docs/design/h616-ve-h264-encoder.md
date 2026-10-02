@@ -1423,6 +1423,12 @@ the engine was told of:
 | 1920x1080, 20, 473,847 | 65,536 | status 2 | 524,293 | every byte | nothing |
 | 1920x1080, 30 | 4,096 | the bit writer is not ready after the first header bits (status `0x62`) | 16 | nothing | nothing |
 | 320x240, 10, 28,285 | 4,096 | the same | 16 | nothing | nothing |
+| 1920x1080 of noise, 30, 1,856,347 | 2,097,152 | finished | 14,850,776 | the frame | nothing |
+| 1920x1080 of noise, 20, 2,747,168 | 2,097,152 | status 2 | 16,777,224 | every byte | nothing |
+| 1920x1080 of noise, 10, 4,034,581 | 2,097,152 | status 2 | 16,777,223 | every byte | nothing |
+| 1920x1080 of noise, 0, more than the buffer | 2,097,152, then the whole 4,194,304 | status 2 both times | 16,777,224, then 33,554,443 | every byte | nothing, and the guards behind the buffer are whole |
+| 1366x768 of noise, 0, 2,726,017 | 1,048,576 | status 2 | 8,388,621 | every byte | nothing |
+| 256x64 of noise, 0, 42,525 | 8,192 | status 2 | 65,546 | every byte | nothing |
 
 - **The engine honours the end of its stream buffer**: it fills the buffer
   to its last byte, writes none behind it, raises its interrupt with the
@@ -1435,6 +1441,13 @@ the engine was told of:
   module kept it, and it answered the wait of the next encode; the lab
   tool now asks for what the module keeps after every reset. A driver
   forgets the interrupt of a frame when it resets the engine for the next.
+- A picture of random bytes is the most a frame can cost: at QP 0 it is
+  1.7 times the picture's own bytes (2,726,017 for 1366x768, 42,525 for
+  256x64), at QP 10 it is 4,034,581 bytes for 1920x1080, and at QP 0 more
+  than the lab's 4 MiB, where the engine stopped at the buffer's real end
+  as it stops at a told one. Whoever chooses the picture and the QP can
+  make a frame that does not fit a buffer of the picture's size; what
+  follows is the stall, not a write behind the buffer.
 
 **How small a picture may be.** A key frame and four P frames at small
 sizes (the first run of `extents`, at 64x64, did not get past its first
@@ -1462,7 +1475,8 @@ with the pattern, at 64x64), `-extents-b` (the stream's end, and the
 interrupt that was kept), `-extents-c` (the stream's end again, small
 pictures, the buffers of ten sizes), `-extents-d` (the widths between 192
 and 256, buffers of a driver's sizes, the pattern in each kind of
-buffer); lab tool `69838cd`.
+buffer), lab tool `69838cd`; `ve-lab-v3-20261003-noise` (pictures of
+noise), lab tool `266613f`.
 
 ## The H616's register description
 
