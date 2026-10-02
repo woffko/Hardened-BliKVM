@@ -53,8 +53,9 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       and back), burst=M:R (the sequence moves for M frames and rests for R), guards=N (the buffers' guards read every N passes), timeout=N (the
       Nth frame is not waited for: the engine is reset and the stream goes on with a
       key frame), seconds=N (the run ends after N seconds, before FRAMES frames if
-      they take longer), period=N (every frame is compared, byte for byte, with the
-      frame N before it: for a fixed QP, a ring and key frames that repeat with N),
+      they take longer), period=N (from the third N frames on every frame is compared,
+      byte for byte, with the frame N before it: for a fixed QP, a ring and key frames
+      that repeat with N),
       search=exact, wide or auto (the engine's search for motion: as the vendor's
       library has it, with its refinement off, or for every frame the one that makes the
       smaller frame, a costly frame being encoded with both; without it the map's),
@@ -1119,8 +1120,13 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             let place = sizes.len() % period;
             if sizes.len() < period {
                 fingerprints.push(fingerprint);
-            } else if std::mem::replace(&mut fingerprints[place], fingerprint) != fingerprint {
-                differing.push(frame);
+            } else {
+                // The first period begins with a stream's beginning, which
+                // the later ones do not have: it is not compared with.
+                let before = std::mem::replace(&mut fingerprints[place], fingerprint);
+                if sizes.len() >= 2 * period && before != fingerprint {
+                    differing.push(frame);
+                }
             }
         }
         if encoded.key {

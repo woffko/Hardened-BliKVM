@@ -9,8 +9,8 @@
 #            back); a frame below FLOOR dB of luma PSNR is a wrong frame.
 #            The engine goes as fast as the decoding takes its frames.
 #            With repeat (and a fixed QP) the stream repeats itself every
-#            580 frames, and a frame that is not, byte for byte, the frame
-#            580 before it is a wrong frame too.
+#            580 frames, and from the third 580 on a frame that is not,
+#            byte for byte, the frame 580 before it is a wrong frame too.
 #        sh ve_endurance_run.sh sustained MAP WIDTHxHEIGHT SECONDS RATE SEQUENCE [BUSY]
 #            a stream of 30 frames a second for SECONDS, each frame begun
 #            at its time, with BUSY cores kept busy; nothing is decoded
@@ -22,9 +22,12 @@
 #            COUNT streams of two frames, each begun and ended: the device
 #            opened, buffers taken, two frames encoded, everything given back
 #
-# Nothing but numbers is left in out/.
+# In the environment: OPTIONS, more options for the lab tool's `stream` in
+# the soak and the sustained run (search=auto). Nothing but numbers is left
+# in out/.
 set -u
 tool=./bli-kvm-ve-lab
+options=${OPTIONS:-}
 action=${1:-}
 
 cma_free() { sed -n 's/^CmaFree: *\([0-9]*\) kB/\1/p' /proc/meminfo; }
@@ -59,7 +62,7 @@ case "$action" in
     status=0
     # shellcheck disable=SC2086
     $tool stream "$map" "$sequence" "$size" 1000000 "$key_every" "$rate" 30 stream.fifo "out/$name.json" \
-      ring=30 guards=300 "seconds=$seconds" $period || status=1
+      ring=30 guards=300 "seconds=$seconds" $period $options || status=1
     wait "$checker"
     rm -f stream.fifo
     {
@@ -81,16 +84,18 @@ case "$action" in
       count=$((count - 1))
     done
     status=0
+    # shellcheck disable=SC2086
     $tool stream "$map" "$sequence" "$size" "$((seconds * 30))" 300 "$rate" 30 /dev/null "out/$name.json" \
-      paced ring=30 guards=300 || status=1
+      paced ring=30 guards=300 $options || status=1
     stop_busy
     exit "$status"
     ;;
   timeout)
     [ "$#" -eq 4 ] || { echo "usage: $0 timeout MAP WIDTHxHEIGHT SEQUENCE"; exit 2; }
     map=$2; size=$3; sequence=$4
+    # shellcheck disable=SC2086
     $tool stream "$map" "$sequence" "$size" 300 300 qp30 30 timeout.h264 out/timeout.json \
-      ring=30 timeout=100 || exit 1
+      ring=30 timeout=100 $options || exit 1
     decoded=$(ffmpeg -v error -nostdin -i timeout.h264 -f rawvideo -pix_fmt nv12 - 2> out/timeout.ffmpeg.txt | wc -c)
     rm -f timeout.h264
     echo "after the timeout and the reset: $decoded bytes decoded, $(wc -c < out/timeout.ffmpeg.txt) bytes of complaints"
