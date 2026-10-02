@@ -1085,6 +1085,13 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         .collect();
     let done = sizes.len();
     let total_bytes: u64 = sizes.iter().sum();
+    // The frames that took longer than the time between two frames.
+    let slow: Vec<(usize, u64)> = frame_micros
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, micros)| *micros > interval.as_micros() as u64)
+        .collect();
     let body = json!({
         "map": hypothesis.name,
         "sequence": sequence.name(),
@@ -1116,6 +1123,11 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "seconds": elapsed.as_secs_f64(),
         "framesPerSecond": done as f64 / elapsed.as_secs_f64().max(1e-9),
         "lateFrames": late,
+        "framesLongerThanAnInterval": slow.len(),
+        "firstFramesLongerThanAnInterval": slow[..slow.len().min(10)]
+            .iter()
+            .map(|(frame, micros)| json!({"frame": frame, "micros": micros}))
+            .collect::<Vec<_>>(),
         "resetsAfterTimeout": resets,
         "keyFrames": keys,
         "secondPasses": second_passes,

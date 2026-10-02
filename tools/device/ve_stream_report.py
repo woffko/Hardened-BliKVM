@@ -12,7 +12,8 @@ the last 30.
 
 With --endurance, what a long run is judged by instead: its length, the
 frames a second it held and the frames that began late, the time of a
-whole frame, the rate and its windows, of the frames that were decoded and
+whole frame and the frames that took longer than the time between two, the
+rate and its windows, of the frames that were decoded and
 compared the lowest PSNR and the number below the run's floor, and of a
 stream that repeats itself the frames unlike the frame a period before.
 """
@@ -58,7 +59,8 @@ def rows(directory):
         engine = psnr.get("engine", {})
         reference = psnr.get("x264", {})
         reference_run = psnr.get("x264 run", {})
-        db = engine.get("db", [])
+        # A long run has no list of every frame's value.
+        db = engine.get("db") or []
         windows = run.get("kbpsTenSecondWindows") or {}
         rate = run["rate"]
         yield {
@@ -93,6 +95,7 @@ def rows(directory):
             "resets": run.get("resetsAfterTimeout"),
             "floor": engine.get("floorDb"),
             "below_floor": engine.get("belowFloor"),
+            "slow": run.get("framesLongerThanAnInterval"),
             "period": run.get("period"),
             "unlike": run.get("framesUnlikeAPeriodBefore"),
             "early_db": mean(db[30:60]),
@@ -111,6 +114,7 @@ def endurance(row):
         show(row["frame_ms"], 1),
         show(row["frame_p99_ms"], 1),
         show(row["frame_max_ms"], 1),
+        "-" if row["slow"] is None else str(row["slow"]),
         str(row["kbps"]),
         show(row["window_low"], 0),
         show(row["window_high"], 0),
@@ -126,7 +130,7 @@ def endurance(row):
 
 
 ENDURANCE_HEADER = [
-    "run", "frames", "seconds", "frames/s", "late", "frame ms", "p99", "max", "kbit/s",
+    "run", "frames", "seconds", "frames/s", "late", "frame ms", "p99", "max", "over 1/fps", "kbit/s",
     "10 s low", "10 s high", "windows", "2nd", "left out", "decoded, ffmpeg",
     "mean dB", "lowest dB", "wrong frames", "repeats",
 ]
