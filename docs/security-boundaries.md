@@ -457,11 +457,24 @@ corresponding source, reviewed `cleared` status, and exact SPDX 3.0.1 offline
 resource bindings. It does not make a legal decision or parse the full SPDX
 license grammar; the pinned offline validator remains mandatory.
 
-## Media processes
+## Media and transport processes
 
-Transition uStreamer and Janus processes bind to loopback or Unix sockets and
-run under dedicated service identities. Only the authenticated Rust server is
-network-facing.
+uStreamer, the MJPEG proxy and the video encoders talk over Unix sockets and
+loopback and run under identities of their own. Besides nginx (TCP 80 for the
+redirect and TCP 443 in front of the authenticated server), these face the
+network:
+
+- Janus, for WebRTC media on UDP 20000-20099: the streaming plugin only, no
+  administration API, host candidates only; its signalling goes through the
+  authenticated server (`docs/design/h616-software-video-encoder.md`);
+- the QUIC gateway, on UDP 443 while its switch is on: a user of its own, one
+  capability, no authority. Every session presents a single-use token that
+  the server issued to an authenticated web session, and what the session may
+  do is decided by the server (`docs/design/quic-transport-v1.md`);
+- the SSH server, behind its own switch.
+
+The firewall mode decides from where each of them can be reached
+(`docs/design/firewall-reference-contract.md`).
 
 ## Filesystem and update boundary
 

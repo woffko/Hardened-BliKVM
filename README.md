@@ -13,131 +13,88 @@ The canonical GitHub repository is
 Private device credentials, runtime configuration and hardware receipts are
 excluded from Git. This source repository is not a complete device image.
 
-The current maintenance priority is updating the existing device's OS/package
-baseline before final project acceptance. See
-[`docs/baselines/system-maintenance.md`](docs/baselines/system-maintenance.md).
+## Status
 
-## Current status
+Alpha. A pre-release carries an SD card image for the BliKVM v4 (Allwinner
+H616) and a signed application bundle for a board that already runs one; see
+the [releases](https://github.com/woffko/Hardened-BliKVM/releases) for the
+files, how to write the card, the first boot and the known limitations.
+Everything was verified on one board. Expect rough edges and report what you
+find.
 
-The reversible H616 prototype and the application-update core are implemented:
+## What it does
 
-- versioned capability, runtime-inventory, and broker contracts;
-- a fail-closed, fully rebranded GUI with first-account setup;
-- Argon2id passwords, opaque HttpOnly sessions, CSRF/origin checks, revocation,
-  and scoped login lockout;
-- a loopback-only Axum server with protected `/api/inventory`;
-- a credential-isolated read-only platform broker and bounded KVMD Unix-socket
-  client; broker schema v1 has no mutation variants;
-- bounded read-only H616 thermal observation through runtime-inventory schema
-  v3, plus external-RTC epoch/offset observation, with no clock, fan, PWM, or
-  GPIO control path;
-- an isolated read-only MJPEG proxy with session-bound browser delivery;
-- fail-closed Rust HID, ATX, and virtual-media transition cores that are not yet
-  wired to a hardware-mutating backend;
-- pure host-only fan policy and mock-backed supervisor crates that enforce
-  failsafe/latch semantics but are not linked to any runtime or hardware
-  backend;
-- pure typed diagnostic export/source/protocol/window/peer layers plus an
-  unlinked safe fixed-account and Unix-peer adapter, with no raw message, path,
-  or identity output;
-- an unlinked fixed-size XChaCha20-Poly1305 diagnostic journal and fixed-root
-  atomic A/B store with OS entropy, a fixed 96-byte systemd key loader, and a
-  cancellation-aware `no_std` write-before-ack coordinator; all enforce strict
-  floor/reselection/inode/ACL/zeroization checks and have no provisioned key,
-  live transport/store link, API, or UI;
-- an unlinked default-off diagnostic persistence adapter that composes only
-  the accepted typed keys, fixed store, fixed export client, and coordinator;
-  it has no floor source, executable, service, package, HTTP, or UI;
-- an unshipped zero-argument synthetic persistence gate and rollback harness,
-  accepted reversibly on H616 and absent from the prototype payload;
-- an authenticated GET-only `/api/diagnostics` current-health view for
-  temperature, RTC, and fixed component states; persistent history is
-  explicitly unavailable and the server has no key/store/floor/ACK authority;
-- a dedicated responsive Diagnostics GUI with exact 26-locale coverage,
-  cancellation-safe refresh, explicit loading/unavailable/stale/error states,
-  and reversible desktop/mobile Chromium acceptance on H616;
-- an unshipped empty-only diagnostic maintenance binary whose static units,
-  synthetic systemd credential, encrypted store initialization, nonmutating
-  inspection, and full rollback passed on the H616 test device;
-- a signed Ed25519 application verifier, immutable stager, anti-rollback
-  journal, one-use health credential, watchdog rollback, and transactional
-  slot garbage collection;
-- a pure Rust public-only application trust enrollment contract that validates
-  the Ed25519 point/fingerprint and renders only fixed supervisor configuration;
-- a host-only, separately keyed system-image verifier bound to an explicit
-  recovery/boot-control/layout policy and incapable of selecting a disk;
-- a recovery-only geometry validator that requires equal A/B roots, redundant
-  state policy, bounded sunxi raw ranges, and rejects the current live layout;
-- a pure dual-copy system journal/selector model that hard-stops split brain,
-  generation gaps, mismatched evidence, and increasing attempt counters;
-- a canonical recovery-input gate requiring pinned provenance, corresponding
-  source, explicit redistribution clearance, and SPDX 3.0.1 validation;
-- H616 gates for systemd credential delivery, a real candidate server, health
-  confirmation, rejected candidate timeout, rollback, and restored service;
-- a source-evidence-only H616 GPIO/RTC profile and vendor-to-Rust migration map;
-- reproducible stripped AArch64 static-PIE builds for all shipped Rust
-  processes and the prototype bundle, with host build paths remapped and
-  rejected by the ELF privacy gate;
-- a deterministic inert `arm64` Debian runtime package whose real H616
-  install/hash/mode verification/purge transaction and crash-guarded retained
-  installation passed;
-- a separate reproducible inert application-update package, retained on H616
-  with its Rust supervisor/reporter and systemd templates disabled/inactive,
-  no trust/configuration/state/slots, and no restart of the working GUI;
-- rollback-gated fixed service identities and a separate device-generated KVMD
-  credential, followed by a rollback-gated persistent web cutover: PiKVM Nginx
-  is disabled, the Hardened broker/video/server/Nginx units are enabled, and
-  the account-free First Setup page passed tunneled and direct-LAN Chromium;
-- reversible installed-unit activation for platform broker, MJPEG proxy, and
-  loopback server, including systemd isolation, Diagnostics, video reconnect,
-  session revocation, and complete state/drop-in/cgroup cleanup;
-- installed-runtime TLS 1.2/1.3 and full desktop/mobile Chromium acceptance
-  behind an unprivileged loopback-only shadow Nginx, with the working PiKVM
-  proxy unchanged and complete rollback;
-- persistent TLS 1.2/1.3 on public 80/443 using the unchanged device
-  certificate, split-privilege Nginx, disabled vendor web service, and zero
-  browser control requests;
-- direct-LAN operator-account login/logout plus a 30-sample persistent
-  resource/TLS/auth-denial soak with stable service PIDs and restart counters;
-- a rollback-gated upgrade to the reproducible `0.1.0~dev2` runtime package,
-  followed by a real guarded BliKVM software reboot, preserved account/TLS,
-  persistent services, decoded/reconnected MJPEG, Diagnostics, and final
-  zero-restart/zero-guard inspection;
-- architecture, field-image, upstream, licensing, and security baselines;
-- project-scoped semantic LSP smoke fixtures.
+- **Remote desktop**: keyboard and mouse (absolute and relative), a touch
+  layout for phones with an on-screen keyboard and a row of extra keys, the
+  ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
+  storage).
+- **Video**, chosen in the Screen menu: MJPEG (the capture passed through),
+  H.264 (x264) and VP8 (libvpx) over WebRTC with a choice of quality, and
+  H.264 over the QUIC transport. The encoders work only while someone
+  watches.
+- **Transport**: the standard one (HTTPS, WebSocket, WebRTC), or QUIC
+  (WebTransport on UDP 443) for the keyboard, the mouse and the H.264
+  picture. QUIC has a switch on the board, off by default, and a choice in
+  each browser (Settings > System > Network > Transport,
+  [`docs/design/quic-transport-v1.md`](docs/design/quic-transport-v1.md)).
+- **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
+  system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
+  of the main connection), a firewall with four modes and a confirmation that
+  rolls back by itself, time, system log, Tailscale, account, session lock.
+- **Updates**: signed application slots with a health check and automatic
+  rollback, and signed RAW system updates behind their own switch.
+- **Administration features** that stay off until they are switched on: web
+  terminal, scripts, remote ISO download, PicoClaw, RAW system updates. Each
+  switch is enforced below the web server
+  ([`docs/design/admin-features-v1.md`](docs/design/admin-features-v1.md)).
 
-No hardware-mutating backend, production updater installation, production
-signing key, full-system image, H616 A/B recovery path, or production release
-is accepted yet. One guarded software reboot is accepted, but host builds and
-isolated device gates do not establish the remaining repeated/interrupted
-reboot, physical, or power-cut matrices. The
-user-supplied field image is truncated relative to its partition table and is
-explicitly rejected as a recovery/release image.
+Not there: audio, and updates fetched from a feed (they are uploaded). The
+time, NTP, remote system log, autostart script and OLED settings are shown
+read-only.
 
-## Architecture
+## How it is put together
+
+The vendor's KVMD services are masked or disabled; the board runs these
+processes instead, each as its own systemd unit with a sandbox:
+
+| Process | Runs as | What it does |
+| --- | --- | --- |
+| nginx | root, workers as `www-data` | TLS on TCP 443 in front of the web server |
+| `bli-kvm-server` | `hardened-blikvm-server`, from the active signed slot | login, sessions, the API and its policy, the web interface, WebRTC signalling, the QUIC gateway's link; no device access of its own |
+| board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
+| `bli-kvm-boardd` | root | the fan and the board's peripherals |
+| uStreamer and the MJPEG proxy | `hardened-blikvm-video` | the capture, and its MJPEG stream for the server |
+| video encoders (VP8, H.264) | dynamic users | encode for Janus and for the QUIC gateway while someone watches |
+| Janus | dynamic user | WebRTC media, streaming plugin only |
+| QUIC gateway (`bli-kvm-quic-gateway`) | `hardened-blikvm-quic` | QUIC and TLS on UDP 443 while its switch is on; it holds no authority and passes on what the server allows |
+| update supervisor and its helpers | `hardened-blikvm-update` | verify, stage and activate slots, check their health, roll back |
+| administration and download helpers | socket-activated, per request | the features behind the switches |
 
 ```text
-React/TypeScript web UI
-        |
-        | HTTPS / WebSocket
-        v
-bli-kvm-server (unprivileged Rust process)
-        |
-        | restricted Unix socket
-        v
-bli-platform-broker (credential-isolated Rust process)
-        |
-        +-- now: five allowlisted read-only KVMD GETs
-        +-- later: typed HID / USB configfs / virtual media
-        +-- later: ATX / fan / OLED / RTC / buttons / serial switch
-
-Separate media services
-        +-- loopback/Unix-socket uStreamer transition
+Browser
+  |  HTTPS, WebSocket (TCP 443)      WebRTC media (UDP)      QUIC (UDP 443, optional)
+  v                                       ^                        ^
+nginx --> bli-kvm-server ---------> Janus <-- RTP --+              |
+              |      ^------------------------------|--- link ---- QUIC gateway
+              |                                     |                  ^ frames
+              v  typed requests                video encoders ---------+
+        board owner                                 ^ MJPEG
+   (USB gadget, ATX, network, firewall)        uStreamer (capture)
 ```
 
-See [the architecture](docs/architecture.md),
-[implementation plan](docs/implementation-plan.md), and
-[security boundaries](docs/security-boundaries.md).
+Design notes are under [`docs/design`](docs/design): the QUIC transport, the
+firewall contract, the administration features, the software video encoders,
+the RAW system update. Plans, audits and what was shown on the test board are
+under [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261002-quic-transport.md`](docs/baselines/audit-20261002-quic-transport.md)
+and [`audit-20260929-review.md`](docs/baselines/audit-20260929-review.md).
+[`docs/security-boundaries.md`](docs/security-boundaries.md) and
+[`docs/licensing.md`](docs/licensing.md) hold the security model and the
+licences. [`docs/architecture.md`](docs/architecture.md),
+[`docs/implementation-plan.md`](docs/implementation-plan.md) and
+[`docs/feature-matrix.md`](docs/feature-matrix.md) were written during the
+transition from the vendor's software and describe that stage; where they
+differ from the design notes, the design notes are newer.
 
 ## Development
 
