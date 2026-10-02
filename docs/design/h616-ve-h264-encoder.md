@@ -239,7 +239,13 @@ IDR frame with SPS and PPS before it whenever a key frame is asked for.
 ### Rules for experiments
 
 1. The engine is programmed only while nobody holds the HID lease; otherwise
-   the run waits (the operator's answer of 2026-10-02).
+   the run waits (the operator's answer of 2026-10-02). The lease cannot be
+   seen from outside its holder: neither the owner nor the server tells a
+   third party whether one is live. Nobody can hold one, though, without a
+   page that renews it at least every 30 s, over HTTPS or over a QUIC
+   session. So a session starts only when the board has no established
+   HTTPS connection and no open QUIC session, checked three times over
+   eight seconds; this also waits for somebody who only watches.
 2. Before any trigger every address register the maps name holds an address
    inside the session's own buffers, and the bitstream's end register bounds
    what the engine may write. An address of zero is not memory on this SoC:
@@ -304,9 +310,66 @@ within their buffers.
 and ended, what it tried, what came out, and the hours spent in each phase,
 which the plan's time boxes count.
 
+## A module for this kernel
+
+`scripts/build-ve-module.sh` builds modules for the board's kernel, which
+its vendor built without publishing a tree or a headers package. The tree is
+made of the upstream source of the same release (5.19.4, signature checked),
+the board's configuration (`/proc/config.gz`), the compiler the kernel names
+in `/proc/version` (Arm's GNU toolchain 8.3-2019.03), and the kernel's own
+headers from its `kheaders` module, laid over the upstream ones.
+
+What `prepare` found, and checks on every run:
+
+- After `olddefconfig` with that compiler every option of the rebuilt
+  configuration header has the board's value, and the release string is the
+  board's (`5.19.4-sunxi64`).
+- The board's configuration header has 42 options more. They belong to
+  patches the vendor's kernel carries and upstream lacks (Wi-Fi drivers,
+  AUFS, the AC200, sound, panels), and one upstream option that a patch
+  made selectable (`GPIO_SYSFS`).
+- One of those patches changes a structure every driver with a mapping
+  uses: with AUFS, `struct vm_area_struct` has one member more. A module
+  built with the rebuilt configuration header would lay that structure out
+  wrongly. The build therefore uses the board's headers and the board's
+  configuration header; the rebuilt one only proves that source,
+  configuration and compiler belong together.
+
+This changes one sentence of the plan, which asked that the rebuilt
+configuration header define exactly what the board's defines. It cannot:
+upstream does not know the vendor's options. The check is that it defines
+nothing differently.
+
+Modules are built from a copy under a fixed name, with the paths of the
+build mapped away; two builds from different directories gave the same
+bytes. Their version magic must equal the board's, and a module that names
+a path of the build machine is refused. The module build is not part of
+`check.sh`: it needs the board's headers, which are not in the repository.
+
+The check modules (`kernel/hardened-blikvm-ve/check`): `ve_hello` does
+nothing; `ve_probe_test` registers a platform driver that matches nothing
+and a device node with one request and one mapping. `struct module` has the
+size it has in the board's own modules (0x300).
+
 ## Lab record
 
-Nothing yet.
+### V1.1, 2026-10-02: modules built by the recipe load
+
+`tools/device/ve_lab_session.sh` was first run with a harmless command of
+25 s: the quiet check passed, the watchdog was armed across its 16 s
+timeout and disarmed, the board stayed up, nothing was left.
+
+Then the two check modules (`ve_hello.ko` `5acb75aa...`, `ve_probe_test.ko`
+`36b04534...`) in a session: `ve_hello` loaded and unloaded; the test
+device answered its request, refused another, and its page was read and
+written through the mapping; both unloaded. The kernel's lines of the
+session were the two taint notices (an out-of-tree module, and an unsigned
+one) and the modules' own. The taint flags went from 1024 (the staging
+driver `cedrus`) to 13312 and stay so until the next boot. `cedrus` was
+bound and suspended afterwards.
+
+Receipts: `evidence/private/ve-lab-v1-20261002-session-dry`,
+`ve-lab-v1-20261002-module-check`.
 
 ## The H616's register description
 

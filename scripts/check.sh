@@ -68,6 +68,12 @@ sh -n tools/image/build_sd_image.sh
 sh -n tools/image/hardened-blikvm-firstboot.sh
 sh -n tools/image/hardened-blikvm-grow-image-store.sh
 sh -n packaging/system-update/initramfs-hook
+# The scripts of the hardware H.264 plan's lab: the module build recipe, a
+# lab session on the board, and the check of the recipe's modules.
+sh -n scripts/build-ve-module.sh
+sh -n tools/device/ve_lab_session.sh
+sh -n tools/device/ve_module_check.sh
+python3 -m py_compile tools/device/ve_probe_check.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate

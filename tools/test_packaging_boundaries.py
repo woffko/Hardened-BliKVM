@@ -3157,7 +3157,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertGreater(len(carriers), 20)
         for carrier in carriers:
             text = carrier.read_text(errors="replace")
-            for name in ("ve-lab", "ve_lab"):
+            for name in ("ve-lab", "ve_lab", "ve_hello", "ve_probe_test"):
                 self.assertNotIn(name, text, carrier)
 
 
