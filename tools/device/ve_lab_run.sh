@@ -6,6 +6,12 @@
 # usage: sh ve_lab_run.sh 'COMMAND' ['COMMAND'...]
 # Each argument is one command line; they run in order until one fails.
 #
+# Rule 1 is kept for the whole run, not only at its beginning: every twenty
+# seconds the board is asked whether somebody has connected to it (an HTTPS
+# connection or a QUIC session, without which nobody can hold the HID
+# lease). If so the running command is ended, the engine is given back, and
+# the run ends with status 75.
+#
 # With ve_memory_scan.py among the session's files, rule 9 of the lab is kept
 # here: the kernel's image is copied before the engine is handed over and
 # compared after it is back, and memory is read for the parameter sets the
@@ -41,10 +47,39 @@ insmod ./hardened-blikvm-ve-lab.ko || exit 1
 [ -c /dev/hardened-blikvm-ve-lab ] || { echo "no lab device"; exit 1; }
 chmod 0755 ./bli-kvm-ve-lab
 
+# Whether somebody is connected to the board.
+in_use() {
+  [ "$(ss -Htn state established '( sport = :443 )' | wc -l)" -gt 0 ] && return 0
+  sessions=$(journalctl -b -o cat --no-pager -u hardened-blikvm-quic.service 2>/dev/null |
+    awk '/session from .* opened/ { opened++ } /session from .* ended/ { ended++ } END { print opened - ended }')
+  [ "${sessions:-0}" -gt 0 ]
+}
+
 status=0
 for command in "$@"; do
   echo "+ $command"
-  sh -c "$command" || { status=$?; echo "status $status"; break; }
+  # In a process group of its own, so that all of it can be ended.
+  setsid sh -c "$command" &
+  running=$!
+  (
+    while sleep 20; do
+      if in_use; then
+        echo "the board is in use: the command is ended"
+        : > stopped-for-use
+        kill -TERM -- "-$running" 2>/dev/null
+        break
+      fi
+    done
+  ) &
+  watcher=$!
+  wait "$running" || status=$?
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  if [ -e stopped-for-use ]; then
+    status=75
+    break
+  fi
+  [ "$status" -eq 0 ] || { echo "status $status"; break; }
 done
 
 restore

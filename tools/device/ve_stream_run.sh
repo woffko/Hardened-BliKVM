@@ -11,7 +11,8 @@
 # options after -- go to the lab tool's `stream` (paced, ring=N, guards=N).
 # In the environment: BUSY=N keeps N cores busy during the engine's runs;
 # KEEP=yes leaves the engine's streams in out/; REFERENCE=no skips x264;
-# DECODE=no skips the decoding and comparing.
+# DECODE=no skips the decoding and comparing; TAG=WORD is added to the names
+# of what is left in out/, for runs that differ in nothing the name says.
 #
 # Raw pictures never touch the disk or tmpfs: they go through pipes. A
 # stream lies in the session's directory while it is decoded.
@@ -46,7 +47,7 @@ compare() {
 status=0
 for sequence in $sequences; do
   for rate in $rates; do
-    name="$sequence-$size-$rate"
+    name="$sequence-$size-$rate${TAG:+-$TAG}"
     count=${BUSY:-0}
     while [ "$count" -gt 0 ]; do
       sh -c 'while :; do :; done' &

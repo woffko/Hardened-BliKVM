@@ -976,6 +976,28 @@ of skipped macroblocks that the rate control put in.
 
 Receipts: `evidence/private/ve-lab-v3-20261002-browser`.
 
+### V3.3, 2026-10-02: time
+
+From the start trigger to the interrupt, over 600 frames with a key frame
+every 60, pictures drawn in advance, as fast as the loop goes; once with
+the processors idle and once with three of the four busy in a loop:
+
+| Size | Key frame, ms | P frame, ms: mean, longest (idle) | Longest with three cores busy | Frames a second of the whole loop: idle, busy |
+| --- | --- | --- | --- | --- |
+| 320x240 | 0.29 | 0.30, 0.38 | 0.79 | 1733, 1692 |
+| 1280x720 | 3.13 | 3.29, 3.90 | 6.45 | 193, 186 |
+| 1366x768 | 3.59 | 3.76, 4.05 | 5.01 | 170, 167 |
+| 1920x1080 | 7.03 | 7.24, 7.81 | 10.98 | 90, 88 |
+
+The engine's time does not depend on what the processors do; what grows
+with busy cores is how long the waiting process takes to wake. The whole
+loop (the picture into the input buffer, about 250 register accesses, the
+encode, the stream out) takes 11 ms at 1920x1080, a third of a frame's
+time at 30 frames a second. The time does not depend on the QP or on the
+frame's size in bytes either (V3.1, V3.4).
+
+Receipts: `evidence/private/ve-lab-v3-20261002-timing`, `-time-idle`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
