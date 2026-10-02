@@ -100,3 +100,32 @@ declared licence.
 `ring` compiles C and assembly for the board. It is built by the project's
 recipe for C code (`scripts/build-aarch64.sh`: clang against the pinned musl
 headers, `rust-lld`), and its objects carry no path of the build machine.
+
+## Hardware video encoder: sources and the clean room
+
+The work on the H616 video engine's H.264 encoder
+(`docs/baselines/work-plan-20261002-hardware-h264.md`) has no open driver to
+start from. What it may use, and what it may not:
+
+- Read and used: sources with an open licence and public documentation.
+  They are listed with their licences and versions in
+  `docs/design/h616-ve-h264-encoder.md`: jemk's `h264enc`
+  (GPL-2.0-or-later) and its register header (LGPL-2.1-or-later), Bootlin's
+  encoder for the V3s in its `cedrus` branch (GPL-2.0), mainline `cedrus`
+  (GPL-2.0), and the vendor kernel's `cedar_ve.c` (GPL-2.0-or-later).
+  Register offsets and bit meanings are facts. Where code is adapted, the
+  file keeps the notice and the licence of its source.
+- Watched, only with the operator's approval: the vendor's encoder library
+  running on the test board as a black box. Only its traffic with the
+  hardware is recorded, and the register description is written from that
+  in this project's own words.
+- Never: disassembling or decompiling a vendor library; reading vendor
+  source that was not published under an open licence, its interface
+  headers excepted as the description of how to call it; copying any of
+  it; a vendor file in Git, a package, a slot or an image.
+
+Kernel modules of this project (`kernel/`) are works of their own, licensed
+GPL-2.0-only as the kernel requires, beside the GPL-3.0-only application,
+which reaches them only through a device node. Their source and build
+recipe are in this repository. The lab module and the lab tool of that plan
+are never part of a package, a slot or an image.
