@@ -165,6 +165,22 @@ impl RateControl {
     }
 }
 
+/// The passes a frame may take when nothing else is said: its first and
+/// one more. A pass over a 1920x1080 picture takes the engine 7 ms and the
+/// loop around it 3 more; three of them and the picture's way in are a
+/// frame's whole time at 30 frames a second, and longer when the
+/// processors are busy.
+pub const PASSES: u32 = 2;
+
+/// Whether a frame that may take `passes` passes can be tried with the
+/// other search. With three it can. With two it can unless its first pass
+/// is `too_large` for the bucket: then its one more pass is the one at a
+/// higher QP, and the other search waits for a frame that fits, which the
+/// next one does as a rule.
+pub fn tries_other(passes: u32, too_large: bool) -> bool {
+    passes >= 3 || (passes == 2 && !too_large)
+}
+
 /// Frames for which the other search is left alone after it was tried.
 const SEARCH_REST: u32 = 3;
 /// The other search is better when its frame is this much smaller.
@@ -296,6 +312,18 @@ mod tests {
             high = high.max(ratio);
         }
         (low, high)
+    }
+
+    #[test]
+    fn of_two_passes_the_second_is_the_rates_when_a_frame_does_not_fit() {
+        // One pass: the first is all there is.
+        assert!(!tries_other(1, false) && !tries_other(1, true));
+        // Two: the other search, unless the rate needs the pass.
+        assert!(tries_other(2, false));
+        assert!(!tries_other(2, true));
+        // Three: both.
+        assert!(tries_other(3, false) && tries_other(3, true));
+        assert_eq!(PASSES, 2);
     }
 
     #[test]

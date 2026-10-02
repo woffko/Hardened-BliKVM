@@ -8,13 +8,15 @@ For every run: the frames, the rate (mean, and the lowest and highest of
 all windows of ten seconds), the engine's and the reference's mean luma
 PSNR, the time of an encode and of a whole frame, second passes, frames
 left out, where the search was chosen for every frame the frames encoded
-with both searches and those sent with the wide one, and for the drift
-check the mean PSNR of frames 30 to 60 against the last 30.
+with both searches and those sent with the wide one, the frames that took
+three passes, and for the drift check the mean PSNR of frames 30 to 60
+against the last 30.
 
 With --endurance, what a long run is judged by instead: its length, the
 frames a second it held and the frames that began late, the time of a
 whole frame and the frames that took longer than the time between two, the
-rate and its windows, of the frames that were decoded and
+rate and its windows, the frames that took two passes and three, of the
+frames that were decoded and
 compared the lowest PSNR and the number below the run's floor, and of a
 stream that repeats itself the frames unlike the frame a period before.
 """
@@ -104,6 +106,7 @@ def rows(directory):
             "period": (run.get("repeat") or run).get("period"),
             "unlike": (run.get("repeat") or run).get("framesUnlikeAPeriodBefore"),
             "search": run.get("search") or {},
+            "passes": run.get("passes") or {},
             "early_db": mean(db[30:60]),
             "late_db": mean(db[-30:]) if len(db) >= 90 else None,
             "error": run.get("error"),
@@ -128,6 +131,8 @@ def endurance(row):
         str(row["second_passes"]),
         str(row["left_out"]),
         count(row["search"].get("framesWithBoth")),
+        count(row["passes"].get("framesWithTwo")),
+        count(row["passes"].get("framesWithThree")),
         "-" if row["decoded"] is None else f"{row['decoded']}, {row['complaints']}",
         show(row["engine_db"]),
         show(row["engine_lowest_db"]),
@@ -138,7 +143,8 @@ def endurance(row):
 
 ENDURANCE_HEADER = [
     "run", "frames", "seconds", "frames/s", "late", "frame ms", "p99", "max", "over 1/fps", "kbit/s",
-    "10 s low", "10 s high", "windows", "2nd", "left out", "both", "decoded, ffmpeg",
+    "10 s low", "10 s high", "windows", "2nd", "left out", "both", "2 passes", "3 passes",
+    "decoded, ffmpeg",
     "mean dB", "lowest dB", "wrong frames", "repeats",
 ]
 
@@ -175,7 +181,7 @@ def main(arguments):
     header = [
         "run", "frames", "ffmpeg", "kbit/s", "10 s low", "10 s high", "engine dB",
         "x264 dB", "diff", "x264 kbit/s", "encode ms", "max", "frame ms", "x264 ms",
-        "2nd", "left out", "both", "wide", "30-60 dB", "last 30 dB",
+        "2nd", "left out", "both", "wide", "3 passes", "30-60 dB", "last 30 dB",
     ]
     table = []
     for row in rows(arguments[0]):
@@ -203,6 +209,7 @@ def main(arguments):
             str(row["left_out"]),
             count(row["search"].get("framesWithBoth")),
             count(row["search"].get("framesWithTheWide")),
+            count(row["passes"].get("framesWithThree")),
             show(row["early_db"]),
             show(row["late_db"]),
         ])

@@ -17,7 +17,7 @@ use bli_kvm_ve_lab::{
         ring_index,
     },
     psnr,
-    rate::{RateControl, SearchChoice},
+    rate::{self, RateControl, SearchChoice},
     regs::{self, Adjust, Hypothesis, Op, Search},
     session::{Encoded, Session},
 };
@@ -59,6 +59,9 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       search=exact, wide or auto (the engine's search for motion: as the vendor's
       library has it, with its refinement off, or for every frame the one that makes the
       smaller frame, a costly frame being encoded with both; without it the map's),
+      passes=N (the passes a frame may take, 1 to 3; 2 without it: with one more pass
+      only, a frame that does not fit is encoded again at a higher QP, and the other
+      search waits for a frame that fits),
       adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or 0xb4c that say how
       the engine searches and decides, changed in every frame's plan)
   bli-kvm-ve-lab search MAP WIDTHxHEIGHT QP FRAMES STREAM OUTPUT [grain] [adjust=REG:CLEAR:SET...] RIGHT,DOWN...
@@ -910,6 +913,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     let (mut adjusts, mut seconds, mut period, mut burst) = (Vec::new(), None, None, None);
     // The search of every pass, or the choice between the two.
     let (mut search, mut choice) = (None, None);
+    let mut passes_at_most = rate::PASSES;
     for option in options {
         let number = |text: &str| {
             text.parse::<u32>()
@@ -927,6 +931,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             Some(("search", "exact")) => search = Some(Search::Exact),
             Some(("search", "wide")) => search = Some(Search::Wide),
             Some(("search", "auto")) => choice = Some(SearchChoice::new()),
+            Some(("passes", value)) => passes_at_most = number(value)?.clamp(1, 3),
             _ => return Err(format!("not an option: {option}")),
         }
     }
@@ -972,6 +977,8 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     // The frames encoded with both searches, and those after which the
     // search changed, with the one that came.
     let (mut both, mut changes) = (Vec::new(), Vec::<(u32, Search)>::new());
+    // The passes every frame took.
+    let mut frame_passes = Vec::<u32>::new();
     let mut wide_frames = 0u32;
     // What every frame of the last period was, and the frames that were
     // not what the frame a period before them was.
@@ -1029,19 +1036,27 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 .pass(source, key, qp, true)
                 .map_err(|error| error.to_string())?;
             let mut passes = 1;
-            // A costly frame that is not a key frame: the other search.
+            let mut made = 1;
+            let first_bits = best.bytes.len() as u64 * 8;
+            // A frame the bucket has no room for needs a pass at a higher QP.
+            let too_large = control
+                .as_ref()
+                .is_some_and(|control| control.again(first_bits, qp).is_some());
+            // A costly frame that is not a key frame: the other search,
+            // where the frame may take the pass.
             let other = choice
                 .as_ref()
-                .filter(|_| !best.key)
-                .and_then(|choice| choice.other(best.bytes.len() as u64 * 8, costly));
+                .filter(|_| !best.key && rate::tries_other(passes_at_most, too_large))
+                .and_then(|choice| choice.other(first_bits, costly));
             if let (Some(other), Some(choice)) = (other, choice.as_mut()) {
                 session.keep(&best);
                 session.set_search(Some(other));
                 let second = session
                     .pass(source, key, qp, false)
                     .map_err(|error| error.to_string())?;
+                made += 1;
                 both.push(frame);
-                if choice.compared(best.bytes.len() as u64 * 8, second.bytes.len() as u64 * 8) {
+                if choice.compared(first_bits, second.bytes.len() as u64 * 8) {
                     best = second;
                     changes.push((frame, choice.first()));
                 }
@@ -1050,14 +1065,19 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 session.set_search(Some(choice.first()));
             }
             let Some(control) = control.as_mut() else {
+                frame_passes.push(made);
                 return Ok((best, passes));
             };
-            if let Some(higher) = control.again(best.bytes.len() as u64 * 8, qp) {
-                best = session
-                    .pass(source, key, higher, false)
-                    .map_err(|error| error.to_string())?;
-                passes = 2;
+            if made < passes_at_most {
+                if let Some(higher) = control.again(best.bytes.len() as u64 * 8, qp) {
+                    best = session
+                        .pass(source, key, higher, false)
+                        .map_err(|error| error.to_string())?;
+                    passes = 2;
+                    made += 1;
+                }
             }
+            frame_passes.push(made);
             // A frame that fits at no QP is left out, unless the stream
             // needs it to begin with.
             if best.key || control.fits(best.bytes.len() as u64 * 8) {
@@ -1184,6 +1204,13 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             .collect::<Vec<_>>()),
         "changesInAll": choice.map(|_| changes.len()),
     });
+    // The passes the frames took.
+    let passes = json!({
+        "atMost": passes_at_most,
+        "framesWithTwo": frame_passes.iter().filter(|passes| **passes == 2).count(),
+        "framesWithThree": frame_passes.iter().filter(|passes| **passes == 3).count(),
+        "ofEveryFrame": frame_passes,
+    });
     // What a stream that repeats itself was found to do.
     let repeat = json!({
         "period": period,
@@ -1230,6 +1257,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "resetsAfterTimeout": resets,
         "keyFrames": keys,
         "secondPasses": second_passes,
+        "passes": passes,
         "framesLeftOut": left_out.len(),
         "search": searches,
         "repeat": repeat,
