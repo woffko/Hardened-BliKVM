@@ -12,10 +12,10 @@ use bli_kvm_ve_lab::{
     engine::{Engine, FakeEngine, Patience, Step},
     headers::{Stream, codec_string},
     lab,
-    picture::{Picture, Sequence, parse_size, render},
+    picture::{Page, Picture, Sequence, parse_size, render, render_moved, ring_index},
     psnr,
     rate::RateControl,
-    regs::{self, Hypothesis, Op},
+    regs::{self, Adjust, Hypothesis, Op},
     session::{Encoded, Session},
 };
 use serde_json::{Value, json};
@@ -24,11 +24,12 @@ const USAGE: &str = "usage:
   bli-kvm-ve-lab generate SEQUENCE WIDTHxHEIGHT FRAMES OUTPUT
       NV12 frames of the visible size, one after the other
   bli-kvm-ve-lab standin MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY OUTPUT
-      an Annex B stream from the stand-in through the plan of MAP (older, v3s, h6)
-  bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N]
-      luma PSNR of decoded frames (planar or NV12, visible size) against the sequence;
-      with ring=N against a stream of N pictures repeated, and without the list of
-      every frame's value
+      an Annex B stream from the stand-in through the plan of MAP (older, v3s, h6, h616)
+  bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N] [luma] [floor=DB]
+      luma PSNR of at most FRAMES decoded frames (planar or NV12, visible size) against
+      the sequence; with ring=N against a stream of N pictures played forth and back,
+      and without the list of every frame's value; with luma the decoded frames are
+      luma planes only; with floor=DB the frames below DB are counted
 on the board, with the lab module loaded (each writes a receipt to OUTPUT):
   bli-kvm-ve-lab probe OUTPUT
       the engine's version and the registers of the blocks the open maps name; reads only
@@ -43,10 +44,19 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
   bli-kvm-ve-lab stream MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY RATE FPS STREAM OUTPUT [OPTION...]
       a long run: RATE is qpN (every frame at QP N) or kilobits a second, held by the
       rate control with a second pass for a frame that does not fit. Options: paced
-      (a frame begins every 1/FPS s), ring=N (N pictures drawn once and repeated),
-      guards=N (the buffers' guards read every N passes), timeout=N (the Nth frame
-      is not waited for: the engine is reset and the stream goes on with a key frame)
-sequences: scroll, drag, motion, pointer";
+      (a frame begins every 1/FPS s), ring=N (N pictures drawn once and played forth
+      and back), guards=N (the buffers' guards read every N passes), timeout=N (the
+      Nth frame is not waited for: the engine is reset and the stream goes on with a
+      key frame), seconds=N (the run ends after N seconds, before FRAMES frames if
+      they take longer), adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or
+      0xb4c that say how the engine searches and decides, changed in every frame's
+      plan)
+  bli-kvm-ve-lab search MAP WIDTHxHEIGHT QP FRAMES STREAM OUTPUT [grain] [adjust=REG:CLEAR:SET...] RIGHT,DOWN...
+      what the engine's search for motion finds: for every vector a key frame and
+      FRAMES P frames of a page of text that moves RIGHT,DOWN pixels a frame, at QP;
+      with grain a page of which no part looks like another
+sequences: scroll, drag, motion, pointer; and PAGE.RIGHT.DOWN, a page (text or grain)
+that moves RIGHT,DOWN pixels a frame, as in text.0.-20";
 
 /// The commit the tool was built from, when the build says.
 const COMMIT: &str = match option_env!("BLI_KVM_VE_LAB_COMMIT") {
@@ -307,18 +317,32 @@ fn standin(arguments: &[String]) -> Result<(), String> {
 }
 
 fn compare(arguments: &[String]) -> Result<(), String> {
-    let (sequence, size, frames, decoded, ring) = match arguments {
-        [sequence, size, frames, decoded] => (sequence, size, frames, decoded, 0),
-        [sequence, size, frames, decoded, ring] => {
-            let ring = ring
-                .strip_prefix("ring=")
-                .and_then(|ring| ring.parse::<u32>().ok())
-                .filter(|ring| (1..=600).contains(ring))
-                .ok_or("ring=N with N from 1 to 600")?;
-            (sequence, size, frames, decoded, ring)
-        }
-        _ => return Err(USAGE.into()),
+    let [sequence, size, frames, decoded, options @ ..] = arguments else {
+        return Err(USAGE.into());
     };
+    let (mut ring, mut luma_only, mut floor) = (0u32, false, None);
+    for option in options {
+        match option.split_once('=') {
+            Some(("ring", value)) => {
+                ring = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|ring| (2..=600).contains(ring))
+                    .ok_or("ring=N with N from 2 to 600")?;
+            }
+            Some(("floor", value)) => {
+                floor = Some(
+                    value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|floor| (0.0..=100.0).contains(floor))
+                        .ok_or("floor=DB with DB from 0 to 100")?,
+                );
+            }
+            None if option == "luma" => luma_only = true,
+            _ => return Err(USAGE.into()),
+        }
+    }
     let sequence: Sequence = sequence.parse()?;
     let (width, height) = parse_size(size)?;
     let frames: u32 = frames
@@ -334,13 +358,34 @@ fn compare(arguments: &[String]) -> Result<(), String> {
             picture.clone()
         })
         .collect();
-    let mut frame_bytes = vec![0u8; width * height * 3 / 2];
+    let mut frame_bytes = vec![
+        0u8;
+        if luma_only {
+            width * height
+        } else {
+            width * height * 3 / 2
+        }
+    ];
     let mut values = Vec::new();
     for frame in 0..frames {
-        file.read_exact(&mut frame_bytes)
-            .map_err(|error| format!("{decoded}: frame {frame}: {error}"))?;
+        // The input may end before FRAMES frames, but not within one.
+        let mut filled = 0;
+        while filled < frame_bytes.len() {
+            match file.read(&mut frame_bytes[filled..]) {
+                Ok(0) => break,
+                Ok(count) => filled += count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(format!("{decoded}: frame {frame}: {error}")),
+            }
+        }
+        if filled == 0 {
+            break;
+        }
+        if filled < frame_bytes.len() {
+            return Err(format!("{decoded}: frame {frame} is cut short"));
+        }
         let source = if ring > 0 {
-            &pictures[(frame % ring) as usize]
+            &pictures[ring_index(frame, ring)]
         } else {
             render(sequence, frame, &mut picture);
             &picture
@@ -365,13 +410,22 @@ fn compare(arguments: &[String]) -> Result<(), String> {
         Some(finite.iter().sum::<f64>() / finite.len() as f64)
     };
     let lowest = finite.iter().copied().fold(f64::INFINITY, f64::min);
+    let below: Vec<usize> = match floor {
+        Some(floor) => (0..values.len())
+            .filter(|&frame| values[frame] < floor)
+            .collect(),
+        None => Vec::new(),
+    };
     println!(
         "{}",
         json!({
             "sequence": sequence.name(),
             "width": width,
             "height": height,
-            "frames": frames,
+            "frames": values.len(),
+            "floorDb": floor,
+            "belowFloor": floor.map(|_| below.len()),
+            "firstBelowFloor": floor.map(|_| &below[..below.len().min(10)]),
             "exact": values.len() - finite.len(),
             "meanDb": mean,
             "lowestDb": if finite.is_empty() { None } else { Some(lowest) },
@@ -590,6 +644,164 @@ fn encode(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// `REG:CLEAR:SET` in hex: a change of fields a lab run may change.
+fn parse_adjust(value: &str) -> Result<Adjust, String> {
+    let number = |text: &str| u32::from_str_radix(text.trim_start_matches("0x"), 16).ok();
+    let mut parts = value.split(':').map(number);
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(Some(reg)), Some(Some(clear)), Some(Some(set)), None) => Adjust::new(reg, clear, set)
+            .ok_or_else(|| {
+                format!(
+                    "{value}: of register {reg:#x} a lab run may change the bits {:#010x}",
+                    regs::adjustable(reg)
+                )
+            }),
+        _ => Err(format!(
+            "an adjustment is REG:CLEAR:SET in hex, not {value}"
+        )),
+    }
+}
+
+fn adjusts_json(adjusts: &[Adjust]) -> Value {
+    adjusts
+        .iter()
+        .map(|adjust| json!({"reg": hex(adjust.reg), "clear": hex(adjust.clear), "set": hex(adjust.set)}))
+        .collect()
+}
+
+/// `RIGHT,DOWN` in pixels a frame.
+fn parse_vector(value: &str) -> Result<(i32, i32), String> {
+    let part = |text: &str| text.parse::<i32>().ok().filter(|part| part.abs() <= 256);
+    value
+        .split_once(',')
+        .and_then(|(right, down)| Some((part(right)?, part(down)?)))
+        .ok_or_else(|| format!("a vector is RIGHT,DOWN with both up to 256, not {value}"))
+}
+
+fn search(arguments: &[String]) -> Result<(), String> {
+    let [map, size, qp, frames, stream_path, output, rest @ ..] = arguments else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let (width, height) = parse_size(size)?;
+    let qp: i32 = qp
+        .parse()
+        .ok()
+        .filter(|qp| (0..=51).contains(qp))
+        .ok_or_else(|| format!("QP is a number from 0 to 51, not {qp}"))?;
+    let frames: u32 = frames
+        .parse()
+        .ok()
+        .filter(|frames| (1..=30).contains(frames))
+        .ok_or("FRAMES is a number from 1 to 30")?;
+    let (mut adjusts, mut vectors, mut page) = (Vec::new(), Vec::new(), Page::Text);
+    for word in rest {
+        match word.strip_prefix("adjust=") {
+            Some(value) => adjusts.push(parse_adjust(value)?),
+            None if word == "grain" => page = Page::Grain,
+            None => vectors.push(parse_vector(word)?),
+        }
+    }
+    if vectors.is_empty() {
+        return Err(USAGE.into());
+    }
+
+    let stream = stream(&hypothesis, width, height, true);
+    let room = room_for(&hypothesis, width, height);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
+        .map_err(|error| error.to_string())?;
+    session.set_adjusts(adjusts.clone());
+    let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
+    let mut out = BufWriter::new(file);
+    let mut picture = Picture::new(width, height);
+    let mut rows = Vec::new();
+    let mut failure = None;
+    'vectors: for &(right, down) in &vectors {
+        let (mut key_bytes, mut sizes, mut micros, mut statistics) =
+            (0, Vec::new(), Vec::new(), Vec::new());
+        for frame in 0..=frames as i32 {
+            render_moved(page, right * frame, down * frame, &mut picture);
+            let encoded = match session.encode(&picture, frame == 0, qp) {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    failure = Some(format!("vector {right},{down} frame {frame}: {error}"));
+                    break 'vectors;
+                }
+            };
+            if let Err(error) = out.write_all(&encoded.bytes) {
+                failure = Some(format!("{stream_path}: {error}"));
+                break 'vectors;
+            }
+            if frame == 0 {
+                key_bytes = encoded.bytes.len();
+            } else {
+                sizes.push(encoded.bytes.len());
+                micros.push(encoded.time.as_micros() as u64);
+                // What the engine counted in the frame.
+                let engine = session.engine();
+                statistics.push(
+                    [
+                        regs::AVC_MAD,
+                        regs::AVC_RESIDUAL_BITS,
+                        regs::AVC_HEADER_BITS,
+                        regs::AVC_ME_INFO,
+                    ]
+                    .map(|reg| hex(engine.read(reg))),
+                );
+            }
+            session.trace.clear();
+        }
+        let mean = sizes.iter().sum::<usize>() / sizes.len();
+        println!("search: {right:5} {down:5}  key {key_bytes:7}  P {mean:7}");
+        rows.push(json!({
+            "right": right,
+            "down": down,
+            "keyBytes": key_bytes,
+            "pBytes": sizes,
+            "pBytesMean": mean,
+            "encodeMicrosMean": micros.iter().sum::<u64>() / micros.len() as u64,
+            "statistics": statistics,
+        }));
+    }
+    let flushed = out
+        .flush()
+        .map_err(|error| format!("{stream_path}: {error}"));
+    if let Some(buffer) = session.broken_guard() {
+        failure.get_or_insert(format!("the engine wrote outside the {buffer} buffer"));
+    }
+    let body = json!({
+        "map": hypothesis.name,
+        "width": width,
+        "height": height,
+        "qp": qp,
+        "pFrames": frames,
+        "page": page.name(),
+        "adjusts": adjusts_json(&adjusts),
+        "codec": codec_string(&stream),
+        "vectors": rows,
+        "error": failure,
+        "encoderAfter": nonzero(session.engine(), 0xb00, 0xc00),
+        "topAfter": nonzero(session.engine(), 0x000, 0x100),
+        "unknownInterrupt": session.engine().unknown_interrupt,
+    });
+    let closed = session
+        .close()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    receipt(output, "search", body)?;
+    flushed?;
+    match failure {
+        Some(failure) => {
+            println!("search: {failure}; receipt {output}");
+            Err(failure)
+        }
+        None => {
+            println!("search: {} vectors; receipt {output}", vectors.len());
+            closed
+        }
+    }
+}
+
 /// What a long run is asked to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Rate {
@@ -666,6 +878,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         .filter(|fps| (1..=120).contains(fps))
         .ok_or("FPS is a number from 1 to 120")?;
     let (mut paced, mut ring, mut guards, mut timeout_at) = (false, 0u32, 1u32, None);
+    let (mut adjusts, mut seconds) = (Vec::new(), None);
     for option in options {
         let number = |text: &str| {
             text.parse::<u32>()
@@ -673,9 +886,11 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         };
         match option.split_once('=') {
             None if option == "paced" => paced = true,
-            Some(("ring", value)) => ring = number(value)?.min(600),
+            Some(("ring", value)) => ring = number(value)?.clamp(2, 600),
             Some(("guards", value)) => guards = number(value)?.max(1),
             Some(("timeout", value)) => timeout_at = Some(number(value)?),
+            Some(("adjust", value)) => adjusts.push(parse_adjust(value)?),
+            Some(("seconds", value)) => seconds = Some(number(value)?.max(1)),
             _ => return Err(format!("not an option: {option}")),
         }
     }
@@ -688,6 +903,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     let mut session = Session::open(open_device()?, hypothesis, stream, &room)
         .map_err(|error| error.to_string())?;
     session.set_guard_checks(guards);
+    session.set_adjusts(adjusts.clone());
     let patience = Patience::default();
     let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
     let mut out = BufWriter::new(file);
@@ -714,6 +930,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     let mut force_key = false;
     let began = std::time::Instant::now();
     for frame in 0..frames {
+        if seconds.is_some_and(|seconds| began.elapsed().as_secs() >= seconds as u64) {
+            break;
+        }
         if paced {
             let due = began + interval * frame;
             match due.checked_duration_since(std::time::Instant::now()) {
@@ -723,7 +942,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         }
         let frame_began = std::time::Instant::now();
         let source = if ring > 0 {
-            &pictures[(frame % ring) as usize]
+            &pictures[ring_index(frame, ring)]
         } else {
             render(sequence, frame, &mut picture);
             &picture
@@ -857,8 +1076,10 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         },
         "keyEvery": key_every,
         "paced": paced,
+        "secondsAsked": seconds,
         "ring": ring,
         "guardsEvery": guards,
+        "adjusts": adjusts_json(&adjusts),
         "codec": codec_string(&stream),
         "framesAsked": frames,
         "framesDone": done,
@@ -920,6 +1141,7 @@ fn main() -> ExitCode {
         Some("bits") => bits(&arguments[1..]),
         Some("encode") => encode(&arguments[1..]),
         Some("stream") => stream_run(&arguments[1..]),
+        Some("search") => search(&arguments[1..]),
         _ => Err(USAGE.into()),
     };
     match result {

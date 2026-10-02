@@ -84,6 +84,14 @@ pub const PARA1_DYNAMIC_ME: u32 = 1 << 8;
 /// Set by the vendor's library in every frame of the newer generation; what
 /// it means is not known.
 pub const PARA1_NEWER: u32 = 1 << 27;
+/// What the vendor's library writes into the motion estimation register
+/// of the newer generation: no write-back of motion vectors (bit 16) and
+/// bit 12.
+pub const ME_NEWER: u32 = 0x0001_1000;
+/// "QSMTSS refine off" in the open map. With it this engine finds a
+/// picture that moves down by more than 12 pixels a frame (V3.4's
+/// addendum in the design note); the vendor's library leaves it clear.
+pub const ME_REFINE_OFF: u32 = 1 << 4;
 pub const TRIGGER_PUT_BITS: u32 = 1;
 /// Fills the stream up to a whole byte; the vendor's library ends headers
 /// that stand alone with it.
@@ -212,6 +220,61 @@ pub enum Op {
     },
     /// Waits for the encode to end.
     Wait,
+}
+
+/// A change of fields in what every frame's plan writes into one register:
+/// the lab's way to try what a field of the open map does to this engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Adjust {
+    pub reg: u32,
+    pub clear: u32,
+    pub set: u32,
+}
+
+/// The bits of `reg` a lab run may change: fields the open map names that
+/// say how the engine searches and decides. None says where or whether it
+/// writes to memory (the write-back of motion vectors, the region of
+/// interest and the two "to memory" switches of `0xb10` stay as the plan
+/// has them), and none is without a name.
+pub fn adjustable(reg: u32) -> u32 {
+    match reg {
+        // Mode optimisation 31:28, motion vector clipping 26:24, dynamic
+        // motion estimation bit 8.
+        AVC_PARA1 => 0xf700_0100,
+        // Bits 0 to 9 and 11 to 15, and the quarter-pixel switches 21:20.
+        AVC_ME => 0x0030_fbff,
+        // The four thresholds.
+        AVC_DYNAMIC_ME0 | AVC_DYNAMIC_ME1 => 0x03ff_03ff,
+        _ => 0,
+    }
+}
+
+impl Adjust {
+    /// None when the change reaches a bit that is not `adjustable`.
+    pub fn new(reg: u32, clear: u32, set: u32) -> Option<Self> {
+        ((clear | set) & !adjustable(reg) == 0).then_some(Self { reg, clear, set })
+    }
+
+    fn apply(&self, value: u32) -> u32 {
+        (value & !self.clear) | self.set
+    }
+}
+
+/// `ops` with every value written to an adjusted register changed.
+pub fn adjusted(mut ops: Vec<Op>, adjusts: &[Adjust]) -> Vec<Op> {
+    for op in &mut ops {
+        for adjust in adjusts {
+            match op {
+                Op::Write { reg, value } if *reg == adjust.reg => *value = adjust.apply(*value),
+                Op::Update { reg, clear, set } if *reg == adjust.reg => {
+                    *clear |= adjust.clear;
+                    *set = adjust.apply(*set);
+                }
+                _ => {}
+            }
+        }
+    }
+    ops
 }
 
 /// How the encoder is selected in the mode register.
@@ -357,7 +420,7 @@ impl Hypothesis {
         wait_idle_after_headers: false,
         scaler_size: true,
         para1: Para1::Newer,
-        me: 0x0001_1000,
+        me: ME_NEWER,
         extra_buffer: false,
         interrupts: 0xf,
         clear_first: true,
@@ -386,6 +449,14 @@ impl Hypothesis {
         ..Self::H6
     };
 
+    /// This board's engine as the plan drives it: the H6's form with one
+    /// bit more in the motion estimation register.
+    pub const H616: Hypothesis = Hypothesis {
+        name: "h616",
+        me: ME_NEWER | ME_REFINE_OFF,
+        ..Self::H6
+    };
+
     pub fn named(name: &str) -> Option<Hypothesis> {
         [
             Self::OLDER,
@@ -394,6 +465,7 @@ impl Hypothesis {
             Self::H6,
             Self::H6_PLAIN_MODE,
             Self::H6_DECODER_MODE,
+            Self::H616,
         ]
         .into_iter()
         .find(|hypothesis| hypothesis.name == name)
@@ -1431,6 +1503,128 @@ mod tests {
             reg: AVC_PARA0,
             value: 0x510
         }));
+    }
+
+    #[test]
+    fn this_boards_plan_is_the_h6s_with_one_bit_more() {
+        assert_eq!(Hypothesis::named("h616"), Some(Hypothesis::H616));
+        for key in [true, false] {
+            let frame = |hypothesis: &Hypothesis| {
+                super::frame(hypothesis, &small(), 320, &slice(key), 1, &TRACED, &[])
+            };
+            let (h6, h616) = (frame(&Hypothesis::H6), frame(&Hypothesis::H616));
+            let different: Vec<_> = h6.iter().zip(&h616).filter(|(a, b)| a != b).collect();
+            assert_eq!(
+                different,
+                [(
+                    &Op::Write {
+                        reg: AVC_ME,
+                        value: 0x0001_1000
+                    },
+                    &Op::Write {
+                        reg: AVC_ME,
+                        value: 0x0001_1010
+                    }
+                )]
+            );
+            assert_eq!(h6.len(), h616.len());
+        }
+        assert_eq!(select(&Hypothesis::H616), select(&Hypothesis::H6));
+        // The bit is one a lab run may change.
+        assert!(Adjust::new(AVC_ME, 0, ME_REFINE_OFF).is_some());
+    }
+
+    #[test]
+    fn a_lab_run_changes_only_fields_that_search_and_decide() {
+        // Where and whether the engine writes is not a lab run's to change.
+        for bit in [10, 16, 17, 18, 19, 22, 23, 31] {
+            assert_eq!(Adjust::new(AVC_ME, 0, 1 << bit), None, "bit {bit}");
+            assert_eq!(Adjust::new(AVC_ME, 1 << bit, 0), None, "bit {bit}");
+        }
+        for reg in [
+            AVC_REF_LUMA,
+            AVC_STREAM_START,
+            AVC_MV_BUFFER,
+            AVC_PARA0,
+            MODE,
+        ] {
+            assert_eq!(Adjust::new(reg, 0, 1), None);
+            assert_eq!(Adjust::new(reg, 1, 0), None);
+        }
+        assert_eq!(Adjust::new(AVC_PARA1, 0, PARA1_NEWER), None);
+        assert_eq!(Adjust::new(AVC_PARA1, 0x3f, 0), None);
+
+        let plain = super::frame(
+            &Hypothesis::H6,
+            &small(),
+            320,
+            &slice(false),
+            1,
+            &TRACED,
+            &[],
+        );
+        let adjusts = [
+            Adjust::new(AVC_ME, 0, 0x4).unwrap(),
+            Adjust::new(AVC_PARA1, PARA1_DYNAMIC_ME, 1 << 26).unwrap(),
+            Adjust::new(AVC_DYNAMIC_ME0, 0x03ff_03ff, 0).unwrap(),
+        ];
+        let changed = adjusted(plain.clone(), &adjusts);
+        assert_eq!(changed.len(), plain.len());
+        let mut differences = Vec::new();
+        for (before, after) in plain.iter().zip(&changed) {
+            if before != after {
+                differences.push((*before, *after));
+            }
+        }
+        let qp = slice(false).qp as u32;
+        assert_eq!(
+            differences,
+            [
+                (
+                    Op::Update {
+                        reg: AVC_PARA1,
+                        clear: 0x3f | 0xf << 10,
+                        set: qp | PARA1_DYNAMIC_ME | 1 << 10,
+                    },
+                    Op::Update {
+                        reg: AVC_PARA1,
+                        clear: 0x3f | 0xf << 10 | PARA1_DYNAMIC_ME,
+                        set: qp | 1 << 10 | 1 << 26,
+                    },
+                ),
+                (
+                    Op::Write {
+                        reg: AVC_DYNAMIC_ME0,
+                        value: 0x000c_0002,
+                    },
+                    Op::Write {
+                        reg: AVC_DYNAMIC_ME0,
+                        value: 0,
+                    },
+                ),
+                (
+                    Op::Write {
+                        reg: AVC_PARA1,
+                        value: PARA1_NEWER | PARA1_DYNAMIC_ME | 1 << 10 | qp,
+                    },
+                    Op::Write {
+                        reg: AVC_PARA1,
+                        value: PARA1_NEWER | 1 << 26 | 1 << 10 | qp,
+                    },
+                ),
+                (
+                    Op::Write {
+                        reg: AVC_ME,
+                        value: 0x0001_1000,
+                    },
+                    Op::Write {
+                        reg: AVC_ME,
+                        value: 0x0001_1004,
+                    },
+                ),
+            ]
+        );
+        assert_eq!(adjusted(plain.clone(), &[]), plain);
     }
 
     #[test]

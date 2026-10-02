@@ -80,6 +80,7 @@ sh -n tools/device/ve_trace_run.sh
 sh -n tools/device/ve_trace_session.sh
 sh -n tools/device/ve_quality_run.sh
 sh -n tools/device/ve_stream_run.sh
+sh -n tools/device/ve_endurance_run.sh
 sh -n scripts/build-ve-reference.sh
 node --check tools/playwright/ve_stream_check.mjs
 python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \

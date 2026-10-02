@@ -7,7 +7,7 @@ use crate::{
     engine::{Engine, Fault, Patience, Step, run},
     headers::{Slice, Stream, pps, slice_header, sps},
     picture::Picture,
-    regs::{self, Buffers, Hypothesis, Reconstruction, Sizes},
+    regs::{self, Adjust, Buffers, Hypothesis, Reconstruction, Sizes},
 };
 
 /// Bytes kept before and after the part of a buffer the engine is given,
@@ -119,6 +119,8 @@ pub struct Session<E: Engine> {
     passes: u32,
     /// What a guard holds while nothing wrote into it.
     guard: Vec<u8>,
+    /// Fields of the frames' plan that this run tries otherwise.
+    adjusts: Vec<Adjust>,
     /// Every step of every frame so far. A long run empties it as it goes.
     pub trace: Vec<Step>,
 }
@@ -204,6 +206,7 @@ impl<E: Engine> Session<E> {
             guard_every: 1,
             passes: 0,
             guard: (0..GUARD).map(marker).collect(),
+            adjusts: Vec::new(),
             trace: Vec::new(),
         };
         let ops = regs::select(&session.hypothesis);
@@ -236,6 +239,11 @@ impl<E: Engine> Session<E> {
     /// time checks them less often.
     pub fn set_guard_checks(&mut self, every: u32) {
         self.guard_every = every.max(1);
+    }
+
+    /// The frames from here on are planned with these fields changed.
+    pub fn set_adjusts(&mut self, adjusts: Vec<Adjust>) {
+        self.adjusts = adjusts;
     }
 
     /// The frames accepted so far.
@@ -347,14 +355,17 @@ impl<E: Engine> Session<E> {
             let ops = regs::select(&self.hypothesis);
             run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
         }
-        let ops = regs::frame(
-            &self.hypothesis,
-            &self.stream,
-            stride,
-            &slice,
-            self.index,
-            &self.buffers,
-            &header_ops,
+        let ops = regs::adjusted(
+            regs::frame(
+                &self.hypothesis,
+                &self.stream,
+                stride,
+                &slice,
+                self.index,
+                &self.buffers,
+                &header_ops,
+            ),
+            &self.adjusts,
         );
         let outcome = run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
 

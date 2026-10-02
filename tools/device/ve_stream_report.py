@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Reads what `ve_stream_run.sh` left of a lab session and prints its table.
 
-usage: ve_stream_report.py RESULTS_DIR [--markdown]
+usage: ve_stream_report.py RESULTS_DIR [--markdown] [--endurance]
 
 For every run: the frames, the rate (mean, and the lowest and highest of
 all windows of ten seconds), the engine's and the reference's mean luma
 PSNR, the time of an encode and of a whole frame, second passes, frames
 left out, and for the drift check the mean PSNR of frames 30 to 60 against
 the last 30.
+
+With --endurance, what a long run is judged by instead: its length, the
+frames a second it held and the frames that began late, the time of a
+whole frame, the rate and its windows, and of the frames that were decoded
+and compared the lowest PSNR and the number below the run's floor.
 """
 
 import json
@@ -79,10 +84,64 @@ def rows(directory):
             "left_out": run.get("framesLeftOut", 0),
             "overflows": run.get("overflows"),
             "late": run.get("lateFrames"),
+            "seconds": run.get("seconds"),
+            "frames_done": run["framesDone"],
+            "frame_p99_ms": (run["frameMicros"] or {}).get("p99", 0) / 1000,
+            "frame_max_ms": (run["frameMicros"] or {}).get("max", 0) / 1000,
+            "windows": windows.get("count"),
+            "resets": run.get("resetsAfterTimeout"),
+            "floor": engine.get("floorDb"),
+            "below_floor": engine.get("belowFloor"),
             "early_db": mean(db[30:60]),
             "late_db": mean(db[-30:]) if len(db) >= 90 else None,
             "error": run.get("error"),
         }
+
+
+def endurance(row):
+    return [
+        row["run"],
+        str(row["frames_done"]),
+        show(row["seconds"], 0),
+        show(row["fps"], 2),
+        "-" if row["late"] is None else str(row["late"]),
+        show(row["frame_ms"], 1),
+        show(row["frame_p99_ms"], 1),
+        show(row["frame_max_ms"], 1),
+        str(row["kbps"]),
+        show(row["window_low"], 0),
+        show(row["window_high"], 0),
+        "-" if row["windows"] is None else str(row["windows"]),
+        str(row["second_passes"]),
+        str(row["left_out"]),
+        "-" if row["decoded"] is None else f"{row['decoded']}, {row['complaints']}",
+        show(row["engine_db"]),
+        show(row["engine_lowest_db"]),
+        "-" if row["below_floor"] is None else f"{row['below_floor']} below {row['floor']:g}",
+    ]
+
+
+ENDURANCE_HEADER = [
+    "run", "frames", "seconds", "frames/s", "late", "frame ms", "p99", "max", "kbit/s",
+    "10 s low", "10 s high", "windows", "2nd", "left out", "decoded, ffmpeg",
+    "mean dB", "lowest dB", "wrong frames",
+]
+
+
+def print_table(header, table, markdown):
+    if markdown:
+        print("| " + " | ".join(header) + " |")
+        print("|" + " --- |" * len(header))
+        for line in table:
+            print("| " + " | ".join(line) + " |")
+        return
+    widths = [
+        max(len(header[i]), *(len(line[i]) for line in table)) if table else len(header[i])
+        for i in range(len(header))
+    ]
+    print("  ".join(header[i].ljust(widths[i]) for i in range(len(header))))
+    for line in table:
+        print("  ".join(line[i].ljust(widths[i]) for i in range(len(header))))
 
 
 def main(arguments):
@@ -90,6 +149,14 @@ def main(arguments):
         print(__doc__, file=sys.stderr)
         return 2
     markdown = "--markdown" in arguments
+    if "--endurance" in arguments:
+        table = []
+        for row in rows(arguments[0]):
+            table.append(endurance(row))
+            if row["error"]:
+                table.append([f"  error: {row['error']}"] + [""] * (len(ENDURANCE_HEADER) - 1))
+        print_table(ENDURANCE_HEADER, table, markdown)
+        return 0
     header = [
         "run", "frames", "ffmpeg", "kbit/s", "10 s low", "10 s high", "engine dB",
         "x264 dB", "diff", "x264 kbit/s", "encode ms", "max", "frame ms", "x264 ms",
@@ -124,16 +191,7 @@ def main(arguments):
         ])
         if row["error"]:
             table.append([f"  error: {row['error']}"] + [""] * (len(header) - 1))
-    if markdown:
-        print("| " + " | ".join(header) + " |")
-        print("|" + " --- |" * len(header))
-        for line in table:
-            print("| " + " | ".join(line) + " |")
-    else:
-        widths = [max(len(header[i]), *(len(line[i]) for line in table)) for i in range(len(header))] if table else [len(h) for h in header]
-        print("  ".join(header[i].ljust(widths[i]) for i in range(len(header))))
-        for line in table:
-            print("  ".join(line[i].ljust(widths[i]) for i in range(len(header))))
+    print_table(header, table, markdown)
     return 0
 
 

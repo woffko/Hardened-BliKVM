@@ -14,17 +14,24 @@ pub enum Sequence {
     Motion,
     /// A still desktop with a small pointer that moves.
     Pointer,
+    /// A page that moves by the same vector in every frame: what a search
+    /// for motion is measured with. Not one of the plan's sequences.
+    Moved { page: Page, right: i32, down: i32 },
 }
 
 impl Sequence {
+    /// The plan's sequences.
     pub const ALL: [Sequence; 4] = [Self::Scroll, Self::Drag, Self::Motion, Self::Pointer];
 
-    pub fn name(self) -> &'static str {
+    /// `scroll` and the like; a moved page is `PAGE.RIGHT.DOWN`, as in
+    /// `text.0.-20`.
+    pub fn name(self) -> String {
         match self {
-            Self::Scroll => "scroll",
-            Self::Drag => "drag",
-            Self::Motion => "motion",
-            Self::Pointer => "pointer",
+            Self::Scroll => "scroll".into(),
+            Self::Drag => "drag".into(),
+            Self::Motion => "motion".into(),
+            Self::Pointer => "pointer".into(),
+            Self::Moved { page, right, down } => format!("{}.{right}.{down}", page.name()),
         }
     }
 }
@@ -33,10 +40,28 @@ impl FromStr for Sequence {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::ALL
+        if let Some(sequence) = Self::ALL
             .into_iter()
             .find(|sequence| sequence.name() == value)
-            .ok_or_else(|| format!("no sequence is called {value}"))
+        {
+            return Ok(sequence);
+        }
+        let mut parts = value.split('.');
+        let page = match parts.next() {
+            Some("text") => Some(Page::Text),
+            Some("grain") => Some(Page::Grain),
+            _ => None,
+        };
+        let mut pixels = || {
+            parts
+                .next()
+                .and_then(|part| part.parse::<i32>().ok())
+                .filter(|pixels| pixels.abs() <= 256)
+        };
+        match (page, pixels(), pixels(), parts.next()) {
+            (Some(page), Some(right), Some(down), None) => Ok(Self::Moved { page, right, down }),
+            _ => Err(format!("no sequence is called {value}")),
+        }
     }
 }
 
@@ -239,18 +264,68 @@ fn pixel(sequence: Sequence, x: u32, y: u32, width: u32, height: u32, frame: u32
                 .or_else(|| window(x, y, width / 5, height / 6, width / 2, height / 2))
                 .unwrap_or_else(|| desktop(x, y, width, height))
         }
+        Sequence::Moved { .. } => unreachable!("a moved page is drawn by render_moved"),
     }
 }
 
-/// Draws frame `frame` of `sequence` into `picture`. Every pixel follows
-/// from its own place alone, so the rows are shared among the processors.
+/// Draws frame `frame` of `sequence` into `picture`.
 pub fn render(sequence: Sequence, frame: u32, picture: &mut Picture) {
+    if let Sequence::Moved { page, right, down } = sequence {
+        let frame = frame.min(1 << 12) as i32;
+        return render_moved(page, right * frame, down * frame, picture);
+    }
+    let size = (picture.width as u32, picture.height as u32);
+    draw(picture, |x, y| pixel(sequence, x, y, size.0, size.1, frame));
+}
+
+/// What a search for motion is measured with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    /// The page of text: what a screen shows, with its line and its cell
+    /// repeating, so that a wrong place can look half right.
+    Text,
+    /// Blocks of four by four pixels of unrelated greys: nothing repeats,
+    /// and only the true place matches.
+    Grain,
+}
+
+impl Page {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Grain => "grain",
+        }
+    }
+}
+
+fn grain(x: u32, y: u32) -> Pixel {
+    let block = mix((x / 4).wrapping_mul(73_856_093) ^ (y / 4).wrapping_mul(19_349_663));
+    (40 + (block % 160) as u8, 128, 128)
+}
+
+/// Draws `page` moved by `(right, down)` pixels, one vector at a time. What
+/// moves into the text from the left is paper.
+pub fn render_moved(page: Page, right: i32, down: i32, picture: &mut Picture) {
+    // Far enough into the page for any move.
+    const FAR: i64 = 1 << 20;
+    draw(picture, |x, y| {
+        let from_y = (FAR + y as i64 - down as i64) as u32;
+        match page {
+            Page::Text if (x as i64) < right as i64 => PAPER,
+            Page::Text => text((x as i64 - right as i64) as u32, from_y),
+            Page::Grain => grain((FAR + x as i64 - right as i64) as u32, from_y),
+        }
+    });
+}
+
+/// Fills `picture` from `pixel`. Every pixel follows from its own place
+/// alone, so the rows are shared among the processors.
+fn draw(picture: &mut Picture, pixel: impl Fn(u32, u32) -> Pixel + Copy + Send) {
     let (width, height) = (picture.width, picture.height);
     let stride = picture.coded_width;
     let workers = std::thread::available_parallelism().map_or(1, |count| count.get().min(8));
     let luma_rows = height.div_ceil(workers).max(1);
     let chroma_rows = (height / 2).div_ceil(workers).max(1);
-    let size = (width as u32, height as u32);
     std::thread::scope(|scope| {
         let (luma, _) = picture.luma.split_at_mut(height * stride);
         for (part, rows) in luma.chunks_mut(luma_rows * stride).enumerate() {
@@ -258,7 +333,7 @@ pub fn render(sequence: Sequence, frame: u32, picture: &mut Picture) {
                 for (index, row) in rows.chunks_exact_mut(stride).enumerate() {
                     let y = (part * luma_rows + index) as u32;
                     for (x, value) in row.iter_mut().enumerate().take(width) {
-                        *value = pixel(sequence, x as u32, y, size.0, size.1, frame).0;
+                        *value = pixel(x as u32, y).0;
                     }
                     let last = row[width - 1];
                     row[width..].fill(last);
@@ -272,8 +347,7 @@ pub fn render(sequence: Sequence, frame: u32, picture: &mut Picture) {
                 for (index, row) in rows.chunks_exact_mut(stride).enumerate() {
                     let y = (part * chroma_rows + index) as u32;
                     for x in 0..width / 2 {
-                        let (_, cb, cr) =
-                            pixel(sequence, 2 * x as u32, 2 * y, size.0, size.1, frame);
+                        let (_, cb, cr) = pixel(2 * x as u32, 2 * y);
                         row[2 * x] = cb;
                         row[2 * x + 1] = cr;
                     }
@@ -294,6 +368,15 @@ pub fn render(sequence: Sequence, frame: u32, picture: &mut Picture) {
         let (above, below) = picture.chroma.split_at_mut(y * stride);
         below[..stride].copy_from_slice(&above[(height / 2 - 1) * stride..(height / 2) * stride]);
     }
+}
+
+/// Which of `ring` pictures frame `frame` shows when they are played forth
+/// and back: 0 up to the last and down again, so that no frame jumps from
+/// the last picture to the first.
+pub fn ring_index(frame: u32, ring: u32) -> usize {
+    let period = 2 * (ring.max(2) - 1);
+    let phase = frame % period;
+    (if phase < ring { phase } else { period - phase }) as usize
 }
 
 /// `1920x1080` and the like.
@@ -326,6 +409,105 @@ mod tests {
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         hash
+    }
+
+    #[test]
+    fn a_ring_plays_forth_and_back() {
+        let shown: Vec<usize> = (0..10).map(|frame| ring_index(frame, 4)).collect();
+        assert_eq!(shown, [0, 1, 2, 3, 2, 1, 0, 1, 2, 3]);
+        // Neighbours are neighbours everywhere.
+        for frame in 0..500 {
+            let step = ring_index(frame, 30).abs_diff(ring_index(frame + 1, 30));
+            assert_eq!(step, 1);
+        }
+        assert!((0..500).all(|frame| ring_index(frame, 30) < 30));
+    }
+
+    #[test]
+    fn a_moved_page_is_a_sequence_by_its_name() {
+        let sequence: Sequence = "text.0.-20".parse().unwrap();
+        assert_eq!(
+            sequence,
+            Sequence::Moved {
+                page: Page::Text,
+                right: 0,
+                down: -20
+            }
+        );
+        assert_eq!(sequence.name(), "text.0.-20");
+        assert_eq!(
+            "grain.16.0".parse::<Sequence>().unwrap().name(),
+            "grain.16.0"
+        );
+        for wrong in [
+            "text",
+            "text.0",
+            "text.0.1.2",
+            "paper.0.1",
+            "text.x.1",
+            "text.0.999",
+        ] {
+            assert!(wrong.parse::<Sequence>().is_err(), "{wrong}");
+        }
+        for name in ["scroll", "drag", "motion", "pointer"] {
+            assert_eq!(name.parse::<Sequence>().unwrap().name(), name);
+        }
+        // Frame 3 is the page moved three times.
+        let (mut by_name, mut by_hand) = (Picture::new(320, 240), Picture::new(320, 240));
+        render(sequence, 3, &mut by_name);
+        render_moved(Page::Text, 0, -60, &mut by_hand);
+        assert_eq!(by_name, by_hand);
+    }
+
+    #[test]
+    fn a_moved_page_is_the_page_moved() {
+        for page in [Page::Text, Page::Grain] {
+            a_moved_page(page);
+        }
+        // No block of the grain is found again nearby.
+        let mut grain = Picture::new(320, 240);
+        render_moved(Page::Grain, 0, 0, &mut grain);
+        let block = |x: usize, y: usize| -> Vec<u8> {
+            (0..16)
+                .flat_map(|row| grain.luma[(y + row) * 320 + x..][..16].to_vec())
+                .collect()
+        };
+        let here = block(160, 112);
+        for y in (48..176).step_by(4) {
+            for x in (96..224).step_by(4) {
+                assert!((x, y) == (160, 112) || block(x, y) != here);
+            }
+        }
+    }
+
+    fn a_moved_page(page: Page) {
+        let mut still = Picture::new(320, 240);
+        render_moved(page, 0, 0, &mut still);
+        // The page is not blank.
+        let dark = still.luma.iter().filter(|&&luma| luma < 100).count();
+        assert!(dark > 5000, "{page:?}: {dark}");
+        for (right, down) in [(0, 20), (0, -20), (7, 0), (-7, 0), (24, -36), (-48, 16)] {
+            let mut moved = Picture::new(320, 240);
+            render_moved(page, right, down, &mut moved);
+            let (mut same, mut differ) = (0, 0);
+            for y in 0..240i32 {
+                for x in 0..320i32 {
+                    let (from_x, from_y) = (x - right, y - down);
+                    if !(0..320).contains(&from_x) || !(0..240).contains(&from_y) {
+                        continue;
+                    }
+                    let here = moved.luma[y as usize * moved.coded_width + x as usize];
+                    let there = still.luma[from_y as usize * still.coded_width + from_x as usize];
+                    if here == there {
+                        same += 1
+                    } else {
+                        differ += 1
+                    }
+                }
+            }
+            assert_eq!(differ, 0, "{right},{down}");
+            assert!(same > 320 * 240 / 2);
+        }
     }
 
     #[test]
