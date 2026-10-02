@@ -109,6 +109,32 @@ other reads, such as the video menu's, from a 5-second cache. Both WebRTC
 transports (H.264 and VP8) are unavailable in the video menu while
 `webrtcBlocked` is set, and a page using one falls back to MJPEG.
 
+## QUIC transport (plan of 2026-10-01)
+
+The QUIC transport (`docs/design/quic-transport-v1.md`) listens on UDP 443
+while its switch is on. No rule is added for it in any mode:
+
+| Mode | UDP 443 from the page's network | The page |
+| --- | --- | --- |
+| baseline | accepted, like everything | QUIC can be chosen |
+| moderate | accepted from the local ranges, like every new local-source connection; dropped from elsewhere | QUIC can be chosen from a local address |
+| restricted | dropped: only local-source HTTPS (TCP 443) and SSH come in | only Standard is offered, with the reason |
+| paranoid | dropped: only local-source HTTPS comes in | only Standard is offered, with the reason |
+
+- The firewall status reports `quicBlocked` beside `webrtcBlocked`, true in
+  Restricted and Paranoid. The web server answers a session request with
+  `blocked` while it is set and `GET /api/transport` says so, which is how
+  the page knows why before it tries.
+- The rule and the refusal are tested on the host
+  (`the_quic_port_is_closed_in_the_restrictive_modes_only` and the transport
+  tests of the server, and the page's contract `quic_transport_contract.mjs`,
+  which plays a blocked port). On the board
+  the transport was exercised in Baseline only: the plan forbids leaving a
+  mode change in place, and a mode change was not needed to show the rule.
+- Whether Restricted should admit UDP 443 from the local ranges, as it
+  admits TCP 443, is left to the operator; it would be one rule beside the
+  HTTPS one and `quicBlocked` false in that mode.
+
 ## Remaining implementation and acceptance gates
 
 1. Typed four-mode control request/status, explicit confirmation identity and

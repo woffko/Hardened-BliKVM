@@ -77,3 +77,26 @@ texts are installed with the encoder under
   this software is based in part on the work of the Independent JPEG Group.
 
 All three are compatible with the project's GPL-3.0-only.
+
+## Rust crates of the QUIC gateway
+
+The QUIC transport (`docs/design/quic-transport-v1.md`) adds a QUIC and TLS
+stack from crates.io, pinned in `Cargo.lock`: `wtransport` 0.7.2
+(WebTransport over HTTP/3) on `quinn` 0.11.12, `rustls` 0.23.45 with `ring`
+0.17.14, and `rcgen` 0.14.10 for the gateway's certificate. It is linked
+into one binary, `bli-kvm-quic-gateway`; the web server uses it only in its
+tests, as a client.
+
+The lock gained 94 external packages with it; 68 of them are built for the
+board, the others belong to other targets or to tests. Each declares its
+licence: MIT OR Apache-2.0 in its spellings (61), Unicode-3.0 (18, the
+Unicode tables of the URL parser), MIT (7), ISC (2), Apache-2.0 OR ISC OR
+MIT (2), BSD-2-Clause (1), MIT OR Apache-2.0 OR Zlib (1), Zlib OR Apache-2.0
+OR MIT (1), and Apache-2.0 AND ISC (1, `ring`). All are compatible with the
+project's GPL-3.0-only. `tools/license_inventory.py --report` lists 313
+packages for the whole workspace, 80 of them its own, and none without a
+declared licence.
+
+`ring` compiles C and assembly for the board. It is built by the project's
+recipe for C code (`scripts/build-aarch64.sh`: clang against the pinned musl
+headers, `rust-lld`), and its objects carry no path of the build machine.

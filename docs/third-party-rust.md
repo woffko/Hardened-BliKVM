@@ -198,3 +198,19 @@ Reproduce the raw Rust inventory with:
 ```sh
 cargo metadata --locked --offline --format-version 1
 ```
+
+The QUIC gateway (plan of 2026-10-01, `docs/design/quic-transport-v1.md`)
+adds `wtransport` 0.7.2 with the features `quinn`, `ring` and `self-signed`
+as its one direct addition; `quinn` 0.11.12, `rustls` 0.23.45, `ring`
+0.17.14 and `rcgen` 0.14.10 come with it. The lock gained 94 external
+packages and two workspace crates (`bli-kvm-quic-protocol`,
+`bli-kvm-quic-gateway`). 68 of the external ones are built for the board,
+40 of those (URL parsing with the Unicode tables, an X.509 parser, the
+native certificate store) only because the library's features cannot leave
+them out; the rest belong to other targets or to tests. The stack is a
+normal dependency of `bli-kvm-quic-gateway` alone and a development
+dependency of the web server, whose tests open sessions as a page does. At
+the end of that plan the locked graph has 313 packages, 80 of the workspace
+and 233 external, each with a declared licence expression (`ISC`,
+`BSD-2-Clause`, `Zlib` as one option and `Apache-2.0 AND ISC` for `ring`
+beside the ones above).

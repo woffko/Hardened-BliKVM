@@ -33,6 +33,28 @@ privilege boundary of every feature and the reference contract we keep.
   switch is off, and the helper that does the work re-reads the switch file
   and refuses on its own. A GUI that ignores the state gains nothing.
 
+## The QUIC transport's switch (plan of 2026-10-01)
+
+"QUIC on this device" (Settings > Network > Transport,
+`docs/design/quic-transport-v1.md`) is a switch of the same kind and is off
+by default, but it is not a key of the switch file above. Like the SSH
+switch it is the enablement of a unit: on enables and starts
+`hardened-blikvm-quic.service`, off stops and disables it, and the state is
+read back from systemd, so one state survives a reboot and the switch file,
+which refuses unknown keys, keeps its format for older slots.
+
+- Only an authenticated session with CSRF may change it
+  (`POST /api/transport/quic/enable`, `.../disable`); switching it on asks
+  first and names the UDP port.
+- It is enforced twice, below the web server: while it is off the unit does
+  not run and nothing listens on the port, and the server hands out no
+  session token because no gateway is on its link
+  (`the_switch_is_enforced_twice`).
+- The gateway is a process of its own under its own user, with one
+  capability (binding the port) and no authority: it redeems the page's
+  token at the server and passes requests on. What a session may do is
+  decided by the server for the web session behind it.
+
 ## Privilege boundaries
 
 The network-facing server stays unprivileged. Privileged work runs in helpers

@@ -947,6 +947,33 @@ What the board showed that the host had not (fixed before these numbers):
 Receipts: `evidence/private/quic-video-device-20261002-seq64-*.json`,
 `h264-webrtc-seq64-*.json`, `quic-q3-state-*.json`.
 
+## Standard against QUIC
+
+What the measurements of this note say, side by side:
+
+| | Standard | QUIC |
+| --- | --- | --- |
+| A key report and its answer, host, direct, median | 4.0 ms (HTTP/1.1, a request each) | 1.0 ms (one stream) |
+| The same, 50 ms each way, median | 103.5 ms | 102.6 ms |
+| The same, 50 ms each way and 2% loss, 99th percentile | 504.5 ms (a retransmission, modelled) | 335.2 ms (measured) |
+| A refused report on the board, median | 15.3 to 15.7 ms (TLS, nginx, the server) | 2.2 to 2.5 ms |
+| A frame from its first packet to the screen, board | 28 ms (WebRTC: 26 ms of jitter buffer) | 1.1 ms |
+| A moving picture on a path that loses 1% of its datagrams | WebRTC sends lost packets again (not measured here) | 23 of 30 frames a second (host) |
+| The same with 3% lost | | 18 of 30 frames a second (host) |
+| What must be open | TCP 443, and for WebRTC a UDP range with ICE | UDP 443 beside TCP 443 |
+
+- Input gains most where there is delay and loss: a report no longer waits
+  behind a stalled TCP connection, and on the board it saves the HTTPS
+  round through nginx.
+- The picture arrives sooner by the jitter buffer, about 27 ms, and a frame
+  that is shown is never old. On a path that loses datagrams all the time
+  it shows fewer frames than a transport that sends them again would.
+- This is why the browser's default stays Standard: QUIC is the better
+  choice on a clean or merely slow path, and where a single UDP port is
+  easier to pass than a WebRTC negotiation. Whether it becomes the default
+  is the operator's decision; a parity fragment per frame would be the step
+  that makes it good on lossy paths as well.
+
 ## Changes against the plan
 
 | Plan | Now | Why |

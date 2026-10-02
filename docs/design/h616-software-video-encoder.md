@@ -295,3 +295,64 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
   the encoder's journal) and the probe kept decoding.
 - MJPEG still offers no quality: the capture device compresses the JPEG
   itself.
+
+## The frame socket and QUIC viewers (2026-10-02, QUIC plan Q3)
+
+The H.264 unit serves its encoded frames to the QUIC gateway as well
+(`docs/design/quic-transport-v1.md` has the transport; this is the encoder's
+side).
+
+- `BLI_KVM_ENCODER_FRAME_SOCKET` (`/run/hardened-blikvm-h264/frames.sock`)
+  carries every encoded frame as a record: a 32-byte header (stream, frame
+  and reference ids, size, picture size, capture time on the board's
+  monotonic clock) and the access unit in Annex B form. Only the user named
+  by `BLI_KVM_ENCODER_FRAME_USER` is served; the VP8 unit has no such
+  socket. Janus keeps its RTP: one encoder serves both kinds of viewer, and
+  the server holds its demand for either.
+- A client asks for a key frame by writing a byte; one is made at most
+  every 250 ms. The capture loop lets its next frame through for a request
+  that is due and for a viewer that has just come, so a still screen, which
+  gives the encoder a frame only every 2 s, answers at once. A WebRTC
+  viewer on a still screen gains the same: its first picture no longer
+  waits for the periodic frame.
+- The unit may run 40 tasks (16 before): six threads of the process, six of
+  x264, one for every viewer's demand, two for every client of the frame
+  socket. An encoder for another size is made after the old one is gone.
+  With both alive for a moment the old limit refused x264's threads, x264
+  could not be opened and the process ended: seen on the board when the
+  first QUIC viewer came, and once before in the kernel's log.
+- An encoder that ends is started again by its unit 2 s later. The server
+  now holds its viewers' demand again as soon as the socket is back; before,
+  the new process had nobody to work for until the viewers negotiated anew.
+- The binary for the board is built like the others, with the paths of the
+  build machine mapped away (`scripts/rustc-remap-wrapper.sh`, as
+  `scripts/build-aarch64.sh` sets it up) and a target directory of its own,
+  and then passes `scripts/verify-aarch64-elf.sh`. The builds before this
+  one carried 19 paths of the toolchain and the crate registry in their
+  panic messages.
+
+  The build, from the repository's root, with the three libraries built for
+  aarch64 by `scripts/build-libvpx.sh`, `scripts/build-x264.sh` and
+  `scripts/build-libjpeg-turbo.sh` and the musl headers of
+  `scripts/musl-headers.sh`:
+
+  ```sh
+  export CC_aarch64_unknown_linux_musl=clang
+  export CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-linux-musl -nostdinc \
+    -isystem $MUSL_HEADERS/include -isystem $(clang -print-resource-dir)/include \
+    -ffile-prefix-map=$PWD=/src"
+  export BLI_KVM_REMAP_PROJECT_ROOT="$PWD"
+  export BLI_KVM_REMAP_RUST_SYSROOT="$(rustc --print sysroot)"
+  export BLI_KVM_REMAP_CARGO_HOME="$CARGO_HOME"
+  export RUSTC_WRAPPER="$PWD/scripts/rustc-remap-wrapper.sh"
+  export BLI_KVM_LIBVPX_DIR=... BLI_KVM_X264_DIR=... BLI_KVM_LIBJPEG_TURBO_DIR=...
+  CARGO_TARGET_DIR=$ENCODER_TARGET cargo build --locked --release \
+    --target aarch64-unknown-linux-musl -p bli-kvm-video-encoder \
+    --features h264,turbojpeg
+  scripts/verify-aarch64-elf.sh \
+    $ENCODER_TARGET/aarch64-unknown-linux-musl/release/bli-kvm-video-encoder
+  ```
+
+  The wrapper is not part of cargo's fingerprint: a target directory that
+  was filled without it keeps the old objects, so the directory must be one
+  that was only ever used with it.
