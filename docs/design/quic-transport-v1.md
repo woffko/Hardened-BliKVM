@@ -947,6 +947,15 @@ What the board showed that the host had not (fixed before these numbers):
 Receipts: `evidence/private/quic-video-device-20261002-seq64-*.json`,
 `h264-webrtc-seq64-*.json`, `quic-q3-state-*.json`.
 
+### Browsers (Q4.2)
+
+| Browser | WebTransport | Session with the certificate's hash | H.264 in WebCodecs | The page with QUIC chosen |
+| --- | --- | --- | --- | --- |
+| Chromium 149 (headless, Linux) | yes | yes | yes | input and the picture over the session: every probe and contract above |
+| Firefox 156.0.1 (headless, Linux, through its geckodriver) | yes | yes, ready after 34 ms | yes | the session is open, the picture is drawn from it at 1920x1080 (`tools/device/quic_firefox_probe.mjs`, on the board) |
+| Safari | not checked: none at hand | | | |
+| Chrome on Android, Safari on iOS | not checked: left to the operator | | | |
+
 ## Standard against QUIC
 
 What the measurements of this note say, side by side:
@@ -985,3 +994,4 @@ What the measurements of this note say, side by side:
 | The frame socket open to the gateway's group | open to connect to, serving the gateway's user only | the gateway is in no group the other units share; the encoder checks who connects, as the server does on its link |
 | The page receives in the existing decoder worker (`direct.worker.ts`) | a worker of its own, `web/src/lib/quic/video.worker.ts` | the existing worker belongs to the Direct mode, which this board does not offer, and speaks that mode's WebSocket records with a fixed codec; reassembly, the chain, recovery and the board's clock are another protocol, and the Direct mode stays as it was |
 | Q3.6: the picture on the board at 1% and 3% loss | on the board with the still screen its target showed; a moving picture under the same loss on the host | the probes may not touch the target's keyboard or mouse, and nothing moved on its screen: one frame every 2 s, half of them on a stream, loses nothing in a minute |
+| Firefox checked in Q0.3 | checked in Q4.2 | Q0 took it for absent; it was installed |
