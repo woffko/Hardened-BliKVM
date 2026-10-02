@@ -186,6 +186,7 @@ node --check tools/playwright/quic_input_device_probe.mjs
 node --check tools/playwright/quic_video_contract.mjs
 node --check tools/playwright/quic_video_device_probe.mjs
 node --check tools/playwright/quic_video_measure.mjs
+node --check tools/playwright/quic_firewall_device_probe.mjs
 node --check tools/device/quic_firefox_probe.mjs
 node --check tools/net/udp_impair_proxy.mjs
 node --check tools/net/tcp_impair_proxy.mjs
