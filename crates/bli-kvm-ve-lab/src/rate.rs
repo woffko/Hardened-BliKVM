@@ -4,7 +4,12 @@
 //!
 //! The bound is the one the product's x264 has today: a leaky bucket of one
 //! second at the target rate. A frame that would not fit is encoded once
-//! more at a higher QP, with the reference left as it was.
+//! more at a higher QP, with the reference left as it was. If it does not
+//! fit then either, it is not sent: the stream gets a frame that says
+//! "nothing changed" in its place, which costs a few bytes, and the picture
+//! stands still for that frame. That is what keeps the rate when the
+//! coarsest quantiser is not enough, as on a picture that changes
+//! everywhere at 1.5 Mbit/s.
 
 /// The QPs the controller uses: all the syntax has, as the product's x264
 /// may. The engine encodes at every one of them (V3.4).
@@ -37,8 +42,11 @@ pub struct RateControl {
     qp: f64,
     /// The last key frame's bits and QP: what the next one is planned by.
     last_key: Option<(f64, i32)>,
-    /// Frames that did not fit even at their second QP.
+    /// Frames that went out although the bucket had no room for them: key
+    /// frames, which cannot be left out.
     pub overflows: u32,
+    /// Frames that were left out.
+    pub skipped: u32,
 }
 
 fn steps(ratio: f64) -> f64 {
@@ -55,7 +63,13 @@ impl RateControl {
             qp: QP_START as f64,
             last_key: None,
             overflows: 0,
+            skipped: 0,
         }
+    }
+
+    /// Whether a frame of `bits` may go out now.
+    pub fn fits(&self, bits: u64) -> bool {
+        bits as f64 <= self.room()
     }
 
     /// What the bucket still takes.
@@ -95,6 +109,15 @@ impl RateControl {
         let allowed = (self.room() * PLANNED).max(1.0);
         let more = steps(bits / allowed).ceil().clamp(1.0, 24.0) as i32;
         Some((qp + more).min(QP_MAX))
+    }
+
+    /// The frame was left out: `bits` of "nothing changed" went out in its
+    /// place, after `qp` was not enough.
+    pub fn left_out(&mut self, bits: u64, qp: i32) {
+        self.skipped += 1;
+        self.fullness = (self.fullness + bits as f64).min(self.capacity);
+        // The next frame starts from where this one failed.
+        self.qp = self.qp.max(qp as f64);
     }
 
     /// The frame went out with `bits` at `qp`.
@@ -150,8 +173,14 @@ mod tests {
                 qp = higher;
                 bits = cost(complexity(frame), qp, key);
             }
-            control.sent(bits, qp, key);
-            sent.push(bits);
+            if key || control.fits(bits) {
+                control.sent(bits, qp, key);
+                sent.push(bits);
+            } else {
+                // A frame of skipped macroblocks: 80 bits.
+                control.left_out(80, qp);
+                sent.push(80);
+            }
         }
         sent
     }
@@ -220,6 +249,23 @@ mod tests {
         assert_eq!(control.next_qp(false), QP_MIN);
         let (_, high) = worst_window(&sent, 300, 80_000_000.0);
         assert!(high < 0.1, "{high}");
+    }
+
+    #[test]
+    fn a_picture_too_costly_at_any_qp_is_held_by_leaving_frames_out() {
+        for kbps in [1500, 2500] {
+            let mut control = RateControl::new(kbps, 30);
+            // 100 kbit a frame at the coarsest QP: twice what 1.5 Mbit/s has.
+            let sent = run(&mut control, 1200, 100_000, |_| 1_130_000.0);
+            assert_eq!(control.overflows, 0, "{kbps}");
+            assert!(control.skipped > 100, "{kbps}: {}", control.skipped);
+            // Every ten seconds are within 12% of the rate, the first
+            // included, and the bucket is never overrun.
+            let (low, high) = worst_window(&sent, 300, kbps as f64 * 10_000.0);
+            assert!(low > 0.88 && high < 1.12, "{kbps}: {low} to {high}");
+            // Frames that go out are at the coarsest QP.
+            assert_eq!(control.next_qp(false), QP_MAX);
+        }
     }
 
     #[test]

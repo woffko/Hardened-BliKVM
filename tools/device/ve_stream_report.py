@@ -6,8 +6,9 @@ usage: ve_stream_report.py RESULTS_DIR [--markdown]
 
 For every run: the frames, the rate (mean, and the lowest and highest of
 all windows of ten seconds), the engine's and the reference's mean luma
-PSNR, the time of an encode and of a whole frame, second passes, and for
-the drift check the mean PSNR of frames 30 to 60 against the last 30.
+PSNR, the time of an encode and of a whole frame, second passes, frames
+left out, and for the drift check the mean PSNR of frames 30 to 60 against
+the last 30.
 """
 
 import json
@@ -75,6 +76,7 @@ def rows(directory):
             "frame_ms": (run["frameMicros"] or {}).get("mean", 0) / 1000,
             "fps": run["framesPerSecond"],
             "second_passes": len(run["secondPasses"]),
+            "left_out": run.get("framesLeftOut", 0),
             "overflows": run.get("overflows"),
             "late": run.get("lateFrames"),
             "early_db": mean(db[30:60]),
@@ -91,7 +93,7 @@ def main(arguments):
     header = [
         "run", "frames", "ffmpeg", "kbit/s", "10 s low", "10 s high", "engine dB",
         "x264 dB", "diff", "x264 kbit/s", "encode ms", "max", "frame ms", "x264 ms",
-        "2nd", "30-60 dB", "last 30 dB",
+        "2nd", "left out", "30-60 dB", "last 30 dB",
     ]
     table = []
     for row in rows(arguments[0]):
@@ -116,6 +118,7 @@ def main(arguments):
             show(row["frame_ms"], 1),
             show(row["x264_ms"], 1),
             str(row["second_passes"]),
+            str(row["left_out"]),
             show(row["early_db"]),
             show(row["late_db"]),
         ])

@@ -918,6 +918,40 @@ Receipts: `evidence/private/ve-lab-v3-20261002-p-first`, `-stream-try`,
 `-p300-qp30`, `-time-idle`, `-time-guards`, `-rates-a` (the alarm),
 `-low-qp`.
 
+### V3.5, 2026-10-02: rate control in software
+
+The engine is given a QP for a frame and nothing else; the stream's rate
+is steered by the lab tool (`rate.rs`), as the product's encoder will do
+it:
+
+- The bound is the product's of today: a leaky bucket of one second at
+  the target rate, which x264 is given as its buffer.
+- A frame's QP follows from the bytes of the frames before: a frame that
+  cost more than its share raises the QP of the next (by at most 3), one
+  that cost less lowers it (by at most 1). A frame's share is the average,
+  a little more while the bucket is below three tenths, less above. Every
+  QP from 0 to 51 is used.
+- A key frame's QP is planned from the last key frame's bytes into what
+  the bucket has room for.
+- A frame that does not fit the bucket is encoded once more at the QP its
+  size calls for, against the same reference: the engine has two sets of
+  buffers, and a pass that is thrown away has written only the frame's own.
+- A frame that does not fit then either is left out: the stream gets a
+  frame of skipped macroblocks in its place (ten bytes at 1920x1080, made
+  in software), which a decoder shows as the picture before it. The engine
+  cannot quantise more coarsely than QP 51, and on the hardest sequence
+  that is 3 Mbit/s: at 1.5 and 2.5 Mbit/s the first runs of V3.4 made twice
+  and 1.24 times their rate, with 148 and 146 frames beyond the bucket.
+  Leaving frames out is what holds the rate there, at the price of a
+  picture that moves in fewer steps.
+
+Tests on the build host run the controller against a model of an encoder
+(bits halve with six steps of QP): a steady picture is held within 5% in
+every ten seconds at 1.5 to 8 Mbit/s; a change of scene to ten times the
+cost overruns nothing; a key frame every second fits; a picture that fits
+at no QP is held within 12% by leaving frames out. The numbers on the
+board are V3.4's.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the

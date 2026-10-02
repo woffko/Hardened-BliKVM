@@ -386,6 +386,24 @@ impl<E: Engine> Session<E> {
         })
     }
 
+    /// A frame that says "nothing changed" in the place of the frame that
+    /// is next: made in software, the engine is not asked. The stream goes
+    /// on by one frame; the reference stays the last frame the engine made,
+    /// which is what a decoder shows for this one.
+    pub fn unchanged(&mut self) -> Encoded {
+        let began = std::time::Instant::now();
+        let bytes = crate::standin::unchanged_frame(&self.stream, self.frame_num);
+        self.frame_num += 1;
+        Encoded {
+            key: false,
+            qp: crate::headers::INITIAL_QP,
+            bytes,
+            status: 0,
+            time: Duration::ZERO,
+            total: began.elapsed(),
+        }
+    }
+
     /// The pass is the frame: the next one refers to it.
     pub fn accept(&mut self, encoded: &Encoded) {
         self.index += 1;
@@ -644,6 +662,40 @@ mod tests {
         render(Sequence::Drag, 4, &mut picture);
         assert!(twice.encode(&picture, false, 30).is_ok());
         assert_eq!(twice.broken_guard(), None);
+    }
+
+    #[test]
+    fn a_frame_left_out_counts_in_the_stream_and_not_for_the_engine() {
+        let stream = Stream {
+            chroma_qp_offset: 0,
+            ..stream(320, 240)
+        };
+        let mut picture = Picture::new(320, 240);
+        let mut session =
+            Session::open(FakeEngine::newer(), Hypothesis::H6, stream, &stream).unwrap();
+        render(Sequence::Drag, 0, &mut picture);
+        session.encode(&picture, false, 30).unwrap();
+        // The second frame is tried and left out; the third is encoded.
+        render(Sequence::Drag, 1, &mut picture);
+        session.pass(&picture, false, 51, true).unwrap();
+        let unchanged = session.unchanged();
+        assert_eq!(session.frames(), 1);
+        render(Sequence::Drag, 2, &mut picture);
+        let third = session.encode(&picture, false, 30).unwrap();
+        assert_eq!(session.frames(), 2);
+        // In the stream the frames count on: 1 for the one left out, 2 after it.
+        let frame_num = |bytes: &[u8]| {
+            let unit = &units(bytes)[0];
+            assert_eq!(unit.0, 0x41);
+            let mut source = BitSource::new(&unit.1);
+            source.ue();
+            source.ue();
+            source.ue();
+            source.bits(8)
+        };
+        assert_eq!(frame_num(&unchanged.bytes), Some(1));
+        assert_eq!(frame_num(&third.bytes), Some(2));
+        assert!(unchanged.bytes.len() < 16);
     }
 
     #[test]

@@ -708,6 +708,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     let (mut sizes, mut qps, mut encode_micros, mut frame_micros) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let (mut keys, mut second_passes, mut late, mut resets) = (Vec::new(), Vec::new(), 0u32, 0u32);
+    let mut left_out = Vec::new();
     let mut failure = None;
     let mut first_frame = Vec::new();
     let mut force_key = false;
@@ -749,12 +750,23 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             let first = session
                 .pass(source, key, qp, true)
                 .map_err(|error| error.to_string())?;
-            match control.again(first.bytes.len() as u64 * 8, qp) {
-                None => Ok((first, 1)),
-                Some(higher) => session
-                    .pass(source, key, higher, false)
-                    .map(|second| (second, 2))
-                    .map_err(|error| error.to_string()),
+            let (last, passes) = match control.again(first.bytes.len() as u64 * 8, qp) {
+                None => (first, 1),
+                Some(higher) => (
+                    session
+                        .pass(source, key, higher, false)
+                        .map_err(|error| error.to_string())?,
+                    2,
+                ),
+            };
+            // A frame that fits at no QP is left out, unless the stream
+            // needs it to begin with.
+            if last.key || control.fits(last.bytes.len() as u64 * 8) {
+                Ok((last, passes))
+            } else {
+                let unchanged = session.unchanged();
+                control.left_out(unchanged.bytes.len() as u64 * 8, last.qp);
+                Ok((unchanged, 0))
             }
         })();
         if timeout_at == Some(frame) {
@@ -788,9 +800,14 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 break;
             }
         };
-        session.accept(&encoded);
-        if let Some(control) = control.as_mut() {
-            control.sent(encoded.bytes.len() as u64 * 8, encoded.qp, encoded.key);
+        // No pass: the frame was left out, and the control knows.
+        if passes > 0 {
+            session.accept(&encoded);
+            if let Some(control) = control.as_mut() {
+                control.sent(encoded.bytes.len() as u64 * 8, encoded.qp, encoded.key);
+            }
+        } else {
+            left_out.push(frame);
         }
         if let Err(error) = out.write_all(&encoded.bytes) {
             failure = Some(format!("{stream_path}: {error}"));
@@ -860,6 +877,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "resetsAfterTimeout": resets,
         "keyFrames": keys,
         "secondPasses": second_passes,
+        "framesLeftOut": left_out.len(),
         "overflows": control.map(|control| control.overflows),
         "frameBytes": sizes,
         "frameQp": qps,
