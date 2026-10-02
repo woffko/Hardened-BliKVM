@@ -74,11 +74,13 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       engine wrote, and what the engine makes of memory it did not write itself.
       With tight the buffers have the sizes a driver would give them, not the lab's.
       An encode that fails ends the run and is part of the answer.
-  bli-kvm-ve-lab overflow MAP WIDTHxHEIGHT QP TOLD_BYTES STREAM OUTPUT
+  bli-kvm-ve-lab overflow MAP WIDTHxHEIGHT QP TOLD_BYTES STREAM OUTPUT [noise]
       what the engine does at the end of its stream buffer: a key frame of a picture
       that changes everywhere, with the engine told that the buffer ends after
       TOLD_BYTES of it while the buffer goes on; then the engine is reset and the
-      same frame is encoded into the whole buffer and written to STREAM
+      same frame is encoded into the whole buffer and written to STREAM. With noise
+      the picture is random bytes, the most a frame can cost: it may not fit the
+      whole buffer either, which is then part of the answer
   bli-kvm-ve-lab search MAP WIDTHxHEIGHT QP FRAMES STREAM OUTPUT [grain] [adjust=REG:CLEAR:SET...] RIGHT,DOWN...
       what the engine's search for motion finds: for every vector a key frame and
       FRAMES P frames of a page of text that moves RIGHT,DOWN pixels a frame, at QP;
@@ -910,8 +912,13 @@ fn extents(arguments: &[String]) -> Result<(), String> {
 /// reached; a driver's is the size of a picture, and whoever gives the
 /// engine a picture and a QP decides how many bytes come out.
 fn overflow(arguments: &[String]) -> Result<(), String> {
-    let [map, size, qp, told, stream_path, output] = arguments else {
+    let [map, size, qp, told, stream_path, output, options @ ..] = arguments else {
         return Err(USAGE.into());
+    };
+    let noise = match options {
+        [] => false,
+        [option] if option == "noise" => true,
+        _ => return Err(USAGE.into()),
     };
     let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
     let (width, height) = parse_size(size)?;
@@ -934,7 +941,19 @@ fn overflow(arguments: &[String]) -> Result<(), String> {
         return Err(format!("TOLD_BYTES is less than the buffer's {whole}"));
     }
     let mut picture = Picture::new(width, height);
-    render(Sequence::Motion, 0, &mut picture);
+    if noise {
+        // Bytes of a generator with a fixed seed: nothing an encoder can
+        // predict from its neighbours.
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for byte in picture.luma.iter_mut().chain(picture.chroma.iter_mut()) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *byte = (state >> 32) as u8;
+        }
+    } else {
+        render(Sequence::Motion, 0, &mut picture);
+    }
 
     // The frame into a buffer that is said to end early.
     session.fill_stream_buffer();
@@ -968,6 +987,7 @@ fn overflow(arguments: &[String]) -> Result<(), String> {
 
     // The engine reset, and the same frame into the whole buffer.
     let mut second_bytes = None;
+    let mut whole_outcome = None;
     if failure.is_none() {
         let again = (|| -> Result<Vec<u8>, String> {
             session
@@ -990,6 +1010,28 @@ fn overflow(arguments: &[String]) -> Result<(), String> {
                     bytes.len()
                 );
                 second_bytes = Some(bytes.len());
+            }
+            // Noise may be more than the whole buffer holds: how that
+            // ended is the answer, and the guards say whether it stayed in.
+            Err(error) if noise => {
+                let status = session.engine().read(regs::AVC_STATUS);
+                let bits = session.engine().read(regs::AVC_STREAM_LENGTH);
+                println!(
+                    "overflow: after the reset, into the whole buffer: {error}; status register {}, length register {bits} bits",
+                    hex(status)
+                );
+                whole_outcome = Some(json!({
+                    "error": error,
+                    "statusRegisterAfter": hex(status),
+                    "lengthRegisterBits": bits,
+                }));
+                if let Some(buffer) = session.broken_guard() {
+                    failure = Some(format!("the engine wrote outside the {buffer} buffer"));
+                }
+                session
+                    .engine()
+                    .reset()
+                    .map_err(|error| format!("reset: {error}"))?;
             }
             Err(error) => failure = Some(format!("after the reset: {error}")),
         }
@@ -1014,7 +1056,9 @@ fn overflow(arguments: &[String]) -> Result<(), String> {
             "endWrittenBeyondTheToldEnd": beyond.map(|(_, last)| told + last + 1),
             "steps": first_steps[first_steps.len().saturating_sub(12)..].to_vec(),
         },
+        "noise": noise,
         "frameBytesIntoTheWholeBuffer": second_bytes,
+        "intoTheWholeBuffer": whole_outcome,
         "error": failure,
         "unknownInterrupt": session.engine().unknown_interrupt,
     });
