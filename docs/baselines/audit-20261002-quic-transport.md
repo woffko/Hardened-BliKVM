@@ -122,8 +122,23 @@ of a probe is left.
   design note's changes). The owner recognises the Restricted rules of
   earlier builds as a form of the same mode and replaces them at its start.
   Shown on the host: the owner's tests with a played kernel, and the page's
-  contract in Restricted and Paranoid. The board's probe
-  (`tools/playwright/quic_firewall_device_probe.mjs`, 8dfd826) has not run
-  yet: it needs a slot with this change on the board.
+  contract in Restricted and Paranoid. Shown on the board with slot 65
+  `0.1.0-alpha.10` (source `4602d68`): the probe
+  `tools/playwright/quic_firewall_device_probe.mjs` passed in Restricted
+  and Paranoid and left the board in Baseline
+  (`quic-firewall-device-seq65-20261002.json`). This closes "the
+  restrictive firewall modes on the board" of "Not shown".
+- The regression on slot 65 passed: the GUI walks, VP8 and H.264 over
+  WebRTC, the touch reach probe, and the picture over QUIC
+  (`gui-walk-seq65-*.json`, `vp8-webrtc-seq65-*.json`,
+  `h264-webrtc-seq65-*.json`, `touch-reach-seq65-*.json`,
+  `quic-video-device-seq65-20261002.json`). During the last the target's
+  screen changed about ten times a second, so "a moving picture on the
+  board" is shown for that rate on a clean path: 695 frames in 66 s, a
+  frame 94 ms old in the median, none given up. Under loss it is still
+  shown on the host only.
+- The board was found with the QUIC switch on and the WebRTC quality at
+  8 Mbit/s, both set by the operator after the plan's end state, and was
+  left so.
 - The operator reported that the phone works. A check from the phone with
   QUIC chosen under "This browser uses" is not recorded yet.

@@ -961,6 +961,35 @@ What the board showed that the host had not (fixed before these numbers):
 Receipts: `evidence/private/quic-video-device-20261002-seq64-*.json`,
 `h264-webrtc-seq64-*.json`, `quic-q3-state-*.json`.
 
+### After the plan: slot 65 (2026-10-02)
+
+Slot 65 `0.1.0-alpha.10` carries the firewall rule for Restricted. On the
+board, with the same probes and without a lease:
+
+- **The firewall modes** (`tools/playwright/quic_firewall_device_probe.mjs`).
+  In Restricted the status said that WebRTC is blocked and QUIC is not, the
+  owned table listed the rule, a session opened in 43 ms and its ten pings
+  were answered, and the page drew H.264 from the session, with
+  "H.264 (QUIC)" offered and VP8 closed. In Paranoid the status said both
+  are blocked, the table had no such rule, the server refused a session with
+  `blocked`, and a connection made with the certificate's hash from before
+  got no answer in 4 s. Baseline was applied again, and a session opened.
+- **A picture that changes.** The target's screen changed about ten times a
+  second during this run, and the operator's quality was 8 Mbit/s. In 66 s
+  the page drew 695 frames at 1920x1080, a frame 94 ms after the board took
+  it in the median and 158 ms at the 95th percentile, and added 2.3 ms of
+  its own (7.5 ms at the 95th percentile). No frame was given up and no key
+  frame asked for; the gateway sent 788 frames, 36 of them key frames, and
+  lost no packet. The encoder's own lines of that minute explain the age:
+  at 8 Mbit/s x264 takes 47 ms for a frame, where it takes 28 ms at 2.5.
+- H.264 and VP8 over WebRTC, the GUI walks on the desktop and on a phone's
+  size, and the touch reach probe passed on the same slot.
+
+Receipts: `evidence/private/quic-firewall-device-seq65-20261002.json`,
+`quic-video-device-seq65-20261002.json`, `h264-webrtc-seq65-20261002.json`,
+`vp8-webrtc-seq65-20261002.json`, `gui-walk-seq65-*.json`,
+`touch-reach-seq65-20261002.json`.
+
 ### Browsers (Q4.2)
 
 | Browser | WebTransport | Session with the certificate's hash | H.264 in WebCodecs | The page with QUIC chosen |

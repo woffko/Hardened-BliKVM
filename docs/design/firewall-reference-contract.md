@@ -158,6 +158,15 @@ side of the page's port, UDP 443, while its switch is on:
   `the_quic_port_is_closed_in_paranoid_only` in the server, and the page's
   contracts (`quic_transport_contract.mjs` plays a blocked port,
   `quic_video_contract.mjs` plays Restricted and Paranoid).
+- On the board (2026-10-02, slot 65,
+  `tools/playwright/quic_firewall_device_probe.mjs`): in Restricted the
+  status reported `webrtcBlocked` and not `quicBlocked`, the owned table
+  listed the rule, a session opened and its pings were answered, and the
+  page drew H.264 from the session with VP8 closed; in Paranoid the status
+  reported both, the table had no such rule, the server refused a session
+  with `blocked`, and a connection to the port got no answer; Baseline was
+  applied again afterwards
+  (`evidence/private/quic-firewall-device-seq65-20261002.json`).
 
 ## Remaining implementation and acceptance gates
 
