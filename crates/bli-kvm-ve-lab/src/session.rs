@@ -7,7 +7,7 @@ use crate::{
     engine::{Engine, Fault, Patience, Step, run},
     headers::{Slice, Stream, pps, slice_header, sps},
     picture::Picture,
-    regs::{self, Adjust, Buffers, Hypothesis, Reconstruction, Sizes},
+    regs::{self, Adjust, Buffers, Hypothesis, Reconstruction, Search, Sizes},
 };
 
 /// Bytes kept before and after the part of a buffer the engine is given,
@@ -94,6 +94,8 @@ pub struct Encoded {
     /// The frame as a decoder takes it: with SPS and PPS before a key frame.
     pub bytes: Vec<u8>,
     pub status: u32,
+    /// Which of the session's sets of buffers holds its reconstruction.
+    pub set: usize,
     /// From the start trigger to the end of the wait.
     pub time: Duration,
     /// The whole pass: the picture into the input buffer, the registers,
@@ -109,6 +111,16 @@ pub struct Session<E: Engine> {
     input: Area,
     output: Area,
     buffers: Buffers,
+    /// Three sets of reconstruction buffers: the reference, and two for
+    /// passes over the frame that is next, so that of two passes either
+    /// can become the reference.
+    sets: [Reconstruction; 3],
+    /// The set that holds the reference.
+    reference: usize,
+    /// The set of a pass that the next pass must not write over.
+    kept: Option<usize>,
+    /// The search of the passes from here on; none is the hypothesis' own.
+    search: Option<Search>,
     patience: Patience,
     index: u32,
     frame_num: u32,
@@ -164,8 +176,10 @@ impl<E: Engine> Session<E> {
         let pictures = sizes.reconstruction_luma + sizes.reconstruction_chroma;
         let first = area(&mut engine, "reconstruction 0", pictures)?;
         let second = area(&mut engine, "reconstruction 1", pictures)?;
+        let third = area(&mut engine, "reconstruction 2", pictures)?;
         let first_subpixel = area(&mut engine, "sub-pixel 0", sizes.subpixel)?;
         let second_subpixel = area(&mut engine, "sub-pixel 1", sizes.subpixel)?;
+        let third_subpixel = area(&mut engine, "sub-pixel 2", sizes.subpixel)?;
         let info = area(&mut engine, "macroblock info", sizes.macroblock_info)?;
         let extra = area(&mut engine, "extra", sizes.extra)?;
         // The address the engine is given: the buffer's, in the form the
@@ -179,15 +193,18 @@ impl<E: Engine> Session<E> {
             chroma: at(engine, picture) + sizes.reconstruction_luma as u32,
             subpixel: at(engine, subpixel),
         };
+        let sets = [
+            reconstruction(&engine, &first, &first_subpixel),
+            reconstruction(&engine, &second, &second_subpixel),
+            reconstruction(&engine, &third, &third_subpixel),
+        ];
         let buffers = Buffers {
             input_luma: at(&engine, &input),
             input_chroma: at(&engine, &input) + coded,
             stream: at(&engine, &output),
             stream_bytes: output.bytes as u32,
-            reconstruction: [
-                reconstruction(&engine, &first, &first_subpixel),
-                reconstruction(&engine, &second, &second_subpixel),
-            ],
+            // A pass names its own two.
+            reconstruction: [sets[1], sets[0]],
             macroblock_info: at(&engine, &info),
             extra: at(&engine, &extra),
         };
@@ -199,6 +216,10 @@ impl<E: Engine> Session<E> {
             input,
             output,
             buffers,
+            sets,
+            reference: 0,
+            kept: None,
+            search: None,
             patience: Patience::default(),
             index: 0,
             frame_num: 0,
@@ -244,6 +265,18 @@ impl<E: Engine> Session<E> {
     /// The frames from here on are planned with these fields changed.
     pub fn set_adjusts(&mut self, adjusts: Vec<Adjust>) {
         self.adjusts = adjusts;
+    }
+
+    /// The passes from here on search like this; none is the hypothesis'
+    /// own way.
+    pub fn set_search(&mut self, search: Option<Search>) {
+        self.search = search;
+    }
+
+    /// The next pass over the same frame leaves this pass's reconstruction
+    /// alone, so that either of the two can be accepted.
+    pub fn keep(&mut self, encoded: &Encoded) {
+        self.kept = Some(encoded.set);
     }
 
     /// The frames accepted so far.
@@ -355,18 +388,31 @@ impl<E: Engine> Session<E> {
             let ops = regs::select(&self.hypothesis);
             run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
         }
-        let ops = regs::adjusted(
+        // Written where neither the reference nor a kept pass is. The
+        // plan takes its own set from the first place and the reference
+        // from the second.
+        let own = (0..self.sets.len())
+            .find(|set| *set != self.reference && Some(*set) != self.kept)
+            .expect("three sets, two of them in use");
+        let buffers = Buffers {
+            reconstruction: [self.sets[own], self.sets[self.reference]],
+            ..self.buffers
+        };
+        let mut ops = regs::adjusted(
             regs::frame(
                 &self.hypothesis,
                 &self.stream,
                 stride,
                 &slice,
-                self.index,
-                &self.buffers,
+                0,
+                &buffers,
                 &header_ops,
             ),
             &self.adjusts,
         );
+        if let Some(search) = self.search {
+            ops = regs::adjusted(ops, &[search.adjust()]);
+        }
         let outcome = run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
 
         let status = self.engine.read(regs::AVC_STATUS) & regs::STATUS_ENDED;
@@ -392,6 +438,7 @@ impl<E: Engine> Session<E> {
             qp,
             bytes,
             status,
+            set: own,
             time: outcome.encode_time.unwrap_or_default(),
             total: began.elapsed(),
         })
@@ -405,11 +452,13 @@ impl<E: Engine> Session<E> {
         let began = std::time::Instant::now();
         let bytes = crate::standin::unchanged_frame(&self.stream, self.frame_num);
         self.frame_num += 1;
+        self.kept = None;
         Encoded {
             key: false,
             qp: crate::headers::INITIAL_QP,
             bytes,
             status: 0,
+            set: self.reference,
             time: Duration::ZERO,
             total: began.elapsed(),
         }
@@ -417,6 +466,8 @@ impl<E: Engine> Session<E> {
 
     /// The pass is the frame: the next one refers to it.
     pub fn accept(&mut self, encoded: &Encoded) {
+        self.reference = encoded.set;
+        self.kept = None;
         self.index += 1;
         self.frame_num = if encoded.key { 1 } else { self.frame_num + 1 };
         if encoded.key {
@@ -439,6 +490,7 @@ mod tests {
         bits::{BitSource, without_prevention},
         engine::FakeEngine,
         picture::{Sequence, render},
+        regs::Search,
     };
 
     fn stream(width: u32, height: u32) -> Stream {
@@ -673,6 +725,65 @@ mod tests {
         render(Sequence::Drag, 4, &mut picture);
         assert!(twice.encode(&picture, false, 30).is_ok());
         assert_eq!(twice.broken_guard(), None);
+    }
+
+    #[test]
+    fn of_two_passes_either_can_become_the_reference() {
+        // The last value written to a register.
+        fn last(session: &mut Session<FakeEngine>, reg: u32) -> u32 {
+            let writes = &session.engine().writes;
+            writes.iter().rev().find(|write| write.0 == reg).unwrap().1
+        }
+        let stream = stream(320, 240);
+        let mut picture = Picture::new(320, 240);
+        let mut session =
+            Session::open(FakeEngine::newer(), Hypothesis::H6, stream, &stream).unwrap();
+        render(Sequence::Drag, 0, &mut picture);
+        let key = session.encode(&picture, true, 30).unwrap();
+        assert_eq!(last(&mut session, regs::AVC_ME), regs::ME_NEWER);
+
+        let mut reference = last(&mut session, regs::AVC_REC_LUMA);
+        for (frame, take_first) in [(1, true), (2, false), (3, true)] {
+            render(Sequence::Drag, frame, &mut picture);
+            session.set_search(Some(Search::Exact));
+            let first = session.pass(&picture, false, 30, true).unwrap();
+            assert_eq!(last(&mut session, regs::AVC_ME), regs::ME_NEWER);
+            assert_eq!(last(&mut session, regs::AVC_REF_LUMA), reference);
+            let first_written = last(&mut session, regs::AVC_REC_LUMA);
+            session.keep(&first);
+            session.set_search(Some(Search::Wide));
+            let second = session.pass(&picture, false, 30, false).unwrap();
+            assert_eq!(
+                last(&mut session, regs::AVC_ME),
+                regs::ME_NEWER | regs::ME_REFINE_OFF
+            );
+            // The same reference, and a set of its own.
+            assert_eq!(last(&mut session, regs::AVC_REF_LUMA), reference);
+            let second_written = last(&mut session, regs::AVC_REC_LUMA);
+            assert_ne!(first.set, second.set);
+            assert_ne!(first_written, second_written);
+            assert_ne!(first_written, reference);
+            assert_ne!(second_written, reference);
+
+            let (taken, written) = if take_first {
+                (&first, first_written)
+            } else {
+                (&second, second_written)
+            };
+            session.accept(taken);
+            // What the next pass refers to is what the accepted one wrote.
+            render(Sequence::Drag, frame + 1, &mut picture);
+            session.set_search(None);
+            let next = session.pass(&picture, false, 30, true).unwrap();
+            assert_eq!(last(&mut session, regs::AVC_REF_LUMA), written);
+            assert_eq!(last(&mut session, regs::AVC_ME), regs::ME_NEWER);
+            assert_ne!(next.set, taken.set);
+            // That pass is thrown away: the stream goes on from `taken`.
+            reference = written;
+        }
+        assert_eq!(session.frames(), 4);
+        assert_ne!(key.set, 0);
+        assert_eq!(session.broken_guard(), None);
     }
 
     #[test]

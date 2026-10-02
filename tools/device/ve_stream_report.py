@@ -7,8 +7,9 @@ usage: ve_stream_report.py RESULTS_DIR [--markdown] [--endurance]
 For every run: the frames, the rate (mean, and the lowest and highest of
 all windows of ten seconds), the engine's and the reference's mean luma
 PSNR, the time of an encode and of a whole frame, second passes, frames
-left out, and for the drift check the mean PSNR of frames 30 to 60 against
-the last 30.
+left out, where the search was chosen for every frame the frames encoded
+with both searches and those sent with the wide one, and for the drift
+check the mean PSNR of frames 30 to 60 against the last 30.
 
 With --endurance, what a long run is judged by instead: its length, the
 frames a second it held and the frames that began late, the time of a
@@ -45,6 +46,10 @@ def mean(values):
 
 def show(value, digits=2):
     return "-" if value is None else f"{value:.{digits}f}"
+
+
+def count(value):
+    return "-" if value is None else str(value)
 
 
 def rows(directory):
@@ -96,8 +101,9 @@ def rows(directory):
             "floor": engine.get("floorDb"),
             "below_floor": engine.get("belowFloor"),
             "slow": run.get("framesLongerThanAnInterval"),
-            "period": run.get("period"),
-            "unlike": run.get("framesUnlikeAPeriodBefore"),
+            "period": (run.get("repeat") or run).get("period"),
+            "unlike": (run.get("repeat") or run).get("framesUnlikeAPeriodBefore"),
+            "search": run.get("search") or {},
             "early_db": mean(db[30:60]),
             "late_db": mean(db[-30:]) if len(db) >= 90 else None,
             "error": run.get("error"),
@@ -121,6 +127,7 @@ def endurance(row):
         "-" if row["windows"] is None else str(row["windows"]),
         str(row["second_passes"]),
         str(row["left_out"]),
+        count(row["search"].get("framesWithBoth")),
         "-" if row["decoded"] is None else f"{row['decoded']}, {row['complaints']}",
         show(row["engine_db"]),
         show(row["engine_lowest_db"]),
@@ -131,7 +138,7 @@ def endurance(row):
 
 ENDURANCE_HEADER = [
     "run", "frames", "seconds", "frames/s", "late", "frame ms", "p99", "max", "over 1/fps", "kbit/s",
-    "10 s low", "10 s high", "windows", "2nd", "left out", "decoded, ffmpeg",
+    "10 s low", "10 s high", "windows", "2nd", "left out", "both", "decoded, ffmpeg",
     "mean dB", "lowest dB", "wrong frames", "repeats",
 ]
 
@@ -168,7 +175,7 @@ def main(arguments):
     header = [
         "run", "frames", "ffmpeg", "kbit/s", "10 s low", "10 s high", "engine dB",
         "x264 dB", "diff", "x264 kbit/s", "encode ms", "max", "frame ms", "x264 ms",
-        "2nd", "left out", "30-60 dB", "last 30 dB",
+        "2nd", "left out", "both", "wide", "30-60 dB", "last 30 dB",
     ]
     table = []
     for row in rows(arguments[0]):
@@ -194,6 +201,8 @@ def main(arguments):
             show(row["x264_ms"], 1),
             str(row["second_passes"]),
             str(row["left_out"]),
+            count(row["search"].get("framesWithBoth")),
+            count(row["search"].get("framesWithTheWide")),
             show(row["early_db"]),
             show(row["late_db"]),
         ])

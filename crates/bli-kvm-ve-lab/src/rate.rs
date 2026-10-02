@@ -1,3 +1,6 @@
+//! What is decided for every frame in software: its QP, from the bytes of
+//! the frames before, and which of the engine's two searches it is given.
+//!
 //! Rate control in software: a QP for every frame from the bytes of the
 //! frames before. The engine is given a fixed QP for a frame and nothing
 //! else; what the stream costs is steered here.
@@ -10,6 +13,8 @@
 //! stands still for that frame. That is what keeps the rate when the
 //! coarsest quantiser is not enough, as on a picture that changes
 //! everywhere at 1.5 Mbit/s.
+
+use crate::regs::Search;
 
 /// The QPs the controller uses: all the syntax has, as the product's x264
 /// may. The engine encodes at every one of them (V3.4).
@@ -25,11 +30,22 @@ const GAIN: f64 = 0.5;
 /// A QP falls slowly and rises fast.
 const FALL: f64 = 1.0;
 const RISE: f64 = 3.0;
+/// After a frame that cost next to nothing it may fall faster: the picture
+/// rests, and what it lost while it moved should come back as fast as the
+/// rate pays for it. A step too many is caught by the second pass.
+const FALL_AT_REST: f64 = 3.0;
+/// A frame costs next to nothing below this part of what it was meant to.
+const AT_REST: f64 = 0.25;
 /// The part of the bucket's room a frame is planned into.
 const PLANNED: f64 = 0.8;
 /// How full the bucket is wanted: room above it for a change of scene, and
 /// little more than the rate while it fills at a stream's beginning.
 const WANTED: f64 = 0.3;
+/// The least a frame is meant to cost, as a part of the average, while the
+/// bucket is fuller than wanted. The bucket is full after motion the search
+/// did not follow, which is when the picture has the most to win back: it
+/// is emptied slowly, with nine tenths of the rate still spent.
+const LEAST: f64 = 0.9;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RateControl {
@@ -138,9 +154,95 @@ impl RateControl {
         // Above the level the bucket is wanted at a frame should cost less
         // than the average, below it more.
         let level = self.fullness / self.capacity;
-        let target = self.per_frame * (1.0 + WANTED - level).clamp(0.5, 1.5);
-        let change = (GAIN * steps(bits.max(1.0) / target)).clamp(-FALL, RISE);
+        let target = self.per_frame * (1.0 + WANTED - level).clamp(LEAST, 1.5);
+        let fall = if bits < AT_REST * target {
+            FALL_AT_REST
+        } else {
+            FALL
+        };
+        let change = (GAIN * steps(bits.max(1.0) / target)).clamp(-fall, RISE);
         self.qp = (self.qp + change).clamp(QP_MIN as f64, QP_MAX as f64);
+    }
+}
+
+/// Frames for which the other search is left alone after it was tried.
+const SEARCH_REST: u32 = 3;
+/// The other search is better when its frame is this much smaller.
+const SEARCH_BETTER: f64 = 0.9;
+/// A frame this many times the size of the last one that was tried with
+/// both is tried with both at once: the picture began to move otherwise.
+const SEARCH_AGAIN: u64 = 2;
+
+/// Which of the engine's two searches a frame is given. Neither is the
+/// better one everywhere: the exact one loses a picture that moves down,
+/// the wide one makes text that moves a few pixels cost several times as
+/// much, and loses a frame now and then. A frame is encoded with the
+/// search the frame before it was sent with; when it comes out costly, it
+/// is encoded again with the other one, the smaller of the two is the
+/// frame, and its search is the next frame's. After such a try the other
+/// search rests for three frames, unless a frame costs twice what the
+/// tried one did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchChoice {
+    current: Search,
+    rest: u32,
+    /// The bits of the smaller pass of the last frame tried with both.
+    tried_bits: u64,
+    /// Frames that were encoded with both.
+    pub tried: u32,
+    /// Frames after which the search changed.
+    pub changed: u32,
+}
+
+impl Default for SearchChoice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SearchChoice {
+    pub fn new() -> Self {
+        Self {
+            current: Search::Exact,
+            rest: 0,
+            tried_bits: 0,
+            tried: 0,
+            changed: 0,
+        }
+    }
+
+    /// The search of a frame's first pass.
+    pub fn first(&self) -> Search {
+        self.current
+    }
+
+    /// A frame begins. Called once before every frame.
+    pub fn tick(&mut self) {
+        self.rest = self.rest.saturating_sub(1);
+    }
+
+    /// The search to encode the frame with once more, after its first pass
+    /// made `bits`; none when the frame is not costly (`costly` bits or
+    /// more), or the other search was tried a moment ago on a frame that
+    /// was not much smaller.
+    pub fn other(&self, bits: u64, costly: u64) -> Option<Search> {
+        let due = self.rest == 0 || bits >= SEARCH_AGAIN * self.tried_bits;
+        (bits >= costly && due).then(|| self.current.other())
+    }
+
+    /// Both passes are made. True when the second is the frame; the search
+    /// that made the smaller one is the next frame's.
+    pub fn compared(&mut self, first_bits: u64, second_bits: u64) -> bool {
+        self.tried += 1;
+        // The frame that is tried counts as the first of the rest.
+        self.rest = SEARCH_REST + 1;
+        self.tried_bits = first_bits.min(second_bits);
+        let second = (second_bits as f64) < SEARCH_BETTER * first_bits as f64;
+        if second {
+            self.current = self.current.other();
+            self.changed += 1;
+        }
+        second
     }
 }
 
@@ -266,6 +368,94 @@ mod tests {
             // Frames that go out are at the coarsest QP.
             assert_eq!(control.next_qp(false), QP_MAX);
         }
+    }
+
+    #[test]
+    fn a_picture_that_rests_after_motion_comes_back_at_the_rates_pace() {
+        // A picture that rests costs a frame only what makes it finer:
+        // about a frame's bits at 8 Mbit/s for every step of QP below the
+        // finest it has had (a page of text at 1920x1080, V3.4).
+        let step = |qp: i32| (120_000.0 + (48 - qp).max(-3) as f64 * 12_000.0) as u64;
+        let frame = |qp: i32, finest: i32| 2_400 + (qp..finest).map(step).sum::<u64>();
+
+        let mut control = RateControl::new(8000, 30);
+        // A key frame, and a second of a picture that costs 1.2 Mbit a
+        // frame at any QP: the bucket is full and the QP at its coarsest.
+        control.tick();
+        control.sent(1_000_000, control.next_qp(true), true);
+        for _ in 0..30 {
+            control.tick();
+            let qp = control.next_qp(false);
+            let qp = control.again(1_200_000, qp).unwrap_or(qp);
+            if control.fits(1_200_000) {
+                control.sent(1_200_000, qp, false);
+            } else {
+                control.left_out(80, qp);
+            }
+        }
+        assert_eq!(control.next_qp(false), QP_MAX);
+        assert!(!control.fits(1_200_000));
+
+        let mut finest = QP_MAX;
+        let mut reached = Vec::new();
+        for _ in 0..60 {
+            control.tick();
+            let mut qp = control.next_qp(false);
+            let mut bits = frame(qp, finest);
+            if let Some(higher) = control.again(bits, qp) {
+                qp = higher;
+                bits = frame(qp, finest);
+            }
+            assert!(control.fits(bits));
+            control.sent(bits, qp, false);
+            finest = finest.min(qp);
+            reached.push(finest);
+        }
+        assert_eq!(control.overflows, 0);
+        // The rate pays for about a step a frame: 15 steps to a readable
+        // page, 21 to a good one. A controller that let the QP fall by one
+        // step after a cheap frame, and emptied the bucket first, needed
+        // 30 and 43 frames.
+        let frames_to = |qp: i32| reached.iter().position(|finest| *finest <= qp).unwrap() + 1;
+        assert!(frames_to(36) <= 20, "{}", frames_to(36));
+        assert!(frames_to(30) <= 28, "{}", frames_to(30));
+    }
+
+    #[test]
+    fn a_costly_frame_is_tried_with_the_other_search() {
+        let mut choice = SearchChoice::new();
+        assert_eq!(choice.first(), Search::Exact);
+        // A cheap frame is not tried twice.
+        choice.tick();
+        assert_eq!(choice.other(9_999, 10_000), None);
+        // A costly one is, and the smaller pass is the frame.
+        assert_eq!(choice.other(400_000, 10_000), Some(Search::Wide));
+        assert!(choice.compared(400_000, 60_000));
+        assert_eq!(choice.first(), Search::Wide);
+        assert_eq!((choice.tried, choice.changed), (1, 1));
+        // The other search rests for three frames of that size.
+        for _ in 0..3 {
+            choice.tick();
+            assert_eq!(choice.other(100_000, 10_000), None);
+        }
+        choice.tick();
+        assert_eq!(choice.other(100_000, 10_000), Some(Search::Exact));
+        // A pass that is not a tenth smaller changes nothing.
+        assert!(!choice.compared(100_000, 95_000));
+        assert_eq!(choice.first(), Search::Wide);
+        assert_eq!((choice.tried, choice.changed), (2, 1));
+        // A frame of twice the size does not wait: the picture moves
+        // otherwise now.
+        choice.tick();
+        assert_eq!(choice.other(189_999, 10_000), None);
+        assert_eq!(choice.other(190_000, 10_000), Some(Search::Exact));
+        assert!(choice.compared(190_000, 30_000));
+        assert_eq!(choice.first(), Search::Exact);
+        // And a cheap frame is never tried, whatever came before.
+        for _ in 0..10 {
+            choice.tick();
+        }
+        assert_eq!(choice.other(9_999, 10_000), None);
     }
 
     #[test]
