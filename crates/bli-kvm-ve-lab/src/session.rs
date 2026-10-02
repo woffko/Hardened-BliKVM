@@ -20,6 +20,13 @@ fn marker(position: usize) -> u8 {
     0xa5 ^ (position as u8).wrapping_mul(31)
 }
 
+/// What a work buffer holds before the engine writes into it, where the
+/// lab wants to know how far the engine writes: bytes that look like
+/// nothing an encoder leaves behind.
+fn filler(position: usize) -> u8 {
+    (position.wrapping_mul(2_654_435_761) >> 11) as u8
+}
+
 #[derive(Debug)]
 pub enum Error {
     Memory(io::Error),
@@ -475,6 +482,48 @@ impl<E: Engine> Session<E> {
         }
     }
 
+    /// The buffers the engine writes its own work into: reconstructed
+    /// pictures, sub-pixel planes, what it keeps about macroblocks. Each
+    /// with the bytes the engine is given of it.
+    pub fn work_buffers(&self) -> Vec<(&'static str, usize)> {
+        self.areas
+            .iter()
+            .filter(|area| !matches!(area.name, "input" | "stream"))
+            .map(|area| (area.name, area.bytes))
+            .collect()
+    }
+
+    /// Fills the work buffers with a pattern, so that `written` can tell
+    /// afterwards how far the engine wrote into them. Before the first
+    /// frame: a key frame reads none of them.
+    pub fn fill_work_buffers(&mut self) {
+        for area in self.areas.clone() {
+            if matches!(area.name, "input" | "stream") {
+                continue;
+            }
+            // Made where memory is cached, and copied in one run.
+            let pattern: Vec<u8> = (0..area.bytes).map(filler).collect();
+            self.engine.bytes(area.buffer)[GUARD..GUARD + area.bytes].copy_from_slice(&pattern);
+        }
+    }
+
+    /// The first and the last byte of the part `from..to` of a filled work
+    /// buffer that no longer hold the pattern, counted from `from`; none
+    /// if the engine wrote nothing there, or the buffer has no such part.
+    pub fn written(&mut self, name: &str, from: usize, to: usize) -> Option<(usize, usize)> {
+        let area = *self.areas.iter().find(|area| area.name == name)?;
+        let to = to.min(area.bytes);
+        if from >= to {
+            return None;
+        }
+        // Not cached where it is: copied out in one run.
+        let found = self.engine.bytes(area.buffer)[GUARD + from..GUARD + to].to_vec();
+        let changed = |(at, byte): (usize, &u8)| (*byte != filler(from + at)).then_some(at);
+        let first = found.iter().enumerate().find_map(changed)?;
+        let last = found.iter().enumerate().rev().find_map(changed)?;
+        Some((first, last))
+    }
+
     /// Gives the engine back: no encoder selected.
     pub fn close(mut self) -> Result<E, Error> {
         let ops = regs::deselect(&self.hypothesis);
@@ -725,6 +774,47 @@ mod tests {
         render(Sequence::Drag, 4, &mut picture);
         assert!(twice.encode(&picture, false, 30).is_ok());
         assert_eq!(twice.broken_guard(), None);
+    }
+
+    #[test]
+    fn what_the_engine_wrote_into_a_filled_buffer_is_found() {
+        let stream = stream(320, 240);
+        let mut session =
+            Session::open(FakeEngine::newer(), Hypothesis::H6, stream, &stream).unwrap();
+        let names: Vec<&str> = session
+            .work_buffers()
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(names.contains(&"sub-pixel 0") && names.contains(&"macroblock info"));
+        assert!(!names.contains(&"input") && !names.contains(&"stream"));
+        session.fill_work_buffers();
+        // The guards are not part of what is filled.
+        assert_eq!(session.broken_guard(), None);
+        for (name, bytes) in session.work_buffers() {
+            assert_eq!(session.written(name, 0, bytes), None, "{name}");
+        }
+        // Somebody writes bytes 100 to 4999 of one buffer.
+        let area = *session
+            .areas
+            .iter()
+            .find(|area| area.name == "sub-pixel 1")
+            .unwrap();
+        for position in 100..5000 {
+            session.engine.bytes(area.buffer)[GUARD + position] = !filler(position);
+        }
+        assert_eq!(
+            session.written("sub-pixel 1", 0, area.bytes),
+            Some((100, 4999))
+        );
+        // A part of the buffer is counted from its own beginning.
+        assert_eq!(
+            session.written("sub-pixel 1", 4096, area.bytes),
+            Some((0, 903))
+        );
+        assert_eq!(session.written("sub-pixel 1", 8192, area.bytes), None);
+        assert_eq!(session.written("sub-pixel 0", 0, area.bytes), None);
+        assert_eq!(session.written("no such buffer", 0, 10), None);
     }
 
     #[test]

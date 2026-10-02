@@ -64,6 +64,11 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       search waits for a frame that fits),
       adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or 0xb4c that say how
       the engine searches and decides, changed in every frame's plan)
+  bli-kvm-ve-lab extents MAP WIDTHxHEIGHT FRAMES OUTPUT
+      how far the engine writes into its work buffers: they are filled with a pattern,
+      a key frame and FRAMES P frames of a picture that changes everywhere are encoded,
+      each P frame with both searches, and for every buffer the first and last byte
+      that changed are given beside the sizes the open maps have for it
   bli-kvm-ve-lab search MAP WIDTHxHEIGHT QP FRAMES STREAM OUTPUT [grain] [adjust=REG:CLEAR:SET...] RIGHT,DOWN...
       what the engine's search for motion finds: for every vector a key frame and
       FRAMES P frames of a page of text that moves RIGHT,DOWN pixels a frame, at QP;
@@ -703,6 +708,151 @@ fn parse_vector(value: &str) -> Result<(i32, i32), String> {
         .ok_or_else(|| format!("a vector is RIGHT,DOWN with both up to 256, not {value}"))
 }
 
+/// How far the engine writes into the buffers it is given for its own
+/// work. The lab's buffers are larger than either open map says they must
+/// be, and their guards only tell that the engine stayed inside those;
+/// whoever gives the engine smaller buffers must know what it fills.
+fn extents(arguments: &[String]) -> Result<(), String> {
+    let [map, size, frames, output] = arguments else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let (width, height) = parse_size(size)?;
+    let frames: u32 = frames
+        .parse()
+        .ok()
+        .filter(|frames| (1..=300).contains(frames))
+        .ok_or("FRAMES is a number from 1 to 300")?;
+    let stream = stream(&hypothesis, width, height, true);
+    let room = room_for(&hypothesis, width, height);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
+        .map_err(|error| error.to_string())?;
+    session.fill_work_buffers();
+
+    // A key frame, then P frames with both searches, of which the first
+    // and the second are the frame in turn: every set of buffers is
+    // written, and read as a reference.
+    let mut picture = Picture::new(width, height);
+    let mut failure = None;
+    let mut passes = 0u32;
+    for frame in 0..=frames {
+        render(Sequence::Motion, frame, &mut picture);
+        let attempt = (|| -> Result<(), String> {
+            session.set_search(Some(Search::Exact));
+            let first = session
+                .pass(&picture, frame == 0, 30, true)
+                .map_err(|error| error.to_string())?;
+            passes += 1;
+            if frame == 0 {
+                session.accept(&first);
+                return Ok(());
+            }
+            session.keep(&first);
+            session.set_search(Some(Search::Wide));
+            let second = session
+                .pass(&picture, false, 30, false)
+                .map_err(|error| error.to_string())?;
+            passes += 1;
+            session.accept(if frame % 2 == 1 { &first } else { &second });
+            Ok(())
+        })();
+        session.trace.clear();
+        if let Err(error) = attempt {
+            failure = Some(format!("frame {frame}: {error}"));
+            break;
+        }
+    }
+    if let Some(buffer) = session.broken_guard() {
+        failure.get_or_insert(format!("the engine wrote outside the {buffer} buffer"));
+    }
+
+    // What each map says a stream of this size needs.
+    let (v3s, older) = (regs::Sizes::v3s(&stream), regs::Sizes::older(&stream));
+    let lab = regs::Sizes::lab(&room);
+    let mut rows = Vec::new();
+    for (name, bytes) in session.work_buffers() {
+        // A buffer of pictures holds luma, and chroma behind the room's luma.
+        let parts: Vec<(String, usize, usize, usize, usize)> = if name.starts_with("reconstruction")
+        {
+            vec![
+                (
+                    format!("{name} luma"),
+                    0,
+                    lab.reconstruction_luma,
+                    v3s.reconstruction_luma,
+                    older.reconstruction_luma,
+                ),
+                (
+                    format!("{name} chroma"),
+                    lab.reconstruction_luma,
+                    bytes,
+                    v3s.reconstruction_chroma,
+                    older.reconstruction_chroma,
+                ),
+            ]
+        } else if name.starts_with("sub-pixel") {
+            vec![(name.to_string(), 0, bytes, v3s.subpixel, older.subpixel)]
+        } else if name == "macroblock info" {
+            vec![(
+                name.to_string(),
+                0,
+                bytes,
+                v3s.macroblock_info,
+                older.macroblock_info,
+            )]
+        } else {
+            vec![(name.to_string(), 0, bytes, v3s.extra, older.extra)]
+        };
+        for (part, from, to, v3s_bytes, older_bytes) in parts {
+            let written = session.written(name, from, to);
+            let end = written.map(|(_, last)| last + 1);
+            println!(
+                "extents: {part:24} {} of {:8}; the V3s map says {v3s_bytes}, the older one {older_bytes}",
+                match written {
+                    Some((first, last)) => format!("bytes {first} to {last}"),
+                    None => "nothing written".into(),
+                },
+                to - from,
+            );
+            rows.push(json!({
+                "buffer": part,
+                "bytes": to - from,
+                "firstWritten": written.map(|(first, _)| first),
+                "endWritten": end,
+                "v3sBytes": v3s_bytes,
+                "olderBytes": older_bytes,
+            }));
+        }
+    }
+    let body = json!({
+        "map": hypothesis.name,
+        "width": width,
+        "height": height,
+        "codedWidth": stream.coded_width(),
+        "codedHeight": stream.coded_height(),
+        "pFrames": frames,
+        "passes": passes,
+        "buffers": rows,
+        "error": failure,
+        "unknownInterrupt": session.engine().unknown_interrupt,
+    });
+    let closed = session
+        .close()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    receipt(output, "extents", body)?;
+    match failure {
+        Some(failure) => {
+            println!("extents: {failure}; receipt {output}");
+            Err(failure)
+        }
+        None => {
+            println!("extents: {passes} passes; receipt {output}");
+            closed
+        }
+    }
+}
+
 fn search(arguments: &[String]) -> Result<(), String> {
     let [map, size, qp, frames, stream_path, output, rest @ ..] = arguments else {
         return Err(USAGE.into());
@@ -1304,6 +1454,7 @@ fn main() -> ExitCode {
         Some("encode") => encode(&arguments[1..]),
         Some("stream") => stream_run(&arguments[1..]),
         Some("search") => search(&arguments[1..]),
+        Some("extents") => extents(&arguments[1..]),
         _ => Err(USAGE.into()),
     };
     match result {
