@@ -47,6 +47,11 @@ shift
 mkdir -p "$output"
 
 # One authentication: a master connection that the copies and commands share.
+# A session says nothing while its command runs, and a connection that is
+# silent for half an hour is forgotten by an address translation on the
+# way: the board's side then ends and what it sends back is lost. The
+# client asks the board every twenty seconds whether it is there, and gives
+# the connection up after five minutes without an answer.
 exec 3<&0
 control=$(mktemp -d "${TMPDIR:-/tmp}/ve-lab-ssh.XXXXXX")
 socket="$control/master"
@@ -56,7 +61,8 @@ finish() {
 }
 trap finish EXIT HUP INT TERM
 sshpass -d 3 ssh -M -S "$socket" -o ControlPersist=600 -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 -fN "root@$HOST"
+  -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
+  -o ServerAliveInterval=20 -o ServerAliveCountMax=15 -fN "root@$HOST"
 board() { ssh -S "$socket" "root@$HOST" "$@"; }
 
 directory=$(board 'mktemp -d /tmp/hardened-ve-lab.XXXXXX')
