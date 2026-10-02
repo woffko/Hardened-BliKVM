@@ -3132,6 +3132,34 @@ class PackagingBoundaryTests(unittest.TestCase):
             tmpfiles,
         )
 
+    def test_the_video_engine_lab_is_in_no_package(self) -> None:
+        # The lab tool and the lab module of the hardware H.264 plan give a
+        # root process the video engine. Nothing that is built for a board
+        # may name them, and no crate may depend on the tool.
+        workspace = (ROOT / "Cargo.toml").read_text()
+        self.assertIn('"crates/bli-kvm-ve-lab"', workspace)
+        manifest = (ROOT / "crates/bli-kvm-ve-lab/Cargo.toml").read_text()
+        self.assertIn("publish = false", manifest)
+        for other in (ROOT / "crates").glob("*/Cargo.toml"):
+            if other.parent.name != "bli-kvm-ve-lab":
+                self.assertNotIn("bli-kvm-ve-lab", other.read_text(), other)
+        carriers = [
+            ROOT / "scripts/build-prototype-bundle.sh",
+            ROOT / "tools/build_debian_runtime_package.py",
+            ROOT / "tools/build_debian_update_runtime_package.py",
+            ROOT / "tools/build_production_update_bundle.py",
+            ROOT / "tools/build_system_raw_bundle.py",
+            ROOT / "tools/image/build_sd_image.sh",
+            ROOT / "tools/device/deploy_vp8.sh",
+            ROOT / "tools/device/deploy_native_profile.sh",
+        ]
+        carriers += [path for path in (ROOT / "packaging").rglob("*") if path.is_file()]
+        self.assertGreater(len(carriers), 20)
+        for carrier in carriers:
+            text = carrier.read_text(errors="replace")
+            for name in ("ve-lab", "ve_lab"):
+                self.assertNotIn(name, text, carrier)
+
 
 if __name__ == "__main__":
     _ = unittest.main()

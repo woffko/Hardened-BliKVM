@@ -849,6 +849,10 @@ BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_SERVER="$
 # gateway, a relay that loses datagrams, and Chromium's decoder.
 cargo build --locked -p bli-kvm-video-encoder --features h264 --example h264_frame_source
 BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAME_SOURCE="$target_root/debug/examples/h264_frame_source" node tools/playwright/quic_video_contract.mjs
+# The lab tool of the hardware H.264 plan: Chromium decodes what its
+# software stand-in makes through the register plans of both open maps.
+cargo build --locked -p bli-kvm-ve-lab
+BLI_KVM_VE_LAB="$target_root/debug/bli-kvm-ve-lab" node tools/playwright/ve_standin_contract.mjs
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'
