@@ -76,7 +76,8 @@ pub const AVC_DEBLOCK: u32 = 0xbc4;
 pub const PARA0_P_SLICE: u32 = 1 << 4;
 pub const PARA0_CABAC: u32 = 1 << 8;
 /// Set by the vendor's library in every P frame of the newer generation;
-/// what it means is not known.
+/// what it means is not known (the V3s map names bits 11:10 "fix mode num"
+/// and says no more).
 pub const PARA0_NEWER_P: u32 = 1 << 10;
 pub const PARA0_NO_DEBLOCKING: u32 = 1 << 12;
 pub const PARA0_NO_PREVENTION: u32 = 1 << 31;

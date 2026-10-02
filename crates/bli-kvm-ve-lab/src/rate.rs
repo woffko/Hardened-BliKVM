@@ -178,10 +178,10 @@ const SEARCH_AGAIN: u64 = 2;
 /// the wide one makes text that moves a few pixels cost several times as
 /// much, and loses a frame now and then. A frame is encoded with the
 /// search the frame before it was sent with; when it comes out costly, it
-/// is encoded again with the other one, the smaller of the two is the
-/// frame, and its search is the next frame's. After such a try the other
-/// search rests for three frames, unless a frame costs twice what the
-/// tried one did.
+/// is encoded again with the other one, and when that pass is smaller by a
+/// tenth it is the frame and its search the next frame's. After such a try
+/// the other search rests for three frames, unless a frame costs twice
+/// what the tried one did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchChoice {
     current: Search,
@@ -413,9 +413,9 @@ mod tests {
         }
         assert_eq!(control.overflows, 0);
         // The rate pays for about a step a frame: 15 steps to a readable
-        // page, 21 to a good one. A controller that let the QP fall by one
-        // step after a cheap frame, and emptied the bucket first, needed
-        // 30 and 43 frames.
+        // page, 21 to a good one, and that is what it takes. A controller
+        // that let the QP fall by one step after a cheap frame, and
+        // emptied the bucket first, needed 28 and 41 frames.
         let frames_to = |qp: i32| reached.iter().position(|finest| *finest <= qp).unwrap() + 1;
         assert!(frames_to(36) <= 20, "{}", frames_to(36));
         assert!(frames_to(30) <= 28, "{}", frames_to(30));

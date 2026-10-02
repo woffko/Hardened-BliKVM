@@ -312,6 +312,12 @@ operator is recorded.
 Sizes: 1920x1080, 1280x720, 1366x768, and 320x240 for first runs. Pictures
 are NV12, BT.601 limited range, as the product's converter makes them.
 
+Besides the plan's four, for the engine's search (V3.4 again): a page that
+moves by one vector a frame, named `PAGE.RIGHT.DOWN` (`text.0.-20` is the
+text of `scroll` moving up 20 pixels a frame; `grain` is a page of which
+no part looks like another), and for any sequence a burst: so many frames
+moving, so many resting.
+
 ### Measures
 
 - **Decodes**: the board's ffmpeg decodes the stream without an error and to
@@ -952,6 +958,9 @@ cost overruns nothing; a key frame every second fits; a picture that fits
 at no QP is held within 12% by leaving frames out. The numbers on the
 board are V3.4's.
 
+What changed afterwards is in "V3.5 again": a third set of buffers and
+the search of a pass, and how fast the QP comes down when a picture rests.
+
 ### V3.2, 2026-10-02: the stream a browser gets
 
 The lab's stream is the one the product's x264 makes today in everything
@@ -1050,6 +1059,308 @@ Receipts: `evidence/private/ve-lab-v3-20261002-rates-b`, `-rates-c`
 with frames left out, tool `8c48d2f`); the first attempt with a lowest QP
 of 10 is `-rates-a`.
 
+The engine's numbers of this table were measured again after the search
+and the control changed: "V3.5 again" has the table the gate is read
+from. x264's numbers are these.
+
+### V3.4 again, 2026-10-02: how far the engine's search for motion reaches
+
+Preparing V3.6, a stream of `scroll` played forth and back cost ten times
+the bits while it played backwards. The plan's sequences move up, up and
+to the left, or slowly; none of them says how far the engine looks for the
+place a macroblock came from, and in which directions.
+
+Measured with the lab tool's `search`: a page that moves by one vector a
+frame, for every vector a key frame and six P frames at QP 30 and
+1920x1080. The page is the text of `scroll`, or a grain of blocks of four
+by four pixels of unrelated greys, of which no part looks like another:
+there a P frame is as large as a key frame where the search did not find
+the place (242 kB; the key frame itself is 228 kB) and small where it did
+(1.4 kB without motion; a frame that moves has new rows or columns at one
+edge, which cost what they cost in a key frame).
+
+Bytes of a P frame in kB on the grain, the mean of the second to the sixth,
+with three settings: the values the vendor's library writes (`0xb10` =
+`0x00011000`, dynamic motion estimation on, its thresholds as the table of
+V2R.5 has them), dynamic motion estimation off (bit 8 of `0xb08` clear),
+and the vendor's values with bit 4 of `0xb10` set.
+
+| Pixels a frame | Page down: vendor | dynamic off | bit 4 | Page up: vendor | dynamic off | bit 4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 | 5.2 | 5.2 | 5.2 | 4.0 | 4.0 | 4.0 |
+| 8 | 6.9 | 6.9 | 6.6 | 4.2 | 4.2 | 4.2 |
+| 12 | 11.1 | 7.8 | 8.6 | 5.6 | 5.6 | 5.6 |
+| 16 | 242 | 7.9 | 41.5 | 7.1 | 7.1 | 7.1 |
+| 20 | 242 | 230 | 47.9 | 8.0 | 8.0 | 7.9 |
+| 24 | 242 | 242 | 37.5 | 8.2 | 8.2 | 8.1 |
+| 28 | 242 | 242 | 80.1 | 12.6 | 230 | 12.5 |
+| 32 | 242 | 242 | 123 | 15.0 | 242 | 90.1 |
+| 36 | 242 | 242 | 77.9 | 19.1 | 242 | 21.6 |
+| 40 | 242 | 241 | 199 | 18.8 | 242 | 78.2 |
+| 48 | 242 | 243 | 231 | 242 | 241 | 231 |
+
+| Pixels a frame | Page right: vendor | dynamic off | bit 4 | Page left: vendor | dynamic off | bit 4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8 | 3.2 | 3.2 | 3.1 | 3.3 | 3.3 | 3.2 |
+| 16 | 3.7 | 3.7 | 3.4 | 3.8 | 3.8 | 3.7 |
+| 20 | 20.1 | 16.6 | 12.8 | 6.4 | 6.1 | 5.8 |
+| 24 | 13.2 | 12.8 | 10.3 | 15.6 | 12.6 | 15.0 |
+| 32 | 22.3 | 20.5 | 14.6 | 12.3 | 12.4 | 11.0 |
+| 48 | 53.2 | 57.8 | 29.7 | 38.4 | 38.2 | 27.4 |
+| 64 | 40.5 | 37.4 | 23.9 | 38.3 | 38.1 | 25.3 |
+| 80 | 62.1 | 47.4 | 27.4 | 52.6 | 52.2 | 27.7 |
+
+What this says about the engine with the vendor's values:
+
+- **Sideways** the place is found exactly up to 16 pixels a frame, and
+  with a remainder (two to seventeen times the bytes of exact motion, a
+  quarter of a key frame at most) at least up to 80, to the right as to
+  the left.
+- **A page that moves up** (what a reader sees who scrolls on) is found up
+  to 40 pixels a frame, from 28 with a small remainder: the first rows of
+  macroblocks are coded without a reference before the engine moves its
+  window. At 48 nothing is found.
+- **A page that moves down** (scrolling back) is found up to 8 pixels a
+  frame, at 12 with a remainder, and from 16 on not at all: every
+  macroblock is coded as in a key frame.
+- The picture's height does not matter: 720, 1072, 1080 and 1088 lines
+  give the same reach (`-search-b`).
+
+What the fields of the open map do on this engine, each changed alone
+(the lab tool's `adjust=`), on the grain and on the text:
+
+| Field | What changed |
+| --- | --- |
+| `0xb08` bit 8, dynamic motion estimation, off | the window stands still: up 24, down 16, exactly, and nothing beyond |
+| `0xb48`, `0xb4c`, the four thresholds | all at their largest: as with bit 8 off. The first pair (the vendor's `S/10` and `6S/10`) is what moves the window for a page that moves up; made smaller, a page that moves down 12 is lost too. The second pair made as small as the first moves the window further (up 16 to 56) and loses most of what is nearer. No value tried moves the window the other way |
+| `0xb10` bits 2:1 (fine search level), 5, 7:6 (coarse cost), 8 ("motion estimation off") | nothing: every frame the same bytes |
+| `0xb10` bits 9, 11, 13, 15, 20, 21 | a few bytes, no reach |
+| `0xb10` bit 3 | the search ends: only a picture that stands still is found |
+| `0xb10` bit 4 ("refine off" in the map) | a page that moves down 16 to 36 is found with a remainder, and sideways motion of 48 and more costs about half; a page that moves up 32 or 40 costs four to six times what it costs without it |
+| `0xb10` bit 12 cleared (the vendor sets it: "quantisation threshold off") | smaller frames at the same QP; no reach |
+| `0xb10` bit 0 ("intra prediction off"), bit 14 ("intra 4x4 off") | other sizes of the frames in which nothing is found; no reach |
+| `0xb08` bits 26:24, motion vector clipping | narrows the reach sideways to under 16, 32, 48 or 64 pixels; off is the widest |
+| `0xb08` bits 31:28, mode optimisation | larger frames; no reach |
+
+Only fields that say how the engine searches and decides were changed:
+never the write-back of motion vectors (bit 16), the region of interest
+(17), the two "to memory" switches (18, 19), or a bit without a name. The
+guards around every buffer held in every run, the kernel's image was the
+same after every session, and ffmpeg decoded every stream.
+
+**Bit 4 has a price on text.** On the grain small motion costs the same
+with it. On the page of text, which repeats itself every 8 pixels
+sideways and every 20 down, motion by a few pixels costs up to five times
+as much (kB a P frame at QP 30, `-search-i`):
+
+| Right, down | Vendor | Bit 4 | | Right, down | Vendor | Bit 4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1, 0 | 13.3 | 13.4 | | 0, 1 | 14.0 | 14.0 |
+| 2, 0 | 3.6 | 4.3 | | 0, 2 | 8.0 | 9.2 |
+| 3, 0 | 12.6 | 31.9 | | 0, 3 | 16.1 | 26.8 |
+| 5, 0 | 13.3 | 39.2 | | 0, 5 | 15.9 | 27.8 |
+| 6, 0 | 3.7 | 18.0 | | 0, -6 | 7.7 | 14.2 |
+| 7, 5 | 20.3 | 21.5 | | 3, 3 | 19.9 | 35.1 |
+
+At a fixed QP of 30 the plan's `drag` costs 10% more bytes with bit 4 in
+every frame and loses 0.4 dB; `scroll`, `motion` and `pointer` stay
+within 4% and 0.12 dB (`-h616-a`).
+
+**Against x264**, on text that moves every frame, 300 frames at
+1920x1080, luma PSNR in dB, with the rate control of V3.5 as it was then
+(x264 as in V3.4; frames left out in brackets; `-moved-a`):
+
+| Text moves | Target, kbit/s | Engine, vendor | Engine, bit 4 | x264 | x264, kbit/s |
+| --- | --- | --- | --- | --- | --- |
+| up 20 a frame | 2500 | 33.50 | 34.05 | 30.06 | 2305 |
+| up 20 a frame | 8000 | 56.05 | 56.31 | 50.05 | 5221 |
+| down 20 a frame | 2500 | 14.97 (144) | 27.01 | 29.47 | 2126 |
+| down 20 a frame | 8000 | 19.17 | 42.29 | 49.81 | 4998 |
+| up 60 a frame | 2500 | 13.08 (244) | 13.07 (245) | 19.09 | 2070 |
+| up 60 a frame | 8000 | 15.25 (124) | 15.25 (123) | 28.33 | 5016 |
+| down 60 a frame | 2500 | 12.96 (246) | 12.97 (246) | 13.36 | 2589 |
+| down 60 a frame | 8000 | 15.15 (126) | 15.08 (128) | 26.17 | 4869 |
+
+What this says:
+
+- Within its reach the engine is far above x264 (the page moving up 20).
+- A page that moves down 20 pixels a frame is the plan's `scroll` the
+  other way round. With the vendor's values the engine codes every frame
+  of it as a key frame and is 14.5 and 30.6 dB below x264; with bit 4 it
+  is 2.5 and 7.5 dB below, at 27 and 42 dB.
+- Beyond its reach (60 pixels a frame, either way) no setting helps: 13
+  to 15 dB, with 40 to 80% of the frames left out. x264 holds 19 to 28 dB
+  when the motion goes on for ten seconds: it starts each macroblock's
+  search from its neighbours' vectors and from the frame before, where
+  the engine has a window.
+
+Neither value is right for every picture: the vendor's loses a page that
+scrolls back, bit 4 pays for it on text that moves a little. What the plan
+does about it is in the next section.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-search-a` (text, the
+vendor's values), `-search-b` (four heights), `-search-c` (text, thirteen
+settings), `-search-d`, `-search-e` (grain: the thresholds), `-search-f`
+(grain, twenty single fields), `-search-g` (the tables above),
+`-search-h`, `-search-i` (small motion on the grain and on text),
+`-moved-a` (against x264), `-h616-a` (the plan's sequences with bit 4 in
+every frame). Lab tool `8970271+` to `47bc63d`.
+
+### V3.5 again, 2026-10-02: the search chosen for every frame, and a picture that rests
+
+Two things the last section and a look at what follows motion showed, and
+what the lab's rate control (`rate.rs`) does about them. Both are the
+client's business, as the plan has the rate control: the engine is given a
+QP and one bit more.
+
+**The search is chosen for every frame.** The engine encodes a 1920x1080
+frame in 7 ms, so a frame can be tried both ways:
+
+- A frame is encoded with the search the frame before it was sent with:
+  "exact", the vendor's value of `0xb10`, or "wide", the same with bit 4.
+  The first frame of a stream is tried with the exact one.
+- When that pass comes out costly (from three quarters of what a frame may
+  cost on average; at a fixed QP from 0.03 bits a pixel), the frame is
+  encoded once more with the other search, at the same QP against the same
+  reference. When the second pass is smaller by a tenth, it is the frame
+  and its search the next frame's; otherwise the first stays.
+- After such a try the other search rests for three frames, unless a
+  frame costs twice what the tried one did: then the picture began to move
+  otherwise, and it is tried at once.
+- A frame that does not fit the bucket is then encoded once more at a
+  higher QP, as before, with the search that won.
+
+For that the lab has three sets of reconstruction buffers instead of two:
+the reference, and one for each of two passes, so that either pass can be
+the next frame's reference. A third pass writes over the pass that lost.
+
+**A picture that rests comes back at the rate's pace.** After a second of
+motion the search does not follow (text moving 60 pixels a frame at
+8 Mbit/s), the picture needed 36 frames to be at 30 dB again and 50 to be
+at 35: the control emptied the bucket first, at half the rate, and let the
+QP fall by one step a frame, taking a step back after every frame that
+made the picture finer. Now a frame is meant to cost nine tenths of the
+average while the bucket is fuller than wanted (it was half), and after a
+frame that cost less than a quarter of what it was meant to the QP may
+fall by three steps instead of one; a step too many is caught by the
+second pass. On the build host a model of a page that rests (every step
+of QP below the finest it has had costs about a frame's bits) is back at
+QP 36 in 15 frames and at QP 30 in 21; the control as it was needed 28
+and 41.
+
+Frames after the motion ends until the picture is at 30, 35 and 40 dB
+again, three bursts each (30 frames moving, 60 resting, 1920x1080; "-":
+not within the 60), and the mean of the whole run:
+
+| Text moves, rate | Engine, the control as it was | Engine now | x264 |
+| --- | --- | --- | --- |
+| down 60 a frame, 8 Mbit/s | 34 to 36, 46 to 50, 57 or - | 15, 21 to 23, 30 to 33 | 10 to 26, 25 to 32, 32 to 39 |
+| up 60 a frame, 8 Mbit/s | 35 to 38, 47 to 51, 58 or - | 14 to 17, 20 to 23, 29 to 33 | 3 to 20, 8 to 25, 14 to 32 |
+| down 60 a frame, 2.5 Mbit/s | -, -, - | 39 to 47, 57 or -, - | 52 to 56, -, - |
+| mean PSNR of the run, the three rows | 24.30, 24.14, 18.87 dB | 30.54, 30.73, 21.48 dB | 30.39, 36.50, 20.28 dB |
+
+While the text moves 60 pixels a frame the picture is at 15 to 17 dB at
+8 Mbit/s with either encoder (13 dB at 2.5 Mbit/s), the engine's frames
+left out included, except that x264 followed the page moving up in two of
+the three bursts (32 and 19 dB).
+
+**Text that moves every frame, against x264** (300 frames, 1920x1080; the
+table of the last section with the search chosen; frames left out in
+brackets):
+
+| Text moves | Target, kbit/s | Engine, dB | x264, dB | Difference | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- |
+| up 20 a frame | 2500 | 34.56 | 30.06 | +4.50 | 0 |
+| up 20 a frame | 8000 | 56.30 | 50.05 | +6.25 | 0 |
+| down 20 a frame | 2500 | 27.63 (3) | 29.47 | -1.84 | 286 |
+| down 20 a frame | 8000 | 47.41 (2) | 49.81 | -2.40 | 263 |
+| up 60 a frame | 2500 | 13.08 (244) | 19.09 | -6.01 | 0 |
+| up 60 a frame | 8000 | 15.25 (124) | 28.33 | -13.08 | 0 |
+| down 60 a frame | 2500 | 12.96 (246) | 13.36 | -0.40 | 0 |
+| down 60 a frame | 8000 | 15.15 (126) | 26.17 | -11.02 | 0 |
+| right 3 a frame | 2500 | 39.17 | | | 0 |
+| right 3 a frame | 8000 | 48.12 | | | 0 |
+
+Text that moves 3 pixels a frame is exactly what the exact search alone
+makes of it; the wide search alone makes 31.75 and 41.71 dB of it.
+
+**The plan's sequences with the search chosen**: the measures of V3.1,
+V3.2 and V3.4 again, with the control as it is now (map `h6`,
+`search=auto`).
+
+At QP 30, 300 frames, every frame decoded by the board's ffmpeg and
+compared:
+
+| Sequence | kbit/s | Mean PSNR, dB | Lowest, dB | Frames 30 to 60, last 30, dB | With both searches | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1700 | 36.32 | 35.89 | 36.88, 36.10 | 52 | 0 |
+| drag | 1921 | 41.91 | 40.09 | 41.79, 42.02 | 60 | 102 |
+| motion | 37086 | 33.36 | 32.23 | 33.36, 33.36 | 75 | 0 |
+| pointer | 366 | 41.26 | 39.97 | 41.36, 41.22 | 1 | 299 |
+
+`scroll` and `motion` are, frame for frame, the sizes of V3.1; `drag`
+costs 3.9% less than there at 0.04 dB less, `pointer` 3.4% less at
+0.11 dB less. The still sequence does not drift (41.36 and 41.22 dB).
+
+At a bitrate, against the x264 numbers of V3.4:
+
+| Sequence | Target, kbit/s | Engine: kbit/s | x264: kbit/s | Engine, dB | x264, dB | Difference | Frames left out | Sent with the wide search |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 1500 | 1657 | 1309 | 34.78 | 29.64 | +5.14 | | 0 |
+| scroll | 2500 | 2693 | 1859 | 45.99 | 37.60 | +8.39 | | 142 |
+| scroll | 5000 | 5116 | 3041 | 56.21 | 50.91 | +5.30 | | 132 |
+| scroll | 8000 | 6351 | 3844 | 63.31 | 58.96 | +4.35 | | 237 |
+| drag | 1500 | 1538 | 1288 | 40.66 | 40.93 | -0.27 | | 130 |
+| drag | 2500 | 2567 | 2280 | 45.54 | 45.67 | -0.13 | | 122 |
+| drag | 5000 | 5134 | 4746 | 50.99 | 52.47 | -1.48 | | 108 |
+| drag | 8000 | 8219 | 7395 | 57.94 | 58.12 | -0.18 | | 153 |
+| motion | 1500 | 1642 | 1563 | 21.32 | 20.99 | +0.33 | 160 | 136 |
+| motion | 2500 | 2737 | 2601 | 23.19 | 22.90 | +0.29 | 6 | 285 |
+| motion | 5000 | 5014 | 5192 | 25.74 | 26.17 | -0.43 | | 0 |
+| motion | 8000 | 8190 | 8208 | 27.28 | 27.34 | -0.06 | | 0 |
+| pointer | 1500 | 1538 | 600 | 56.85 | 44.50 | +12.35 | | 299 |
+| pointer | 2500 | 2498 | 867 | 58.18 | 45.55 | +12.63 | | 299 |
+| pointer | 5000 | 2145 | 1347 | 65.32 | 46.05 | +19.27 | | 0 |
+| pointer | 8000 | 2226 | 1360 | 65.59 | 46.19 | +19.40 | | 0 |
+
+About a quarter of the frames were encoded with both searches (61 to 76
+of 300), fewer where the picture is still (5 and 11 for `pointer` at 8
+and 5 Mbit/s). At the rates the gate names the
+engine is at most 0.18 dB below x264 at 8 Mbit/s and 0.13 dB below at
+2.5 Mbit/s. These are the first ten seconds of a stream, in which the
+bucket fills: the rate is at most 10.5% above its target (`scroll` at
+1.5 Mbit/s, whose first key frame is 1.8 Mbit at QP 38: a key frame of
+text does not halve with six steps of QP, as the control's second pass
+assumes, and a stream's first frame cannot be left out).
+
+Chromium (WebCodecs) decoded 90 frames of every sequence at 2.5 Mbit/s
+with a key frame every 30: 90 of 90 each, `avc1.42c028`, 1920x1080, and
+every frame's PSNR equal to ffmpeg's to the hundredth of a decibel (means
+26.79, 39.42, 23.61 and 45.70 dB), frames sent with the wide search and
+frames left out among them.
+
+**What remains.** The engine has a window where x264 has a search that
+starts from its neighbours' vectors and the frame before. Inside the
+window (40 pixels a frame up, 36 down, 16 exactly and 80 with a remainder
+sideways) the engine with the search chosen is level with x264 or above
+it; a page that scrolls back 20 pixels a frame is 1.8 and 2.4 dB below, at
+28 and 47 dB. Beyond the window every macroblock is coded without a
+reference. In a burst of a second that costs the same picture as x264's
+while it lasts (15 to 17 dB) and the same half second afterwards; when
+such motion goes on for many seconds, x264 finds it in three of the four
+runs (19 to 28 dB) and the engine in none (13 to 15 dB, with frames left
+out). The plan's sequences
+do not move like that, and gate V3 is worded for them; V7.1 measures what
+a target's screen does.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-burst-a` (bursts, the
+control as it was, and x264), `-auto-try` (a first rule of the choice,
+which rested for half a second after a try: it changed its search on one
+bad frame and stayed wrong that long), `-auto-try2` (the rule as it is;
+text that moves 3 pixels a frame with the search chosen, exact and wide;
+lab tool `afa12d0`), `-auto-a` (the plan's sequences), `-auto-b` (text
+that moves, and the bursts; lab tool `f16a1e4`).
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
@@ -1091,6 +1402,19 @@ first.
   and `0xb04` holds `0x410`. 299 P frames in a row do not drift.
 - Every QP from 0 to 51 encodes; a 1920x1080 frame takes the engine 7.0 to
   7.8 ms, key or P, whatever its QP and its size in bytes.
+- The search for motion has a window (V3.4 again): with the library's
+  values 16 pixels a frame sideways exactly and 80 with a remainder, 40
+  up, 8 to 12 down. Bit 8 of `0xb08` with the thresholds of `0xb48` and
+  `0xb4c` is what moves the window for a picture that moves up; without it
+  the window is 24 up and 16 down. Bit 4 of `0xb10` finds a picture that
+  moves down up to 36 pixels a frame, with a remainder, and makes text
+  that moves a few pixels cost more. Bits 2:1, 5, 7:6 and 8 of `0xb10` do
+  nothing on this engine, bit 3 ends the search, and bit 12, which the
+  library sets, makes frames larger at the same QP ("quantisation
+  threshold off" in the V3s map).
+- A frame can be encoded any number of times against the same reference:
+  a pass writes only the reconstruction it is given, and passes with the
+  same registers and the same memory make the same bytes (V3.5, V3.6).
 
 The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
 stream, the parameter sets go through the bit writer into the stream
@@ -1117,10 +1441,10 @@ reset the engine and select the encoder, and then writes, in this order:
 | | `0xbc0` | macroblock info |
 | | `0xbc4`, `0xb28` | 0 |
 | Headers | `0xb04`, `0xb20`, `0xb18` | bit 31 of `0xb04` set for the four bytes of the start code and cleared for the unit's header byte and the slice header; before every put a read of `0xb1c` for bit 9 |
-| Last parameters | `0xb04` | 0 for a key frame, `0x410` for a P frame (bit 4, and bit 10, which no map explains); bit 8 more with CABAC |
+| Last parameters | `0xb04` | 0 for a key frame, `0x410` for a P frame (bit 4, and bit 10: the V3s map names bits 11:10 "fix mode num" and says no more); bit 8 more with CABAC |
 | | `0xb08` | bit 27 added to what it holds |
 | | `0xb0c`, `0xb24`, `0xb60` | 0 |
-| | `0xb10` | `0x00011000` |
+| | `0xb10` | `0x00011000`: the exact search. This plan writes `0x00011010`, bit 4 more, for a pass with the wide search (V3.5 again) |
 | Start | `0xb18` | 8 |
 | Afterwards | `0xb90`, `0xb1c`, `0xb50`, `0xb54`, `0xb58` | the length in bits; the status, written back to clear it; three statistics |
 
@@ -1148,8 +1472,9 @@ reset the engine and select the encoder, and then writes, in this order:
   buffer of 12 bytes for every row of macroblocks and 500 more. The lab
   does not use it: a frame is given its QP.
 - Main and high profile change only its headers; CABAC is bit 8 of `0xb04`.
-- Not known: what bit 27 of `0xb08`, bit 10 of `0xb04` and bit 12 of
-  `0xb10` mean; what the keeper writes into the mode register for the
+- Not known: what bit 27 of `0xb08` and bit 10 of `0xb04` mean; how the
+  dynamic motion estimation decides, and why its window moves only one
+  way; what the keeper writes into the mode register for the
   encoder on this part (its memory interface field: the published keeper
   sets 2 on the H6, `cedrus` sets 3 and bit 20 for this board's decoders,
   and V2.1 ran with what the reset leaves, 0). The lab tool has all three
