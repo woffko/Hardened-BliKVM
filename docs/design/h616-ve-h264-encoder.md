@@ -1361,6 +1361,133 @@ text that moves 3 pixels a frame with the search chosen, exact and wide;
 lab tool `afa12d0`), `-auto-a` (the plan's sequences), `-auto-b` (text
 that moves, and the bursts; lab tool `f16a1e4`).
 
+### V3.3 again, 2026-10-02 and 2026-10-03: thirty frames a second for ten minutes, and two passes a frame
+
+Paced runs at 1920x1080: every frame begins at its time, a thirtieth of a
+second after the one before; 30 pictures of a sequence played forth and
+back, a key frame every 300, the rate control and the search chosen for
+every frame; nothing is decoded. Twice for ten minutes, once with the
+processors idle and once with three of the four busy in a loop, and six
+runs of two minutes.
+
+**With up to three passes a frame**, as "V3.5 again" had it (a first pass,
+one with the other search, one at a higher QP), and the lab's guards read
+every 300 passes:
+
+| Sequence, rate, busy cores | Frames a second | A frame, ms: mean, 99 in 100, longest | Frames longer than 33.3 ms | kbit/s, and the lowest and highest ten seconds | Passes at a higher QP, frames left out |
+| --- | --- | --- | --- | --- | --- |
+| drag, 2.5 Mbit/s, idle, 600 s | 30.00 | 12.7, 18.7, 48.8 | 75 of 18000 | 2501, 2467 to 2602 | 0, 0 |
+| motion, 8 Mbit/s, three busy, 600 s | 30.00 | 13.5, 21.0, 42.0 | 36 of 18000 | 8003, 7949 to 8194 | 0, 0 |
+| scroll, 2.5 Mbit/s, idle | 30.00 | 13.7, 31.9, 65.2 | 22 of 3600 | 2533, 2426 to 2698 | 240, 43 |
+| motion, 2.5 Mbit/s, idle | 30.01 | 12.7, 19.4, 48.9 | 13 of 3600 | 2504, 2391 to 2623 | 2, 1 |
+| pointer, 2.5 Mbit/s, idle | 30.00 | 12.4, 18.8, 48.5 | 13 of 3600 | 2500, 2434 to 2666 | 10, 1 |
+| scroll, 8 Mbit/s, three busy | 30.01 | 14.4, 44.0, 58.4 | 84 of 3600 | 8052, 7538 to 8697 | 75, 64 |
+| drag, 8 Mbit/s, three busy | 30.01 | 13.1, 21.6, 39.5 | 8 of 3600 | 8018, 7953 to 8376 | 0, 0 |
+| pointer, 8 Mbit/s, three busy | 30.01 | 10.7, 18.8, 31.4 | 0 of 3600 | 891, 487 to 2559 | 0, 0 |
+
+Thirty frames a second were held in every run, and a frame took 11 to 14 ms
+of its 33.3 on average. But not every frame was done within its time, for
+two reasons:
+
+- The lab's own reading of the buffers' guards, every 300 passes, takes
+  about 20 ms out of uncached memory: with a frame of two passes that is
+  more than a frame's time. It is the lab's instrument and not the
+  encoder's work.
+- A frame with three passes. One pass and the loop around it take 8 ms
+  after the picture's 3 ms into the input buffer: three are 27 to 32 ms
+  with idle processors, and 35 to 58 ms when the process waits for a busy
+  core after every interrupt. Without the guards' reading
+  (`-sustained-three`) `scroll` at 2.5 Mbit/s still had 8 frames over
+  33.3 ms with idle processors (the longest 40.0 ms), each of them one of
+  the 193 frames with three passes, and at 8 Mbit/s with three cores busy
+  83 (the longest 72.0 ms).
+
+Gate V3 asks for 33 ms a frame, key or P. So **a frame takes at most two
+passes** (`rate.rs`, `PASSES`; the lab tool's `passes=3` gives the third
+back), its first and one more:
+
+- A frame that fits and is costly: the other search at the same QP, as
+  before, and the smaller pass is the frame.
+- A frame the bucket has no room for: once more at a higher QP with the
+  same search, as before.
+- A frame that does not fit and is due the other search gets both in its
+  one more pass: the other search at the higher QP. That pass is the frame
+  if it fits. Whether its search is the next frame's is judged against
+  what the first search would have made at that QP by the control's rule
+  of thumb (bits halve with six steps of QP): a tenth less, and it is.
+- Not so in the frame after a key frame, which gets the higher QP with the
+  search it came with: the bucket is full of the key frame then, and the
+  engine's search begins anew at a key frame and is no measure of the
+  frames that follow.
+
+Streams at a fixed QP are not touched by this: they have no pass at a
+higher QP.
+
+How the third and the fourth point came about is part of the record. The
+first rule with two passes gave a frame that did not fit its higher QP and
+let the other search wait for a frame that fits. The plan's sequences were
+as before with it, but a page that scrolls down 20 pixels a frame at
+2.5 Mbit/s lost 5.9 dB (21.7 dB, 17 frames left out, where three passes
+made 27.6 with 3): the wrong search's frames are the ones that do not fit,
+the control raised the QP until they did, and at QP 47 to 51 a frame costs
+so little with either search that the other one was not tried for a
+second. With both in one pass the same run made 25.9 dB, and lost eight
+frames in a row at its beginning: the frame after the key frame did not
+fit, the wide search made that one frame twice as large, it was left out,
+and then the page had moved 40 pixels against its reference, which no
+search finds. A look at both searches at four QPs showed why: the exact
+search finds a page that moves down 20 in the first frame after a key
+frame, and in the frames after it sometimes and sometimes not (94 and
+120 kB at QP 30 where the wide search makes 12 to 17); the wide search
+costs twice in that first frame. One more idea, to let the control go on
+from the first pass's QP when such a pass changed the search, made the
+search change with every other frame at 2.5 Mbit/s and was dropped.
+
+**With two passes a frame**, lab tool `266613f`, and the guards read once,
+at the end of each run:
+
+| Sequence, rate, busy cores | Frames a second | A frame, ms: mean, 99 in 100, longest | Frames longer than 33.3 ms | kbit/s, and the lowest and highest ten seconds | Passes at a higher QP, frames left out |
+| --- | --- | --- | --- | --- | --- |
+| drag, 2.5 Mbit/s, idle, 600 s | 30.00 | 12.6, 18.6, 25.1 | 0 of 18000 | 2501, 2467 to 2602 | 0, 0 |
+| motion, 8 Mbit/s, three busy, 600 s | 30.00 | 13.4, 20.3, 33.6 | 1 of 18000 | 8003, 7949 to 8194 | 0, 0 |
+| scroll, 2.5 Mbit/s, idle | 30.01 | 13.4, 22.3, 26.1 | 0 of 3600 | 2537, 2422 to 2725 | 195, 146 |
+| motion, 2.5 Mbit/s, idle | 30.01 | 12.6, 19.3, 26.0 | 0 of 3600 | 2503, 2388 to 2619 | 4, 0 |
+| pointer, 2.5 Mbit/s, idle | 30.00 | 12.4, 18.7, 25.9 | 0 of 3600 | 2500, 2434 to 2666 | 10, 1 |
+| scroll, 8 Mbit/s, three busy | 30.01 | 14.0, 33.4, 51.5 | 37 of 3600 | 8055, 7503 to 8577 | 55, 77 |
+| drag, 8 Mbit/s, three busy | 30.01 | 13.0, 19.4, 40.0 | 1 of 3600 | 8018, 7953 to 8376 | 0, 0 |
+| pointer, 8 Mbit/s, three busy | 30.01 | 10.5, 12.0, 21.6 | 0 of 3600 | 891, 487 to 2559 | 0, 0 |
+
+Thirty frames a second were held in every run again. With the processors
+idle no frame took longer than 26.1 ms, in 28,800 frames. With three cores
+busy 39 frames of 32,400 did: 37 of `scroll` at 8 Mbit/s (99 in 100 within
+33.4 ms, the longest 51.5), one of `drag` (40.0 ms) and one of `motion`
+(33.6 ms) at 8 Mbit/s. Each of the twelve of them that the receipts name
+had two passes, and the frames after them made the time up. The engine's
+time of a pass, from the start to the interrupt as the waiting process
+sees it, was 7 to 10 ms in these runs, and twice 11.7 and 14.5 ms
+(`motion` with three cores busy): what grows with busy cores is the wait
+for a core, as in V3.3.
+
+The third pass is missed where a picture does not fit: `scroll` at
+2.5 Mbit/s, played forth and back, left out 146 frames of 3600 where three
+passes left out 43, and at 8 Mbit/s with three cores busy 77 where they
+left out 64. A frame that does not fit at the higher QP with the search it
+is given is left out, where the third pass let it have the better of the
+two searches first. In the 300-frame runs below `scroll` leaves out no
+frame at either rate.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-sustained` (three passes),
+`ve-lab-v3-20261003-sustained` (two), `-sustained-three` (three passes
+again, without the guards' reading); for the rule,
+`ve-lab-v3-20261002-two-a`, `-two-b` (the first rule with two passes),
+`ve-lab-v3-20261003-rule-a`, `-rule-b`, `-rule-c` (both in one pass; not
+after a key frame; the idea that was dropped) and `-mad` (both searches at
+four QPs). A first session of the three-pass runs ran to its end on the
+board and its results were lost on the way back: the session's connection
+had been silent for half an hour (`ve_lab_session.sh` keeps it alive
+since). A session of the first two-pass rule was ended on purpose, by the
+lab's own rule 1, when that rule was given up.
+
 ### V3.1 again, 2026-10-03: what the engine writes, where it stops, and how small a picture may be
 
 Three things the lab had not measured, and that whoever gives the engine
