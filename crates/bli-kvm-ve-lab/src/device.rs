@@ -195,7 +195,13 @@ impl Engine for Device {
     }
 
     fn reset(&mut self) -> io::Result<()> {
-        Device::reset(self)
+        Device::reset(self)?;
+        // An interrupt that came before the reset and was not waited for
+        // (the stall of a full stream buffer while the headers were still
+        // being put) must not answer the next wait: the module keeps it
+        // until somebody asks.
+        self.wait(Duration::ZERO);
+        Ok(())
     }
 
     fn allocate(&mut self, bytes: usize) -> io::Result<usize> {
