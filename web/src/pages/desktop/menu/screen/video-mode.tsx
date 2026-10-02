@@ -5,7 +5,11 @@ import { CheckIcon, TvMinimalPlayIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as firewallApi from '@/api/system-firewall.ts';
-import { supportedUiVideoModes, type UiVideoMode } from '@/lib/capabilities.ts';
+import {
+  supportedUiVideoModes,
+  supportsBoardFeature,
+  type UiVideoMode
+} from '@/lib/capabilities.ts';
 import { setVideoMode as setCookie } from '@/lib/localstorage.ts';
 import { browserSupportsWebRtc } from '@/lib/video-transport.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
@@ -30,16 +34,17 @@ export const VideoMode = () => {
   const videoMode = useAtomValue(videoModeAtom);
   const supportedModes = supportedUiVideoModes(capabilities);
   // H.264 comes over the QUIC session when this browser uses QUIC and can
-  // have the picture there; the entry says which of the two serves it. The
-  // mode stays one of the WebRTC modes: WebRTC is what it falls back to.
-  const h264OverQuic = useQuicVideo().use;
+  // have the picture there; the entry says which of the two serves it.
+  const h264OverQuic = useQuicVideo().offered;
 
   const [isDirectSupported, setIsDirectSupported] = useState<boolean | null>(null);
   const [isWebrtcBlocked, setIsWebrtcBlocked] = useState(false);
+  // The firewall mode admits the QUIC transport's port although it closes
+  // WebRTC's: Restricted does.
+  const [isQuicAdmitted, setIsQuicAdmitted] = useState(false);
   // A VPN or privacy extension, or a policy, can switch WebRTC off in the
   // browser; both WebRTC modes then stay unselectable like under the firewall.
   const isWebrtcMissing = !browserSupportsWebRtc();
-  const isWebrtcOff = isWebrtcBlocked || isWebrtcMissing;
 
   const refreshFirewallStatus = useCallback(() => {
     firewallApi
@@ -54,6 +59,7 @@ export const VideoMode = () => {
             firewall.effectiveMode === 'restricted' ||
             firewall.effectiveMode === 'paranoid'
         );
+        setIsQuicAdmitted(firewall.quicBlocked === false);
       })
       .catch(() => undefined);
   }, []);
@@ -91,19 +97,35 @@ export const VideoMode = () => {
     setTimeout(() => window.location.reload(), 250);
   }, [supportedModes, videoMode]);
 
+  // A WebRTC mode cannot be had where WebRTC is off. Where the firewall mode
+  // closes it, H.264 still can, while the QUIC session serves it. A browser
+  // without WebRTC keeps both modes closed: the page's start takes it to
+  // MJPEG before a session exists.
+  const isUnavailable = (mode: string) =>
+    WEBRTC_MODES.includes(mode) &&
+    (isWebrtcMissing || (isWebrtcBlocked && !(mode === 'h264' && h264OverQuic)));
+  const currentIsUnavailable = isUnavailable(videoMode);
+
   useEffect(() => {
-    if (!isWebrtcOff || !WEBRTC_MODES.includes(videoMode) || isDirectSupported === null) return;
+    if (!currentIsUnavailable || isDirectSupported === null) return;
 
     setCookie(isDirectSupported && supportedModes.includes('direct') ? 'direct' : 'mjpeg');
     setTimeout(() => {
       window.location.reload();
     }, 250);
-  }, [isDirectSupported, isWebrtcOff, supportedModes, videoMode]);
+  }, [currentIsUnavailable, isDirectSupported, supportedModes]);
+
+  // H.264 would come over QUIC here, were QUIC this browser's choice.
+  const quicWouldServe =
+    isWebrtcBlocked &&
+    isQuicAdmitted &&
+    typeof WebTransport !== 'undefined' &&
+    supportsBoardFeature(capabilities, 'network_quic');
 
   function update(mode: string) {
     if (mode === videoMode) return;
     if (!supportedModes.includes(mode as UiVideoMode)) return;
-    if (WEBRTC_MODES.includes(mode) && isWebrtcOff) return;
+    if (isUnavailable(mode)) return;
 
     setCookie(mode);
 
@@ -135,24 +157,26 @@ export const VideoMode = () => {
             <Tooltip
               key={mode.key}
               title={
-                WEBRTC_MODES.includes(mode.key) && isWebrtcMissing
-                  ? t('screen.videoWebrtcUnavailable')
-                  : WEBRTC_MODES.includes(mode.key) && isWebrtcBlocked
-                    ? t(
+                !isUnavailable(mode.key)
+                  ? undefined
+                  : isWebrtcMissing
+                    ? t('screen.videoWebrtcUnavailable')
+                    : t(
                         mode.key === 'vp8'
                           ? 'screen.videoVp8BlockedByFirewall'
-                          : 'screen.videoWebrtcBlockedByFirewall'
+                          : quicWouldServe
+                            ? 'screen.videoWebrtcBlockedUseQuic'
+                            : 'screen.videoWebrtcBlockedByFirewall'
                       )
-                    : undefined
               }
               placement="right"
               styles={{ root: { maxWidth: '270px' } }}
             >
               <div
-                aria-disabled={WEBRTC_MODES.includes(mode.key) && isWebrtcOff}
+                aria-disabled={isUnavailable(mode.key)}
                 data-video-mode={mode.key}
                 className={
-                  WEBRTC_MODES.includes(mode.key) && isWebrtcOff
+                  isUnavailable(mode.key)
                     ? 'flex cursor-not-allowed select-none items-center rounded py-1.5 pl-1 pr-5 text-neutral-500 hover:bg-neutral-700/70'
                     : 'flex cursor-pointer select-none items-center rounded py-1.5 pl-1 pr-5 hover:bg-neutral-700/70'
                 }

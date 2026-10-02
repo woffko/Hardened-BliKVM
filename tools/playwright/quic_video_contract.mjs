@@ -9,7 +9,9 @@
 // the canvas. Under loss the picture goes on, never shows an older frame
 // after a newer one, and asks for a bounded number of key frames; without
 // loss it asks for none. Where the picture cannot be had over the session,
-// H.264 stays on WebRTC and Settings says why.
+// H.264 stays on WebRTC and Settings says why. In the Restricted firewall
+// mode, which closes WebRTC's ports and admits the session's, H.264 is to be
+// had over the session and nothing else is.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
@@ -28,6 +30,7 @@ import {
   sleep,
   startFrameSource,
   until,
+  VIDEO_MODE_KEY,
   videoProbe,
 } from "./quic_fixture.mjs";
 import { freePort } from "./quic_stack_rig.mjs";
@@ -133,6 +136,52 @@ async function menuEntry(page) {
   await entry.waitFor({ state: "hidden" });
   return text;
 }
+/**
+ * The Screen menu's two WebRTC entries: what each is called, whether it can
+ * be chosen, and what it says under the pointer when it cannot.
+ */
+async function menuModes(page) {
+  await page.locator("svg.lucide-monitor").first().click();
+  await page.getByText("Video Mode", { exact: true }).hover();
+  const modes = {};
+  for (const mode of ["h264", "vp8"]) {
+    const entry = page.locator(`[data-video-mode="${mode}"]`);
+    await entry.waitFor();
+    modes[mode] = {
+      name: await entry.locator("[data-video-mode-name]").innerText(),
+      disabled: (await entry.getAttribute("aria-disabled")) === "true",
+      says: null,
+    };
+    if (modes[mode].disabled) {
+      await entry.hover();
+      const tip = page.locator(".ant-tooltip:not(.ant-tooltip-hidden)");
+      await tip.first().waitFor();
+      modes[mode].says = await tip.first().innerText();
+      // Away from the entry, so the next one's tip is the only one shown.
+      await page.getByText("Video Mode", { exact: true }).hover();
+      await tip.first().waitFor({ state: "hidden" });
+    }
+  }
+  return modes;
+}
+/** The firewall status as the page reads it, in a mode. */
+const firewall = (mode) => (context) =>
+  context.route("**/api/system/firewall**", (route) =>
+    route.fulfill({
+      json: {
+        code: 0,
+        data: {
+          effectiveMode: mode,
+          restrictedActive: mode === "restricted",
+          paranoidActive: mode === "paranoid",
+          webrtcBlocked: mode === "restricted" || mode === "paranoid",
+          quicBlocked: mode === "paranoid",
+        },
+      },
+    }),
+  );
+const rememberedMode = (page) =>
+  page.evaluate((key) => localStorage.getItem(key), VIDEO_MODE_KEY);
 const subscriptions = () =>
   board.videoRequests.filter((request) => request.subscribe);
 // Ends a scenario: the page leaves, as a closed tab does, and what its
@@ -505,6 +554,107 @@ try {
     assert.deepEqual(board.videoRequests, []);
     assert.deepEqual(errors, []);
     await finish(page, context);
+  }
+
+  // The Restricted firewall mode closes WebRTC's ports and admits the
+  // session's. With QUIC chosen the remembered H.264 mode stays and comes
+  // over the session; VP8 cannot be had.
+  {
+    const { context, page, errors } = await open({
+      prepare: firewall("restricted"),
+    });
+    await playing(page);
+    assert.equal(await rememberedMode(page), "h264");
+    const modes = await menuModes(page);
+    assert.deepEqual(modes.h264, {
+      name: "H.264 (QUIC)",
+      disabled: false,
+      says: null,
+    });
+    assert.equal(modes.vp8.disabled, true);
+    assert.equal(
+      modes.vp8.says,
+      "VP8 WebRTC is disabled in Restricted and Paranoid Firewall modes",
+    );
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // The same mode, MJPEG on the screen: H.264 can be chosen, and is then
+  // served over the session.
+  {
+    const { context, page, errors } = await open({
+      videoMode: "mjpeg",
+      prepare: firewall("restricted"),
+    });
+    await page.locator("img#screen").waitFor({ state: "attached" });
+    await page.locator("svg.lucide-monitor").first().click();
+    await page.getByText("Video Mode", { exact: true }).hover();
+    const entry = page.locator('[data-video-mode="h264"]');
+    await entry.waitFor();
+    assert.equal(await entry.getAttribute("aria-disabled"), "false");
+    assert.equal(
+      await entry.locator("[data-video-mode-name]").innerText(),
+      "H.264 (QUIC)",
+    );
+    await entry.click();
+    // The page loads again with the new mode.
+    await until("the page shows H.264 from the session", async () => {
+      const seen = await stats(page).catch(() => null);
+      return seen && seen.frames >= 15 ? true : null;
+    });
+    assert.equal(await rememberedMode(page), "h264");
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
+  // The same mode, a browser that uses Standard: H.264 is not to be had,
+  // and its entry says what would give it.
+  {
+    const { context, page, errors } = await open({
+      choice: "standard",
+      videoMode: "mjpeg",
+      prepare: firewall("restricted"),
+    });
+    await page.locator("img#screen").waitFor({ state: "attached" });
+    const modes = await menuModes(page);
+    assert.equal(modes.h264.name, "H.264 (WebRTC)");
+    assert.equal(modes.h264.disabled, true);
+    assert.equal(
+      modes.h264.says,
+      'H.264 WebRTC is disabled in the Restricted Firewall mode. With QUIC chosen in "Settings > System > Network", H.264 comes over QUIC instead.',
+    );
+    assert.equal(modes.vp8.disabled, true);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
+  // Paranoid closes the session's port as well. The page says that QUIC is
+  // not to be had; the Screen menu, once opened, takes a remembered H.264
+  // mode to MJPEG, and its entry promises nothing.
+  {
+    board.blocked = true;
+    const { context, page, errors } = await open({
+      prepare: firewall("paranoid"),
+    });
+    await page
+      .locator('[data-testid="transport-notice"][data-reason="blocked"]')
+      .waitFor();
+    assert.equal(await stats(page), null);
+    await page.locator("svg.lucide-monitor").first().click();
+    await page.locator("img#screen").waitFor({ state: "attached" });
+    assert.equal(await rememberedMode(page), "mjpeg");
+    const modes = await menuModes(page);
+    assert.equal(modes.h264.name, "H.264 (WebRTC)");
+    assert.equal(modes.h264.disabled, true);
+    assert.equal(
+      modes.h264.says,
+      "H.264 WebRTC is disabled in Restricted and Paranoid Firewall modes",
+    );
+    assert.deepEqual(board.videoRequests, []);
+    board.blocked = false;
+    assert.deepEqual(errors, []);
+    await context.close();
   }
 
   // MJPEG keeps its path whatever the browser's choice.

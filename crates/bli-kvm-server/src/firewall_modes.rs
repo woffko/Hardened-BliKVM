@@ -570,12 +570,13 @@ pub(crate) async fn reference_confirm(
     reference_status(state).await
 }
 
-/// The restrictive modes admit HTTPS (Restricted: and SSH) from local
-/// addresses and nothing else: the QUIC gateway's UDP port stays closed in
-/// them, and no rule is ever added for it.
+/// Paranoid admits HTTPS from local addresses and nothing else: the QUIC
+/// gateway's UDP port stays closed in it. Restricted admits that port from
+/// the local ranges beside HTTPS and SSH (the owner's rules), and the open
+/// modes need no rule for it.
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) fn quic_blocked(mode: FirewallMode) -> bool {
-    matches!(mode, FirewallMode::Restricted | FirewallMode::Paranoid)
+    mode == FirewallMode::Paranoid
 }
 
 /// Whether the mode in force keeps the QUIC gateway's port closed. Without
@@ -602,10 +603,10 @@ mod reference_tests {
     use super::{FirewallMode, media_admitted, quic_blocked};
 
     #[test]
-    fn the_quic_port_is_closed_in_the_restrictive_modes_only() {
+    fn the_quic_port_is_closed_in_paranoid_only() {
         assert!(!quic_blocked(FirewallMode::Baseline));
         assert!(!quic_blocked(FirewallMode::Moderate));
-        assert!(quic_blocked(FirewallMode::Restricted));
+        assert!(!quic_blocked(FirewallMode::Restricted));
         assert!(quic_blocked(FirewallMode::Paranoid));
     }
 

@@ -153,7 +153,7 @@ Safari is not at hand.
 
 | Who | What they can try | What stops it |
 | --- | --- | --- |
-| Anyone who reaches UDP 443 | handshake floods, amplification, many connections | off by default; QUIC address validation before any state is kept; at most 8 connections; 5 s to present a token; the unit's memory limit; closed in the Restricted and Paranoid firewall modes |
+| Anyone who reaches UDP 443 | handshake floods, amplification, many connections | off by default; QUIC address validation before any state is kept; at most 8 connections; 5 s to present a token; the unit's memory limit; admitted only from the local ranges in the Moderate and Restricted firewall modes, closed in Paranoid |
 | Anyone who reaches UDP 443 | malformed packets against the QUIC and TLS code | a memory-safe stack; a process of its own without files, devices or the owner's and broker's sockets; a crash ends QUIC only, HTTPS and the lease are untouched |
 | A web page in the operator's browser | open a session to the board | it has no token: one is issued only to the authenticated session with its CSRF token, once, for 30 s; the gateway also refuses a foreign `Origin` |
 | Someone on the path | pose as the board on UDP 443 | the certificate's hash comes over the HTTPS session; TLS 1.3 only |
@@ -579,8 +579,22 @@ the lease like a client that vanished.
   comes over the session, and with "Retry" when the gateway had no picture.
   MJPEG and VP8 keep their paths whatever the choice. The status line's
   key-frame requests are the page's own count.
-- **Firewall**: no rule; `quicBlocked` in the firewall status for Restricted
-  and Paranoid.
+
+  Where the firewall mode closes WebRTC and admits the session's port
+  (Restricted), H.264 has no WebRTC to stay on. The Screen menu then offers
+  it only while the session can serve it: the entry reads "H.264 (QUIC)" and
+  can be chosen with QUIC this browser's choice, and with Standard it is
+  closed and says that QUIC would open it. A picture that is given up there
+  takes the mode to MJPEG once the menu is opened, as a WebRTC mode under a
+  closing firewall mode always did. A browser without WebRTC still gets
+  neither WebRTC mode: the page's start takes it to MJPEG before a session
+  exists.
+- **Firewall**: Baseline and Moderate need no rule. Restricted admits the
+  port from the local ranges by a rule of its own, beside HTTPS and SSH (the
+  operator's decision of 2026-10-02; the plan had left it closed), and H.264
+  then comes over the session while WebRTC stays closed. Paranoid keeps the
+  port closed, and `quicBlocked` in the firewall status is true there only
+  (`docs/design/firewall-reference-contract.md`).
 - The Content-Security-Policy is unchanged.
 
 ## What stays on HTTPS
@@ -995,3 +1009,4 @@ What the measurements of this note say, side by side:
 | The page receives in the existing decoder worker (`direct.worker.ts`) | a worker of its own, `web/src/lib/quic/video.worker.ts` | the existing worker belongs to the Direct mode, which this board does not offer, and speaks that mode's WebSocket records with a fixed codec; reassembly, the chain, recovery and the board's clock are another protocol, and the Direct mode stays as it was |
 | Q3.6: the picture on the board at 1% and 3% loss | on the board with the still screen its target showed; a moving picture under the same loss on the host | the probes may not touch the target's keyboard or mouse, and nothing moved on its screen: one frame every 2 s, half of them on a stream, loses nothing in a minute |
 | Firefox checked in Q0.3 | checked in Q4.2 | Q0 took it for absent; it was installed |
+| The port stays closed in Restricted and Paranoid | Restricted admits it from the local ranges; Paranoid keeps it closed | the plan left the question to the operator, who decided on 2026-10-02 that UDP 443 is to be admitted |

@@ -79,6 +79,8 @@ const ru = {
         'Включите HTTPS в "Настройки > Система > Сеть", чтобы использовать этот режим',
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC отключен в режимах Restricted и Paranoid Firewall',
+      videoWebrtcBlockedUseQuic:
+        'H.264 WebRTC отключен в режиме Restricted Firewall. Если в "Настройки > Система > Сеть" выбрать QUIC, H.264 пойдёт через QUIC.',
       videoVp8BlockedByFirewall: 'VP8 WebRTC отключен в режимах Restricted и Paranoid Firewall',
       videoWebrtcUnavailable:
         'В этом браузере выключен WebRTC, часто это делает VPN или расширение для приватности. Разрешите WebRTC для этого сайта, чтобы использовать этот режим.',
@@ -768,7 +770,7 @@ const ru = {
               'Дефолтный профиль. Сохраняет сервисы baseline, но принимает новые входящие соединения только из private, ULA, link-local или loopback диапазонов.',
             restricted: 'Restricted',
             restrictedDesc:
-              'Локальные административные HTTPS/SSH порты плюс исходящие сервисы для обновлений, DNS, NTP и syslog. WebRTC отключен.',
+              'Локальные административные HTTPS/SSH порты и транспорт QUIC плюс исходящие сервисы для обновлений, DNS, NTP и syslog. WebRTC отключен.',
             paranoid: 'Paranoid',
             paranoidDesc:
               'Только локальный HTTPS-доступ. Блокирует SSH, HTTP, онлайн-обновления и другие исходящие сетевые функции.',
@@ -791,10 +793,10 @@ const ru = {
             enable: 'Включить Restricted',
             active: 'Restricted Firewall mode активен',
             allows:
-              'Разрешенный трафик: HTTPS и SSH только из private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local или IPv6 loopback source ranges; исходящие DNS, NTP, удаленный syslog и онлайн-обновления; DHCP, established-соединения и минимальный IPv6 control traffic. WebRTC/ICE UDP блокируется.',
+              'Разрешенный трафик: HTTPS, SSH и транспорт QUIC (порт HTTPS по UDP) только из private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local или IPv6 loopback source ranges; исходящие DNS, NTP, удаленный syslog и онлайн-обновления; DHCP, established-соединения и минимальный IPv6 control traffic. WebRTC/ICE UDP блокируется.',
             confirmTitle: 'Включить Restricted Firewall mode?',
             confirmDesc:
-              'Входящий административный доступ будет ограничен private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local или IPv6 loopback source ranges для HTTPS и SSH. Публичные source ranges не разрешаются. Исходящие DNS, NTP, удаленный syslog, онлайн-обновления, DHCP, established-соединения и минимальный IPv6 control traffic останутся доступны. WebRTC/ICE UDP и прочий входящий/исходящий трафик будут заблокированы.'
+              'Входящий административный доступ будет ограничен private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local или IPv6 loopback source ranges для HTTPS, SSH и транспорта QUIC (порт HTTPS по UDP). Публичные source ranges не разрешаются. Исходящие DNS, NTP, удаленный syslog, онлайн-обновления, DHCP, established-соединения и минимальный IPv6 control traffic останутся доступны. WebRTC/ICE UDP и прочий входящий/исходящий трафик будут заблокированы.'
           },
           paranoid: {
             enable: 'Включить Paranoid',

@@ -39,6 +39,12 @@ export type QuicVideoUse = {
   /** The Screen menu's H.264 mode is served over the QUIC session now. */
   use: boolean;
   /**
+   * H.264 is, or would be if it were the Screen menu's mode, served over the
+   * QUIC session: the menu offers the mode so, also where WebRTC is not to
+   * be had (a firewall mode that closes its ports, a browser without it).
+   */
+  offered: boolean;
+  /**
    * Why H.264 stays on WebRTC although this browser uses QUIC: `decoder`
    * (no H.264 decoder in WebCodecs), or the gateway's or the session's
    * reason. `null` when it does not stay there, or QUIC is not chosen.
@@ -72,11 +78,11 @@ export function useQuicVideo(): QuicVideoUse {
     };
   }, []);
 
-  const wanted =
+  const able =
     choice === 'quic' &&
-    videoMode === 'h264' &&
     supportsBoardFeature(capabilities, 'network_quic') &&
     supportsVideoTransport(capabilities, 'web_rtc_janus_h264');
+  const wanted = able && videoMode === 'h264';
 
   // The gateway has no picture for this session, or the session failed:
   // WebRTC serves for the rest of this page load.
@@ -86,11 +92,12 @@ export function useQuicVideo(): QuicVideoUse {
     if (wanted && failure && !givenUp) setGivenUp(failure);
   }, [failure, givenUp, setGivenUp, wanted]);
 
-  if (!wanted) return { use: false, kept: null };
-  if (decoder === false) return { use: false, kept: 'decoder' };
-  if (givenUp ?? failure) return { use: false, kept: givenUp ?? failure };
+  if (!able) return { use: false, offered: false, kept: null };
+  if (decoder === false) return { use: false, offered: false, kept: wanted ? 'decoder' : null };
+  const stopped = givenUp ?? failure;
+  if (stopped) return { use: false, offered: false, kept: wanted ? stopped : null };
   // While the decoder is being asked about, and until the session has
   // failed, the page waits for QUIC rather than start WebRTC and switch: the
   // session is started as soon as the page is there.
-  return { use: true, kept: null };
+  return { use: wanted, offered: true, kept: null };
 }

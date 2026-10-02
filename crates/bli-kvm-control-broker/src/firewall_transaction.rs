@@ -18,6 +18,11 @@ pub trait ModeExecutor {
     /// Configuration inputs must stay stable throughout a pending transaction,
     /// including across recovery, so previous mode regenerates previous policy.
     fn apply(&mut self, mode: FirewallMode) -> Result<(), String>;
+    /// Replaces rules that an earlier build wrote for the mode in force by
+    /// this build's rules for the same mode. The mode it did that for.
+    fn refresh(&mut self) -> Result<Option<FirewallMode>, String> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -201,6 +206,18 @@ impl<S: PendingStore, E: ModeExecutor> FirewallTransaction<S, E> {
         Ok(true)
     }
 
+    /// After the owner was updated: the mode in force stays, but its rules
+    /// become this build's. Not while a change waits for its confirmation or
+    /// its rollback, which must find the rules they left.
+    pub fn refresh(&mut self) -> Result<Option<FirewallMode>, TransactionError> {
+        if self.recovering || self.journal.pending().is_some() {
+            return Ok(None);
+        }
+        self.executor
+            .refresh()
+            .map_err(|_| TransactionError::Backend)
+    }
+
     /// Invoke on the owner's independent timer, not from browser traffic only.
     pub fn tick(&mut self, now_ms: u64) -> Result<(), TransactionError> {
         let Some(pending) = self.journal.pending() else {
@@ -265,6 +282,7 @@ mod tests {
         mismatch: bool,
         store: Store,
         calls: Vec<FirewallMode>,
+        refreshed: u32,
     }
     impl ModeExecutor for Executor {
         fn preflight(&mut self, _mode: FirewallMode) -> Result<(), String> {
@@ -276,6 +294,10 @@ mod tests {
         }
         fn observe(&mut self) -> Result<FirewallMode, String> {
             Ok(self.current)
+        }
+        fn refresh(&mut self) -> Result<Option<FirewallMode>, String> {
+            self.refreshed += 1;
+            Ok(Some(self.current))
         }
         fn apply(&mut self, mode: FirewallMode) -> Result<(), String> {
             assert!(
@@ -301,6 +323,7 @@ mod tests {
             mismatch: false,
             store: store.clone(),
             calls: vec![],
+            refreshed: 0,
         };
         FirewallTransaction::open(store, executor, [3; 16]).unwrap()
     }
@@ -322,6 +345,23 @@ mod tests {
         tx.request([1; 16], [2; 32], FirewallMode::Paranoid, 100)
             .unwrap();
         assert_eq!(tx.restore(FirewallMode::Moderate, 200), Ok(false));
+    }
+
+    #[test]
+    fn rules_are_brought_up_to_date_only_while_no_change_is_pending() {
+        let mut tx = fixture();
+        assert_eq!(tx.refresh(), Ok(Some(FirewallMode::Moderate)));
+        assert_eq!(tx.executor.refreshed, 1);
+        // A change that waits for its confirmation: its rollback must find
+        // the rules it left.
+        tx.request([1; 16], [2; 32], FirewallMode::Restricted, 100)
+            .unwrap();
+        assert!(tx.pending().is_some());
+        assert_eq!(tx.refresh(), Ok(None));
+        assert_eq!(tx.executor.refreshed, 1);
+        tx.confirm([1; 16], [2; 32], 200).unwrap();
+        assert_eq!(tx.refresh(), Ok(Some(FirewallMode::Restricted)));
+        assert_eq!(tx.executor.refreshed, 2);
     }
 
     #[test]

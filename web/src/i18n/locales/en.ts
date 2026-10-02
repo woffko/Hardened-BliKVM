@@ -74,6 +74,8 @@ const en = {
       videoDirectTips: 'Enable HTTPS in "Settings > System > Network" to use this mode',
       videoWebrtcBlockedByFirewall:
         'H.264 WebRTC is disabled in Restricted and Paranoid Firewall modes',
+      videoWebrtcBlockedUseQuic:
+        'H.264 WebRTC is disabled in the Restricted Firewall mode. With QUIC chosen in "Settings > System > Network", H.264 comes over QUIC instead.',
       videoVp8BlockedByFirewall: 'VP8 WebRTC is disabled in Restricted and Paranoid Firewall modes',
       videoWebrtcUnavailable:
         'WebRTC is switched off in this browser, often by a VPN or privacy extension. Allow WebRTC for this site to use this mode.',
@@ -766,7 +768,7 @@ const en = {
               'Default profile. Keeps baseline services, but accepts new inbound connections only from private, ULA, link-local, or loopback ranges.',
             restricted: 'Restricted',
             restrictedDesc:
-              'Local-only HTTPS/SSH admin ports plus outbound services for updates, DNS, NTP, and syslog. WebRTC is disabled.',
+              'Local-only HTTPS/SSH admin ports and the QUIC transport, plus outbound services for updates, DNS, NTP, and syslog. WebRTC is disabled.',
             paranoid: 'Paranoid',
             paranoidDesc:
               'Local-only HTTPS access. Blocks SSH, HTTP, online updates, and other outbound network features.',
@@ -789,10 +791,10 @@ const en = {
             enable: 'Enable Restricted',
             active: 'Restricted Firewall mode is active',
             allows:
-              'Allowed traffic: HTTPS and SSH only from private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges; outbound DNS, NTP, remote syslog, and online updates; DHCP, established connections, and essential IPv6 control traffic. WebRTC/ICE UDP is blocked.',
+              'Allowed traffic: HTTPS, SSH and the QUIC transport (the HTTPS port over UDP) only from private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges; outbound DNS, NTP, remote syslog, and online updates; DHCP, established connections, and essential IPv6 control traffic. WebRTC/ICE UDP is blocked.',
             confirmTitle: 'Enable Restricted Firewall mode?',
             confirmDesc:
-              'Inbound admin access will be limited to private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges for HTTPS and SSH. Public source ranges are not allowed. Outbound DNS, NTP, remote syslog, online updates, DHCP, established connections, and essential IPv6 control traffic remain available. WebRTC/ICE UDP and other inbound/outbound traffic will be blocked.'
+              'Inbound admin access will be limited to private IPv4, IPv4 link-local/loopback, IPv6 ULA, IPv6 link-local, or IPv6 loopback source ranges for HTTPS, SSH and the QUIC transport (the HTTPS port over UDP). Public source ranges are not allowed. Outbound DNS, NTP, remote syslog, online updates, DHCP, established connections, and essential IPv6 control traffic remain available. WebRTC/ICE UDP and other inbound/outbound traffic will be blocked.'
           },
           paranoid: {
             enable: 'Enable Paranoid',

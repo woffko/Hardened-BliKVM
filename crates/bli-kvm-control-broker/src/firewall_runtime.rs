@@ -113,8 +113,19 @@ impl ModeRuntime {
     }
 
     /// Keeps confirmed modes in `path` and, when the kernel holds no owned
-    /// table (after a reboot), re-applies the mode stored there.
+    /// table (after a reboot), re-applies the mode stored there. A table that
+    /// an earlier build of the owner wrote (after an update without a
+    /// reboot) is brought up to this build's rules for its mode.
     pub fn persist_to(&mut self, path: PathBuf, now_ms: u64) {
+        match self.transaction.refresh() {
+            Ok(Some(mode)) => {
+                eprintln!("firewall: the rules of the {mode:?} mode were brought up to date")
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("firewall: the rules in force could not be brought up to date: {error:?}")
+            }
+        }
         if let Some(mode) = read_persisted_mode(&path) {
             match self.transaction.restore(mode, now_ms) {
                 Ok(true) => eprintln!("firewall: restored the confirmed {mode:?} mode"),

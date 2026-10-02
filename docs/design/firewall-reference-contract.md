@@ -111,29 +111,53 @@ transports (H.264 and VP8) are unavailable in the video menu while
 
 ## QUIC transport (plan of 2026-10-01)
 
-The QUIC transport (`docs/design/quic-transport-v1.md`) listens on UDP 443
-while its switch is on. No rule is added for it in any mode:
+The QUIC transport (`docs/design/quic-transport-v1.md`) listens on the UDP
+side of the page's port, UDP 443, while its switch is on:
 
 | Mode | UDP 443 from the page's network | The page |
 | --- | --- | --- |
 | baseline | accepted, like everything | QUIC can be chosen |
 | moderate | accepted from the local ranges, like every new local-source connection; dropped from elsewhere | QUIC can be chosen from a local address |
-| restricted | dropped: only local-source HTTPS (TCP 443) and SSH come in | only Standard is offered, with the reason |
+| restricted | accepted from the local ranges by a rule of its own, beside HTTPS and SSH | QUIC can be chosen from a local address; H.264 comes over it while WebRTC stays closed |
 | paranoid | dropped: only local-source HTTPS comes in | only Standard is offered, with the reason |
 
+- **Restricted admits the port** since 2026-10-02, by the operator's
+  decision (the plan of 2026-10-01 had left it closed and the question
+  open). The rule follows the HTTPS rule in the input chain:
+  `ip saddr <local ranges> udp dport <HTTPS port> accept`, and the same for
+  IPv6. The answers leave through the output chain's
+  `ct state established,related accept`. The port is the page's own: a page
+  may open a session on its own origin only, so no other port can serve.
+  Paranoid stays as it was: HTTPS only.
 - The firewall status reports `quicBlocked` beside `webrtcBlocked`, true in
-  Restricted and Paranoid. The web server answers a session request with
-  `blocked` while it is set and `GET /api/transport` says so, which is how
-  the page knows why before it tries.
-- The rule and the refusal are tested on the host
-  (`the_quic_port_is_closed_in_the_restrictive_modes_only` and the transport
-  tests of the server, and the page's contract `quic_transport_contract.mjs`,
-  which plays a blocked port). On the board
-  the transport was exercised in Baseline only: the plan forbids leaving a
-  mode change in place, and a mode change was not needed to show the rule.
-- Whether Restricted should admit UDP 443 from the local ranges, as it
-  admits TCP 443, is left to the operator; it would be one rule beside the
-  HTTPS one and `quicBlocked` false in that mode.
+  Paranoid only. The web server answers a session request with `blocked`
+  while it is set and `GET /api/transport` says so, which is how the page
+  knows why before it tries.
+- **In Restricted WebRTC stays closed** (its media range is not admitted
+  unless `webrtcMedia` is configured), so the Screen menu offers H.264 only
+  over the QUIC session: with QUIC this browser's choice the entry reads
+  "H.264 (QUIC)" and can be chosen, VP8 cannot; with Standard the entry says
+  that QUIC would give it.
+- **A board that is in Restricted when the owner is updated** holds the
+  rules its earlier build wrote, without the QUIC rule. The owner verifies
+  its whole table against the mode it is marked with, so it knows that form
+  as well (`RuleForm::BeforeQuicPort`): the mode in force is still read as
+  Restricted, and at its start the owner replaces the table by this build's
+  rules for the same mode in one nft transaction, which only admits more
+  and needs no confirmation. It does not do so while a change waits for its
+  confirmation or its rollback. An owner older than this change that meets
+  the newer rules (a slot rolled back while in Restricted) cannot verify
+  them and reports the firewall status as unavailable until a reboot, when
+  it writes its own rules again; the rules in force meanwhile are the newer
+  Restricted ones.
+- Tests: the rule and its absence from the other modes
+  (`policy_differences_and_native_ports_are_explicit`), the two forms of
+  the Restricted table (`restricted_before_the_quic_port_is_another_form_of_the_same_mode`),
+  the replacement at the owner's start and its refusal of a table that is
+  no form of its mode (`firewall_executor` tests against a played kernel),
+  `the_quic_port_is_closed_in_paranoid_only` in the server, and the page's
+  contracts (`quic_transport_contract.mjs` plays a blocked port,
+  `quic_video_contract.mjs` plays Restricted and Paranoid).
 
 ## Remaining implementation and acceptance gates
 
