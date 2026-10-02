@@ -66,6 +66,7 @@ members = [
   "crates/bli-kvm-update-exec-helper",
   "crates/bli-kvm-admin-helper",
   "crates/bli-kvm-video-encoder",
+  "crates/bli-kvm-ve-lab",
   "crates/bli-kvm-update-trust-config",
   "crates/bli-kvm-kvmd-media-client",
   "crates/bli-kvm-broker-protocol",
