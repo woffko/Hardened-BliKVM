@@ -17,7 +17,7 @@ use bli_kvm_ve_lab::{
         ring_index,
     },
     psnr,
-    rate::{self, RateControl, SearchChoice},
+    rate::{self, RateControl, SearchChoice, Second},
     regs::{self, Adjust, Hypothesis, Op, Search},
     session::{Encoded, Session},
 };
@@ -60,8 +60,8 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       library has it, with its refinement off, or for every frame the one that makes the
       smaller frame, a costly frame being encoded with both; without it the map's),
       passes=N (the passes a frame may take, 1 to 3; 2 without it: with one more pass
-      only, a frame that does not fit is encoded again at a higher QP, and the other
-      search waits for a frame that fits),
+      only, a frame that does not fit and is due the other search gets both at once,
+      the other search at the higher QP),
       adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or 0xb4c that say how
       the engine searches and decides, changed in every frame's plan)
   bli-kvm-ve-lab extents MAP WIDTHxHEIGHT FRAMES OUTPUT [fill=KIND[,KIND...]] [tight]
@@ -1390,6 +1390,8 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 ..patience
             });
         }
+        // The search of the pass that is the frame.
+        let mut sent_search = None;
         let attempt = (|| -> Result<(Encoded, u32), String> {
             let qp = match control.as_mut() {
                 Some(control) => {
@@ -1411,45 +1413,86 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             let mut passes = 1;
             let mut made = 1;
             let first_bits = best.bytes.len() as u64 * 8;
+            sent_search = choice.as_ref().map(SearchChoice::first);
             // A frame the bucket has no room for needs a pass at a higher QP.
-            let too_large = control
+            let higher = control
                 .as_ref()
-                .is_some_and(|control| control.again(first_bits, qp).is_some());
-            // A costly frame that is not a key frame: the other search,
-            // where the frame may take the pass.
+                .and_then(|control| control.again(first_bits, qp));
+            // A costly frame that is not a key frame is due the other search.
             let other = choice
                 .as_ref()
-                .filter(|_| !best.key && rate::tries_other(passes_at_most, too_large))
+                .filter(|_| !best.key)
                 .and_then(|choice| choice.other(first_bits, costly));
-            if let (Some(other), Some(choice)) = (other, choice.as_mut()) {
-                session.keep(&best);
-                session.set_search(Some(other));
-                let second = session
-                    .pass(source, key, qp, false)
-                    .map_err(|error| error.to_string())?;
-                made += 1;
-                both.push(frame);
-                if choice.compared(first_bits, second.bytes.len() as u64 * 8) {
-                    best = second;
-                    changes.push((frame, choice.first()));
+            match (
+                rate::second_pass(passes_at_most, other.is_some(), higher.is_some()),
+                other,
+                higher,
+                choice.as_mut(),
+            ) {
+                (Some(Second::Other), Some(other), _, Some(choice)) => {
+                    session.keep(&best);
+                    session.set_search(Some(other));
+                    let second = session
+                        .pass(source, key, qp, false)
+                        .map_err(|error| error.to_string())?;
+                    made += 1;
+                    both.push(frame);
+                    if choice.compared(first_bits, second.bytes.len() as u64 * 8) {
+                        best = second;
+                        sent_search = Some(other);
+                        changes.push((frame, choice.first()));
+                    }
+                    // A pass at another QP leaves the better one alone.
+                    session.keep(&best);
+                    session.set_search(Some(choice.first()));
+                    // With a third pass to take: the better one at a higher
+                    // QP, if it does not fit either.
+                    if let (true, Some(control)) = (made < passes_at_most, control.as_ref()) {
+                        if let Some(higher) = control.again(best.bytes.len() as u64 * 8, qp) {
+                            best = session
+                                .pass(source, key, higher, false)
+                                .map_err(|error| error.to_string())?;
+                            passes = 2;
+                            made += 1;
+                        }
+                    }
                 }
-                // A pass at another QP leaves the better one alone.
-                session.keep(&best);
-                session.set_search(Some(choice.first()));
-            }
-            let Some(control) = control.as_mut() else {
-                frame_passes.push(made);
-                return Ok((best, passes));
-            };
-            if made < passes_at_most {
-                if let Some(higher) = control.again(best.bytes.len() as u64 * 8, qp) {
+                (Some(Second::OtherHigher), Some(other), Some(higher), Some(choice)) => {
+                    // The first pass does not fit and is not the frame: its
+                    // set of buffers is the next pass's to write.
+                    session.set_search(Some(other));
+                    let second = session
+                        .pass(source, key, higher, false)
+                        .map_err(|error| error.to_string())?;
+                    made += 1;
+                    passes = 2;
+                    both.push(frame);
+                    if choice.compared_higher(
+                        first_bits,
+                        higher - qp,
+                        second.bytes.len() as u64 * 8,
+                    ) {
+                        changes.push((frame, choice.first()));
+                    }
+                    // The pass at the QP that was meant to fit is the frame,
+                    // whichever search the next frame begins with.
+                    best = second;
+                    sent_search = Some(other);
+                    session.set_search(Some(choice.first()));
+                }
+                (Some(Second::Higher), _, Some(higher), _) => {
                     best = session
                         .pass(source, key, higher, false)
                         .map_err(|error| error.to_string())?;
                     passes = 2;
                     made += 1;
                 }
+                _ => {}
             }
+            let Some(control) = control.as_mut() else {
+                frame_passes.push(made);
+                return Ok((best, passes));
+            };
             frame_passes.push(made);
             // A frame that fits at no QP is left out, unless the stream
             // needs it to begin with.
@@ -1494,7 +1537,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         };
         // No pass: the frame was left out, and the control knows.
         if passes > 0 {
-            if !encoded.key && choice.is_some_and(|choice| choice.first() == Search::Wide) {
+            if !encoded.key && sent_search == Some(Search::Wide) {
                 wide_frames += 1;
             }
             session.accept(&encoded);

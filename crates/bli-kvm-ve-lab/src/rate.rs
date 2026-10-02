@@ -172,13 +172,34 @@ impl RateControl {
 /// processors are busy.
 pub const PASSES: u32 = 2;
 
-/// Whether a frame that may take `passes` passes can be tried with the
-/// other search. With three it can. With two it can unless its first pass
-/// is `too_large` for the bucket: then its one more pass is the one at a
-/// higher QP, and the other search waits for a frame that fits, which the
-/// next one does as a rule.
-pub fn tries_other(passes: u32, too_large: bool) -> bool {
-    passes >= 3 || (passes == 2 && !too_large)
+/// What a frame's pass after the first is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Second {
+    /// The other search at the same QP: the smaller of the two passes is
+    /// the frame.
+    Other,
+    /// The same search at a higher QP: the first pass did not fit.
+    Higher,
+    /// Both in one pass, where a frame may take only one more: the other
+    /// search at the higher QP.
+    OtherHigher,
+}
+
+/// What follows the first pass of a frame that may take `passes` passes:
+/// `other` says that the other search is due, `too_large` that the bucket
+/// has no room for the first pass. With three passes the other search
+/// comes first and a higher QP may follow it. With two, a frame that is
+/// due the other search and too large gets both at once: such a frame is
+/// where a wrong search shows first, and a control that only raised the QP
+/// would hide the cost the other search is chosen by.
+pub fn second_pass(passes: u32, other: bool, too_large: bool) -> Option<Second> {
+    match (passes, other, too_large) {
+        (0 | 1, _, _) | (_, false, false) => None,
+        (_, false, true) => Some(Second::Higher),
+        (_, true, false) => Some(Second::Other),
+        (2, true, true) => Some(Second::OtherHigher),
+        (_, true, true) => Some(Second::Other),
+    }
 }
 
 /// Frames for which the other search is left alone after it was tried.
@@ -244,6 +265,25 @@ impl SearchChoice {
     pub fn other(&self, bits: u64, costly: u64) -> Option<Search> {
         let due = self.rest == 0 || bits >= SEARCH_AGAIN * self.tried_bits;
         (bits >= costly && due).then(|| self.current.other())
+    }
+
+    /// The second pass was made with the other search at a QP `steps`
+    /// higher than the first. What the first search would have made there
+    /// is taken from the control's rule of thumb, bits halving with six
+    /// steps; text shrinks less than that, so the rule errs towards the
+    /// search the frame came with. True when the other search's pass is a
+    /// tenth smaller than that estimate: it is then the next frame's.
+    pub fn compared_higher(&mut self, first_bits: u64, steps: i32, second_bits: u64) -> bool {
+        let expected = first_bits as f64 / 2f64.powf(steps as f64 / STEPS_PER_HALVING);
+        self.tried += 1;
+        self.rest = SEARCH_REST + 1;
+        self.tried_bits = (expected as u64).min(second_bits);
+        let second = (second_bits as f64) < SEARCH_BETTER * expected;
+        if second {
+            self.current = self.current.other();
+            self.changed += 1;
+        }
+        second
     }
 
     /// Both passes are made. True when the second is the frame; the search
@@ -315,15 +355,48 @@ mod tests {
     }
 
     #[test]
-    fn of_two_passes_the_second_is_the_rates_when_a_frame_does_not_fit() {
+    fn a_frame_that_is_too_large_and_due_the_other_search_gets_both_in_one_pass() {
         // One pass: the first is all there is.
-        assert!(!tries_other(1, false) && !tries_other(1, true));
-        // Two: the other search, unless the rate needs the pass.
-        assert!(tries_other(2, false));
-        assert!(!tries_other(2, true));
-        // Three: both.
-        assert!(tries_other(3, false) && tries_other(3, true));
+        for (other, too_large) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert_eq!(second_pass(1, other, too_large), None);
+        }
+        for passes in [2, 3] {
+            assert_eq!(second_pass(passes, false, false), None);
+            assert_eq!(second_pass(passes, true, false), Some(Second::Other));
+            assert_eq!(second_pass(passes, false, true), Some(Second::Higher));
+        }
+        // Two: both at once. Three: the other search, and a higher QP after it.
+        assert_eq!(second_pass(2, true, true), Some(Second::OtherHigher));
+        assert_eq!(second_pass(3, true, true), Some(Second::Other));
         assert_eq!(PASSES, 2);
+    }
+
+    #[test]
+    fn the_other_search_at_a_higher_qp_is_judged_by_what_the_first_would_have_made_there() {
+        // 800 kbit at QP 30 are 400 at QP 36 by the rule of thumb.
+        let mut choice = SearchChoice::new();
+        assert_eq!(choice.first(), Search::Exact);
+        // 380 kbit: not a tenth less. The search stays, and rests.
+        assert!(!choice.compared_higher(800_000, 6, 380_000));
+        assert_eq!(
+            (choice.first(), choice.tried, choice.changed),
+            (Search::Exact, 1, 0)
+        );
+        assert_eq!(choice.other(500_000, 1), None);
+        // Unless a frame costs twice what the tried one did.
+        assert_eq!(choice.other(1_000_000, 1), Some(Search::Wide));
+        // 100 kbit: the other search found what the first did not.
+        let mut choice = SearchChoice::new();
+        assert!(choice.compared_higher(800_000, 6, 100_000));
+        assert_eq!(
+            (choice.first(), choice.tried, choice.changed),
+            (Search::Wide, 1, 1)
+        );
+        // No step of QP between them: the comparison of two passes at one QP.
+        let mut choice = SearchChoice::new();
+        assert!(choice.compared_higher(800_000, 0, 700_000));
+        let mut choice = SearchChoice::new();
+        assert!(!choice.compared_higher(800_000, 0, 730_000));
     }
 
     #[test]
