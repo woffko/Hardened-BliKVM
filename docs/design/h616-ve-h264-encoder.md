@@ -411,6 +411,84 @@ total was the 131072 kB found before; closing the device freed them.
 
 Receipt: `evidence/private/ve-lab-v1-20261002-buffers`.
 
+### V1.5, 2026-10-02: which bits the encoder's registers hold
+
+With the encoder selected and nothing triggered, every register the open
+maps name (34, no trigger, status or interrupt register among them) was
+read, written with ones, read, written with zero, read, and put back.
+
+**The older select does nothing here.** With `0x0013000b` in the mode
+register, engine 11 in the low four bits, no register of the input stage or
+of the encoder holds a bit.
+
+**The newer select is this engine's.** After the pulse of the encoder's
+reset bit, bits 7 and 6 stay set in the mode register (`0xc00000c7`), and
+the blocks hold what is written:
+
+| Register | Bits that can be set | Remark |
+| --- | --- | --- |
+| `0xa00` size | `0x07ff07ff` | 11 bits for each dimension in macroblocks |
+| `0xa04` stride | `0x07ff07ff` | the same two fields |
+| `0xa08` control | `0xf8790006` tried, all held | only the bits the map names were tried, never the interrupt enable |
+| `0xa2c` scaler size | all | |
+| `0xa78`, `0xa7c` input | `0xfffffff0`, `0xfffffff8` | luma addresses in steps of 16 bytes, chroma of 8 |
+| `0xb04` `PARA0` | all | |
+| `0xb08` `PARA1` | all | `0x0000001e` after reset: QP 30 |
+| `0xb0c` `PARA2` | all | |
+| `0xb10` motion estimation | `0x00ffffff` | |
+| `0xb24` | `0x0003f000` | |
+| `0xb28` intra refresh | `0x80ff00ff` | the map's three fields exactly |
+| `0xb2c` | `0xf03fffff` | |
+| `0xb30`, `0xb34`, `0xb38` | all | |
+| `0xb3c` | none | the map's fourth MAD threshold holds nothing |
+| `0xb44` temporal filter | `0xffff7fff` | the map's five fields exactly |
+| `0xb48`, `0xb4c` dynamic motion estimation | `0x03ff03ff` | the map's two fields exactly |
+| `0xb60` | `0xfffffffc` | an address |
+| `0xb80` stream start | `0xfffffffc` | |
+| `0xb84` stream end | all; the low two bits cannot be cleared | all ones after reset |
+| `0xb88` bit offset | none | |
+| `0xb8c` size in bits | `0xffff0000` | in steps of 65536 bits, 8 KiB; `0xffff0000` after reset |
+| `0xba0`, `0xba4`, `0xbb0`, `0xbb4`, `0xbb8`, `0xbbc`, `0xbc0`, `0xbc4`, `0xbc8` | `0xfffffffc` | addresses |
+
+Every register read after the probe what it had read before it. No
+interrupt came. The kernel's lines were the two of every session.
+
+What this says:
+
+- The block is the V3s map's: where that map names fields, the bits that
+  can be set are those fields and no others (intra refresh, temporal
+  filter, dynamic motion estimation, the two size fields).
+- Three things the maps do not say: the stream buffer's size counts in
+  steps of 8 KiB; its end address always has its low two bits set; the bit
+  offset cannot be read back.
+- One register of the map is not there: the fourth MAD threshold.
+
+Receipt: `evidence/private/ve-lab-v1-20261002-masks`.
+
+### Gate V1: passed
+
+Modules built by the recipe load. The engine's identification is recorded
+(its version register reads zero). The encoder's block holds what is
+written to it once the encoder is selected the newer way. Buffers work.
+After every session `cedrus` was bound and suspended as before, and the
+kernel's log had only the lab module's and the decoder's own lines. The
+first hypothesis for V2 is the V3s map; the older map is tried only for
+what it writes into the block, not for its select.
+
 ## The H616's register description
 
-Nothing yet: written from V1 on.
+Shown on the board so far (V1). Everything else is still the hypothesis of
+the maps above.
+
+- The encoder is selected by bits 7 (encoder) and 6 (input stage) of the
+  mode register `0x000`, with the decoder field at 7, after a pulse of bit
+  24 of the reset register `0x004`. The mode register reads `0xc0000007`
+  after power-on and `0xc00000c7` with the encoder selected.
+- `0x004` reads `0x00000300` when idle.
+- `0x0f0` reads zero; `0x0e0` = `0x00033010` and `0x0e4` = `0x00012011`.
+- The registers of `0xa00` and `0xb00` and their writable bits are those of
+  the table of V1.5. They read zero, and cannot be written, while the
+  encoder is not selected.
+- The engine takes 32-bit bus addresses; the lab's buffers lie between
+  `0x40000000` and `0x80000000`. Whether it takes them as they are is shown
+  by its first write (V2.1).
