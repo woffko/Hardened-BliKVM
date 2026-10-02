@@ -142,3 +142,33 @@ of a probe is left.
   left so.
 - The operator reported that the phone works. A check from the phone with
   QUIC chosen under "This browser uses" is not recorded yet.
+
+## Release 0.1.0-alpha.10 (2026-10-02)
+
+The operator asked for an intermediate release with the card image. Tag
+`v0.1.0-alpha.10` (annotated, on `702040d`: slot 65's source `4602d68` and
+documents after it) and a GitHub pre-release with:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-alpha.10-seq65.tar` | `04e0548afdfd2e4ce65b397a2ada2844101e57168f558741a63131d994b51a3d` |
+| `hardened-blikvm-h616-sd.img.zst` | `b4f2830edc5e79fd9c0076f5de7fec9e635bd0a50325fd33085d017cf4ddf5ce` |
+| `IMAGE-INFO.txt` | `25da580a8cfb0f6ad08986bf521bbf2251c849ab4c759d370247daf1e85cd86d` |
+| `SHA256SUMS` | lists the three above and the unpacked image |
+
+- The image was built from the test board with slot 65 confirmed
+  (`tools/image/build_sd_image.sh`, release `0.1.0-alpha.10`). Looked at
+  before publishing: the image names its release; the QUIC gateway and its
+  unit are in it and the unit is not enabled; the update runtime is
+  `0.1.0~dev35` and the encoder the one deployed; the server's state, the
+  owner's switches and journals and the video settings are absent, so a new
+  card starts with every switch off, Baseline and the default bitrate; the
+  first-boot marker is set. The published files' digests equal the local
+  ones. The image has not been booted from a new card.
+- `cargo audit` on the release's lock reports one advisory, in `time`, which
+  the QUIC stack brought in and whose fault is not reachable in the gateway
+  (`docs/third-party-rust.md`). The release notes say so.
+- The notes of alpha.2 now begin with a pointer to this release.
+- Found while preparing it: at the operator's 8 Mbit/s the software H.264
+  encoder needs 47 ms for a 1920x1080 frame (28 ms at 2.5 Mbit/s), about 20
+  frames a second. The release notes name both rates.
