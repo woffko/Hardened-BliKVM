@@ -1700,6 +1700,54 @@ Receipts: `evidence/private/ve-lab-v3-20261003-two-a` (the plan's
 sequences, with the kept streams and Chromium's verdicts), `-two-b` (text
 that moves, bursts, a key frame every two seconds).
 
+### V3.6, 2026-10-02 and 2026-10-03: an hour, a timeout, a thousand starts
+
+**An hour of encoding.** One hour of `drag` at QP 30, the search chosen
+for every frame, decoded by the board's ffmpeg as it was made (2026-10-02,
+lab tool `f16a1e4`): 104,769 frames, 29.1 a second, every one decoded
+without a complaint and none below 40.09 dB. The stream comes round every
+580 frames (ten rounds of the 58 pictures forth and back, and two key
+frames), and every frame was, byte for byte, the frame 580 before it: no
+frame was wrong. A fixed QP has no pass at a higher one, and its streams
+are the same with two passes a frame (above).
+
+Then five minutes each at a bitrate with two passes a frame (2026-10-03,
+`266613f`): `drag` at 2.5 Mbit/s, 8908 frames, all decoded, none below
+40.09 dB; `scroll` at 8 Mbit/s, 8566 frames, all decoded, 208 of them
+left out. Of the 206 frames below 20 dB, 201 were left out and show the
+picture before them while the page has moved on; the other five are the
+key frame 8100, to which the bucket gave QP 51 after a frame of 455 kB,
+and the four frames after it at QP 47 to 51. They are frames at the
+highest QPs. PSNR alone does not tell such a frame from a wrong one, which
+is why the hour is at a fixed QP, where every frame is compared with the
+frame of the same picture a period before.
+
+**A timeout and the reset after it.** A stream of 300 frames in which the
+hundredth is not waited for: the lab gives the frame up, resets the engine
+through the reset control, and goes on with a key frame. 299 frames came
+out, the board's ffmpeg decodes all of them without a complaint, and the
+key frame is frame 101. The driver of V4 does the same after 200 ms.
+
+**A thousand starts and stops.** A thousand times the device was opened,
+buffers for a 1920x1080 stream were taken, two frames of 320x240 were
+encoded, and everything was given back: a thousand of a thousand, and the
+last stream decodes. The free part of the 128 MiB of contiguous memory
+was 124,452 kB before and 119,132 kB after; the page cache uses free pages
+of it too, and at idle after nineteen more sessions, on 2026-10-03,
+121,932 kB were free. Starts that kept their buffers, about 19 MB at
+1920x1080, would have used it up within seven. The driver's hostile client
+(V4.3) counts after the page cache is dropped.
+
+Every session ended with the engine back with `cedrus` and suspended, no
+module, file or process left, the kernel's image compared word by word and
+unchanged, and no line in the kernel's log but the two of every session.
+
+Receipts: `evidence/private/ve-lab-v3-20261002-soak` (the hour, and two
+runs at a bitrate with up to three passes), `ve-lab-v3-20261003-soak` (the
+two runs at a bitrate with two passes), `ve-lab-v3-20261002-sustained`
+(the timeout and the starts), `-soak-try`, `-soak-try2` (short runs of the
+same soak).
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
