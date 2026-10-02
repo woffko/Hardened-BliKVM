@@ -148,12 +148,21 @@ impl<E: Engine> Session<E> {
     /// Allocates buffers with room for a stream of `room`'s size (at least
     /// the stream's own), marks their guards and selects the encoder.
     pub fn open(
-        mut engine: E,
+        engine: E,
         hypothesis: Hypothesis,
         stream: Stream,
         room: &Stream,
     ) -> Result<Self, Error> {
-        let sizes = Sizes::lab(room);
+        Self::open_sized(engine, hypothesis, stream, Sizes::lab(room))
+    }
+
+    /// The same with buffers of the given sizes.
+    pub fn open_sized(
+        mut engine: E,
+        hypothesis: Hypothesis,
+        stream: Stream,
+        sizes: Sizes,
+    ) -> Result<Self, Error> {
         let needed = Sizes::lab(&stream);
         if needed.input > sizes.input || needed.reconstruction_luma > sizes.reconstruction_luma {
             return Err(Error::Picture);
@@ -493,12 +502,15 @@ impl<E: Engine> Session<E> {
             .collect()
     }
 
-    /// Fills the work buffers with a pattern, so that `written` can tell
-    /// afterwards how far the engine wrote into them. Before the first
-    /// frame: a key frame reads none of them.
-    pub fn fill_work_buffers(&mut self) {
+    /// Fills the work buffers whose names begin with one of `kinds` with a
+    /// pattern, so that `written` can tell afterwards how far the engine
+    /// wrote into them, whatever it wrote. The others keep the zeros they
+    /// were made with.
+    pub fn fill_work_buffers(&mut self, kinds: &[&str]) {
         for area in self.areas.clone() {
-            if matches!(area.name, "input" | "stream") {
+            if matches!(area.name, "input" | "stream")
+                || !kinds.iter().any(|kind| area.name.starts_with(kind))
+            {
                 continue;
             }
             // Made where memory is cached, and copied in one run.
@@ -527,10 +539,18 @@ impl<E: Engine> Session<E> {
         self.buffers.stream_bytes = bytes.clamp(4096, self.output.bytes) as u32;
     }
 
-    /// The first and the last byte of the part `from..to` of a filled
-    /// buffer that no longer hold the pattern, counted from `from`; none
-    /// if the engine wrote nothing there, or the buffer has no such part.
-    pub fn written(&mut self, name: &str, from: usize, to: usize) -> Option<(usize, usize)> {
+    /// The first and the last byte of the part `from..to` of a buffer that
+    /// no longer hold what the buffer was made with, counted from `from`:
+    /// the pattern if it was `filled`, zeros if not (a zero the engine
+    /// wrote is then not seen). None if nothing changed there, or the
+    /// buffer has no such part.
+    pub fn written(
+        &mut self,
+        name: &str,
+        from: usize,
+        to: usize,
+        filled: bool,
+    ) -> Option<(usize, usize)> {
         let area = *self.areas.iter().find(|area| area.name == name)?;
         let to = to.min(area.bytes);
         if from >= to {
@@ -538,7 +558,10 @@ impl<E: Engine> Session<E> {
         }
         // Not cached where it is: copied out in one run.
         let found = self.engine.bytes(area.buffer)[GUARD + from..GUARD + to].to_vec();
-        let changed = |(at, byte): (usize, &u8)| (*byte != filler(from + at)).then_some(at);
+        let changed = |(at, byte): (usize, &u8)| {
+            let before = if filled { filler(from + at) } else { 0 };
+            (*byte != before).then_some(at)
+        };
         let first = found.iter().enumerate().find_map(changed)?;
         let last = found.iter().enumerate().rev().find_map(changed)?;
         Some((first, last))
@@ -808,18 +831,24 @@ mod tests {
             .collect();
         assert!(names.contains(&"sub-pixel 0") && names.contains(&"macroblock info"));
         assert!(!names.contains(&"input") && !names.contains(&"stream"));
-        session.fill_work_buffers();
+        // As they were made the buffers hold zeros.
+        for (name, bytes) in session.work_buffers() {
+            assert_eq!(session.written(name, 0, bytes, false), None, "{name}");
+        }
+        session.fill_work_buffers(&["sub-pixel", "macroblock"]);
         // The guards are not part of what is filled.
         assert_eq!(session.broken_guard(), None);
         for (name, bytes) in session.work_buffers() {
-            assert_eq!(session.written(name, 0, bytes), None, "{name}");
+            let filled = name.starts_with("sub-pixel") || name == "macroblock info";
+            assert_eq!(session.written(name, 0, bytes, filled), None, "{name}");
+            // Seen against the other beginning, the whole buffer differs.
+            assert!(session.written(name, 0, bytes, !filled).is_some(), "{name}");
         }
         // The stream buffer is filled by its own request, and told shorter.
         let whole = session.stream_bytes();
-        // Zeros are not the pattern.
-        assert!(session.written("stream", 0, whole).is_some());
+        assert_eq!(session.written("stream", 0, whole, false), None);
         session.fill_stream_buffer();
-        assert_eq!(session.written("stream", 0, whole), None);
+        assert_eq!(session.written("stream", 0, whole, true), None);
         assert_eq!(session.broken_guard(), None);
         session.tell_stream_bytes(65536);
         assert_eq!(session.buffers().stream_bytes, 65536);
@@ -835,17 +864,56 @@ mod tests {
             session.engine.bytes(area.buffer)[GUARD + position] = !filler(position);
         }
         assert_eq!(
-            session.written("sub-pixel 1", 0, area.bytes),
+            session.written("sub-pixel 1", 0, area.bytes, true),
             Some((100, 4999))
         );
         // A part of the buffer is counted from its own beginning.
         assert_eq!(
-            session.written("sub-pixel 1", 4096, area.bytes),
+            session.written("sub-pixel 1", 4096, area.bytes, true),
             Some((0, 903))
         );
-        assert_eq!(session.written("sub-pixel 1", 8192, area.bytes), None);
-        assert_eq!(session.written("sub-pixel 0", 0, area.bytes), None);
-        assert_eq!(session.written("no such buffer", 0, 10), None);
+        assert_eq!(session.written("sub-pixel 1", 8192, area.bytes, true), None);
+        assert_eq!(session.written("sub-pixel 0", 0, area.bytes, true), None);
+        assert_eq!(session.written("no such buffer", 0, 10, true), None);
+        // In a buffer of zeros, what is not zero was written.
+        let picture = *session
+            .areas
+            .iter()
+            .find(|area| area.name == "reconstruction 2")
+            .unwrap();
+        session.engine.bytes(picture.buffer)[GUARD + 7] = 1;
+        session.engine.bytes(picture.buffer)[GUARD + 70] = 9;
+        assert_eq!(
+            session.written("reconstruction 2", 0, picture.bytes, false),
+            Some((7, 70))
+        );
+    }
+
+    #[test]
+    fn buffers_of_a_drivers_sizes_hold_a_stream() {
+        // The sizes of kernel/hardened-blikvm-ve/ve_enc_plan.c for 1920x1080
+        // and 64x64: pictures, sub-pixel planes, macroblock information.
+        let large = Sizes::tight(&stream(1920, 1080));
+        assert_eq!(
+            large.reconstruction_luma + large.reconstruction_chroma,
+            3_321_856
+        );
+        assert_eq!((large.subpixel, large.macroblock_info), (57_344, 20_480));
+        let small = stream(64, 64);
+        let sizes = Sizes::tight(&small);
+        assert_eq!(
+            sizes.reconstruction_luma + sizes.reconstruction_chroma,
+            16_384
+        );
+        assert_eq!((sizes.subpixel, sizes.macroblock_info), (8_192, 8_192));
+        let mut picture = Picture::new(64, 64);
+        let mut session =
+            Session::open_sized(FakeEngine::newer(), Hypothesis::H6, small, sizes).unwrap();
+        for frame in 0..3 {
+            render(Sequence::Motion, frame, &mut picture);
+            session.encode(&picture, frame == 0, 30).unwrap();
+        }
+        assert_eq!(session.broken_guard(), None);
     }
 
     #[test]

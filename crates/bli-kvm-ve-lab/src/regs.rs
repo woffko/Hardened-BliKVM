@@ -589,6 +589,24 @@ impl Sizes {
         }
     }
 
+    /// What a driver would allocate (`kernel/hardened-blikvm-ve`): the
+    /// V3s map's sizes for the picture itself, each buffer a whole number
+    /// of pages and one page more. The lab uses them only after it has
+    /// seen, in its own larger buffers, that the engine fills no more.
+    pub fn tight(stream: &Stream) -> Self {
+        let v3s = Self::v3s(stream);
+        let page = |bytes: usize| align(bytes, 4096) + 4096;
+        Self {
+            input: v3s.input,
+            reconstruction_luma: v3s.reconstruction_luma,
+            reconstruction_chroma: page(v3s.reconstruction_luma + v3s.reconstruction_chroma)
+                - v3s.reconstruction_luma,
+            subpixel: page(v3s.subpixel),
+            macroblock_info: v3s.macroblock_info + 4096,
+            extra: 0,
+        }
+    }
+
     /// What the lab allocates: the larger of both for every buffer.
     pub fn lab(stream: &Stream) -> Self {
         let (older, v3s) = (Self::older(stream), Self::v3s(stream));

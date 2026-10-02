@@ -64,11 +64,16 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       search waits for a frame that fits),
       adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or 0xb4c that say how
       the engine searches and decides, changed in every frame's plan)
-  bli-kvm-ve-lab extents MAP WIDTHxHEIGHT FRAMES OUTPUT
-      how far the engine writes into its work buffers: they are filled with a pattern,
-      a key frame and FRAMES P frames of a picture that changes everywhere are encoded,
-      each P frame with both searches, and for every buffer the first and last byte
-      that changed are given beside the sizes the open maps have for it
+  bli-kvm-ve-lab extents MAP WIDTHxHEIGHT FRAMES OUTPUT [fill=KIND[,KIND...]] [tight]
+      how far the engine writes into its work buffers: a key frame and FRAMES P frames
+      of a picture that changes everywhere are encoded, each P frame with both
+      searches, and for every buffer the first and last byte that changed are given
+      beside the sizes the open maps have for it. The buffers begin as zeros, as in
+      every run; fill= puts a pattern into those of the named kinds first
+      (reconstruction, sub-pixel, macroblock, extra, or all), which shows a zero the
+      engine wrote, and what the engine makes of memory it did not write itself.
+      With tight the buffers have the sizes a driver would give them, not the lab's.
+      An encode that fails ends the run and is part of the answer.
   bli-kvm-ve-lab overflow MAP WIDTHxHEIGHT QP TOLD_BYTES STREAM OUTPUT
       what the engine does at the end of its stream buffer: a key frame of a picture
       that changes everywhere, with the engine told that the buffer ends after
@@ -718,7 +723,7 @@ fn parse_vector(value: &str) -> Result<(i32, i32), String> {
 /// be, and their guards only tell that the engine stayed inside those;
 /// whoever gives the engine smaller buffers must know what it fills.
 fn extents(arguments: &[String]) -> Result<(), String> {
-    let [map, size, frames, output] = arguments else {
+    let [map, size, frames, output, options @ ..] = arguments else {
         return Err(USAGE.into());
     };
     let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
@@ -728,11 +733,34 @@ fn extents(arguments: &[String]) -> Result<(), String> {
         .ok()
         .filter(|frames| (1..=300).contains(frames))
         .ok_or("FRAMES is a number from 1 to 300")?;
+    const KINDS: [&str; 4] = ["reconstruction", "sub-pixel", "macroblock", "extra"];
+    let (mut filled, mut tight) = (Vec::<&str>::new(), false);
+    for option in options {
+        match option.strip_prefix("fill=") {
+            Some("all") => filled = KINDS.to_vec(),
+            Some(kinds) => {
+                for kind in kinds.split(',') {
+                    let known = KINDS
+                        .iter()
+                        .find(|known| **known == kind)
+                        .ok_or_else(|| format!("not a kind of buffer: {kind}"))?;
+                    filled.push(known);
+                }
+            }
+            None if option == "tight" => tight = true,
+            None => return Err(format!("not an option: {option}")),
+        }
+    }
     let stream = stream(&hypothesis, width, height, true);
     let room = room_for(&hypothesis, width, height);
-    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
+    let sizes = if tight {
+        regs::Sizes::tight(&stream)
+    } else {
+        regs::Sizes::lab(&room)
+    };
+    let mut session = Session::open_sized(open_device()?, hypothesis, stream, sizes)
         .map_err(|error| error.to_string())?;
-    session.fill_work_buffers();
+    session.fill_work_buffers(&filled);
 
     // A key frame, then P frames with both searches, of which the first
     // and the second are the frame in turn: every set of buffers is
@@ -763,33 +791,43 @@ fn extents(arguments: &[String]) -> Result<(), String> {
         })();
         session.trace.clear();
         if let Err(error) = attempt {
-            failure = Some(format!("frame {frame}: {error}"));
+            failure = Some(format!("frame {frame}, after {passes} passes: {error}"));
             break;
         }
     }
-    if let Some(buffer) = session.broken_guard() {
-        failure.get_or_insert(format!("the engine wrote outside the {buffer} buffer"));
+    // What the engine says and has written of the stream, before it is
+    // reset: an encode that did not end may still be at work.
+    let status_after = session.engine().read(regs::AVC_STATUS);
+    let length_bits = session.engine().read(regs::AVC_STREAM_LENGTH);
+    let stream_bytes = session.stream_bytes();
+    let stream_written = session.written("stream", 0, stream_bytes, false);
+    if failure.is_some() {
+        session
+            .engine()
+            .reset()
+            .map_err(|error| format!("reset after the failed encode: {error}"))?;
     }
+    let broken = session.broken_guard();
 
     // What each map says a stream of this size needs.
     let (v3s, older) = (regs::Sizes::v3s(&stream), regs::Sizes::older(&stream));
-    let lab = regs::Sizes::lab(&room);
     let mut rows = Vec::new();
     for (name, bytes) in session.work_buffers() {
-        // A buffer of pictures holds luma, and chroma behind the room's luma.
+        let was_filled = filled.iter().any(|kind| name.starts_with(kind));
+        // A buffer of pictures holds luma, and chroma behind the luma's room.
         let parts: Vec<(String, usize, usize, usize, usize)> = if name.starts_with("reconstruction")
         {
             vec![
                 (
                     format!("{name} luma"),
                     0,
-                    lab.reconstruction_luma,
+                    sizes.reconstruction_luma,
                     v3s.reconstruction_luma,
                     older.reconstruction_luma,
                 ),
                 (
                     format!("{name} chroma"),
-                    lab.reconstruction_luma,
+                    sizes.reconstruction_luma,
                     bytes,
                     v3s.reconstruction_chroma,
                     older.reconstruction_chroma,
@@ -809,8 +847,7 @@ fn extents(arguments: &[String]) -> Result<(), String> {
             vec![(name.to_string(), 0, bytes, v3s.extra, older.extra)]
         };
         for (part, from, to, v3s_bytes, older_bytes) in parts {
-            let written = session.written(name, from, to);
-            let end = written.map(|(_, last)| last + 1);
+            let written = session.written(name, from, to, was_filled);
             println!(
                 "extents: {part:24} {} of {:8}; the V3s map says {v3s_bytes}, the older one {older_bytes}",
                 match written {
@@ -822,8 +859,9 @@ fn extents(arguments: &[String]) -> Result<(), String> {
             rows.push(json!({
                 "buffer": part,
                 "bytes": to - from,
+                "filled": was_filled,
                 "firstWritten": written.map(|(first, _)| first),
-                "endWritten": end,
+                "endWritten": written.map(|(_, last)| last + 1),
                 "v3sBytes": v3s_bytes,
                 "olderBytes": older_bytes,
             }));
@@ -837,8 +875,14 @@ fn extents(arguments: &[String]) -> Result<(), String> {
         "codedHeight": stream.coded_height(),
         "pFrames": frames,
         "passes": passes,
+        "filled": filled,
+        "tight": tight,
         "buffers": rows,
-        "error": failure,
+        "failure": failure,
+        "statusRegisterAfter": hex(status_after),
+        "lengthRegisterBits": length_bits,
+        "streamEndWritten": stream_written.map(|(_, last)| last + 1),
+        "brokenGuard": broken,
         "unknownInterrupt": session.engine().unknown_interrupt,
     });
     let closed = session
@@ -846,16 +890,19 @@ fn extents(arguments: &[String]) -> Result<(), String> {
         .map(|_| ())
         .map_err(|error| error.to_string());
     receipt(output, "extents", body)?;
-    match failure {
-        Some(failure) => {
-            println!("extents: {failure}; receipt {output}");
-            Err(failure)
-        }
-        None => {
-            println!("extents: {passes} passes; receipt {output}");
-            closed
-        }
+    if let Some(buffer) = broken {
+        let message = format!("the engine wrote outside the {buffer} buffer");
+        println!("extents: {message}; receipt {output}");
+        return Err(message);
     }
+    match &failure {
+        Some(failure) => println!(
+            "extents: {size} FAILED: {failure}; status {}, {length_bits} bits; receipt {output}",
+            hex(status_after)
+        ),
+        None => println!("extents: {size}: {passes} passes; receipt {output}"),
+    }
+    closed
 }
 
 /// What the engine does when a frame is larger than the stream buffer it
@@ -895,8 +942,8 @@ fn overflow(arguments: &[String]) -> Result<(), String> {
     let short = session.pass(&picture, true, qp, true);
     let status_after = session.engine().read(regs::AVC_STATUS);
     let length_bits = session.engine().read(regs::AVC_STREAM_LENGTH);
-    let written = session.written("stream", 0, whole);
-    let beyond = session.written("stream", told, whole);
+    let written = session.written("stream", 0, whole, true);
+    let beyond = session.written("stream", told, whole, true);
     let first_steps = steps(&session.trace);
     session.trace.clear();
     println!(
