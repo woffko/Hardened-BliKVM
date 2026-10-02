@@ -215,6 +215,95 @@ The lab tool writes its own headers: constrained baseline (profile 66 with
 picture order type 2, cropping for sizes that are not whole macroblocks, an
 IDR frame with SPS and PPS before it whenever a key frame is asked for.
 
+## The lab
+
+### Parts
+
+- **The lab module** `hardened-blikvm-ve-lab` (kernel, GPL-2.0-only, root
+  only, never packaged). It binds to the engine's node while `cedrus` is
+  unbound for the session, takes the interrupt, the SRAM section, the three
+  clocks and the reset in the order `cedrus` does, and offers one client:
+  the register window mapped, DMA buffers allocated and mapped with their
+  bus addresses told, a wait for the encoder's interrupt, a reset of the
+  engine. Closing it, or the client's death, resets the engine and frees
+  everything.
+- **The lab tool** `bli-kvm-ve-lab` (user space, static aarch64): the
+  picture generator, the header writer, the register plans of both maps,
+  the experiments, PSNR, and a software stand-in for the engine that makes
+  all of it testable on the host.
+- **The session script** on the development host: copies both to the
+  board's tmpfs, checks the lease rule, starts the watchdog keeper, runs
+  the experiment, collects the receipt and the kernel log, and puts the
+  board back as it was.
+
+### Rules for experiments
+
+1. The engine is programmed only while nobody holds the HID lease; otherwise
+   the run waits (the operator's answer of 2026-10-02).
+2. Before any trigger every address register the maps name holds an address
+   inside the session's own buffers, and the bitstream's end register bounds
+   what the engine may write. An address of zero is not memory on this SoC:
+   its memory begins at `0x40000000`.
+3. First runs use a small picture in buffers many times its size, with
+   marker bytes around the part in use; the markers are checked after every
+   run.
+4. A keeper process arms the SoC's watchdog (16 s) for the length of a run:
+   a kernel that hangs is reset instead of waiting for a hand. `sync`
+   precedes every run. The engine is reset before the watchdog is disarmed.
+5. The mask probe writes no trigger. Registers outside the blocks the open
+   maps name are read, never written.
+6. Afterwards: the lab module unloaded, `cedrus` bound and suspended as
+   found, the watchdog disarmed, no file left on the board, no unit or
+   process. The kernel log is read after every session; a warning it did
+   not have before ends the session.
+7. A hang or reboot that is not understood stops the work on the board
+   until it is explained in the record below; a second one ends the plan.
+
+### Test pictures
+
+A generator in the lab tool, the same on the board and on the host, makes
+every sequence from its name, size and frame number alone; no screen of the
+operator is recorded.
+
+| Name | What moves |
+| --- | --- |
+| `scroll` | a page of text-like marks that scrolls by lines |
+| `drag` | a window dragged over a still desktop |
+| `motion` | the whole picture: moving gradients and blocks, the hardest case |
+| `pointer` | a still desktop with a small pointer that moves |
+
+Sizes: 1920x1080, 1280x720, 1366x768, and 320x240 for first runs. Pictures
+are NV12, BT.601 limited range, as the product's converter makes them.
+
+### Measures
+
+- **Decodes**: the board's ffmpeg decodes the stream without an error and to
+  the expected number of frames; on the host Chromium decodes it with
+  WebCodecs.
+- **PSNR**: of the luma plane, per frame, between the generator's picture
+  and the decoded one; a sequence's value is the mean over its frames.
+- **Time per frame**: from the write of the start trigger to the finish
+  status, by the board's monotonic clock.
+- **Rate**: the bytes of the frames in every window of ten seconds at the
+  sequence's frame rate.
+- **The reference**: x264 with the product's settings (`ultrafast`,
+  `zerolatency`, constrained baseline, the same bitrates), driven through
+  the encoder crate's own wrapper on the same pictures on the board.
+
+### Receipts and the log
+
+Every experiment writes one JSON receipt under `evidence/private`
+(`ve-lab-<phase>-<date>-<name>.json`): the tool's version and the source
+commit, the engine's version, the map and parameters, every register written
+with its value in order, the status and length read back, the buffers'
+sizes and marker checks, the times, the decoders' verdicts and PSNR, and
+the kernel log lines of the session. Bus addresses are recorded as offsets
+within their buffers.
+
+`evidence/private/ve-lab-log.md` is the lab's diary: when a session began
+and ended, what it tried, what came out, and the hours spent in each phase,
+which the plan's time boxes count.
+
 ## Lab record
 
 Nothing yet.
