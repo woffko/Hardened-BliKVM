@@ -12,6 +12,7 @@ pub mod headers;
 pub mod lab;
 pub mod picture;
 pub mod psnr;
+pub mod rate;
 pub mod regs;
 pub mod session;
 pub mod standin;

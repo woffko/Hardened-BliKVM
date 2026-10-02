@@ -1,0 +1,239 @@
+//! Rate control in software: a QP for every frame from the bytes of the
+//! frames before. The engine is given a fixed QP for a frame and nothing
+//! else; what the stream costs is steered here.
+//!
+//! The bound is the one the product's x264 has today: a leaky bucket of one
+//! second at the target rate. A frame that would not fit is encoded once
+//! more at a higher QP, with the reference left as it was.
+
+/// The QPs the controller uses: all the syntax has, as the product's x264
+/// may. The engine encodes at every one of them (V3.4).
+pub const QP_MIN: i32 = 0;
+pub const QP_MAX: i32 = 51;
+/// Where a stream begins, before it knows what its pictures cost.
+pub const QP_START: i32 = 30;
+
+/// Bits halve with six steps of QP, near enough for a controller.
+const STEPS_PER_HALVING: f64 = 6.0;
+/// How much of a frame's deviation is taken into the next QP.
+const GAIN: f64 = 0.5;
+/// A QP falls slowly and rises fast.
+const FALL: f64 = 1.0;
+const RISE: f64 = 3.0;
+/// The part of the bucket's room a frame is planned into.
+const PLANNED: f64 = 0.8;
+/// How full the bucket is wanted: room above it for a change of scene, and
+/// little more than the rate while it fills at a stream's beginning.
+const WANTED: f64 = 0.3;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RateControl {
+    /// Bits a frame may cost on average.
+    per_frame: f64,
+    /// The bucket: one second at the rate.
+    capacity: f64,
+    fullness: f64,
+    /// The QP of frames that are not key frames, with its fraction.
+    qp: f64,
+    /// The last key frame's bits and QP: what the next one is planned by.
+    last_key: Option<(f64, i32)>,
+    /// Frames that did not fit even at their second QP.
+    pub overflows: u32,
+}
+
+fn steps(ratio: f64) -> f64 {
+    STEPS_PER_HALVING * ratio.log2()
+}
+
+impl RateControl {
+    pub fn new(kbps: u32, fps: u32) -> Self {
+        let rate = kbps as f64 * 1000.0;
+        Self {
+            per_frame: rate / fps.max(1) as f64,
+            capacity: rate,
+            fullness: 0.0,
+            qp: QP_START as f64,
+            last_key: None,
+            overflows: 0,
+        }
+    }
+
+    /// What the bucket still takes.
+    fn room(&self) -> f64 {
+        (self.capacity - self.fullness).max(0.0)
+    }
+
+    /// A frame's time passes: the bucket drains. Called once before every
+    /// frame, the first included.
+    pub fn tick(&mut self) {
+        self.fullness = (self.fullness - self.per_frame).max(0.0);
+    }
+
+    /// The QP to try for the next frame.
+    pub fn next_qp(&self, key: bool) -> i32 {
+        let usual = self.qp.round() as i32;
+        if !key {
+            return usual.clamp(QP_MIN, QP_MAX);
+        }
+        // A key frame costs many times a frame after it: plan it by the
+        // last one, into what the bucket has room for.
+        let Some((bits, qp)) = self.last_key else {
+            return usual.clamp(QP_MIN, QP_MAX);
+        };
+        let allowed = (self.room() * PLANNED).max(1.0);
+        let needed = qp + steps(bits / allowed).ceil() as i32;
+        needed.max(usual - 3).clamp(QP_MIN, QP_MAX)
+    }
+
+    /// Whether a frame of `bits` at `qp` must be encoded again, and at
+    /// which QP. Asked once for a frame: its second pass goes out.
+    pub fn again(&self, bits: u64, qp: i32) -> Option<i32> {
+        let bits = bits as f64;
+        if bits <= self.room() || qp >= QP_MAX {
+            return None;
+        }
+        let allowed = (self.room() * PLANNED).max(1.0);
+        let more = steps(bits / allowed).ceil().clamp(1.0, 24.0) as i32;
+        Some((qp + more).min(QP_MAX))
+    }
+
+    /// The frame went out with `bits` at `qp`.
+    pub fn sent(&mut self, bits: u64, qp: i32, key: bool) {
+        let bits = bits as f64;
+        if bits > self.room() {
+            self.overflows += 1;
+        }
+        self.fullness = (self.fullness + bits).min(self.capacity);
+        if key {
+            self.last_key = Some((bits, qp));
+            return;
+        }
+        // A second pass moved the QP: go on from where the frame was sent.
+        if qp != self.qp.round() as i32 {
+            self.qp = qp as f64;
+        }
+        // Above the level the bucket is wanted at a frame should cost less
+        // than the average, below it more.
+        let level = self.fullness / self.capacity;
+        let target = self.per_frame * (1.0 + WANTED - level).clamp(0.5, 1.5);
+        let change = (GAIN * steps(bits.max(1.0) / target)).clamp(-FALL, RISE);
+        self.qp = (self.qp + change).clamp(QP_MIN as f64, QP_MAX as f64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A model of an encoder: a picture's cost at QP 30, halving with six
+    /// steps of QP; a key frame costs eight times a frame after it.
+    fn cost(complexity: f64, qp: i32, key: bool) -> u64 {
+        let bits = complexity * 2f64.powf((30 - qp) as f64 / 6.0);
+        (if key { bits * 8.0 } else { bits }) as u64
+    }
+
+    /// Runs `frames` through the controller; returns every frame's bits.
+    fn run(
+        control: &mut RateControl,
+        frames: usize,
+        key_every: usize,
+        complexity: impl Fn(usize) -> f64,
+    ) -> Vec<u64> {
+        let mut sent = Vec::new();
+        for frame in 0..frames {
+            let key = frame % key_every == 0;
+            control.tick();
+            let mut qp = control.next_qp(key);
+            let mut bits = cost(complexity(frame), qp, key);
+            if let Some(higher) = control.again(bits, qp) {
+                assert!(higher > qp);
+                qp = higher;
+                bits = cost(complexity(frame), qp, key);
+            }
+            control.sent(bits, qp, key);
+            sent.push(bits);
+        }
+        sent
+    }
+
+    fn worst_window(sent: &[u64], frames: usize, target: f64) -> (f64, f64) {
+        let mut low = f64::INFINITY;
+        let mut high: f64 = 0.0;
+        for window in sent.windows(frames) {
+            let ratio = window.iter().sum::<u64>() as f64 / target;
+            low = low.min(ratio);
+            high = high.max(ratio);
+        }
+        (low, high)
+    }
+
+    #[test]
+    fn a_steady_picture_is_held_at_the_rate() {
+        for kbps in [1500, 2500, 5000, 8000] {
+            let mut control = RateControl::new(kbps, 30);
+            // A frame costs 200 kbit at QP 30: far too much at every rate.
+            let sent = run(&mut control, 1200, 100_000, |_| 200_000.0);
+            // After the first two seconds every ten seconds are within 5%.
+            let (low, high) = worst_window(&sent[60..], 300, kbps as f64 * 10_000.0);
+            assert!(low > 0.95 && high < 1.05, "{kbps}: {low} to {high}");
+            assert_eq!(control.overflows, 0, "{kbps}");
+        }
+    }
+
+    #[test]
+    fn a_change_of_scene_is_caught_by_a_second_pass() {
+        let mut control = RateControl::new(2500, 30);
+        // Easy for ten seconds, then ten times as costly.
+        let sent = run(&mut control, 900, 100_000, |frame| {
+            if frame < 300 { 60_000.0 } else { 600_000.0 }
+        });
+        assert_eq!(control.overflows, 0);
+        // No frame after the change is larger than the bucket.
+        assert!(sent[300..].iter().all(|bits| *bits <= 2_500_000));
+        let (_, high) = worst_window(&sent[1..], 300, 25_000_000.0);
+        assert!(high < 1.15, "{high}");
+        // And the stream is back at its rate.
+        let (low, high) = worst_window(&sent[450..], 300, 25_000_000.0);
+        assert!(low > 0.9 && high < 1.1, "{low} to {high}");
+    }
+
+    #[test]
+    fn key_frames_are_planned_into_the_bucket() {
+        let mut control = RateControl::new(2500, 30);
+        // A key frame every second.
+        let sent = run(&mut control, 900, 30, |_| 150_000.0);
+        assert_eq!(control.overflows, 0);
+        let (low, high) = worst_window(&sent[90..], 300, 25_000_000.0);
+        assert!(low > 0.85 && high < 1.15, "{low} to {high}");
+        // From the third key frame on no second pass is needed: its QP is
+        // planned from the one before.
+        control.tick();
+        let qp = control.next_qp(true);
+        assert!(control.again(cost(150_000.0, qp, true), qp).is_none());
+    }
+
+    #[test]
+    fn a_still_picture_gets_the_lowest_qp_and_stays_below_the_rate() {
+        let mut control = RateControl::new(8000, 30);
+        // Half a kilobit a frame at QP 30: a pointer on a still desktop.
+        let sent = run(&mut control, 600, 100_000, |_| 500.0);
+        assert_eq!(control.next_qp(false), QP_MIN);
+        let (_, high) = worst_window(&sent, 300, 80_000_000.0);
+        assert!(high < 0.1, "{high}");
+    }
+
+    #[test]
+    fn the_first_frame_of_a_costly_stream_does_not_overflow() {
+        let mut control = RateControl::new(1500, 30);
+        // The first frame is a key frame of 4 Mbit at the starting QP.
+        control.tick();
+        let qp = control.next_qp(true);
+        assert_eq!(qp, QP_START);
+        let bits = cost(500_000.0, qp, true);
+        let higher = control.again(bits, qp).unwrap();
+        let second = cost(500_000.0, higher, true);
+        assert!(second <= 1_500_000, "{second}");
+        control.sent(second, higher, true);
+        assert_eq!(control.overflows, 0);
+    }
+}

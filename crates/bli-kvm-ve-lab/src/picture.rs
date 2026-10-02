@@ -242,50 +242,53 @@ fn pixel(sequence: Sequence, x: u32, y: u32, width: u32, height: u32, frame: u32
     }
 }
 
-/// Draws frame `frame` of `sequence` into `picture`.
+/// Draws frame `frame` of `sequence` into `picture`. Every pixel follows
+/// from its own place alone, so the rows are shared among the processors.
 pub fn render(sequence: Sequence, frame: u32, picture: &mut Picture) {
     let (width, height) = (picture.width, picture.height);
     let stride = picture.coded_width;
-    for y in 0..height {
-        let row = &mut picture.luma[y * stride..(y + 1) * stride];
-        for (x, value) in row.iter_mut().enumerate().take(width) {
-            *value = pixel(
-                sequence,
-                x as u32,
-                y as u32,
-                width as u32,
-                height as u32,
-                frame,
-            )
-            .0;
+    let workers = std::thread::available_parallelism().map_or(1, |count| count.get().min(8));
+    let luma_rows = height.div_ceil(workers).max(1);
+    let chroma_rows = (height / 2).div_ceil(workers).max(1);
+    let size = (width as u32, height as u32);
+    std::thread::scope(|scope| {
+        let (luma, _) = picture.luma.split_at_mut(height * stride);
+        for (part, rows) in luma.chunks_mut(luma_rows * stride).enumerate() {
+            scope.spawn(move || {
+                for (index, row) in rows.chunks_exact_mut(stride).enumerate() {
+                    let y = (part * luma_rows + index) as u32;
+                    for (x, value) in row.iter_mut().enumerate().take(width) {
+                        *value = pixel(sequence, x as u32, y, size.0, size.1, frame).0;
+                    }
+                    let last = row[width - 1];
+                    row[width..].fill(last);
+                }
+            });
         }
-        let last = row[width - 1];
-        row[width..].fill(last);
-    }
+        // Chroma: the pixel at the top left of every two by two.
+        let (chroma, _) = picture.chroma.split_at_mut((height / 2) * stride);
+        for (part, rows) in chroma.chunks_mut(chroma_rows * stride).enumerate() {
+            scope.spawn(move || {
+                for (index, row) in rows.chunks_exact_mut(stride).enumerate() {
+                    let y = (part * chroma_rows + index) as u32;
+                    for x in 0..width / 2 {
+                        let (_, cb, cr) =
+                            pixel(sequence, 2 * x as u32, 2 * y, size.0, size.1, frame);
+                        row[2 * x] = cb;
+                        row[2 * x + 1] = cr;
+                    }
+                    let (cb, cr) = (row[width - 2], row[width - 1]);
+                    for pair in row[width..].chunks_exact_mut(2) {
+                        pair[0] = cb;
+                        pair[1] = cr;
+                    }
+                }
+            });
+        }
+    });
     for y in height..picture.coded_height {
         let (above, below) = picture.luma.split_at_mut(y * stride);
         below[..stride].copy_from_slice(&above[(height - 1) * stride..height * stride]);
-    }
-    // Chroma: the pixel at the top left of every two by two.
-    for y in 0..height / 2 {
-        let row = &mut picture.chroma[y * stride..(y + 1) * stride];
-        for x in 0..width / 2 {
-            let (_, cb, cr) = pixel(
-                sequence,
-                2 * x as u32,
-                2 * y as u32,
-                width as u32,
-                height as u32,
-                frame,
-            );
-            row[2 * x] = cb;
-            row[2 * x + 1] = cr;
-        }
-        let (cb, cr) = (row[width - 2], row[width - 1]);
-        for pair in row[width..].chunks_exact_mut(2) {
-            pair[0] = cb;
-            pair[1] = cr;
-        }
     }
     for y in height / 2..picture.coded_height / 2 {
         let (above, below) = picture.chroma.split_at_mut(y * stride);

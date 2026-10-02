@@ -286,11 +286,15 @@ IDR frame with SPS and PPS before it whenever a key frame is asked for.
    `tools/device/ve_memory_scan.py` reads all of memory for what it was
    given. A find outside the session's buffers means the kernel's memory is
    damaged: nothing else is done on the board until it has been reset.
-   Since V2R the lab's run script does this itself, and also takes a digest
-   of the kernel's own image (its instructions and read-only data, in
-   pieces of 64 KiB) before the engine is handed to the lab module and
-   after it is back: the digest does not change by itself, so a piece that
-   differs is a write that went astray, and where.
+   Since V2R the lab's run script does this itself, and also copies the
+   kernel's own image (its instructions and read-only data) before the
+   engine is handed to the lab module and compares it word by word after
+   the engine is back. The kernel changes its own instructions while it
+   runs: a static key that is switched turns single instructions from "no
+   operation" into a branch or back. Such words are counted and held
+   against nobody; any other word that differs is a write that went astray,
+   and the comparison says where (see "V3.1" for the session that taught
+   this).
 
 ### Test pictures
 
@@ -853,6 +857,67 @@ the lab tool alone; no vendor code was on the board. After every session
 module's and the decoder's own lines, and the digest of its image was
 unchanged.
 
+### V3.1, 2026-10-02: P frames, and a false alarm of rule 9
+
+The lab tool got its long run (`stream`): frames at a fixed QP or at a
+bitrate, a frame encoded once more when the rate control asks for it, a
+loop that can be paced, pictures drawn once and repeated, and a timeout
+that is provoked. Its pictures are drawn by all processors now; they are
+the same pictures (the fingerprints in its tests did not change).
+
+The first P frames: `drag` and `motion` at 320x240, a key frame and four P
+frames at QP 30. The plan of `h6` for a P frame (the reference is the
+frame before, in the other of two sets of buffers; `0xb04` = `0x410`)
+worked at once: ffmpeg decodes all five frames.
+
+Then 300 frames of every sequence at 1920x1080 and QP 30, one key frame
+and 299 P frames, every frame decoded by the board's ffmpeg and compared
+with its source:
+
+| Sequence | Frames decoded | ffmpeg's complaints | Mean PSNR, dB | Frames 30 to 60 | Last 30 | kbit/s at 30 frames a second | Encode, ms (mean, longest) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| scroll | 300 | none | 36.32 | 36.88 | 36.10 | 1700 | 7.2, 7.5 |
+| drag | 300 | none | 41.95 | 41.83 | 42.09 | 1998 | 7.1, 7.2 |
+| motion | 300 | none | 33.36 | 33.36 | 33.36 | 37086 | 7.4, 7.8 |
+| pointer | 300 | none | 41.37 | 41.46 | 41.33 | 379 | 7.0, 7.4 |
+
+No drift: on the still sequence (`pointer`) the last 30 frames are 0.13 dB
+from frames 30 to 60, after 299 frames that each refer to the one before.
+`scroll` shows other text at its end than at its beginning, which is what
+its 0.8 dB are.
+
+What the loop costs besides the encode, measured on the way: the buffers
+the lab module gives are not cached for the processor. Writing a picture
+into one is fast (3 MB in about 3 ms). Reading is slow, about 60 MB/s even
+in one run and 6 MB/s byte by byte: reading the guards of every buffer
+after every frame took 175 ms, 25 times the encode. The lab now copies a
+guard out in one run before it compares it (15 ms for all of them) and can
+be told to do so every so many frames. With the guards read every 30
+frames, pictures drawn in advance and no pacing, the loop makes 88 frames
+a second at 1920x1080 (11.4 ms a frame: picture in, about 250 register
+accesses, 7.2 ms of encoding, stream out). For the driver this means: the
+stream must not be read out of uncached memory.
+
+**The false alarm.** A session of 13 minutes ended with status 79: six of
+the 283 pieces of the kernel's image had another digest than before it.
+Read without touching the engine again, the six pieces differ from the
+kernel's image file in 24 single instruction words, every one of them "no
+operation" where the file has a branch or a branch where the file has "no
+operation", in `netif_rx_internal`, `netif_receive_skb`,
+`__netif_receive_skb_core`, `dev_queue_xmit_nit`, `packet_rcv`,
+`ip_output`, `ip6_output` and their like. Those are the places where the
+network stack asks its static keys (time stamps for a socket that wants
+them, programs attached to a control group): the kernel had switched keys
+while the session ran, and rewrites its own instructions when it does.
+Nothing had been written by the engine. The claim of V2.1's second record,
+that the digest does not change by itself, held for the ten seconds it was
+tested for and is wrong for a quarter of an hour. Rule 9's check now
+compares words and knows this one kind of change (above).
+
+Receipts: `evidence/private/ve-lab-v3-20261002-p-first`, `-stream-try`,
+`-p300-qp30`, `-time-idle`, `-time-guards`, `-rates-a` (the alarm),
+`-low-qp`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
@@ -889,6 +954,11 @@ first.
   frame.
 - The mode register's memory field does not matter to the bit writer; key
   frames were encoded with it at 2.
+- A P frame by the hypothesis below works (V3.1): the reference is the
+  reconstruction of the frame before, in the other of two sets of buffers,
+  and `0xb04` holds `0x410`. 299 P frames in a row do not drift.
+- Every QP from 0 to 51 encodes; a 1920x1080 frame takes the engine 7.0 to
+  7.8 ms, key or P, whatever its QP and its size in bytes.
 
 The hypothesis `h6`, from the vendor's library for the H5 and the H6. Per
 stream, the parameter sets go through the bit writer into the stream

@@ -51,3 +51,10 @@ required-features = ["vp8", "h264"]
 name = "h264_frame_source"
 path = "examples/h264_frame_source.rs"
 required-features = ["vp8", "h264"]
+
+# The product's x264 over pictures from a file: the reference of the
+# hardware encoder's lab. No package carries it.
+[[example]]
+name = "h264_reference"
+path = "examples/h264_reference.rs"
+required-features = ["vp8", "h264"]

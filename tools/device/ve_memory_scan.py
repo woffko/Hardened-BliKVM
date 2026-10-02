@@ -10,16 +10,21 @@ forms the tool writes them. It writes nothing, and it does not find itself:
 the patterns are kept with every bit flipped.
 
 usage: python3 ve_memory_scan.py [HEX_PATTERN...]
-       python3 ve_memory_scan.py digest
+       python3 ve_memory_scan.py snapshot FILE
+       python3 ve_memory_scan.py compare FILE
 
-`digest` prints a checksum of every 64 KiB of the kernel's own image (what
-/proc/iomem calls "Kernel code": its instructions and its read-only data,
-where the stray write of V2.1 landed). Two digests, one before and one
-after a session, show whether anything wrote there, and where.
+`snapshot` copies the kernel's own image (what /proc/iomem calls "Kernel
+code": its instructions and its read-only data, where the stray write of
+V2.1 landed) to FILE; `compare` reads it again and says what differs. The
+kernel changes its own instructions while it runs: a static key that is
+switched turns single instructions from "no operation" into a branch or
+back, in every function that asks the key. Such words are counted and not
+held against anyone. Any other word that differs is a write that went
+astray, and `compare` ends with status 3.
 """
 
-import hashlib
 import os
+import struct
 import sys
 
 # SPS and PPS of the lab tool's 320x240 stream, behind their start codes:
@@ -89,8 +94,11 @@ def scan(texts: list[str]) -> None:
             print(f"{start:#010x}: {count} repeats, {count * length} bytes")
 
 
-def digest() -> None:
-    piece = 64 * 1024
+PIECE = 64 * 1024
+NOP = 0xD503201F
+
+
+def kernel_image() -> list[tuple[int, int]]:
     ranges = []
     with open("/proc/iomem", encoding="ascii") as iomem:
         for line in iomem:
@@ -100,21 +108,74 @@ def digest() -> None:
                 ranges.append((int(first, 16), int(last, 16) + 1))
     if not ranges:
         raise SystemExit("/proc/iomem names no kernel image (not root?)")
+    return ranges
+
+
+def read_image() -> list[tuple[int, bytes]]:
     descriptor = os.open("/dev/mem", os.O_RDONLY)
-    for first, end in ranges:
-        address = first - first % piece
+    pieces = []
+    for first, end in kernel_image():
+        address = first - first % PIECE
         while address < end:
             os.lseek(descriptor, address, os.SEEK_SET)
-            data = os.read(descriptor, piece)
-            print(f"{address:#010x} {hashlib.sha256(data).hexdigest()[:16]}")
-            address += piece
+            pieces.append((address, os.read(descriptor, PIECE)))
+            address += PIECE
     os.close(descriptor)
+    return pieces
+
+
+def snapshot(path: str) -> None:
+    with open(path, "wb") as out:
+        for address, data in read_image():
+            out.write(struct.pack("<QI", address, len(data)))
+            out.write(data)
+
+
+def branch(word: int) -> bool:
+    return word >> 26 == 0b000101
+
+
+def compare(path: str) -> int:
+    before = {}
+    with open(path, "rb") as saved:
+        while header := saved.read(12):
+            address, length = struct.unpack("<QI", header)
+            before[address] = saved.read(length)
+    pieces = read_image()
+    changed = patched = 0
+    other: list[tuple[int, int, int]] = []
+    for address, data in pieces:
+        old = before.get(address)
+        if old == data:
+            continue
+        changed += 1
+        if old is None or len(old) != len(data):
+            other.append((address, 0, 0))
+            continue
+        for offset in range(0, len(data) - 3, 4):
+            if old[offset : offset + 4] == data[offset : offset + 4]:
+                continue
+            was, now = struct.unpack_from("<I", old, offset)[0], struct.unpack_from("<I", data, offset)[0]
+            # A jump label: no operation and a branch take each other's place.
+            if (was == NOP and branch(now)) or (branch(was) and now == NOP):
+                patched += 1
+            else:
+                other.append((address + offset, was, now))
+    print(
+        f"kernel image: {changed} of {len(pieces)} pieces changed: {patched} instruction "
+        f"words the kernel switched itself, {len(other)} other words"
+    )
+    for address, was, now in other[:32]:
+        print(f"{address:#010x}: {was:08x} became {now:08x}")
+    return 3 if other else 0
 
 
 def main() -> None:
-    if sys.argv[1:] == ["digest"]:
-        digest()
+    if len(sys.argv) == 3 and sys.argv[1] == "snapshot":
+        snapshot(sys.argv[2])
         return
+    if len(sys.argv) == 3 and sys.argv[1] == "compare":
+        sys.exit(compare(sys.argv[2]))
     texts = sys.argv[1:] or PATTERNS
     for text in texts:
         if len(text) < 24 or len(text) % 2 or any(digit not in "0123456789abcdefABCDEF" for digit in text):

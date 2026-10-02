@@ -90,11 +90,15 @@ impl HeaderReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Encoded {
     pub key: bool,
+    pub qp: i32,
     /// The frame as a decoder takes it: with SPS and PPS before a key frame.
     pub bytes: Vec<u8>,
     pub status: u32,
     /// From the start trigger to the end of the wait.
     pub time: Duration,
+    /// The whole pass: the picture into the input buffer, the registers,
+    /// the headers, the encode, the stream out of its buffer.
+    pub total: Duration,
 }
 
 pub struct Session<E: Engine> {
@@ -109,7 +113,13 @@ pub struct Session<E: Engine> {
     index: u32,
     frame_num: u32,
     idr_pic_id: u32,
-    /// Every step of every frame so far.
+    /// The guards are checked after every so many passes (and by whoever
+    /// asks `broken_guard`); 1 is every pass.
+    guard_every: u32,
+    passes: u32,
+    /// What a guard holds while nothing wrote into it.
+    guard: Vec<u8>,
+    /// Every step of every frame so far. A long run empties it as it goes.
     pub trace: Vec<Step>,
 }
 
@@ -191,6 +201,9 @@ impl<E: Engine> Session<E> {
             index: 0,
             frame_num: 0,
             idr_pic_id: 0,
+            guard_every: 1,
+            passes: 0,
+            guard: (0..GUARD).map(marker).collect(),
             trace: Vec::new(),
         };
         let ops = regs::select(&session.hypothesis);
@@ -219,20 +232,32 @@ impl<E: Engine> Session<E> {
         self.patience = patience;
     }
 
+    /// Reading every guard takes longer than an encode; a run that measures
+    /// time checks them less often.
+    pub fn set_guard_checks(&mut self, every: u32) {
+        self.guard_every = every.max(1);
+    }
+
+    /// The frames accepted so far.
+    pub fn frames(&self) -> u32 {
+        self.index
+    }
+
     /// The name of a buffer whose guards no longer hold their pattern.
     pub fn broken_guard(&mut self) -> Option<&'static str> {
+        // The buffers' memory is not cached, and reading it byte by byte
+        // takes longer than an encode: each guard is copied out in one run
+        // and compared where it is cached. Every part of a buffer the
+        // engine is given is a whole number of pages, so both guards begin
+        // at the beginning of the pattern, which repeats every 256 bytes.
+        let mut copy = vec![0u8; GUARD];
         for area in &self.areas {
             let memory = self.engine.bytes(area.buffer);
-            let intact = memory[..GUARD]
-                .iter()
-                .enumerate()
-                .all(|(position, byte)| *byte == marker(position))
-                && memory[GUARD + area.bytes..]
-                    .iter()
-                    .enumerate()
-                    .all(|(position, byte)| *byte == marker(GUARD + area.bytes + position));
-            if !intact {
-                return Some(area.name);
+            for start in [0, GUARD + area.bytes] {
+                copy.copy_from_slice(&memory[start..start + GUARD]);
+                if copy != self.guard {
+                    return Some(area.name);
+                }
             }
         }
         None
@@ -271,6 +296,23 @@ impl<E: Engine> Session<E> {
     /// Encodes `picture` as the stream's next frame. The first frame is a
     /// key frame whatever `key` says.
     pub fn encode(&mut self, picture: &Picture, key: bool, qp: i32) -> Result<Encoded, Error> {
+        let encoded = self.pass(picture, key, qp, true)?;
+        self.accept(&encoded);
+        Ok(encoded)
+    }
+
+    /// One pass over the frame that is next. The stream does not move: the
+    /// same frame can be encoded again at another QP, against the same
+    /// reference, until one pass is accepted. `fresh` says that the picture
+    /// is not yet in the input buffer.
+    pub fn pass(
+        &mut self,
+        picture: &Picture,
+        key: bool,
+        qp: i32,
+        fresh: bool,
+    ) -> Result<Encoded, Error> {
+        let began = std::time::Instant::now();
         let (width, height) = (
             self.stream.coded_width() as usize,
             self.stream.coded_height() as usize,
@@ -279,20 +321,19 @@ impl<E: Engine> Session<E> {
             return Err(Error::Picture);
         }
         let key = key || self.index == 0;
-        if key {
-            self.frame_num = 0;
-        }
         let slice = Slice {
             key,
-            frame_num: self.frame_num,
+            frame_num: if key { 0 } else { self.frame_num },
             idr_pic_id: self.idr_pic_id,
             qp,
             cabac_init_idc: 0,
         };
-        let memory = self.engine.bytes(self.input.buffer);
-        memory[GUARD..GUARD + picture.luma.len()].copy_from_slice(&picture.luma);
-        memory[GUARD + picture.luma.len()..GUARD + picture.bytes()]
-            .copy_from_slice(&picture.chroma);
+        if fresh {
+            let memory = self.engine.bytes(self.input.buffer);
+            memory[GUARD..GUARD + picture.luma.len()].copy_from_slice(&picture.luma);
+            memory[GUARD + picture.luma.len()..GUARD + picture.bytes()]
+                .copy_from_slice(&picture.chroma);
+        }
 
         let mut header_ops = Vec::new();
         if key {
@@ -321,8 +362,11 @@ impl<E: Engine> Session<E> {
         self.engine.write(regs::AVC_STATUS, regs::STATUS_ENDED);
         self.engine.write(regs::AVC_INT_EN, 0);
         let bits = self.engine.read(regs::AVC_STREAM_LENGTH);
-        if let Some(buffer) = self.broken_guard() {
-            return Err(Error::Marker(buffer));
+        self.passes += 1;
+        if self.passes % self.guard_every == 0 {
+            if let Some(buffer) = self.broken_guard() {
+                return Err(Error::Marker(buffer));
+            }
         }
         if status != regs::STATUS_FINISH {
             return Err(Error::Status(status));
@@ -332,17 +376,23 @@ impl<E: Engine> Session<E> {
             return Err(Error::Length(bits));
         }
         let bytes = self.engine.bytes(self.output.buffer)[GUARD..GUARD + length].to_vec();
-        self.index += 1;
-        self.frame_num += 1;
-        if key {
-            self.idr_pic_id ^= 1;
-        }
         Ok(Encoded {
             key,
+            qp,
             bytes,
             status,
             time: outcome.encode_time.unwrap_or_default(),
+            total: began.elapsed(),
         })
+    }
+
+    /// The pass is the frame: the next one refers to it.
+    pub fn accept(&mut self, encoded: &Encoded) {
+        self.index += 1;
+        self.frame_num = if encoded.key { 1 } else { self.frame_num + 1 };
+        if encoded.key {
+            self.idr_pic_id ^= 1;
+        }
     }
 
     /// Gives the engine back: no encoder selected.
@@ -566,6 +616,34 @@ mod tests {
         let mut session =
             Session::open(FakeEngine::new(), Hypothesis::H6, stream, &stream).unwrap();
         assert!(!session.put_parameter_sets(1).unwrap().matches());
+    }
+
+    #[test]
+    fn a_frame_can_be_encoded_again_before_it_is_accepted() {
+        let stream = stream(320, 240);
+        let mut picture = Picture::new(320, 240);
+        let mut twice = Session::open(FakeEngine::new(), Hypothesis::V3S, stream, &stream).unwrap();
+        let mut once = Session::open(FakeEngine::new(), Hypothesis::V3S, stream, &stream).unwrap();
+        for frame in 0..4 {
+            render(Sequence::Drag, frame, &mut picture);
+            // A first pass at a QP that is thrown away, then the one that
+            // counts: the stream is the one of a session that never tried.
+            let first = twice.pass(&picture, false, 20, true).unwrap();
+            assert_eq!(twice.frames(), frame);
+            let second = twice.pass(&picture, false, 30, false).unwrap();
+            twice.accept(&second);
+            assert_eq!(twice.frames(), frame + 1);
+            let plain = once.encode(&picture, false, 30).unwrap();
+            assert_eq!(second.bytes, plain.bytes);
+            assert_eq!(second.key, frame == 0);
+            assert_eq!((first.qp, second.qp), (20, 30));
+            assert_ne!(first.bytes, second.bytes);
+        }
+        // Guards are still checked when asked for less often.
+        twice.set_guard_checks(100);
+        render(Sequence::Drag, 4, &mut picture);
+        assert!(twice.encode(&picture, false, 30).is_ok());
+        assert_eq!(twice.broken_guard(), None);
     }
 
     #[test]

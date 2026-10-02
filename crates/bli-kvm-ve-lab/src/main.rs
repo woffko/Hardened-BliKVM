@@ -9,13 +9,14 @@ use std::{
 
 use bli_kvm_ve_lab::{
     device::Device,
-    engine::{Engine, FakeEngine, Step},
+    engine::{Engine, FakeEngine, Patience, Step},
     headers::{Stream, codec_string},
     lab,
     picture::{Picture, Sequence, parse_size, render},
     psnr,
+    rate::RateControl,
     regs::{self, Hypothesis, Op},
-    session::Session,
+    session::{Encoded, Session},
 };
 use serde_json::{Value, json};
 
@@ -24,8 +25,10 @@ const USAGE: &str = "usage:
       NV12 frames of the visible size, one after the other
   bli-kvm-ve-lab standin MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY OUTPUT
       an Annex B stream from the stand-in through the plan of MAP (older, v3s, h6)
-  bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED
-      luma PSNR of decoded frames (planar or NV12, visible size) against the sequence
+  bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N]
+      luma PSNR of decoded frames (planar or NV12, visible size) against the sequence;
+      with ring=N against a stream of N pictures repeated, and without the list of
+      every frame's value
 on the board, with the lab module loaded (each writes a receipt to OUTPUT):
   bli-kvm-ve-lab probe OUTPUT
       the engine's version and the registers of the blocks the open maps name; reads only
@@ -37,6 +40,12 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       SPS and PPS, TIMES times, through the engine's bit writer into the stream buffer; no encode
   bli-kvm-ve-lab encode MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY QP STREAM OUTPUT
       frames of SEQUENCE encoded by the engine into STREAM (Annex B)
+  bli-kvm-ve-lab stream MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY RATE FPS STREAM OUTPUT [OPTION...]
+      a long run: RATE is qpN (every frame at QP N) or kilobits a second, held by the
+      rate control with a second pass for a frame that does not fit. Options: paced
+      (a frame begins every 1/FPS s), ring=N (N pictures drawn once and repeated),
+      guards=N (the buffers' guards read every N passes), timeout=N (the Nth frame
+      is not waited for: the engine is reset and the stream goes on with a key frame)
 sequences: scroll, drag, motion, pointer";
 
 /// The commit the tool was built from, when the build says.
@@ -298,23 +307,47 @@ fn standin(arguments: &[String]) -> Result<(), String> {
 }
 
 fn compare(arguments: &[String]) -> Result<(), String> {
-    let [sequence, size, frames, decoded] = arguments else {
-        return Err(USAGE.into());
+    let (sequence, size, frames, decoded, ring) = match arguments {
+        [sequence, size, frames, decoded] => (sequence, size, frames, decoded, 0),
+        [sequence, size, frames, decoded, ring] => {
+            let ring = ring
+                .strip_prefix("ring=")
+                .and_then(|ring| ring.parse::<u32>().ok())
+                .filter(|ring| (1..=600).contains(ring))
+                .ok_or("ring=N with N from 1 to 600")?;
+            (sequence, size, frames, decoded, ring)
+        }
+        _ => return Err(USAGE.into()),
     };
     let sequence: Sequence = sequence.parse()?;
     let (width, height) = parse_size(size)?;
-    let frames = count(frames, "FRAMES")?;
+    let frames: u32 = frames
+        .parse()
+        .ok()
+        .filter(|frames| (1..=1_000_000).contains(frames))
+        .ok_or("FRAMES is a number from 1 to 1000000")?;
     let mut file = File::open(decoded).map_err(|error| format!("{decoded}: {error}"))?;
     let mut picture = Picture::new(width, height);
+    let pictures: Vec<Picture> = (0..ring)
+        .map(|frame| {
+            render(sequence, frame, &mut picture);
+            picture.clone()
+        })
+        .collect();
     let mut frame_bytes = vec![0u8; width * height * 3 / 2];
     let mut values = Vec::new();
     for frame in 0..frames {
         file.read_exact(&mut frame_bytes)
             .map_err(|error| format!("{decoded}: frame {frame}: {error}"))?;
-        render(sequence, frame, &mut picture);
+        let source = if ring > 0 {
+            &pictures[(frame % ring) as usize]
+        } else {
+            render(sequence, frame, &mut picture);
+            &picture
+        };
         values.push(psnr::luma(
-            &picture.luma,
-            picture.coded_width,
+            &source.luma,
+            source.coded_width,
             &frame_bytes,
             width,
             width,
@@ -342,10 +375,20 @@ fn compare(arguments: &[String]) -> Result<(), String> {
             "exact": values.len() - finite.len(),
             "meanDb": mean,
             "lowestDb": if finite.is_empty() { None } else { Some(lowest) },
-            "db": values
-                .iter()
-                .map(|value| if value.is_finite() { json!((value * 100.0).round() / 100.0) } else { json!("exact") })
-                .collect::<Vec<_>>(),
+            "lowestFrame": if finite.is_empty() {
+                None
+            } else {
+                values.iter().position(|value| *value == lowest)
+            },
+            // A long run's list would be longer than its use.
+            "db": if ring > 0 {
+                Value::Null
+            } else {
+                json!(values
+                    .iter()
+                    .map(|value| if value.is_finite() { json!((value * 100.0).round() / 100.0) } else { json!("exact") })
+                    .collect::<Vec<_>>())
+            },
         })
     );
     Ok(())
@@ -547,6 +590,306 @@ fn encode(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// What a long run is asked to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rate {
+    Qp(i32),
+    Kbps(u32),
+}
+
+fn parse_rate(value: &str) -> Result<Rate, String> {
+    let wrong = || format!("RATE is qp0 to qp51 or 64 to 20000 kbit/s, not {value}");
+    match value.strip_prefix("qp") {
+        Some(qp) => qp
+            .parse()
+            .ok()
+            .filter(|qp| (0..=51).contains(qp))
+            .map(Rate::Qp)
+            .ok_or_else(wrong),
+        None => value
+            .parse()
+            .ok()
+            .filter(|kbps| (64..=20000).contains(kbps))
+            .map(Rate::Kbps)
+            .ok_or_else(wrong),
+    }
+}
+
+/// Smallest, mean, 99th percentile and largest of times, in microseconds.
+fn spread(mut micros: Vec<u64>) -> Value {
+    if micros.is_empty() {
+        return Value::Null;
+    }
+    micros.sort_unstable();
+    let mean = micros.iter().sum::<u64>() / micros.len() as u64;
+    json!({
+        "min": micros[0],
+        "mean": mean,
+        "p99": micros[(micros.len() * 99 / 100).min(micros.len() - 1)],
+        "max": micros[micros.len() - 1],
+    })
+}
+
+fn stream_run(arguments: &[String]) -> Result<(), String> {
+    let [
+        map,
+        sequence,
+        size,
+        frames,
+        key_every,
+        rate,
+        fps,
+        stream_path,
+        output,
+        options @ ..,
+    ] = arguments
+    else {
+        return Err(USAGE.into());
+    };
+    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let sequence: Sequence = sequence.parse()?;
+    let (width, height) = parse_size(size)?;
+    let frames: u32 = frames
+        .parse()
+        .ok()
+        .filter(|frames| (1..=1_000_000).contains(frames))
+        .ok_or("FRAMES is a number from 1 to 1000000")?;
+    let key_every: u32 = key_every
+        .parse()
+        .ok()
+        .filter(|every| *every >= 1)
+        .ok_or("KEY_EVERY is a number from 1")?;
+    let rate = parse_rate(rate)?;
+    let fps: u32 = fps
+        .parse()
+        .ok()
+        .filter(|fps| (1..=120).contains(fps))
+        .ok_or("FPS is a number from 1 to 120")?;
+    let (mut paced, mut ring, mut guards, mut timeout_at) = (false, 0u32, 1u32, None);
+    for option in options {
+        let number = |text: &str| {
+            text.parse::<u32>()
+                .map_err(|_| format!("not an option: {option}"))
+        };
+        match option.split_once('=') {
+            None if option == "paced" => paced = true,
+            Some(("ring", value)) => ring = number(value)?.min(600),
+            Some(("guards", value)) => guards = number(value)?.max(1),
+            Some(("timeout", value)) => timeout_at = Some(number(value)?),
+            _ => return Err(format!("not an option: {option}")),
+        }
+    }
+
+    let stream = Stream {
+        fps,
+        ..stream(&hypothesis, width, height, true)
+    };
+    let room = room_for(&hypothesis, width, height);
+    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
+        .map_err(|error| error.to_string())?;
+    session.set_guard_checks(guards);
+    let patience = Patience::default();
+    let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
+    let mut out = BufWriter::new(file);
+
+    let mut picture = Picture::new(width, height);
+    let pictures: Vec<Picture> = (0..ring)
+        .map(|frame| {
+            render(sequence, frame, &mut picture);
+            picture.clone()
+        })
+        .collect();
+    let mut control = match rate {
+        Rate::Kbps(kbps) => Some(RateControl::new(kbps, fps)),
+        Rate::Qp(_) => None,
+    };
+    let interval = std::time::Duration::from_secs_f64(1.0 / fps as f64);
+
+    let (mut sizes, mut qps, mut encode_micros, mut frame_micros) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut keys, mut second_passes, mut late, mut resets) = (Vec::new(), Vec::new(), 0u32, 0u32);
+    let mut failure = None;
+    let mut first_frame = Vec::new();
+    let mut force_key = false;
+    let began = std::time::Instant::now();
+    for frame in 0..frames {
+        if paced {
+            let due = began + interval * frame;
+            match due.checked_duration_since(std::time::Instant::now()) {
+                Some(wait) => std::thread::sleep(wait),
+                None => late += 1,
+            }
+        }
+        let frame_began = std::time::Instant::now();
+        let source = if ring > 0 {
+            &pictures[(frame % ring) as usize]
+        } else {
+            render(sequence, frame, &mut picture);
+            &picture
+        };
+        let key = frame % key_every == 0 || std::mem::take(&mut force_key);
+        if timeout_at == Some(frame) {
+            // A wait that cannot be met: the frame is given up, the engine
+            // reset, and the stream goes on with a key frame.
+            session.set_patience(Patience {
+                encode: std::time::Duration::ZERO,
+                ..patience
+            });
+        }
+        let attempt = (|| -> Result<(Encoded, u32), String> {
+            let Some(control) = control.as_mut() else {
+                let Rate::Qp(qp) = rate else { unreachable!() };
+                let encoded = session
+                    .pass(source, key, qp, true)
+                    .map_err(|error| error.to_string())?;
+                return Ok((encoded, 1));
+            };
+            control.tick();
+            let qp = control.next_qp(key || frame == 0);
+            let first = session
+                .pass(source, key, qp, true)
+                .map_err(|error| error.to_string())?;
+            match control.again(first.bytes.len() as u64 * 8, qp) {
+                None => Ok((first, 1)),
+                Some(higher) => session
+                    .pass(source, key, higher, false)
+                    .map(|second| (second, 2))
+                    .map_err(|error| error.to_string()),
+            }
+        })();
+        if timeout_at == Some(frame) {
+            session.set_patience(patience);
+            match attempt {
+                Err(error) if error.contains("did not end") => {
+                    session
+                        .engine()
+                        .reset()
+                        .map_err(|error| format!("reset after the timeout: {error}"))?;
+                    resets += 1;
+                    force_key = true;
+                    session.trace.clear();
+                    continue;
+                }
+                other => {
+                    failure = Some(format!(
+                        "frame {frame}: the timeout did not come: {}",
+                        other
+                            .err()
+                            .unwrap_or_else(|| "the frame was encoded".into())
+                    ));
+                    break;
+                }
+            }
+        }
+        let (encoded, passes) = match attempt {
+            Ok(done) => done,
+            Err(error) => {
+                failure = Some(format!("frame {frame}: {error}"));
+                break;
+            }
+        };
+        session.accept(&encoded);
+        if let Some(control) = control.as_mut() {
+            control.sent(encoded.bytes.len() as u64 * 8, encoded.qp, encoded.key);
+        }
+        if let Err(error) = out.write_all(&encoded.bytes) {
+            failure = Some(format!("{stream_path}: {error}"));
+            break;
+        }
+        if encoded.key {
+            keys.push(frame);
+        }
+        if passes == 2 {
+            second_passes.push(frame);
+        }
+        sizes.push(encoded.bytes.len() as u64);
+        qps.push(encoded.qp);
+        encode_micros.push(encoded.time.as_micros() as u64);
+        frame_micros.push(frame_began.elapsed().as_micros() as u64);
+        if frame == 0 {
+            first_frame = steps(&session.trace);
+        }
+        // A long run does not keep every step.
+        session.trace.clear();
+    }
+    let elapsed = began.elapsed();
+    let flushed = out
+        .flush()
+        .map_err(|error| format!("{stream_path}: {error}"));
+    if let Some(buffer) = session.broken_guard() {
+        failure.get_or_insert(format!("the engine wrote outside the {buffer} buffer"));
+    }
+
+    // The rate in every window of ten seconds.
+    let window = (fps * 10) as usize;
+    let windows: Vec<u64> = sizes
+        .windows(window)
+        .map(|frames| frames.iter().sum::<u64>() * 8 / 10_000)
+        .collect();
+    let done = sizes.len();
+    let total_bytes: u64 = sizes.iter().sum();
+    let body = json!({
+        "map": hypothesis.name,
+        "sequence": sequence.name(),
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "rate": match rate {
+            Rate::Qp(qp) => json!({"qp": qp}),
+            Rate::Kbps(kbps) => json!({"kbps": kbps}),
+        },
+        "keyEvery": key_every,
+        "paced": paced,
+        "ring": ring,
+        "guardsEvery": guards,
+        "codec": codec_string(&stream),
+        "framesAsked": frames,
+        "framesDone": done,
+        "bytes": total_bytes,
+        "kbpsMean": if done == 0 { 0 } else { total_bytes * 8 * fps as u64 / done as u64 / 1000 },
+        "kbpsTenSecondWindows": if windows.is_empty() {
+            Value::Null
+        } else {
+            json!({"lowest": windows.iter().min(), "highest": windows.iter().max(), "count": windows.len()})
+        },
+        "encodeMicros": spread(encode_micros.clone()),
+        "frameMicros": spread(frame_micros.clone()),
+        "seconds": elapsed.as_secs_f64(),
+        "framesPerSecond": done as f64 / elapsed.as_secs_f64().max(1e-9),
+        "lateFrames": late,
+        "resetsAfterTimeout": resets,
+        "keyFrames": keys,
+        "secondPasses": second_passes,
+        "overflows": control.map(|control| control.overflows),
+        "frameBytes": sizes,
+        "frameQp": qps,
+        "frameEncodeMicros": encode_micros,
+        "error": failure,
+        "firstFrameSteps": first_frame,
+        "topAfter": nonzero(session.engine(), 0x000, 0x100),
+        "unknownInterrupt": session.engine().unknown_interrupt,
+    });
+    let closed = session
+        .close()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    receipt(output, "stream", body)?;
+    flushed?;
+    match failure {
+        Some(failure) => {
+            println!("stream: {failure}; receipt {output}");
+            Err(failure)
+        }
+        None => {
+            println!(
+                "stream: {done} frames, {total_bytes} bytes, {:.1} frames a second; receipt {output}",
+                done as f64 / elapsed.as_secs_f64().max(1e-9)
+            );
+            closed
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let result = match arguments.first().map(String::as_str) {
@@ -558,6 +901,7 @@ fn main() -> ExitCode {
         Some("masks") => masks(&arguments[1..]),
         Some("bits") => bits(&arguments[1..]),
         Some("encode") => encode(&arguments[1..]),
+        Some("stream") => stream_run(&arguments[1..]),
         _ => Err(USAGE.into()),
     };
     match result {

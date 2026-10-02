@@ -3169,6 +3169,7 @@ class PackagingBoundaryTests(unittest.TestCase):
                 "ve_trace",
                 "libvencoder",
                 "libcedarc",
+                "h264_reference",
             ):
                 self.assertNotIn(name, text, carrier)
         # The vendor's interface headers are read from a cache at build

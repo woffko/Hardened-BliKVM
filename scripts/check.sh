@@ -79,9 +79,11 @@ sh -n scripts/build-ve-trace.sh
 sh -n tools/device/ve_trace_run.sh
 sh -n tools/device/ve_trace_session.sh
 sh -n tools/device/ve_quality_run.sh
+sh -n tools/device/ve_stream_run.sh
+sh -n scripts/build-ve-reference.sh
 node --check tools/playwright/ve_stream_check.mjs
 python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \
-  tools/ve-trace/ve_trace_report.py
+  tools/device/ve_stream_report.py tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
