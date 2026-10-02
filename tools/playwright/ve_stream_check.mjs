@@ -68,11 +68,25 @@ const source = path.join(directory, "source.nv12");
 execFileSync(tool, ["generate", sequence, size, String(list.length), source]);
 fs.copyFileSync(streamPath, path.join(directory, "stream.h264"));
 
+const frameBytes = (width * height * 3) / 2;
 const server = http.createServer((request, response) => {
   const name = path.basename(decodeURIComponent(request.url.slice(1)));
   if (name === "") {
     response.writeHead(200, { "Content-Type": "text/html" });
     response.end("<!doctype html><title>stream</title>");
+    return;
+  }
+  // The luma plane of one source picture: the page never holds them all.
+  const picture = /^\/luma\/(\d+)$/.exec(request.url);
+  if (picture) {
+    const luma = Buffer.alloc(width * height);
+    const file = fs.openSync(source, "r");
+    const read = fs.readSync(file, luma, 0, luma.length, Number(picture[1]) * frameBytes);
+    fs.closeSync(file);
+    response.writeHead(read === luma.length ? 200 : 404, {
+      "Content-Type": "application/octet-stream",
+    });
+    response.end(read === luma.length ? luma : undefined);
     return;
   }
   const file = path.join(directory, name);
@@ -106,48 +120,39 @@ const browser = await chromium.launch({
 });
 
 /// In the page: decode, and give every frame's luma PSNR against the source.
+/// A decoded picture is compared and given back before many more are
+/// decoded, so a long stream takes no more memory than a short one.
 async function decode({ codec, list, width, height }) {
-  const [streamBytes, sourceBytes] = await Promise.all(
-    ["stream.h264", "source.nv12"].map(
-      async (name) =>
-        new Uint8Array(await (await fetch(`/${name}`)).arrayBuffer()),
-    ),
+  const streamBytes = new Uint8Array(
+    await (await fetch("/stream.h264")).arrayBuffer(),
   );
   const support = await VideoDecoder.isConfigSupported({ codec });
   if (!support.supported) return { error: `${codec} is not supported` };
-  const decoded = [];
+  const waiting = [];
   let failure = null;
+  let wake = () => {};
   const decoder = new VideoDecoder({
-    output: (frame) => decoded.push(frame),
+    output: (frame) => {
+      waiting.push(frame);
+      wake();
+    },
     error: (error) => {
       failure = String(error);
+      wake();
     },
   });
   decoder.configure({ codec, optimizeForLatency: true });
-  for (const [index, frame] of list.entries()) {
-    if (failure) break;
-    decoder.decode(
-      new EncodedVideoChunk({
-        type: frame.key ? "key" : "delta",
-        timestamp: index * 33333,
-        data: streamBytes.subarray(frame.at, frame.at + frame.bytes),
-      }),
-    );
-  }
-  await decoder.flush().catch((error) => {
-    failure = failure ?? String(error);
-  });
-  const frameBytes = (width * height * 3) / 2;
   const results = [];
-  for (const [index, frame] of decoded.entries()) {
+  async function compare(frame) {
+    const index = results.length;
     const buffer = new Uint8Array(frame.allocationSize());
     const layout = await frame.copyTo(buffer);
-    const expected = sourceBytes.subarray(
-      index * frameBytes,
-      (index + 1) * frameBytes,
-    );
+    const right = frame.displayWidth === width && frame.displayHeight === height;
     let squares = 0;
-    if (frame.displayWidth === width && frame.displayHeight === height) {
+    if (right) {
+      const expected = new Uint8Array(
+        await (await fetch(`/luma/${index}`)).arrayBuffer(),
+      );
       for (let y = 0; y < height; y += 1) {
         const row = layout[0].offset + y * layout[0].stride;
         for (let x = 0; x < width; x += 1) {
@@ -166,6 +171,31 @@ async function decode({ codec, list, width, height }) {
     });
     frame.close();
   }
+  async function drain() {
+    while (waiting.length > 0) await compare(waiting.shift());
+  }
+  for (const [index, frame] of list.entries()) {
+    if (failure) break;
+    decoder.decode(
+      new EncodedVideoChunk({
+        type: frame.key ? "key" : "delta",
+        timestamp: index * 33333,
+        data: streamBytes.subarray(frame.at, frame.at + frame.bytes),
+      }),
+    );
+    while (!failure && (decoder.decodeQueueSize > 4 || waiting.length > 4)) {
+      if (waiting.length > 0) await drain();
+      else
+        await new Promise((resolve) => {
+          wake = resolve;
+          setTimeout(resolve, 50);
+        });
+    }
+  }
+  await decoder.flush().catch((error) => {
+    failure = failure ?? String(error);
+  });
+  await drain();
   if (decoder.state !== "closed") decoder.close();
   return { error: failure, results };
 }
