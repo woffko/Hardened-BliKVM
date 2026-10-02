@@ -48,9 +48,10 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       and back), guards=N (the buffers' guards read every N passes), timeout=N (the
       Nth frame is not waited for: the engine is reset and the stream goes on with a
       key frame), seconds=N (the run ends after N seconds, before FRAMES frames if
-      they take longer), adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or
-      0xb4c that say how the engine searches and decides, changed in every frame's
-      plan)
+      they take longer), period=N (every frame is compared, byte for byte, with the
+      frame N before it: for a fixed QP, a ring and key frames that repeat with N),
+      adjust=REG:CLEAR:SET (hex: fields of 0xb08, 0xb10, 0xb48 or 0xb4c that say how
+      the engine searches and decides, changed in every frame's plan)
   bli-kvm-ve-lab search MAP WIDTHxHEIGHT QP FRAMES STREAM OUTPUT [grain] [adjust=REG:CLEAR:SET...] RIGHT,DOWN...
       what the engine's search for motion finds: for every vector a key frame and
       FRAMES P frames of a page of text that moves RIGHT,DOWN pixels a frame, at QP;
@@ -802,6 +803,13 @@ fn search(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// FNV-1a: a frame's fingerprint.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
 /// What a long run is asked to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Rate {
@@ -878,7 +886,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         .filter(|fps| (1..=120).contains(fps))
         .ok_or("FPS is a number from 1 to 120")?;
     let (mut paced, mut ring, mut guards, mut timeout_at) = (false, 0u32, 1u32, None);
-    let (mut adjusts, mut seconds) = (Vec::new(), None);
+    let (mut adjusts, mut seconds, mut period) = (Vec::new(), None, None);
     for option in options {
         let number = |text: &str| {
             text.parse::<u32>()
@@ -891,6 +899,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             Some(("timeout", value)) => timeout_at = Some(number(value)?),
             Some(("adjust", value)) => adjusts.push(parse_adjust(value)?),
             Some(("seconds", value)) => seconds = Some(number(value)?.max(1)),
+            Some(("period", value)) => period = Some(number(value)?.clamp(1, 100_000) as usize),
             _ => return Err(format!("not an option: {option}")),
         }
     }
@@ -925,6 +934,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let (mut keys, mut second_passes, mut late, mut resets) = (Vec::new(), Vec::new(), 0u32, 0u32);
     let mut left_out = Vec::new();
+    // What every frame of the last period was, and the frames that were
+    // not what the frame a period before them was.
+    let (mut fingerprints, mut differing) = (Vec::new(), Vec::new());
     let mut failure = None;
     let mut first_frame = Vec::new();
     let mut force_key = false;
@@ -1032,6 +1044,15 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             failure = Some(format!("{stream_path}: {error}"));
             break;
         }
+        if let Some(period) = period {
+            let fingerprint = fnv1a(&encoded.bytes);
+            let place = sizes.len() % period;
+            if sizes.len() < period {
+                fingerprints.push(fingerprint);
+            } else if std::mem::replace(&mut fingerprints[place], fingerprint) != fingerprint {
+                differing.push(frame);
+            }
+        }
         if encoded.key {
             keys.push(frame);
         }
@@ -1099,6 +1120,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "keyFrames": keys,
         "secondPasses": second_passes,
         "framesLeftOut": left_out.len(),
+        "period": period,
+        "framesUnlikeAPeriodBefore": period.map(|_| differing.len()),
+        "firstFramesUnlikeAPeriodBefore": period.map(|_| &differing[..differing.len().min(10)]),
         "overflows": control.map(|control| control.overflows),
         "frameBytes": sizes,
         "frameQp": qps,

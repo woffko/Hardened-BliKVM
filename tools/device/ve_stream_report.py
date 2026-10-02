@@ -12,8 +12,9 @@ the last 30.
 
 With --endurance, what a long run is judged by instead: its length, the
 frames a second it held and the frames that began late, the time of a
-whole frame, the rate and its windows, and of the frames that were decoded
-and compared the lowest PSNR and the number below the run's floor.
+whole frame, the rate and its windows, of the frames that were decoded and
+compared the lowest PSNR and the number below the run's floor, and of a
+stream that repeats itself the frames unlike the frame a period before.
 """
 
 import json
@@ -92,6 +93,8 @@ def rows(directory):
             "resets": run.get("resetsAfterTimeout"),
             "floor": engine.get("floorDb"),
             "below_floor": engine.get("belowFloor"),
+            "period": run.get("period"),
+            "unlike": run.get("framesUnlikeAPeriodBefore"),
             "early_db": mean(db[30:60]),
             "late_db": mean(db[-30:]) if len(db) >= 90 else None,
             "error": run.get("error"),
@@ -118,13 +121,14 @@ def endurance(row):
         show(row["engine_db"]),
         show(row["engine_lowest_db"]),
         "-" if row["below_floor"] is None else f"{row['below_floor']} below {row['floor']:g}",
+        "-" if row["unlike"] is None else f"{row['unlike']} unlike {row['period']} before",
     ]
 
 
 ENDURANCE_HEADER = [
     "run", "frames", "seconds", "frames/s", "late", "frame ms", "p99", "max", "kbit/s",
     "10 s low", "10 s high", "windows", "2nd", "left out", "decoded, ffmpeg",
-    "mean dB", "lowest dB", "wrong frames",
+    "mean dB", "lowest dB", "wrong frames", "repeats",
 ]
 
 

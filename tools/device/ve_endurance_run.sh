@@ -2,12 +2,15 @@
 # On the board, as a command of ve_lab_run.sh: the lab's endurance runs
 # (docs/design/h616-ve-h264-encoder.md, V3.6).
 #
-# usage: sh ve_endurance_run.sh soak MAP WIDTHxHEIGHT SECONDS RATE SEQUENCE FLOOR
+# usage: sh ve_endurance_run.sh soak MAP WIDTHxHEIGHT SECONDS RATE SEQUENCE FLOOR [repeat]
 #            a stream for SECONDS at RATE (qpN or kilobits a second); every
 #            frame is decoded by the board's ffmpeg while the run goes on
 #            and compared with its source (30 pictures, played forth and
 #            back); a frame below FLOOR dB of luma PSNR is a wrong frame.
 #            The engine goes as fast as the decoding takes its frames.
+#            With repeat (and a fixed QP) the stream repeats itself every
+#            580 frames, and a frame that is not, byte for byte, the frame
+#            580 before it is a wrong frame too.
 #        sh ve_endurance_run.sh sustained MAP WIDTHxHEIGHT SECONDS RATE SEQUENCE [BUSY]
 #            a stream of 30 frames a second for SECONDS, each frame begun
 #            at its time, with BUSY cores kept busy; nothing is decoded
@@ -36,9 +39,13 @@ trap 'exit 129' HUP INT TERM
 
 case "$action" in
   soak)
-    [ "$#" -eq 7 ] || { echo "usage: $0 soak MAP WIDTHxHEIGHT SECONDS RATE SEQUENCE FLOOR"; exit 2; }
+    [ "$#" -ge 7 ] || { echo "usage: $0 soak MAP WIDTHxHEIGHT SECONDS RATE SEQUENCE FLOOR [repeat]"; exit 2; }
     map=$2; size=$3; seconds=$4; rate=$5; sequence=$6; floor=$7
     name="soak-$sequence-$size-$rate"
+    # 30 pictures forth and back are 58 frames; a key frame every 290, of
+    # which every second has the same number in its header.
+    key_every=300; period=
+    if [ "${8:-}" = repeat ]; then key_every=290; period=period=580; fi
     command -v ffmpeg > /dev/null || { echo "no ffmpeg on this board"; exit 1; }
     rm -f stream.fifo
     mkfifo stream.fifo
@@ -50,8 +57,9 @@ case "$action" in
     ) &
     checker=$!
     status=0
-    $tool stream "$map" "$sequence" "$size" 1000000 300 "$rate" 30 stream.fifo "out/$name.json" \
-      ring=30 guards=300 "seconds=$seconds" || status=1
+    # shellcheck disable=SC2086
+    $tool stream "$map" "$sequence" "$size" 1000000 "$key_every" "$rate" 30 stream.fifo "out/$name.json" \
+      ring=30 guards=300 "seconds=$seconds" $period || status=1
     wait "$checker"
     rm -f stream.fifo
     {
