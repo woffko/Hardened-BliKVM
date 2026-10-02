@@ -5,7 +5,8 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, V0): nothing has been tried on hardware yet.
+Status (2026-10-02, V1): the engine answers and its encoder block is the
+newer map's; nothing has been encoded yet.
 
 ## Sources
 
@@ -370,6 +371,35 @@ bound and suspended afterwards.
 
 Receipts: `evidence/private/ve-lab-v1-20261002-session-dry`,
 `ve-lab-v1-20261002-module-check`.
+
+### V1.3, 2026-10-02: the engine answers
+
+The lab module (`kernel/hardened-blikvm-ve`, `ve_lab.c`) bound to the
+engine's node after `cedrus` was unbound; the lab tool opened its device,
+which gives the engine its clocks and releases its reset, and read the four
+blocks. Nothing was written. Afterwards `cedrus` was bound and suspended
+again, and the kernel had said two lines: the lab module bound, the decoder
+registered.
+
+| Register | Value after power-on |
+| --- | --- |
+| `0x000` mode | `0xc0000007`: no decoder; bits 31 and 30 set |
+| `0x004` reset | `0x00000300`: the two idle bits |
+| `0x01c` | `0x00010000` |
+| `0x030` | `0x00000200` |
+| `0x040` | `0x0000000f` |
+| `0x080`, `0x084`, `0x088` | `0x00001c55`, `0x000fffff`, `0x00008000` |
+| `0x0e0`, `0x0e4` | `0x00033010`, `0x00012011` |
+| `0x0f0` version | `0x00000000` |
+
+- **The version register reads zero.** The older generations have their
+  version in its upper half; this engine does not. `0x0e0` and `0x0e4` hold
+  values that look like an identification, and no open source names them.
+  They are what this note records as the engine's version.
+- The input stage (`0xa00`), the encoder (`0xb00`) and the JPEG decoder
+  (`0xe00`) read zero in every register while none of them is selected.
+
+Receipt: `evidence/private/ve-lab-v1-20261002-probe`.
 
 ## The H616's register description
 
