@@ -379,6 +379,27 @@ pub fn ring_index(frame: u32, ring: u32) -> usize {
     (if phase < ring { phase } else { period - phase }) as usize
 }
 
+/// Which picture of a sequence frame `frame` shows when the sequence moves
+/// for `moving` frames and then rests for `resting`, again and again: what
+/// a hand on a wheel does.
+pub fn burst_index(frame: u32, moving: u32, resting: u32) -> u32 {
+    let cycle = (moving + resting).max(1);
+    (frame / cycle) * moving + (frame % cycle).min(moving)
+}
+
+/// `MOVING:RESTING` in frames, as the `burst=` option of the commands has it.
+pub fn parse_burst(value: &str) -> Result<(u32, u32), String> {
+    let part = |text: &str| {
+        text.parse::<u32>()
+            .ok()
+            .filter(|part| (1..=10_000).contains(part))
+    };
+    value
+        .split_once(':')
+        .and_then(|(moving, resting)| Some((part(moving)?, part(resting)?)))
+        .ok_or_else(|| format!("burst=MOVING:RESTING in frames, not {value}"))
+}
+
 /// `1920x1080` and the like.
 pub fn parse_size(value: &str) -> Result<(usize, usize), String> {
     let (width, height) = value
@@ -409,6 +430,15 @@ mod tests {
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         hash
+    }
+
+    #[test]
+    fn a_burst_moves_and_rests() {
+        let shown: Vec<u32> = (0..12).map(|frame| burst_index(frame, 2, 3)).collect();
+        assert_eq!(shown, [0, 1, 2, 2, 2, 2, 3, 4, 4, 4, 4, 5]);
+        assert_eq!(parse_burst("30:60"), Ok((30, 60)));
+        assert!(parse_burst("30").is_err());
+        assert!(parse_burst("0:5").is_err());
     }
 
     #[test]

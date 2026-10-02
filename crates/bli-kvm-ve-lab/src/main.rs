@@ -12,7 +12,10 @@ use bli_kvm_ve_lab::{
     engine::{Engine, FakeEngine, Patience, Step},
     headers::{Stream, codec_string},
     lab,
-    picture::{Page, Picture, Sequence, parse_size, render, render_moved, ring_index},
+    picture::{
+        Page, Picture, Sequence, burst_index, parse_burst, parse_size, render, render_moved,
+        ring_index,
+    },
     psnr,
     rate::RateControl,
     regs::{self, Adjust, Hypothesis, Op},
@@ -21,15 +24,17 @@ use bli_kvm_ve_lab::{
 use serde_json::{Value, json};
 
 const USAGE: &str = "usage:
-  bli-kvm-ve-lab generate SEQUENCE WIDTHxHEIGHT FRAMES OUTPUT
-      NV12 frames of the visible size, one after the other
+  bli-kvm-ve-lab generate SEQUENCE WIDTHxHEIGHT FRAMES OUTPUT [burst=M:R]
+      NV12 frames of the visible size, one after the other; with burst=M:R the
+      sequence moves for M frames and rests for R
   bli-kvm-ve-lab standin MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY OUTPUT
       an Annex B stream from the stand-in through the plan of MAP (older, v3s, h6, h616)
-  bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N] [luma] [floor=DB]
+  bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N] [burst=M:R] [luma] [floor=DB]
       luma PSNR of at most FRAMES decoded frames (planar or NV12, visible size) against
       the sequence; with ring=N against a stream of N pictures played forth and back,
-      and without the list of every frame's value; with luma the decoded frames are
-      luma planes only; with floor=DB the frames below DB are counted
+      and without the list of every frame's value; with burst=M:R against a sequence
+      that moves for M frames and rests for R; with luma the decoded frames are luma
+      planes only; with floor=DB the frames below DB are counted
 on the board, with the lab module loaded (each writes a receipt to OUTPUT):
   bli-kvm-ve-lab probe OUTPUT
       the engine's version and the registers of the blocks the open maps name; reads only
@@ -45,7 +50,7 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
       a long run: RATE is qpN (every frame at QP N) or kilobits a second, held by the
       rate control with a second pass for a frame that does not fit. Options: paced
       (a frame begins every 1/FPS s), ring=N (N pictures drawn once and played forth
-      and back), guards=N (the buffers' guards read every N passes), timeout=N (the
+      and back), burst=M:R (the sequence moves for M frames and rests for R), guards=N (the buffers' guards read every N passes), timeout=N (the
       Nth frame is not waited for: the engine is reset and the stream goes on with a
       key frame), seconds=N (the run ends after N seconds, before FRAMES frames if
       they take longer), period=N (every frame is compared, byte for byte, with the
@@ -251,8 +256,13 @@ fn visible(picture: &Picture, out: &mut impl Write) -> std::io::Result<()> {
 }
 
 fn generate(arguments: &[String]) -> Result<(), String> {
-    let [sequence, size, frames, output] = arguments else {
-        return Err(USAGE.into());
+    let (sequence, size, frames, output, burst) = match arguments {
+        [sequence, size, frames, output] => (sequence, size, frames, output, None),
+        [sequence, size, frames, output, option] => {
+            let burst = option.strip_prefix("burst=").ok_or(USAGE)?;
+            (sequence, size, frames, output, Some(parse_burst(burst)?))
+        }
+        _ => return Err(USAGE.into()),
     };
     let sequence: Sequence = sequence.parse()?;
     let (width, height) = parse_size(size)?;
@@ -261,7 +271,10 @@ fn generate(arguments: &[String]) -> Result<(), String> {
     let mut out = BufWriter::new(file);
     let mut picture = Picture::new(width, height);
     for frame in 0..frames {
-        render(sequence, frame, &mut picture);
+        let shown = burst.map_or(frame, |(moving, resting)| {
+            burst_index(frame, moving, resting)
+        });
+        render(sequence, shown, &mut picture);
         visible(&picture, &mut out).map_err(|error| format!("{output}: {error}"))?;
     }
     out.flush().map_err(|error| format!("{output}: {error}"))?;
@@ -321,9 +334,10 @@ fn compare(arguments: &[String]) -> Result<(), String> {
     let [sequence, size, frames, decoded, options @ ..] = arguments else {
         return Err(USAGE.into());
     };
-    let (mut ring, mut luma_only, mut floor) = (0u32, false, None);
+    let (mut ring, mut luma_only, mut floor, mut burst) = (0u32, false, None, None);
     for option in options {
         match option.split_once('=') {
+            Some(("burst", value)) => burst = Some(parse_burst(value)?),
             Some(("ring", value)) => {
                 ring = value
                     .parse::<u32>()
@@ -388,7 +402,10 @@ fn compare(arguments: &[String]) -> Result<(), String> {
         let source = if ring > 0 {
             &pictures[ring_index(frame, ring)]
         } else {
-            render(sequence, frame, &mut picture);
+            let shown = burst.map_or(frame, |(moving, resting)| {
+                burst_index(frame, moving, resting)
+            });
+            render(sequence, shown, &mut picture);
             &picture
         };
         values.push(psnr::luma(
@@ -886,7 +903,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         .filter(|fps| (1..=120).contains(fps))
         .ok_or("FPS is a number from 1 to 120")?;
     let (mut paced, mut ring, mut guards, mut timeout_at) = (false, 0u32, 1u32, None);
-    let (mut adjusts, mut seconds, mut period) = (Vec::new(), None, None);
+    let (mut adjusts, mut seconds, mut period, mut burst) = (Vec::new(), None, None, None);
     for option in options {
         let number = |text: &str| {
             text.parse::<u32>()
@@ -899,6 +916,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             Some(("timeout", value)) => timeout_at = Some(number(value)?),
             Some(("adjust", value)) => adjusts.push(parse_adjust(value)?),
             Some(("seconds", value)) => seconds = Some(number(value)?.max(1)),
+            Some(("burst", value)) => burst = Some(parse_burst(value)?),
             Some(("period", value)) => period = Some(number(value)?.clamp(1, 100_000) as usize),
             _ => return Err(format!("not an option: {option}")),
         }
@@ -956,7 +974,10 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         let source = if ring > 0 {
             &pictures[ring_index(frame, ring)]
         } else {
-            render(sequence, frame, &mut picture);
+            let shown = burst.map_or(frame, |(moving, resting)| {
+                burst_index(frame, moving, resting)
+            });
+            render(sequence, shown, &mut picture);
             &picture
         };
         let key = frame % key_every == 0 || std::mem::take(&mut force_key);
@@ -1106,6 +1127,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "paced": paced,
         "secondsAsked": seconds,
         "ring": ring,
+        "burst": burst.map(|(moving, resting)| json!({"moving": moving, "resting": resting})),
         "guardsEvery": guards,
         "adjusts": adjusts_json(&adjusts),
         "codec": codec_string(&stream),

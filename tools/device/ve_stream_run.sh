@@ -8,7 +8,8 @@
 # usage: sh ve_stream_run.sh MAP WIDTHxHEIGHT FRAMES KEY_EVERY FPS 'RATE...' SEQUENCE... [-- OPTION...]
 #
 # RATE is qpN or kilobits a second; several are given in one argument. The
-# options after -- go to the lab tool's `stream` (paced, ring=N, guards=N).
+# options after -- go to the lab tool's `stream` (paced, ring=N, guards=N);
+# burst=M:R among them goes to the comparison and to x264's pictures too.
 # In the environment: BUSY=N keeps N cores busy during the engine's runs;
 # KEEP=yes leaves the engine's streams in out/; REFERENCE=no skips x264;
 # DECODE=no skips the decoding and comparing; TAG=WORD is added to the names
@@ -23,6 +24,10 @@ shift 6
 sequences=
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do sequences="$sequences $1"; shift; done
 [ "$#" -eq 0 ] || shift
+burst=
+for option in "$@"; do
+  case "$option" in burst=*) burst=$option ;; esac
+done
 tool=./bli-kvm-ve-lab
 width=${size%x*}; height=${size#*x}
 decode=${DECODE:-yes}
@@ -40,8 +45,9 @@ trap 'exit 129' HUP INT TERM
 
 # Decodes a stream and prints the tool's comparison with the source.
 compare() {
+  # shellcheck disable=SC2086
   ffmpeg -v error -nostdin -i "$1" -f rawvideo -pix_fmt nv12 - 2> "$2" |
-    $tool psnr "$sequence" "$size" "$frames" /dev/stdin 2>&1 | tail -1
+    $tool psnr "$sequence" "$size" "$frames" /dev/stdin $burst 2>&1 | tail -1
 }
 
 status=0
@@ -68,7 +74,8 @@ for sequence in $sequences; do
           if [ "${REFERENCE:-yes}" = yes ] && [ -x ./h264_reference ]; then
             rm -f source.fifo
             mkfifo source.fifo
-            $tool generate "$sequence" "$size" "$frames" source.fifo > /dev/null &
+            # shellcheck disable=SC2086
+            $tool generate "$sequence" "$size" "$frames" source.fifo $burst > /dev/null &
             ./h264_reference "$width" "$height" "$fps" "$rate" "$key_every" ultrafast 3 \
               < source.fifo > x264.h264 2> x264.txt
             wait $!
