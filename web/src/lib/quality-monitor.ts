@@ -217,6 +217,8 @@ export type QualityInputs = {
   board: QualityAnswer | null;
   sample: PageSample | null;
   rates: PageRates | null;
+  /** Measured with animation frames, Hz. */
+  refreshHz: number | null;
 };
 
 /** The encoder that serves the path, from the board's answer. */
@@ -301,11 +303,58 @@ export function basicRows(inputs: QualityInputs, t: Translate): QualityRow[] {
   ];
 }
 
-/** The sections of Extended: Basic's rows first, then the board's. Rows
- * that do not apply are left out. */
+/** The sections of Extended: Basic's rows first, then the transport, the
+ * board and the local side. Rows that do not apply are left out. */
 export function extendedSections(inputs: QualityInputs, t: Translate): QualitySection[] {
-  const { board } = inputs;
+  const { path, board, sample, rates } = inputs;
   const encoder = servingEncoder(inputs);
+  const transport: QualityRow[] = [];
+  const row = (key: string, label: string, value: string) =>
+    transport.push({ key, label: t(label), value });
+  if (path === 'quic' && sample?.quic) {
+    const quic = sample.quic;
+    row('quicRoundTrip', 'qualityMonitor.roundTrip', `${fixed(quic.roundTripMs, 1)} ms`);
+    row('quicLost', 'qualityMonitor.datagramsLost', fixed(quic.packetsLost));
+    row('quicFrames', 'qualityMonitor.framesReceived', fixed(sample.framesReceived));
+    row('quicGivenUp', 'qualityMonitor.givenUp', fixed(quic.givenUp));
+    row('quicRequests', 'qualityMonitor.keyFrameRequests', fixed(quic.keyFrameRequests));
+    row(
+      'quicGateway',
+      'qualityMonitor.gatewayFrames',
+      `${fixed(quic.gatewayFramesSent)} / ${fixed(quic.gatewayFramesDropped)} / ${fixed(quic.gatewayKeyFrames)}`
+    );
+  }
+  if (path === 'webrtc' && sample?.webrtc) {
+    const rtc = sample.webrtc;
+    row('rtcRoundTrip', 'qualityMonitor.roundTrip', `${fixed(rtc.roundTripMs, 1)} ms`);
+    row('rtcCandidates', 'qualityMonitor.candidates', rtc.candidates ?? NOT_KNOWN);
+    row(
+      'rtcPackets',
+      'qualityMonitor.packets',
+      `${fixed(rtc.packetsReceived)} / ${fixed(rtc.packetsLost)}`
+    );
+    row('rtcJitter', 'qualityMonitor.jitter', `${fixed(rtc.jitterMs, 1)} ms`);
+    row(
+      'rtcJitterBuffer',
+      'qualityMonitor.jitterBuffer',
+      `${fixed(rtc.jitterBufferMsPerFrame, 1)} ms`
+    );
+    row(
+      'rtcFeedback',
+      'qualityMonitor.feedback',
+      `${fixed(rtc.nack)} / ${fixed(rtc.pli)} / ${fixed(rtc.fir)}`
+    );
+    row(
+      'rtcFrames',
+      'qualityMonitor.framesReceivedDecodedDropped',
+      `${fixed(sample.framesReceived)} / ${fixed(sample.framesDecoded)} / ${fixed(sample.framesDropped)}`
+    );
+  }
+  if (path === 'mjpeg') {
+    row('mjpegCapture', 'qualityMonitor.captureRate', `${fixed(board?.capture.fps, 1)}`);
+    row('mjpegQueued', 'qualityMonitor.queuedRate', `${fixed(board?.capture.queuedFps, 1)}`);
+  }
+
   const boardRows: QualityRow[] = [];
   const add = (key: string, label: string, value: string) =>
     boardRows.push({ key, label: t(label), value });
@@ -380,8 +429,26 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
       : `${fixed(board.temperatureMillidegrees / 1000, 1)} °C`
   );
 
+  const local: QualityRow[] = [];
+  const put = (key: string, label: string, value: string) =>
+    local.push({ key, label: t(label), value });
+  if (path !== 'mjpeg') {
+    put('decoder', 'qualityMonitor.decoder', sample?.decoder ?? NOT_KNOWN);
+    put(
+      'framesPerSecond',
+      'qualityMonitor.framesPerSecond',
+      `${fixed(rates?.receivedPerSecond, 1)} / ${fixed(rates?.decodedPerSecond, 1)} / ${fixed(rates?.drawnPerSecond, 1)} / ${fixed(rates?.droppedPerSecond, 1)}`
+    );
+    put('decodeTime', 'qualityMonitor.decodeTime', `${fixed(sample?.decodeMs, 1)} ms`);
+  }
+  put('refresh', 'qualityMonitor.refresh', `${fixed(inputs.refreshHz)} Hz`);
+
   return [
     { key: 'basic', title: null, rows: basicRows(inputs, t) },
-    { key: 'board', title: t('qualityMonitor.board'), rows: boardRows }
+    ...(transport.length
+      ? [{ key: 'transport', title: t('qualityMonitor.transport'), rows: transport }]
+      : []),
+    { key: 'board', title: t('qualityMonitor.board'), rows: boardRows },
+    { key: 'local', title: t('qualityMonitor.local'), rows: local }
   ];
 }

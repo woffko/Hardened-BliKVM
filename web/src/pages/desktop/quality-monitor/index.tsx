@@ -61,6 +61,29 @@ async function samplePath(path: VideoPath): Promise<PageSample> {
   }
 }
 
+/** The display's refresh, counted with animation frames over a second. */
+function useRefreshRate(measure: boolean): number | null {
+  const [hz, setHz] = useState<number | null>(null);
+  useEffect(() => {
+    if (!measure || hz !== null) return;
+    let frames = 0;
+    let first = 0;
+    let request = 0;
+    const step = (at: number) => {
+      if (!first) first = at;
+      frames += 1;
+      if (at - first >= 1000) {
+        setHz(Math.round(((frames - 1) * 1000) / (at - first)));
+        return;
+      }
+      request = requestAnimationFrame(step);
+    };
+    request = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(request);
+  }, [measure, hz]);
+  return hz;
+}
+
 const QualityMonitorWindow = () => {
   const { t } = useTranslation();
   const [layout, setLayout] = useAtom(qualityMonitorAtom);
@@ -80,6 +103,7 @@ const QualityMonitorWindow = () => {
   const extended = layout.level === 'extended';
 
   const [view, setView] = useState<View>({ board: null, sample: null, rates: null });
+  const refreshHz = useRefreshRate(extended);
 
   useEffect(() => {
     let stopped = false;
@@ -164,7 +188,8 @@ const QualityMonitorWindow = () => {
     codec,
     board: view.board,
     sample: view.sample,
-    rates: view.rates
+    rates: view.rates,
+    refreshHz
   };
   const left = Math.min(place.x, Math.max(0, window.innerWidth - KEEP_IN_VIEW_PX));
   const top = Math.min(place.y, Math.max(0, window.innerHeight - KEEP_IN_VIEW_PX));
