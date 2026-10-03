@@ -151,13 +151,19 @@ two, each with the transport in brackets as today:
 
 | Row | Shows | Where it comes from |
 | --- | --- | --- |
-| Speed | what arrives, Mbit/s | WebRTC: `bytesReceived` of the video's inbound RTP; QUIC: the session's bytes; MJPEG: - |
+| Speed | what arrives, Mbit/s, to a kilobit below one megabit | WebRTC: `bytesReceived` of the video's inbound RTP; QUIC: the frames' bytes the session brought; MJPEG: - |
 | Delay | a frame's age when it is drawn, ms | QUIC: measured by the board's clock (the session already has it); WebRTC: estimated, the jitter buffer's delay a frame and half the round trip, marked `~`; MJPEG: - |
 | Path | MJPEG, H.264 Direct, WebRTC or QUIC | the page's mode and transport |
 | FPS | frames drawn a second / the capture's | the page's count; the board's capture rate |
 | Bitrate | the target, kbit/s | the WebRTC quality (both encoders and QUIC); MJPEG: the JPEG quality instead |
 | Codec | H.264 HW, H.264 SW, VP8 or MJPEG, and the picture's size | the encoder's report, the page's decoder |
 | Chroma | 4:2:0 for H.264 and VP8, 4:2:2 for the capture's JPEG | the codec |
+
+Refined in C5.2: the Speed has three places below one megabit a second
+instead of two. On the board's still screen a second brings 0 to 40
+kilobits, and with two places VP8's small frames of about five kilobits
+were shown as ten: the monitor's Speed was 18% above what `getStats()`
+counted over the same two minutes, every byte counted right.
 
 ### Extended, in sections
 

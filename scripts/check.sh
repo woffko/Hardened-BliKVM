@@ -97,7 +97,7 @@ python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan
   tools/device/ve_capture_play.py tools/device/ve_demand_hold.py \
   tools/device/ve_engine_switch.py tools/device/ve_engine_watch.py \
   tools/device/ve_engine_choose.py tools/device/engine_switch_probe.py \
-  tools/ve-trace/ve_trace_report.py
+  tools/device/frame_socket_tap.py tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate

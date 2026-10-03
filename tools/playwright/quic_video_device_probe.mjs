@@ -18,11 +18,15 @@
 // the gateway's port in the server's answers is replaced by the relay's.
 //
 // With QUALITY_MONITOR=basic or extended the page's quality monitor is open
-// over the span: every second what it shows is read from its worker, and
-// the receipt sets it beside what the probe counts itself (frames drawn a
-// second, a frame's age when drawn) and, through the relays, the bytes that
-// came to the page (docs/design/h264-engine-choice-and-quality-monitor-v1.md,
-// C5.2).
+// over the span: every draw of it is read from its worker, and the receipt
+// sets it beside what the probe counts itself (frames drawn a second, a
+// frame's age when drawn) and, through the relays, the bytes that came to
+// the page (docs/design/h264-engine-choice-and-quality-monitor-v1.md,
+// C5.2). The relays count the QUIC packets whole, their own headers,
+// acknowledgements and the session's other messages with the frames; the
+// monitor's Speed is the frames' bytes, and `tools/device/frame_socket_tap.py`
+// holds it to what the encoder handed the gateway, by the capture times of
+// the span's ends that the receipt keeps.
 //
 // The probe logs in once and watches. It asks for no lease and no
 // confirmation of the target: any /api/hid request fails it. The board's
@@ -286,6 +290,8 @@ try {
     viewport: { width: 1440, height: 1000 },
   });
   await context.addInitScript(() => {
+    // Not on the blank page the probe leaves for.
+    if (!location.protocol.startsWith("http")) return;
     localStorage.setItem("hardened-blikvm-transport", "quic");
     localStorage.setItem("hardened-blikvm-video-mode", "h264");
     localStorage.setItem("hardened-blikvm-menu-auto-hide", "always");
@@ -413,6 +419,11 @@ try {
   receipt.picture = {
     frames,
     boardSeconds: round(boardSeconds, 2),
+    // The capture times of the newest frames at the span's ends.
+    captureMicros: {
+      first: before.probe.lastCaptureMicros,
+      last: after.probe.lastCaptureMicros,
+    },
     framesPerSecond: round(frames / boardSeconds, 2),
     // By the page's count for each second of its own clock.
     perSecond: {
@@ -475,7 +486,9 @@ try {
     };
     receipt.monitorCounted = {
       framesPerSecond: receipt.picture.framesPerSecond,
-      megabitsPerSecond:
+      // The QUIC packets whole: for a still picture mostly the transport's
+      // own bytes, so no measure of the monitor's Speed.
+      transportMegabitsPerSecond:
         relayBytes === null ? null : round((relayBytes * 8) / 1e6, 3),
       delayMedianMs: receipt.picture.age.median,
     };
@@ -488,13 +501,6 @@ try {
         receipt.monitor.framesPerSecond,
         receipt.monitorCounted.framesPerSecond,
       ),
-      bytesRateWithin10:
-        receipt.monitorCounted.megabitsPerSecond === null
-          ? null
-          : within(
-              receipt.monitor.megabitsPerSecond,
-              receipt.monitorCounted.megabitsPerSecond,
-            ),
       delayWithin10Ms:
         receipt.monitor.delayMedianMs !== null &&
         Math.abs(

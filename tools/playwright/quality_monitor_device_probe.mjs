@@ -240,6 +240,8 @@ try {
       mean(shown.map((rows) => number(rows.fps)).filter(Number.isFinite)),
     ),
     delays: [...new Set(shown.map((rows) => rows.delay))].slice(0, 12),
+    // Every draw's Speed as it was shown.
+    speeds: shown.map((rows) => rows.speed),
     rows: last,
   };
   if (before && after) {

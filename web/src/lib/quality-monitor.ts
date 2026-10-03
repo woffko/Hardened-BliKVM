@@ -262,15 +262,13 @@ export function basicRows(inputs: QualityInputs, t: Translate): QualityRow[] {
       ? NOT_KNOWN
       : `${sample.delayEstimated ? '~' : ''}${fixed(sample.delayMs)} ms`;
   const drawn = path === 'mjpeg' ? NOT_KNOWN : fixed(rates?.drawnPerSecond, 1);
+  // To a kilobit below a megabit a second: a still screen sends a few.
+  const speed =
+    path === 'mjpeg' || !rates || rates.megabitsPerSecond === null
+      ? NOT_KNOWN
+      : `${fixed(rates.megabitsPerSecond, rates.megabitsPerSecond < 1 ? 3 : 2)} Mbit/s`;
   return [
-    {
-      key: 'speed',
-      label: t('qualityMonitor.speed'),
-      value:
-        path === 'mjpeg' || rates?.megabitsPerSecond === null || !rates
-          ? NOT_KNOWN
-          : `${fixed(rates.megabitsPerSecond, 2)} Mbit/s`
-    },
+    { key: 'speed', label: t('qualityMonitor.speed'), value: speed },
     { key: 'delay', label: t('qualityMonitor.delay'), value: path === 'mjpeg' ? NOT_KNOWN : delay },
     { key: 'path', label: t('qualityMonitor.path'), value: PATH_LABEL[path] },
     {
