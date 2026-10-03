@@ -98,6 +98,21 @@ pub type OpenHardware = dyn Fn(HardwareConfig) -> Result<Box<dyn Hardware>, Stri
 /// up for x264, until the engine is chosen again.
 pub const HARDWARE_FAILURES: u32 = 3;
 
+/// What two runs of the engine's encoder did, together.
+pub fn add_counters(one: Counters, other: Counters) -> Counters {
+    Counters {
+        frames: one.frames + other.frames,
+        key_frames: one.key_frames + other.key_frames,
+        left_out: one.left_out + other.left_out,
+        passes: one.passes + other.passes,
+        both_searches: one.both_searches + other.both_searches,
+        wide: one.wide + other.wide,
+        higher_qp: one.higher_qp + other.higher_qp,
+        failures: one.failures + other.failures,
+        engine_micros: one.engine_micros + other.engine_micros,
+    }
+}
+
 struct HardwareStream {
     encoder: Box<dyn Hardware>,
     /// The picture as the driver takes it, and the frame it makes.
@@ -125,6 +140,8 @@ pub struct Engine {
     /// Why the engine could not be had when it was last tried, or why it
     /// was given up.
     refusal: Option<String>,
+    /// What the engine's encoders that this stream has had and let go did.
+    finished: Counters,
 }
 
 impl Engine {
@@ -155,6 +172,7 @@ impl Engine {
             width,
             height,
             refusal: None,
+            finished: Counters::default(),
         };
         engine.encoder = match settings.codec {
             Codec::Vp8 => Encoder::Vp8(
@@ -284,6 +302,7 @@ impl Engine {
             unreachable!("the engine encodes");
         };
         // The device is closed before x264 takes its threads.
+        self.finished = add_counters(self.finished, stream.encoder.counters());
         drop(stream);
         let encoder =
             H264Encoder::new(self.x264_config(preset)).map_err(|error| error.to_string())?;
@@ -343,6 +362,12 @@ impl Engine {
             Encoder::Hardware(stream, _) => Some(stream.encoder.counters()),
             _ => None,
         }
+    }
+
+    /// What the engine did for this stream in all, also where x264 has
+    /// taken over since.
+    pub fn hardware_totals(&self) -> Counters {
+        add_counters(self.finished, self.hardware_counters().unwrap_or_default())
     }
 
     /// The engine is given up: x264 takes the stream over where it is,

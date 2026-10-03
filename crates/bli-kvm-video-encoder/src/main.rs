@@ -20,7 +20,7 @@ use std::{
     process::ExitCode,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -34,11 +34,14 @@ use bli_kvm_video_encoder::{
     FrameDecision, FrameGate, GatePolicy, LatestFrame,
     choice::{Choice, ProbeHardware},
     demand::{Demand, group_id},
-    engine::{Codec, Engine, EngineSettings, Hardware, OpenHardware},
+    engine::{Codec, Engine, EngineSettings, Hardware, OpenHardware, add_counters},
     frames::{FrameHub, MonotonicBase, Numbering, user_id},
     h264::H264Preset,
     mjpeg::MjpegReader,
-    report::{Report, SCHEMA, engine_name},
+    report::{
+        GateCounts, HardwareCounts, MAX_SIDE, MAX_STAGE_MICROS, Report, SCHEMA, StageMicros,
+        engine_name,
+    },
     yuv::{I420Frame, JpegBackend, JpegToI420, scale_two_thirds},
 };
 
@@ -241,6 +244,66 @@ fn note_encoder(settings: &Settings, encoding: &mut &'static str, name: &'static
     }
 }
 
+/// What the gate did with the capture's frames, counted by the reader for
+/// the report.
+#[derive(Default)]
+struct GateTally {
+    admitted: AtomicU64,
+    too_soon: AtomicU64,
+    unchanged: AtomicU64,
+}
+
+impl GateTally {
+    fn count(&self, decision: FrameDecision) {
+        let counter = match decision {
+            FrameDecision::Encode => &self.admitted,
+            FrameDecision::TooSoon => &self.too_soon,
+            FrameDecision::Unchanged => &self.unchanged,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn counts(&self) -> GateCounts {
+        GateCounts {
+            admitted: self.admitted.load(Ordering::Relaxed),
+            too_soon: self.too_soon.load(Ordering::Relaxed),
+            unchanged: self.unchanged.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// The stages' times over the frames since the report was last written.
+#[derive(Default)]
+struct StageWindow {
+    frames: u32,
+    decode: Duration,
+    convert: Duration,
+    encode: Duration,
+}
+
+impl StageWindow {
+    fn means(&self) -> StageMicros {
+        let mean = |total: Duration| {
+            (total.as_micros() / u128::from(self.frames.max(1))).min(u128::from(MAX_STAGE_MICROS))
+                as u64
+        };
+        StageMicros {
+            decode: mean(self.decode),
+            convert: mean(self.convert),
+            encode: mean(self.encode),
+        }
+    }
+}
+
+/// What the report counts.
+struct ReportNumbers<'a> {
+    encoded_frames: u64,
+    window: &'a StageWindow,
+    gate: &'a GateTally,
+    /// What the engine did since the start, where it has encoded.
+    hardware: Option<Counters>,
+}
+
 /// What the report says now.
 fn report_of(
     settings: &Settings,
@@ -248,6 +311,7 @@ fn report_of(
     engine: Option<&Engine>,
     streaming: bool,
     kbps: u32,
+    numbers: &ReportNumbers,
 ) -> Report {
     let h264 = settings.engine.codec != Codec::Vp8;
     let (width, height) = engine.map_or((0, 0), Engine::size);
@@ -259,26 +323,51 @@ fn report_of(
         engine_wanted: h264.then(|| choice.wanted().name()),
         hardware_available: choice.available(),
         hardware_reason: choice.reason().map(str::to_string),
-        width: width as u32,
-        height: height as u32,
+        width: (width as u32).min(MAX_SIDE),
+        height: (height as u32).min(MAX_SIDE),
         kbps,
         max_fps: settings.max_fps,
         converters: settings.converters as u32,
+        encoded_frames: numbers.encoded_frames,
+        stage_micros: numbers.window.means(),
+        gate: numbers.gate.counts(),
+        hardware: numbers.hardware.map(|counters| HardwareCounts {
+            passes: counters.passes,
+            both_searches: counters.both_searches,
+            wide: counters.wide,
+            higher_qp: counters.higher_qp,
+            left_out: counters.left_out,
+            key_frames: counters.key_frames,
+            failures: counters.failures,
+            engine_micros: counters.engine_micros,
+        }),
     }
 }
 
-/// Replaces the report where it has changed.
-fn write_report(settings: &Settings, last: &mut Option<Report>, report: Report) {
+/// The report is written at the start, whenever what it says but its
+/// numbers changes, and once a second while a viewer watches.
+const REPORT_EVERY: Duration = Duration::from_secs(1);
+
+/// Replaces the report where it is due; true where it was written.
+fn write_report(settings: &Settings, last: &mut Option<(Report, Instant)>, report: Report) -> bool {
     let Some(path) = &settings.report else {
-        return;
+        return false;
     };
-    if last.as_ref() == Some(&report) {
-        return;
+    let due = match last {
+        None => true,
+        Some((written, at)) => {
+            !written.same_but_numbers(&report)
+                || (report.streaming && at.elapsed() >= REPORT_EVERY && *written != report)
+        }
+    };
+    if !due {
+        return false;
     }
     if let Err(error) = report.write(path) {
         eprintln!("bli-kvm-video-encoder: {}: {error}", path.display());
     }
-    *last = Some(report);
+    *last = Some((report, Instant::now()));
+    true
 }
 
 struct Captured {
@@ -297,6 +386,7 @@ fn open_capture(settings: &Settings) -> io::Result<MjpegReader<UnixStream>> {
 fn read_stream(
     settings: &Settings,
     gate: &mut FrameGate,
+    tally: &GateTally,
     slot: &LatestFrame<Captured>,
     demand: &Demand,
     frames: Option<&FrameHub>,
@@ -333,7 +423,9 @@ fn read_stream(
             let_through = Some(now);
             gate.reset();
         }
-        if gate.admit(&jpeg, now) == FrameDecision::Encode {
+        let decision = gate.admit(&jpeg, now);
+        tally.count(decision);
+        if decision == FrameDecision::Encode {
             slot.publish(Captured { jpeg, at: now });
         }
     }
@@ -412,6 +504,7 @@ fn encode_loop(
     settings: &Settings,
     slot: &LatestFrame<Decoded>,
     rejected: &AtomicU32,
+    tally: &GateTally,
     demand: &Demand,
     frames: Option<&FrameHub>,
     stop: &AtomicBool,
@@ -428,7 +521,14 @@ fn encode_loop(
         settings.hardware.clone().map(probe_hardware),
     );
     let mut encoding = "";
-    let mut reported: Option<Report> = None;
+    let mut reported: Option<(Report, Instant)> = None;
+    // The report's numbers: frames since the start, the stages' times since
+    // it was last written, and what the engine did in the streams before
+    // this one.
+    let mut encoded_frames = 0_u64;
+    let mut window = StageWindow::default();
+    let mut hardware_before = Counters::default();
+    let mut hardware_ever = false;
     let start = Instant::now();
     let mut last_pts = -1_i64;
     let mut stats = Stats::default();
@@ -451,11 +551,34 @@ fn encode_loop(
             choice.apply(engine)?;
             note_encoder(settings, &mut encoding, engine.encoder_name());
         }
-        write_report(
+        hardware_ever |= engine
+            .as_ref()
+            .is_some_and(|engine| engine.encoder_name() == "hardware");
+        let numbers = ReportNumbers {
+            encoded_frames,
+            window: &window,
+            gate: tally,
+            hardware: hardware_ever.then(|| {
+                add_counters(
+                    hardware_before,
+                    engine
+                        .as_ref()
+                        .map(Engine::hardware_totals)
+                        .unwrap_or_default(),
+                )
+            }),
+        };
+        let report = report_of(
             settings,
-            &mut reported,
-            report_of(settings, &choice, engine.as_ref(), demand.active(), kbps),
+            &choice,
+            engine.as_ref(),
+            demand.active(),
+            kbps,
+            &numbers,
         );
+        if write_report(settings, &mut reported, report) {
+            window = StageWindow::default();
+        }
         let Some(decoded) = slot.take(Duration::from_millis(500)) else {
             continue;
         };
@@ -466,6 +589,8 @@ fn encode_loop(
         last_capture = Some(decoded.at);
         stats.decode += decoded.decode;
         stats.convert += decoded.convert;
+        window.decode += decoded.decode;
+        window.convert += decoded.convert;
         let frame = &decoded.frame;
         if engine
             .as_ref()
@@ -475,6 +600,9 @@ fn encode_loop(
             // stays and the sequence numbers go on where the last one ended.
             // The old encoder goes first: two at once would have twice the
             // threads, more than the unit may run.
+            if let Some(old) = &engine {
+                hardware_before = add_counters(hardware_before, old.hardware_totals());
+            }
             let next = engine.take().map_or(sequence, |old| old.next_sequence());
             numbering = Numbering::new(stream_id()?);
             let open = choice.opener();
@@ -524,12 +652,18 @@ fn encode_loop(
         let (packets, encoded) = engine.encode_frames(frame, pts, force_key)?;
         stats.encode += encode_start.elapsed();
         stats.frames += 1;
+        window.encode += encode_start.elapsed();
+        window.frames += 1;
+        encoded_frames += 1;
         if was_hardware && engine.encoder_name() != "hardware" {
             choice.given_up(engine);
         }
         note_encoder(settings, &mut encoding, engine.encoder_name());
         stats.engine = encoding;
-        stats.hardware = engine.hardware_counters();
+        // Counted since the start, so that a switch does not lose them.
+        stats.hardware = engine
+            .hardware_counters()
+            .map(|_| add_counters(hardware_before, engine.hardware_totals()));
         // The encoder makes key frames of its own at its interval: one of
         // those counts like one that was asked for, or two would follow each
         // other whenever the two clocks meet.
@@ -616,8 +750,9 @@ impl Stats {
         *self = Self {
             since: Some(Instant::now()),
             engine: self.engine,
-            // A new stream's encoder counts from nothing again.
-            reported: self.hardware.unwrap_or_default(),
+            // The engine's counts go on since the start, also while x264
+            // encodes.
+            reported: self.hardware.unwrap_or(self.reported),
             ..Self::default()
         };
     }
@@ -835,13 +970,15 @@ fn main() -> ExitCode {
     let captured = Arc::new(LatestFrame::new());
     let decoded = Arc::new(LatestFrame::new());
     let rejected = Arc::new(AtomicU32::new(0));
+    let tally = Arc::new(GateTally::default());
     let reader = {
-        let (settings, captured, demand, frames, stop) = (
+        let (settings, captured, demand, frames, stop, tally) = (
             Arc::clone(&settings),
             Arc::clone(&captured),
             Arc::clone(&demand),
             frames.clone(),
             Arc::clone(&stop),
+            Arc::clone(&tally),
         );
         thread::spawn(move || {
             let policy = GatePolicy::new(settings.max_fps, Duration::from_secs(2))
@@ -857,6 +994,7 @@ fn main() -> ExitCode {
                 if let Err(error) = read_stream(
                     &settings,
                     &mut gate,
+                    &tally,
                     &captured,
                     &demand,
                     frames.as_deref(),
@@ -894,6 +1032,7 @@ fn main() -> ExitCode {
         &settings,
         &decoded,
         &rejected,
+        &tally,
         &demand,
         frames.as_deref(),
         &stop,

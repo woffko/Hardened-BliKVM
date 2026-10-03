@@ -31,7 +31,8 @@ Environment=BLI_KVM_ENCODER_CODEC=h264-ultrafast
 # with a line in the journal, or when the board's choice is x264 (the web
 # server sends it on the demand socket). Which of the two encodes is one
 # word in the status file, which the web server reads for the interface.
-# The report says that, the choice, and whether the engine can be had
+# The report says that, the choice, whether the engine can be had, and how
+# the encoding goes, once a second while a viewer watches
 # (docs/design/h264-engine-choice-and-quality-monitor-v1.md).
 Environment=BLI_KVM_ENCODER_HARDWARE=/dev/hardened-blikvm-ve-enc
 Environment=BLI_KVM_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder
