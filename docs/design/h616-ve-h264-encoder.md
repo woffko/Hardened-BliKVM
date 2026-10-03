@@ -5,18 +5,19 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-03, gate V3 passed): the engine makes H.264 streams that
-ffmpeg and Chromium decode frame for frame. A 1920x1080 frame, key or P,
-takes it 7 ms; the lab's rate control in software gives every frame its QP
-and at most two passes, and chooses the search for motion of every frame;
-thirty frames a second hold for ten minutes with the processors idle or
-busy; on the plan's sequences the picture is within 0.2 dB of x264's at
-the product's rates, and text that moves fast is worse. The engine takes
-its encoder's addresses in units of 256 bytes (V2.1, V2R), stays inside
-the buffers it is given, and stops at the end of its stream buffer
-(V3.1 again). The driver of V4 gives the lab module's streams byte for byte
-(gate V4, `docs/design/h616-ve-encoder-driver-v1.md`); next is V5, the
-product's encoder.
+Status (2026-10-03, gate V7 passed): the product encodes H.264 with the
+engine. A 1920x1080 frame, key or P, takes it 7 ms; the product's encoder
+(V5) gives every frame its QP and at most the passes its time allows, and
+chooses the engine's search for motion for every frame; it holds thirty
+frames a second of a moving 1920x1080 picture with 1.6 to 1.7 cores, where
+x264 makes 12 to 19 with three cores and more, and ran twelve hours on the
+board without a failure. On the plan's sequences the picture is within
+0.2 dB of x264's at the product's rates; text that moves fast is worse. The
+engine takes its encoder's addresses in units of 256 bytes (V2.1, V2R),
+stays inside its buffers, and stops at the end of its stream buffer
+(V3.1 again); the driver that gives it to the product is
+`docs/design/h616-ve-encoder-driver-v1.md`, and the plan's outcome item by
+item is `docs/baselines/audit-20261003-hardware-h264.md`.
 
 ## Sources
 
@@ -1998,6 +1999,24 @@ Receipts: `evidence/private/gui-walk-seq66-v7-*`, `vp8-webrtc-seq66-v7`,
 `h264-webrtc-seq66-v7`, `quic-video-device-seq66-v7`,
 `mjpeg-latency-seq66-v7*`, `quic-firewall-device-seq66-v7*`,
 `v7-state-after-20261003.json`.
+
+### Gate V7: passed
+
+- **One core less.** At 30 frames a second of a moving 1920x1080 picture
+  the encoder used 1.56 cores (`drag`) and 1.70 (`motion`) with the
+  engine; with x264 it used 3.07 and 3.27 and made only 18.8 and 12.5 of
+  the 30 frames. That is 1.37 cores less at the least, for more frames.
+- **Twelve hours** on the engine without an encoder error (no failure in
+  238,468 passes) and without a line in the kernel's log from the driver
+  or the engine: the four lines of those hours are `cedrus` taking the
+  engine back, twice, when the run gave it back, and two notes of
+  `systemd-journald`.
+
+**The hardware engine stays on for H.264**, at the frame rate V3 and V7.1
+showed it can hold: the unit's limit stays at 30 frames a second.
+`tools/device/deploy_ve.sh install` switched it on for good on 2026-10-03 at
+14:44 UTC. From then on the board's H.264 viewers get the engine's frames,
+and x264's where the engine is not there or fails three frames in a row.
 
 ## The H616's register description
 

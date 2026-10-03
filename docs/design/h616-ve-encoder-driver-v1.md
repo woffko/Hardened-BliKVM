@@ -6,9 +6,11 @@ is known about the engine, and how it was learnt, is in
 that gives the product's encoder the engine's H.264 encoder and nothing
 else of the engine.
 
-Status (2026-10-03, gate V4 passed): the driver gives, byte for byte, the
+Status (2026-10-03, gate V7 passed): the driver gives, byte for byte, the
 streams the lab module gives, and a hostile client leaves nothing behind
-(Record). The product's encoder on it is V5, its package V6.
+(Record). The update runtime `0.1.0~dev36` carries it; on the test board it
+is switched on (`tools/device/deploy_ve.sh install`) and the product's H.264
+encoder uses it (`docs/design/h616-ve-h264-encoder.md`, "V7" and gate V7).
 
 ## Why a driver of our own
 
