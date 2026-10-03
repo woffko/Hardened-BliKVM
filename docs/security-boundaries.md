@@ -476,6 +476,24 @@ network:
 The firewall mode decides from where each of them can be reached
 (`docs/design/firewall-reference-contract.md`).
 
+The H.264 encoder may encode with the board's video engine, through the
+project's encoder driver (`docs/design/h616-ve-encoder-driver-v1.md`). No
+IOMMU stands between that engine and the board's memory, so the driver is
+the confinement: its one client, the encoder's unit (a dynamic user, the
+only member of the device node's group), sends pictures, QPs and the bits
+of its headers, never an address or a register value; every register and
+address is the driver's, from a register plan that is tested on the build
+host with random requests and against the lab's hypothesis; the buffers
+belong to one open device and are freed only after the engine is reset;
+and a client's mistake writes no line into the kernel's log. The encoder's
+unit may open that device and no other (`DevicePolicy=closed`). The driver
+is loaded at boot by a oneshot unit whose only capability is the one that
+loads a module, from a directory named for the kernel release, and only on
+a board where `tools/device/deploy_ve.sh` switched it on; the decoder
+driver `cedrus`, which nothing of the product uses, is then not loaded. The
+lab module of that plan, which gives the whole engine to a root process,
+is never packaged.
+
 ## Filesystem and update boundary
 
 - Read-only inspection never enables write mode.

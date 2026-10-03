@@ -356,3 +356,44 @@ side).
   The wrapper is not part of cargo's fingerprint: a target directory that
   was filled without it keeps the old objects, so the directory must be one
   that was only ever used with it.
+
+## H.264 by the video engine (2026-10-03, hardware H.264 plan)
+
+The H.264 unit has a third engine: the board's video engine, through the
+encoder driver of `docs/design/h616-ve-encoder-driver-v1.md` (the engine
+and how it was learnt: `docs/design/h616-ve-h264-encoder.md`; the plan:
+`docs/baselines/work-plan-20261002-hardware-h264.md`).
+
+- When a viewer's stream opens, the encoder opens
+  `BLI_KVM_ENCODER_HARDWARE` (`/dev/hardened-blikvm-ve-enc`), configures it
+  for the size and encodes a test picture; without the device, or when that
+  fails, x264 encodes as before, with a line in the journal that says why.
+  A frame the engine fails on is lost and the next one is a key frame;
+  after three failures in a row x264 takes the stream over where it is,
+  behind the same packetizer and frame socket, until the encoder restarts.
+- The converter still gives I420; the engine's path writes it into the
+  driver's NV12 of whole macroblocks. The rate control is the lab's
+  (`bli-kvm-ve-encoder`): a QP for every frame from the frames before, the
+  engine's search for motion chosen for every frame, a second pass for a
+  frame that does not fit, a frame of skipped macroblocks for one that fits
+  at no QP. Key frames come as with x264, with SPS and PPS before each.
+- The statistics line names the engine and counts its passes, frames
+  left out, key frames and failures, and the engine's time a pass. The
+  encoder writes `hardware` or `x264` to `BLI_KVM_ENCODER_STATUS`
+  (`/run/hardened-blikvm-h264/encoder`); `GET /api/vm/screen` reports it as
+  `h264Encoder`, and the screen settings show it.
+- The unit may open that device and no other, joins the device's group
+  (which `tools/device/deploy_vp8.sh` makes with the unit), and has three
+  converter threads: with the engine, decoding the capture's JPEG pictures
+  is what bounds the frame rate.
+
+On the board (V7.1), thirty pictures a second of a moving 1920x1080 picture
+into a second, transient instance of the encoder: the engine holds 30
+frames a second with 1.56 cores (`drag`) and 1.70 (`motion`); x264 makes
+18.8 and 12.5 of them with 3.07 and 3.27 cores. The encoder's gate admits a
+frame no sooner than an interval of its limit after the one before: fed at
+60 pictures a second with a limit of 30, as the board's capture feeds it,
+it let about twenty a second through in the lab's runs, whichever engine
+encoded, because a picture that comes a little early waits for the next.
+How many the board's own capture loses so was not measured: the target's
+picture stood still.

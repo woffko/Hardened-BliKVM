@@ -125,6 +125,32 @@ WebRTC viewers at once). The first step then is cheap and read-only: read
 the engine's version from a running mainline `cedrus` and compare the V3
 encoder's register use against what the engine reports.
 
+## Outcome (2026-10-03)
+
+The question was taken up after all, by another way than "What a usable
+path would need" describes: on the board's own kernel (5.19.4, no IOMMU),
+with a driver of the project's own instead of a V4L2 encoder on a new
+kernel (`docs/baselines/work-plan-20261002-hardware-h264.md`). The record
+is `docs/design/h616-ve-h264-encoder.md`, the driver's design
+`docs/design/h616-ve-encoder-driver-v1.md`, and the item list
+`docs/baselines/audit-20261003-hardware-h264.md`.
+
+- The unknowns above were answered in the lab: the H616's encoder is the
+  H6's next revision, addressed in units of 256 bytes, with the H6's
+  register plan; it encodes key and P frames at 1920x1080 in 7 ms, stays
+  inside its buffers, and stops at the end of its stream buffer.
+- Without an IOMMU the driver is the confinement: its client never names
+  an address or a register.
+- The benefit is larger than estimated above: x264 does not hold 30 frames
+  a second of a moving 1920x1080 picture on this board (12.5 to 18.8 with
+  three cores and more), and the engine does with 1.56 to 1.70 cores. What
+  remains on the processors is decoding the capture's JPEG pictures. A
+  frame is about 15 ms younger when it is drawn.
+
+Gate V7 passed on 2026-10-03: since then the test board encodes H.264
+with the engine, and with x264 where the engine is not there or fails.
+`tools/device/deploy_ve.sh remove` switches it off again.
+
 ## Sources
 
 - Allwinner H616 brief: https://www.allwinnertech.com/uploads/pdf/20200409170709ca.pdf
