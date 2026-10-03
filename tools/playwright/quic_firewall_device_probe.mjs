@@ -397,20 +397,31 @@ try {
     await viewer
       .locator('[data-video-mode="vp8"][aria-disabled="true"]')
       .waitFor();
-    const entries = {};
-    for (const mode of ["h264", "vp8"]) {
-      const entry = viewer.locator(`[data-video-mode="${mode}"]`);
-      await entry.waitFor();
-      entries[mode] = {
-        name: await entry.locator("[data-video-mode-name]").innerText(),
-        disabled: (await entry.getAttribute("aria-disabled")) === "true",
-      };
-    }
+    const described = async (entry) => ({
+      name: await entry.locator("[data-video-mode-name]").innerText(),
+      disabled: (await entry.getAttribute("aria-disabled")) === "true",
+    });
+    // H.264 HW and H.264 SW where the board offers the choice of its
+    // engine, one H.264 entry where it does not
+    // (docs/design/h264-engine-choice-and-quality-monitor-v1.md).
+    const h264 = viewer.locator('[data-video-mode="h264"]');
+    await h264.first().waitFor();
+    const entries = { h264: [], vp8: null };
+    for (const entry of await h264.all())
+      entries.h264.push(await described(entry));
+    entries.vp8 = await described(viewer.locator('[data-video-mode="vp8"]'));
     const remembered = await viewer.evaluate(() =>
       localStorage.getItem("hardened-blikvm-video-mode"),
     );
     step("restricted, the page", { frames, entries, remembered });
-    assert.deepEqual(entries.h264, { name: "H.264 (QUIC)", disabled: false });
+    const names =
+      entries.h264.length === 2
+        ? ["H.264 HW (QUIC)", "H.264 SW (QUIC)"]
+        : ["H.264 (QUIC)"];
+    assert.deepEqual(
+      entries.h264,
+      names.map((name) => ({ name, disabled: false })),
+    );
     assert.equal(entries.vp8.disabled, true);
     assert.equal(remembered, "h264");
     await viewer.goto("about:blank");
