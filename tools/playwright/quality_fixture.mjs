@@ -3,6 +3,31 @@
 // the fields `GET /api/vm/screen` gains, `POST /api/vm/screen` with
 // `h264_engine`, and `GET /api/vm/quality`, for the page's contracts on the
 // host. It is a test support module, never a shipped artifact.
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+/** Playwright's Chromium, where the installer puts it for this user. */
+export async function launchChromium() {
+  const { chromium } = await import(
+    pathToFileURL(
+      process.env.PLAYWRIGHT_MODULE ??
+        path.join(
+          os.homedir(),
+          ".local/share/playwright/node_modules/playwright/index.mjs",
+        ),
+    ).href
+  );
+  return chromium.launch({
+    headless: true,
+    executablePath:
+      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ??
+      path.join(
+        os.homedir(),
+        ".cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
+      ),
+  });
+}
 
 /** The capabilities' video section of a board that offers the choice. */
 export function engineChoiceVideo(overrides = {}) {
@@ -140,17 +165,18 @@ export function qualityState(board, second = 0, { vp8 = false } = {}) {
 
 /**
  * Answers the screen and the quality routes on a Playwright `page` from a
- * mutable `board`, records what was asked, and lets a test choose how a
- * change of the engine is answered (`refuse` names a rejection).
+ * mutable `board`, records what was asked (a change with its setting and
+ * value), and lets a test choose how a change of the engine is answered
+ * (`refuse` names a rejection).
  */
 export async function routeEngineAndQuality(page, board, options = {}) {
   const asked = [];
   let second = 0;
   await page.route("**/api/vm/screen", async (route) => {
     const request = route.request();
-    asked.push(`${request.method()} /api/vm/screen`);
     if (request.method() === "POST") {
       const body = request.postDataJSON();
+      asked.push(`POST /api/vm/screen ${body?.type}=${body?.value}`);
       if (body?.type === "h264_engine") {
         if (options.refuse) {
           await route.fulfill({
@@ -183,6 +209,8 @@ export async function routeEngineAndQuality(page, board, options = {}) {
         });
         return;
       }
+    } else {
+      asked.push(`${request.method()} /api/vm/screen`);
     }
     await route.fulfill({ json: { code: 0, data: screenState(board) } });
   });
