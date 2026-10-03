@@ -7,9 +7,9 @@ cases, the monitor's rows and where each comes from, the reference and the
 licence question. The record of what was measured follows at its end as the
 work goes on.
 
-Status (2026-10-03): the engine as the board's choice is built (C1) and
-passed its gate on the test board; the menu and the monitor are not built
-yet.
+Status (2026-10-03): the engine as the board's choice, the menu, the
+board's side of the monitor and the monitor are built; gates C1 (on the
+board) and C4 (on the host) passed; C5 (on the board) is next.
 
 ## The engine as the board's choice
 
@@ -401,3 +401,46 @@ Receipts: `evidence/private/c1-transient-gate`, `c1-product-gate`,
 `c1-product-gate-switches.json`, `c1-product-gate-quic.json`,
 `update-to-seq67-alpha12-*`, `c1-state-as-found-20261003.json`,
 `c1-state-after-gate-20261003.json`.
+
+### C2 to C4, 2026-10-03: the menu, the board's side, the monitor
+
+Built: H.264 HW and SW in the video menu (C2.1, 2348bf5) and its contract
+(C2.2, 7e9e6ea); the encoders' report once a second with its numbers
+(C3.1, 9e89e61), `GET /api/vm/quality` (C3.2, 0cb01fd) and their tests
+(C3.3, e39791d); the monitor's window (C4.1, bc75c74), the page's own
+numbers (C4.2, c51d97a), the rows (C4.3, 8366b3d), its rows drawn by its
+own worker (C4.1, f331041) and its contract (C4.4, 3ef25c8).
+
+**Gate C4, on the host** (`tools/playwright/quality_monitor_gate.mjs`): the
+web server as the board builds it (with the owner's surface, a stand-in for
+the owner), the gateway and the encoder (x264) of this branch, the encoder
+fed with three changing pictures of 320x180 at 30 a second by a stand-in
+for uStreamer; Chromium with QUIC chosen and H.264 the mode; the monitor
+open over twelve seconds.
+
+| | The monitor | Counted by the gate | Bound |
+| --- | --- | --- | --- |
+| Frames drawn a second | 17.92 | 17.97 (the picture's worker) | within 10% |
+| Mbit/s that came | 0.898 | 0.880 (the frames the encoder handed to the gateway) | within 10% |
+| A frame's age when drawn, median, ms | 15 | 15 (the worker's own ages) | within 10 ms |
+
+The difference is the fragments' headers that the frames' bytes lack
+(2%). The board's side came from the encoder's real report: x264 encoding
+with the engine chosen (there is none on the host), 16.5 frames a second,
+the stages and the gate's rates.
+
+What the open monitor costs the page's main thread, from Chromium's trace
+of eight-second windows with it closed and open in turn, seven pairs a
+level: the difference of the whole thread's task time is 0.77 ms a second
+in Basic and 0.24 in Extended in the median (bound 2); the monitor's own
+timer took 0.10 to 0.29 ms a second, and its window drew nothing on the
+main thread. Single windows vary by up to three milliseconds a second
+(the video path's garbage collection, and once a task of 11 ms in a closed
+window), which is why the median of pairs is the measure. With the rows in
+the document instead, the same measure gave 4 to 5 ms a second (C4.1,
+f331041).
+
+**Gate C4 passed.**
+
+Receipts: `evidence/private/c4-gate-final2.json` (and `c4-gate-final.json`,
+`c4-gate-run2.json`, the runs before it).

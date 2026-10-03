@@ -227,6 +227,7 @@ node --check tools/playwright/video_settings_contract.mjs
 node --check tools/playwright/quality_fixture.mjs
 node --check tools/playwright/h264_engine_menu_contract.mjs
 node --check tools/playwright/quality_monitor_contract.mjs
+node --check tools/playwright/quality_monitor_gate.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
