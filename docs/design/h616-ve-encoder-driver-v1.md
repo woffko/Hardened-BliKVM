@@ -6,8 +6,9 @@ is known about the engine, and how it was learnt, is in
 that gives the product's encoder the engine's H.264 encoder and nothing
 else of the engine.
 
-Status (2026-10-03): the design. The code and its tests follow it
-(V4.2, V4.3); nothing of it has run on the board yet.
+Status (2026-10-03, gate V4 passed): the driver gives, byte for byte, the
+streams the lab module gives, and a hostile client leaves nothing behind
+(Record). The product's encoder on it is V5, its package V6.
 
 ## Why a driver of our own
 
@@ -274,6 +275,60 @@ are never packaged.
   a thousand times would be 20 MiB.
 - Gate V4: the lab tool's sequences through the driver give, byte for
   byte, the streams the lab module gave for the same pictures and QPs.
+
+## Record
+
+### Gate V4, 2026-10-03: passed
+
+**The same streams.** Through the driver the lab tool's sequences give,
+byte for byte, the streams the lab module gave for the same pictures, QPs
+and rate control (`tools/device/ve_driver_compare.sh`; lab tool `b0cd482`,
+the search chosen for every frame, at most two passes a frame):
+
+| Size | Frames, a key frame every | Rates | Sequences | Streams the same |
+| --- | --- | --- | --- | --- |
+| 320x240 | 30, 30 | QP 30 | drag | 1 of 1 |
+| 1920x1080 | 300, 300 | QP 30, 2.5 and 8 Mbit/s | scroll, drag, motion, pointer | 12 of 12 |
+| 1366x768 | 300, 300 | QP 30, 2.5 Mbit/s | scroll, drag, motion, pointer | 8 of 8 |
+| 1280x720 | 300, 60 | 1.5 Mbit/s | scroll, motion | 2 of 2 |
+
+The engine takes the same time either way, 7.0 ms a pass at 1920x1080;
+the loop around it takes about 2 ms more through the driver, for the
+picture's copy in and the frame's copy out. The first stream through the
+driver, 30 frames of `drag` at 320x240, decodes in the board's ffmpeg
+without a complaint.
+
+**V4.3.** On the build host: 200,000 random requests in 9,251 streams
+(146,276 planned and checked, 1,400 sizes and 43,073 frames refused, 2,909
+failures), every invariant held, and the driver's operations the lab
+tool's for 14 passes. On the board, the hostile client: every request out of range, out of order, twice, at memory that is not the client's (none, address 0, the kernel's, memory that cannot be written), 425 of them, each answered as the interface promises; pictures of noise at QP 0: at 1920x1088 and 1366x768 the key frame is larger than the stream buffer and ends with `EIO` and the stall status 2, and the next key frame is made, at 1024x768 and 256x64 it fits (2,037,592 and 42,553 bytes); 200 encodes at 1920x1080 under 210 signals, every one finished; 20 clients killed in the middle of a frame, and the device opened again after each; 20,000 random requests (13,920 `EINVAL`, 3,222 `EFAULT`, 1,948 `ENOTTY`, 910 frames); a thousand streams of 1920x1088 opened, configured, used for a frame and closed. Afterwards no line in the kernel's log but the client's own note that it dropped the page cache, and 126,264 kB of contiguous memory free, as before.
+
+**The board as it was.** Every run loaded the driver or the lab module in
+`cedrus`'s place and gave the engine back: the module unloaded, `cedrus`
+bound and suspended, the kernel's image compared word by word and
+unchanged (50 runs), no module, file or process left. The driver wrote
+no line into the kernel's log: the sessions' lines are `cedrus`
+registering its device again after each run, the lab module's line when
+it is bound, and the hostile client's notes that it dropped the page
+cache. The memory scan found the parameter sets of the 320x240 stream
+twice, in the two stream files the comparison keeps on tmpfs while it
+compares them, as it finds every stream file a session leaves there.
+
+The hostile client needed three runs, for faults of its own. The first
+ended after five requests: Python cannot pass an address of the process
+as a number to `ioctl`, and the client counted the kernel's notes of its
+own page-cache drops as forbidden lines. The second ran through and found
+every request "at no memory" answered with a frame: its hole was a mapping
+given back, and its own 1 MiB stream buffer had been mapped at the same
+place right after; the driver had read the client's memory, as it should.
+The hole is now a mapping without access, kept for the whole test. In
+both runs everything else held as in the third. And a first session of the
+first stream never ran its command: a session takes its command as words,
+not as one line of a shell.
+
+Receipts: `evidence/private/ve-lab-v4-20261003-first`, `-compare`,
+`-compare-b`, `-compare-c`, `-hostile`; and `-first-argv`,
+`-hostile-test-bug`, `-hostile-hole-reused` for the tries above.
 
 ## What changed against the plan
 

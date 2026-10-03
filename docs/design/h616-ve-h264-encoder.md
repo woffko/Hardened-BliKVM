@@ -14,7 +14,9 @@ busy; on the plan's sequences the picture is within 0.2 dB of x264's at
 the product's rates, and text that moves fast is worse. The engine takes
 its encoder's addresses in units of 256 bytes (V2.1, V2R), stays inside
 the buffers it is given, and stops at the end of its stream buffer
-(V3.1 again). Next is V4: the driver.
+(V3.1 again). The driver of V4 gives the lab module's streams byte for byte
+(gate V4, `docs/design/h616-ve-encoder-driver-v1.md`); next is V5, the
+product's encoder.
 
 ## Sources
 
