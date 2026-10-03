@@ -282,3 +282,144 @@ fn units(root: &Path, memory: &mut Memory) -> Value {
     }
     Value::Object(shares)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encoder_report::tests::whole_report;
+
+    fn seen(report: serde_json::Value, modified: SystemTime) -> Seen {
+        Seen {
+            modified,
+            report: serde_json::from_value(report).unwrap(),
+        }
+    }
+
+    /// Rates come from the last two reports by the times they were written,
+    /// and are null where there is one, or a count went back.
+    #[test]
+    fn rates_come_from_two_reports() {
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let before = seen(whole_report("h264"), at);
+        let mut later = whole_report("h264");
+        later["encodedFrames"] = 1060.into();
+        later["gate"] = serde_json::json!({ "admitted": 1060, "tooSoon": 620, "unchanged": 20 });
+        later["hardware"]["passes"] = 1376.into();
+        later["hardware"]["engineMicros"] = (9_490_000 + 76 * 7300).into();
+        let later = seen(later, at + Duration::from_secs(2));
+        let value = with_rates(Some(&before), &later);
+        assert_eq!(value["fps"], 30.0);
+        assert_eq!(
+            value["gatePerSecond"],
+            serde_json::json!({ "admitted": 30.0, "tooSoon": 60.0, "unchanged": 0.0 })
+        );
+        assert_eq!(value["hardware"]["passesPerSecond"], 38.0);
+        assert_eq!(value["hardware"]["engineMicrosPerPass"], 7300);
+        assert_eq!(value["encodedFrames"], 1060);
+        // One report: no rates yet.
+        let alone = with_rates(None, &later);
+        assert!(alone["fps"].is_null() && alone["gatePerSecond"].is_null());
+        assert!(alone["hardware"]["passesPerSecond"].is_null());
+        // The encoder started again: its counts went back.
+        let again = with_rates(
+            Some(&later),
+            &seen(whole_report("h264"), at + Duration::from_secs(3)),
+        );
+        assert!(again["fps"].is_null() && again["gatePerSecond"].is_null());
+        assert!(again["hardware"]["engineMicrosPerPass"].is_null());
+        // VP8 has no engine's counts.
+        let vp8 = with_rates(None, &seen(whole_report("vp8"), at));
+        assert!(vp8["hardware"].is_null());
+    }
+
+    /// The reader keeps the last two reports written at different times,
+    /// shows none that is older than three seconds, and tells the log of a
+    /// refused report once.
+    #[test]
+    fn reports_are_paired_by_their_times_and_stale_ones_are_not_shown() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("report.json");
+        let mut memory = Memory::default();
+        assert!(encoder(None, "h264", &mut memory).is_null());
+        assert!(encoder(Some(&path), "h264", &mut memory).is_null());
+        // Every report's time is set from one moment, so that two of them
+        // are apart by what the test says however slowly it runs.
+        let base = SystemTime::now();
+        let write = |report: &serde_json::Value, age: Duration| {
+            std::fs::write(&path, report.to_string()).unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(base - age).unwrap();
+        };
+        let mut report = whole_report("h264");
+        write(&report, Duration::from_millis(1500));
+        let first = encoder(Some(&path), "h264", &mut memory);
+        assert_eq!(first["encodedFrames"], 1000);
+        assert!(first["fps"].is_null());
+        // Read again before the next report: the same, still no rates.
+        assert_eq!(encoder(Some(&path), "h264", &mut memory), first);
+        report["encodedFrames"] = 1030.into();
+        write(&report, Duration::from_millis(500));
+        let second = encoder(Some(&path), "h264", &mut memory);
+        assert!(
+            (second["fps"].as_f64().unwrap() - 30.0).abs() < 0.1,
+            "{second}"
+        );
+        // The pair stays until a report written later comes.
+        assert_eq!(encoder(Some(&path), "h264", &mut memory), second);
+        // Older than three seconds: not shown.
+        write(&report, Duration::from_secs(4));
+        assert!(encoder(Some(&path), "h264", &mut memory).is_null());
+        // Refused, told once until a report is taken again.
+        std::fs::write(&path, "{").unwrap();
+        assert!(encoder(Some(&path), "h264", &mut memory).is_null());
+        assert!(memory.told.contains("h264"));
+        write(&report, Duration::ZERO);
+        assert!(!encoder(Some(&path), "h264", &mut memory).is_null());
+        assert!(!memory.told.contains("h264"));
+    }
+
+    /// A unit's share of the processors over the span between two reads.
+    #[test]
+    fn a_units_share_comes_from_its_control_group() {
+        let directory = tempfile::tempdir().unwrap();
+        let unit = directory
+            .path()
+            .join("hardened-blikvm-video-encoder-h264.service");
+        std::fs::create_dir(&unit).unwrap();
+        let stat = |usage: u64| {
+            std::fs::write(
+                unit.join("cpu.stat"),
+                format!("usage_usec {usage}\nuser_usec 1\nsystem_usec 2\n"),
+            )
+            .unwrap();
+        };
+        stat(1_000_000);
+        let mut memory = Memory::default();
+        let began = Instant::now();
+        let first = units(directory.path(), &mut memory);
+        let first_done = Instant::now();
+        assert_eq!(
+            first,
+            serde_json::json!({ "h264CpuPercent": null, "vp8CpuPercent": null })
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        stat(1_300_000);
+        let second_began = Instant::now();
+        let second = units(directory.path(), &mut memory);
+        let ended = Instant::now();
+        let share = second["h264CpuPercent"].as_f64().unwrap();
+        // 0.3 s of a core over the span between the two reads, which lies
+        // between the sleep and the whole of both reads.
+        let most = 30.0 / second_began.duration_since(first_done).as_secs_f64();
+        let least = 30.0 / ended.duration_since(began).as_secs_f64();
+        assert!(
+            share >= least - 0.1 && share <= most + 0.1,
+            "{share} not within {least}..{most}"
+        );
+        assert!(second["vp8CpuPercent"].is_null());
+        // A count that went back (the unit started again) gives no share.
+        stat(10);
+        assert!(units(directory.path(), &mut memory)["h264CpuPercent"].is_null());
+        assert_eq!(usage_micros(&unit.join("missing")), None);
+    }
+}

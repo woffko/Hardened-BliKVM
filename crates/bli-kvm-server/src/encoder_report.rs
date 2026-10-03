@@ -206,8 +206,140 @@ pub(crate) fn read_engine_availability(path: &Path) -> Option<EngineAvailability
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A whole report as the encoder writes it, as JSON to change.
+    pub(crate) fn whole_report(codec: &str) -> serde_json::Value {
+        let h264 = codec == "h264";
+        serde_json::json!({
+            "schema": 1,
+            "codec": codec,
+            "streaming": true,
+            "engine": if h264 { "hardware" } else { "libvpx" },
+            "engineWanted": if h264 { Some("hardware") } else { None },
+            "hardwareAvailable": if h264 { Some(true) } else { None },
+            "hardwareReason": null,
+            "width": 1920,
+            "height": 1080,
+            "kbps": 8000,
+            "maxFps": 30,
+            "converters": 3,
+            "encodedFrames": 1000,
+            "stageMicros": { "decode": 28100, "convert": 9600, "encode": 17600 },
+            "gate": { "admitted": 1000, "tooSoon": 500, "unchanged": 20 },
+            "hardware": if h264 {
+                serde_json::json!({
+                    "passes": 1300, "bothSearches": 200, "wide": 150, "higherQp": 9,
+                    "leftOut": 3, "keyFrames": 40, "failures": 0, "engineMicros": 9490000
+                })
+            } else {
+                serde_json::Value::Null
+            }
+        })
+    }
+
+    /// A report is taken whole and within every bound, or refused: too
+    /// large, damaged, of another form, another codec, or out of bounds.
+    #[test]
+    fn a_whole_report_is_taken_only_within_its_bounds() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("report.json");
+        assert_eq!(read_encoder_report(&path, "h264"), Ok(None));
+        for codec in ["h264", "vp8"] {
+            std::fs::write(&path, whole_report(codec).to_string()).unwrap();
+            let (report, _) = read_encoder_report(&path, codec).unwrap().unwrap();
+            assert_eq!(report.codec, codec);
+            assert_eq!(report.gate.too_soon, 500);
+            assert_eq!(report.hardware.is_some(), codec == "h264");
+            // Another codec's report is not this one's.
+            let other = if codec == "h264" { "vp8" } else { "h264" };
+            assert_eq!(
+                read_encoder_report(&path, other),
+                Err(ReportRefusal::OutOfBounds)
+            );
+        }
+        let changed = |pointer: &str, value: serde_json::Value| {
+            let mut report = whole_report("h264");
+            *report.pointer_mut(pointer).unwrap() = value;
+            report.to_string()
+        };
+        for (written, refusal) in [
+            (changed("/schema", 2.into()), ReportRefusal::OutOfBounds),
+            (changed("/engine", "vp8".into()), ReportRefusal::OutOfBounds),
+            (
+                changed("/engineWanted", "fast".into()),
+                ReportRefusal::OutOfBounds,
+            ),
+            (
+                changed("/engineWanted", serde_json::Value::Null),
+                ReportRefusal::OutOfBounds,
+            ),
+            (
+                changed("/hardwareReason", "x".repeat(121).into()),
+                ReportRefusal::OutOfBounds,
+            ),
+            (changed("/width", 8193.into()), ReportRefusal::OutOfBounds),
+            (changed("/kbps", 63.into()), ReportRefusal::OutOfBounds),
+            (changed("/kbps", 20001.into()), ReportRefusal::OutOfBounds),
+            (changed("/maxFps", 0.into()), ReportRefusal::OutOfBounds),
+            (changed("/maxFps", 61.into()), ReportRefusal::OutOfBounds),
+            (changed("/converters", 5.into()), ReportRefusal::OutOfBounds),
+            (
+                changed("/stageMicros/decode", 10_000_001.into()),
+                ReportRefusal::OutOfBounds,
+            ),
+            (
+                changed("/encodedFrames", (-1).into()),
+                ReportRefusal::NotJson,
+            ),
+            (
+                changed("/gate/admitted", "many".into()),
+                ReportRefusal::NotJson,
+            ),
+            (changed("/streaming", "yes".into()), ReportRefusal::NotJson),
+            (
+                whole_report("h264").to_string()[..60].to_string(),
+                ReportRefusal::NotJson,
+            ),
+            (String::from("not json"), ReportRefusal::NotJson),
+        ] {
+            std::fs::write(&path, &written).unwrap();
+            assert_eq!(
+                read_encoder_report(&path, "h264"),
+                Err(refusal),
+                "{written}"
+            );
+        }
+        // A field the schema does not have, and a VP8 report with the
+        // engine's counts.
+        let mut report = whole_report("h264");
+        report["extra"] = 1.into();
+        std::fs::write(&path, report.to_string()).unwrap();
+        assert_eq!(
+            read_encoder_report(&path, "h264"),
+            Err(ReportRefusal::NotJson)
+        );
+        let mut report = whole_report("vp8");
+        report["hardware"] = whole_report("h264")["hardware"].clone();
+        std::fs::write(&path, report.to_string()).unwrap();
+        assert_eq!(
+            read_encoder_report(&path, "vp8"),
+            Err(ReportRefusal::OutOfBounds)
+        );
+        // Larger than a report, though whole JSON.
+        let mut large = whole_report("h264").to_string().into_bytes();
+        large.resize(MAX_REPORT_BYTES + 1, b' ');
+        std::fs::write(&path, &large).unwrap();
+        assert_eq!(
+            read_encoder_report(&path, "h264"),
+            Err(ReportRefusal::TooLarge)
+        );
+        large.truncate(MAX_REPORT_BYTES);
+        std::fs::write(&path, &large).unwrap();
+        assert!(read_encoder_report(&path, "h264").unwrap().is_some());
+        assert_eq!(ReportRefusal::TooLarge.says(), "larger than a report");
+    }
 
     #[test]
     fn the_engines_availability_comes_from_a_checked_report() {

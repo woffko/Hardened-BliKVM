@@ -2355,6 +2355,97 @@ mod tests {
         owner.abort();
     }
 
+    /// The quality monitor's answer: for a logged-in session only, with
+    /// every section; built once a second, so that many readers within it
+    /// cost one build and see the same answer; rates and shares once there
+    /// are two reads.
+    #[tokio::test]
+    async fn the_quality_answer_is_built_once_a_second_from_the_reports() {
+        let root = tempdir().unwrap();
+        let report = root.path().join("h264-report.json");
+        let cgroups = root.path().join("cgroups");
+        let unit = cgroups.join("hardened-blikvm-video-encoder-h264.service");
+        std::fs::create_dir_all(&unit).unwrap();
+        std::fs::write(unit.join("cpu.stat"), "usage_usec 1000000\n").unwrap();
+        let mut written = crate::encoder_report::tests::whole_report("h264");
+        std::fs::write(&report, written.to_string()).unwrap();
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            h264_encoder_report: Some(report.clone()),
+            vp8_encoder_report: Some(root.path().join("no-vp8-report.json")),
+            unit_cgroups: cgroups,
+            ..ServerOptions::default()
+        });
+        let anonymous = app
+            .clone()
+            .oneshot(json_request(Method::GET, "/api/vm/quality", Value::Null))
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+        let (cookie, _) = setup_and_login(&app).await;
+        let read = |app: Router| {
+            let cookie = cookie.clone();
+            async move {
+                let request = Request::builder()
+                    .uri("/api/vm/quality")
+                    .header(header::HOST, "kvm.test")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap();
+                let response = app.oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                json_body(response).await["data"].clone()
+            }
+        };
+        let first = read(app.clone()).await;
+        for key in [
+            "capture",
+            "h264",
+            "vp8",
+            "units",
+            "temperatureMillidegrees",
+            "version",
+        ] {
+            assert!(first.get(key).is_some(), "{key} missing: {first}");
+        }
+        for key in ["width", "height", "fps", "queuedFps", "quality"] {
+            assert!(
+                first["capture"].get(key).is_some(),
+                "capture {key}: {first}"
+            );
+        }
+        assert_eq!(first["h264"]["engine"], "hardware");
+        assert_eq!(first["h264"]["encodedFrames"], 1000);
+        assert!(first["h264"]["fps"].is_null(), "one report: no rate yet");
+        assert!(first["vp8"].is_null());
+        assert!(first["units"]["h264CpuPercent"].is_null());
+        assert!(first["units"]["vp8CpuPercent"].is_null());
+        assert!(first["version"].is_null());
+        // A new report and more processor time within the second: the same
+        // answer, built once for every reader.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        written["encodedFrames"] = 1030.into();
+        std::fs::write(&report, written.to_string()).unwrap();
+        std::fs::write(unit.join("cpu.stat"), "usage_usec 1500000\n").unwrap();
+        for _ in 0..20 {
+            assert_eq!(read(app.clone()).await, first);
+        }
+        // After the second: the rates of the two reports and the unit's
+        // share.
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        let later = read(app.clone()).await;
+        assert_eq!(later["h264"]["encodedFrames"], 1030);
+        assert!(later["h264"]["fps"].as_f64().unwrap() > 0.0, "{later}");
+        assert!(later["h264"]["hardware"].get("passesPerSecond").is_some());
+        assert!(later["units"]["h264CpuPercent"].as_f64().unwrap() > 0.0);
+        // A damaged report is null, and nothing else changes.
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        std::fs::write(&report, "{").unwrap();
+        let damaged = read(app.clone()).await;
+        assert!(damaged["h264"].is_null());
+        assert!(damaged.get("units").is_some());
+    }
+
     #[tokio::test]
     async fn session_lock_round_trips_and_requires_csrf() {
         let app = isolated_app();

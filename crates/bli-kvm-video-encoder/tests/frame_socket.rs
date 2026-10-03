@@ -408,3 +408,57 @@ fn the_choice_of_the_engine_is_reported_and_followed_by_a_key_frame() {
     let left = report_until(&report, |report| report["streaming"] == false);
     assert_eq!(left["engine"], "x264");
 }
+
+/// While a viewer watches, the report is written about once a second with
+/// its numbers: frames handed to the encoder, the gate's counts, the
+/// stages' times; there is no engine on the host, so no engine's counts.
+#[test]
+fn the_report_counts_once_a_second_while_a_viewer_watches() {
+    let (directory, _rtp, _encoder, mut client) = encoder_and_client_with(
+        &FRAMES,
+        &[
+            ("BLI_KVM_ENCODER_REPORT", "./report.json"),
+            ("BLI_KVM_VP8_DEMAND_SOCKET", "./demand.sock"),
+        ],
+    );
+    let report = directory.path().join("report.json");
+    let mut demand = UnixStream::connect(directory.path().join("demand.sock")).unwrap();
+    demand.write_all(b"h264\nkbps 2500\n").unwrap();
+    read_record(&mut client);
+    let first = report_until(&report, |report| report["encodedFrames"].as_u64() > Some(0));
+    let written = |report: &Path| std::fs::metadata(report).unwrap().modified().unwrap();
+    // Every report written in three seconds, as the server would see them.
+    let mut seen = vec![(written(&report), first)];
+    let began = Instant::now();
+    while began.elapsed() < Duration::from_millis(3300) {
+        read_record(&mut client);
+        let at = written(&report);
+        if at != seen.last().unwrap().0 {
+            let value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+            seen.push((at, value));
+        }
+    }
+    assert!(
+        (3..=5).contains(&seen.len()),
+        "{} reports in about three seconds",
+        seen.len()
+    );
+    for pair in seen.windows(2) {
+        let (before, after) = (&pair[0].1, &pair[1].1);
+        let gap = pair[1].0.duration_since(pair[0].0).unwrap();
+        assert!(
+            gap >= Duration::from_millis(900),
+            "two reports {gap:?} apart"
+        );
+        assert!(after["encodedFrames"].as_u64() > before["encodedFrames"].as_u64());
+        assert!(after["gate"]["admitted"].as_u64() > before["gate"]["admitted"].as_u64());
+        assert!(after["gate"]["tooSoon"].as_u64() >= before["gate"]["tooSoon"].as_u64());
+    }
+    let last = &seen.last().unwrap().1;
+    assert_eq!(last["streaming"], true);
+    assert!(last["stageMicros"]["decode"].as_u64() > Some(0));
+    assert!(last["stageMicros"]["encode"].as_u64() > Some(0));
+    assert!(last["hardware"].is_null());
+    assert!(std::fs::read(&report).unwrap().len() < 4096);
+}
