@@ -28,6 +28,7 @@ import { Mouse } from './mouse';
 import { Collapse, Expand } from './operations';
 import { Picoclaw } from './picoclaw';
 import { Power } from './power';
+import { QualityMonitorButton } from './quality-monitor-button.tsx';
 import { RemoteControl } from './remote-control.tsx';
 import { Screen } from './screen';
 import { Script } from './script';
@@ -157,6 +158,7 @@ export const Menu = () => {
             <Divider type="vertical" />
 
             <Screen />
+            {isEnabled('qualityMonitor') && <QualityMonitorButton />}
             {restrictedHid && <RemoteControl />}
             {hidAvailable && <LocalKeyboardButton />}
             {hidAvailable && <Keyboard />}
