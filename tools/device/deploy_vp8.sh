@@ -21,7 +21,8 @@
 # demand socket (the encoder works only while a viewer is connected), the
 # file in which the H.264 encoder says whether the board's video engine or
 # x264 encodes, and its report, which says whether the engine can be had
-# (GET /api/vm/screen reports both); the server restarts once.
+# (GET /api/vm/screen reports both), and with the VP8 encoder's report how
+# the encoding goes (GET /api/vm/quality); the server restarts once.
 set -eu
 
 action=${1:-}
@@ -67,6 +68,7 @@ install_vp8() {
       'Environment=BLI_KVM_WEBRTC_H264_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock' \
       'Environment=BLI_KVM_H264_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder' \
       'Environment=BLI_KVM_H264_ENCODER_REPORT=/run/hardened-blikvm-h264/report.json' \
+      'Environment=BLI_KVM_VP8_ENCODER_REPORT=/run/hardened-blikvm-vp8/report.json' \
       > "$units/$unit.service.d/60-webrtc.conf"
   done
   systemctl daemon-reload

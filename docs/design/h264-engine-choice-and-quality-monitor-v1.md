@@ -260,7 +260,14 @@ a second and serves the same answer within that second.
   group's `cpu.stat`; `null` where it cannot be read.
 - `temperatureMillidegrees`: what `/api/inventory` already reads, or
   `null`.
-- `version`: the slot's.
+- `version`: the slot's, as the update status names the selected slot, or
+  `null` where the server has no update status.
+
+Settled in C3.2: a report's age and the span of its rates are the times its
+file was written, so that a reader that comes twice within a second sees
+the same pair of reports; the capture's JPEG quality is the owner's, asked
+like `GET /api/vm/screen` asks it, once with every answer; a server built
+without the owner's surface answers the capture with `null` fields.
 
 ## The page's side
 

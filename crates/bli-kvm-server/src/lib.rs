@@ -47,6 +47,7 @@ mod network;
 mod network_ipv4;
 mod network_write;
 mod picoclaw;
+mod quality;
 mod quic;
 mod remote_download;
 mod scripts;
@@ -101,6 +102,9 @@ pub(crate) struct AppState {
     pub firewall_status: Arc<firewall_modes::StatusCache>,
     /// The QUIC transport's tokens and sessions; absent without a link.
     pub quic: Option<Arc<quic::QuicTransport>>,
+    /// The quality monitor's answer of the last second, and what its rates
+    /// are made from.
+    pub quality: Arc<quality::QualityCache>,
     pub options: Arc<ServerOptions>,
 }
 
@@ -161,8 +165,13 @@ pub struct ServerOptions {
     /// engine or x264). No value keeps the field absent.
     pub h264_encoder_status: Option<PathBuf>,
     /// The H.264 encoder's report: whether the board's video engine can be
-    /// had (docs/design/h264-engine-choice-and-quality-monitor-v1.md).
+    /// had (docs/design/h264-engine-choice-and-quality-monitor-v1.md), and
+    /// with the VP8 encoder's, how the encoding goes for the quality monitor.
     pub h264_encoder_report: Option<PathBuf>,
+    pub vp8_encoder_report: Option<PathBuf>,
+    /// Where the encoder units' control groups are, for their processor
+    /// time.
+    pub unit_cgroups: PathBuf,
     /// Root administration helper (terminal, scripts). No value keeps those
     /// features unavailable even when switched on.
     pub admin_socket: Option<PathBuf>,
@@ -223,6 +232,8 @@ impl Default for ServerOptions {
             engine_socket: None,
             h264_encoder_status: None,
             h264_encoder_report: None,
+            vp8_encoder_report: None,
+            unit_cgroups: PathBuf::from("/sys/fs/cgroup/system.slice"),
             admin_socket: None,
             download_socket: None,
             picoclaw_socket: None,
@@ -525,6 +536,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             ))
         }),
         firewall_status: Arc::new(firewall_modes::StatusCache::default()),
+        quality: Arc::new(quality::QualityCache::default()),
         quic: options
             .quic_link_socket
             .as_ref()
@@ -746,6 +758,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/vm/screen",
             get(video_settings::screen_state).post(video_settings::update_screen),
         )
+        .route("/vm/quality", get(quality::quality))
         .route("/picoclaw/model/config", post(picoclaw::model_config))
         .route("/picoclaw/agent/profile", post(picoclaw::agent_profile))
         .route("/picoclaw/sessions", get(picoclaw::list_sessions))

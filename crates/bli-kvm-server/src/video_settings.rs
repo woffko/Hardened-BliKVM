@@ -99,7 +99,7 @@ pub(crate) fn read_h264_encoder(path: &std::path::Path) -> Option<&'static str> 
 }
 
 #[cfg(feature = "restricted-control-surface")]
-fn operation_id(session_token: &str) -> String {
+pub(crate) fn operation_id(session_token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(VIDEO_SETTINGS_OP_DOMAIN);
     hasher.update(session_token.as_bytes());

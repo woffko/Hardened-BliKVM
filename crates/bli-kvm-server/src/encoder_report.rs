@@ -2,9 +2,9 @@
 //! files that another process writes into its runtime directory, read
 //! bounded and checked like the status word.
 
-use std::{io::Read, path::Path};
+use std::{io::Read, path::Path, time::SystemTime};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A report is never larger; a larger file is no report.
 pub(crate) const MAX_REPORT_BYTES: usize = 4096;
@@ -12,6 +12,148 @@ pub(crate) const MAX_REPORT_BYTES: usize = 4096;
 const SCHEMA: u32 = 1;
 /// A reason is at most this many characters.
 const MAX_REASON_CHARS: usize = 120;
+/// A stream's side is at most this many pixels.
+const MAX_SIDE: u32 = 8192;
+/// A stage's mean time a frame is at most this, in microseconds.
+const MAX_STAGE_MICROS: u64 = 10_000_000;
+
+/// The stages' mean times a frame over the encoder's last second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StageMicros {
+    pub decode: u64,
+    pub convert: u64,
+    pub encode: u64,
+}
+
+/// The gate's counts since the encoder's start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GateCounts {
+    pub admitted: u64,
+    pub too_soon: u64,
+    pub unchanged: u64,
+}
+
+/// The video engine's counts since the encoder's start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HardwareCounts {
+    pub passes: u64,
+    pub both_searches: u64,
+    pub wide: u64,
+    pub higher_qp: u64,
+    pub left_out: u64,
+    pub key_frames: u64,
+    pub failures: u64,
+    pub engine_micros: u64,
+}
+
+/// An encoder's whole report, as its schema has it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EncoderReport {
+    pub schema: u32,
+    pub codec: String,
+    pub streaming: bool,
+    pub engine: Option<String>,
+    pub engine_wanted: Option<String>,
+    pub hardware_available: Option<bool>,
+    pub hardware_reason: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub kbps: u32,
+    pub max_fps: u32,
+    pub converters: u32,
+    pub encoded_frames: u64,
+    pub stage_micros: StageMicros,
+    pub gate: GateCounts,
+    pub hardware: Option<HardwareCounts>,
+}
+
+/// Why a report file was not taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReportRefusal {
+    TooLarge,
+    NotJson,
+    OutOfBounds,
+}
+
+impl ReportRefusal {
+    pub(crate) fn says(self) -> &'static str {
+        match self {
+            Self::TooLarge => "larger than a report",
+            Self::NotJson => "not a report's JSON",
+            Self::OutOfBounds => "out of its bounds",
+        }
+    }
+}
+
+impl EncoderReport {
+    /// Every field within the design note's bounds, for `codec`.
+    fn within_bounds(&self, codec: &str) -> bool {
+        let engines: &[&str] = match codec {
+            "h264" => &["hardware", "x264"],
+            "vp8" => &["libvpx"],
+            _ => return false,
+        };
+        let wanted_ok = match codec {
+            "h264" => matches!(self.engine_wanted.as_deref(), Some("hardware" | "software")),
+            _ => self.engine_wanted.is_none(),
+        };
+        let stages = [
+            self.stage_micros.decode,
+            self.stage_micros.convert,
+            self.stage_micros.encode,
+        ];
+        self.schema == SCHEMA
+            && self.codec == codec
+            && self
+                .engine
+                .as_deref()
+                .is_none_or(|engine| engines.contains(&engine))
+            && wanted_ok
+            && (codec == "h264" || self.hardware_available.is_none() && self.hardware.is_none())
+            && self
+                .hardware_reason
+                .as_deref()
+                .is_none_or(|reason| reason.chars().count() <= MAX_REASON_CHARS)
+            && self.width <= MAX_SIDE
+            && self.height <= MAX_SIDE
+            && (64..=20_000).contains(&self.kbps)
+            && (1..=60).contains(&self.max_fps)
+            && (1..=4).contains(&self.converters)
+            && stages.iter().all(|micros| *micros <= MAX_STAGE_MICROS)
+    }
+}
+
+/// The report of `codec`'s encoder at `path` with the time the file was
+/// last written: `Ok(None)` while there is none, a refusal for a file that
+/// is too large, not a report's JSON, or out of its bounds.
+pub(crate) fn read_encoder_report(
+    path: &Path,
+    codec: &str,
+) -> Result<Option<(EncoderReport, SystemTime)>, ReportRefusal> {
+    let Ok(modified) = std::fs::metadata(path).and_then(|metadata| metadata.modified()) else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    let Ok(file) = std::fs::File::open(path) else {
+        return Ok(None);
+    };
+    file.take(MAX_REPORT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ReportRefusal::NotJson)?;
+    if bytes.len() > MAX_REPORT_BYTES {
+        return Err(ReportRefusal::TooLarge);
+    }
+    let report: EncoderReport =
+        serde_json::from_slice(&bytes).map_err(|_| ReportRefusal::NotJson)?;
+    if !report.within_bounds(codec) {
+        return Err(ReportRefusal::OutOfBounds);
+    }
+    Ok(Some((report, modified)))
+}
 
 /// What the H.264 encoder says of the board's video engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
