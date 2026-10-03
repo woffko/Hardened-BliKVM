@@ -1124,6 +1124,8 @@ dependencies = [
  "bli-kvm-quic-protocol",
  "bli-kvm-ve-encoder",
  "cc",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror",

@@ -1,7 +1,9 @@
 //! One WebRTC video codec with its RTP packetizer: VP8 (libvpx) or H.264,
 //! chosen per encoder instance. H.264 comes from the board's video engine
 //! where there is one that encodes, and from x264 otherwise
-//! (`docs/design/h616-ve-encoder-driver-v1.md`).
+//! (`docs/design/h616-ve-encoder-driver-v1.md`); the board's choice moves a
+//! running stream from the one to the other
+//! (`docs/design/h264-engine-choice-and-quality-monitor-v1.md`).
 
 use bli_kvm_ve_encoder::{
     device::Device,
@@ -93,7 +95,7 @@ impl<D: Device + Send> Hardware for HardwareEncoder<D> {
 pub type OpenHardware = dyn Fn(HardwareConfig) -> Result<Box<dyn Hardware>, String> + Send + Sync;
 
 /// After this many frames in a row that the engine failed on it is given
-/// up for x264, until the encoder is started again.
+/// up for x264, until the engine is chosen again.
 pub const HARDWARE_FAILURES: u32 = 3;
 
 struct HardwareStream {
@@ -102,8 +104,6 @@ struct HardwareStream {
     picture: Vec<u8>,
     frame: Vec<u8>,
     failures: u32,
-    /// What x264 is opened with when the engine is given up.
-    fallback: H264Config,
 }
 
 enum Encoder {
@@ -117,9 +117,14 @@ enum Encoder {
 /// Encodes frames of one size and packetizes them.
 pub struct Engine {
     encoder: Encoder,
+    /// What an encoder for the stream is opened with; the bitrate is the
+    /// last one set.
+    settings: EngineSettings,
     width: usize,
     height: usize,
-    fps: u32,
+    /// Why the engine could not be had when it was last tried, or why it
+    /// was given up.
+    refusal: Option<String>,
 }
 
 impl Engine {
@@ -144,106 +149,172 @@ impl Engine {
         sequence: u16,
         open: Option<&OpenHardware>,
     ) -> Result<Self, String> {
-        let (w, h) = (width as u32, height as u32);
-        if let (Codec::H264(preset), Some(open)) = (settings.codec, open) {
-            let config = HardwareConfig {
-                width: w,
-                height: h,
-                fps: settings.fps,
-                kbps: settings.kbps,
-            };
-            match open(config) {
-                Ok(encoder) => {
-                    eprintln!("bli-kvm-video-encoder: H.264 by the video engine, {w}x{h}");
-                    return Ok(Self {
-                        encoder: Encoder::Hardware(
-                            Box::new(HardwareStream {
-                                encoder,
-                                picture: Vec::new(),
-                                frame: Vec::new(),
-                                failures: 0,
-                                fallback: H264Config {
-                                    width: w,
-                                    height: h,
-                                    fps: settings.fps,
-                                    kbps: settings.kbps,
-                                    threads: settings.threads,
-                                    keyframe_interval: settings.fps * 2,
-                                    preset,
-                                },
-                            }),
-                            H264Packetizer::new(H264_PAYLOAD_TYPE, ssrc, sequence, MTU)
-                                .map_err(|error| error.to_string())?,
-                        ),
-                        width,
-                        height,
-                        fps: settings.fps,
-                    });
-                }
-                Err(error) => eprintln!(
-                    "bli-kvm-video-encoder: the video engine does not encode ({error}); H.264 by x264"
-                ),
-            }
-        }
-        // Janus RTP input cannot request key frames; one every two seconds
-        // lets joining viewers converge quickly.
-        let keyframe_interval = settings.fps * 2;
-        let encoder = match settings.codec {
+        let mut engine = Self {
+            encoder: Encoder::None,
+            settings,
+            width,
+            height,
+            refusal: None,
+        };
+        engine.encoder = match settings.codec {
             Codec::Vp8 => Encoder::Vp8(
                 Vp8Encoder::new(Vp8Config {
-                    width: w,
-                    height: h,
+                    width: width as u32,
+                    height: height as u32,
                     fps: settings.fps,
                     kbps: settings.kbps,
                     threads: settings.threads,
-                    keyframe_interval,
+                    keyframe_interval: settings.fps * 2,
                 })
                 .map_err(|error| error.to_string())?,
                 Vp8Packetizer::new(VP8_PAYLOAD_TYPE, ssrc, sequence, MTU)
                     .map_err(|error| error.to_string())?,
             ),
-            Codec::H264(preset) => Encoder::H264(
-                H264Encoder::new(H264Config {
-                    width: w,
-                    height: h,
-                    fps: settings.fps,
-                    kbps: settings.kbps,
-                    threads: settings.threads,
-                    keyframe_interval,
-                    preset,
-                })
-                .map_err(|error| error.to_string())?,
-                H264Packetizer::new(H264_PAYLOAD_TYPE, ssrc, sequence, MTU)
-                    .map_err(|error| error.to_string())?,
-            ),
+            Codec::H264(preset) => {
+                let packetizer = H264Packetizer::new(H264_PAYLOAD_TYPE, ssrc, sequence, MTU)
+                    .map_err(|error| error.to_string())?;
+                match open.map(|open| engine.open_hardware(open)) {
+                    Some(Ok(stream)) => Encoder::Hardware(stream, packetizer),
+                    refused => {
+                        if let Some(Err(reason)) = refused {
+                            engine.refuse(reason);
+                        }
+                        Encoder::H264(
+                            H264Encoder::new(engine.x264_config(preset))
+                                .map_err(|error| error.to_string())?,
+                            packetizer,
+                        )
+                    }
+                }
+            }
         };
-        Ok(Self {
-            encoder,
-            width,
-            height,
-            fps: settings.fps,
-        })
+        Ok(engine)
     }
 
-    /// Changes the target bitrate of the running encoder; the stream goes on.
+    /// x264's settings for the stream.
+    fn x264_config(&self, preset: H264Preset) -> H264Config {
+        H264Config {
+            width: self.width as u32,
+            height: self.height as u32,
+            fps: self.settings.fps,
+            kbps: self.settings.kbps,
+            threads: self.settings.threads,
+            // Janus RTP input cannot request key frames; one every two
+            // seconds lets joining viewers converge quickly.
+            keyframe_interval: self.settings.fps * 2,
+            preset,
+        }
+    }
+
+    /// Opens the engine's encoder for the stream's size and bitrate.
+    fn open_hardware(&self, open: &OpenHardware) -> Result<Box<HardwareStream>, String> {
+        let (width, height) = (self.width as u32, self.height as u32);
+        let encoder = open(HardwareConfig {
+            width,
+            height,
+            fps: self.settings.fps,
+            kbps: self.settings.kbps,
+        })?;
+        eprintln!("bli-kvm-video-encoder: H.264 by the video engine, {width}x{height}");
+        Ok(Box::new(HardwareStream {
+            encoder,
+            picture: Vec::new(),
+            frame: Vec::new(),
+            failures: 0,
+        }))
+    }
+
+    fn refuse(&mut self, reason: String) {
+        eprintln!(
+            "bli-kvm-video-encoder: the video engine does not encode ({reason}); H.264 by x264"
+        );
+        self.refusal = Some(reason);
+    }
+
+    /// Why the engine could not be had when it was last tried for this
+    /// stream, or why it was given up; `None` where it was had or never
+    /// tried.
+    pub fn hardware_refusal(&self) -> Option<&str> {
+        self.refusal.as_deref()
+    }
+
+    /// The board chose x264: where the engine encodes, x264 takes the
+    /// stream over where it is, behind the same packetizer, beginning with
+    /// a key frame. That is no failure of the engine. An error is x264's,
+    /// which could not be opened.
+    pub fn use_software(&mut self) -> Result<(), String> {
+        if matches!(self.encoder, Encoder::Hardware(..)) {
+            eprintln!("bli-kvm-video-encoder: x264 is chosen; H.264 by x264 from here on");
+            self.x264_takes_over()?;
+        }
+        Ok(())
+    }
+
+    /// The board chose the engine: where x264 encodes H.264, the engine is
+    /// opened for the stream and takes it over behind the same packetizer;
+    /// its first frame is a key frame. Where it cannot be had x264 goes on,
+    /// and the error says why.
+    pub fn use_hardware(&mut self, open: &OpenHardware) -> Result<(), String> {
+        if !matches!(self.encoder, Encoder::H264(..)) {
+            return Ok(());
+        }
+        // x264 goes only once the engine is had.
+        let stream = self.open_hardware(open).inspect_err(|reason| {
+            self.refuse(reason.clone());
+        })?;
+        let Encoder::H264(x264, packetizer) = std::mem::replace(&mut self.encoder, Encoder::None)
+        else {
+            unreachable!("x264 encodes");
+        };
+        drop(x264);
+        self.encoder = Encoder::Hardware(stream, packetizer);
+        self.refusal = None;
+        Ok(())
+    }
+
+    /// x264 takes the stream over from the engine where it is, with the
+    /// same packetizer.
+    fn x264_takes_over(&mut self) -> Result<(), String> {
+        let Codec::H264(preset) = self.settings.codec else {
+            unreachable!("only H.264 has the engine");
+        };
+        let Encoder::Hardware(stream, packetizer) =
+            std::mem::replace(&mut self.encoder, Encoder::None)
+        else {
+            unreachable!("the engine encodes");
+        };
+        // The device is closed before x264 takes its threads.
+        drop(stream);
+        let encoder =
+            H264Encoder::new(self.x264_config(preset)).map_err(|error| error.to_string())?;
+        self.encoder = Encoder::H264(encoder, packetizer);
+        Ok(())
+    }
+
+    /// Changes the target bitrate of the running encoder; the stream goes
+    /// on, and an encoder that takes it over later starts from it.
     pub fn set_bitrate(&mut self, kbps: u32) -> Result<(), String> {
         match &mut self.encoder {
             Encoder::Vp8(encoder, _) => {
-                encoder.set_bitrate(kbps).map_err(|error| error.to_string())
+                encoder
+                    .set_bitrate(kbps)
+                    .map_err(|error| error.to_string())?;
             }
             Encoder::H264(encoder, _) => {
-                encoder.set_bitrate(kbps).map_err(|error| error.to_string())
+                encoder
+                    .set_bitrate(kbps)
+                    .map_err(|error| error.to_string())?;
             }
             Encoder::Hardware(stream, _) => {
                 if !crate::demand::KBPS_RANGE.contains(&kbps) {
                     return Err("the bitrate is out of range".into());
                 }
                 stream.encoder.set_bitrate(kbps);
-                stream.fallback.kbps = kbps;
-                Ok(())
             }
-            Encoder::None => Err("no encoder".into()),
+            Encoder::None => return Err("no encoder".into()),
         }
+        self.settings.kbps = kbps;
+        Ok(())
     }
 
     /// The sequence number the next RTP packet carries.
@@ -277,20 +348,13 @@ impl Engine {
     /// The engine is given up: x264 takes the stream over where it is,
     /// with the same packetizer.
     fn give_up_hardware(&mut self) -> Result<(), String> {
-        let Encoder::Hardware(stream, packetizer) =
-            std::mem::replace(&mut self.encoder, Encoder::None)
-        else {
-            unreachable!("only the engine's encoder is given up");
-        };
         eprintln!(
             "bli-kvm-video-encoder: the video engine failed on {HARDWARE_FAILURES} frames in a row; H.264 by x264 from here on"
         );
-        // The device is closed before x264 takes its threads.
-        let fallback = stream.fallback;
-        drop(stream);
-        let encoder = H264Encoder::new(fallback).map_err(|error| error.to_string())?;
-        self.encoder = Encoder::H264(encoder, packetizer);
-        Ok(())
+        self.refusal = Some(format!(
+            "the engine failed on {HARDWARE_FAILURES} frames in a row"
+        ));
+        self.x264_takes_over()
     }
 
     pub fn size(&self) -> (usize, usize) {
@@ -332,7 +396,7 @@ impl Engine {
         };
         let frames = match &mut self.encoder {
             Encoder::Vp8(encoder, packetizer) => {
-                let duration = 1_000_000 / i64::from(self.fps);
+                let duration = 1_000_000 / i64::from(self.settings.fps);
                 let frames = encoder
                     .encode(planes, pts_us, duration, force_key)
                     .map_err(|error| error.to_string())?;

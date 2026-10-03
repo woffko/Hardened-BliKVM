@@ -28,10 +28,14 @@ Environment=BLI_KVM_ENCODER_CODEC=h264-ultrafast
 # The board's video engine encodes H.264 where its driver is loaded
 # (docs/design/h616-ve-encoder-driver-v1.md): the encoder opens this device,
 # tries it with one picture, and uses x264 when it is not there or fails,
-# with a line in the journal. Which of the two encodes is one word in the
-# status file, which the web server reads for the interface.
+# with a line in the journal, or when the board's choice is x264 (the web
+# server sends it on the demand socket). Which of the two encodes is one
+# word in the status file, which the web server reads for the interface.
+# The report says that, the choice, and whether the engine can be had
+# (docs/design/h264-engine-choice-and-quality-monitor-v1.md).
 Environment=BLI_KVM_ENCODER_HARDWARE=/dev/hardened-blikvm-ve-enc
 Environment=BLI_KVM_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder
+Environment=BLI_KVM_ENCODER_REPORT=/run/hardened-blikvm-h264/report.json
 # The engine encodes a frame in 7 ms and takes no processor: decoding the
 # capture's JPEG frames is what bounds the frame rate then, and gets a
 # third thread.

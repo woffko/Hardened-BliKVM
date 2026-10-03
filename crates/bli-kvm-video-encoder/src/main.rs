@@ -1,9 +1,11 @@
 //! WebRTC video feed for Janus: reads the uStreamer MJPEG stream, encodes
 //! changed frames with libvpx (VP8) or as H.264 and sends RTP to a loopback
 //! UDP port. H.264 comes from the board's video engine where the unit names
-//! its device and the engine encodes, and from x264 otherwise. With a
-//! demand socket it works only while a viewer is connected. The H.264 unit
-//! also hands every encoded frame to the frame socket, for the QUIC gateway.
+//! its device, the engine encodes and the board has not chosen x264, and
+//! from x264 otherwise. With a demand socket it works only while a viewer is
+//! connected. The H.264 unit also hands every encoded frame to the frame
+//! socket, for the QUIC gateway. A report says what encodes, for the web
+//! server.
 //!
 //! `bli-kvm-video-encoder bench [FRAMES]` instead reads that many frames from
 //! uStreamer into memory and measures every codec and size on them (plan
@@ -30,11 +32,13 @@ use bli_kvm_ve_encoder::{
 };
 use bli_kvm_video_encoder::{
     FrameDecision, FrameGate, GatePolicy, LatestFrame,
+    choice::{Choice, ProbeHardware},
     demand::{Demand, group_id},
     engine::{Codec, Engine, EngineSettings, Hardware, OpenHardware},
     frames::{FrameHub, MonotonicBase, Numbering, user_id},
     h264::H264Preset,
     mjpeg::MjpegReader,
+    report::{Report, SCHEMA, engine_name},
     yuv::{I420Frame, JpegBackend, JpegToI420, scale_two_thirds},
 };
 
@@ -77,6 +81,8 @@ struct Settings {
     hardware: Option<PathBuf>,
     /// Where the encoder says which engine encodes, for the web server.
     status: Option<PathBuf>,
+    /// Where it reports what encodes and what the board chose.
+    report: Option<PathBuf>,
     /// Threads that decode and convert capture frames.
     converters: usize,
 }
@@ -182,6 +188,12 @@ fn settings() -> Result<Settings, String> {
             }
             path => path,
         },
+        report: match env::var_os("BLI_KVM_ENCODER_REPORT").map(PathBuf::from) {
+            Some(path) if !path.is_absolute() => {
+                return Err("BLI_KVM_ENCODER_REPORT must be absolute".into());
+            }
+            path => path,
+        },
         converters: number("BLI_KVM_ENCODER_CONVERTERS", CONVERTERS as u32, 1..=4)? as usize,
     })
 }
@@ -193,6 +205,15 @@ fn open_hardware(path: PathBuf) -> Box<OpenHardware> {
         HardwareEncoder::new(driver, config)
             .map(|encoder| Box::new(encoder) as Box<dyn Hardware>)
             .map_err(|error| error.to_string())
+    })
+}
+
+/// Opens the video engine's device, asks what it is and closes it again.
+fn probe_hardware(path: PathBuf) -> Box<ProbeHardware> {
+    Box::new(move || {
+        Driver::open(&path)
+            .map(drop)
+            .map_err(|error| format!("{}: {error}", path.display()))
     })
 }
 
@@ -208,6 +229,56 @@ fn write_status(path: &std::path::Path, name: &str) {
     if let Err(error) = written {
         eprintln!("bli-kvm-video-encoder: {}: {error}", path.display());
     }
+}
+
+/// Writes the status word where what encodes has changed.
+fn note_encoder(settings: &Settings, encoding: &mut &'static str, name: &'static str) {
+    if name != *encoding {
+        *encoding = name;
+        if let Some(path) = &settings.status {
+            write_status(path, name);
+        }
+    }
+}
+
+/// What the report says now.
+fn report_of(
+    settings: &Settings,
+    choice: &Choice,
+    engine: Option<&Engine>,
+    streaming: bool,
+    kbps: u32,
+) -> Report {
+    let h264 = settings.engine.codec != Codec::Vp8;
+    let (width, height) = engine.map_or((0, 0), Engine::size);
+    Report {
+        schema: SCHEMA,
+        codec: if h264 { "h264" } else { "vp8" },
+        streaming,
+        engine: engine.map(|engine| engine_name(engine.encoder_name())),
+        engine_wanted: h264.then(|| choice.wanted().name()),
+        hardware_available: choice.available(),
+        hardware_reason: choice.reason().map(str::to_string),
+        width: width as u32,
+        height: height as u32,
+        kbps,
+        max_fps: settings.max_fps,
+        converters: settings.converters as u32,
+    }
+}
+
+/// Replaces the report where it has changed.
+fn write_report(settings: &Settings, last: &mut Option<Report>, report: Report) {
+    let Some(path) = &settings.report else {
+        return;
+    };
+    if last.as_ref() == Some(&report) {
+        return;
+    }
+    if let Err(error) = report.write(path) {
+        eprintln!("bli-kvm-video-encoder: {}: {error}", path.display());
+    }
+    *last = Some(report);
 }
 
 struct Captured {
@@ -351,10 +422,13 @@ fn encode_loop(
         .map_err(|error| error.to_string())?;
     let (ssrc, sequence) = session_ids()?;
     let mut engine: Option<Engine> = None;
-    // The video engine is tried for every new stream until it has been
-    // given up once: then x264 encodes until the unit is started again.
-    let mut hardware = settings.hardware.clone().map(open_hardware);
+    // The board's choice of the engine, and whether the engine can be had.
+    let mut choice = Choice::new(
+        settings.hardware.clone().map(open_hardware),
+        settings.hardware.clone().map(probe_hardware),
+    );
     let mut encoding = "";
+    let mut reported: Option<Report> = None;
     let start = Instant::now();
     let mut last_pts = -1_i64;
     let mut stats = Stats::default();
@@ -368,6 +442,20 @@ fn encode_loop(
     let mut numbering = Numbering::new(stream_id()?);
     while !stop.load(Ordering::Relaxed) {
         stats.report(slot.replaced(), rejected.load(Ordering::Relaxed));
+        // The board's choice reaches the stream between two frames: a
+        // switch does not wait for the picture to change. The choice also
+        // asks for a key frame, which the next frame is.
+        let lines = demand.engine_lines();
+        choice.take(lines, demand.engine(), engine.as_ref());
+        if let Some(engine) = engine.as_mut() {
+            choice.apply(engine)?;
+            note_encoder(settings, &mut encoding, engine.encoder_name());
+        }
+        write_report(
+            settings,
+            &mut reported,
+            report_of(settings, &choice, engine.as_ref(), demand.active(), kbps),
+        );
         let Some(decoded) = slot.take(Duration::from_millis(500)) else {
             continue;
         };
@@ -389,7 +477,9 @@ fn encode_loop(
             // threads, more than the unit may run.
             let next = engine.take().map_or(sequence, |old| old.next_sequence());
             numbering = Numbering::new(stream_id()?);
-            engine = Some(Engine::with_hardware(
+            let open = choice.opener();
+            let tried = open.is_some();
+            let opened = Engine::with_hardware(
                 EngineSettings {
                     kbps,
                     ..settings.engine
@@ -398,8 +488,10 @@ fn encode_loop(
                 frame.height,
                 ssrc,
                 next,
-                hardware.as_deref(),
-            )?);
+                open,
+            )?;
+            choice.opened(&opened, tried);
+            engine = Some(opened);
         }
         let engine = engine.as_mut().expect("engine was just created");
         // The quality the operator picked reaches the running encoder.
@@ -433,14 +525,9 @@ fn encode_loop(
         stats.encode += encode_start.elapsed();
         stats.frames += 1;
         if was_hardware && engine.encoder_name() != "hardware" {
-            hardware = None;
+            choice.given_up(engine);
         }
-        if engine.encoder_name() != encoding {
-            encoding = engine.encoder_name();
-            if let Some(path) = &settings.status {
-                write_status(path, encoding);
-            }
-        }
+        note_encoder(settings, &mut encoding, engine.encoder_name());
         stats.engine = encoding;
         stats.hardware = engine.hardware_counters();
         // The encoder makes key frames of its own at its interval: one of

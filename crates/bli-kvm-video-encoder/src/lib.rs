@@ -5,6 +5,8 @@
 //! packetizes encoded VP8 frames into RTP (RFC 7741) for a loopback consumer.
 //! JPEG decoding and VP8 encoding are separate, replaceable stages.
 
+#[cfg(feature = "h264")]
+pub mod choice;
 pub mod demand;
 #[cfg(feature = "h264")]
 pub mod engine;
@@ -13,6 +15,7 @@ pub mod gate;
 #[cfg(feature = "h264")]
 pub mod h264;
 pub mod mjpeg;
+pub mod report;
 pub mod rtp;
 pub mod slot;
 #[cfg(feature = "turbojpeg")]
