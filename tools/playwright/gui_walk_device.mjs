@@ -7,6 +7,10 @@
 // from stdin; a receipt is written under evidence/private. No screenshot is
 // taken.
 //
+// With QUALITY_MONITOR=basic or extended the quality monitor is open at that
+// level from the page's load on, as the browser remembers it, and must still
+// be open at the end; its own requests are recorded with the steps' others.
+//
 // Usage: node gui_walk_device.mjs BASE_URL USERNAME OUTPUT VIEWPORT
 //   VIEWPORT: desktop | mobile
 import assert from "node:assert/strict";
@@ -20,6 +24,8 @@ const output = path.resolve(outputValue);
 assert.equal(path.dirname(output), path.resolve("evidence/private"));
 assert.ok(!fs.existsSync(output));
 assert.ok(["desktop", "mobile"].includes(viewport));
+const MONITOR = process.env.QUALITY_MONITOR ?? null;
+assert.ok(MONITOR === null || ["basic", "extended"].includes(MONITOR));
 let password = "";
 for await (const chunk of process.stdin) password += chunk.toString("utf8");
 password = password.replace(/[\r\n]+$/, "");
@@ -45,10 +51,20 @@ const context = await browser.newContext({
     ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }
     : { viewport: { width: 1440, height: 1000 } }),
 });
+if (MONITOR) {
+  await context.addInitScript((level) => {
+    if (!location.protocol.startsWith("http")) return;
+    localStorage.setItem(
+      "hardened-blikvm-quality-monitor",
+      JSON.stringify({ open: true, level }),
+    );
+  }, MONITOR);
+}
 const receipt = {
   schemaVersion: 1,
   probe: "gui-walk-device",
   viewport,
+  qualityMonitor: MONITOR,
   steps: [],
 };
 let step = { step: "load", api: [], errors: [] };
@@ -148,6 +164,8 @@ try {
   assert.ok((await login.json()).data?.csrfToken, "login failed");
   await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
   await page.locator("svg.lucide-settings").first().waitFor({ timeout: 30000 });
+  if (MONITOR)
+    await page.getByTestId("quality-monitor").waitFor({ timeout: 30000 });
   await settle(4000);
   flush("menu");
 
@@ -254,6 +272,9 @@ try {
     .click()
     .catch(() => {});
   await settle();
+  receipt.monitorOpenAtEnd = await page
+    .getByTestId("quality-monitor")
+    .isVisible();
   flush("done");
   receipt.steps.pop();
   const problems = receipt.steps.flatMap((entry) =>
@@ -269,6 +290,8 @@ try {
   );
   receipt.problems = problems;
   receipt.errors = errors;
+  if (MONITOR && !receipt.monitorOpenAtEnd)
+    errors.push("the quality monitor was not open at the end");
   result = problems.length === 0 && errors.length === 0 ? "passed" : "failed";
 } catch (error) {
   step.errors.push(`walk: ${String(error?.message ?? error).slice(0, 300)}`);
