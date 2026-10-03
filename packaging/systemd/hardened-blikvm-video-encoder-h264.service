@@ -1,8 +1,8 @@
 [Unit]
-Description=Hardened BliKVM H.264 (x264) encoder for the WebRTC video path
+Description=Hardened BliKVM H.264 encoder for the WebRTC and QUIC video paths
 Documentation=https://github.com/woffko/Hardened-BliKVM
 Requires=hardened-blikvm-ustreamer.service
-After=hardened-blikvm-ustreamer.service hardened-blikvm-janus.service
+After=hardened-blikvm-ustreamer.service hardened-blikvm-janus.service hardened-blikvm-ve.service
 Wants=hardened-blikvm-janus.service
 
 [Service]
@@ -11,7 +11,7 @@ DynamicUser=yes
 # Read access to the uStreamer socket, which is group hardened-blikvm; as the
 # primary group it also owns the demand socket below (chown is filtered).
 Group=hardened-blikvm
-SupplementaryGroups=hardened-blikvm
+SupplementaryGroups=hardened-blikvm hardened-blikvm-ve
 UMask=0077
 # The web server holds this socket open while a WebRTC viewer is connected;
 # without one the encoder leaves the capture stream and takes no CPU. The
@@ -25,6 +25,17 @@ Environment=BLI_KVM_VP8_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock
 Environment=BLI_KVM_ENCODER_FRAME_SOCKET=/run/hardened-blikvm-h264/frames.sock
 Environment=BLI_KVM_ENCODER_FRAME_USER=hardened-blikvm-quic
 Environment=BLI_KVM_ENCODER_CODEC=h264-ultrafast
+# The board's video engine encodes H.264 where its driver is loaded
+# (docs/design/h616-ve-encoder-driver-v1.md): the encoder opens this device,
+# tries it with one picture, and uses x264 when it is not there or fails,
+# with a line in the journal. Which of the two encodes is one word in the
+# status file, which the web server reads for the interface.
+Environment=BLI_KVM_ENCODER_HARDWARE=/dev/hardened-blikvm-ve-enc
+Environment=BLI_KVM_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder
+# The engine encodes a frame in 7 ms and takes no processor: decoding the
+# capture's JPEG frames is what bounds the frame rate then, and gets a
+# third thread.
+Environment=BLI_KVM_ENCODER_CONVERTERS=3
 Environment=BLI_KVM_ENCODER_RTP_PORT=5006
 Environment=BLI_KVM_USTREAMER_SOCKET=/run/hardened-blikvm-ustreamer/ustreamer.sock
 Environment=BLI_KVM_VP8_MAX_FPS=30
@@ -43,7 +54,11 @@ MemoryMax=160M
 # socket (four): 30.
 TasksMax=40
 NoNewPrivileges=yes
-PrivateDevices=yes
+# The video engine's encoder device and no other: the device policy below
+# is closed, and the node belongs to this group alone
+# (packaging/udev/99-hardened-blikvm-ve.rules).
+PrivateDevices=no
+DeviceAllow=/dev/hardened-blikvm-ve-enc rw
 PrivateNetwork=no
 PrivateTmp=yes
 ProtectClock=yes

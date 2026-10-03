@@ -217,3 +217,7 @@ systemd-analyze security --offline=yes --threshold=22 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-update-exec@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
   >/dev/null
+# The encoder with its one device.
+systemd-analyze security --offline=yes --threshold=20 --no-pager \
+  "$project_root/packaging/systemd/hardened-blikvm-video-encoder-h264.service" \
+  >/dev/null
