@@ -2145,6 +2145,203 @@ mod tests {
         assert_eq!(webrtc::load_bitrate(&state_dir), 5000);
     }
 
+    /// The owner's side for the screen's read-backs: the settings it runs
+    /// the engine with, as often as it is asked.
+    #[cfg(feature = "restricted-control-surface")]
+    fn owner_reading_back(listener: UnixListener) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                assert!(matches!(
+                    request.request,
+                    bli_kvm_core::PlatformControlRequestV2::VideoSettingsState {}
+                ));
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response: bli_kvm_control_protocol::ControlResponse::VideoState {
+                        resolution: Some("1920x1080".into()),
+                        fps: 60,
+                        quality: 100,
+                    },
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        })
+    }
+
+    /// The board's choice of the H.264 engine: offered where the H.264
+    /// encoder's demand socket is, chosen by its two values only, kept for
+    /// the next start, and read back with what the encoder's report says of
+    /// the engine.
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn the_h264_engine_is_offered_chosen_kept_and_reported() {
+        let root = tempdir().unwrap();
+        let state_dir = root.path().join("account");
+        let control_socket = root.path().join("control.sock");
+        let owner = owner_reading_back(UnixListener::bind(&control_socket).unwrap());
+        let report = root.path().join("report.json");
+        let options = ServerOptions {
+            state_dir: state_dir.clone(),
+            restricted_controls_enabled: true,
+            video_controls_enabled: true,
+            control_socket: Some(control_socket.clone()),
+            webrtc_janus: Some("127.0.0.1:8188".parse().unwrap()),
+            webrtc_h264_demand_socket: Some(root.path().join("h264.sock")),
+            h264_encoder_report: Some(report.clone()),
+            ..ServerOptions::default()
+        };
+        let app = app_with_options(options.clone());
+        let operator = setup_and_login(&app).await;
+        // Another server on the same state: the account is there.
+        let login = |app: Router| async move {
+            let login = app
+                .oneshot(json_request(
+                    Method::POST,
+                    "/api/auth/login",
+                    serde_json::json!({
+                        "username": "operator",
+                        "password": "initial password"
+                    }),
+                ))
+                .await
+                .unwrap();
+            let cookie = login.headers()[header::SET_COOKIE]
+                .to_str()
+                .unwrap()
+                .split(';')
+                .next()
+                .unwrap()
+                .to_owned();
+            let csrf = json_body(login).await["data"]["csrfToken"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            (cookie, csrf)
+        };
+        let capabilities = |app: Router| async move {
+            let response = app
+                .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap();
+            json_body(response).await["data"]["video"]["settings"].clone()
+        };
+        let choose = |app: Router, (cookie, csrf): (String, String), value: i64| async move {
+            let mut request = json_request(
+                Method::POST,
+                "/api/vm/screen",
+                serde_json::json!({"type": "h264_engine", "value": value}),
+            );
+            request
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            json_body(app.oneshot(request).await.unwrap()).await
+        };
+        let read_back = |app: Router, (cookie, _): (String, String)| async move {
+            let request = Request::builder()
+                .uri("/api/vm/screen")
+                .header(header::HOST, "kvm.test")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap();
+            json_body(app.oneshot(request).await.unwrap()).await["data"].clone()
+        };
+        let settings = capabilities(app.clone()).await;
+        assert!(
+            settings
+                .as_array()
+                .unwrap()
+                .contains(&Value::from("h264_engine")),
+            "{settings}"
+        );
+        // Nothing chosen and no report yet: the engine, availability unknown.
+        let screen = read_back(app.clone(), operator.clone()).await;
+        assert_eq!(screen["h264Engine"], "hardware", "{screen}");
+        assert!(screen.get("h264HardwareAvailable").is_none(), "{screen}");
+        assert!(screen.get("h264HardwareReason").is_none(), "{screen}");
+        // The encoder reports an engine it cannot have.
+        let report_of = |available: &str, reason: &str| {
+            format!(
+                r#"{{"schema":1,"codec":"h264","streaming":true,"engine":"x264","engineWanted":"hardware","hardwareAvailable":{available},"hardwareReason":{reason}}}"#
+            )
+        };
+        std::fs::write(&report, report_of("false", r#""/dev/x: busy""#)).unwrap();
+        let screen = read_back(app.clone(), operator.clone()).await;
+        assert_eq!(screen["h264HardwareAvailable"], false, "{screen}");
+        assert_eq!(screen["h264HardwareReason"], "/dev/x: busy");
+
+        let body = choose(app.clone(), operator.clone(), 0).await;
+        assert_eq!(body["data"]["applied"], true, "{body}");
+        assert_eq!(body["data"]["h264Engine"], "software");
+        for refused in [2, -1, 1 << 40] {
+            let body = choose(app.clone(), operator.clone(), refused).await;
+            assert_eq!(body["data"]["applied"], false, "{body}");
+            assert_eq!(body["data"]["rejection"], "value_out_of_range");
+        }
+        std::fs::write(&report, report_of("true", "null")).unwrap();
+        let screen = read_back(app.clone(), operator.clone()).await;
+        assert_eq!(screen["h264Engine"], "software", "{screen}");
+        assert_eq!(screen["h264HardwareAvailable"], true);
+        assert!(screen.get("h264HardwareReason").is_none(), "{screen}");
+        // Kept for the next start of the server.
+        assert_eq!(
+            webrtc::load_engine(&state_dir),
+            webrtc::H264Engine::Software
+        );
+        let restarted = app_with_options(options.clone());
+        let again = login(restarted.clone()).await;
+        assert_eq!(read_back(restarted, again).await["h264Engine"], "software");
+        // A damaged report is no report.
+        std::fs::write(&report, "{").unwrap();
+        let screen = read_back(app.clone(), operator.clone()).await;
+        assert!(screen.get("h264HardwareAvailable").is_none(), "{screen}");
+        let body = choose(app.clone(), operator.clone(), 1).await;
+        assert_eq!(body["data"]["h264Engine"], "hardware", "{body}");
+
+        // Without the H.264 encoder's demand socket nothing is offered,
+        // chosen or reported.
+        let without = app_with_options(ServerOptions {
+            webrtc_h264_demand_socket: None,
+            webrtc_demand_socket: Some(root.path().join("vp8.sock")),
+            ..options
+        });
+        let settings = capabilities(without.clone()).await;
+        assert!(
+            !settings
+                .as_array()
+                .unwrap()
+                .contains(&Value::from("h264_engine")),
+            "{settings}"
+        );
+        let credentials = login(without.clone()).await;
+        let body = choose(without.clone(), credentials.clone(), 0).await;
+        assert_eq!(body["data"]["rejection"], "unsupported_setting", "{body}");
+        assert!(
+            read_back(without, credentials)
+                .await
+                .get("h264Engine")
+                .is_none()
+        );
+        assert_eq!(
+            webrtc::load_engine(&state_dir),
+            webrtc::H264Engine::Hardware
+        );
+        owner.abort();
+    }
+
     #[tokio::test]
     async fn session_lock_round_trips_and_requires_csrf() {
         let app = isolated_app();

@@ -645,6 +645,119 @@ mod tests {
         assert_eq!(lines.next_line().await.unwrap(), None, "demand ended");
     }
 
+    /// The H.264 encoder learns the board's choice of its engine when a
+    /// viewer comes and whenever the choice is made, the same one too, and
+    /// again when it comes back after it ended; the VP8 encoder never hears
+    /// of it.
+    #[tokio::test]
+    async fn the_h264_demand_carries_the_engine_and_every_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let h264 = directory.path().join("h264.sock");
+        let vp8 = directory.path().join("vp8.sock");
+        let h264_listener = tokio::net::UnixListener::bind(&h264).unwrap();
+        let vp8_listener = tokio::net::UnixListener::bind(&vp8).unwrap();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            Some(vp8),
+            Some(h264),
+            2500,
+            H264Engine::Software,
+        )
+        .unwrap();
+        let (guard, accepted) = tokio::join!(
+            gateway.hold_demand(StreamCodec::H264),
+            h264_listener.accept()
+        );
+        let _guard = guard.unwrap();
+        let mut lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["h264", "kbps 2500", "engine software"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+        gateway.engine.send_replace(H264Engine::Hardware);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("engine hardware")
+        );
+        // The same choice made again is sent again.
+        gateway.engine.send_replace(H264Engine::Hardware);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("engine hardware")
+        );
+
+        let (vp8_guard, accepted) =
+            tokio::join!(gateway.hold_demand(StreamCodec::Vp8), vp8_listener.accept());
+        let _vp8_guard = vp8_guard.unwrap();
+        let mut vp8_lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["vp8", "kbps 2500"] {
+            assert_eq!(
+                vp8_lines.next_line().await.unwrap().as_deref(),
+                Some(expected)
+            );
+        }
+        gateway.engine.send_replace(H264Engine::Software);
+        gateway.bitrate.send_replace(8000);
+        assert_eq!(
+            vp8_lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000"),
+            "no engine line for VP8"
+        );
+        let mut h264_after = Vec::new();
+        for _ in 0..2 {
+            h264_after.push(lines.next_line().await.unwrap().unwrap());
+        }
+        h264_after.sort();
+        assert_eq!(h264_after, ["engine software", "kbps 8000"]);
+
+        // The H.264 encoder ends and comes back: its new connection names
+        // the choice.
+        drop(lines);
+        let (accepted, _) = h264_listener.accept().await.unwrap();
+        let mut lines = TokioBufReader::new(accepted).lines();
+        for expected in ["h264", "kbps 8000", "engine software"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn the_chosen_engine_survives_a_restart_and_anything_else_is_the_engine() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Hardware);
+        store_engine(directory.path(), H264Engine::Software).unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Software);
+        let path = directory.path().join(ENGINE_FILE);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"engine":"software"}"#
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        // Written whole: no temporary file is left beside it.
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        store_engine(directory.path(), H264Engine::Hardware).unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Hardware);
+        // A file the server cannot understand is the default.
+        let padded = format!(r#"{{"engine":"software"}}{}"#, " ".repeat(300));
+        for damaged in [
+            r#"{"engine":"x264"}"#,
+            r#"{"engine":1}"#,
+            r#"{"kbps":8000}"#,
+            r#"{"engine":"software""#,
+            "",
+            padded.as_str(),
+        ] {
+            std::fs::write(&path, damaged).unwrap();
+            assert_eq!(
+                load_engine(directory.path()),
+                H264Engine::Hardware,
+                "{damaged}"
+            );
+        }
+        std::fs::write(&path, r#"{"engine":"software"}"#).unwrap();
+        assert_eq!(load_engine(directory.path()), H264Engine::Software);
+    }
+
     #[test]
     fn the_chosen_bitrate_survives_a_restart_and_only_offered_levels_load() {
         let directory = tempfile::tempdir().unwrap();

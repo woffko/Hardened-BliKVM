@@ -118,6 +118,7 @@ fn encoder_and_client_with(
             .env_remove("BLI_KVM_ENCODER_FRAME_USER")
             .env_remove("BLI_KVM_ENCODER_HARDWARE")
             .env_remove("BLI_KVM_ENCODER_STATUS")
+            .env_remove("BLI_KVM_ENCODER_REPORT")
             .envs(more.iter().map(|(name, value)| {
                 // A value that begins with a dot is a file of the test's
                 // own directory.
@@ -285,4 +286,125 @@ fn without_the_video_engine_x264_encodes_and_the_encoder_says_so() {
     // Another user reads it.
     let mode = std::fs::metadata(&status).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o644);
+}
+
+/// Reads the encoder's report until `check` holds of it.
+fn report_until(path: &Path, check: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(report) = std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            && check(&report)
+        {
+            return report;
+        }
+        assert!(Instant::now() < deadline, "the report did not come");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Reads records until a key frame, each the one after the last; returns
+/// it and how many came before it.
+fn until_key(client: &mut UnixStream, last: &mut RecordHeader) -> usize {
+    let mut before = 0;
+    loop {
+        let (header, _) = read_record(client);
+        assert_eq!(header.stream, last.stream);
+        assert_eq!(header.frame, last.frame + 1);
+        *last = header;
+        if header.kind == Kind::Key {
+            return before;
+        }
+        before += 1;
+    }
+}
+
+/// The board's choice of the engine on the demand socket, where the unit
+/// names a device the board does not have: x264 encodes whatever is chosen,
+/// the report says what is wanted and why the engine cannot be had, and
+/// every choice is followed at once by a key frame in the same stream of
+/// records.
+#[test]
+fn the_choice_of_the_engine_is_reported_and_followed_by_a_key_frame() {
+    let (directory, _rtp, _encoder, mut client) = encoder_and_client_with(
+        &FRAMES,
+        &[
+            ("BLI_KVM_ENCODER_HARDWARE", "./no-such-device"),
+            ("BLI_KVM_ENCODER_STATUS", "./encoder"),
+            ("BLI_KVM_ENCODER_REPORT", "./report.json"),
+            ("BLI_KVM_VP8_DEMAND_SOCKET", "./demand.sock"),
+        ],
+    );
+    let report = directory.path().join("report.json");
+    // Before anyone watches: the device was looked at, nothing encodes.
+    let idle = report_until(&report, |report| report["streaming"] == false);
+    assert_eq!(idle["schema"], 1);
+    assert_eq!(idle["codec"], "h264");
+    assert!(idle["engine"].is_null());
+    assert_eq!(idle["engineWanted"], "hardware");
+    assert_eq!(idle["hardwareAvailable"], false);
+    assert!(
+        idle["hardwareReason"]
+            .as_str()
+            .unwrap()
+            .contains("no-such-device")
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&report).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o644);
+
+    let mut demand = UnixStream::connect(directory.path().join("demand.sock")).unwrap();
+    demand
+        .write_all(b"h264\nkbps 2500\nengine hardware\n")
+        .unwrap();
+    let (first, _) = read_record(&mut client);
+    assert_eq!(first.kind, Kind::Key);
+    let watched = report_until(&report, |report| report["streaming"] == true);
+    assert_eq!(watched["engine"], "x264");
+    assert_eq!(
+        (watched["width"].as_u64(), watched["height"].as_u64()),
+        (Some(320), Some(180))
+    );
+    assert_eq!(watched["kbps"], 2500);
+    assert_eq!(
+        (watched["maxFps"].as_u64(), watched["converters"].as_u64()),
+        (Some(30), Some(2))
+    );
+
+    let mut last = first;
+    for (line, wanted) in [
+        (&b"engine software\n"[..], "software"),
+        (&b"engine hardware\n"[..], "hardware"),
+        (&b"engine software\n"[..], "software"),
+    ] {
+        // Just after a periodic key frame, so that the next one within a
+        // dozen frames can only be the choice's.
+        until_key(&mut client, &mut last);
+        for _ in 0..5 {
+            let (header, _) = read_record(&mut client);
+            assert_eq!(header.frame, last.frame + 1);
+            assert_eq!(header.kind, Kind::Delta);
+            last = header;
+        }
+        let chosen = Instant::now();
+        demand.write_all(line).unwrap();
+        let before = until_key(&mut client, &mut last);
+        let waited = chosen.elapsed();
+        assert!(
+            waited < Duration::from_millis(900) && before < 12,
+            "the key frame came {waited:?} and {before} frames after the choice"
+        );
+        let now = report_until(&report, |report| report["engineWanted"] == wanted);
+        assert_eq!(now["engine"], "x264");
+        assert_eq!(now["hardwareAvailable"], false);
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("encoder")).unwrap(),
+            "x264\n"
+        );
+    }
+    // The viewer leaves: the report says so once.
+    drop(demand);
+    let left = report_until(&report, |report| report["streaming"] == false);
+    assert_eq!(left["engine"], "x264");
 }
