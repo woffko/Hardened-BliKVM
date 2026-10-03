@@ -1095,7 +1095,8 @@ async fn a_video_subscription_holds_the_encoders_demand() {
     let session = session_of(gateway.redeem(1, &page.token().await).await);
     demand.idle().await;
 
-    // It watches: the codec and the quality, as for a WebRTC viewer.
+    // It watches: the codec, the quality and the engine, as for a WebRTC
+    // viewer of H.264.
     gateway
         .say(&GatewayToServer::Video {
             id: 2,
@@ -1106,6 +1107,7 @@ async fn a_video_subscription_holds_the_encoders_demand() {
     let mut held = demand.held().await;
     assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("engine hardware"));
     assert_eq!(gateway.hear().await.unwrap(), video_answer(2, None));
     // It gives the picture up: the demand ends.
     assert_eq!(
@@ -1127,9 +1129,11 @@ async fn a_video_subscription_holds_the_encoders_demand() {
     let mut second = demand.held().await;
     assert_eq!(line(&mut first).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut first).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut first).await.as_deref(), Some("engine hardware"));
     assert_eq!(line(&mut first).await, None);
     assert_eq!(line(&mut second).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut second).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut second).await.as_deref(), Some("engine hardware"));
 
     // Its connection closes.
     gateway
@@ -1156,6 +1160,7 @@ async fn a_video_subscription_holds_the_encoders_demand() {
     page.call(Method::POST, "/api/auth/logout", Value::Null)
         .await;
     assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("engine hardware"));
     assert_eq!(line(&mut held).await, None);
 
     // The link goes.
@@ -1173,6 +1178,7 @@ async fn a_video_subscription_holds_the_encoders_demand() {
     let mut held = demand.held().await;
     assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("engine hardware"));
     drop(gateway);
     assert_eq!(line(&mut held).await, None);
 }
@@ -1200,12 +1206,14 @@ async fn a_demand_is_held_again_when_the_encoder_comes_back() {
     let mut held = demand.held().await;
     assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("engine hardware"));
 
     // The encoder ends: its side of the connection closes.
     drop(held);
     let mut again = demand.held().await;
     assert_eq!(line(&mut again).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut again).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut again).await.as_deref(), Some("engine hardware"));
 
     // It is away for a while, its socket with it, and comes back.
     drop(again);
@@ -1216,6 +1224,7 @@ async fn a_demand_is_held_again_when_the_encoder_comes_back() {
     let mut back = demand.held().await;
     assert_eq!(line(&mut back).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut back).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut back).await.as_deref(), Some("engine hardware"));
 
     // The session gives the picture up: nothing is asked for any more.
     assert_eq!(
@@ -1300,6 +1309,7 @@ async fn the_quality_reaches_the_encoder_over_a_quic_sessions_demand() {
     let mut held = demand.held().await;
     assert_eq!(line(&mut held).await.as_deref(), Some("h264"));
     assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    assert_eq!(line(&mut held).await.as_deref(), Some("engine hardware"));
     let (_, changed) = page
         .post(
             "/api/vm/screen",

@@ -35,6 +35,7 @@ mod auth;
 mod autostart;
 mod device_settings;
 mod download;
+mod encoder_report;
 mod error;
 mod firewall_modes;
 mod hid;
@@ -159,6 +160,9 @@ pub struct ServerOptions {
     /// Where the H.264 encoder says which engine encodes (the board's video
     /// engine or x264). No value keeps the field absent.
     pub h264_encoder_status: Option<PathBuf>,
+    /// The H.264 encoder's report: whether the board's video engine can be
+    /// had (docs/design/h264-engine-choice-and-quality-monitor-v1.md).
+    pub h264_encoder_report: Option<PathBuf>,
     /// Root administration helper (terminal, scripts). No value keeps those
     /// features unavailable even when switched on.
     pub admin_socket: Option<PathBuf>,
@@ -218,6 +222,7 @@ impl Default for ServerOptions {
             video_controls_enabled: false,
             engine_socket: None,
             h264_encoder_status: None,
+            h264_encoder_report: None,
             admin_socket: None,
             download_socket: None,
             picoclaw_socket: None,
@@ -412,6 +417,14 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                     .settings
                     .push(bli_kvm_core::VideoSetting::WebrtcBitrate);
             }
+            // The H.264 encoder takes the board's choice of its engine the
+            // same way.
+            if options.webrtc_janus.is_some() && options.webrtc_h264_demand_socket.is_some() {
+                manifest
+                    .video
+                    .settings
+                    .push(bli_kvm_core::VideoSetting::H264Engine);
+            }
         }
         if options.network_writes_enabled {
             manifest.network.status = FeatureStatus::read_write(EvidenceLevel::SourceVerified);
@@ -447,6 +460,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 options.webrtc_demand_socket.clone(),
                 options.webrtc_h264_demand_socket.clone(),
                 webrtc::load_bitrate(&options.state_dir),
+                webrtc::load_engine(&options.state_dir),
             )
         }),
         update_activation: options

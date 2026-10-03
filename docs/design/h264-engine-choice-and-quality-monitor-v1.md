@@ -40,7 +40,12 @@ encodes with is therefore the board's, not a browser's.
 - `GET /api/vm/screen` reports, beside today's fields:
   - `h264Engine`: the choice, where the setting is offered;
   - `h264HardwareAvailable`: `true` or `false` from the encoder's report,
-    absent while the encoder has not reported;
+    absent while the encoder has not reported; `false` also where the
+    encoder's unit names no device (the report's `null`);
+  - `h264HardwareReason`: the encoder's reason where that is `false` and
+    it gives one, at most 120 characters (added in C1.2: the menu's
+    tooltip shows it, and the menu must not ask the quality API, which is
+    asked only while the monitor is open);
   - `h264Encoder`: as today, `hardware` or `x264`, what encodes.
 
 ### On the demand connection
@@ -48,20 +53,29 @@ encodes with is therefore the board's, not a browser's.
 The server already writes the codec and `kbps N` on every demand
 connection and a new `kbps` line on every change of the quality. To the
 H.264 encoder it writes `engine hardware` or `engine software` after the
-`kbps` line, and again on every change of the choice. Lines stay below the
-encoder's bound of 32 bytes. The VP8 encoder never gets the line.
+`kbps` line, and again whenever the choice is made, also where it is the
+one already made. Lines stay below the encoder's bound of 32 bytes. The
+VP8 encoder never gets the line.
+
+The encoder counts a line as the choice made, which lets it try again an
+engine it could not have, except a connection's first line where that
+repeats the choice it has: a new viewer is no choice.
 
 ### In the encoder
 
 - It keeps the last `engine` line it was given on any demand connection;
   without one it keeps to `hardware`, as before this plan.
+- It takes the choice between two frames, also while no frame comes: a
+  switch waits at most half a second for the encoder's loop, and the line
+  lets the next captured frame through as a key frame.
 - **At its start**, where `BLI_KVM_ENCODER_HARDWARE` names a device, it
   opens the device, asks its `INFO` and closes it again: that answers
   `hardwareAvailable`, with the reason when it is `false` (no such device,
   refused, an interface it does not know). A stream that opens later tries
   the engine again only where it is wanted.
-- **When a stream opens**: the engine where it is wanted and available,
-  tried with a picture as today; otherwise x264.
+- **When a stream opens**: the engine where it is wanted and has not been
+  given up since the choice was last made (below), tried with a picture as
+  today, whatever the look at the start found; otherwise x264.
 - **When the choice changes during a stream**, at the next frame:
   - `software` while the engine encodes: x264 takes the stream over where
     it is, behind the same packetizer and frame socket, beginning with a
@@ -71,6 +85,13 @@ encoder's bound of 32 bytes. The VP8 encoder never gets the line.
     that fails x264 goes on, `hardwareAvailable` turns `false` with the
     reason, and the engine is not tried again until the choice is made
     again or a new stream opens.
+- An engine that fails on three frames in a row is given up for x264 as
+  before this plan, `hardwareAvailable` turns `false` with the reason, and
+  it is tried again only when the choice is made again: a new stream would
+  only fail on it again.
+- Where a choice comes and nothing is about to try the engine (x264 is
+  chosen, or no stream is open), the encoder looks at the device again, so
+  that `hardwareAvailable` tells whether the engine could be chosen.
 - The status word (`BLI_KVM_ENCODER_STATUS`) follows what encodes, as
   today; the report (below) says what is wanted and whether the engine can
   be had.

@@ -100,6 +100,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         video_controls_enabled: env::var("BLI_KVM_VIDEO_CONTROLS").as_deref() == Ok("1"),
         engine_socket: env::var_os("BLI_KVM_USTREAMER_SOCKET").map(PathBuf::from),
         h264_encoder_status: env::var_os("BLI_KVM_H264_ENCODER_STATUS").map(PathBuf::from),
+        h264_encoder_report: env::var_os("BLI_KVM_H264_ENCODER_REPORT").map(PathBuf::from),
         admin_socket: env::var_os("BLI_KVM_ADMIN_SOCKET").map(PathBuf::from),
         download_socket: env::var_os("BLI_KVM_DOWNLOAD_SOCKET").map(PathBuf::from),
         picoclaw_socket: env::var_os("BLI_KVM_PICOCLAW_SOCKET").map(PathBuf::from),

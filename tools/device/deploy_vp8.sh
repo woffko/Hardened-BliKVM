@@ -18,9 +18,10 @@
 #
 # The server advertises VP8 only when BLI_KVM_JANUS_WS is set, which this
 # script adds as a drop-in for the serving units together with the encoder's
-# demand socket (the encoder works only while a viewer is connected) and the
+# demand socket (the encoder works only while a viewer is connected), the
 # file in which the H.264 encoder says whether the board's video engine or
-# x264 encodes (GET /api/vm/screen reports it); the server restarts once.
+# x264 encodes, and its report, which says whether the engine can be had
+# (GET /api/vm/screen reports both); the server restarts once.
 set -eu
 
 action=${1:-}
@@ -65,6 +66,7 @@ install_vp8() {
       'Environment=BLI_KVM_WEBRTC_DEMAND_SOCKET=/run/hardened-blikvm-vp8/demand.sock' \
       'Environment=BLI_KVM_WEBRTC_H264_DEMAND_SOCKET=/run/hardened-blikvm-h264/demand.sock' \
       'Environment=BLI_KVM_H264_ENCODER_STATUS=/run/hardened-blikvm-h264/encoder' \
+      'Environment=BLI_KVM_H264_ENCODER_REPORT=/run/hardened-blikvm-h264/report.json' \
       > "$units/$unit.service.d/60-webrtc.conf"
   done
   systemctl daemon-reload

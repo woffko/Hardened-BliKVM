@@ -58,6 +58,9 @@ pub(crate) struct WebRtcGateway {
     /// The encoders' target bitrate in kbit/s, sent to them over the demand
     /// connections and changed through the Screen menu's quality.
     pub bitrate: tokio::sync::watch::Sender<u32>,
+    /// The board's choice of the H.264 engine, sent to the H.264 encoder
+    /// the same way and changed through the video menu.
+    pub engine: tokio::sync::watch::Sender<H264Engine>,
 }
 
 /// The WebRTC qualities the Screen menu offers, in kbit/s.
@@ -70,6 +73,55 @@ const BITRATE_FILE: &str = "webrtc-bitrate.json";
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedBitrate {
     kbps: u32,
+}
+
+/// The engine that encodes H.264 for every viewer of the board
+/// (`docs/design/h264-engine-choice-and-quality-monitor-v1.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum H264Engine {
+    /// The board's video engine, where it can be had.
+    Hardware,
+    /// x264.
+    Software,
+}
+
+impl H264Engine {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Hardware => "hardware",
+            Self::Software => "software",
+        }
+    }
+}
+
+/// The chosen engine survives server restarts and updates, like the
+/// quality.
+const ENGINE_FILE: &str = "h264-engine.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedEngine {
+    engine: H264Engine,
+}
+
+/// The chosen engine, or the video engine where nothing was chosen or the
+/// file cannot be understood.
+pub(crate) fn load_engine(state_dir: &std::path::Path) -> H264Engine {
+    std::fs::read(state_dir.join(ENGINE_FILE))
+        .ok()
+        .filter(|bytes| bytes.len() <= 256)
+        .and_then(|bytes| serde_json::from_slice::<PersistedEngine>(&bytes).ok())
+        .map_or(H264Engine::Hardware, |persisted| persisted.engine)
+}
+
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn store_engine(state_dir: &std::path::Path, engine: H264Engine) -> std::io::Result<()> {
+    store_state(
+        state_dir,
+        ".h264-engine-",
+        ENGINE_FILE,
+        &serde_json::to_vec(&PersistedEngine { engine }).map_err(std::io::Error::other)?,
+    )
 }
 
 /// The chosen bitrate, or the default.
@@ -85,19 +137,34 @@ pub(crate) fn load_bitrate(state_dir: &std::path::Path) -> u32 {
 
 #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
 pub(crate) fn store_bitrate(state_dir: &std::path::Path, kbps: u32) -> std::io::Result<()> {
+    store_state(
+        state_dir,
+        ".webrtc-bitrate-",
+        BITRATE_FILE,
+        &serde_json::to_vec(&PersistedBitrate { kbps }).map_err(std::io::Error::other)?,
+    )
+}
+
+/// Replaces `name` in the state directory with `bytes`: written to a
+/// temporary file of mode 0600, synced, and renamed.
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+fn store_state(
+    state_dir: &std::path::Path,
+    prefix: &str,
+    name: &str,
+    bytes: &[u8],
+) -> std::io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(state_dir)?;
     let mut file = tempfile::Builder::new()
-        .prefix(".webrtc-bitrate-")
+        .prefix(prefix)
         .tempfile_in(state_dir)?;
     file.as_file()
         .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(
-        &serde_json::to_vec(&PersistedBitrate { kbps }).map_err(std::io::Error::other)?,
-    )?;
+    file.write_all(bytes)?;
     file.as_file().sync_all()?;
-    file.persist(state_dir.join(BITRATE_FILE))
+    file.persist(state_dir.join(name))
         .map_err(|error| error.error)?;
     Ok(())
 }
@@ -145,6 +212,7 @@ impl WebRtcGateway {
         demand: Option<PathBuf>,
         h264_demand: Option<PathBuf>,
         kbps: u32,
+        engine: H264Engine,
     ) -> Option<Arc<Self>> {
         janus.ip().is_loopback().then(|| {
             Arc::new(Self {
@@ -153,6 +221,7 @@ impl WebRtcGateway {
                 demand,
                 h264_demand,
                 bitrate: tokio::sync::watch::channel(kbps).0,
+                engine: tokio::sync::watch::channel(engine).0,
             })
         })
     }
@@ -160,7 +229,9 @@ impl WebRtcGateway {
     /// Asks the codec's encoder to run while the returned guard is held: it
     /// otherwise decodes and encodes every changed frame for nobody. The
     /// first line names the codec, the next the bitrate, and a new `kbps`
-    /// line follows every change of the quality. An encoder without the
+    /// line follows every change of the quality. The H.264 encoder also
+    /// gets the board's choice of the engine after the bitrate, and an
+    /// `engine` line whenever the choice is made. An encoder without the
     /// socket runs anyway, so a failure only means no demand is signalled.
     ///
     /// The connection is the demand. An encoder that ends, to be started
@@ -173,13 +244,19 @@ impl WebRtcGateway {
             StreamCodec::H264 => self.h264_demand.as_ref(),
         }?
         .clone();
+        // Only the H.264 encoder has an engine to choose.
+        let chooses = codec == StreamCodec::H264;
         let codec = codec.name();
         let mut bitrate = self.bitrate.subscribe();
+        let mut engine = self.engine.subscribe();
         let kbps = *bitrate.borrow_and_update();
-        let mut connection = open_demand(&socket, codec, kbps).await?;
+        let chosen = chooses.then(|| *engine.borrow_and_update());
+        let mut connection = open_demand(&socket, codec, kbps, chosen).await?;
         Some(DemandGuard(tokio::spawn(async move {
-            // Nobody changes the quality once its sender is gone.
+            // Nobody changes the quality or the engine once its sender is
+            // gone.
             let mut quality_changes = true;
+            let mut engine_changes = chooses;
             loop {
                 // The encoder never writes: its side ends when it does.
                 let mut ended = [0_u8; 1];
@@ -196,6 +273,18 @@ impl WebRtcGateway {
                                 .is_err()
                         }
                     }
+                    changed = engine.changed(), if engine_changes => {
+                        if changed.is_err() {
+                            engine_changes = false;
+                            false
+                        } else {
+                            let chosen = *engine.borrow_and_update();
+                            connection
+                                .write_all(format!("engine {}\n", chosen.name()).as_bytes())
+                                .await
+                                .is_err()
+                        }
+                    }
                     read = connection.read(&mut ended) => !matches!(read, Ok(read) if read > 0),
                 };
                 if !lost {
@@ -204,7 +293,8 @@ impl WebRtcGateway {
                 connection = loop {
                     tokio::time::sleep(DEMAND_RETRY).await;
                     let kbps = *bitrate.borrow_and_update();
-                    if let Some(connection) = open_demand(&socket, codec, kbps).await {
+                    let chosen = chooses.then(|| *engine.borrow_and_update());
+                    if let Some(connection) = open_demand(&socket, codec, kbps, chosen).await {
                         break connection;
                     }
                 };
@@ -216,13 +306,20 @@ impl WebRtcGateway {
 /// Between attempts to reach an encoder that went away.
 const DEMAND_RETRY: Duration = Duration::from_millis(500);
 
-/// A demand connection of the encoder behind `socket`, with its first lines.
-async fn open_demand(socket: &std::path::Path, codec: &str, kbps: u32) -> Option<UnixStream> {
+/// A demand connection of the encoder behind `socket`, with its first
+/// lines: the codec, the bitrate and, for H.264, the engine.
+async fn open_demand(
+    socket: &std::path::Path,
+    codec: &str,
+    kbps: u32,
+    engine: Option<H264Engine>,
+) -> Option<UnixStream> {
     let mut connection = UnixStream::connect(socket).await.ok()?;
-    connection
-        .write_all(format!("{codec}\nkbps {kbps}\n").as_bytes())
-        .await
-        .ok()?;
+    let mut lines = format!("{codec}\nkbps {kbps}\n");
+    if let Some(engine) = engine {
+        lines.push_str(&format!("engine {}\n", engine.name()));
+    }
+    connection.write_all(lines.as_bytes()).await.ok()?;
     Some(connection)
 }
 
@@ -518,9 +615,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("demand.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-        let gateway =
-            WebRtcGateway::new("127.0.0.1:8188".parse().unwrap(), None, Some(socket), 2500)
-                .unwrap();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            None,
+            Some(socket),
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
         let (guard, accepted) =
             tokio::join!(gateway.hold_demand(StreamCodec::H264), listener.accept());
         let guard = guard.unwrap();
@@ -529,6 +631,10 @@ mod tests {
         assert_eq!(
             lines.next_line().await.unwrap().as_deref(),
             Some("kbps 2500")
+        );
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("engine hardware")
         );
         gateway.bitrate.send_replace(8000);
         assert_eq!(

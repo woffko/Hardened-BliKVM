@@ -61,6 +61,8 @@ export function screenState(board) {
   };
   if (board.hardwareAvailable !== undefined)
     data.h264HardwareAvailable = board.hardwareAvailable;
+  if (board.hardwareAvailable === false && board.hardwareReason)
+    data.h264HardwareReason = board.hardwareReason;
   return data;
 }
 
