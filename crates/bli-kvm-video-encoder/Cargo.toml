@@ -25,11 +25,15 @@ h264 = ["vp8"]
 [dependencies]
 # The record header of the frame socket; no code of the QUIC stack.
 bli-kvm-quic-protocol = { path = "../bli-kvm-quic-protocol" }
+# The H616 video engine's H.264 encoder: the client of its driver.
+bli-kvm-ve-encoder = { path = "../bli-kvm-ve-encoder" }
 sha2.workspace = true
 thiserror.workspace = true
 zune-jpeg = { version = "=0.4.21", default-features = false, features = ["std", "neon"], optional = true }
 
 [dev-dependencies]
+# The stand-in for the engine, behind the driver's interface.
+bli-kvm-ve-encoder = { path = "../bli-kvm-ve-encoder", features = ["standin"] }
 tempfile.workspace = true
 
 [build-dependencies]

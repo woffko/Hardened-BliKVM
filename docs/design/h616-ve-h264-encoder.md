@@ -1789,6 +1789,62 @@ condition of the gate.
 
 **Go for the product.** Next is V4, the driver.
 
+### V5, 2026-10-03: the product's encoder
+
+The product encodes with the engine through the driver of V4
+(`docs/design/h616-ve-encoder-driver-v1.md`), as the third engine of
+`bli-kvm-video-encoder`. What the lab tool and the product share is the
+crate `bli-kvm-ve-encoder`: the stream's headers and bit writer, the rate
+control of V3.5 with the search chosen for every frame, the frame of
+skipped macroblocks for a frame that is left out, the software stand-in
+for the engine, the driver's interface, the account of the reconstruction
+sets, the frame policy (which pass to make next, which to send), and the
+encoder itself: one picture in, one frame out. Where it differs from the
+plan's design, or the plan left it open:
+
+- **The passes a frame may take** follow from the frame's time and V3.3's
+  numbers (`policy::passes_for`): a pass takes the engine 3.6 ns a pixel
+  and the loop around it a millisecond, the picture's way in 1.8 ns a
+  pixel once a frame, and a process that waits for a busy core wakes up to
+  4 ms late after every pass; at least one pass, at most three. That is two
+  at 1920x1080 and 30 frames a second, the rule gate V3 was judged with,
+  and three at 1366x768 and below, where three fit the frame's time and
+  the third pass saves the frames "V3.3 again" saw left out. Three passes
+  at those sizes have not been measured on the board; V7 measures the
+  product's frames.
+- **The picture.** The plan has the converter give NV12 instead of I420.
+  It keeps giving I420, which x264 and VP8 take as well, and the engine's
+  path writes the picture into a buffer of whole macroblocks, the edge
+  repeated into the padding, interleaving the chroma on the way
+  (`nv12::from_i420`): one copy of the picture more a frame (3 MB at
+  1920x1080) for one converter that serves all three engines.
+- **Key frames** come every two seconds, for a new viewer, when a client of
+  the frame socket asks, and after a frame the engine failed on; each has
+  the SPS and the PPS before it; constrained baseline, CAVLC.
+- **Choice and fallback.** The engine is tried when a viewer's stream
+  opens: the device is configured for the size and a test picture is
+  encoded; without that x264 encodes, with a line in the journal that says
+  why. A frame the engine fails on is lost and the next one is a key frame;
+  after three in a row x264 takes the stream over where it is, behind the
+  same RTP packetizer and frame socket, until the encoder starts again.
+  The encoder writes `hardware` or `x264` to a status file, which the web
+  server reports as `h264Encoder` in `GET /api/vm/screen` (it reads nothing
+  from that file but these two words) and the screen settings show.
+- **The unit** may open the driver's device and no other
+  (`DevicePolicy=closed`, `DeviceAllow=/dev/hardened-blikvm-ve-enc rw`),
+  through the group that the package gives the node (V6.1). It gets three
+  converter threads, since decoding the capture's JPEG pictures is what
+  bounds the frame rate when the engine encodes, and keeps its limit of 30
+  frames a second, the rate gate V3 measured.
+
+Tests on the build host run the encoder against the stand-in behind the
+driver's interface: the frame policy and the sets against an account of
+their own, the engine in the product's encoder (H.264 from the engine
+where there is one, x264 where there is none or where it fails three times
+in a row, the bitrate changed while encoding), the frame socket with a
+unit that names a device the board does not have, and the page that shows
+the encoder.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the

@@ -14,7 +14,33 @@
 //! coarsest quantiser is not enough, as on a picture that changes
 //! everywhere at 1.5 Mbit/s.
 
-use crate::regs::Search;
+/// How the engine looks for the place a macroblock came from
+/// (`docs/design/h616-ve-h264-encoder.md`, "V3.4 again").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Search {
+    /// As the vendor's library has it: exact, and no further than 12
+    /// pixels a frame for a picture that moves down.
+    Exact,
+    /// With "refine off": a picture that moves down is found up to 36
+    /// pixels a frame, and text that moves by a few pixels costs more.
+    Wide,
+}
+
+impl Search {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Wide => "wide",
+        }
+    }
+
+    pub fn other(self) -> Self {
+        match self {
+            Self::Exact => Self::Wide,
+            Self::Wide => Self::Exact,
+        }
+    }
+}
 
 /// The QPs the controller uses: all the syntax has, as the product's x264
 /// may. The engine encodes at every one of them (V3.4).
@@ -81,6 +107,22 @@ impl RateControl {
             overflows: 0,
             skipped: 0,
         }
+    }
+
+    /// Another rate for a stream that runs: the QP goes on from where it
+    /// is, and the bucket is as full, as a part of itself, as it was.
+    pub fn set_rate(&mut self, kbps: u32, fps: u32) {
+        let rate = kbps as f64 * 1000.0;
+        let level = if self.capacity > 0.0 {
+            self.fullness / self.capacity
+        } else {
+            0.0
+        };
+        self.per_frame = rate / fps.max(1) as f64;
+        self.capacity = rate;
+        self.fullness = level * rate;
+        // The last key frame was planned for the old rate's bucket.
+        self.last_key = None;
     }
 
     /// Whether a frame of `bits` may go out now.
@@ -574,6 +616,23 @@ mod tests {
             choice.tick();
         }
         assert_eq!(choice.other(9_999, 10_000), None);
+    }
+
+    #[test]
+    fn another_rate_is_held_from_where_the_stream_is() {
+        let mut control = RateControl::new(2500, 30);
+        let sent = run(&mut control, 300, 100_000, |_| 200_000.0);
+        let qp = control.next_qp(false);
+        assert!(sent.len() == 300 && qp > QP_START);
+        // Four times the rate: the QP comes down from where it was, and
+        // the stream is at the new rate within seconds.
+        control.set_rate(10_000, 30);
+        assert_eq!(control.next_qp(false), qp);
+        let sent = run(&mut control, 600, 100_000, |_| 200_000.0);
+        assert!(control.next_qp(false) < qp);
+        let (low, high) = worst_window(&sent[150..], 300, 100_000_000.0);
+        assert!(low > 0.9 && high < 1.1, "{low} to {high}");
+        assert_eq!(control.overflows, 0);
     }
 
     #[test]

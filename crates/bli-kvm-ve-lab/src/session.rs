@@ -427,7 +427,7 @@ impl<E: Engine> Session<E> {
             &self.adjusts,
         );
         if let Some(search) = self.search {
-            ops = regs::adjusted(ops, &[search.adjust()]);
+            ops = regs::adjusted(ops, &[regs::search_adjust(search)]);
         }
         let outcome = run(&mut self.engine, &ops, self.patience, &mut self.trace)?;
 

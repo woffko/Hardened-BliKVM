@@ -223,43 +223,17 @@ pub enum Op {
     Wait,
 }
 
-/// How the engine looks for the place a macroblock came from (V3.4's
-/// addendum in the design note).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Search {
-    /// As the vendor's library has it: exact, and no further than 12
-    /// pixels a frame for a picture that moves down.
-    Exact,
-    /// With "refine off": a picture that moves down is found up to 36
-    /// pixels a frame, and text that moves by a few pixels costs more.
-    Wide,
-}
+pub use bli_kvm_ve_encoder::rate::Search;
 
-impl Search {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Exact => "exact",
-            Self::Wide => "wide",
-        }
-    }
-
-    pub fn other(self) -> Self {
-        match self {
-            Self::Exact => Self::Wide,
-            Self::Wide => Self::Exact,
-        }
-    }
-
-    /// What it makes of the motion estimation register.
-    pub fn adjust(self) -> Adjust {
-        Adjust {
-            reg: AVC_ME,
-            clear: ME_REFINE_OFF,
-            set: match self {
-                Self::Exact => 0,
-                Self::Wide => ME_REFINE_OFF,
-            },
-        }
+/// What a search makes of the motion estimation register.
+pub fn search_adjust(search: Search) -> Adjust {
+    Adjust {
+        reg: AVC_ME,
+        clear: ME_REFINE_OFF,
+        set: match search {
+            Search::Exact => 0,
+            Search::Wide => ME_REFINE_OFF,
+        },
     }
 }
 
@@ -1576,8 +1550,11 @@ mod tests {
             &[],
         );
         // The vendor's plan is the exact search, this board's map the wide.
-        assert_eq!(adjusted(plain.clone(), &[Search::Exact.adjust()]), plain);
-        let wide = adjusted(plain.clone(), &[Search::Wide.adjust()]);
+        assert_eq!(
+            adjusted(plain.clone(), &[search_adjust(Search::Exact)]),
+            plain
+        );
+        let wide = adjusted(plain.clone(), &[search_adjust(Search::Wide)]);
         assert_eq!(
             wide,
             super::frame(
@@ -1590,10 +1567,10 @@ mod tests {
                 &[]
             )
         );
-        assert_eq!(adjusted(wide, &[Search::Exact.adjust()]), plain);
+        assert_eq!(adjusted(wide, &[search_adjust(Search::Exact)]), plain);
         assert_eq!(Search::Exact.other(), Search::Wide);
         assert_eq!(Search::Wide.other().name(), "exact");
-        let adjust = Search::Wide.adjust();
+        let adjust = search_adjust(Search::Wide);
         assert_eq!(
             Adjust::new(adjust.reg, adjust.clear, adjust.set),
             Some(adjust)

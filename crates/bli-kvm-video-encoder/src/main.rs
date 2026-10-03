@@ -1,8 +1,9 @@
 //! WebRTC video feed for Janus: reads the uStreamer MJPEG stream, encodes
-//! changed frames with libvpx (VP8) or x264 (H.264) and sends RTP to a
-//! loopback UDP port. With a demand socket it works only while a viewer is
-//! connected. The H.264 unit also hands every encoded frame to the frame
-//! socket, for the QUIC gateway.
+//! changed frames with libvpx (VP8) or as H.264 and sends RTP to a loopback
+//! UDP port. H.264 comes from the board's video engine where the unit names
+//! its device and the engine encodes, and from x264 otherwise. With a
+//! demand socket it works only while a viewer is connected. The H.264 unit
+//! also hands every encoded frame to the frame socket, for the QUIC gateway.
 //!
 //! `bli-kvm-video-encoder bench [FRAMES]` instead reads that many frames from
 //! uStreamer into memory and measures every codec and size on them (plan
@@ -23,10 +24,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bli_kvm_ve_encoder::{
+    driver::Driver,
+    encoder::{Counters, HardwareEncoder},
+};
 use bli_kvm_video_encoder::{
     FrameDecision, FrameGate, GatePolicy, LatestFrame,
     demand::{Demand, group_id},
-    engine::{Codec, Engine, EngineSettings},
+    engine::{Codec, Engine, EngineSettings, Hardware, OpenHardware},
     frames::{FrameHub, MonotonicBase, Numbering, user_id},
     h264::H264Preset,
     mjpeg::MjpegReader,
@@ -68,6 +73,12 @@ struct Settings {
     /// The frame socket, and the only user it serves.
     frames: Option<PathBuf>,
     frame_user: Option<String>,
+    /// The video engine's encoder, where the unit has one: its device.
+    hardware: Option<PathBuf>,
+    /// Where the encoder says which engine encodes, for the web server.
+    status: Option<PathBuf>,
+    /// Threads that decode and convert capture frames.
+    converters: usize,
 }
 
 /// A frame let through for a viewer that waits for a key frame is not
@@ -84,7 +95,9 @@ const IDLE_GRACE: Duration = Duration::from_secs(2);
 const KEY_FRAME_EVERY: Duration = Duration::from_secs(2);
 /// Decoding and converting a 1080p frame takes about 45 ms on the H616,
 /// more than encoding it with x264 ultrafast (29 ms): two threads take turns
-/// so preparation keeps up with the encoder (plan J2).
+/// so preparation keeps up with the encoder (plan J2). The video engine
+/// encodes in 7 ms and leaves the processors to more of them; the unit says
+/// how many.
 const CONVERTERS: usize = 2;
 
 fn number(name: &str, default: u32, range: std::ops::RangeInclusive<u32>) -> Result<u32, String> {
@@ -153,7 +166,44 @@ fn settings() -> Result<Settings, String> {
             path => path,
         },
         frame_user: env::var("BLI_KVM_ENCODER_FRAME_USER").ok(),
+        hardware: match env::var_os("BLI_KVM_ENCODER_HARDWARE").map(PathBuf::from) {
+            Some(path) if !path.is_absolute() => {
+                return Err("BLI_KVM_ENCODER_HARDWARE must be absolute".into());
+            }
+            // The engine encodes H.264 and nothing else.
+            Some(_) if codec == Codec::Vp8 => {
+                return Err("BLI_KVM_ENCODER_HARDWARE needs an H.264 codec".into());
+            }
+            path => path,
+        },
+        status: match env::var_os("BLI_KVM_ENCODER_STATUS").map(PathBuf::from) {
+            Some(path) if !path.is_absolute() => {
+                return Err("BLI_KVM_ENCODER_STATUS must be absolute".into());
+            }
+            path => path,
+        },
+        converters: number("BLI_KVM_ENCODER_CONVERTERS", CONVERTERS as u32, 1..=4)? as usize,
     })
+}
+
+/// Opens the video engine's encoder for a stream.
+fn open_hardware(path: PathBuf) -> Box<OpenHardware> {
+    Box::new(move |config| {
+        let driver = Driver::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        HardwareEncoder::new(driver, config)
+            .map(|encoder| Box::new(encoder) as Box<dyn Hardware>)
+            .map_err(|error| error.to_string())
+    })
+}
+
+/// Says which engine encodes: one word in a file, replaced whole.
+fn write_status(path: &std::path::Path, name: &str) {
+    let temporary = path.with_extension("new");
+    let written = std::fs::write(&temporary, format!("{name}\n"))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if let Err(error) = written {
+        eprintln!("bli-kvm-video-encoder: {}: {error}", path.display());
+    }
 }
 
 struct Captured {
@@ -297,6 +347,10 @@ fn encode_loop(
         .map_err(|error| error.to_string())?;
     let (ssrc, sequence) = session_ids()?;
     let mut engine: Option<Engine> = None;
+    // The video engine is tried for every new stream until it has been
+    // given up once: then x264 encodes until the unit is started again.
+    let mut hardware = settings.hardware.clone().map(open_hardware);
+    let mut encoding = "";
     let start = Instant::now();
     let mut last_pts = -1_i64;
     let mut stats = Stats::default();
@@ -331,7 +385,7 @@ fn encode_loop(
             // threads, more than the unit may run.
             let next = engine.take().map_or(sequence, |old| old.next_sequence());
             numbering = Numbering::new(stream_id()?);
-            engine = Some(Engine::new(
+            engine = Some(Engine::with_hardware(
                 EngineSettings {
                     kbps,
                     ..settings.engine
@@ -340,6 +394,7 @@ fn encode_loop(
                 frame.height,
                 ssrc,
                 next,
+                hardware.as_deref(),
             )?);
         }
         let engine = engine.as_mut().expect("engine was just created");
@@ -369,9 +424,21 @@ fn encode_loop(
             last_key = Some(Instant::now());
         }
         let encode_start = Instant::now();
+        let was_hardware = engine.encoder_name() == "hardware";
         let (packets, encoded) = engine.encode_frames(frame, pts, force_key)?;
         stats.encode += encode_start.elapsed();
         stats.frames += 1;
+        if was_hardware && engine.encoder_name() != "hardware" {
+            hardware = None;
+        }
+        if engine.encoder_name() != encoding {
+            encoding = engine.encoder_name();
+            if let Some(path) = &settings.status {
+                write_status(path, encoding);
+            }
+        }
+        stats.engine = encoding;
+        stats.hardware = engine.hardware_counters();
         // The encoder makes key frames of its own at its interval: one of
         // those counts like one that was asked for, or two would follow each
         // other whenever the two clocks meet.
@@ -407,6 +474,11 @@ struct Stats {
     decode: Duration,
     convert: Duration,
     encode: Duration,
+    /// Which engine encodes, and what the video engine's encoder has done
+    /// since it began; `reported` is what it had done at the last report.
+    engine: &'static str,
+    hardware: Option<Counters>,
+    reported: Counters,
 }
 
 impl Stats {
@@ -422,8 +494,27 @@ impl Stats {
             return;
         }
         let per_frame = |total: Duration| total.as_micros() / u128::from(self.frames.max(1));
+        // What the video engine's encoder did in these ten seconds.
+        let engine = match self.hardware {
+            Some(now) => {
+                let before = self.reported;
+                format!(
+                    " engine=hardware passes={} both_searches={} wide={} higher_qp={} left_out={} key={} failures={} engine_us={}",
+                    now.passes.saturating_sub(before.passes),
+                    now.both_searches.saturating_sub(before.both_searches),
+                    now.wide.saturating_sub(before.wide),
+                    now.higher_qp.saturating_sub(before.higher_qp),
+                    now.left_out.saturating_sub(before.left_out),
+                    now.key_frames.saturating_sub(before.key_frames),
+                    now.failures.saturating_sub(before.failures),
+                    now.engine_micros.saturating_sub(before.engine_micros)
+                        / now.passes.saturating_sub(before.passes).max(1),
+                )
+            }
+            None => format!(" engine={}", self.engine),
+        };
         eprintln!(
-            "bli-kvm-video-encoder: fps={:.1} rejected={} replaced_total={} per_frame_us decode={} convert={} encode={}",
+            "bli-kvm-video-encoder: fps={:.1} rejected={} replaced_total={} per_frame_us decode={} convert={} encode={}{engine}",
             f64::from(self.frames) / elapsed.as_secs_f64(),
             rejected,
             replaced,
@@ -433,6 +524,9 @@ impl Stats {
         );
         *self = Self {
             since: Some(Instant::now()),
+            engine: self.engine,
+            // A new stream's encoder counts from nothing again.
+            reported: self.hardware.unwrap_or_default(),
             ..Self::default()
         };
     }
@@ -551,7 +645,10 @@ fn bench(settings: &Settings, count: usize) -> Result<(), String> {
                 }
                 let encode_ms = millis(encode, frames.len());
                 // Preparation (on CONVERTERS threads) and encoding overlap.
-                let pipelined = 1000.0 / (prepare_ms / CONVERTERS as f64).max(encode_ms).max(0.1);
+                let pipelined = 1000.0
+                    / (prepare_ms / settings.converters as f64)
+                        .max(encode_ms)
+                        .max(0.1);
                 rows.push(format!(
                     "{{\"codec\":\"{}\",\"threads\":{},\"width\":{},\"height\":{},\"decodeMs\":{},\"convertMs\":{},\"encodeMs\":{},\"pipelinedFps\":{:.1},\"kbitPerFrame\":{:.0}}}",
                     codec.name(),
@@ -690,7 +787,7 @@ fn main() -> ExitCode {
             }
         })
     };
-    let converters: Vec<_> = (0..CONVERTERS)
+    let converters: Vec<_> = (0..settings.converters)
         .map(|_| {
             let (settings, captured, decoded, rejected, stop) = (
                 Arc::clone(&settings),

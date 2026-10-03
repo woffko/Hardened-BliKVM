@@ -1091,9 +1091,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-ve-encoder"
+version = "0.1.0"
+
+[[package]]
 name = "bli-kvm-ve-lab"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-ve-encoder",
  "serde_json",
 ]
 
@@ -1117,6 +1122,7 @@ name = "bli-kvm-video-encoder"
 version = "0.1.0"
 dependencies = [
  "bli-kvm-quic-protocol",
+ "bli-kvm-ve-encoder",
  "cc",
  "sha2",
  "tempfile",

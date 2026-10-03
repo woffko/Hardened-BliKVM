@@ -20,8 +20,9 @@ use bli_kvm_ve_lab::{
         Page, Picture, Sequence, burst_index, parse_burst, parse_size, render, render_moved,
         ring_index,
     },
+    policy::{FramePolicy, Next, Quantiser, Searching, Which},
     psnr,
-    rate::{self, RateControl, SearchChoice, Second},
+    rate::{self, RateControl, SearchChoice},
     regs::{self, Adjust, Hypothesis, Op, Search},
     session::{Encoded, Session},
 };
@@ -1323,7 +1324,7 @@ fn plan(arguments: &[String]) -> Result<(), String> {
         &unit_ops,
     ));
     let search = if wide { Search::Wide } else { Search::Exact };
-    let ops = regs::adjusted(ops, &[search.adjust()]);
+    let ops = regs::adjusted(ops, &[regs::search_adjust(search)]);
     let mut at = 0;
     while at < ops.len() {
         match ops[at] {
@@ -1510,7 +1511,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     let (mut paced, mut ring, mut guards, mut timeout_at) = (false, 0u32, 1u32, None);
     let (mut adjusts, mut seconds, mut period, mut burst) = (Vec::new(), None, None, None);
     // The search of every pass, or the choice between the two.
-    let (mut search, mut choice) = (None, None);
+    let mut searching = Searching::Unsaid;
     let mut passes_at_most = rate::PASSES;
     for option in options {
         let number = |text: &str| {
@@ -1526,9 +1527,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             Some(("seconds", value)) => seconds = Some(number(value)?.max(1)),
             Some(("burst", value)) => burst = Some(parse_burst(value)?),
             Some(("period", value)) => period = Some(number(value)?.clamp(1, 100_000) as usize),
-            Some(("search", "exact")) => search = Some(Search::Exact),
-            Some(("search", "wide")) => search = Some(Search::Wide),
-            Some(("search", "auto")) => choice = Some(SearchChoice::new()),
+            Some(("search", "exact")) => searching = Searching::Fixed(Search::Exact),
+            Some(("search", "wide")) => searching = Searching::Fixed(Search::Wide),
+            Some(("search", "auto")) => searching = Searching::Chosen(SearchChoice::new()),
             Some(("passes", value)) => passes_at_most = number(value)?.clamp(1, 3),
             _ => return Err(format!("not an option: {option}")),
         }
@@ -1553,7 +1554,6 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         session.set_adjusts(adjusts.clone());
         Way::Lab(Box::new(session))
     };
-    way.set_search(search);
     let patience = Patience::default();
     let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
     let mut out = BufWriter::new(file);
@@ -1565,18 +1565,16 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             picture.clone()
         })
         .collect();
-    let mut control = match rate {
-        Rate::Kbps(kbps) => Some(RateControl::new(kbps, fps)),
-        Rate::Qp(_) => None,
+    // The passes of every frame are the product's policy's: what is
+    // measured here is what the product's encoder does.
+    let (quantiser, kbps) = match rate {
+        Rate::Kbps(kbps) => (Quantiser::Rate(RateControl::new(kbps, fps)), kbps),
+        Rate::Qp(qp) => (Quantiser::Fixed(qp), 0),
     };
+    let costly = FramePolicy::costly_bits(&quantiser, kbps, fps, (width * height) as u64);
+    let chosen = matches!(searching, Searching::Chosen(_));
+    let mut policy = FramePolicy::new(quantiser, searching, costly).with_passes(passes_at_most);
     let interval = std::time::Duration::from_secs_f64(1.0 / fps as f64);
-    // A frame is costly, and worth a pass with the other search, from
-    // three quarters of what a frame may cost on average; at a fixed QP,
-    // from 0.03 bits a pixel.
-    let costly = match rate {
-        Rate::Kbps(kbps) => kbps as u64 * 1000 * 3 / 4 / fps as u64,
-        Rate::Qp(_) => (width * height) as u64 * 3 / 100,
-    };
 
     let (mut sizes, mut qps, mut encode_micros, mut frame_micros) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -1626,112 +1624,65 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 ..patience
             });
         }
-        // The search of the pass that is the frame.
-        let mut sent_search = None;
-        // Whether the frame before this one was a key frame.
-        let after_key = keys.last().is_some_and(|last| *last + 1 == frame);
+        let tried_before = policy.choice().map_or(0, |choice| choice.tried);
+        let changed_before = policy.choice().map_or(0, |choice| choice.changed);
         let attempt = (|| -> Result<(Encoded, u32), String> {
-            let qp = match control.as_mut() {
-                Some(control) => {
-                    control.tick();
-                    control.next_qp(key || frame == 0)
-                }
-                None => {
-                    let Rate::Qp(qp) = rate else { unreachable!() };
-                    qp
-                }
-            };
-            if let Some(choice) = choice.as_mut() {
-                choice.tick();
-                way.set_search(Some(choice.first()));
+            let first = policy.begin(key || frame == 0);
+            if first.search.is_some() {
+                way.set_search(first.search);
             }
-            let mut best = way.pass(source, key, qp, true)?;
+            let mut last = way.pass(source, key, first.qp, true)?;
+            let mut earlier: Option<Encoded> = None;
             let mut passes = 1;
-            let mut made = 1;
-            let first_bits = best.bytes.len() as u64 * 8;
-            sent_search = choice.as_ref().map(SearchChoice::first);
-            // A frame the bucket has no room for needs a pass at a higher QP.
-            let higher = control
-                .as_ref()
-                .and_then(|control| control.again(first_bits, qp));
-            // A costly frame that is not a key frame is due the other search.
-            let other = choice
-                .as_ref()
-                .filter(|_| !best.key)
-                .and_then(|choice| choice.other(first_bits, costly));
-            match (
-                rate::second_pass(passes_at_most, other.is_some(), higher.is_some(), after_key),
-                other,
-                higher,
-                choice.as_mut(),
-            ) {
-                (Some(Second::Other), Some(other), _, Some(choice)) => {
-                    way.keep(&best);
-                    way.set_search(Some(other));
-                    let second = way.pass(source, key, qp, false)?;
-                    made += 1;
-                    both.push(frame);
-                    if choice.compared(first_bits, second.bytes.len() as u64 * 8) {
-                        best = second;
-                        sent_search = Some(other);
-                        changes.push((frame, choice.first()));
-                    }
-                    // A pass at another QP leaves the better one alone.
-                    way.keep(&best);
-                    way.set_search(Some(choice.first()));
-                    // With a third pass to take: the better one at a higher
-                    // QP, if it does not fit either.
-                    if let (true, Some(control)) = (made < passes_at_most, control.as_ref()) {
-                        if let Some(higher) = control.again(best.bytes.len() as u64 * 8, qp) {
-                            best = way.pass(source, key, higher, false)?;
-                            passes = 2;
-                            made += 1;
+            loop {
+                match policy.made(last.bytes.len() as u64 * 8, last.key) {
+                    Next::Again { ask, better } => {
+                        // The pass that would be sent is not written over.
+                        let kept = match better {
+                            Which::Last => last,
+                            Which::Earlier => earlier.take().expect("two passes were made"),
+                        };
+                        way.keep(&kept);
+                        if ask.search.is_some() {
+                            way.set_search(ask.search);
                         }
+                        if ask.qp != first.qp {
+                            passes = 2;
+                        }
+                        last = way.pass(source, key, ask.qp, false)?;
+                        earlier = Some(kept);
+                    }
+                    Next::Send(Which::Last) => return Ok((last, passes)),
+                    Next::Send(Which::Earlier) => {
+                        return Ok((earlier.take().expect("two passes were made"), passes));
+                    }
+                    // A frame that fits at no QP is left out, unless the
+                    // stream needs it to begin with.
+                    Next::LeaveOut => {
+                        let unchanged = way.unchanged();
+                        policy.left_out(unchanged.bytes.len() as u64 * 8);
+                        return Ok((unchanged, 0));
                     }
                 }
-                (Some(Second::OtherHigher), Some(other), Some(higher), Some(choice)) => {
-                    // The first pass does not fit and is not the frame: its
-                    // set of buffers is the next pass's to write.
-                    way.set_search(Some(other));
-                    let second = way.pass(source, key, higher, false)?;
-                    made += 1;
-                    passes = 2;
-                    both.push(frame);
-                    if choice.compared_higher(
-                        first_bits,
-                        higher - qp,
-                        second.bytes.len() as u64 * 8,
-                    ) {
-                        changes.push((frame, choice.first()));
-                    }
-                    // The pass at the QP that was meant to fit is the frame,
-                    // whichever search the next frame begins with.
-                    best = second;
-                    sent_search = Some(other);
-                    way.set_search(Some(choice.first()));
-                }
-                (Some(Second::Higher), _, Some(higher), _) => {
-                    best = way.pass(source, key, higher, false)?;
-                    passes = 2;
-                    made += 1;
-                }
-                _ => {}
-            }
-            let Some(control) = control.as_mut() else {
-                frame_passes.push(made);
-                return Ok((best, passes));
-            };
-            frame_passes.push(made);
-            // A frame that fits at no QP is left out, unless the stream
-            // needs it to begin with.
-            if best.key || control.fits(best.bytes.len() as u64 * 8) {
-                Ok((best, passes))
-            } else {
-                let unchanged = way.unchanged();
-                control.left_out(unchanged.bytes.len() as u64 * 8, best.qp);
-                Ok((unchanged, 0))
             }
         })();
+        if attempt.is_err() {
+            policy.failed();
+        } else {
+            frame_passes.push(policy.passes_made());
+        }
+        if policy
+            .choice()
+            .is_some_and(|choice| choice.tried != tried_before)
+        {
+            both.push(frame);
+        }
+        if let Some(choice) = policy
+            .choice()
+            .filter(|choice| choice.changed != changed_before)
+        {
+            changes.push((frame, choice.first()));
+        }
         if let (true, Some(session)) = (provoked, way.lab()) {
             session.set_patience(patience);
             match attempt {
@@ -1765,12 +1716,10 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         };
         // No pass: the frame was left out, and the control knows.
         if passes > 0 {
-            if !encoded.key && sent_search == Some(Search::Wide) {
-                wide_frames += 1;
-            }
             way.accept(&encoded);
-            if let Some(control) = control.as_mut() {
-                control.sent(encoded.bytes.len() as u64 * 8, encoded.qp, encoded.key);
+            policy.sent();
+            if chosen && !encoded.key && policy.sent_search() == Some(Search::Wide) {
+                wide_frames += 1;
             }
         } else {
             left_out.push(frame);
@@ -1836,19 +1785,19 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         .collect();
     // The engine's search for motion in this run.
     let searches = json!({
-        "way": match (choice, search) {
-            (Some(_), _) => "auto",
-            (None, Some(search)) => search.name(),
-            (None, None) => "the map's",
+        "way": match searching {
+            Searching::Chosen(_) => "auto",
+            Searching::Fixed(search) => search.name(),
+            Searching::Unsaid => "the map's",
         },
-        "costlyFromBits": choice.map(|_| costly),
-        "framesWithBoth": choice.map(|_| both.len()),
-        "framesWithTheWide": choice.map(|_| wide_frames),
-        "changes": choice.map(|_| changes[..changes.len().min(100)]
+        "costlyFromBits": chosen.then_some(costly),
+        "framesWithBoth": chosen.then_some(both.len()),
+        "framesWithTheWide": chosen.then_some(wide_frames),
+        "changes": chosen.then(|| changes[..changes.len().min(100)]
             .iter()
             .map(|(frame, search)| json!({"frame": frame, "to": search.name()}))
             .collect::<Vec<_>>()),
-        "changesInAll": choice.map(|_| changes.len()),
+        "changesInAll": chosen.then_some(changes.len()),
     });
     // The passes the frames took.
     let passes = json!({
@@ -1923,7 +1872,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "framesLeftOut": left_out.len(),
         "search": searches,
         "repeat": repeat,
-        "overflows": control.map(|control| control.overflows),
+        "overflows": policy.control().map(|control| control.overflows),
         "frameBytes": sizes,
         "frameQp": qps,
         "frameEncodeMicros": encode_micros,
