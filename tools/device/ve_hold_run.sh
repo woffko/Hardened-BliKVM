@@ -16,12 +16,18 @@
 #              quality, as the web server would send it)
 #   MAX_HOURS  the most the run may take in all (default: HOURS + 8)
 #
-# It ends with the engine off, as it found it.
+# It ends with the engine off, as it found it. A lost connection does not
+# end it: the session gives the watchdog up and removes its directory, so
+# the run keeps what it needs in a directory of its own under /run, goes on
+# watching for whoever connects, and removes that directory at its end.
 set -u
+trap '' HUP
 hours=${1:?usage: $0 HOURS KBPS [MAX_HOURS]}
 kbps=${2:?usage: $0 HOURS KBPS [MAX_HOURS]}
 max_hours=${3:-$((hours + 8))}
 want=$((hours * 3600)); limit=$((max_hours * 3600))
+work=$(mktemp -d /run/ve-hold.XXXXXX) || exit 1
+cp ./deploy_ve.sh ./ve_demand_hold.py "$work/" || { rm -rf "$work"; exit 1; }
 encoder=hardened-blikvm-video-encoder-h264.service
 demand=/run/hardened-blikvm-h264/demand.sock
 holder=
@@ -43,17 +49,18 @@ release() {
 
 engine_off() {
   release
-  sh ./deploy_ve.sh remove > out/deploy-off.txt 2>&1 || echo "$(date -u +%FT%TZ) deploy_ve.sh remove failed" >> out/hold.txt
+  sh "$work/deploy_ve.sh" remove > out/deploy-off.txt 2>&1 || echo "$(date -u +%FT%TZ) deploy_ve.sh remove failed" >> out/hold.txt
 }
 
 finish() {
   engine_off
   echo "$(date -u +%FT%TZ) end: $on seconds on the engine, $switches times given up for somebody" >> out/hold.txt
+  rm -rf "$work"
 }
 trap 'finish; exit 143' TERM INT
 
 hold() {
-  python3 ./ve_demand_hold.py "$demand" h264 "$kbps" >> out/holder.txt 2>&1 &
+  python3 "$work/ve_demand_hold.py" "$demand" h264 "$kbps" >> out/holder.txt 2>&1 &
   holder=$!
 }
 
@@ -80,7 +87,7 @@ while :; do
       echo "$(date -u +%FT%TZ) somebody connected: the engine is off" >> out/hold.txt
     fi
   elif [ "$state" = off ] && [ $((now - quiet_since)) -ge 300 ]; then
-    sh ./deploy_ve.sh install > out/deploy-on.txt 2>&1 ||
+    sh "$work/deploy_ve.sh" install > out/deploy-on.txt 2>&1 ||
       { echo "$(date -u +%FT%TZ) deploy_ve.sh install failed"; cat out/deploy-on.txt; } >> out/hold.txt
     hold
     state=on
