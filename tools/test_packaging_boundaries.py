@@ -3153,6 +3153,8 @@ class PackagingBoundaryTests(unittest.TestCase):
             ROOT / "tools/image/build_sd_image.sh",
             ROOT / "tools/device/deploy_vp8.sh",
             ROOT / "tools/device/deploy_native_profile.sh",
+            ROOT / "tools/device/deploy_ve.sh",
+            ROOT / "tools/ve_module.py",
         ]
         carriers += [path for path in (ROOT / "packaging").rglob("*") if path.is_file()]
         self.assertGreater(len(carriers), 20)
@@ -3180,6 +3182,23 @@ class PackagingBoundaryTests(unittest.TestCase):
         for header in ("vencoder.h", "veInterface.h", "sc_interface.h", "veAdapter.h", "memoryAdapter.h"):
             self.assertFalse([path for path in tracked if path.endswith("/" + header)], header)
         self.assertFalse([path for path in tracked if path.endswith((".so", ".ko", ".a"))])
+        # One module of the project is packaged, the encoder driver: the
+        # bundle takes the built file from outside the repository, by name,
+        # and of the directory's sources only the driver's go with it.
+        bundle = (ROOT / "scripts/build-prototype-bundle.sh").read_text()
+        self.assertIn('install -m 0644 "$ve_module" "$stage/share/ve/$ve_release/hardened-blikvm-ve-enc.ko"', bundle)
+        self.assertIn('python3 tools/ve_module.py check "$ve_module" "$ve_release"', bundle)
+        staged = {line.strip().rstrip("\\").strip() for line in bundle.splitlines()
+                  if line.strip().startswith("kernel/hardened-blikvm-ve/")}
+        self.assertEqual(staged, {
+            "kernel/hardened-blikvm-ve/ve_enc.c", "kernel/hardened-blikvm-ve/ve_enc_abi.h",
+            "kernel/hardened-blikvm-ve/ve_enc_plan.c", "kernel/hardened-blikvm-ve/ve_enc_plan.h",
+            "kernel/hardened-blikvm-ve/ve_hw.c", "kernel/hardened-blikvm-ve/ve_hw.h",
+        })
+        # The driver's own sources do not need the lab's.
+        for name in ("ve_enc.c", "ve_enc_plan.c", "ve_hw.c", "ve_enc_abi.h", "ve_enc_plan.h", "ve_hw.h"):
+            text = (ROOT / "kernel/hardened-blikvm-ve" / name).read_text()
+            self.assertNotIn("ve_lab", text, name)
 
 
 if __name__ == "__main__":

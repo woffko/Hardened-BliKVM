@@ -129,3 +129,19 @@ GPL-2.0-only as the kernel requires, beside the GPL-3.0-only application,
 which reaches them only through a device node. Their source and build
 recipe are in this repository. The lab module and the lab tool of that plan
 are never part of a package, a slot or an image.
+
+One module is distributed: the encoder driver, `hardened-blikvm-ve-enc.ko`,
+in the update-runtime package from `0.1.0~dev36`, and with that package in
+the SD image and the RAW system payload. It is built from
+`kernel/hardened-blikvm-ve/` (`ve_enc.c`, `ve_enc_plan.c`, `ve_hw.c` and
+their headers) by `scripts/build-ve-module.sh`, against Linux 5.19.4 from
+kernel.org with the board vendor's configuration and the headers the
+board's kernel itself provides, with the compiler that kernel was built
+with. The package carries the module's complete source beside it
+(`/usr/share/doc/hardened-blikvm-update-runtime/ve-module-source/`) and
+names the licence's text on the system (`/usr/share/common-licenses/GPL-2`).
+The module contains no vendor code: its register plan was written from the
+project's own description of the engine
+(`docs/design/h616-ve-h264-encoder.md`), and the shared hardware part
+follows mainline `cedrus` (GPL-2.0), which the file says. No slot carries
+the module: it belongs to the system, not to the application.
