@@ -97,6 +97,15 @@ const en = {
       megabitsPerSecond: '{{value}} Mbit/s',
       h264EncoderHardware: 'H.264 encoder: video engine (hardware)',
       h264EncoderSoftware: 'H.264 encoder: x264 (software)',
+      h264EngineIsBoards:
+        "HW: the board's video engine, SW: x264. The engine is the board's: every H.264 viewer gets it.",
+      h264EngineByOperator:
+        "The board's operator chooses the H.264 engine: this entry only sets this browser's video mode.",
+      h264HardwareUnavailable: "The board's video engine cannot encode H.264 now.",
+      h264HardwareUnavailableBecause:
+        "The board's video engine cannot encode H.264 now: {{reason}}",
+      h264X264Encodes: 'x264 encodes',
+      h264VideoEngineEncodes: 'the video engine encodes',
       frameDetect: 'Frame Detect',
       frameDetectTip:
         "Calculate the difference between frames. Stop transmitting video stream when no changes are detected on the remote host's screen.",
