@@ -81,10 +81,13 @@ sh -n tools/device/ve_trace_session.sh
 sh -n tools/device/ve_quality_run.sh
 sh -n tools/device/ve_stream_run.sh
 sh -n tools/device/ve_endurance_run.sh
+sh -n tools/device/ve_driver_compare.sh
+sh -n kernel/hardened-blikvm-ve/test/run.sh
 sh -n scripts/build-ve-reference.sh
 node --check tools/playwright/ve_stream_check.mjs
 python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \
-  tools/device/ve_stream_report.py tools/ve-trace/ve_trace_report.py
+  tools/device/ve_stream_report.py tools/device/ve_enc_hostile.py \
+  tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
@@ -875,6 +878,9 @@ BLI_KVM_VE_LAB="$target_root/debug/bli-kvm-ve-lab" node tools/playwright/ve_stan
 # the report must read a trace made by hand.
 scripts/build-ve-trace.sh host "$target_root/ve-trace"
 python3 -B -m unittest tools/ve-trace/test_ve_trace_report.py
+# The encoder driver's checks and register plan, as the kernel module has
+# them: random requests, and the plan against the lab tool's.
+kernel/hardened-blikvm-ve/test/run.sh "$target_root/ve-enc-plan" "$target_root/debug/bli-kvm-ve-lab"
 node tools/playwright/wifi_contract.mjs
 node tools/playwright/video_settings_contract.mjs
 pnpm_web exec prettier --check 'src/**/*.{js,jsx,ts,tsx,json,css,scss,md}'

@@ -282,6 +282,59 @@ pub fn bytes(ops: &[HeaderOp]) -> Vec<u8> {
     sink.into_bytes()
 }
 
+/// One unit as the encoder driver is given it: the byte after the start
+/// code, and the payload's bits, the first byte's most significant first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawUnit {
+    pub header: u8,
+    pub payload: Vec<u8>,
+    pub bits: usize,
+}
+
+impl RawUnit {
+    /// The unit as writes to a bit writer, sixteen bits at a time: what the
+    /// driver makes of it.
+    pub fn ops(&self) -> Vec<HeaderOp> {
+        let mut ops = vec![HeaderOp::Start(self.header)];
+        let mut done = 0;
+        while done < self.bits {
+            let take = (self.bits - done).min(16);
+            let value = (done..done + take).fold(0u32, |value, bit| {
+                (value << 1) | ((self.payload[bit / 8] >> (7 - bit % 8)) & 1) as u32
+            });
+            ops.push(HeaderOp::Bits(Put::new(value, take as u8)));
+            done += take;
+        }
+        ops
+    }
+}
+
+/// The units of a list of header writes.
+pub fn units(ops: &[HeaderOp]) -> Vec<RawUnit> {
+    let mut units: Vec<RawUnit> = Vec::new();
+    for op in ops {
+        match *op {
+            HeaderOp::Start(header) => units.push(RawUnit {
+                header,
+                payload: Vec::new(),
+                bits: 0,
+            }),
+            HeaderOp::Bits(put) => {
+                let unit = units.last_mut().expect("bits follow a unit's start");
+                for index in (0..put.bits).rev() {
+                    if unit.bits % 8 == 0 {
+                        unit.payload.push(0);
+                    }
+                    let bit = ((put.value >> index) & 1) as u8;
+                    *unit.payload.last_mut().unwrap() |= bit << (7 - unit.bits % 8);
+                    unit.bits += 1;
+                }
+            }
+        }
+    }
+    units
+}
+
 /// The stop bit and alignment after a slice's data, given the bits written
 /// since the unit's header.
 pub fn slice_trailing(bits_in_unit: usize) -> Put {
@@ -474,6 +527,48 @@ mod tests {
         assert_eq!(source.bits(3), Some(0));
         assert_eq!(source.ue(), Some(1));
         assert_eq!(source.se(), Some(0));
+    }
+
+    #[test]
+    fn units_are_the_same_bits_in_pieces_of_sixteen() {
+        let stream = Stream {
+            width: 1366,
+            height: 768,
+            fps: 30,
+            cabac: false,
+            chroma_qp_offset: 0,
+            deblocking: true,
+        };
+        let slice = Slice {
+            key: true,
+            frame_num: 0,
+            idr_pic_id: 1,
+            qp: 30,
+            cabac_init_idc: 0,
+        };
+        let mut ops = sps(&stream);
+        ops.extend(pps(&stream));
+        ops.extend(slice_header(&stream, &slice));
+        let units = units(&ops);
+        assert_eq!(
+            units.iter().map(|unit| unit.header).collect::<Vec<_>>(),
+            [0x67, 0x68, 0x65]
+        );
+        // The parameter sets end on a byte; the slice header does not have to.
+        assert_eq!(units[0].bits % 8, 0);
+        assert_eq!(units[1].bits % 8, 0);
+        assert!(
+            units
+                .iter()
+                .all(|unit| unit.payload.len() == unit.bits.div_ceil(8))
+        );
+        // Written again from the units, the stream is the same.
+        let again: Vec<HeaderOp> = units.iter().flat_map(RawUnit::ops).collect();
+        assert_eq!(bytes(&again), bytes(&ops));
+        assert!(again.iter().all(|op| match op {
+            HeaderOp::Bits(put) => put.bits <= 16,
+            HeaderOp::Start(_) => true,
+        }));
     }
 
     #[test]

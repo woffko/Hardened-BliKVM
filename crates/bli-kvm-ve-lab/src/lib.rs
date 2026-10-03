@@ -7,6 +7,7 @@
 
 pub mod bits;
 pub mod device;
+pub mod driver;
 pub mod engine;
 pub mod headers;
 pub mod lab;

@@ -6,6 +6,10 @@
 # usage: sh ve_lab_run.sh 'COMMAND' ['COMMAND'...]
 # Each argument is one command line; they run in order until one fails.
 #
+# VE_MODULE names another module of the session's files to take the lab
+# module's place: `hardened-blikvm-ve-enc`, the encoder driver, whose tests
+# run the same way.
+#
 # Rule 1 is kept for the whole run, not only at its beginning: every twenty
 # seconds the board is asked whether somebody has connected to it (an HTTPS
 # connection or a QUIC session, without which nobody can hold the HID
@@ -20,10 +24,16 @@
 set -u
 node=1c0e000.video-codec
 decoder=/sys/bus/platform/drivers/cedrus
+module=${VE_MODULE:-hardened-blikvm-ve-lab}
+case "$module" in
+  hardened-blikvm-ve-lab|hardened-blikvm-ve-enc) ;;
+  *) echo "not a module of the lab: $module"; exit 2 ;;
+esac
+loaded=$(echo "$module" | tr - _)
 
 restore() {
-  if grep -q '^hardened_blikvm_ve_lab ' /proc/modules; then
-    rmmod hardened_blikvm_ve_lab || echo "the lab module did not unload"
+  if grep -q "^$loaded " /proc/modules; then
+    rmmod "$loaded" || echo "the module did not unload"
   fi
   if [ ! -e "/sys/bus/platform/devices/$node/driver" ] && [ -d "$decoder" ]; then
     echo "$node" > "$decoder/bind" || echo "the decoder driver did not bind"
@@ -43,8 +53,8 @@ echo "the engine's driver as found: ${found:-none}"
 if [ "$found" = cedrus ]; then
   echo "$node" > "$decoder/unbind" || exit 1
 fi
-insmod ./hardened-blikvm-ve-lab.ko || exit 1
-[ -c /dev/hardened-blikvm-ve-lab ] || { echo "no lab device"; exit 1; }
+insmod "./$module.ko" || exit 1
+[ -c "/dev/$module" ] || { echo "no device of $module"; exit 1; }
 chmod 0755 ./bli-kvm-ve-lab
 
 # Whether somebody is connected to the board.

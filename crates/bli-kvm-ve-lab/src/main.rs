@@ -1,6 +1,9 @@
 //! The lab tool's commands. Those that need the board's engine come with
 //! the lab module; these work anywhere.
 
+// A receipt is one `json!` of many fields.
+#![recursion_limit = "256"]
+
 use std::{
     fs::File,
     io::{BufWriter, Read, Write},
@@ -9,8 +12,9 @@ use std::{
 
 use bli_kvm_ve_lab::{
     device::Device,
+    driver::DriverStream,
     engine::{Engine, FakeEngine, Patience, Step},
-    headers::{Stream, codec_string},
+    headers::{self, HeaderOp, RawUnit, Slice, Stream, codec_string},
     lab,
     picture::{
         Page, Picture, Sequence, burst_index, parse_burst, parse_size, render, render_moved,
@@ -29,6 +33,10 @@ const USAGE: &str = "usage:
       sequence moves for M frames and rests for R
   bli-kvm-ve-lab standin MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY OUTPUT
       an Annex B stream from the stand-in through the plan of MAP (older, v3s, h6, h616)
+  bli-kvm-ve-lab plan WIDTHxHEIGHT key|p QP OWN REFERENCE [cabac] [wide]
+      the register operations of one pass as the encoder driver must make them, with
+      made-up addresses and the pass's two sets of buffers: what the driver's own plan
+      is compared with on the build host
   bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N] [burst=M:R] [luma] [floor=DB]
       luma PSNR of at most FRAMES decoded frames (planar or NV12, visible size) against
       the sequence; with ring=N against a stream of N pictures played forth and back,
@@ -47,7 +55,8 @@ on the board, with the lab module loaded (each writes a receipt to OUTPUT):
   bli-kvm-ve-lab encode MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY QP STREAM OUTPUT
       frames of SEQUENCE encoded by the engine into STREAM (Annex B)
   bli-kvm-ve-lab stream MAP SEQUENCE WIDTHxHEIGHT FRAMES KEY_EVERY RATE FPS STREAM OUTPUT [OPTION...]
-      a long run: RATE is qpN (every frame at QP N) or kilobits a second, held by the
+      a long run; with `driver` for MAP through the encoder driver instead of the lab
+      module. RATE is qpN (every frame at QP N) or kilobits a second, held by the
       rate control with a second pass for a frame that does not fit. Options: paced
       (a frame begins every 1/FPS s), ring=N (N pictures drawn once and played forth
       and back), burst=M:R (the sequence moves for M frames and rests for R), guards=N (the buffers' guards read every N passes), timeout=N (the
@@ -1200,6 +1209,216 @@ fn search(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// The operations of one pass by the plan of the H6's form, for buffers at
+/// made-up addresses, in the words of the driver's test on the build host
+/// (`kernel/hardened-blikvm-ve/test/plan_test.c`): first what that test
+/// needs to make the same pass, then the operations.
+fn plan(arguments: &[String]) -> Result<(), String> {
+    let [size, kind, qp, own, reference, options @ ..] = arguments else {
+        return Err(USAGE.into());
+    };
+    let (mut cabac, mut wide) = (false, false);
+    for option in options {
+        match option.as_str() {
+            "cabac" => cabac = true,
+            "wide" => wide = true,
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let hypothesis = Hypothesis::H6;
+    let (width, height) = parse_size(size)?;
+    let key = match kind.as_str() {
+        "key" => true,
+        "p" => false,
+        _ => return Err(USAGE.into()),
+    };
+    let qp: i32 = qp
+        .parse()
+        .ok()
+        .filter(|qp| (0..=51).contains(qp))
+        .ok_or("QP is a number from 0 to 51")?;
+    let set = |text: &String| text.parse::<usize>().ok().filter(|set| *set < 3);
+    let (Some(own), Some(reference)) = (set(own), set(reference)) else {
+        return Err("OWN and REFERENCE are sets 0 to 2".into());
+    };
+    let stream = Stream {
+        cabac,
+        ..stream(&hypothesis, width, height, true)
+    };
+    let coded = stream.coded_width() * stream.coded_height();
+    let picture_bytes = coded * 3 / 2;
+    let stream_bytes = picture_bytes.div_ceil(1 << 20) << 20;
+    let luma_bytes = regs::Sizes::v3s(&stream).reconstruction_luma as u32;
+    // Where the buffers would be: nothing lives there.
+    let (input, output) = (0x5000_0000u32, 0x5100_0000u32);
+    let pictures = [0x5200_0000u32, 0x5300_0000, 0x5400_0000];
+    let subpixels = [0x5500_0000u32, 0x5510_0000, 0x5520_0000];
+    let info = 0x5530_0000u32;
+    let set = |at: usize| regs::Reconstruction {
+        luma: pictures[at],
+        chroma: pictures[at] + luma_bytes,
+        subpixel: subpixels[at],
+    };
+    let buffers = regs::Buffers {
+        input_luma: input,
+        input_chroma: input + coded,
+        stream: output,
+        stream_bytes,
+        // The plan writes the first and reads the second.
+        reconstruction: [set(own), set(reference)],
+        macroblock_info: info,
+        extra: 0,
+    };
+    let slice = Slice {
+        key,
+        frame_num: if key { 0 } else { 1 },
+        idr_pic_id: 0,
+        qp,
+        cabac_init_idc: 0,
+    };
+    let mut header_ops = Vec::new();
+    if key {
+        header_ops.extend(headers::sps(&stream));
+        header_ops.extend(headers::pps(&stream));
+    }
+    header_ops.extend(headers::slice_header(&stream, &slice));
+    let units = headers::units(&header_ops);
+    let unit_ops: Vec<HeaderOp> = units.iter().flat_map(RawUnit::ops).collect();
+
+    // The driver's flags: a key frame, the wide search.
+    let flags = u32::from(key) | if wide { 1 << 2 } else { 0 };
+    // A key frame names its own set as its reference.
+    let read = if key { own } else { reference };
+    println!("geometry {width} {height} {}", u32::from(cabac));
+    println!("frame {flags} {qp} {own} {read}");
+    for (name, addresses) in [("rec", pictures), ("subpixel", subpixels)] {
+        for (set, address) in addresses.iter().enumerate() {
+            println!("address {name}{set} {address:#x}");
+        }
+    }
+    for (name, address) in [("input", input), ("stream", output), ("mb_info", info)] {
+        println!("address {name} {address:#x}");
+    }
+    for unit in &units {
+        println!(
+            "unit {:#x} {} {}",
+            unit.header,
+            unit.bits,
+            unit.payload
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+    }
+    println!("ops");
+    println!("sizes {picture_bytes} {stream_bytes} {luma_bytes}");
+    let mut ops = regs::select(&hypothesis);
+    ops.extend(regs::frame(
+        &hypothesis,
+        &stream,
+        stream.coded_width(),
+        &slice,
+        0,
+        &buffers,
+        &unit_ops,
+    ));
+    let search = if wide { Search::Wide } else { Search::Exact };
+    let ops = regs::adjusted(ops, &[search.adjust()]);
+    let mut at = 0;
+    while at < ops.len() {
+        match ops[at] {
+            // A put: the wait for the bit writer, the bits, the trigger.
+            Op::Until {
+                reg: regs::AVC_STATUS,
+                ..
+            } => {
+                let (Some(Op::Write { value, .. }), Some(Op::Write { value: trigger, .. })) =
+                    (ops.get(at + 1), ops.get(at + 2))
+                else {
+                    return Err("a wait for the bit writer without its put".into());
+                };
+                println!("put {} {value:#x}", trigger >> 8);
+                at += 3;
+                continue;
+            }
+            Op::Write {
+                reg: regs::AVC_TRIGGER,
+                value: regs::TRIGGER_START,
+            } => println!("start"),
+            Op::Write { reg, value } => println!("write {reg:#05x} {value:#010x}"),
+            Op::Update { reg, clear, set } => {
+                println!("update {reg:#05x} {clear:#010x} {set:#010x}")
+            }
+            Op::Until { .. } => return Err("a wait the driver does not make".into()),
+            Op::Wait => {}
+        }
+        at += 1;
+    }
+    Ok(())
+}
+
+/// The two ways a long run reaches the engine: the lab module, where this
+/// tool writes every register, and the encoder driver, which writes them
+/// itself.
+enum Way {
+    Lab(Box<Session<Device>>),
+    Driver(Box<DriverStream>),
+}
+
+impl Way {
+    fn pass(
+        &mut self,
+        picture: &Picture,
+        key: bool,
+        qp: i32,
+        fresh: bool,
+    ) -> Result<Encoded, String> {
+        match self {
+            Self::Lab(session) => session
+                .pass(picture, key, qp, fresh)
+                .map_err(|error| error.to_string()),
+            Self::Driver(stream) => stream.pass(picture, key, qp, fresh),
+        }
+    }
+
+    fn set_search(&mut self, search: Option<Search>) {
+        match self {
+            Self::Lab(session) => session.set_search(search),
+            Self::Driver(stream) => stream.set_search(search),
+        }
+    }
+
+    fn keep(&mut self, encoded: &Encoded) {
+        match self {
+            Self::Lab(session) => session.keep(encoded),
+            Self::Driver(stream) => stream.keep(encoded),
+        }
+    }
+
+    fn accept(&mut self, encoded: &Encoded) {
+        match self {
+            Self::Lab(session) => session.accept(encoded),
+            Self::Driver(stream) => stream.accept(encoded),
+        }
+    }
+
+    /// A frame of skipped macroblocks in the place of the one that is next.
+    fn unchanged(&mut self) -> Encoded {
+        match self {
+            Self::Lab(session) => session.unchanged(),
+            Self::Driver(stream) => stream.unchanged(),
+        }
+    }
+
+    /// The lab's session, where the run goes through the lab module.
+    fn lab(&mut self) -> Option<&mut Session<Device>> {
+        match self {
+            Self::Lab(session) => Some(session),
+            Self::Driver(_) => None,
+        }
+    }
+}
+
 /// FNV-1a: a frame's fingerprint.
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
@@ -1263,7 +1482,13 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
     else {
         return Err(USAGE.into());
     };
-    let hypothesis = Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?;
+    let through_driver = map == "driver";
+    // The driver's plan is the H6's form; its stream has that form's headers.
+    let hypothesis = if through_driver {
+        Hypothesis::H6
+    } else {
+        Hypothesis::named(map).ok_or_else(|| format!("no map is called {map}"))?
+    };
     let sequence: Sequence = sequence.parse()?;
     let (width, height) = parse_size(size)?;
     let frames: u32 = frames
@@ -1313,12 +1538,22 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         fps,
         ..stream(&hypothesis, width, height, true)
     };
-    let room = room_for(&hypothesis, width, height);
-    let mut session = Session::open(open_device()?, hypothesis, stream, &room)
-        .map_err(|error| error.to_string())?;
-    session.set_guard_checks(guards);
-    session.set_adjusts(adjusts.clone());
-    session.set_search(search);
+    let mut way = if through_driver {
+        if timeout_at.is_some() || !adjusts.is_empty() {
+            return Err("the driver takes no adjustment and no provoked timeout".into());
+        }
+        Way::Driver(Box::new(DriverStream::open(stream).map_err(|error| {
+            format!("{}: {error}", bli_kvm_ve_lab::driver::DEVICE)
+        })?))
+    } else {
+        let room = room_for(&hypothesis, width, height);
+        let mut session = Session::open(open_device()?, hypothesis, stream, &room)
+            .map_err(|error| error.to_string())?;
+        session.set_guard_checks(guards);
+        session.set_adjusts(adjusts.clone());
+        Way::Lab(Box::new(session))
+    };
+    way.set_search(search);
     let patience = Patience::default();
     let file = File::create(stream_path).map_err(|error| format!("{stream_path}: {error}"))?;
     let mut out = BufWriter::new(file);
@@ -1382,7 +1617,8 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             &picture
         };
         let key = frame % key_every == 0 || std::mem::take(&mut force_key);
-        if timeout_at == Some(frame) {
+        let provoked = timeout_at == Some(frame);
+        if let (true, Some(session)) = (provoked, way.lab()) {
             // A wait that cannot be met: the frame is given up, the engine
             // reset, and the stream goes on with a key frame.
             session.set_patience(Patience {
@@ -1407,11 +1643,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             };
             if let Some(choice) = choice.as_mut() {
                 choice.tick();
-                session.set_search(Some(choice.first()));
+                way.set_search(Some(choice.first()));
             }
-            let mut best = session
-                .pass(source, key, qp, true)
-                .map_err(|error| error.to_string())?;
+            let mut best = way.pass(source, key, qp, true)?;
             let mut passes = 1;
             let mut made = 1;
             let first_bits = best.bytes.len() as u64 * 8;
@@ -1432,11 +1666,9 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 choice.as_mut(),
             ) {
                 (Some(Second::Other), Some(other), _, Some(choice)) => {
-                    session.keep(&best);
-                    session.set_search(Some(other));
-                    let second = session
-                        .pass(source, key, qp, false)
-                        .map_err(|error| error.to_string())?;
+                    way.keep(&best);
+                    way.set_search(Some(other));
+                    let second = way.pass(source, key, qp, false)?;
                     made += 1;
                     both.push(frame);
                     if choice.compared(first_bits, second.bytes.len() as u64 * 8) {
@@ -1445,15 +1677,13 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                         changes.push((frame, choice.first()));
                     }
                     // A pass at another QP leaves the better one alone.
-                    session.keep(&best);
-                    session.set_search(Some(choice.first()));
+                    way.keep(&best);
+                    way.set_search(Some(choice.first()));
                     // With a third pass to take: the better one at a higher
                     // QP, if it does not fit either.
                     if let (true, Some(control)) = (made < passes_at_most, control.as_ref()) {
                         if let Some(higher) = control.again(best.bytes.len() as u64 * 8, qp) {
-                            best = session
-                                .pass(source, key, higher, false)
-                                .map_err(|error| error.to_string())?;
+                            best = way.pass(source, key, higher, false)?;
                             passes = 2;
                             made += 1;
                         }
@@ -1462,10 +1692,8 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                 (Some(Second::OtherHigher), Some(other), Some(higher), Some(choice)) => {
                     // The first pass does not fit and is not the frame: its
                     // set of buffers is the next pass's to write.
-                    session.set_search(Some(other));
-                    let second = session
-                        .pass(source, key, higher, false)
-                        .map_err(|error| error.to_string())?;
+                    way.set_search(Some(other));
+                    let second = way.pass(source, key, higher, false)?;
                     made += 1;
                     passes = 2;
                     both.push(frame);
@@ -1480,12 +1708,10 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
                     // whichever search the next frame begins with.
                     best = second;
                     sent_search = Some(other);
-                    session.set_search(Some(choice.first()));
+                    way.set_search(Some(choice.first()));
                 }
                 (Some(Second::Higher), _, Some(higher), _) => {
-                    best = session
-                        .pass(source, key, higher, false)
-                        .map_err(|error| error.to_string())?;
+                    best = way.pass(source, key, higher, false)?;
                     passes = 2;
                     made += 1;
                 }
@@ -1501,12 +1727,12 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             if best.key || control.fits(best.bytes.len() as u64 * 8) {
                 Ok((best, passes))
             } else {
-                let unchanged = session.unchanged();
+                let unchanged = way.unchanged();
                 control.left_out(unchanged.bytes.len() as u64 * 8, best.qp);
                 Ok((unchanged, 0))
             }
         })();
-        if timeout_at == Some(frame) {
+        if let (true, Some(session)) = (provoked, way.lab()) {
             session.set_patience(patience);
             match attempt {
                 Err(error) if error.contains("did not end") => {
@@ -1542,7 +1768,7 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
             if !encoded.key && sent_search == Some(Search::Wide) {
                 wide_frames += 1;
             }
-            session.accept(&encoded);
+            way.accept(&encoded);
             if let Some(control) = control.as_mut() {
                 control.sent(encoded.bytes.len() as u64 * 8, encoded.qp, encoded.key);
             }
@@ -1577,17 +1803,19 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         qps.push(encoded.qp);
         encode_micros.push(encoded.time.as_micros() as u64);
         frame_micros.push(frame_began.elapsed().as_micros() as u64);
-        if frame == 0 {
-            first_frame = steps(&session.trace);
+        if let Some(session) = way.lab() {
+            if frame == 0 {
+                first_frame = steps(&session.trace);
+            }
+            // A long run does not keep every step.
+            session.trace.clear();
         }
-        // A long run does not keep every step.
-        session.trace.clear();
     }
     let elapsed = began.elapsed();
     let flushed = out
         .flush()
         .map_err(|error| format!("{stream_path}: {error}"));
-    if let Some(buffer) = session.broken_guard() {
+    if let Some(buffer) = way.lab().and_then(|session| session.broken_guard()) {
         failure.get_or_insert(format!("the engine wrote outside the {buffer} buffer"));
     }
 
@@ -1638,8 +1866,21 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "framesUnlikeAPeriodBefore": period.map(|_| differing.len()),
         "firstFramesUnlikeAPeriodBefore": period.map(|_| &differing[..differing.len().min(10)]),
     });
+    let (top_after, unknown_interrupt, identification) = match &mut way {
+        Way::Lab(session) => (
+            nonzero(session.engine(), 0x000, 0x100),
+            session.engine().unknown_interrupt,
+            Value::Null,
+        ),
+        Way::Driver(stream) => (
+            Value::Null,
+            false,
+            json!({"decoder": hex(stream.decoder_ip), "encoder": hex(stream.encoder_ip)}),
+        ),
+    };
     let body = json!({
-        "map": hypothesis.name,
+        "map": if through_driver { "driver" } else { hypothesis.name },
+        "engineIdentification": identification,
         "sequence": sequence.name(),
         "width": width,
         "height": height,
@@ -1688,13 +1929,17 @@ fn stream_run(arguments: &[String]) -> Result<(), String> {
         "frameEncodeMicros": encode_micros,
         "error": failure,
         "firstFrameSteps": first_frame,
-        "topAfter": nonzero(session.engine(), 0x000, 0x100),
-        "unknownInterrupt": session.engine().unknown_interrupt,
+        "topAfter": top_after,
+        "unknownInterrupt": unknown_interrupt,
     });
-    let closed = session
-        .close()
-        .map(|_| ())
-        .map_err(|error| error.to_string());
+    let closed = match way {
+        Way::Lab(session) => session
+            .close()
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        // Closing the device is all the driver needs.
+        Way::Driver(_) => Ok(()),
+    };
     receipt(output, "stream", body)?;
     flushed?;
     match failure {
@@ -1717,6 +1962,7 @@ fn main() -> ExitCode {
     let result = match arguments.first().map(String::as_str) {
         Some("generate") => generate(&arguments[1..]),
         Some("standin") => standin(&arguments[1..]),
+        Some("plan") => plan(&arguments[1..]),
         Some("psnr") => compare(&arguments[1..]),
         Some("probe") => probe(&arguments[1..]),
         Some("buffers") => buffers(&arguments[1..]),

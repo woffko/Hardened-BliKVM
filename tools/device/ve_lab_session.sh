@@ -30,7 +30,7 @@ set -eu
 
 HOST=${BLI_KVM_DEVICE_HOST:?set BLI_KVM_DEVICE_HOST to the board address}
 KNOWN_HOSTS=${BLI_KVM_KNOWN_HOSTS:-evidence/private/ssh-known-hosts}
-MODULES=${BLI_KVM_VE_LAB_MODULES:-"hardened_blikvm_ve_lab ve_hello ve_probe_test"}
+MODULES=${BLI_KVM_VE_LAB_MODULES:-"hardened_blikvm_ve_lab hardened_blikvm_ve_enc ve_hello ve_probe_test"}
 REQUIRE_QUIET=${BLI_KVM_VE_LAB_REQUIRE_QUIET:-yes}
 
 output=${1:-}
