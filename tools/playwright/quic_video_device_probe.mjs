@@ -17,6 +17,13 @@
 // for DELAY_MS. The page then has this host's address as its origin, and
 // the gateway's port in the server's answers is replaced by the relay's.
 //
+// With QUALITY_MONITOR=basic or extended the page's quality monitor is open
+// over the span: every second what it shows is read from its worker, and
+// the receipt sets it beside what the probe counts itself (frames drawn a
+// second, a frame's age when drawn) and, through the relays, the bytes that
+// came to the page (docs/design/h264-engine-choice-and-quality-monitor-v1.md,
+// C5.2).
+//
 // The probe logs in once and watches. It asks for no lease and no
 // confirmation of the target: any /api/hid request fails it. The board's
 // QUIC switch is turned on through the API if it is off, and is left as it
@@ -48,6 +55,8 @@ assert.ok(!fs.existsSync(output));
 const SECONDS = Number(secondsValue ?? 60);
 assert.ok(SECONDS >= 5 && SECONDS <= 600);
 const relayed = lossValue !== undefined;
+const MONITOR = process.env.QUALITY_MONITOR ?? null;
+assert.ok(MONITOR === null || ["basic", "extended"].includes(MONITOR));
 const LOSS = Number(lossValue ?? 0);
 const DELAY_MS = Number(delayValue ?? 0);
 assert.ok(LOSS >= 0 && LOSS <= 0.2 && DELAY_MS >= 0 && DELAY_MS <= 500);
@@ -165,6 +174,43 @@ const stats = (page) =>
       resets: Number(canvas.dataset.quicResets),
     };
   });
+
+/** What the quality monitor's worker drew last, by row, and how often it drew. */
+async function monitorDraw(page) {
+  for (const worker of page.workers()) {
+    const found = await worker
+      .evaluate(() =>
+        self.qualityMonitorRows
+          ? { rows: self.qualityMonitorRows, draws: self.qualityMonitorDraws }
+          : null,
+      )
+      .catch(() => null);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Every draw of the monitor while `running()` holds, read ten times a second
+ * so that none is missed: its per-second values are a picture that moves in
+ * steps (a still screen gives a frame every two seconds), and reading once a
+ * second could meet the same step every time.
+ */
+async function everyDraw(page, running) {
+  const draws = [];
+  let last = null;
+  while (running()) {
+    const seen = await monitorDraw(page);
+    if (seen && seen.draws !== last) {
+      if (last !== null && seen.draws > last + 1)
+        draws.missed = (draws.missed ?? 0) + seen.draws - last - 1;
+      last = seen.draws;
+      draws.push(seen.rows);
+    }
+    await sleep(100);
+  }
+  return draws;
+}
 
 /** What the picture's worker counts for the probes (`video.worker.ts`). */
 async function videoProbe(page) {
@@ -321,6 +367,14 @@ try {
     return null;
   });
   step("picture", { afterMs: Math.round(now() - opened) });
+  if (MONITOR) {
+    await page.getByTestId("quality-monitor-toggle").click();
+    await page.getByTestId("quality-monitor").waitFor();
+    await page.locator(`[data-qm-level="${MONITOR}"]`).click();
+    // The pointer rests where it moves nothing.
+    await page.mouse.move(1400, 960);
+    step("monitor", { level: MONITOR });
+  }
 
   await sleep(WARM_UP_MS);
   const before = {
@@ -331,12 +385,18 @@ try {
   };
   assert.ok(before.probe, "the picture's worker was not found");
   const perSecond = [];
+  let spanning = true;
+  const drawing = MONITOR
+    ? everyDraw(page, () => spanning)
+    : Promise.resolve([]);
   for (let second = 0; second < SECONDS; second += 1) {
     await sleep(1000);
     const seen = await stats(page);
     assert.ok(seen, "the picture left the session");
     perSecond.push(seen.fps);
   }
+  spanning = false;
+  const shown = await drawing;
   const after = {
     probe: await videoProbe(page),
     stats: await stats(page),
@@ -386,6 +446,68 @@ try {
     };
   }
   step("measured", receipt.picture);
+  if (MONITOR) {
+    const number = (text) => Number.parseFloat(text);
+    const numbers = (key) =>
+      shown.map((rows) => number(rows[key])).filter(Number.isFinite);
+    const mean = (values) =>
+      values.length
+        ? values.reduce((total, value) => total + value, 0) / values.length
+        : null;
+    const middle = (values) => {
+      const sorted = [...values].sort((left, right) => left - right);
+      return sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+    };
+    const hostSeconds = receipt.hostSeconds?.monotonic ?? SECONDS;
+    const relayBytes = receipt.relay
+      ? (after.relay.toClient.bytes - before.relay.toClient.bytes) / hostSeconds
+      : null;
+    receipt.monitor = {
+      level: MONITOR,
+      draws: shown.length,
+      missedDraws: shown.missed ?? 0,
+      path: shown.at(-1)?.path ?? null,
+      codec: shown.at(-1)?.codec ?? null,
+      framesPerSecond: round(mean(numbers("fps")), 2),
+      megabitsPerSecond: round(mean(numbers("speed")), 3),
+      delayMedianMs: middle(numbers("delay")),
+      rows: shown.at(-1) ?? null,
+    };
+    receipt.monitorCounted = {
+      framesPerSecond: receipt.picture.framesPerSecond,
+      megabitsPerSecond:
+        relayBytes === null ? null : round((relayBytes * 8) / 1e6, 3),
+      delayMedianMs: receipt.picture.age.median,
+    };
+    const within = (shownValue, counted) =>
+      shownValue !== null &&
+      counted !== null &&
+      Math.abs(shownValue - counted) <= 0.1 * counted;
+    receipt.monitorChecks = {
+      framesPerSecondWithin10: within(
+        receipt.monitor.framesPerSecond,
+        receipt.monitorCounted.framesPerSecond,
+      ),
+      bytesRateWithin10:
+        receipt.monitorCounted.megabitsPerSecond === null
+          ? null
+          : within(
+              receipt.monitor.megabitsPerSecond,
+              receipt.monitorCounted.megabitsPerSecond,
+            ),
+      delayWithin10Ms:
+        receipt.monitor.delayMedianMs !== null &&
+        Math.abs(
+          receipt.monitor.delayMedianMs - receipt.monitorCounted.delayMedianMs,
+        ) <= 10,
+      path: receipt.monitor.path === "QUIC",
+    };
+    step("monitor measured", {
+      monitor: receipt.monitor,
+      counted: receipt.monitorCounted,
+      checks: receipt.monitorChecks,
+    });
+  }
 
   // What the page and the gateway say about the session.
   await page.locator("svg.lucide-settings").first().click();
@@ -435,6 +557,10 @@ try {
     }
   }
   if (switchedOn && receipt.left?.enabled !== false) result = "failed";
+  // Nothing the relays' route asks may be in flight when the browser goes.
+  await context
+    ?.unrouteAll({ behavior: "ignoreErrors" })
+    .catch(() => undefined);
   const clocksAfter = hostClocks();
   if (clocksBefore && clocksAfter) {
     receipt.hostClockRate =

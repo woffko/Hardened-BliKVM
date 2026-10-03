@@ -52,6 +52,8 @@ const scope = self as unknown as Scope & {
   qualityMonitorRows?: Record<string, string>;
   qualityMonitorLabels?: Record<string, string>;
   qualityMonitorSections?: string[];
+  /** How often it drew: a probe that reads more often takes every draw once. */
+  qualityMonitorDraws?: number;
 };
 
 let url = '';
@@ -108,6 +110,7 @@ function draw() {
     sections.flatMap((section) => section.rows.map((row) => [row.key, row.label]))
   );
   scope.qualityMonitorSections = sections.map((section) => section.key);
+  scope.qualityMonitorDraws = (scope.qualityMonitorDraws ?? 0) + 1;
 
   const { width, fontPx, scale } = view;
   const line = Math.round(fontPx * 1.35);

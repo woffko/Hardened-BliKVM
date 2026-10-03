@@ -8,7 +8,7 @@
 # usage: sh ve_unit_cpu.sh SECONDS
 set -u
 seconds=${1:?usage: $0 SECONDS}
-units="hardened-blikvm-ustreamer hardened-blikvm-video-encoder-h264 hardened-blikvm-janus hardened-blikvm-quic hardened-blikvm-server-current hardened-blikvm-nginx hardened-blikvm-board-video-proxy"
+units="hardened-blikvm-ustreamer hardened-blikvm-video-encoder-h264 hardened-blikvm-video-encoder hardened-blikvm-janus hardened-blikvm-quic hardened-blikvm-server-current hardened-blikvm-server-candidate hardened-blikvm-nginx hardened-blikvm-board-video-proxy"
 sample() {
   printf 'at=%s' "$(date +%s.%N)"
   for unit in $units; do
