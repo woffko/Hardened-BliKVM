@@ -31,6 +31,19 @@ class BuildSdImageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.script = BUILDER.read_text(encoding="utf-8")
 
+    def test_the_encoder_driver_is_checked_against_the_images_kernel(self) -> None:
+        # The check runs on the tree the image is made of, before the file
+        # system is: a driver for another kernel stops the build.
+        check = 'python3 "$script_dir/../ve_module.py" image "$staging"\n'
+        self.assertEqual(self.script.count(check), 1)
+        self.assertLess(self.script.index(check), self.script.index('root_img="$work/root.ext4"'))
+        self.assertLess(self.script.index("tar --numeric-owner --no-acls --no-xattrs"), self.script.index(check))
+        self.assertTrue((ROOT / "tools/ve_module.py").is_file())
+        # The module lives outside the directories the fetch leaves out.
+        fetch = self.script[self.script.index("fetch() {") : self.script.index("assemble() {")]
+        self.assertNotIn("--exclude=./usr/lib/hardened-blikvm", fetch)
+        self.assertNotIn("--exclude=./usr", fetch)
+
     def test_the_image_store_is_mounted_after_tmpfiles_with_its_new_uuid(self) -> None:
         board = (
             "UUID=a / ext4 defaults,noatime 0 1\n"

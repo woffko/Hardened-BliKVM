@@ -278,6 +278,12 @@ assemble() {
     }
   done
 
+  # The encoder driver of the video engine loads on one kernel release.
+  # What the image carries of it must be that driver for the kernel the
+  # image boots, and an image that enables the driver's unit must carry it:
+  # a module for another kernel would sit in the image as if it worked.
+  python3 "$script_dir/../ve_module.py" image "$staging"
+
   # Every path the units that start need must exist in the image, or be one
   # the first boot creates: a missing sandbox path stops a unit before it
   # runs (the board owner, and with it the whole application, on a card
