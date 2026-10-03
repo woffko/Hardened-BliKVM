@@ -3140,7 +3140,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         # driver is ever switched on. The board's first deploy of the unit
         # without it left H.264 without an encoder.
         unit = (ROOT / "packaging/systemd/hardened-blikvm-video-encoder-h264.service").read_text()
-        groups = set()
+        groups: set[str] = set()
         for line in unit.splitlines():
             if line.startswith("SupplementaryGroups="):
                 groups.update(line.removeprefix("SupplementaryGroups=").split())
