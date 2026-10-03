@@ -166,7 +166,6 @@ def slice_only_units(client):
 LIBC = ctypes.CDLL(None, use_errno=True)
 LIBC.mmap.restype = ctypes.c_void_p
 LIBC.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
-LIBC.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 MAP_PRIVATE_ANONYMOUS = 0x02 | 0x20
 # fcntl.ioctl takes an argument that is a number only as a C int: an
 # address of this process does not fit, so such requests go through libc.
@@ -182,11 +181,12 @@ def ioctl_at(fd, request, address):
     return 0
 
 
-def unmapped():
-    """An address of this process that has no memory behind it."""
-    address = LIBC.mmap(None, 1 << 20, mmap.PROT_READ, MAP_PRIVATE_ANONYMOUS, -1, 0)
-    LIBC.munmap(address, 1 << 20)
-    return address
+def no_memory():
+    """An address of this process that can be neither read nor written: a
+    mapping without access, kept for as long as the test runs. A mapping
+    that is given back is where the next one of its size goes, and the first
+    run of this test found its own 1 MiB stream buffer there."""
+    return LIBC.mmap(None, 1 << 20, 0, MAP_PRIVATE_ANONYMOUS, -1, 0)
 
 
 def read_only(size):
@@ -195,7 +195,7 @@ def read_only(size):
 
 
 def groups(report):
-    hole = unmapped()
+    hole = no_memory()
 
     # Nothing but one client.
     first = Client()
