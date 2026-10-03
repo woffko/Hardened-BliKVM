@@ -7,6 +7,9 @@
 #   hardened-blikvm-video-encoder.service  packaging/systemd
 #   hardened-blikvm-video-encoder-h264.service  packaging/systemd (x264)
 #   60-hardened-blikvm-stream.conf         packaging/sysctl (MJPEG latency)
+#   hardened-blikvm-ve.conf                packaging/sysusers.d (the group of the
+#                                          video engine's encoder device, which
+#                                          the H.264 encoder's unit names)
 #   hardened-blikvm-ustreamer.service      packaging/systemd (default rate)
 #   licenses/*                             license texts of the static libraries
 #                                          linked into the encoder (libvpx,
@@ -49,6 +52,11 @@ install_vp8() {
   install -m 0644 "$staging/hardened-blikvm-video-encoder.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-video-encoder-h264.service" "$units/"
   install -m 0644 "$staging/hardened-blikvm-ustreamer.service" "$units/"
+  # The H.264 encoder's unit joins the group of the video engine's encoder
+  # device, and systemd starts no unit that names a group the system does
+  # not have (216/GROUP): the group comes with the unit, whether or not the
+  # driver is ever switched on (deploy_ve.sh). It stays when this is removed.
+  systemd-sysusers "$staging/hardened-blikvm-ve.conf"
   install -m 0644 -o root -g root "$staging/60-hardened-blikvm-stream.conf" /etc/sysctl.d/
   sysctl -q -p /etc/sysctl.d/60-hardened-blikvm-stream.conf
   for unit in $serving; do

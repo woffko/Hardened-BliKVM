@@ -28,7 +28,6 @@ encoder=hardened-blikvm-video-encoder-h264.service
 module=hardened_blikvm_ve_enc
 node=/dev/hardened-blikvm-ve-enc
 rule=/etc/udev/rules.d/99-hardened-blikvm-ve.rules
-group_file=/etc/sysusers.d/hardened-blikvm-ve.conf
 modprobe_file=/etc/modprobe.d/hardened-blikvm-ve.conf
 
 engine() {
@@ -68,8 +67,9 @@ install_ve() {
     /usr/libexec/hardened-blikvm/bli-kvm-ve-load; do
     [ -f "$file" ] || { echo "$file is missing: install the update-runtime package first" >&2; exit 1; }
   done
-  install -m 0644 -o root -g root "$examples/hardened-blikvm-ve-sysusers.conf" "$group_file"
-  systemd-sysusers "$group_file"
+  # The group is made from the package's example, as the QUIC gateway's
+  # user is; deploy_vp8.sh made it already where the encoder is installed.
+  systemd-sysusers "$examples/hardened-blikvm-ve-sysusers.conf"
   install -m 0644 -o root -g root "$examples/99-hardened-blikvm-ve.rules" "$rule"
   udevadm control --reload
   install -m 0644 -o root -g root "$examples/hardened-blikvm-ve-modprobe.conf" "$modprobe_file"
@@ -101,9 +101,7 @@ remove_ve() {
   if [ -n "$device" ] && [ ! -e "$device/driver" ] && [ -d /sys/bus/platform/drivers/cedrus ]; then
     basename "$device" > /sys/bus/platform/drivers/cedrus/bind || true
   fi
-  # The group stays in /etc/group, as every group a package's fragment
-  # made does; its fragment goes.
-  rm -f "$group_file"
+  # The group stays: the H.264 encoder's unit names it.
   systemctl daemon-reload
   if [ "$was_active" = yes ]; then
     systemctl start "$encoder"

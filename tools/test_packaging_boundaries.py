@@ -3133,6 +3133,30 @@ class PackagingBoundaryTests(unittest.TestCase):
             tmpfiles,
         )
 
+    def test_every_group_of_the_h264_encoder_unit_comes_with_it(self) -> None:
+        # systemd starts no unit that names a group the system lacks
+        # (216/GROUP): the group of the video engine's encoder device must be
+        # made where the H.264 encoder's unit is installed, whether or not the
+        # driver is ever switched on. The board's first deploy of the unit
+        # without it left H.264 without an encoder.
+        unit = (ROOT / "packaging/systemd/hardened-blikvm-video-encoder-h264.service").read_text()
+        groups = set()
+        for line in unit.splitlines():
+            if line.startswith("SupplementaryGroups="):
+                groups.update(line.removeprefix("SupplementaryGroups=").split())
+        self.assertIn("hardened-blikvm-ve", groups)
+        deploy = (ROOT / "tools/device/deploy_vp8.sh").read_text()
+        install = deploy[deploy.index("install_vp8() {") : deploy.index("remove_vp8() {")]
+        made = install.index('systemd-sysusers "$staging/hardened-blikvm-ve.conf"')
+        self.assertLess(made, install.index("systemctl restart hardened-blikvm-video-encoder.service"))
+        self.assertIn("g hardened-blikvm-ve -", (ROOT / "packaging/sysusers.d/hardened-blikvm-ve.conf").read_text())
+        # The other group is the runtime's own.
+        base = (ROOT / "packaging/sysusers.d/hardened-blikvm.conf").read_text()
+        for group in groups - {"hardened-blikvm-ve"}:
+            self.assertRegex(base, rf"(?m)^[gu] {re.escape(group)} ")
+        # deploy_ve.sh makes the group without a directory the board may lack.
+        self.assertNotIn("/etc/sysusers.d", (ROOT / "tools/device/deploy_ve.sh").read_text())
+
     def test_the_video_engine_lab_is_in_no_package(self) -> None:
         # The lab tool and the lab module of the hardware H.264 plan give a
         # root process the video engine. Nothing that is built for a board
