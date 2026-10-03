@@ -33,6 +33,7 @@ try {
   let fps = 60;
   let quality = 80;
   let resolution = "1920x1080";
+  let h264Encoder = "hardware";
   await page.route("**/api/vm/screen", (route) => {
     requests.push(route.request().method());
     if (route.request().method() === "POST") {
@@ -87,6 +88,8 @@ try {
           queuedFps: fps === 60 ? 28 : 19,
           width: 1280,
           height: 720,
+          // What the board's H.264 encoder says encodes; the page shows it.
+          ...(h264Encoder ? { h264Encoder } : {}),
         },
       },
     });
@@ -106,6 +109,9 @@ try {
     ["GET"],
     "opening desktop or screen settings must not write video settings",
   );
+  // The encoder in use is shown as the board says it, and changes with it.
+  await page.getByText("H.264 encoder: video engine (hardware)").waitFor();
+  h264Encoder = "x264";
   await page.getByText("30Hz", { exact: true }).click();
   await page.getByText("fps_refused", { exact: true }).waitFor();
   assert.equal(await selected.locator("svg.lucide-check").count(), 1);
@@ -116,6 +122,8 @@ try {
   accept = true;
   await page.getByText("30Hz", { exact: true }).click();
   await page.getByText(/delivers 20 fps/).waitFor();
+  await page.getByText("H.264 encoder: x264 (software)").waitFor();
+  assert.equal(await page.getByText(/video engine \(hardware\)/).count(), 0);
   assert.equal(
     await page
       .getByText("30Hz", { exact: true })

@@ -95,6 +95,8 @@ const en = {
       qualityLow: 'Low',
       qualityVeryHigh: 'Very high',
       megabitsPerSecond: '{{value}} Mbit/s',
+      h264EncoderHardware: 'H.264 encoder: video engine (hardware)',
+      h264EncoderSoftware: 'H.264 encoder: x264 (software)',
       frameDetect: 'Frame Detect',
       frameDetectTip:
         "Calculate the difference between frames. Stop transmitting video stream when no changes are detected on the remote host's screen.",

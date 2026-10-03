@@ -196,10 +196,14 @@ fn open_hardware(path: PathBuf) -> Box<OpenHardware> {
     })
 }
 
-/// Says which engine encodes: one word in a file, replaced whole.
+/// Says which engine encodes: one word in a file, replaced whole. The web
+/// server reads it, which is another user: the unit's mask would keep the
+/// file to the encoder.
 fn write_status(path: &std::path::Path, name: &str) {
+    use std::os::unix::fs::PermissionsExt;
     let temporary = path.with_extension("new");
     let written = std::fs::write(&temporary, format!("{name}\n"))
+        .and_then(|()| std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o644)))
         .and_then(|()| std::fs::rename(&temporary, path));
     if let Err(error) = written {
         eprintln!("bli-kvm-video-encoder: {}: {error}", path.display());

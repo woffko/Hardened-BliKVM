@@ -35,6 +35,8 @@ export const Screen = () => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [capturedFps, setCapturedFps] = useState<number | undefined>(undefined);
+  // What encodes H.264 on the board, once its encoder has said so.
+  const [h264Encoder, setH264Encoder] = useState<'hardware' | 'x264' | undefined>(undefined);
   const [delivered, setDelivered] = useState<{
     width?: number;
     height?: number;
@@ -73,6 +75,9 @@ export const Screen = () => {
     const measured = (value: unknown) =>
       typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
     setCapturedFps(measured(data.capturedFps));
+    setH264Encoder(
+      data.h264Encoder === 'hardware' || data.h264Encoder === 'x264' ? data.h264Encoder : undefined
+    );
     setDelivered({
       width: measured(data.width),
       height: measured(data.height),
@@ -128,6 +133,13 @@ export const Screen = () => {
         (videoMode === 'vp8' || videoMode === 'h264') &&
         videoSettings.includes('webrtc_bitrate') &&
         webrtcKbps !== undefined && <WebrtcQuality kbps={webrtcKbps} refresh={refresh} />}
+      {isWritable && loaded && h264Encoder && (
+        <div className="px-2 pb-1 text-xs text-neutral-400">
+          {t(
+            h264Encoder === 'hardware' ? 'screen.h264EncoderHardware' : 'screen.h264EncoderSoftware'
+          )}
+        </div>
+      )}
       {isWritable && loaded && quality > 0 && videoSettings.includes('quality') && (
         <Quality quality={quality} refresh={refreshAfterChange} />
       )}

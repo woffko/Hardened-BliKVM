@@ -156,6 +156,9 @@ pub struct ServerOptions {
     /// The engine's read-only control socket (`/state` read-back for the
     /// measured capture rate). No value keeps the extra field absent.
     pub engine_socket: Option<PathBuf>,
+    /// Where the H.264 encoder says which engine encodes (the board's video
+    /// engine or x264). No value keeps the field absent.
+    pub h264_encoder_status: Option<PathBuf>,
     /// Root administration helper (terminal, scripts). No value keeps those
     /// features unavailable even when switched on.
     pub admin_socket: Option<PathBuf>,
@@ -214,6 +217,7 @@ impl Default for ServerOptions {
             system_actions_enabled: false,
             video_controls_enabled: false,
             engine_socket: None,
+            h264_encoder_status: None,
             admin_socket: None,
             download_socket: None,
             picoclaw_socket: None,

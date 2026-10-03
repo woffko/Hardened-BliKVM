@@ -63,6 +63,29 @@ pub(crate) struct ScreenOutcome {
     /// The WebRTC encoders' target bitrate in kbit/s, when WebRTC is offered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webrtc_kbps: Option<u32>,
+    /// What encodes H.264: `hardware` (the board's video engine) or `x264`.
+    /// Absent while the encoder has not said, which it does with its first
+    /// frame for a viewer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h264_encoder: Option<&'static str>,
+}
+
+/// The H.264 encoder's own word for what encodes, from the file it keeps.
+/// Anything but the two words it has is no answer.
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) fn read_h264_encoder(path: &std::path::Path) -> Option<&'static str> {
+    use std::io::Read;
+    let mut word = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(16)
+        .read_to_string(&mut word)
+        .ok()?;
+    match word.trim_end_matches('\n') {
+        "hardware" => Some("hardware"),
+        "x264" => Some("x264"),
+        _ => None,
+    }
 }
 
 #[cfg(feature = "restricted-control-surface")]
@@ -131,6 +154,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             height: None,
             queued_fps: None,
             webrtc_kbps: None,
+            h264_encoder: None,
         },
         ControlResponse::VideoState {
             fps,
@@ -147,6 +171,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             height: None,
             queued_fps: None,
             webrtc_kbps: None,
+            h264_encoder: None,
         },
         ControlResponse::Rejected { code } => ScreenOutcome {
             requested_resolution: None,
@@ -159,6 +184,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             height: None,
             queued_fps: None,
             webrtc_kbps: None,
+            h264_encoder: None,
         },
         _ => ScreenOutcome {
             requested_resolution: None,
@@ -171,6 +197,7 @@ fn outcome(response: ControlResponse) -> ScreenOutcome {
             height: None,
             queued_fps: None,
             webrtc_kbps: None,
+            h264_encoder: None,
         },
     }
 }
@@ -201,6 +228,7 @@ pub(crate) async fn update_screen(
                 height: None,
                 queued_fps: None,
                 webrtc_kbps: None,
+                h264_encoder: None,
             })));
         }
     };
@@ -276,6 +304,11 @@ pub(crate) async fn screen_state(
         .webrtc
         .as_ref()
         .map(|gateway| *gateway.bitrate.borrow());
+    outcome.h264_encoder = state
+        .options
+        .h264_encoder_status
+        .as_deref()
+        .and_then(read_h264_encoder);
     // Read the measured state only for an applied state and only when the engine
     // socket is configured; an unreachable engine simply omits the fields.
     if outcome.applied {
@@ -320,6 +353,28 @@ pub(crate) async fn screen_state(
 #[cfg(all(test, feature = "restricted-control-surface"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_h264_encoder_is_named_by_its_own_word_and_no_other() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("encoder");
+        assert_eq!(read_h264_encoder(&path), None);
+        for (written, read) in [
+            ("hardware\n", Some("hardware")),
+            ("x264\n", Some("x264")),
+            ("x264", Some("x264")),
+            ("", None),
+            ("vp8\n", None),
+            ("hardware and more\n", None),
+            ("hardware\nx264\n", None),
+        ] {
+            std::fs::write(&path, written).unwrap();
+            assert_eq!(read_h264_encoder(&path), read, "{written:?}");
+        }
+        // A file that is not the encoder's small word is not read to its end.
+        std::fs::write(&path, vec![b'x'; 1 << 20]).unwrap();
+        assert_eq!(read_h264_encoder(&path), None);
+    }
 
     #[test]
     fn maps_the_reference_request_to_a_bounded_change() {

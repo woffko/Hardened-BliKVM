@@ -90,6 +90,14 @@ fn has_nal(frame: &[u8], kind: u8) -> bool {
 fn encoder_and_client(
     pictures: &'static [&'static [u8]],
 ) -> (tempfile::TempDir, UdpSocket, Encoder, UnixStream) {
+    encoder_and_client_with(pictures, &[])
+}
+
+/// The same with more of the unit's settings.
+fn encoder_and_client_with(
+    pictures: &'static [&'static [u8]],
+    more: &[(&str, &str)],
+) -> (tempfile::TempDir, UdpSocket, Encoder, UnixStream) {
     let directory = tempfile::tempdir().unwrap();
     let upstream = directory.path().join("ustreamer.sock");
     let socket = directory.path().join("frames.sock");
@@ -108,6 +116,16 @@ fn encoder_and_client(
             .env("BLI_KVM_VP8_THREADS", "1")
             .env_remove("BLI_KVM_VP8_DEMAND_SOCKET")
             .env_remove("BLI_KVM_ENCODER_FRAME_USER")
+            .env_remove("BLI_KVM_ENCODER_HARDWARE")
+            .env_remove("BLI_KVM_ENCODER_STATUS")
+            .envs(more.iter().map(|(name, value)| {
+                // A value that begins with a dot is a file of the test's
+                // own directory.
+                match value.strip_prefix("./") {
+                    Some(file) => (*name, directory.path().join(file).into_os_string()),
+                    None => (*name, (*value).into()),
+                }
+            }))
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
@@ -240,4 +258,31 @@ fn on_a_still_picture_a_key_frame_comes_when_it_is_asked_for() {
     );
     // The first one did not wait for a period either.
     assert!(first_at.duration_since(started) < Duration::from_secs(8));
+}
+
+/// A unit that names the video engine's device on a board that has none:
+/// x264 encodes, as before, and the encoder says so where the web server
+/// reads it.
+#[test]
+fn without_the_video_engine_x264_encodes_and_the_encoder_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let (directory, _rtp, _encoder, mut client) = encoder_and_client_with(
+        &FRAMES,
+        &[
+            ("BLI_KVM_ENCODER_HARDWARE", "./no-such-device"),
+            ("BLI_KVM_ENCODER_STATUS", "./encoder"),
+            ("BLI_KVM_ENCODER_CONVERTERS", "3"),
+        ],
+    );
+    let (first, frame) = read_record(&mut client);
+    assert_eq!(first.kind, Kind::Key);
+    assert!(has_nal(&frame, 7) && has_nal(&frame, 8) && has_nal(&frame, 5));
+    for _ in 0..10 {
+        read_record(&mut client);
+    }
+    let status = directory.path().join("encoder");
+    assert_eq!(std::fs::read_to_string(&status).unwrap(), "x264\n");
+    // Another user reads it.
+    let mode = std::fs::metadata(&status).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o644);
 }
