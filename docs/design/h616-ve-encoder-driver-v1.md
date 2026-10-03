@@ -245,10 +245,44 @@ and from traces of the vendor's library; it contains no vendor code.
 
 ## How it reaches a board
 
-The update-runtime package carries the module built for the board's
-kernel release and for no other, loads it at boot, and gives its device
-node to the encoder unit's group (V6.1). The lab module and the lab tool
-are never packaged.
+The update-runtime package, from `0.1.0~dev36`, carries the module built
+for the board's kernel release, `5.19.4-sunxi64`, and for no other:
+
+- `/usr/lib/hardened-blikvm/modules/5.19.4-sunxi64/hardened-blikvm-ve-enc.ko`.
+  The directory is not one of the kernel's own: nothing loads the module
+  because a device asks for it.
+- `/usr/libexec/hardened-blikvm/bli-kvm-ve-load` and
+  `hardened-blikvm-ve.service`, which runs it once at boot, before the
+  H.264 encoder. The unit's condition is the module for the kernel that
+  runs (`%v`), so on another kernel it does nothing. The loader looks for
+  the engine by its device-tree name, gives up the decoder driver's hold on
+  it if that driver was loaded, loads the one file with `insmod`, waits
+  for udev, and fails unless the device then belongs to the encoder's
+  group. Its unit has one capability, the one that loads a module.
+- As examples, which the device script puts in place
+  (`tools/device/deploy_ve.sh install`), like every active configuration
+  of that package: the group `hardened-blikvm-ve`; the udev rule that gives
+  `/dev/hardened-blikvm-ve-enc` to that group with mode 0660 (the driver
+  asks for 0600, and udev would set that again on every event without the
+  rule); and a modprobe line that keeps `sunxi_cedrus`, which nothing of
+  the product uses, from being loaded.
+- The module's source, beside it (`.../ve-module-source`), because the
+  module is GPL-2.0-only and goes where the package goes.
+
+Only the H.264 encoder's unit is in the group, and its device policy
+allows this one device. Nothing requires the driver's unit: an encoder
+that cannot open the device uses x264 and says so.
+
+The package's builder refuses a module that is not this driver for this
+release: `tools/ve_module.py` reads the module's own description. The SD
+image builder asks the same of the tree an image is made of, against the
+kernel the image boots, and refuses an image whose driver is for another
+kernel or that enables the unit without a driver; the RAW system payload
+is that image's root file system. The capture unit names its device by
+the rule's name alone, because without the decoder driver the capture is
+the first video device instead of the second.
+
+The lab module and the lab tool are never packaged.
 
 ## Tests
 
@@ -339,6 +373,7 @@ Receipts: `evidence/private/ve-lab-v4-20261003-first`, `-compare`,
 | Three requests: configure, encode, read the result | the result comes back with the encode request | one request a frame is one sleep and one place where a frame can fail |
 | A frame is encoded, key or not, at a QP | a frame may be made in several passes, with either of two searches, and the client says which pass is the frame | V3 found that neither of the engine's searches is right for every picture and that the engine is fast enough to try both (`h616-ve-h264-encoder.md`, V3.4 and V3.5); the choice is the rate control's, which is the client's by the plan |
 | A device of its own or a V4L2 encoder, to be decided | a device of its own | a V4L2 stateful encoder would bring the framework's buffer queues and controls into a module whose whole point is to be small enough to check; the product has one client that needs none of it |
+| The update-runtime package loads the module at boot, gives the node to the encoder's group, and no longer loads `cedrus` (V6.1) | the package carries the module, its loader and the loader's unit, installed disabled; the group, the udev rule and the modprobe line are examples, which `tools/device/deploy_ve.sh install` puts in place before it enables the unit | by its own design the package enables no unit, installs its sysusers and other fragments only as examples, and has no maintainer script (`docs/design/update-runtime-package-v1.md`): what changes how the system boots is switched on by a step that can be seen and undone (`deploy_ve.sh remove`), as the encoder's own units are by `deploy_vp8.sh` |
 
 ## Not in this version
 

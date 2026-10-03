@@ -40,6 +40,8 @@ install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-update
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-admin-helper"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-system-update"
 install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-quic-gateway"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-ve-load"
+install -m 0755 /bin/true "$test_root/usr/libexec/hardened-blikvm/bli-kvm-video-encoder"
 # The PicoClaw runtime is downloaded at run time, not packaged.
 install -d -m 0755 "$test_root/var/lib/hardened-blikvm-picoclaw-runtime"
 install -m 0755 /bin/true "$test_root/var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
@@ -56,6 +58,7 @@ install -m 0644 \
   "$project_root/packaging/sysusers.d/hardened-blikvm.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-diagnostics.conf" \
   "$project_root/packaging/sysusers.d/hardened-blikvm-quic.conf" \
+  "$project_root/packaging/sysusers.d/hardened-blikvm-ve.conf" \
   "$test_root/usr/lib/sysusers.d/"
 install -m 0644 \
   "$project_root/packaging/tmpfiles.d/hardened-blikvm-update.conf" \
@@ -138,7 +141,9 @@ systemd-analyze verify --root="$test_root" \
   hardened-blikvm-picoclaw-api.socket \
   hardened-blikvm-picoclaw-api@.service \
   hardened-blikvm-system-update-booted.service \
-  hardened-blikvm-quic.service
+  hardened-blikvm-quic.service \
+  hardened-blikvm-ve.service \
+  hardened-blikvm-video-encoder-h264.service
 
 # Native profile: the rendered replacements override the managed base units
 # and must verify on their own, with no legacy recover/confirm dependency.
@@ -217,7 +222,11 @@ systemd-analyze security --offline=yes --threshold=22 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-update-exec@.service" \
   "$project_root/packaging/systemd/hardened-blikvm-nginx.service" \
   >/dev/null
-# The encoder with its one device.
+# The encoder with its one device, and the root unit whose one capability
+# loads the encoder driver.
 systemd-analyze security --offline=yes --threshold=20 --no-pager \
   "$project_root/packaging/systemd/hardened-blikvm-video-encoder-h264.service" \
+  >/dev/null
+systemd-analyze security --offline=yes --threshold=20 --no-pager \
+  "$project_root/packaging/systemd/hardened-blikvm-ve.service" \
   >/dev/null

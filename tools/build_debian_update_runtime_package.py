@@ -20,11 +20,12 @@ if not __package__:
 
 from tools import build_debian_runtime_package as runtime_package
 from tools import stage_device_prototype as prototype
+from tools import ve_module
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev35"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev36"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -181,6 +182,40 @@ FILE_MAP.update({
         "lib/systemd/system/hardened-blikvm-hid-gadget.service"
     ),
 })
+# dev36: the encoder driver of the H616's video engine, for exactly this
+# kernel release (docs/design/h616-ve-encoder-driver-v1.md). The package
+# installs the module, its loader and the loader's unit, disabled; the rule
+# that gives the device to the encoder's group, that group, and the line
+# that keeps the decoder driver from being loaded are examples, as every
+# active configuration of this package is. The module is GPL-2.0-only and
+# comes with its source.
+VE_KERNEL_RELEASE = "5.19.4-sunxi64"
+VE_MODULE_DESTINATION = (
+    f"{ve_module.MODULE_ROOT}/{VE_KERNEL_RELEASE}/{ve_module.MODULE_FILE}"
+)
+VE_MODULE_SOURCE_FILES = (
+    "README.md", "ve_enc.c", "ve_enc_abi.h", "ve_enc_plan.c", "ve_enc_plan.h", "ve_hw.c", "ve_hw.h",
+)
+FILE_MAP.update({
+    f"share/ve/{VE_KERNEL_RELEASE}/{ve_module.MODULE_FILE}": VE_MODULE_DESTINATION,
+    "libexec/bli-kvm-ve-load": "usr/libexec/hardened-blikvm/bli-kvm-ve-load",
+    "share/systemd/hardened-blikvm-ve.service": (
+        "lib/systemd/system/hardened-blikvm-ve.service"
+    ),
+    "share/udev/99-hardened-blikvm-ve.rules": (
+        f"usr/share/doc/{PACKAGE_NAME}/examples/99-hardened-blikvm-ve.rules"
+    ),
+    "share/sysusers.d/hardened-blikvm-ve.conf": (
+        f"usr/share/doc/{PACKAGE_NAME}/examples/hardened-blikvm-ve-sysusers.conf"
+    ),
+    "share/modprobe.d/hardened-blikvm-ve.conf": (
+        f"usr/share/doc/{PACKAGE_NAME}/examples/hardened-blikvm-ve-modprobe.conf"
+    ),
+})
+FILE_MAP.update({
+    f"share/ve/source/{name}": f"usr/share/doc/{PACKAGE_NAME}/ve-module-source/{name}"
+    for name in VE_MODULE_SOURCE_FILES
+})
 NATIVE_PROFILE_UNITS = (
     "board-owner", "board-video-proxy", "boardd", "server-current", "server-candidate",
     "update-activation@",
@@ -202,6 +237,7 @@ EXECUTABLE_DESTINATIONS = {
     "usr/libexec/hardened-blikvm/bli-kvm-admin-helper",
     "usr/libexec/hardened-blikvm/bli-kvm-system-update",
     "usr/libexec/hardened-blikvm/bli-kvm-quic-gateway",
+    "usr/libexec/hardened-blikvm/bli-kvm-ve-load",
     "usr/share/initramfs-tools/hooks/hardened-blikvm-system-update",
     "usr/share/initramfs-tools/scripts/local-premount/hardened-blikvm-system-update",
 }
@@ -247,6 +283,12 @@ def file_map(version: str) -> dict[str, str]:
         "bli-kvm-quic-gateway": 32,
         "hardened-blikvm-quic.service": 32,
         "hardened-blikvm-quic.conf": 32,
+        # dev36 is the 33rd.
+        "bli-kvm-ve-load": 33,
+        "hardened-blikvm-ve.service": 33,
+        "99-hardened-blikvm-ve.rules": 33,
+        # The group's fragment and the modprobe line have one name.
+        "hardened-blikvm-ve.conf": 33,
         "94-application-update.conf": 10,
         "hardened-blikvm-update-activation.socket": 9,
         "hardened-blikvm-update-activation@.service": 9,
@@ -260,6 +302,9 @@ def file_map(version: str) -> dict[str, str]:
         # Native examples share base-unit names, so they are keyed by directory.
         if source.startswith("share/systemd/native/"):
             return 11
+        # The driver and its source, by their directory.
+        if source.startswith("share/ve/"):
+            return 33
         return introduced.get(source.rsplit("/", 1)[-1], 1)
 
     return {source: destination for source, destination in FILE_MAP.items()
@@ -307,6 +352,9 @@ def package_manifest(
         # switches it on and the initramfs is rebuilt.
         "systemUpdateIncluded": SUPPORTED_PACKAGE_VERSIONS.index(version) >= 25,
         "hardwareMutationIncluded": False,
+        # dev36 carries a kernel module, loaded by a unit that is installed
+        # disabled.
+        "kernelModuleIncluded": SUPPORTED_PACKAGE_VERSIONS.index(version) >= 32,
     }
 
 
@@ -322,6 +370,17 @@ def audit_package_tree(root: Path) -> None:
     for relative in relative_files:
         if relative.startswith(ACTIVE_CONFIGURATION_PREFIXES):
             raise BuildError("update package entered an active configuration path")
+    # The one module is the encoder driver for the release its directory
+    # names; nothing else under the package's tree is a module.
+    for path in files:
+        relative = str(path.relative_to(root))
+        if relative == VE_MODULE_DESTINATION:
+            try:
+                ve_module.check(path.read_bytes(), VE_KERNEL_RELEASE)
+            except ve_module.ModuleError as error:
+                raise BuildError("the packaged kernel module is not the encoder driver") from error
+        elif path.name.endswith(".ko"):
+            raise BuildError("update package contains an unexpected kernel module")
     control_root = root / "DEBIAN"
     if {path.name for path in control_root.iterdir()} != {"control"}:
         raise BuildError("update package contains a maintainer script")
@@ -373,6 +432,9 @@ def build_package(bundle_value: str, expected_sha256: str, output_value: str) ->
                 "Description: inert Hardened BliKVM application update runtime",
                 " Installs disabled update binaries and systemd templates only.",
                 " It contains no trust key, active configuration, state, slot, API, or GUI route.",
+                f" The encoder driver of the video engine is for kernel {VE_KERNEL_RELEASE} only;",
+                " it is GPL-2.0-only (/usr/share/common-licenses/GPL-2) and its source is in",
+                f" /usr/share/doc/{PACKAGE_NAME}/ve-module-source.",
                 "",
             )
         )

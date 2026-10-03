@@ -83,6 +83,8 @@ sh -n tools/device/ve_stream_run.sh
 sh -n tools/device/ve_endurance_run.sh
 sh -n tools/device/ve_driver_compare.sh
 sh -n kernel/hardened-blikvm-ve/test/run.sh
+sh -n packaging/ve/bli-kvm-ve-load
+sh -n tools/device/deploy_ve.sh
 sh -n scripts/build-ve-reference.sh
 node --check tools/playwright/ve_stream_check.mjs
 python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan.py \
@@ -359,6 +361,7 @@ python3 -m unittest \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
   tools/test_build_system_raw_bundle.py \
+  tools/test_ve_module.py \
   -v
 python3 -m py_compile \
   tools/device/owner_lock_probe.py \
@@ -558,7 +561,9 @@ python3 -m py_compile \
   tools/test_build_update_test_fixture.py \
   tools/test_build_system_image_test_fixture.py \
   tools/build_system_raw_bundle.py \
-  tools/test_build_system_raw_bundle.py
+  tools/test_build_system_raw_bundle.py \
+  tools/ve_module.py \
+  tools/test_ve_module.py
 
 node --check tools/playwright/device_tls_auth_smoke.mjs
 node --check tools/playwright/local_application_upload.mjs
@@ -836,7 +841,9 @@ if command -v basedpyright >/dev/null 2>&1; then
     tools/test_build_update_test_fixture.py \
     tools/test_build_system_image_test_fixture.py \
     tools/build_system_raw_bundle.py \
-    tools/test_build_system_raw_bundle.py
+    tools/test_build_system_raw_bundle.py \
+    tools/ve_module.py \
+    tools/test_ve_module.py
 else
   echo "basedpyright is required for the complete check" >&2
   exit 1

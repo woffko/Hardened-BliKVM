@@ -7,6 +7,8 @@ import unittest
 import tools.build_debian_runtime_package as runtime_package
 import tools.build_debian_update_runtime_package as package
 import tools.stage_device_prototype as prototype
+import tools.test_ve_module as module_fixture
+import tools.ve_module as ve_module
 
 
 class DebianUpdateRuntimePackageTests(unittest.TestCase):
@@ -92,8 +94,11 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         self.assertTrue(installed <= set(package.file_map("0.1.0~dev35").values()))
         self.assertIn("usr/libexec/hardened-blikvm/bli-kvm-quic-gateway",
                       package.EXECUTABLE_DESTINATIONS)
-        for version in package.SUPPORTED_PACKAGE_VERSIONS[:-1]:
+        first = package.SUPPORTED_PACKAGE_VERSIONS.index("0.1.0~dev35")
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[:first]:
             self.assertFalse(installed & set(package.file_map(version).values()), version)
+        for version in package.SUPPORTED_PACKAGE_VERSIONS[first:]:
+            self.assertTrue(installed <= set(package.file_map(version).values()), version)
         # The gateway is not the slot's: the application package must not carry it.
         self.assertIn("bli-kvm-quic-gateway", runtime_package.FORBIDDEN_PACKAGE_NAMES)
         self.assertIn("hardened-blikvm-quic.service", runtime_package.FORBIDDEN_PACKAGE_NAMES)
@@ -140,6 +145,141 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         self.assertIn(fragment, package.file_map("0.1.0~dev35").values())
         self.assertNotIn(fragment, package.file_map("0.1.0~dev34").values())
 
+    def test_the_encoder_driver_starts_at_dev36_for_one_kernel_and_disabled(self) -> None:
+        examples = f"usr/share/doc/{package.PACKAGE_NAME}/examples"
+        source = f"usr/share/doc/{package.PACKAGE_NAME}/ve-module-source"
+        installed = {
+            "usr/lib/hardened-blikvm/modules/5.19.4-sunxi64/hardened-blikvm-ve-enc.ko",
+            "usr/libexec/hardened-blikvm/bli-kvm-ve-load",
+            "lib/systemd/system/hardened-blikvm-ve.service",
+            f"{examples}/99-hardened-blikvm-ve.rules",
+            f"{examples}/hardened-blikvm-ve-sysusers.conf",
+            f"{examples}/hardened-blikvm-ve-modprobe.conf",
+            *(f"{source}/{name}" for name in package.VE_MODULE_SOURCE_FILES),
+        }
+        current = package.file_map("0.1.0~dev36")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev36")
+        self.assertTrue(installed <= set(current.values()))
+        self.assertEqual(
+            set(current.values()) - set(package.file_map("0.1.0~dev35").values()), installed
+        )
+        self.assertIn("usr/libexec/hardened-blikvm/bli-kvm-ve-load", package.EXECUTABLE_DESTINATIONS)
+        # One module, in a directory named after the one release it loads on.
+        modules = [destination for destination in current.values() if destination.endswith(".ko")]
+        self.assertEqual(modules, [package.VE_MODULE_DESTINATION])
+        self.assertEqual(
+            package.VE_MODULE_DESTINATION,
+            f"{ve_module.MODULE_ROOT}/{package.VE_KERNEL_RELEASE}/{ve_module.MODULE_FILE}",
+        )
+        # Nothing of it is active by being installed: no rule, group or
+        # modprobe line outside the examples, and no module where the kernel
+        # would find it by itself.
+        for destination in current.values():
+            self.assertFalse(destination.startswith(("etc/", "lib/modules/", "usr/lib/modules/",
+                                                     "lib/udev/", "usr/lib/udev/", "lib/modprobe.d/",
+                                                     "usr/lib/modprobe.d/")), destination)
+        # The lab's instruments are in no package.
+        for name in (*current, *current.values()):
+            for lab in ("ve-lab", "ve_lab", "bli-kvm-ve-lab", "ve_trace", "ve-trace"):
+                self.assertNotIn(lab, name)
+        # The module's source goes with it, without the lab module's.
+        self.assertEqual(
+            set(package.VE_MODULE_SOURCE_FILES),
+            {"README.md", "ve_enc.c", "ve_enc_abi.h", "ve_enc_plan.c", "ve_enc_plan.h", "ve_hw.c", "ve_hw.h"},
+        )
+        makefile = Path("kernel/hardened-blikvm-ve/Makefile").read_text()
+        self.assertIn("hardened-blikvm-ve-enc-y := ve_enc.o ve_enc_plan.o ve_hw.o", makefile)
+        readme = Path("packaging/ve/SOURCE.md").read_text()
+        self.assertIn("hardened-blikvm-ve-enc-y := ve_enc.o ve_enc_plan.o ve_hw.o", readme)
+        self.assertIn("GPL-2.0-only", readme)
+        for name in package.VE_MODULE_SOURCE_FILES[1:]:
+            text = (Path("kernel/hardened-blikvm-ve") / name).read_text()
+            self.assertIn("SPDX-License-Identifier: GPL-2.0-only", text.splitlines()[0], name)
+        # Neither the application package nor a slot carries any of it.
+        for name in ("hardened-blikvm-ve-enc.ko", "bli-kvm-ve-load", "hardened-blikvm-ve.service"):
+            self.assertIn(name, runtime_package.FORBIDDEN_PACKAGE_NAMES)
+        slot_builder = Path("tools/build_production_update_bundle.py").read_text()
+        for name in ("ve-enc", "bli-kvm-ve-load", "hardened-blikvm-ve"):
+            self.assertNotIn(name, slot_builder)
+
+    def test_the_driver_is_loaded_by_a_unit_with_one_capability(self) -> None:
+        unit = Path("packaging/systemd/hardened-blikvm-ve.service").read_text()
+        for required in (
+            "ConditionPathExists=/usr/lib/hardened-blikvm/modules/%v/hardened-blikvm-ve-enc.ko",
+            "Before=hardened-blikvm-video-encoder-h264.service",
+            "Type=oneshot",
+            "RemainAfterExit=yes",
+            "ExecStart=/usr/libexec/hardened-blikvm/bli-kvm-ve-load",
+            "CapabilityBoundingSet=CAP_SYS_MODULE\n",
+            "NoNewPrivileges=yes",
+            "PrivateNetwork=yes",
+            "ProtectSystem=strict",
+            "SystemCallFilter=@system-service @module",
+            "WantedBy=multi-user.target",
+        ):
+            self.assertIn(required, unit)
+        for forbidden in ("ExecStartPre=", "ExecStartPost=", "ReadWritePaths=", "StateDirectory=",
+                          "Requires=", "Restart="):
+            self.assertNotIn(forbidden, unit)
+        # Nothing requires it: without the driver the encoder uses x264.
+        for other in Path("packaging/systemd").rglob("*"):
+            if other.is_file() and other.name != "hardened-blikvm-ve.service":
+                text = other.read_text()
+                for line in text.splitlines():
+                    if "hardened-blikvm-ve.service" in line:
+                        self.assertTrue(line.startswith("After="), f"{other.name}: {line}")
+        loader = Path("packaging/ve/bli-kvm-ve-load").read_text()
+        for required in (
+            "file=/usr/lib/hardened-blikvm/modules/$release/hardened-blikvm-ve-enc.ko",
+            "release=$(uname -r)",
+            "allwinner,sun50i-h616-video-engine",
+            'insmod "$file"',
+            "udevadm settle",
+            '"$group 660"',
+        ):
+            self.assertIn(required, loader)
+        # It loads the one file by its path: no search of the kernel's
+        # module directories, no force, no other driver unbound.
+        commands = "\n".join(
+            line for line in loader.splitlines() if not line.lstrip().startswith("#")
+        )
+        for forbidden in ("modprobe", "--force", "insmod -f", "depmod", "rmmod"):
+            self.assertNotIn(forbidden, commands)
+        self.assertEqual(commands.count("/unbind"), 1)
+        self.assertIn('if [ "$holder" != cedrus ]; then', loader)
+        rule = Path("packaging/udev/99-hardened-blikvm-ve.rules").read_text()
+        self.assertIn(
+            'SUBSYSTEM=="misc", KERNEL=="hardened-blikvm-ve-enc", GROUP="hardened-blikvm-ve", MODE="0660"\n',
+            rule,
+        )
+        group = Path("packaging/sysusers.d/hardened-blikvm-ve.conf").read_text()
+        self.assertIn("\ng hardened-blikvm-ve -\n", group)
+        self.assertNotIn("\nu ", group)
+        self.assertNotIn("\nm ", group)
+        self.assertNotIn("hardened-blikvm-ve", Path("packaging/sysusers.d/hardened-blikvm.conf").read_text())
+        self.assertIn("\nblacklist sunxi_cedrus\n", Path("packaging/modprobe.d/hardened-blikvm-ve.conf").read_text())
+        # Only the H.264 encoder's unit is in the group and may open the device.
+        for other in Path("packaging/systemd").rglob("*.service"):
+            text = other.read_text()
+            if other.name == "hardened-blikvm-video-encoder-h264.service":
+                self.assertIn("SupplementaryGroups=hardened-blikvm hardened-blikvm-ve\n", text)
+                self.assertIn("DeviceAllow=/dev/hardened-blikvm-ve-enc rw\n", text)
+                self.assertIn("DevicePolicy=closed\n", text)
+            else:
+                self.assertNotIn("hardened-blikvm-ve\n", text, other.name)
+                self.assertNotIn("hardened-blikvm-ve-enc", text.replace(
+                    "hardened-blikvm-ve-enc.ko", ""), other.name)
+
+    def test_the_capture_unit_does_not_name_a_device_number(self) -> None:
+        unit = Path("packaging/systemd/hardened-blikvm-ustreamer.service").read_text()
+        allowed = [line for line in unit.splitlines() if line.startswith("DeviceAllow=")]
+        self.assertEqual(allowed, ["DeviceAllow=/dev/kvmd-video rw"])
+        self.assertIn("DevicePolicy=closed\n", unit)
+        self.assertIn("--device=/dev/kvmd-video", unit)
+        self.assertIn("ConditionPathExists=/dev/kvmd-video\n", unit)
+        rule = Path("packaging/udev/99-hardened-blikvm-video.rules").read_text()
+        self.assertIn('SYMLINK+="kvmd-video"', rule)
+
     def test_upload_units_start_at_dev8_with_stage_only_disk_spool(self) -> None:
         units = {
             "lib/systemd/system/hardened-blikvm-update-upload.socket",
@@ -185,7 +325,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
 
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev35")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev36")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -228,16 +368,24 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         ):
             self.assertIs(manifest[field], False)
         self.assertIs(manifest["systemUpdateIncluded"], True)
+        self.assertIs(manifest["kernelModuleIncluded"], True)
+        self.assertIs(
+            package.package_manifest(bundle, "c" * 40, version="0.1.0~dev35")["kernelModuleIncluded"],
+            False,
+        )
 
     def test_rollback_manifest_requires_an_explicit_supported_old_version(self) -> None:
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev35")
+        self.assertEqual(current["version"], "0.1.0~dev36")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertIs(previous["systemUpdateIncluded"], False)
+        self.assertIs(previous["kernelModuleIncluded"], False)
         self.assertEqual(
-            {**previous, "version": current["version"], "systemUpdateIncluded": True}, current
+            {**previous, "version": current["version"], "systemUpdateIncluded": True,
+             "kernelModuleIncluded": True},
+            current,
         )
         with self.assertRaises(package.BuildError):
             package.package_manifest(bundle, "c" * 40, version="unreviewed")
@@ -253,6 +401,19 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("safe", encoding="utf-8")
+            module = root / package.VE_MODULE_DESTINATION
+            # What is in the module's place must be the encoder driver for
+            # the release its directory names.
+            with self.assertRaises(package.BuildError):
+                package.audit_package_tree(root)
+            for wrong in (
+                module_fixture.module(release="6.1.0-sunxi64"),
+                module_fixture.module(name="hardened_blikvm_ve_lab"),
+            ):
+                module.write_bytes(wrong)
+                with self.assertRaises(package.BuildError):
+                    package.audit_package_tree(root)
+            module.write_bytes(module_fixture.module())
             package.audit_package_tree(root)
             extra = root / "etc/hardened-blikvm/update-supervisor.json"
             extra.parent.mkdir(parents=True)
