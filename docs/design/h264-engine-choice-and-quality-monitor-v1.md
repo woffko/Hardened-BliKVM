@@ -279,7 +279,14 @@ a second and serves the same answer within that second.
 - `temperatureMillidegrees`: what `/api/inventory` already reads, or
   `null`.
 - `version`: the slot's, as the update status names the selected slot, or
-  `null` where the server has no update status.
+  `null` where the server has no update status. Refined in C5.3: the
+  update runtime's status takes about half a second to answer, and an
+  answer that waited for it took 0.5 to 0.6 s on the board; when the
+  settings' System tab asked the board for more at the same time, it
+  took longer than the monitor's 0.9 s and the monitor gave it up. The
+  version changes with an update only: it is read in the background at
+  most once a minute, and an answer has the version read last (`null`
+  before the first read has answered).
 
 Settled in C3.2: a report's age and the span of its rates are the times its
 file was written, so that a reader that comes twice within a second sees

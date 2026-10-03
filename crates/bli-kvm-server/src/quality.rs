@@ -3,12 +3,14 @@
 //! monitor: the capture, the encoders' reports with rates made from the
 //! last two of each, the encoder units' share of the processors, the SoC's
 //! temperature and the slot's version. It is built at most once a second;
-//! a request within that second gets the same answer.
+//! a request within that second gets the same answer. The slot's version is
+//! read apart from it, in the background (`known_version`).
 
 use std::{
     collections::{HashMap, HashSet},
     io::Read,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -33,10 +35,36 @@ const UNITS: [(&str, &str); 2] = [
 ];
 /// A control group's `cpu.stat` is read no further.
 const MAX_CPU_STAT_BYTES: u64 = 4096;
+/// The slot's version is asked for at most this often.
+const VERSION_FOR: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub(crate) struct QualityCache {
     memory: tokio::sync::Mutex<Memory>,
+    version: std::sync::Mutex<Version>,
+}
+
+/// The selected slot's version, as the update runtime's status said it.
+#[derive(Default)]
+struct Version {
+    known: Option<String>,
+    /// When it was last asked for.
+    asked: Option<Instant>,
+}
+
+impl Version {
+    /// Whether to ask for it at `now`: the first time, and a minute after
+    /// it was asked for last, whatever the answer was.
+    fn due(&mut self, now: Instant) -> bool {
+        if self
+            .asked
+            .is_some_and(|at| now.saturating_duration_since(at) < VERSION_FOR)
+        {
+            return false;
+        }
+        self.asked = Some(now);
+        true
+    }
 }
 
 #[derive(Default)]
@@ -85,14 +113,7 @@ async fn build(state: &AppState, session_token: &str, memory: &mut Memory) -> Va
     let vp8 = encoder(state.options.vp8_encoder_report.as_deref(), "vp8", memory);
     let units = units(&state.options.unit_cgroups, memory);
     let temperature = bli_kvm_platform_bli::read_h616_temperature_millidegrees().ok();
-    let version = match state.update_status.as_ref() {
-        Some(client) => client
-            .status()
-            .await
-            .ok()
-            .map(|status| status.selected.version),
-        None => None,
-    };
+    let version = known_version(state);
     json!({
         "capture": capture,
         "h264": h264,
@@ -101,6 +122,25 @@ async fn build(state: &AppState, session_token: &str, memory: &mut Memory) -> Va
         "temperatureMillidegrees": temperature,
         "version": version,
     })
+}
+
+/// The slot's version as it was read last, null before the first read has
+/// answered. The update runtime's status takes about half a second, and the
+/// version changes with an update only: an answer never waits for it, and a
+/// read is begun in the background when the one before is a minute old.
+fn known_version(state: &AppState) -> Option<String> {
+    let client = state.update_status.as_ref()?;
+    let mut version = state.quality.version.lock().expect("quality version lock");
+    if version.due(Instant::now()) {
+        let (client, cache) = (Arc::clone(client), Arc::clone(&state.quality));
+        tokio::spawn(async move {
+            if let Ok(status) = client.status().await {
+                cache.version.lock().expect("quality version lock").known =
+                    Some(status.selected.version);
+            }
+        });
+    }
+    version.known.clone()
 }
 
 fn round(value: f64, places: i32) -> f64 {
@@ -293,6 +333,19 @@ mod tests {
             modified,
             report: serde_json::from_value(report).unwrap(),
         }
+    }
+
+    /// The slot's version is asked for at once, and then a minute after it
+    /// was asked for last.
+    #[test]
+    fn the_version_is_asked_for_once_a_minute() {
+        let mut version = Version::default();
+        let start = Instant::now();
+        assert!(version.due(start));
+        assert!(!version.due(start));
+        assert!(!version.due(start + Duration::from_secs(59)));
+        assert!(version.due(start + VERSION_FOR));
+        assert!(!version.due(start + VERSION_FOR + Duration::from_secs(1)));
     }
 
     /// Rates come from the last two reports by the times they were written,
