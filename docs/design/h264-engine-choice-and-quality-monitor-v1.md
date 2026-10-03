@@ -134,6 +134,18 @@ two, each with the transport in brackets as today:
 - Open or closed, its level, place, size and opacity are this browser's
   (local storage); nothing of it goes to the board.
 - It reads once a second while it is open, and never while it is closed.
+- Settled in C4 for its gate: the rows are drawn on a canvas by the
+  monitor's own worker. Once a second the page counts its own picture and
+  sends that to the worker; the worker asks `GET /api/vm/quality`, makes the
+  rows and draws them; the canvas is the compositor's, like the QUIC
+  picture's. The page's main thread only counts and sends. Rows that React
+  drew in the document cost the main thread 4 to 5 ms a second on the host
+  with the QUIC picture (the request's work and the browser's frame for
+  every change of text), more than the 2 the plan allows; the worker's
+  canvas costs it 0.2 to 0.8. The header with its buttons stays in the
+  document. The rows' text is not in the document: the canvas is an image
+  named for the monitor, and the contracts read what was drawn from the
+  worker.
 
 ### Basic
 
@@ -277,8 +289,8 @@ without the owner's surface answers the capture with `null` fields.
 - **WebRTC**: `RTCPeerConnection.getStats()` once a second while the
   monitor is open: the video's `inbound-rtp`, its `codec`, the selected
   `candidate-pair`.
-- **H.264 Direct**: the frames its decoder takes and gives, where the board
-  offers the mode.
+- **H.264 Direct**: the bytes it is sent, where the board offers the mode;
+  its decoder counts nothing the monitor could read (settled in C4.2).
 - **MJPEG**: the image element counts nothing; the monitor shows the
   board's capture and queue only.
 

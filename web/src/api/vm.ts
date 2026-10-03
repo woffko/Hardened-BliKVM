@@ -38,11 +38,6 @@ export function getScreen() {
   return http.get('/api/vm/screen');
 }
 
-// what the board knows of the picture's way, for the quality monitor
-export function getQuality() {
-  return http.get('/api/vm/quality');
-}
-
 // get memory limit
 export function getMemoryLimit() {
   return http.get('/api/vm/memory/limit');

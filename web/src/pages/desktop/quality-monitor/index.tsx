@@ -1,35 +1,40 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react';
 import clsx from 'clsx';
 import { getDefaultStore, useAtom, useAtomValue } from 'jotai';
 import { GripVerticalIcon, SquareIcon, XIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { getQuality } from '@/api/vm';
 import { sampleDirect, sampleNothing, sampleQuic, sampleWebRtc } from '@/lib/page-video.ts';
 import {
-  basicRows,
-  extendedSections,
   MIN_HEIGHT,
   MIN_WIDTH,
-  pageRates,
-  type PageRates,
   type PageSample,
-  type QualityAnswer,
   type QualityInputs,
   type QualityLevel,
-  type QualityRow,
   type VideoPath
 } from '@/lib/quality-monitor.ts';
+import type { FromQualityWorker, QualityView, ToQualityWorker } from '@/lib/quality.worker.ts';
+import QualityWorker from '@/lib/quality.worker.ts?worker';
+import { getBaseUrl } from '@/lib/service.ts';
 import { qualityMonitorAtom } from '@/jotai/quality-monitor.ts';
 import { videoModeAtom } from '@/jotai/screen.ts';
 import { quicStatusAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
-import { useQuicVideo } from '@/hooks/useQuicVideo.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
-/** The monitor reads this often while it is open, and never while closed. */
+/** The page counts its own picture this often while the monitor is open,
+ * and never while it is closed. */
 const TICK_MS = 1000;
-/** The board's answer counts as known this long. */
-const FRESH_MS = 3000;
+/** The width the window keeps for its scroll bar in Extended. */
+const SCROLL_BAR_PX = 12;
+/** Basic's width, by layout. */
+const BASIC_WIDTH = { desktop: 264, phone: 196 };
 /** Room the window keeps inside the page when it is dragged. */
 const KEEP_IN_VIEW_PX = 48;
 
@@ -40,11 +45,17 @@ export const QualityMonitor = () => {
   return layout.open ? <QualityMonitorWindow /> : null;
 };
 
-type View = {
-  board: QualityAnswer | null;
-  sample: PageSample | null;
-  rates: PageRates | null;
-};
+/**
+ * The way the picture comes now, read from what draws it: the QUIC
+ * session's canvas, the WebRTC video element, the Direct canvas or the
+ * MJPEG image. Read once a second, so that the monitor follows no state of
+ * the page between its readings.
+ */
+function currentPath(videoMode: string | null): VideoPath {
+  if (videoMode === 'mjpeg') return 'mjpeg';
+  if (videoMode === 'direct') return 'direct';
+  return document.querySelector('canvas#screen[data-video-transport="quic"]') ? 'quic' : 'webrtc';
+}
 
 async function samplePath(path: VideoPath): Promise<PageSample> {
   switch (path) {
@@ -84,53 +95,129 @@ function useRefreshRate(measure: boolean): number | null {
   return hz;
 }
 
+/** The text's size of the rows, in CSS pixels. */
+const FONT_PX = { desktop: 12, phone: 10 };
+
+/**
+ * The rows: drawn on a canvas by the monitor's worker, which asks the board
+ * and makes them, once a second when this page sends what it counted of its
+ * own picture. The page's main thread only counts and sends; the canvas is
+ * the compositor's, so that a second's update costs the page next to
+ * nothing. In Extended the canvas scrolls inside the window.
+ */
+const MonitorBody = memo(
+  ({
+    extended,
+    videoMode,
+    isDesktop,
+    width
+  }: {
+    extended: boolean;
+    videoMode: string | null;
+    isDesktop: boolean;
+    width: number;
+  }) => {
+    const { t } = useTranslation();
+    const codec: QualityInputs['codec'] =
+      videoMode === 'mjpeg' ? 'mjpeg' : videoMode === 'vp8' ? 'vp8' : 'h264';
+    const refreshHz = useRefreshRate(extended);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const workerRef = useRef<Worker | null>(null);
+    // A canvas can be handed to a worker once; a new one is mounted for the
+    // next worker.
+    const [canvasKey, setCanvasKey] = useState(0);
+    const [height, setHeight] = useState(0);
+
+    const view = useMemo<QualityView>(
+      () => ({
+        level: extended ? 'extended' : 'basic',
+        codec,
+        width,
+        fontPx: isDesktop ? FONT_PX.desktop : FONT_PX.phone,
+        scale: window.devicePixelRatio || 1,
+        labels: t('qualityMonitor', { returnObjects: true }) as Record<string, string>,
+        refreshHz
+      }),
+      [extended, codec, width, isDesktop, t, refreshHz]
+    );
+    const viewRef = useRef(view);
+    viewRef.current = view;
+
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      let offscreen: OffscreenCanvas;
+      try {
+        offscreen = canvas.transferControlToOffscreen();
+      } catch {
+        setCanvasKey((key) => key + 1);
+        return;
+      }
+      const worker = new QualityWorker();
+      workerRef.current = worker;
+      worker.onmessage = (event: MessageEvent<FromQualityWorker>) => {
+        if (event.data.type === 'height') setHeight(event.data.height);
+      };
+      const start: ToQualityWorker = {
+        type: 'start',
+        url: `${getBaseUrl('http')}/api/vm/quality`,
+        canvas: offscreen,
+        view: viewRef.current
+      };
+      worker.postMessage(start, [offscreen]);
+      // Once a second: what the page counted of its own picture, by the way
+      // it comes now.
+      let stopped = false;
+      const tick = async () => {
+        const path = currentPath(videoMode);
+        const sample = await samplePath(path);
+        if (stopped) return;
+        const message: ToQualityWorker = { type: 'sample', path, sample };
+        worker.postMessage(message);
+      };
+      void tick();
+      const timer = setInterval(() => void tick(), TICK_MS);
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+        worker.terminate();
+        workerRef.current = null;
+      };
+    }, [canvasKey, videoMode]);
+
+    useEffect(() => {
+      const message: ToQualityWorker = { type: 'view', view };
+      workerRef.current?.postMessage(message);
+    }, [view]);
+
+    const canvas = (
+      <canvas
+        key={canvasKey}
+        ref={canvasRef}
+        data-testid="quality-monitor-rows"
+        role="img"
+        aria-label={t('qualityMonitor.title')}
+        className="block"
+        style={{ width, height }}
+      />
+    );
+    return extended ? (
+      <div data-testid="quality-monitor-body" className="min-h-0 flex-1 overflow-auto">
+        {canvas}
+      </div>
+    ) : (
+      <div data-testid="quality-monitor-body">{canvas}</div>
+    );
+  }
+);
+MonitorBody.displayName = 'MonitorBody';
+
 const QualityMonitorWindow = () => {
   const { t } = useTranslation();
   const [layout, setLayout] = useAtom(qualityMonitorAtom);
   const isDesktop = useIsDesktopLayout();
   const videoMode = useAtomValue(videoModeAtom);
-  const quicServes = useQuicVideo().use;
-  const path: VideoPath =
-    videoMode === 'mjpeg'
-      ? 'mjpeg'
-      : videoMode === 'direct'
-        ? 'direct'
-        : videoMode === 'h264' && quicServes
-          ? 'quic'
-          : 'webrtc';
-  const codec: QualityInputs['codec'] =
-    videoMode === 'mjpeg' ? 'mjpeg' : videoMode === 'vp8' ? 'vp8' : 'h264';
   const extended = layout.level === 'extended';
-
-  const [view, setView] = useState<View>({ board: null, sample: null, rates: null });
-  const refreshHz = useRefreshRate(extended);
-
-  useEffect(() => {
-    let stopped = false;
-    let previous: PageSample | null = null;
-    let board: { at: number; answer: QualityAnswer } | null = null;
-    const tick = async () => {
-      const [answer, sample] = await Promise.all([
-        getQuality()
-          .then((rsp) => (rsp.code === 0 && rsp.data ? (rsp.data as QualityAnswer) : null))
-          .catch(() => null),
-        samplePath(path)
-      ]);
-      if (stopped) return;
-      if (answer) board = { at: performance.now(), answer };
-      const rates = pageRates(previous, sample);
-      previous = sample;
-      // An answer older than three seconds is no longer known.
-      const fresh = board && performance.now() - board.at <= FRESH_MS ? board.answer : null;
-      setView({ board: fresh, sample, rates });
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), TICK_MS);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [path]);
 
   // Dragged by its header, resized at its corner; kept when let go.
   const [place, setPlace] = useState({ x: layout.x, y: layout.y });
@@ -183,26 +270,8 @@ const QualityMonitorWindow = () => {
     setLayout(current.kind === 'move' ? { x: place.x, y: place.y } : size);
   };
 
-  const inputs: QualityInputs = {
-    path,
-    codec,
-    board: view.board,
-    sample: view.sample,
-    rates: view.rates,
-    refreshHz
-  };
   const left = Math.min(place.x, Math.max(0, window.innerWidth - KEEP_IN_VIEW_PX));
   const top = Math.min(place.y, Math.max(0, window.innerHeight - KEEP_IN_VIEW_PX));
-
-  const rowsOf = (rows: QualityRow[]) =>
-    rows.map((row) => (
-      <div key={row.key} data-qm-row={row.key} className="flex min-w-0 gap-2 leading-tight">
-        <span className="w-[42%] shrink-0 truncate text-right text-neutral-300">{row.label}</span>
-        <span data-qm-value className="min-w-0 flex-1 truncate text-white">
-          {row.value}
-        </span>
-      </div>
-    ));
 
   const level = (value: QualityLevel, label: string) => (
     <button
@@ -232,14 +301,18 @@ const QualityMonitorWindow = () => {
       className={clsx(
         'fixed z-[950] flex flex-col overflow-hidden rounded shadow-lg',
         isDesktop ? 'text-xs' : 'text-[10px]',
-        layout.opaque ? 'bg-neutral-900' : 'bg-neutral-900/60 backdrop-blur-[2px]'
+        layout.opaque ? 'bg-neutral-900' : 'bg-neutral-900/70'
       )}
       style={{
         left,
         top,
+        // Its own layer: what changes in it is laid out and painted apart
+        // from the picture beneath.
+        contain: 'layout paint',
+        willChange: 'transform',
         ...(extended
           ? { width: size.width, height: size.height }
-          : { width: isDesktop ? 252 : 196 })
+          : { width: isDesktop ? BASIC_WIDTH.desktop : BASIC_WIDTH.phone })
       }}
       onPointerDown={keep}
       onMouseDown={keep}
@@ -293,27 +366,18 @@ const QualityMonitorWindow = () => {
         </div>
       </div>
 
-      {extended ? (
-        <div
-          data-testid="quality-monitor-body"
-          className="min-h-0 flex-1 space-y-1 overflow-auto px-1.5 py-1"
-        >
-          {extendedSections(inputs, t).map((section) => (
-            <div key={section.key} data-qm-section={section.key}>
-              {section.title && (
-                <div className="pt-1 text-[10px] uppercase tracking-wide text-neutral-400">
-                  {section.title}
-                </div>
-              )}
-              {rowsOf(section.rows)}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div data-testid="quality-monitor-body" className="px-1.5 py-1">
-          {rowsOf(basicRows(inputs, t))}
-        </div>
-      )}
+      <MonitorBody
+        extended={extended}
+        videoMode={videoMode}
+        isDesktop={isDesktop}
+        width={
+          extended
+            ? Math.max(MIN_WIDTH, size.width) - SCROLL_BAR_PX
+            : isDesktop
+              ? BASIC_WIDTH.desktop
+              : BASIC_WIDTH.phone
+        }
+      />
 
       {extended && (
         <div
