@@ -5,15 +5,16 @@ what is known about the encoder from open sources, the two register maps
 that are the hypotheses to test, how the lab works, and, as the work goes
 on, the lab's record and the register description that comes out of it.
 
-Status (2026-10-02, gate V2 passed): the engine encodes key frames. A
-1920x1080 key frame takes it 7 ms, decodes in ffmpeg and Chromium, and is
-2 to 3 dB below x264's at the same QP. The way there: in V2.1 the engine
-wrote its bits into the kernel's memory instead of the buffer it was given;
-the encoder block of this generation takes its addresses in units of 256
-bytes, which the vendor's encoder library, watched on the board without
-the engine, showed for the two parts whose encoder is this one's
-predecessor. The lab tool has that form as its third hypothesis (`h6`).
-Next is V3: P frames and a stream.
+Status (2026-10-03, gate V3 passed): the engine makes H.264 streams that
+ffmpeg and Chromium decode frame for frame. A 1920x1080 frame, key or P,
+takes it 7 ms; the lab's rate control in software gives every frame its QP
+and at most two passes, and chooses the search for motion of every frame;
+thirty frames a second hold for ten minutes with the processors idle or
+busy; on the plan's sequences the picture is within 0.2 dB of x264's at
+the product's rates, and text that moves fast is worse. The engine takes
+its encoder's addresses in units of 256 bytes (V2.1, V2R), stays inside
+the buffers it is given, and stops at the end of its stream buffer
+(V3.1 again). Next is V4: the driver.
 
 ## Sources
 
@@ -1747,6 +1748,44 @@ runs at a bitrate with up to three passes), `ve-lab-v3-20261003-soak` (the
 two runs at a bitrate with two passes), `ve-lab-v3-20261002-sustained`
 (the timeout and the starts), `-soak-try`, `-soak-try2` (short runs of the
 same soak).
+
+### Gate V3: passed
+
+At 1920x1080, with two passes a frame at most (lab tool `266613f`):
+
+| The gate's condition | Measured | |
+| --- | --- | --- |
+| Every frame of every sequence decodes in ffmpeg and Chromium | the board's ffmpeg: the 20 streams of the four sequences, at QP 30 and at 1.5, 2.5, 5 and 8 Mbit/s, 300 of 300 frames each, without a complaint; Chromium: the eight streams at 2.5 and 8 Mbit/s, 300 of 300 frames each, to ffmpeg's PSNR | met |
+| No drift | the still sequence at QP 30: 41.36 dB in frames 30 to 60, 41.22 in the last 30 | met |
+| At least 30 frames a second sustained (33 ms a frame, key or P) | 30.00 to 30.01 frames a second in every run, ten minutes with the processors idle and ten with three cores busy; a key frame takes the engine 7.0 ms and a P frame 7.2 (V3.3), one pass with the loop around it 11 ms | met, read as below |
+| The rate over any ten seconds within 15% of the target | 68,810 windows of 40 runs within −6.2% and +10.6%; 3,304 more below, every one with frames at QP 0 in it | met, read as below |
+| V3.6 passed | an hour without a wrong frame; a timeout and the reset after it; a thousand starts and stops | met |
+| PSNR at most 1 dB below x264's at 8 Mbit/s and 2 dB below at 2.5 Mbit/s, on every sequence | at most 0.18 dB below at 8 Mbit/s and 0.13 dB below at 2.5 Mbit/s, both on `drag`; `motion` 0.06 dB below at 8 Mbit/s and above at 2.5; `scroll` and `pointer` above | met |
+
+How two of the conditions are read:
+
+- **Time.** As V3.3 measures it: thirty frames a second sustained, and the
+  time of a frame, key or P, within a frame's 33 ms. One pass takes a
+  third of that. A frame with two passes took at most 26.1 ms with the
+  processors idle (28,800 frames); with three of the four cores busy in a
+  loop 39 frames of 32,400 took longer, up to 51.5 ms, and the frames
+  after them made the time up. Read as every frame within 33 ms whatever
+  the load, those 39 frames miss it. The product's encoder (V5) keeps the
+  rule of two passes, and V7 measures its frames' times on the board as
+  it is used.
+- **Rate.** A window is more than 15% below its target only where the QP
+  is 0 and the picture has no more bits to give (`pointer` at 5 and
+  8 Mbit/s, `scroll` at 8 Mbit/s, and x264 gives less still); no window is
+  more than 15% above.
+
+Beyond the plan's four sequences, text that moves is worse with the
+engine than with x264: a page that moves down 20 pixels a frame is 3.1
+and 2.9 dB below it at 2.5 and 8 Mbit/s, and a page that moves 60 pixels
+a frame 0.4 to 13.1 dB below, with up to 246 of 300 frames left out: the
+engine's search does not reach as far (V3.4 again). It is not a
+condition of the gate.
+
+**Go for the product.** Next is V4, the driver.
 
 ## The H616's register description
 
