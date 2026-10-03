@@ -8,9 +8,12 @@
 # encoder's statistics lines, the processor time it used, the SoC's
 # temperatures every five seconds, and the frames the player sent.
 #
-# usage: sh ve_encoder_measure.sh PICTURES FPS SECONDS KBPS NAME ENGINE...
+# usage: sh ve_encoder_measure.sh PICTURES PLAY_FPS MAX_FPS SECONDS KBPS NAME ENGINE...
 #   PICTURES  JPEG pictures one after the other, played forth and back
-#   FPS       the player's rate and the encoder's limit
+#   PLAY_FPS  the player's rate: the capture's, 60 a second on the board
+#   MAX_FPS   the encoder's limit, which its gate keeps by admitting a frame
+#             no sooner than 1/MAX_FPS after the one before: a capture at
+#             the limit's own rate loses every frame that comes a little early
 #   SECONDS   measured after ten seconds of warming up
 #   ENGINE    hardware (the driver's device) or x264
 #
@@ -20,9 +23,9 @@
 # root's while the lab session holds it: the product's own encoder cannot
 # open it, and stays on x264.
 set -u
-[ "$#" -ge 6 ] || { echo "usage: $0 PICTURES FPS SECONDS KBPS NAME ENGINE..."; exit 2; }
-pictures=$1; fps=$2; seconds=$3; kbps=$4; name=$5
-shift 5
+[ "$#" -ge 7 ] || { echo "usage: $0 PICTURES PLAY_FPS MAX_FPS SECONDS KBPS NAME ENGINE..."; exit 2; }
+pictures=$1; play_fps=$2; fps=$3; seconds=$4; kbps=$5; name=$6
+shift 6
 encoder=/usr/libexec/hardened-blikvm/bli-kvm-video-encoder
 [ -x "$encoder" ] || { echo "no encoder at $encoder"; exit 1; }
 ticks=$(getconf CLK_TCK)
@@ -54,9 +57,9 @@ for engine in "$@"; do
     x264) device= ;;
     *) echo "unknown engine $engine"; exit 2 ;;
   esac
-  run="$name-$engine-${fps}fps-$kbps"
+  run="$name-$engine-${play_fps}in-${fps}max-$kbps"
   socket=$PWD/capture-$engine.sock
-  python3 ./ve_capture_play.py "$socket" "$pictures" "$fps" $((seconds + 20)) > "out/$run.player.txt" 2>&1 &
+  python3 ./ve_capture_play.py "$socket" "$pictures" "$play_fps" $((seconds + 20)) > "out/$run.player.txt" 2>&1 &
   player=$!
   children="$player"
   waited=0
