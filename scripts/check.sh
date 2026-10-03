@@ -221,6 +221,7 @@ node --check tools/playwright/touch_reach_device_probe.mjs
 node --check tools/playwright/wifi_contract.mjs
 node --check tools/playwright/vp8_webrtc_probe.mjs
 node --check tools/playwright/video_settings_contract.mjs
+node --check tools/playwright/quality_fixture.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
