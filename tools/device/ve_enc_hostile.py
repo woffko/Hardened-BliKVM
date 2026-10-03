@@ -9,7 +9,8 @@ Every request out of range, out of order, twice, with memory that is not
 the client's, pictures of noise at the finest quantiser, a device closed in
 the middle and a client killed in the middle; then random requests, and a
 thousand streams of the largest size one after the other. After each group the driver must still encode a key
-frame. The kernel's log must have no new line. Of the board's contiguous
+frame. The kernel's log must have no new line but the test's own notes that
+it dropped the page cache. Of the board's contiguous
 memory nothing may be left taken: the kernel does not say who holds it and
 lends what is free to its page cache, so the page cache is dropped before
 each count, and the measure is that after the thousand streams no more
@@ -167,6 +168,18 @@ LIBC.mmap.restype = ctypes.c_void_p
 LIBC.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
 LIBC.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 MAP_PRIVATE_ANONYMOUS = 0x02 | 0x20
+# fcntl.ioctl takes an argument that is a number only as a C int: an
+# address of this process does not fit, so such requests go through libc.
+LIBC.ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+LIBC.ioctl.restype = ctypes.c_int
+
+
+def ioctl_at(fd, request, address):
+    """A request whose argument is `address` as it is."""
+    if LIBC.ioctl(fd, request, address) < 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    return 0
 
 
 def unmapped():
@@ -195,9 +208,10 @@ def groups(report):
     expect("a second open", errno.EBUSY, lambda: os.open(DEVICE, os.O_RDWR))
     expect("an unknown request", errno.ENOTTY, lambda: fcntl.ioctl(first.fd, 0xC0485699, bytearray(72)))
     expect("the lab module's request", errno.ENOTTY, lambda: fcntl.ioctl(first.fd, 0x5613))
-    expect("info into no memory", errno.EFAULT, lambda: fcntl.ioctl(first.fd, IOC_INFO, hole))
-    expect("configure from no memory", errno.EFAULT, lambda: fcntl.ioctl(first.fd, IOC_CONFIGURE, hole))
-    expect("encode from no memory", (errno.EFAULT, errno.EINVAL), lambda: fcntl.ioctl(first.fd, IOC_ENCODE, hole))
+    expect("info into no memory", errno.EFAULT, lambda: ioctl_at(first.fd, IOC_INFO, hole))
+    expect("configure from no memory", errno.EFAULT, lambda: ioctl_at(first.fd, IOC_CONFIGURE, hole))
+    expect("encode from no memory", (errno.EFAULT, errno.EINVAL), lambda: ioctl_at(first.fd, IOC_ENCODE, hole))
+    expect("info into the kernel", errno.EFAULT, lambda: ioctl_at(first.fd, IOC_INFO, 0xFFFF800008000000))
     expect("a mapping", (errno.ENODEV, errno.EINVAL, errno.EACCES), lambda: mmap.mmap(first.fd, 4096))
     expect("a read", (errno.EINVAL, errno.EBADF, errno.ENOSYS), lambda: os.read(first.fd, 16))
     expect("a write", (errno.EINVAL, errno.EBADF, errno.ENOSYS), lambda: os.write(first.fd, b"x" * 16))
@@ -452,7 +466,12 @@ def main():
     after_log = kernel_log()
     after_free = cma_free()
     seen = set(before_log)
-    report["kernel_lines"] = [line for line in after_log if line not in seen]
+    new = [line for line in after_log if line not in seen]
+    # The kernel notes every drop of the page cache with the name and the
+    # number of the process that asked for it: those lines are this test's.
+    own = f"({os.getpid()}): drop_caches: "
+    report["kernel_lines"] = [line for line in new if own not in line]
+    report["own_kernel_lines"] = len(new) - len(report["kernel_lines"])
     report["cma_free_before_kb"] = before_free
     report["cma_free_after_kb"] = after_free
     report["cma_free_slack_kb"] = SLACK_KB

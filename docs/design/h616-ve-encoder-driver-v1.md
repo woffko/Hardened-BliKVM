@@ -265,7 +265,8 @@ are never packaged.
   own, pictures of noise at QP 0 that do not fit the stream buffer, under
   a rain of signals, closes in the middle and dies in the middle, sends 20000 random requests, and then opens, configures, uses
   and closes a thousand streams of the largest size. Afterwards the
-  kernel's log has no new line, and of the board's contiguous memory
+  kernel's log has no new line but the test's own notes that it dropped
+  the page cache, and of the board's contiguous memory
   nothing is left taken: the kernel does not say who holds that memory and
   lends what is free to its page cache, so the test drops the page cache
   before each count, and the measure is that no more than 16 MiB less is
