@@ -1965,6 +1965,40 @@ the limit), `-b` (fed at 60 and at 90), `-c` (`drag`, and an equal rate),
 them), `ve-v7-hold-20261003`, `update-to-seq66-alpha11-*`,
 `v7-state-as-found-20261003.json`.
 
+### V7.2, 2026-10-03: regression
+
+On slot 66 with the engine switched on, as gate V7 left the board:
+
+- The GUI walks, desktop and mobile: 21 steps each, 72 and 67 calls of the
+  API, no error. The first two tries of each ended before their first step
+  because the board's address was given with a slash at its end.
+- VP8 and H.264 over WebRTC: decoded at 1920x1080, nothing lost; H.264 over
+  QUIC from the engine: 34 frames of a still picture, a frame 67 ms old in
+  the median when it was drawn, none given up.
+- MJPEG (`tools/device/stream_latency_probe.py`): the viewer at full speed
+  had 54.6 to 55.5 frames a second and was 12 to 31 ms behind in 90 of
+  100; the viewer held to 20 Mbit/s had 40.3 and was 291 to 309 ms behind,
+  around the probe's limit of 300 ms as before this plan (298 on slot 55):
+  two runs of three were over it, by 4 and by 9 ms.
+- The firewall probe (`tools/playwright/quic_firewall_device_probe.mjs`)
+  failed twice: in Paranoid the server refused the QUIC session and the
+  port gave no answer, but the status still said Restricted. The server
+  keeps the firewall's status for five seconds and reads it again right
+  after a change, which can be before the owner's table has the new rules;
+  on slot 65 the probe's page step had taken long enough for the five
+  seconds to pass. The probe now waits until the status names the mode it
+  applied, and passed: Restricted with the port admitted and a session,
+  Paranoid with the port closed and no session, Baseline again. Not this
+  plan's: after a change the firewall page's status may be five seconds
+  old.
+- A slot from before this plan (65) showed H.264 over WebRTC and over QUIC
+  on the new system, with x264 and with the engine ("V7" above).
+
+Receipts: `evidence/private/gui-walk-seq66-v7-*`, `vp8-webrtc-seq66-v7`,
+`h264-webrtc-seq66-v7`, `quic-video-device-seq66-v7`,
+`mjpeg-latency-seq66-v7*`, `quic-firewall-device-seq66-v7*`,
+`v7-state-after-20261003.json`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the

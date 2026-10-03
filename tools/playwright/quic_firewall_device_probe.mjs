@@ -125,6 +125,20 @@ async function confirm(status) {
   });
   assert.equal(confirmed.status, 200, "the confirmation was refused");
 }
+/**
+ * The firewall page's status once it names `mode`. The server keeps its
+ * status for five seconds and reads it again right after a change, which
+ * may be before the owner's table has the new rules: a read straight after
+ * a change can be the mode before it.
+ */
+async function firewallViewOf(mode) {
+  let view = null;
+  await until(`the status says ${mode}`, async () => {
+    view = await firewallView();
+    return view.effectiveMode === mode;
+  });
+  return view;
+}
 /** What the firewall page's status says, and whether the table has the rule. */
 async function firewallView() {
   const data = (await call("GET", "/api/system/firewall")).body?.data ?? {};
@@ -335,7 +349,7 @@ try {
   // Restricted: the port is admitted from this (local) address.
   {
     const status = await apply("restricted");
-    const view = await firewallView();
+    const view = await firewallViewOf("restricted");
     const transport = (await call("GET", "/api/transport")).body.data.quic;
     const opened = await session();
     step("restricted", {
@@ -406,7 +420,7 @@ try {
   // Paranoid: the port is closed, to the server's knowledge and in fact.
   {
     const status = await apply("paranoid");
-    const view = await firewallView();
+    const view = await firewallViewOf("paranoid");
     const refused = await session();
     const bare = await page.evaluate(inPage, ["bare", 0, known]);
     step("paranoid", { view, session: refused, connection: bare });
