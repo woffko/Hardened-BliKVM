@@ -5,6 +5,7 @@ import { useAtom, useAtomValue } from 'jotai';
 import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
+import { watchPeer } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
@@ -45,6 +46,7 @@ export const H264Webrtc = () => {
     const videoElement = videoRef.current;
 
     let video: RTCPeerConnection | null = null;
+    let forgetPeer = () => {};
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let disposed = false;
 
@@ -67,6 +69,8 @@ export const H264Webrtc = () => {
 
       const peer = new RTCPeerConnection({ iceServers });
       video = peer;
+      // The quality monitor reads this connection's statistics while it is open.
+      forgetPeer = watchPeer(peer);
       videoOfferSent.current = false;
       videoIceCandidates.current = [];
 
@@ -204,6 +208,7 @@ export const H264Webrtc = () => {
 
     return () => {
       disposed = true;
+      forgetPeer();
 
       if (ws.readyState !== WebSocket.CLOSING && ws.readyState !== WebSocket.CLOSED) {
         ws.close();

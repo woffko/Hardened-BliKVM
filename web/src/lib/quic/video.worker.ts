@@ -49,6 +49,15 @@ export type VideoStats = {
   resets: number;
   /** Frames the decoder has not come to yet. */
   queued: number;
+  /**
+   * For the quality monitor: the bytes of every datagram and key frame
+   * that came, the frames handed to the decoder, both since the picture
+   * began, and how long the decoder took for a frame in the median over the
+   * last five seconds.
+   */
+  bytes: number;
+  received: number;
+  decodeMedianMs: number | null;
 };
 
 export type FromVideoWorker =
@@ -82,6 +91,12 @@ let decoder: VideoDecoder | null = null;
 let configured: string | null = null;
 let frames = 0;
 let resets = 0;
+let bytes = 0;
+let handed = 0;
+/** When each frame the decoder has was handed to it, by its capture time. */
+const handedAt = new Map<number, number>();
+/** How long the decoder took for the frames of the last seconds, and when. */
+let decodeTimes: { at: number; ms: number }[] = [];
 /** The frames of the last seconds: when they were drawn, and how long after they arrived. */
 let drawn: { at: number; wait: number | null }[] = [];
 /** When the frames the decoder has began to arrive, by their capture time. */
@@ -117,6 +132,7 @@ function closeDecoder() {
   decoder = null;
   configured = null;
   received.clear();
+  handedAt.clear();
   if (old && old.state !== 'closed') {
     try {
       old.close();
@@ -141,6 +157,9 @@ function draw(frame: VideoFrame) {
     context.drawImage(frame, 0, 0);
   }
   frames += 1;
+  const started = handedAt.get(frame.timestamp);
+  handedAt.delete(frame.timestamp);
+  if (started !== undefined) decodeTimes.push({ at: now, ms: now - started });
   // The frame's timestamp is its capture time on the board's clock.
   const arrived = received.get(frame.timestamp);
   received.delete(frame.timestamp);
@@ -213,6 +232,8 @@ function decode(frame: ReceivedFrame) {
     if (!decoder || decoder.state !== 'configured') return;
     if (!frame.key && decoder.decodeQueueSize >= MAX_DECODE_QUEUE) return failed();
     received.set(frame.captureMicros, frame.receivedAt);
+    handedAt.set(frame.captureMicros, performance.now());
+    handed += 1;
     decoder.decode(
       new EncodedVideoChunk({
         type: frame.key ? 'key' : 'delta',
@@ -240,6 +261,8 @@ setInterval(() => {
   const now = performance.now();
   drawn = drawn.filter((frame) => now - frame.at <= WINDOW_MS);
   aged = aged.filter((frame) => now - frame.at <= WINDOW_MS);
+  decodeTimes = decodeTimes.filter((frame) => now - frame.at <= WINDOW_MS);
+  const decodeSorted = decodeTimes.map((frame) => frame.ms).sort((left, right) => left - right);
   const known = aged.map((frame) => frame.age).sort((left, right) => left - right);
   const waits = drawn
     .map((frame) => frame.wait)
@@ -256,7 +279,10 @@ setInterval(() => {
     dropped: receiver.counters.dropped,
     requests: receiver.counters.requests,
     resets,
-    queued: decoder?.decodeQueueSize ?? 0
+    queued: decoder?.decodeQueueSize ?? 0,
+    bytes,
+    received: handed,
+    decodeMedianMs: decodeSorted.length ? percentile(decodeSorted, 0.5) : null
   });
 }, STATS_MS);
 
@@ -275,9 +301,11 @@ scope.onmessage = (event) => {
       closeDecoder();
       break;
     case 'datagram':
+      bytes += message.data.byteLength;
       handle(receiver.datagram(new Uint8Array(message.data), now));
       break;
     case 'keyframe':
+      bytes += message.data.byteLength;
       handle(receiver.keyFrame(new Uint8Array(message.data), now));
       break;
     case 'pong': {

@@ -97,7 +97,10 @@ export const H264Quic = () => {
             dropped: message.dropped,
             requests: message.requests,
             resets: message.resets,
-            queued: message.queued
+            queued: message.queued,
+            bytes: message.bytes,
+            received: message.received,
+            decodeMedianMs: message.decodeMedianMs
           });
           // What a probe reads without opening Settings.
           canvas.dataset.quicFrames = String(message.frames);

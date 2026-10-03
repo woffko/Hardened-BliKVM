@@ -5,6 +5,7 @@ import { useAtom, useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as storage from '@/lib/localstorage.ts';
+import { watchPeer } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
 import { client } from '@/lib/websocket.ts';
@@ -66,6 +67,8 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
       setIsLoading(false);
       return;
     }
+    // The quality monitor reads this connection's statistics while it is open.
+    const forgetPeer = watchPeer(peer);
     const query = codec === 'h264' ? '?codec=h264' : '';
     const socket = new WebSocket(`${getBaseUrl('ws')}/api/stream/webrtc${query}`);
     let answered = false;
@@ -157,6 +160,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
 
     return () => {
       clearTimeout(retryTimer);
+      forgetPeer();
       socket.onmessage = null;
       socket.onclose = null;
       peer.onconnectionstatechange = null;

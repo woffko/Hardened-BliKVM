@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import clsx from 'clsx';
-import { useAtom, useAtomValue } from 'jotai';
+import { getDefaultStore, useAtom, useAtomValue } from 'jotai';
 import { GripVerticalIcon, SquareIcon, XIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { getQuality } from '@/api/vm';
+import { sampleDirect, sampleNothing, sampleQuic, sampleWebRtc } from '@/lib/page-video.ts';
 import {
   basicRows,
   extendedSections,
   MIN_HEIGHT,
   MIN_WIDTH,
+  pageRates,
+  type PageRates,
+  type PageSample,
   type QualityAnswer,
   type QualityInputs,
   type QualityLevel,
@@ -18,6 +22,7 @@ import {
 } from '@/lib/quality-monitor.ts';
 import { qualityMonitorAtom } from '@/jotai/quality-monitor.ts';
 import { videoModeAtom } from '@/jotai/screen.ts';
+import { quicStatusAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
 import { useQuicVideo } from '@/hooks/useQuicVideo.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
@@ -34,6 +39,27 @@ export const QualityMonitor = () => {
   const layout = useAtomValue(qualityMonitorAtom);
   return layout.open ? <QualityMonitorWindow /> : null;
 };
+
+type View = {
+  board: QualityAnswer | null;
+  sample: PageSample | null;
+  rates: PageRates | null;
+};
+
+async function samplePath(path: VideoPath): Promise<PageSample> {
+  switch (path) {
+    case 'quic': {
+      const store = getDefaultStore();
+      return sampleQuic(store.get(quicStatusAtom), store.get(quicVideoStatsAtom));
+    }
+    case 'webrtc':
+      return sampleWebRtc();
+    case 'direct':
+      return sampleDirect();
+    case 'mjpeg':
+      return sampleNothing();
+  }
+}
 
 const QualityMonitorWindow = () => {
   const { t } = useTranslation();
@@ -53,19 +79,26 @@ const QualityMonitorWindow = () => {
     videoMode === 'mjpeg' ? 'mjpeg' : videoMode === 'vp8' ? 'vp8' : 'h264';
   const extended = layout.level === 'extended';
 
-  const [board, setBoard] = useState<QualityAnswer | null>(null);
+  const [view, setView] = useState<View>({ board: null, sample: null, rates: null });
 
   useEffect(() => {
     let stopped = false;
-    let known: { at: number; answer: QualityAnswer } | null = null;
+    let previous: PageSample | null = null;
+    let board: { at: number; answer: QualityAnswer } | null = null;
     const tick = async () => {
-      const answer = await getQuality()
-        .then((rsp) => (rsp.code === 0 && rsp.data ? (rsp.data as QualityAnswer) : null))
-        .catch(() => null);
+      const [answer, sample] = await Promise.all([
+        getQuality()
+          .then((rsp) => (rsp.code === 0 && rsp.data ? (rsp.data as QualityAnswer) : null))
+          .catch(() => null),
+        samplePath(path)
+      ]);
       if (stopped) return;
-      if (answer) known = { at: performance.now(), answer };
+      if (answer) board = { at: performance.now(), answer };
+      const rates = pageRates(previous, sample);
+      previous = sample;
       // An answer older than three seconds is no longer known.
-      setBoard(known && performance.now() - known.at <= FRESH_MS ? known.answer : null);
+      const fresh = board && performance.now() - board.at <= FRESH_MS ? board.answer : null;
+      setView({ board: fresh, sample, rates });
     };
     void tick();
     const timer = setInterval(() => void tick(), TICK_MS);
@@ -126,7 +159,13 @@ const QualityMonitorWindow = () => {
     setLayout(current.kind === 'move' ? { x: place.x, y: place.y } : size);
   };
 
-  const inputs: QualityInputs = { path, codec, board };
+  const inputs: QualityInputs = {
+    path,
+    codec,
+    board: view.board,
+    sample: view.sample,
+    rates: view.rates
+  };
   const left = Math.min(place.x, Math.max(0, window.innerWidth - KEEP_IN_VIEW_PX));
   const top = Math.min(place.y, Math.max(0, window.innerHeight - KEEP_IN_VIEW_PX));
 

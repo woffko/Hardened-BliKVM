@@ -118,6 +118,79 @@ export type QualityAnswer = {
 /** The way the picture comes to this page. */
 export type VideoPath = 'mjpeg' | 'direct' | 'webrtc' | 'quic';
 
+/**
+ * What the page counts of its own picture at one moment: totals since the
+ * picture began, and what the path's own counters say. A count the path
+ * does not have is `null`.
+ */
+export type PageSample = {
+  at: number;
+  bytes: number | null;
+  framesReceived: number | null;
+  framesDecoded: number | null;
+  framesDrawn: number | null;
+  framesDropped: number | null;
+  /** A frame's age when it is drawn, ms; estimated over WebRTC. */
+  delayMs: number | null;
+  delayEstimated: boolean;
+  /** Decoding a frame, ms. */
+  decodeMs: number | null;
+  decoder: string | null;
+  width: number | null;
+  height: number | null;
+  /** QUIC: the session's and the gateway's counters. */
+  quic: {
+    roundTripMs: number | null;
+    packetsLost: number | null;
+    givenUp: number;
+    keyFrameRequests: number;
+    resets: number;
+    gatewayFramesSent: number | null;
+    gatewayFramesDropped: number | null;
+    gatewayKeyFrames: number | null;
+  } | null;
+  /** WebRTC: `getStats()`. */
+  webrtc: {
+    roundTripMs: number | null;
+    candidates: string | null;
+    packetsReceived: number | null;
+    packetsLost: number | null;
+    jitterMs: number | null;
+    jitterBufferMsPerFrame: number | null;
+    nack: number | null;
+    pli: number | null;
+    fir: number | null;
+  } | null;
+};
+
+/** Per second, from two samples. */
+export type PageRates = {
+  megabitsPerSecond: number | null;
+  receivedPerSecond: number | null;
+  decodedPerSecond: number | null;
+  drawnPerSecond: number | null;
+  droppedPerSecond: number | null;
+};
+
+function perSecond(now: number | null, before: number | null, seconds: number) {
+  if (now === null || before === null || now < before || seconds <= 0) return null;
+  return (now - before) / seconds;
+}
+
+export function pageRates(previous: PageSample | null, current: PageSample): PageRates {
+  const seconds = previous ? (current.at - previous.at) / 1000 : 0;
+  const rate = (pick: (sample: PageSample) => number | null) =>
+    previous ? perSecond(pick(current), pick(previous), seconds) : null;
+  const bytes = rate((sample) => sample.bytes);
+  return {
+    megabitsPerSecond: bytes === null ? null : (bytes * 8) / 1e6,
+    receivedPerSecond: rate((sample) => sample.framesReceived),
+    decodedPerSecond: rate((sample) => sample.framesDecoded),
+    drawnPerSecond: rate((sample) => sample.framesDrawn),
+    droppedPerSecond: rate((sample) => sample.framesDropped)
+  };
+}
+
 /** One row: what it is, and its value as shown; `-` where not known. */
 export type QualityRow = { key: string; label: string; value: string };
 export type QualitySection = { key: string; title: string | null; rows: QualityRow[] };
@@ -136,12 +209,14 @@ function size(width: number | null | undefined, height: number | null | undefine
   return width && height ? `${width}x${height}` : null;
 }
 
-/** What the monitor shows: the board's answer while it is fresh. */
+/** What the monitor shows: the board's answer while it is fresh, the page's numbers. */
 export type QualityInputs = {
   path: VideoPath;
   /** The browser's mode: `h264` or `vp8` over WebRTC, `h264` over QUIC. */
   codec: 'h264' | 'vp8' | 'mjpeg';
   board: QualityAnswer | null;
+  sample: PageSample | null;
+  rates: PageRates | null;
 };
 
 /** The encoder that serves the path, from the board's answer. */
@@ -174,18 +249,32 @@ const PATH_LABEL: Record<VideoPath, string> = {
 
 /** The rows of Basic. */
 export function basicRows(inputs: QualityInputs, t: Translate): QualityRow[] {
-  const { path, board } = inputs;
+  const { path, board, sample, rates } = inputs;
   const encoder = servingEncoder(inputs);
   const pictureSize =
-    size(encoder?.width, encoder?.height) ?? size(board?.capture.width, board?.capture.height);
+    size(encoder?.width, encoder?.height) ??
+    size(sample?.width, sample?.height) ??
+    size(board?.capture.width, board?.capture.height);
+  const delay =
+    sample?.delayMs === null || sample?.delayMs === undefined
+      ? NOT_KNOWN
+      : `${sample.delayEstimated ? '~' : ''}${fixed(sample.delayMs)} ms`;
+  const drawn = path === 'mjpeg' ? NOT_KNOWN : fixed(rates?.drawnPerSecond, 1);
   return [
-    { key: 'speed', label: t('qualityMonitor.speed'), value: NOT_KNOWN },
-    { key: 'delay', label: t('qualityMonitor.delay'), value: NOT_KNOWN },
+    {
+      key: 'speed',
+      label: t('qualityMonitor.speed'),
+      value:
+        path === 'mjpeg' || rates?.megabitsPerSecond === null || !rates
+          ? NOT_KNOWN
+          : `${fixed(rates.megabitsPerSecond, 2)} Mbit/s`
+    },
+    { key: 'delay', label: t('qualityMonitor.delay'), value: path === 'mjpeg' ? NOT_KNOWN : delay },
     { key: 'path', label: t('qualityMonitor.path'), value: PATH_LABEL[path] },
     {
       key: 'fps',
       label: t('qualityMonitor.fps'),
-      value: `${NOT_KNOWN} / ${fixed(board?.capture.fps, 1)}`
+      value: `${drawn} / ${fixed(board?.capture.fps, 1)}`
     },
     {
       key: 'bitrate',

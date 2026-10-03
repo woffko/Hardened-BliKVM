@@ -4,6 +4,7 @@ import { useAtom, useAtomValue } from 'jotai';
 import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
+import { directCounters } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
@@ -49,8 +50,15 @@ export const H264Direct = () => {
     const url = `${getBaseUrl('ws')}/api/stream/h264/direct`;
     const ws = new W3cWebSocket(url);
     ws.binaryType = 'arraybuffer';
+    // What the quality monitor reads: the bytes this picture was sent.
+    directCounters.bytes = 0;
+    directCounters.messages = 0;
 
     ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        directCounters.bytes += event.data.byteLength;
+        directCounters.messages += 1;
+      }
       try {
         worker.postMessage({ type: 'ws_message', data: event.data }, [event.data]);
       } catch (error) {
