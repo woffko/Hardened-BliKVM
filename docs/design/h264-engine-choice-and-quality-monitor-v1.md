@@ -7,7 +7,9 @@ cases, the monitor's rows and where each comes from, the reference and the
 licence question. The record of what was measured follows at its end as the
 work goes on.
 
-Status (2026-10-03): the design; nothing of it is built yet.
+Status (2026-10-03): the engine as the board's choice is built (C1) and
+passed its gate on the test board; the menu and the monitor are not built
+yet.
 
 ## The engine as the board's choice
 
@@ -308,4 +310,75 @@ page's licence statement would name it.
 
 ## Record
 
-(Filled as the work goes on.)
+### C1, 2026-10-03: the engine as the board's choice
+
+Built: the encoder's `engine` line, its switch between two frames both
+ways, its look at the device and its report (C1.1, 047f5f4); the server's
+choice, stored and sent on the demand connections, and the screen's new
+fields (C1.2, 7ec1c57); the host tests (C1.3, 6088fb9). On the test board:
+slot 67 (`0.1.0-alpha.12`, source 6088fb9) and the encoder of the same
+source through `deploy_vp8.sh`; the update runtime (dev36) and the driver
+as they were.
+
+**Found on the board: the choice reaches the encoder only on a demand
+connection.** While nobody watches H.264 the server stores a choice and
+answers it, and the encoder takes it from the next viewer's connection,
+whose first lines name it: until then `h264Encoder` names the engine that
+encoded last while `h264Engine` already names the new choice. A browser
+that chooses an H.264 entry watches H.264 right after it (the entry sets
+its mode), so the menu meets this only where it shows what encodes to a
+browser in another mode: it says so only while this browser's mode is
+H.264 (C2).
+
+**Gate C1, a transient instance** (`tools/device/ve_engine_switch_run.sh`
+in a lab session): the product's binary with the unit's settings, fed with
+the lab's `drag` pictures at 60 a second into its limit of 30 at 8 Mbit/s,
+its demand held on the board and switched by `engine` lines
+(`ve_engine_switch.py`), 100 times, four seconds apart, while it encoded.
+The product's own encoder was given x264 for the session and the engine
+after it, through its demand socket as a viewer's connection gives it
+(`ve_engine_choose.py`): its status word followed after 0.08 and 0.13 s.
+
+| | To x264 | To the engine |
+| --- | --- | --- |
+| Status word followed the line, s (median, highest) | 0.074, 0.094 | 0.107, 0.149 |
+| First key frame after the line, s (median, highest) | 0.057, 0.116 | 0.135, 0.177 |
+| Frames before that key frame (at most) | 1 | 1 |
+| Frames a second (median of the periods) | 17.0 | 20.3 |
+| Cores (median of the periods) | 2.87 | 1.13 |
+
+7,659 records came over the frame socket, one stream, every one the next;
+241 key frames. The journal has 51 lines that the engine encodes (the first
+stream's and 50 switches), 50 that x264 is chosen, and none of a failure;
+the kernel said nothing. The frame before the engine's first is the one x264
+was encoding when the line came.
+
+**Gate C1, the product's own encoder** (`tools/device/engine_switch_probe.py`,
+`ve_engine_watch.py` on the board): 100 choices through `POST /api/vm/screen`,
+five seconds apart, while `quic_video_device_probe.mjs` watched for 580 s.
+The target showed a moving picture (17.2 frames a second at the viewer).
+
+| | To x264 | To the engine |
+| --- | --- | --- |
+| `h264Encoder` followed the request, s (median, 95 in 100, highest) | 0.134, 0.190, 0.234 | 0.209, 0.318, 1.266 |
+| The unit's share of the processors while it encoded, % of a core | 244 | 136 |
+
+The request was answered in 28 ms in the median (72 at most). The board's
+watcher saw the status word change 101 times; the unit ran one process
+throughout and held at most 48 MB. The viewer decoded 9,973 frames: none
+given up, no key-frame request, no restart of its decoder; a frame was 78 ms
+old in the median when it was drawn (200 in 95 of 100). The gateway sent
+10,240 frames, dropped 2, sent 350 key frames and lost no packet. The
+journal has 51 and 50 lines as above and none of a failure; the kernel said
+nothing.
+
+**Gate C1 passed**: both ways 50 times in each setting, every switch within
+1.3 s (2 s allowed), the status word and `h264Encoder` with it, the stream
+on with a key frame, no encoder failure, no kernel line, and the processor
+time with the engine. The choice was left as found (`hardware`), and with it
+the board's other settings.
+
+Receipts: `evidence/private/c1-transient-gate`, `c1-product-gate`,
+`c1-product-gate-switches.json`, `c1-product-gate-quic.json`,
+`update-to-seq67-alpha12-*`, `c1-state-as-found-20261003.json`,
+`c1-state-after-gate-20261003.json`.
