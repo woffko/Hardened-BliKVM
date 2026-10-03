@@ -11,6 +11,11 @@
  *        plan_test dump < DESCRIPTION
  *            the operations of one pass, for the comparison with the lab
  *            tool's plan (`bli-kvm-ve-lab plan`)
+ *        plan_test sets < WALK
+ *            the sets of buffers of passes one after the other, for the
+ *            comparison with the client's own account of them
+ *            (`bli-kvm-ve-lab sets`): every line of WALK is a pass's flags,
+ *            whether a picture is there, and whether the pass fails
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -565,6 +570,37 @@ static int dump(void)
 	return operations != 0;
 }
 
+/*
+ * A walk through the sets: for every line the flags, whether a picture is
+ * there and whether the pass fails; the answer is the line with the set
+ * written and the set read, or with a dash for a pass that is refused.
+ */
+static int walk(void)
+{
+	struct ve_enc_unit unit = { .bits = 8 };
+	struct ve_enc_request request = { .unit_count = 1, .units = &unit };
+	struct ve_enc_sets sets;
+	unsigned int flags, have_picture, fails;
+
+	ve_enc_sets_reset(&sets);
+	while (scanf("%u %u %u%*[^\n]", &flags, &have_picture, &fails) == 3) {
+		struct ve_enc_pass pass;
+
+		request.flags = flags;
+		if (ve_enc_check_frame(&request, &sets, (int)have_picture, &pass)) {
+			printf("%u %u %u -\n", flags, have_picture, fails);
+			continue;
+		}
+		printf("%u %u %u %u %u\n", flags, have_picture, fails, pass.own,
+		       pass.reference);
+		if (fails)
+			ve_enc_sets_reset(&sets);
+		else
+			ve_enc_sets_done(&sets, flags, &pass);
+	}
+	return 1;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc >= 3 && !strcmp(argv[1], "random")) {
@@ -574,6 +610,9 @@ int main(int argc, char **argv)
 	}
 	if (argc == 2 && !strcmp(argv[1], "dump"))
 		return dump() ? 0 : 1;
-	fprintf(stderr, "usage: %s random COUNT [SEED] | dump < DESCRIPTION\n", argv[0]);
+	if (argc == 2 && !strcmp(argv[1], "sets"))
+		return walk() ? 0 : 1;
+	fprintf(stderr, "usage: %s random COUNT [SEED] | dump < DESCRIPTION | sets < WALK\n",
+		argv[0]);
 	return 2;
 }

@@ -38,6 +38,10 @@ const USAGE: &str = "usage:
       the register operations of one pass as the encoder driver must make them, with
       made-up addresses and the pass's two sets of buffers: what the driver's own plan
       is compared with on the build host
+  bli-kvm-ve-lab sets COUNT SEED
+      COUNT passes one after the other with flags by chance, and the sets of buffers
+      the driver's client expects each to write and read: what the driver's own rule
+      is compared with on the build host
   bli-kvm-ve-lab psnr SEQUENCE WIDTHxHEIGHT FRAMES DECODED [ring=N] [burst=M:R] [luma] [floor=DB]
       luma PSNR of at most FRAMES decoded frames (planar or NV12, visible size) against
       the sequence; with ring=N against a stream of N pictures played forth and back,
@@ -1358,6 +1362,74 @@ fn plan(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// A walk through the driver's sets of buffers as the product's own
+/// account has them (`bli_kvm_ve_encoder::sets`), in the words of the
+/// driver's test on the build host: for every pass its flags, whether a
+/// picture is there and whether the pass fails, then the set written and
+/// the set read, or a dash for a pass that is refused.
+fn sets(arguments: &[String]) -> Result<(), String> {
+    let [count, seed] = arguments else {
+        return Err(USAGE.into());
+    };
+    let count: u32 = count
+        .parse()
+        .ok()
+        .filter(|count| (1..=10_000_000).contains(count))
+        .ok_or("COUNT is a number from 1 to 10000000")?;
+    let mut state: u64 = seed.parse().map_err(|_| "SEED is a number")?;
+    let mut below = |bound: u64| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 16) % bound
+    };
+    use bli_kvm_ve_encoder::{abi, sets::Sets};
+    let mut sets = Sets::default();
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    for _ in 0..count {
+        // Most passes are what a client sends; one in eight is anything.
+        let mut flags = 0;
+        if below(12) == 0 {
+            flags |= abi::KEY;
+        }
+        match below(6) {
+            0 | 1 => flags |= abi::AGAIN,
+            2 => flags |= abi::EARLIER,
+            3 if below(2) == 0 => flags |= abi::STAY,
+            _ => {}
+        }
+        if below(2) == 0 {
+            flags |= abi::WIDE;
+        }
+        if below(8) == 0 {
+            flags = below(64) as u32;
+        }
+        let have_picture = below(10) != 0;
+        let fails = below(40) == 0;
+        let line = match sets.check(flags, have_picture) {
+            None => format!("{flags} {} {} -", u32::from(have_picture), u32::from(fails)),
+            Some(pass) => {
+                let line = format!(
+                    "{flags} {} {} {} {}",
+                    u32::from(have_picture),
+                    u32::from(fails),
+                    pass.own,
+                    pass.reference
+                );
+                if fails {
+                    sets.reset();
+                } else {
+                    sets.done(flags, &pass);
+                }
+                line
+            }
+        };
+        writeln!(out, "{line}").map_err(|error| error.to_string())?;
+    }
+    out.flush().map_err(|error| error.to_string())
+}
+
 /// The two ways a long run reaches the engine: the lab module, where this
 /// tool writes every register, and the encoder driver, which writes them
 /// itself.
@@ -1912,6 +1984,7 @@ fn main() -> ExitCode {
         Some("generate") => generate(&arguments[1..]),
         Some("standin") => standin(&arguments[1..]),
         Some("plan") => plan(&arguments[1..]),
+        Some("sets") => sets(&arguments[1..]),
         Some("psnr") => compare(&arguments[1..]),
         Some("probe") => probe(&arguments[1..]),
         Some("buffers") => buffers(&arguments[1..]),

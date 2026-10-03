@@ -40,3 +40,14 @@ for pass in \
   passes=$((passes + 1))
 done
 echo "ve-enc plan: the driver's operations are the lab tool's for $passes passes"
+
+# Which set of buffers a pass reads and writes: the driver's rule against
+# the client's own account of it, over passes with flags by chance.
+"$lab" sets 200000 20261002 > "$output/sets-lab.txt"
+"$output/plan_test" sets < "$output/sets-lab.txt" > "$output/sets-driver.txt"
+if ! cmp -s "$output/sets-lab.txt" "$output/sets-driver.txt"; then
+  echo "the driver's sets are not the client's:" >&2
+  diff "$output/sets-lab.txt" "$output/sets-driver.txt" | head -10 >&2
+  exit 1
+fi
+echo "ve-enc plan: the driver's sets are the client's for $(wc -l < "$output/sets-lab.txt") passes, $(grep -c -- '-$' "$output/sets-lab.txt") of them refused"
