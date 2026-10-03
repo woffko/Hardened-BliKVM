@@ -56,7 +56,7 @@ or fails three frames in a row.
 | V6.3 | b31149a | `docs/licensing.md`; packaging tests; `check.sh` green. |
 | V7.1 | 44d18d6, f6fd0f3, b68f8f5, 5d5d6b5 | Installed: dev36, the encoder, slot 66. The transient instance (`ve-v7-measure-20261003-*`), the windows end to end (`ve-v7-e2e-*`), twelve hours (`ve-v7-hold-20261003`). |
 | V7.2 | f21b327 | On slot 66 with the engine: GUI walks desktop and mobile, VP8 and H.264 over WebRTC, H.264 over QUIC, MJPEG (the 20 Mbit/s viewer around its 300 ms limit, as before), the firewall probe (after it was taught to wait for the server's five-second status); slot 65 showed H.264 on the new system (`gui-walk-seq66-v7-*`, `vp8-webrtc-seq66-v7`, `h264-webrtc-seq66-v7`, `quic-video-device-seq66-v7`, `mjpeg-latency-seq66-v7*`, `quic-firewall-device-seq66-v7*`, `ve-v7-e2e-slot65-*`). |
-| V7.3 | this note's commit | This note, the two design notes, the video design note, the feasibility note's outcome, `docs/security-boundaries.md`; the memory note. |
+| V7.3 | d474b7a | This note, the two design notes, the video design note, the feasibility note's outcome, `docs/security-boundaries.md`; the memory note. |
 | Gate V7 | f70213c | Passed: 1.56 and 1.70 cores at 30 frames a second of a moving 1920x1080 picture against 3.07 and 3.27 for x264, which made 18.8 and 12.5 of them; twelve hours on the engine without a failure or a kernel line from the driver or the engine. The engine stays on. |
 | V7.4 | the commit after it | The end state below. |
 
@@ -111,6 +111,33 @@ or fails three frames in a row.
 - The engine while somebody holds the HID lease: by rule 1, never before
   gate V7.
 - Browsers other than Chromium, and phones.
+
+## Board end state (2026-10-03)
+
+As found before V7 and compared field by field afterwards
+(`v7-state-as-found-20261003.json`, `v7-state-after-20261003.json`): the
+switch for RAW system updates on as the operator left it; the terminal,
+scripts, remote download and PicoClaw switches off; firewall Baseline;
+video at 60 frames a second, quality 100, 1920x1080; WebRTC quality
+8 Mbit/s; the QUIC transport on; session lock 3600 s; SSH enabled; the
+operator's two images in the catalog and no drive attached. The only
+differences are the capture's measured rates and the new field
+`h264Encoder`, which says `hardware`.
+
+What the plan left on the board, as gate V7 decided: slot 66
+`0.1.0-alpha.11`, the update runtime `0.1.0~dev36`, the encoder of
+`b31149a` with its units, and the encoder driver switched on: its loader
+unit enabled and active, the module loaded and holding the engine,
+`/dev/hardened-blikvm-ve-enc` the group `hardened-blikvm-ve`'s with mode
+0660, the udev rule and the modprobe line in `/etc`, and `sunxi_cedrus`
+loaded but bound to nothing (it stays out from the next boot). The QUIC
+gateway was restarted once (finding 6).
+
+No lab tool, lab module, measuring script, temporary directory or process
+of the plan is on the board: every lab session gave the engine back to
+`cedrus` and left the kernel's image as it was before it. The kernel's
+taint flags are 13312 since the first out-of-tree module of this boot and
+stay so until the next.
 
 ## Left to the operator
 
