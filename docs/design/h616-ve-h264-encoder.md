@@ -1845,6 +1845,126 @@ in a row, the bitrate changed while encoding), the frame socket with a
 unit that names a device the board does not have, and the page that shows
 the encoder.
 
+### V7, 2026-10-03: the product's encoder on the board
+
+**What was installed** (tree `b31149a`, `check.sh` green): the update-runtime
+package `0.1.0~dev36` with the encoder driver (the module's bytes are those
+gate V4 was passed with, `a8baacfe…`), the H.264 encoder and its units
+through `tools/device/deploy_vp8.sh`, and slot 66, `0.1.0-alpha.11`, through
+the update API. The driver is off until `tools/device/deploy_ve.sh install`
+switches it on; until gate V7 that was done only for the runs below.
+
+Two things went wrong on the way. The first deploy of the encoder's units
+left H.264 without an encoder for about a minute: its unit names the group
+of the driver's device, which only `deploy_ve.sh` made, and systemd starts
+no unit that names a group the system does not have (216/GROUP). The group
+was made by hand from the package's example and the encoder came back;
+`deploy_vp8.sh` now makes it with the unit (`1fafaab`). And the QUIC
+transport refused every session with "clock": the board's QUIC gateway had
+started at boot while the board's clock still said 2026-07-29 and made its
+13-day certificate from then. That is not this plan's; the gateway was
+restarted, which made a new certificate, and the finding is for the
+operator (the gateway should wait for the clock, or make a new certificate
+when the clock jumps).
+
+**A slot from before this plan** (65, `0.1.0-alpha.10`) on the new system,
+before slot 66 was installed: H.264 over WebRTC and over QUIC with x264, and
+in a guarded window with the engine (below), every probe passed.
+
+**The engine against x264 in a second, transient instance of the
+encoder** (V7.1; `tools/device/ve_encoder_measure.sh` in lab sessions with
+the driver loaded root-only, so that the product's own encoder could not
+open it and stayed on x264): the product's binary with the unit's settings
+(three converter threads, 8 Mbit/s), fed with the lab's pictures as a
+capture stream of JPEG pictures (`ve_capture_play.py`, ffmpeg's MJPEG at
+`q:v 4`: `drag` 284 kB, `motion` 348 kB, `scroll` 593 kB a picture), 60
+seconds after 10 of warming up. The processor time is the encoder process's
+own; the player's is not in it.
+
+Thirty pictures a second, into an encoder whose limit (60) lets every one
+of them in:
+
+| Picture | Engine | Frames a second | Cores | JPEG decode, convert, encode, ms a frame | Frames left out a second | Hottest: processors, engine, °C |
+| --- | --- | --- | --- | --- | --- | --- |
+| drag | video engine | 30.0 | 1.56 | 28.1, 9.6, 17.6 | 2.2 | 68.3, 63.2 |
+| drag | x264 | 18.8 | 3.07 | 34.1, 10.5, 51.0 | (11.2 not taken) | 75.0, 66.5 |
+| motion | video engine | 30.0 | 1.70 | 34.3, 7.8, 17.7 | 0 | 71.7, 65.4 |
+| motion | x264 | 12.5 | 3.27 | 39.7, 9.5, 77.9 | (17.6 not taken) | 77.3, 68.6 |
+| scroll | video engine | 19.6 | 1.18 | 36.5, 6.5, 16.9 | 10.1 | 66.6, 62.8 |
+| scroll | x264 | 17.6 | 2.94 | 42.6, 8.6, 53.6 | (2.2 not taken) | 75.4, 67.0 |
+
+The engine holds thirty frames a second of a moving 1920x1080 picture with
+1.56 and 1.70 cores; x264, with three cores and more, makes 18.8 and 12.5
+of them and lets the rest go. At an equal rate, with the encoder's limit at
+12 (about 10.5 frames a second for both), `scroll` takes 0.85 cores with
+the engine and 2.27 with x264, `motion` 0.69 and 2.45. Most of what the
+engine's path costs is decoding the capture's JPEG pictures, which x264's
+path pays as well; the engine's own time is 7.3 to 7.6 ms a pass. `scroll`
+did not reach thirty: the player did not give its large pictures faster
+than about twenty a second, and at 8 Mbit/s a third of its frames were left
+out by the rate control. At the limit (pictures at 90 a second, limit 60)
+the engine's path made 26 to 27 frames a second with all four cores busy
+(decoding), x264's 6.5 to 7.7.
+
+The encoder's gate admits a frame no sooner than one interval of its limit
+after the one before. Fed at exactly its limit, it lost the frames that
+came a little early: about a third (18 to 19 frames a second of 30 for the
+engine, the first session); fed at twice the limit, as the board's capture
+at 60 frames a second feeds an encoder limited to 30, it let about twenty
+a second through (20.5 for the engine on `drag`, with 1.08 cores, and 17.7
+for x264 with 2.89). That is the product's gate for every engine, not this
+plan's, and a finding for the operator: how many frames the board's own
+capture loses so was not measured, because the target's picture stood
+still.
+
+**End to end, as a viewer gets it** (V7.1; `quic_video_device_probe.mjs`
+and `vp8_webrtc_probe.mjs` with H.264, 60 s each, the processor time of
+every unit on the picture's way from its control group): the target showed
+a still picture, so the encoder had half a frame a second to encode.
+
+| Slot, engine | QUIC: frames, age at drawing (median, 95 in 100), ms | WebRTC: frames | The H.264 encoder's unit, % of a core | uStreamer | nginx (WebRTC) |
+| --- | --- | --- | --- | --- | --- |
+| 65, x264 | 32, 60, 109 | 32 | 9.7 | 6.5 | 7.1 |
+| 65, video engine | 32, 46, 78 | 32 | 6.1 | 6.5 | 6.6 |
+| 66, x264 | 32, 60, 111 | 32 | 9.7 | 6.5 | 6.7 |
+| 66, video engine | 32, 45, 78 | 32 | 6.0 | 6.4 | 6.9 |
+
+With slot 66 the server said `h264Encoder: hardware` while the engine
+encoded and `x264` after. The windows with the engine were guarded as the
+lab sessions are: the board quiet before, a watcher of every connection
+and QUIC session that is not the probe's own, and the engine switched off
+by `deploy_ve.sh remove` at the end.
+
+**Twelve hours with a viewer** (V7.1; `tools/device/ve_hold_run.sh 12 8000`
+in a lab session): the product's own units with the engine switched on,
+and a viewer's demand held on the board itself at the operator's
+8 Mbit/s (`ve_demand_hold.py`), so that no connection from outside was
+needed and a connection from outside still meant somebody else. The
+encoder encoded what the target showed: mostly a still picture, and about
+an hour in all of motion at up to 25 frames a second.
+
+- 43,200 seconds on the engine, from 02:28 to 14:37 UTC on 2026-10-03.
+  Once somebody connected (02:56): the engine was switched off within the
+  watcher's 20 seconds and on again after five quiet minutes.
+- 4,294 statistics lines, every one `engine=hardware`: 238,468 passes,
+  14,905 key frames, 319 frames left out, **no failure**; a pass took the
+  engine 6.7 to 8.3 ms. The encoder ran as one process from 03:02 to the
+  end and used 31% of a core on average; its memory stayed at 10 to 16 MB
+  (27 MB at most), the free contiguous memory at 66,192 kB throughout.
+- The hottest the processors got was 74.7 °C.
+- The kernel's log got four lines: `cedrus` registering its device twice,
+  when the run gave the engine back to it (for the connection, and at the
+  end), and two notes of `systemd-journald` at 02:30 that its journal was
+  flushed and given up, which neither the driver nor the encoder asks for
+  and whose cause was not found. Nothing from the driver or the engine.
+
+Receipts: `evidence/private/ve-v7-measure-20261003-gate-at-limit` (fed at
+the limit), `-b` (fed at 60 and at 90), `-c` (`drag`, and an equal rate),
+`-d` (fed at 30, the table above), `ve-v7-e2e-slot65-x264`, `-hardware`,
+`ve-v7-e2e-slot66-x264`, `-hardware` (and the probes' receipts beside
+them), `ve-v7-hold-20261003`, `update-to-seq66-alpha11-*`,
+`v7-state-as-found-20261003.json`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the
