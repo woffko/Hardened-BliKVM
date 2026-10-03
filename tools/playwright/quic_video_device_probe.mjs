@@ -245,6 +245,8 @@ const receipt = {
   path: relayed ? { relay: true, loss: LOSS, delayMs: DELAY_MS } : "direct",
   steps: [],
   hidRequests: {},
+  // The page's API requests that failed (the probe's own are not the page's).
+  apiErrors: [],
   errors: [],
 };
 const step = (name, detail = {}) => {
@@ -351,6 +353,12 @@ try {
       const key = `${request.method()} ${route}`;
       receipt.hidRequests[key] = (receipt.hidRequests[key] ?? 0) + 1;
     }
+  });
+  page.on("response", (response) => {
+    const route = new URL(response.url()).pathname;
+    if (!route.startsWith("/api/") || route.startsWith("/api/stream/")) return;
+    if (response.status() >= 400)
+      receipt.apiErrors.push(`${response.status()} ${route}`);
   });
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   await page.getByTestId("menu-bar").waitFor({ timeout: 30000 });
@@ -538,6 +546,7 @@ try {
   assert.equal(receipt.session.video, "quic");
   assert.ok(frames > 0, "no frame was decoded");
   assert.deepEqual(receipt.hidRequests, {}, "a HID request was made");
+  assert.deepEqual(receipt.apiErrors, [], "an API request failed");
   assert.deepEqual(receipt.errors, []);
 
   // The page leaves, as a closed tab does.

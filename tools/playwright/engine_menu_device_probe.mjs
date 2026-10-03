@@ -84,6 +84,8 @@ const receipt = {
   steps: [],
   switches: [],
   hidRequests: {},
+  // The page's API requests that failed (the probe's own are not the page's).
+  apiErrors: [],
   errors: [],
 };
 const step = (name, detail = {}) => {
@@ -163,6 +165,12 @@ try {
       receipt.hidRequests[key] = (receipt.hidRequests[key] ?? 0) + 1;
     }
   });
+  page.on("response", (response) => {
+    const route = new URL(response.url()).pathname;
+    if (!route.startsWith("/api/") || route.startsWith("/api/stream/")) return;
+    if (response.status() >= 400)
+      receipt.apiErrors.push(`${response.status()} ${route}`);
+  });
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   await page.getByTestId("menu-bar").waitFor({ timeout: 30000 });
   await until("the picture", async () => (await framesDrawn(page)) >= 2);
@@ -231,6 +239,7 @@ try {
     missed: missed.length,
   };
   assert.deepEqual(receipt.hidRequests, {}, "a HID request was made");
+  assert.deepEqual(receipt.apiErrors, [], "an API request failed");
   await page.goto("about:blank");
   result =
     missed.length === 0 && receipt.errors.length === 0 ? "passed" : "failed";
