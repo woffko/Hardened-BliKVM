@@ -165,6 +165,23 @@ two, each with the transport in brackets as today:
   document. The rows' text is not in the document: the canvas is an image
   named for the monitor, and the contracts read what was drawn from the
   worker.
+- Limits, written down in the review fixes (Q1, Q12):
+  - It needs workers and `OffscreenCanvas`. A browser that lacks them, or
+    refuses the worker, gets one line in place of the rows (English and
+    Russian) and nothing else: no rows, no timer, no request. There is no
+    drawing fallback on the main thread: it would bring back the 4 to 5 ms a
+    second that the worker removed, and a second renderer to keep right.
+  - The rows are an image. A screen reader gets the window's name and the
+    header's buttons and not the numbers, and nothing in the rows can be
+    selected or copied. A text alternative is not built: text kept current in
+    the document is what cost the main thread 4 to 5 ms a second.
+  - The worker keeps five values on its scope for the contracts and the
+    device probes, which read them and nothing else of it:
+    `qualityMonitorRows`, `qualityMonitorLabels`, `qualityMonitorSections`,
+    `qualityMonitorDraws` (a probe that reads more often than the monitor
+    draws takes every draw once) and `qualityMonitorPixels` (the canvas's size
+    in device pixels, which shows that the rows follow the display's pixel
+    ratio).
 
 ### Basic
 
@@ -266,6 +283,10 @@ open and once when it closes or the encoder starts.
   `engineMicros` is the engine's time summed over its passes.
 - `stageMicros`: the mean a frame over the last second, 0 to 10,000,000.
 - `hardware` is `null` where the engine has not encoded since the start.
+- Schema 1 is closed. The server reads the report with every field checked
+  and refuses a whole report that has a field it does not know, so a field
+  added to schema 1 would make an older server show no board numbers at all.
+  A new field needs a new schema number and a server that reads it.
 
 ### `GET /api/vm/quality`
 
@@ -363,9 +384,22 @@ page's licence statement would name it.
   `GET /api/vm/quality` and its cache.
 - **Page** (host, Playwright): the menu's cases against a stand-in
   (`tools/playwright/quality_fixture.mjs`): both entries, the check mark,
-  a choice that is not what encodes, no engine, no right; the monitor's
-  window, its two levels, its rows for each path against the stand-in, the
-  API asked only while it is open.
+  a choice that is not what encodes, an engine that failed or is busy (shown
+  with its reason, choosable again), no engine, a refused choice, no right;
+  the monitor's window, its two levels, its rows for each path against the
+  stand-in, the API asked only while it is open, a browser without
+  `OffscreenCanvas` or with the worker refused, the rows drawn again when the
+  pixel ratio changes.
+- **Page** (host, `node --test`): `tools/test_quality_monitor.mjs` holds the
+  monitor's pure functions (rates, the rows of each path, the stored window)
+  without a browser.
+- **Under load** (host): `scripts/stress-under-load.sh RUNS [LOAD] --
+  COMMAND...` runs a command again and again beside busy loops, one and a
+  half times the cores by default, and counts the runs that passed. The tests
+  of this plan that depend on time are held to 30 runs under it without a
+  failure (gates C and E of the review fixes; the numbers are in the Record).
+  `check.sh` runs only the tool's own unit test, `tools/test_stress_under_load.py`:
+  a run takes minutes.
 
 ## Record
 
