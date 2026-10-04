@@ -202,6 +202,32 @@ pub struct ServerOptions {
     pub quic_link_uid: Option<u32>,
 }
 
+impl ServerOptions {
+    /// Whether the server offers, and serves, the WebRTC quality: the video
+    /// controls are enabled and the encoders take the bitrate over their
+    /// demand sockets.
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) fn offers_webrtc_quality(&self) -> bool {
+        self.video_controls_enabled
+            && self.webrtc_janus.is_some()
+            && (self.webrtc_demand_socket.is_some() || self.webrtc_h264_demand_socket.is_some())
+    }
+
+    /// Whether the server offers, and serves, the board's choice of the H.264
+    /// engine: the video controls are enabled, the H.264 encoder takes the
+    /// choice over its demand socket, and its report is configured. The report
+    /// is written by the encoder that knows the choice and its drop-in is
+    /// installed with it, so it says that the encoder is there: a slot on a
+    /// board whose encoder is older offers nothing that would change nothing.
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) fn offers_engine_choice(&self) -> bool {
+        self.video_controls_enabled
+            && self.webrtc_janus.is_some()
+            && self.webrtc_h264_demand_socket.is_some()
+            && self.h264_encoder_report.is_some()
+    }
+}
+
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
@@ -419,18 +445,15 @@ pub fn app_with_options(options: ServerOptions) -> Router {
                 bli_kvm_core::VideoSetting::FrameDetect,
             ];
             // The WebRTC encoders take their bitrate over the demand socket.
-            if options.webrtc_janus.is_some()
-                && (options.webrtc_demand_socket.is_some()
-                    || options.webrtc_h264_demand_socket.is_some())
-            {
+            if options.offers_webrtc_quality() {
                 manifest
                     .video
                     .settings
                     .push(bli_kvm_core::VideoSetting::WebrtcBitrate);
             }
             // The H.264 encoder takes the board's choice of its engine the
-            // same way.
-            if options.webrtc_janus.is_some() && options.webrtc_h264_demand_socket.is_some() {
+            // same way, where it reports.
+            if options.offers_engine_choice() {
                 manifest
                     .video
                     .settings
@@ -2156,6 +2179,67 @@ mod tests {
         assert_eq!(body["data"]["rejection"], "value_out_of_range");
         // Kept for the next start of the server.
         assert_eq!(webrtc::load_bitrate(&state_dir), 5000);
+    }
+
+    /// The WebRTC quality and the H.264 engine's choice are the server's own
+    /// settings: offered, and served, only where the video controls are
+    /// enabled; the choice also only where the H.264 encoder's report is
+    /// configured, which the encoder that knows the choice writes, so that a
+    /// slot on a board with an older encoder does not offer a choice that
+    /// changes nothing.
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn the_servers_own_video_settings_are_offered_and_served_only_where_configured() {
+        let root = tempdir().unwrap();
+        for (controls, report) in [(true, true), (true, false), (false, true), (false, false)] {
+            let tag = format!("controls {controls}, report {report}");
+            let app = app_with_options(ServerOptions {
+                state_dir: root.path().join(format!("account-{controls}-{report}")),
+                restricted_controls_enabled: true,
+                video_controls_enabled: controls,
+                control_socket: Some(root.path().join("control.sock")),
+                webrtc_janus: Some("127.0.0.1:8188".parse().unwrap()),
+                webrtc_h264_demand_socket: Some(root.path().join("h264.sock")),
+                h264_encoder_report: report.then(|| root.path().join("report.json")),
+                ..ServerOptions::default()
+            });
+            let (cookie, csrf) = setup_and_login(&app).await;
+            let response = app
+                .clone()
+                .oneshot(json_request(Method::GET, "/api/capabilities", Value::Null))
+                .await
+                .unwrap();
+            let settings = json_body(response).await["data"]["video"]["settings"].clone();
+            let offered = |name: &str| settings.as_array().unwrap().contains(&Value::from(name));
+            let post = |kind: &str, value: i64| {
+                let mut request = json_request(
+                    Method::POST,
+                    "/api/vm/screen",
+                    serde_json::json!({"type": kind, "value": value}),
+                );
+                request
+                    .headers_mut()
+                    .insert(header::COOKIE, cookie.parse().unwrap());
+                request
+                    .headers_mut()
+                    .insert("x-csrf-token", csrf.parse().unwrap());
+                request
+            };
+            for (name, kind, value, is_offered) in [
+                ("h264_engine", "h264_engine", 0, controls && report),
+                ("webrtc_bitrate", "webrtc_kbps", 5000, controls),
+            ] {
+                assert_eq!(offered(name), is_offered, "{tag}: {settings}");
+                let body = json_body(app.clone().oneshot(post(kind, value)).await.unwrap()).await;
+                assert_eq!(body["data"]["applied"], is_offered, "{tag}, {kind}: {body}");
+                if !is_offered {
+                    assert_eq!(
+                        body["data"]["rejection"], "unsupported_setting",
+                        "{tag}, {kind}: {body}"
+                    );
+                }
+            }
+        }
     }
 
     /// The owner's side for the screen's read-backs: the settings it runs

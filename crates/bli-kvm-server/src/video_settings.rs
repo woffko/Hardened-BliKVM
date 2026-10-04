@@ -222,7 +222,11 @@ pub(crate) async fn update_screen(
 /// viewer; nothing restarts. Only the offered levels are accepted.
 #[cfg(feature = "restricted-control-surface")]
 fn set_webrtc_bitrate(state: &AppState, value: i64) -> AppResult<ScreenOutcome> {
-    let Some(gateway) = state.webrtc.as_ref() else {
+    let Some(gateway) = state
+        .webrtc
+        .as_ref()
+        .filter(|_| state.options.offers_webrtc_quality())
+    else {
         return Ok(ScreenOutcome {
             rejection: Some("unsupported_setting"),
             ..ScreenOutcome::default()
@@ -262,7 +266,7 @@ fn set_h264_engine(state: &AppState, value: i64) -> AppResult<ScreenOutcome> {
     let Some(gateway) = state
         .webrtc
         .as_ref()
-        .filter(|gateway| gateway.h264_demand.is_some())
+        .filter(|gateway| gateway.h264_demand.is_some() && state.options.offers_engine_choice())
     else {
         return Ok(ScreenOutcome {
             rejection: Some("unsupported_setting"),
@@ -325,7 +329,7 @@ pub(crate) async fn screen_state(
     outcome.h264_engine = state
         .webrtc
         .as_ref()
-        .filter(|gateway| gateway.h264_demand.is_some())
+        .filter(|gateway| gateway.h264_demand.is_some() && state.options.offers_engine_choice())
         .map(|gateway| gateway.engine.borrow().name());
     if let Some(availability) = state
         .options

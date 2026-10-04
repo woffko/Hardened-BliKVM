@@ -40,8 +40,16 @@ encodes with is therefore the board's, not a browser's.
 - The right is the WebRTC quality's: the request is served to an
   authenticated session where the video controls are enabled, and the
   capabilities offer the setting as `h264_engine` in `video.settings`
-  where they offer `webrtc_bitrate` and the H.264 demand socket is
-  configured.
+  where they offer `webrtc_bitrate`, the H.264 demand socket is configured
+  and the H.264 encoder's report is configured (changed in the review
+  fixes, Q3 and Q7: the report's path is installed with the encoder that
+  writes it, so it says that an encoder that knows the choice is there, and
+  a slot on a board with an older encoder offers nothing that would change
+  nothing). What is not offered is not served either: `POST /api/vm/screen`
+  with `h264_engine` or `webrtc_kbps` answers `unsupported_setting`, and
+  `GET /api/vm/screen` has no `h264Engine`. Before, the video controls hid
+  the entries in the page only, and the server served both settings to any
+  session with a CSRF token.
 - `GET /api/vm/screen` reports, beside today's fields:
   - `h264Engine`: the choice, where the setting is offered;
   - `h264HardwareAvailable`: `true` or `false` from the encoder's report,
