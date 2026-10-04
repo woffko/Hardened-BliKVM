@@ -758,3 +758,60 @@ report), and with the controls off both settings were served.
 
 **Gate C passed.** Receipts: `evidence/private/review-fixes-20261004/baseline`
 and `gate-c`.
+
+**Phase D, the menu.** Changed against the design:
+
+- H.264 HW is disabled only where the encoder reports no engine and gives no
+  reason (Q6). The design disabled it whenever the engine could not be had
+  now, and the engine, once given up, is tried again only when the choice is
+  made again, so that a busy engine could never be asked for again from the
+  menu. With a reason (busy, no device node, three frames in a row failed)
+  the entry stays choosable and its tooltip says why and that choosing it asks
+  the encoder to try again; choosing hardware while the board's choice is
+  hardware and x264 encodes posts `h264_engine` 1 again, which is that
+  retry. Nothing changes for the other states ("The video menu").
+- A choice the server refuses shows the page's own sentence in English and
+  Russian, not the server's rejection code (Q11).
+- The design note says what the review plan decided about the monitor's
+  limits, the closed schema 1 and the load tool (D3; "The window", "The
+  encoder's report", "Tests").
+
+The menu contract has the three unavailable-engine cases and the refused
+choice in both languages; the case "no engine to be had" was split into one
+with and one without a reason.
+
+**Gate E, the encoder.** Changed against the design:
+
+- The periodic key frame is decided in capture time (Q4; "In the encoder").
+  Confirmed first with a scratch build that logged every decision in both
+  times: 40 runs of the still-picture test beside 96 busy loops, 7 failed; in
+  all 7 the time since the last key frame was 1979.9 to 1999.6 ms in the time
+  the encode began and 2001.3 to 2007.9 ms in capture time, so the frame was a
+  delta; in the 33 that passed both were at least 2000 ms, and in capture time
+  all 40 were. The same 40 runs on the fixed encoder: 40 passed.
+- The demand connection skips a line longer than 32 bytes only up to 4 KiB in
+  all, and then ends the connection (Q13; "On the demand connection").
+- Three timing-sensitive tests of the frame socket and the frame hub were
+  mended, not the code: the slow-client test's publisher is paced by the
+  reading client (it published 199 frames of 256 KiB 0.3 ms apart, and a
+  reader that fell 32 frames behind was dropped as designed); the key request
+  test waits until the hub has read every request it wrote (it waited for the
+  first of twenty; with 50,000 it failed three times in three); the tests that
+  wait for a new client wait for its request for a key frame too.
+
+Numbers (`scripts/stress-under-load.sh`, 96 busy loops on 64 cores):
+
+| | Before | After |
+| --- | --- | --- |
+| The still-picture test of the frame socket, alone (the confirmation's logging build before) | 7 of 40 runs failed | 40 of 40 passed |
+| The frame socket's five tests | 2 of 12 runs failed in A2, both on the still-picture test | 30 of 30 passed |
+| The encoder's library tests | 2 of 40 runs failed in A2; 1 of 80 on 960a93f, before E3 | 40 of 40 (the gate), 80 of 80 |
+| The demand, gate and frame hub tests, each group | not run alone | 30 of 30 |
+| A line of a MiB without a newline on the demand connection | read to its end and kept; the connection stayed | the connection ends after 4 KiB; a line of 4096 bytes with its newline is skipped as before |
+
+The two timing-sensitive tests of the plan (`frame_socket.rs`: a key frame
+within 900 ms of the choice; three to five reports in 3.3 s) did not fail in
+the 30 runs, and were not widened.
+
+**Gate E passed.** Receipts: `evidence/private/review-fixes-20261004/e2-confirm`,
+`e3` and `gate-e`.
