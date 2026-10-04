@@ -221,7 +221,7 @@ export const VideoMode = () => {
       if (mayChooseEngine && (board.engine !== entry.engine || retry)) {
         const rsp = await updateScreen('h264_engine', entry.engine === 'hardware' ? 1 : 0);
         if (rsp.code !== 0 || rsp.data?.applied !== true || rsp.data?.rejection != null)
-          throw new Error(rsp.data?.rejection || 'The engine was not changed');
+          throw new Error(rsp.data?.rejection ?? 'not applied');
         setBoard((current) => ({ ...current, engine: entry.engine }));
       }
       if (modeChanges) {
@@ -233,8 +233,10 @@ export const VideoMode = () => {
         // The encoder switches at its next frame: what encodes is read again.
         setTimeout(refreshBoardEngine, 1000);
       }
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : 'Unable to change the H.264 engine');
+    } catch {
+      // The page's own sentence, in the page's language, and not the server's
+      // rejection code.
+      message.error(t('screen.h264EngineNotChanged'));
     } finally {
       choosing.current = false;
     }

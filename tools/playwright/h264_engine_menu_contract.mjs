@@ -23,7 +23,13 @@ const app = await startApp();
 const MODE_KEY = "hardened-blikvm-video-mode";
 const LANGUAGE_KEY = "hardened-blikvm-language";
 
-async function open({ mode, board, video = engineChoiceVideo(), language }) {
+async function open({
+  mode,
+  board,
+  video = engineChoiceVideo(),
+  language,
+  refuse,
+}) {
   const manifest = defaultManifest();
   manifest.video = { ...manifest.video, ...video };
   const context = await browser.newContext();
@@ -58,7 +64,7 @@ async function open({ mode, board, video = engineChoiceVideo(), language }) {
       },
     }),
   );
-  const asked = await routeEngineAndQuality(page, board);
+  const asked = await routeEngineAndQuality(page, board, { refuse });
   await page.goto(app.baseUrl, { waitUntil: "networkidle" });
   return { context, page, errors, asked };
 }
@@ -333,6 +339,34 @@ try {
     await context.close();
   }
 
+  // A choice the board refuses: the message is the sentence the page owns, in
+  // the page's language, and not the server's rejection code; the choice
+  // stays the board's.
+  for (const [language, sentence] of [
+    [undefined, "The board did not change the H.264 engine."],
+    ["ru", "Плата не изменила движок H.264."],
+  ]) {
+    const board = boardState();
+    const { context, page, errors, asked } = await open({
+      mode: "h264",
+      board,
+      language,
+      refuse: "unsupported_setting",
+    });
+    await openMenu(page, language === "ru" ? "Видеорежим" : "Video Mode");
+    await entry(page, "software").click();
+    await page.getByText(sentence).waitFor();
+    assert.equal(await page.getByText("unsupported_setting").count(), 0);
+    assert.deepEqual(changes(asked), ["POST /api/vm/screen h264_engine=0"]);
+    assert.equal(board.engine, "hardware");
+    assert.equal(
+      await entry(page, "software").getAttribute("data-checked"),
+      "false",
+    );
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
   // Russian.
   {
     const board = boardState({ encoder: "x264" });
@@ -373,7 +407,7 @@ try {
   }
 
   console.log(
-    "H.264 engine menu: HW and SW with the transport, the board's choice checked and changed in place or with the mode, what encodes beside the choice, an engine that failed or is busy shown with its reason and choosable again, an absent engine disabled, no right choosing the mode only, Russian, and the one entry without the choice passed",
+    "H.264 engine menu: HW and SW with the transport, the board's choice checked and changed in place or with the mode, what encodes beside the choice, an engine that failed or is busy shown with its reason and choosable again, an absent engine disabled, a refused choice told in the page's own sentence, no right choosing the mode only, Russian, and the one entry without the choice passed",
   );
 } finally {
   await browser.close();

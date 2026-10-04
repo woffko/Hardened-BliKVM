@@ -155,6 +155,7 @@ const en = {
       h264HardwareUnavailable: "The board's video engine cannot encode H.264 now.",
       h264HardwareUnavailableBecause:
         "The board's video engine cannot encode H.264 now: {{reason}}",
+      h264EngineNotChanged: 'The board did not change the H.264 engine.',
       h264HardwareRetry:
         "The board's video engine cannot encode H.264 now: {{reason}}. Choosing it asks the encoder to try again.",
       h264X264Encodes: 'x264 encodes',
