@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Switches the board's H.264 engine through the API, as the video menu
 does, and measures when each switch shows in `GET /api/vm/screen`
 (docs/design/h264-engine-choice-and-quality-monitor-v1.md, gate C1).

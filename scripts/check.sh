@@ -378,6 +378,7 @@ python3 -m unittest \
   tools/test_build_system_raw_bundle.py \
   tools/test_ve_module.py \
   tools/test_stress_under_load.py \
+  tools/test_plan_tool_headers.py \
   -v
 python3 -m py_compile \
   tools/device/owner_lock_probe.py \
