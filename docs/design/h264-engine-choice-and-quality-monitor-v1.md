@@ -122,8 +122,16 @@ two, each with the transport in brackets as today:
 - The check mark follows the board's choice while this browser's mode is
   H.264. Where what encodes is not what was chosen (`hardware` chosen, x264
   encoding), the chosen entry says so beside its name.
-- `h264HardwareAvailable: false`: H.264 HW is shown disabled, with the
-  encoder's reason in its tooltip.
+- `h264HardwareAvailable: false` with no reason (the unit names no device:
+  there is no engine to offer): H.264 HW is shown disabled. With a reason
+  (busy, no device node, three frames in a row failed) it stays choosable and
+  its tooltip gives the reason and says that choosing it asks the encoder to
+  try again; choosing hardware while the board's choice is hardware and x264
+  encodes posts the choice again, which is the retry (changed in the review
+  fixes, Q6: the encoder tries an engine that failed only when the choice is
+  made again, and a disabled entry made that impossible from the menu; the
+  one way back was to choose H.264 SW, which makes the encoder look at the
+  device again, and then H.264 HW).
 - Without the right (the setting not offered for writing), both entries
   only choose this browser's mode, and their tooltip says that the board's
   operator sets the engine.

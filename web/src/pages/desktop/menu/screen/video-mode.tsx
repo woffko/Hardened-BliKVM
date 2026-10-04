@@ -194,9 +194,13 @@ export const VideoMode = () => {
     }, 500);
   }
 
-  // The video engine cannot be had: its entry cannot be chosen.
+  // The encoder has no engine to offer at all: its unit names no device, so
+  // it gives no reason, and the entry cannot be chosen. Where it gives one
+  // (busy, no device node, three frames in a row failed) the entry stays
+  // choosable: the encoder tries the engine again only when the choice is
+  // made again.
   const isEngineUnavailable = (entry: Entry) =>
-    entry.engine === 'hardware' && board.available === false;
+    entry.engine === 'hardware' && board.available === false && !board.reason;
 
   // An H.264 entry with its engine: this browser's mode becomes H.264, and
   // the board's choice the entry's where it is another and may be changed.
@@ -207,10 +211,14 @@ export const VideoMode = () => {
     if (!supportedModes.includes('h264')) return;
     if (isUnavailable('h264') || isEngineUnavailable(entry)) return;
     const modeChanges = videoMode !== 'h264';
-    if (!modeChanges && (!mayChooseEngine || board.engine === entry.engine)) return;
+    // The board's choice is posted again where it is hardware and x264 encodes:
+    // that is the retry of an engine that was busy or failed.
+    const retry =
+      entry.engine === 'hardware' && board.engine === 'hardware' && board.encoder === 'x264';
+    if (!modeChanges && (!mayChooseEngine || (board.engine === entry.engine && !retry))) return;
     choosing.current = true;
     try {
-      if (mayChooseEngine && board.engine !== entry.engine) {
+      if (mayChooseEngine && (board.engine !== entry.engine || retry)) {
         const rsp = await updateScreen('h264_engine', entry.engine === 'hardware' ? 1 : 0);
         if (rsp.code !== 0 || rsp.data?.applied !== true || rsp.data?.rejection != null)
           throw new Error(rsp.data?.rejection || 'The engine was not changed');
@@ -277,10 +285,12 @@ export const VideoMode = () => {
                 : 'screen.videoWebrtcBlockedByFirewall'
           );
     if (!entry.engine) return undefined;
-    if (isEngineUnavailable(entry))
-      return board.reason
-        ? t('screen.h264HardwareUnavailableBecause', { reason: board.reason })
-        : t('screen.h264HardwareUnavailable');
+    if (isEngineUnavailable(entry)) return t('screen.h264HardwareUnavailable');
+    if (entry.engine === 'hardware' && board.available === false && board.reason)
+      return t(
+        mayChooseEngine ? 'screen.h264HardwareRetry' : 'screen.h264HardwareUnavailableBecause',
+        { reason: board.reason }
+      );
     return t(mayChooseEngine ? 'screen.h264EngineIsBoards' : 'screen.h264EngineByOperator');
   }
 

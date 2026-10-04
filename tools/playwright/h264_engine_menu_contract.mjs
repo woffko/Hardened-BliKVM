@@ -203,8 +203,44 @@ try {
     await context.close();
   }
 
-  // No engine to be had: H.264 HW is disabled with the encoder's reason,
-  // and choosing it posts nothing.
+  // The engine was asked for and could not be had (busy): the board's choice
+  // is still hardware and x264 encodes. H.264 HW stays choosable and says why,
+  // and choosing it again posts the choice again, which is the retry that the
+  // encoder waits for; once the engine is free it takes the stream over.
+  {
+    const board = boardState({
+      engine: "hardware",
+      encoder: "x264",
+      hardwareAvailable: false,
+      hardwareReason: "/dev/hardened-blikvm-ve-enc: Device or resource busy",
+    });
+    const { context, page, errors, asked } = await open({
+      mode: "h264",
+      board,
+    });
+    await openMenu(page);
+    const shown = await entries(page);
+    assert.equal(shown.hardware.disabled, "false");
+    assert.equal(shown.hardware.checked, "true");
+    assert.equal(shown.hardware.note, "x264 encodes");
+    assert.equal(shown.software.disabled, "false");
+    await tooltip(page, "hardware", "Device or resource busy");
+    await page.getByText("asks the encoder to try again").waitFor();
+    // The engine is free again; the choice made again brings it back.
+    board.hardwareAvailable = true;
+    board.hardwareReason = null;
+    await entry(page, "hardware").click();
+    await page.waitForFunction(
+      () => !document.querySelector("[data-h264-encodes]"),
+    );
+    assert.deepEqual(changes(asked), ["POST /api/vm/screen h264_engine=1"]);
+    assert.equal(board.encoder, "hardware");
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
+  // x264 was chosen while the engine is busy: H.264 HW is choosable too, and
+  // choosing it posts the choice.
   {
     const board = boardState({
       engine: "software",
@@ -218,10 +254,40 @@ try {
     });
     await openMenu(page);
     const shown = await entries(page);
-    assert.equal(shown.hardware.disabled, "true");
+    assert.equal(shown.hardware.disabled, "false");
     assert.equal(shown.software.disabled, "false");
     assert.equal(shown.software.checked, "true");
     await tooltip(page, "hardware", "Device or resource busy");
+    await entry(page, "hardware").click();
+    await page.waitForFunction(() =>
+      document.querySelector(
+        '[data-h264-engine="hardware"][data-checked="true"]',
+      ),
+    );
+    assert.deepEqual(changes(asked), ["POST /api/vm/screen h264_engine=1"]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
+  // The encoder has no engine to offer at all (its unit names no device, so
+  // it gives no reason): H.264 HW is disabled, and choosing it posts nothing.
+  {
+    const board = boardState({
+      engine: "software",
+      encoder: "x264",
+      hardwareAvailable: false,
+      hardwareReason: null,
+    });
+    const { context, page, errors, asked } = await open({
+      mode: "h264",
+      board,
+    });
+    await openMenu(page);
+    const shown = await entries(page);
+    assert.equal(shown.hardware.disabled, "true");
+    assert.equal(shown.software.disabled, "false");
+    assert.equal(shown.software.checked, "true");
+    await tooltip(page, "hardware", "cannot encode H.264 now");
     await entry(page, "hardware").click({ force: true });
     await page.waitForTimeout(400);
     assert.deepEqual(changes(asked), []);
@@ -307,7 +373,7 @@ try {
   }
 
   console.log(
-    "H.264 engine menu: HW and SW with the transport, the board's choice checked and changed in place or with the mode, what encodes beside the choice, no engine disabled with the reason, no right choosing the mode only, Russian, and the one entry without the choice passed",
+    "H.264 engine menu: HW and SW with the transport, the board's choice checked and changed in place or with the mode, what encodes beside the choice, an engine that failed or is busy shown with its reason and choosable again, an absent engine disabled, no right choosing the mode only, Russian, and the one entry without the choice passed",
   );
 } finally {
   await browser.close();
