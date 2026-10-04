@@ -145,3 +145,15 @@ project's own description of the engine
 (`docs/design/h616-ve-h264-encoder.md`), and the shared hardware part
 follows mainline `cedrus` (GPL-2.0), which the file says. No slot carries
 the module: it belongs to the system, not to the application.
+
+## The quality monitor and RustAdmin's
+
+The page's quality monitor
+(`docs/design/h264-engine-choice-and-quality-monitor-v1.md`) follows the
+quality monitor of RustAdmin (woffko/rustadmin, branch `experimental`), which
+is RustDesk's code under AGPL-3.0: its toggle on the toolbar, its window over
+the picture, its two levels and what its rows mean where this product has the
+same thing. It was written anew in TypeScript for this page; no code, text
+or asset of RustAdmin was taken into this repository, a package or a slot.
+Anything taken from it later would be RustDesk's under AGPL-3.0: it would be
+recorded here, with the files it went into and its notice kept.

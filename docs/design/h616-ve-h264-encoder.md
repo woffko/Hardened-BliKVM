@@ -17,7 +17,11 @@ engine takes its encoder's addresses in units of 256 bytes (V2.1, V2R),
 stays inside its buffers, and stops at the end of its stream buffer
 (V3.1 again); the driver that gives it to the product is
 `docs/design/h616-ve-encoder-driver-v1.md`, and the plan's outcome item by
-item is `docs/baselines/audit-20261003-hardware-h264.md`.
+item is `docs/baselines/audit-20261003-hardware-h264.md`. Since 2026-10-04
+the engine is the board's choice: the video menu offers H.264 HW and
+H.264 SW, and the encoder follows the choice between two frames
+(`docs/design/h264-engine-choice-and-quality-monitor-v1.md`; "Since
+2026-10-04" below).
 
 ## Sources
 
@@ -2017,6 +2021,32 @@ showed it can hold: the unit's limit stays at 30 frames a second.
 `tools/device/deploy_ve.sh install` switched it on for good on 2026-10-03 at
 14:44 UTC. From then on the board's H.264 viewers get the engine's frames,
 and x264's where the engine is not there or fails three frames in a row.
+
+### Since 2026-10-04: the engine as the board's choice
+
+The plan of 2026-10-03
+(`docs/baselines/work-plan-20261003-h264-choice-quality-monitor.md`, design
+in `docs/design/h264-engine-choice-and-quality-monitor-v1.md`) changed what
+"Choice and fallback" above says in three ways:
+
+- **Who chooses.** The video menu offers H.264 HW and H.264 SW; the choice
+  is the board's, kept by the web server (hardware unless somebody chose
+  otherwise) and sent to the encoder on every viewer's demand connection
+  and whenever it is made. The encoder switches between two frames, in
+  either direction and also in the middle of a stream; the stream goes on
+  with a key frame. A choice made while nobody watches H.264 reaches the
+  encoder with the next viewer.
+- **How long x264 holds a stream** after the engine failed three frames in
+  a row: until the choice is made again, not until the encoder starts
+  again.
+- **What the encoder says**: besides `hardware` or `x264` in its status
+  file, a report once a second while a viewer watches (the engine, the
+  frames, the stages' times, the engine's passes and failures, the gate's
+  counts), which `GET /api/vm/quality` serves to the quality monitor.
+
+On the board a choice took effect for a watching viewer within 1.3 s,
+0.13 to 0.45 s in the median, both ways, without an encoder failure or a
+kernel line (gates C1 and C5 of that plan).
 
 ## The H616's register description
 
