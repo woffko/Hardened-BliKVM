@@ -96,3 +96,37 @@ this plan; the engine choice is `hardware`, as the operator left it.
   walked in Chromium's phone emulation).
 - The monitor or the menu while somebody holds the HID lease: nothing of
   this plan asks for it.
+
+## Board end state (2026-10-04)
+
+Compared field by field with the state found before C1
+(`c1-state-as-found-20261003.json`, `c5-state-after-20261004.json`): the
+switch for RAW system updates on as the operator left it; the terminal,
+scripts, remote download and PicoClaw switches off; firewall Baseline;
+video at 60 frames a second, quality 100, 1920x1080; WebRTC quality
+8 Mbit/s; the QUIC transport on; session lock 3600 s; SSH enabled; the
+operator's two images in the catalog and no drive attached;
+`h264Encoder: hardware`. The only differences are this plan's new fields:
+`h264Engine` says `hardware`, the choice as the operator left it, and
+`h264HardwareAvailable` says the engine can be had.
+
+What the plan left on the board: slot 72 `0.1.0-alpha.16`, the update
+runtime `0.1.0~dev36` and the encoder driver as they were, the encoders of
+this plan (one binary, `4e3d9a8c`) with their units, and the web server's
+drop-in that names the encoders' reports. No probe, tap, measuring script
+or file of the plan is on the board, and no process of it runs; the
+kernel's log had no line from the first of C5's measurements to the last.
+
+## Left to the operator
+
+- H.264 SW in the video menu is the board's choice for every H.264 viewer
+  until somebody chooses H.264 HW again; x264 costs more of the processors
+  for a moving picture and makes fewer of its frames.
+- Slots 67 to 72 and the update runtime `0.1.0~dev36` are not published.
+  Slot 70 is the code from before this plan (6522ff5) under the label
+  `0.1.0-alpha.11`, built for the regression only.
+- Whether to look at the update runtime's status that takes half a second
+  (finding 8), and at the findings of the hardware plan that are still
+  open: the QUIC gateway's certificate made before the clock is set, the
+  gate that lets about twenty of thirty frames a second through, and the
+  firewall status that may be five seconds old after a change.

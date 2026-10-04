@@ -7,10 +7,12 @@ cases, the monitor's rows and where each comes from, the reference and the
 licence question. The record of what was measured follows at its end as the
 work goes on.
 
-Status (2026-10-04): the engine as the board's choice, the menu, the
-board's side of the monitor and the monitor are built; gates C1 (on the
-board), C4 (on the host) and C5 (on the board) passed; the test board runs
-slot 72 `0.1.0-alpha.16` with the engine chosen.
+Status (2026-10-04): done. The engine as the board's choice, the menu,
+the board's side of the monitor and the monitor are built; gates C1 (on
+the board), C4 (on the host) and C5 (on the board) passed; the test board
+runs slot 72 `0.1.0-alpha.16` with the engine chosen, its settings as they
+were found. The plan's outcome item by item is
+`docs/baselines/audit-20261004-h264-choice-quality-monitor.md`.
 
 ## The engine as the board's choice
 
