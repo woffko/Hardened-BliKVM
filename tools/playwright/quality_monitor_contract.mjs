@@ -84,6 +84,39 @@ function standInStatistics() {
   };
 }
 
+/**
+ * How many canvases for the monitor's rows the page has made: a loop of
+ * mounting and failing shows here.
+ */
+function countMonitorCanvases() {
+  window.__monitorCanvases = 0;
+  const count = (node) =>
+    node.nodeType === 1 &&
+    (node.matches("canvas[data-testid='quality-monitor-rows']") ||
+      node.querySelector("canvas[data-testid='quality-monitor-rows']"))
+      ? 1
+      : 0;
+  new MutationObserver((records) => {
+    for (const record of records)
+      for (const node of record.addedNodes)
+        window.__monitorCanvases += count(node);
+  }).observe(document, { childList: true, subtree: true });
+}
+
+/**
+ * A browser that cannot draw the rows in a worker: one without the hand-over
+ * of a canvas to a worker, or one that refuses to make a worker.
+ */
+function withoutWorkers(kind) {
+  if (kind === "offscreen") {
+    delete HTMLCanvasElement.prototype.transferControlToOffscreen;
+  } else {
+    window.Worker = function Worker() {
+      throw new DOMException("blocked by a policy", "SecurityError");
+    };
+  }
+}
+
 async function open({
   mode,
   board = boardState(),
@@ -93,6 +126,7 @@ async function open({
   viewport = { width: 1280, height: 720 },
   touch = false,
   layout,
+  without,
 } = {}) {
   const manifest = defaultManifest();
   manifest.video = { ...manifest.video, ...engineChoiceVideo() };
@@ -124,6 +158,8 @@ async function open({
     ],
   );
   await context.addInitScript(standInStatistics);
+  await context.addInitScript(countMonitorCanvases);
+  if (without) await context.addInitScript(withoutWorkers, without);
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   const errors = [];
@@ -233,6 +269,12 @@ try {
     assert.ok(
       whileOpen >= 3 && whileOpen <= 5,
       `${whileOpen} asks in about 3 s`,
+    );
+    // The rows' canvas is mounted again once for the mode the page sets
+    // after its load, and then not any more.
+    assert.ok(
+      (await page.evaluate(() => window.__monitorCanvases)) <= 2,
+      "the monitor kept mounting canvases",
     );
 
     await page.locator('[data-qm-level="extended"]').click();
@@ -467,8 +509,47 @@ try {
     await context.close();
   }
 
+  // A browser that cannot draw in a worker (no hand-over of a canvas, or the
+  // worker refused), with the monitor open from the stored layout: the window
+  // says so in place of the rows and does nothing else: no loop of canvases,
+  // no request to the board, no error screen; the page works, and QM closes
+  // the window and opens it again.
+  for (const without of ["offscreen", "worker"]) {
+    const { context, page, errors, asked } = await open({
+      mode: "mjpeg",
+      without,
+      layout: { open: true },
+    });
+    await page.waitForTimeout(1000);
+    const noteAtOneSecond = await page
+      .getByTestId("quality-monitor-unsupported")
+      .count();
+    await page.waitForTimeout(2000);
+    const made = await page.evaluate(() => window.__monitorCanvases);
+    assert.ok(made <= 1, `${without}: ${made} canvases made in three seconds`);
+    assert.equal(noteAtOneSecond, 1, `${without}: no note within a second`);
+    assert.equal(
+      await page.getByTestId("quality-monitor-rows").count(),
+      0,
+      `${without}: a canvas is left`,
+    );
+    assert.equal(qualityAsked(asked), 0, `${without}: the board was asked`);
+    assert.equal(
+      await page.getByText("Unexpected Application Error").count(),
+      0,
+      `${without}: the page's error screen shows`,
+    );
+    await page.getByTestId("menu-bar").waitFor();
+    await page.getByTestId("quality-monitor-close").click();
+    await monitor(page).waitFor({ state: "detached" });
+    await page.getByTestId("quality-monitor-toggle").click();
+    await page.getByTestId("quality-monitor-unsupported").waitFor();
+    assert.deepEqual(errors, [], without);
+    await context.close();
+  }
+
   console.log(
-    "Quality monitor: QM opens and closes it on desktop and phone and can be hidden, dragged, resized, scrolled, opaque and remembered, MJPEG, WebRTC by either engine and VP8 rows, Russian, and the board asked only while it is open passed",
+    "Quality monitor: QM opens and closes it on desktop and phone and can be hidden, dragged, resized, scrolled, opaque and remembered, MJPEG, WebRTC by either engine and VP8 rows, Russian, the board asked only while it is open, and a browser without OffscreenCanvas or with the worker refused told so without a loop or an error screen passed",
   );
 } finally {
   await browser.close();

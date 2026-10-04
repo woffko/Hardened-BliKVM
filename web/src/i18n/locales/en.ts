@@ -73,6 +73,7 @@ const en = {
       extended: 'Extended',
       opaque: 'Opaque',
       close: 'Close the quality monitor',
+      unsupported: 'The quality monitor needs a browser with workers and OffscreenCanvas.',
       speed: 'Speed',
       delay: 'Delay',
       path: 'Path',

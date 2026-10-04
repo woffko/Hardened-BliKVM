@@ -77,6 +77,7 @@ const ru = {
       extended: 'Подробно',
       opaque: 'Непрозрачный',
       close: 'Закрыть монитор качества',
+      unsupported: 'Монитору качества нужен браузер с воркерами и OffscreenCanvas.',
       speed: 'Скорость',
       delay: 'Задержка',
       path: 'Путь',

@@ -57,6 +57,20 @@ function currentPath(videoMode: string | null): VideoPath {
   return document.querySelector('canvas#screen[data-video-transport="quic"]') ? 'quic' : 'webrtc';
 }
 
+/**
+ * Whether this browser can draw the rows in a worker: it has workers and
+ * OffscreenCanvas, and a canvas can be handed over to a worker. Safari before
+ * 16.4 and some embedded web views cannot.
+ */
+function canDrawInWorker(): boolean {
+  return (
+    typeof Worker !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined' &&
+    typeof HTMLCanvasElement !== 'undefined' &&
+    typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function'
+  );
+}
+
 async function samplePath(path: VideoPath): Promise<PageSample> {
   switch (path) {
     case 'quic': {
@@ -120,12 +134,16 @@ const MonitorBody = memo(
     const { t } = useTranslation();
     const codec: QualityInputs['codec'] =
       videoMode === 'mjpeg' ? 'mjpeg' : videoMode === 'vp8' ? 'vp8' : 'h264';
-    const refreshHz = useRefreshRate(extended);
+    // A browser that cannot draw in a worker, or whose worker fails or is
+    // refused, gets one line in place of the rows and no second try.
+    const [unsupported, setUnsupported] = useState(() => !canDrawInWorker());
+    const refreshHz = useRefreshRate(extended && !unsupported);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const workerRef = useRef<Worker | null>(null);
     // A canvas can be handed to a worker once; a new one is mounted for the
     // next worker.
     const [canvasKey, setCanvasKey] = useState(0);
+    const handedOver = useRef<HTMLCanvasElement | null>(null);
     const [height, setHeight] = useState(0);
 
     const view = useMemo<QualityView>(
@@ -144,27 +162,40 @@ const MonitorBody = memo(
     viewRef.current = view;
 
     useEffect(() => {
+      if (unsupported) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
-      let offscreen: OffscreenCanvas;
-      try {
-        offscreen = canvas.transferControlToOffscreen();
-      } catch {
+      // After a change of mode this canvas has been handed over already: a
+      // new one is mounted, once, and the effect runs again for it.
+      if (handedOver.current === canvas) {
         setCanvasKey((key) => key + 1);
         return;
       }
-      const worker = new QualityWorker();
-      workerRef.current = worker;
-      worker.onmessage = (event: MessageEvent<FromQualityWorker>) => {
-        if (event.data.type === 'height') setHeight(event.data.height);
-      };
-      const start: ToQualityWorker = {
-        type: 'start',
-        url: `${getBaseUrl('http')}/api/vm/quality`,
-        canvas: offscreen,
-        view: viewRef.current
-      };
-      worker.postMessage(start, [offscreen]);
+      let worker: Worker | undefined;
+      try {
+        const offscreen = canvas.transferControlToOffscreen();
+        handedOver.current = canvas;
+        worker = new QualityWorker();
+        worker.onmessage = (event: MessageEvent<FromQualityWorker>) => {
+          if (event.data.type === 'height') setHeight(event.data.height);
+        };
+        worker.onerror = () => setUnsupported(true);
+        worker.onmessageerror = () => setUnsupported(true);
+        const start: ToQualityWorker = {
+          type: 'start',
+          url: `${getBaseUrl('http')}/api/vm/quality`,
+          canvas: offscreen,
+          view: viewRef.current
+        };
+        worker.postMessage(start, [offscreen]);
+      } catch {
+        // The browser cannot hand the canvas over, or refuses the worker.
+        worker?.terminate();
+        setUnsupported(true);
+        return;
+      }
+      const started = worker;
+      workerRef.current = started;
       // Once a second: what the page counted of its own picture, by the way
       // it comes now.
       let stopped = false;
@@ -173,23 +204,30 @@ const MonitorBody = memo(
         const sample = await samplePath(path);
         if (stopped) return;
         const message: ToQualityWorker = { type: 'sample', path, sample };
-        worker.postMessage(message);
+        started.postMessage(message);
       };
       void tick();
       const timer = setInterval(() => void tick(), TICK_MS);
       return () => {
         stopped = true;
         clearInterval(timer);
-        worker.terminate();
+        started.terminate();
         workerRef.current = null;
       };
-    }, [canvasKey, videoMode]);
+    }, [canvasKey, videoMode, unsupported]);
 
     useEffect(() => {
       const message: ToQualityWorker = { type: 'view', view };
       workerRef.current?.postMessage(message);
     }, [view]);
 
+    if (unsupported) {
+      return (
+        <div data-testid="quality-monitor-unsupported" className="px-2 py-1.5 text-neutral-300">
+          {t('qualityMonitor.unsupported')}
+        </div>
+      );
+    }
     const canvas = (
       <canvas
         key={canvasKey}
