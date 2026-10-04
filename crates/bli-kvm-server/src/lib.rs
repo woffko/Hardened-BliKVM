@@ -2452,7 +2452,17 @@ mod tests {
         std::fs::create_dir_all(&unit).unwrap();
         std::fs::write(unit.join("cpu.stat"), "usage_usec 1000000\n").unwrap();
         let mut written = crate::encoder_report::tests::whole_report("h264");
-        std::fs::write(&report, written.to_string()).unwrap();
+        // The reports' times are set and not taken from the clock: a time ahead
+        // of now is a report written just now, however long a login takes on a
+        // loaded host, and two of them a second apart give a rate over exactly
+        // one second. The answer shows no report older than three seconds.
+        let ahead = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        let put = |value: &serde_json::Value, second: u64| {
+            std::fs::write(&report, value.to_string()).unwrap();
+            let file = std::fs::File::options().write(true).open(&report).unwrap();
+            file.set_modified(ahead + std::time::Duration::from_secs(second))
+                .unwrap();
+        };
         let app = app_with_options(ServerOptions {
             state_dir: root.path().join("account"),
             h264_encoder_report: Some(report.clone()),
@@ -2481,7 +2491,9 @@ mod tests {
                 json_body(response).await["data"].clone()
             }
         };
+        put(&written, 0);
         let first = read(app.clone()).await;
+        let first_read = std::time::Instant::now();
         for key in [
             "capture",
             "h264",
@@ -2509,17 +2521,23 @@ mod tests {
         // answer, built once for every reader.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         written["encodedFrames"] = 1030.into();
-        std::fs::write(&report, written.to_string()).unwrap();
+        put(&written, 1);
         std::fs::write(unit.join("cpu.stat"), "usage_usec 1500000\n").unwrap();
         for _ in 0..20 {
-            assert_eq!(read(app.clone()).await, first);
+            // Within the second of the first build; a host so loaded that
+            // the reads outlast it is no failure of the cache.
+            let within = first_read.elapsed() < std::time::Duration::from_millis(900);
+            let answer = read(app.clone()).await;
+            if within {
+                assert_eq!(answer, first);
+            }
         }
-        // After the second: the rates of the two reports and the unit's
-        // share.
+        // After the second: the rates of the two reports, thirty frames in
+        // the second between their times, and the unit's share.
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         let later = read(app.clone()).await;
         assert_eq!(later["h264"]["encodedFrames"], 1030);
-        assert!(later["h264"]["fps"].as_f64().unwrap() > 0.0, "{later}");
+        assert_eq!(later["h264"]["fps"].as_f64(), Some(30.0), "{later}");
         assert!(later["h264"]["hardware"].get("passesPerSecond").is_some());
         assert!(later["units"]["h264CpuPercent"].as_f64().unwrap() > 0.0);
         // A damaged report is null, and nothing else changes.

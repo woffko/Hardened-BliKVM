@@ -425,23 +425,24 @@ mod tests {
         let mut memory = Memory::default();
         assert!(encoder(None, "h264", &mut memory).is_null());
         assert!(encoder(Some(&path), "h264", &mut memory).is_null());
-        // Every report's time is set from one moment, so that two of them
-        // are apart by what the test says however slowly it runs.
-        let base = SystemTime::now();
-        let write = |report: &serde_json::Value, age: Duration| {
+        // Every report's time is set, and not taken from the clock: a time
+        // ahead of now is a report written just now however slowly the test
+        // runs, and two of them are apart by what the test says.
+        let ahead = SystemTime::now() + Duration::from_secs(60);
+        let write = |report: &serde_json::Value, at: SystemTime| {
             std::fs::write(&path, report.to_string()).unwrap();
             let file = std::fs::File::options().write(true).open(&path).unwrap();
-            file.set_modified(base - age).unwrap();
+            file.set_modified(at).unwrap();
         };
         let mut report = whole_report("h264");
-        write(&report, Duration::from_millis(1500));
+        write(&report, ahead);
         let first = encoder(Some(&path), "h264", &mut memory);
         assert_eq!(first["encodedFrames"], 1000);
         assert!(first["fps"].is_null());
         // Read again before the next report: the same, still no rates.
         assert_eq!(encoder(Some(&path), "h264", &mut memory), first);
         report["encodedFrames"] = 1030.into();
-        write(&report, Duration::from_millis(500));
+        write(&report, ahead + Duration::from_secs(1));
         let second = encoder(Some(&path), "h264", &mut memory);
         assert!(
             (second["fps"].as_f64().unwrap() - 30.0).abs() < 0.1,
@@ -450,13 +451,13 @@ mod tests {
         // The pair stays until a report written later comes.
         assert_eq!(encoder(Some(&path), "h264", &mut memory), second);
         // Older than three seconds: not shown.
-        write(&report, Duration::from_secs(4));
+        write(&report, SystemTime::now() - Duration::from_secs(4));
         assert!(encoder(Some(&path), "h264", &mut memory).is_null());
         // Refused, told once until a report is taken again.
         std::fs::write(&path, "{").unwrap();
         assert!(encoder(Some(&path), "h264", &mut memory).is_null());
         assert!(memory.told.contains("h264"));
-        write(&report, Duration::ZERO);
+        write(&report, ahead + Duration::from_secs(2));
         assert!(!encoder(Some(&path), "h264", &mut memory).is_null());
         assert!(!memory.told.contains("h264"));
     }
@@ -468,25 +469,25 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("report.json");
         let mut memory = Memory::default();
-        // Every report's time is set from one moment, as in the test above.
-        let base = SystemTime::now();
+        // Every report's time is set, as in the test above.
+        let ahead = SystemTime::now() + Duration::from_secs(60);
         let write = |report: &serde_json::Value, at: SystemTime| {
             std::fs::write(&path, report.to_string()).unwrap();
             let file = std::fs::File::options().write(true).open(&path).unwrap();
             file.set_modified(at).unwrap();
         };
         let mut report = whole_report("h264");
-        write(&report, base - Duration::from_millis(1500));
+        write(&report, ahead);
         assert!(encoder(Some(&path), "h264", &mut memory)["fps"].is_null());
         report["encodedFrames"] = 1030.into();
-        write(&report, base - Duration::from_millis(500));
+        write(&report, ahead + Duration::from_secs(1));
         let rated = encoder(Some(&path), "h264", &mut memory);
         assert!(rated["fps"].as_f64().unwrap() > 0.0, "{rated}");
         // The report goes stale; a new one comes: no rate yet.
-        write(&report, base - Duration::from_secs(4));
+        write(&report, SystemTime::now() - Duration::from_secs(4));
         assert!(encoder(Some(&path), "h264", &mut memory).is_null());
         report["encodedFrames"] = 1060.into();
-        write(&report, base);
+        write(&report, ahead + Duration::from_secs(2));
         let after = encoder(Some(&path), "h264", &mut memory);
         assert_eq!(after["encodedFrames"], 1060);
         assert!(after["fps"].is_null(), "a rate over the pause: {after}");
@@ -494,14 +495,14 @@ mod tests {
         assert!(after["hardware"]["passesPerSecond"].is_null(), "{after}");
         // The next report, a second later, has its rates again.
         report["encodedFrames"] = 1090.into();
-        write(&report, base + Duration::from_secs(1));
+        write(&report, ahead + Duration::from_secs(3));
         let next = encoder(Some(&path), "h264", &mut memory);
         assert!((next["fps"].as_f64().unwrap() - 30.0).abs() < 0.1, "{next}");
         // An absent report and a refused one end the pair as well.
         std::fs::remove_file(&path).unwrap();
         assert!(encoder(Some(&path), "h264", &mut memory).is_null());
         assert!(!memory.reports.contains_key("h264"));
-        write(&report, base + Duration::from_secs(2));
+        write(&report, ahead + Duration::from_secs(4));
         std::fs::write(&path, "{").unwrap();
         assert!(encoder(Some(&path), "h264", &mut memory).is_null());
         assert!(!memory.reports.contains_key("h264"));
