@@ -35,6 +35,10 @@ const UNITS: [(&str, &str); 2] = [
 ];
 /// A control group's `cpu.stat` is read no further.
 const MAX_CPU_STAT_BYTES: u64 = 4096;
+/// A unit's processor time is compared only with a reading no older than
+/// this: the monitor reads once a second while it is open, and a reading
+/// from before it was closed says nothing of the second since.
+const USAGE_FOR: Duration = Duration::from_secs(10);
 /// The slot's version is asked for at most this often.
 const VERSION_FOR: Duration = Duration::from_secs(60);
 
@@ -197,10 +201,16 @@ fn encoder(path: Option<&Path>, codec: &'static str, memory: &mut Memory) -> Val
     let Some(path) = path else {
         return Value::Null;
     };
+    // A report that is absent, refused or stale ends the pair: the next one
+    // is paired with nothing, and no rate is made across the pause.
     let (report, modified) = match read_encoder_report(path, codec) {
         Ok(Some(read)) => read,
-        Ok(None) => return Value::Null,
+        Ok(None) => {
+            memory.reports.remove(codec);
+            return Value::Null;
+        }
         Err(refusal) => {
+            memory.reports.remove(codec);
             if memory.told.insert(codec) {
                 eprintln!(
                     "quality: the {codec} encoder's report is {}; it is not shown",
@@ -215,18 +225,32 @@ fn encoder(path: Option<&Path>, codec: &'static str, memory: &mut Memory) -> Val
         .duration_since(modified)
         .unwrap_or_default();
     if age > STALE {
+        memory.reports.remove(codec);
         return Value::Null;
     }
-    let seen = Seen { modified, report };
-    // A report written later moves the last one back.
-    let pair = match memory.reports.remove(codec) {
-        Some((previous, last)) if last.modified == seen.modified => (previous, last),
-        Some((_, last)) if last.modified < seen.modified => (Some(last), seen),
-        _ => (None, seen),
-    };
+    let pair = pair_reports(memory.reports.remove(codec), Seen { modified, report });
     let value = with_rates(pair.0.as_ref(), &pair.1);
     memory.reports.insert(codec, pair);
     value
+}
+
+/// What a codec's stored pair becomes with `seen`, the report read now: the
+/// same report read again keeps its pair; a report written later moves the
+/// last one back where they were written no more than [`STALE`] apart (a
+/// longer pause makes no rate); anything else starts again.
+fn pair_reports(stored: Option<(Option<Seen>, Seen)>, seen: Seen) -> (Option<Seen>, Seen) {
+    match stored {
+        Some((previous, last)) if last.modified == seen.modified => (previous, last),
+        Some((_, last))
+            if seen
+                .modified
+                .duration_since(last.modified)
+                .is_ok_and(|apart| apart <= STALE) =>
+        {
+            (Some(last), seen)
+        }
+        _ => (None, seen),
+    }
 }
 
 /// The report with its rates: frames encoded, and the gate's counts, a
@@ -299,13 +323,19 @@ fn usage_micros(path: &Path) -> Option<u64> {
 /// Each encoder unit's share of the processors since the last read, in
 /// percent of one core; null at the first read and where it cannot be read.
 fn units(root: &Path, memory: &mut Memory) -> Value {
+    units_at(root, memory, Instant::now())
+}
+
+/// [`units`] at `now`, which a test chooses.
+fn units_at(root: &Path, memory: &mut Memory, now: Instant) -> Value {
     let mut shares = Map::new();
     for (codec, unit) in UNITS {
-        let now = Instant::now();
         let usage = usage_micros(&root.join(unit).join("cpu.stat"));
         let share = match (usage, memory.usage.get(codec)) {
-            (Some(usage), Some((at, before))) if usage >= *before => {
-                let seconds = now.duration_since(*at).as_secs_f64();
+            (Some(usage), Some((at, before)))
+                if usage >= *before && now.saturating_duration_since(*at) <= USAGE_FOR =>
+            {
+                let seconds = now.saturating_duration_since(*at).as_secs_f64();
                 (seconds > 0.0).then(|| round((usage - before) as f64 / 1e6 / seconds * 100.0, 1))
             }
             _ => None,
@@ -429,6 +459,113 @@ mod tests {
         write(&report, Duration::ZERO);
         assert!(!encoder(Some(&path), "h264", &mut memory).is_null());
         assert!(!memory.told.contains("h264"));
+    }
+
+    /// A pause makes no rate: after the encoder's report went stale, the next
+    /// one is paired with nothing, and not with the last one before the pause.
+    #[test]
+    fn a_pause_makes_no_rate() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("report.json");
+        let mut memory = Memory::default();
+        // Every report's time is set from one moment, as in the test above.
+        let base = SystemTime::now();
+        let write = |report: &serde_json::Value, at: SystemTime| {
+            std::fs::write(&path, report.to_string()).unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(at).unwrap();
+        };
+        let mut report = whole_report("h264");
+        write(&report, base - Duration::from_millis(1500));
+        assert!(encoder(Some(&path), "h264", &mut memory)["fps"].is_null());
+        report["encodedFrames"] = 1030.into();
+        write(&report, base - Duration::from_millis(500));
+        let rated = encoder(Some(&path), "h264", &mut memory);
+        assert!(rated["fps"].as_f64().unwrap() > 0.0, "{rated}");
+        // The report goes stale; a new one comes: no rate yet.
+        write(&report, base - Duration::from_secs(4));
+        assert!(encoder(Some(&path), "h264", &mut memory).is_null());
+        report["encodedFrames"] = 1060.into();
+        write(&report, base);
+        let after = encoder(Some(&path), "h264", &mut memory);
+        assert_eq!(after["encodedFrames"], 1060);
+        assert!(after["fps"].is_null(), "a rate over the pause: {after}");
+        assert!(after["gatePerSecond"].is_null(), "{after}");
+        assert!(after["hardware"]["passesPerSecond"].is_null(), "{after}");
+        // The next report, a second later, has its rates again.
+        report["encodedFrames"] = 1090.into();
+        write(&report, base + Duration::from_secs(1));
+        let next = encoder(Some(&path), "h264", &mut memory);
+        assert!((next["fps"].as_f64().unwrap() - 30.0).abs() < 0.1, "{next}");
+        // An absent report and a refused one end the pair as well.
+        std::fs::remove_file(&path).unwrap();
+        assert!(encoder(Some(&path), "h264", &mut memory).is_null());
+        assert!(!memory.reports.contains_key("h264"));
+        write(&report, base + Duration::from_secs(2));
+        std::fs::write(&path, "{").unwrap();
+        assert!(encoder(Some(&path), "h264", &mut memory).is_null());
+        assert!(!memory.reports.contains_key("h264"));
+    }
+
+    /// Two reports are paired for rates only when they were written no more
+    /// than three seconds apart.
+    #[test]
+    fn two_reports_are_paired_only_within_three_seconds() {
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let first = seen(whole_report("h264"), at);
+        let alone = pair_reports(None, first.clone());
+        assert!(alone.0.is_none());
+        // The same report read again keeps its pair.
+        let kept = pair_reports(Some(alone), first.clone());
+        assert!(kept.0.is_none() && kept.1.modified == at);
+        let written =
+            |seconds: f64| seen(whole_report("h264"), at + Duration::from_secs_f64(seconds));
+        let near = pair_reports(Some((None, first.clone())), written(2.5));
+        assert_eq!(near.0.map(|last| last.modified), Some(at));
+        let edge = pair_reports(Some((None, first.clone())), written(3.0));
+        assert!(edge.0.is_some(), "three seconds apart still pairs");
+        let far = pair_reports(Some((None, first.clone())), written(10.0));
+        assert!(far.0.is_none(), "a pause of ten seconds pairs");
+        assert_eq!(far.1.modified, at + Duration::from_secs(10));
+        // A report older than the one before it (the clock went back) starts again.
+        let older = pair_reports(Some((None, written(5.0))), first);
+        assert!(older.0.is_none());
+    }
+
+    /// A unit's processor time is compared only with a reading no older than
+    /// ten seconds.
+    #[test]
+    fn a_unit_is_not_compared_with_a_reading_older_than_ten_seconds() {
+        let directory = tempfile::tempdir().unwrap();
+        let unit = directory
+            .path()
+            .join("hardened-blikvm-video-encoder-h264.service");
+        std::fs::create_dir(&unit).unwrap();
+        let stat = |usage: u64| {
+            std::fs::write(unit.join("cpu.stat"), format!("usage_usec {usage}\n")).unwrap()
+        };
+        let mut memory = Memory::default();
+        let start = Instant::now();
+        let share = |memory: &mut Memory, seconds: u64| {
+            units_at(
+                directory.path(),
+                memory,
+                start + Duration::from_secs(seconds),
+            )["h264CpuPercent"]
+                .clone()
+        };
+        stat(1_000_000);
+        assert!(share(&mut memory, 0).is_null(), "the first read");
+        stat(1_300_000);
+        assert_eq!(share(&mut memory, 1).as_f64(), Some(30.0));
+        // The monitor was closed meanwhile: the reading is eleven seconds old.
+        stat(5_000_000);
+        assert!(share(&mut memory, 12).is_null(), "a share over the pause");
+        stat(5_300_000);
+        assert_eq!(share(&mut memory, 13).as_f64(), Some(30.0));
+        // Ten seconds is still a span that is measured.
+        stat(6_000_000);
+        assert_eq!(share(&mut memory, 23).as_f64(), Some(7.0));
     }
 
     /// A unit's share of the processors over the span between two reads.

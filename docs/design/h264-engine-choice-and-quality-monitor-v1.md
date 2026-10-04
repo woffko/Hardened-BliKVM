@@ -297,6 +297,14 @@ the same pair of reports; the capture's JPEG quality is the owner's, asked
 like `GET /api/vm/screen` asks it, once with every answer; a server built
 without the owner's surface answers the capture with `null` fields.
 
+Refined in the review fixes (Q5): no rate is made across a pause. A report
+that is absent, refused or older than three seconds ends the stored pair, and
+two reports are paired only when they were written no more than three seconds
+apart; a unit's processor time is compared only with a reading no older than
+ten seconds. Before, the first answer after the monitor had been closed made
+its rates over the whole pause (a number near zero for a second, where a dash
+belongs).
+
 ## The page's side
 
 - **QUIC**: the session's own counters, which `useQuicVideo` and the
