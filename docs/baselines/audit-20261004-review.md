@@ -246,3 +246,46 @@ server test): the load average there was above 70 by the third run, and the
 failure rate follows the load. The gates after the fixes are 30 runs under
 this tool with no failure (a failure rate of one in six leaves 30 clean runs
 a chance of under 0.5 %).
+
+## Status after the fixes
+
+Written on 2026-10-04 at the end of the fixes of
+`docs/baselines/work-plan-20261004-review-fixes.md`, on branch
+`wip/corrective-audit-checkpoint`: a line for each finding, with the commit
+of the change and the test that failed on the code as it was and passes now.
+Where the plan asked for a confirmation first, it is named. The numbers of
+the gates are in the Record of
+`docs/design/h264-engine-choice-and-quality-monitor-v1.md` ("Review fixes,
+2026-10-04"); the receipts are under `evidence/private` (not in Git).
+
+| | Status | Change | Test, and what it showed |
+|---|---|---|---|
+| Q1 | fixed | d667726 (B1) | `quality_monitor_contract.mjs`, the cases without `transferControlToOffscreen` and with the worker refused: 30,430 canvases in three seconds and the router's error screen before; at most one canvas, the note, no request and no error screen after (gate B) |
+| Q2 | fixed | 996d41f (C5) | `the_quality_answer_is_built_once_a_second_from_the_reports`: 2 of 12 runs failed beside 96 busy loops before, 30 of 30 passed after (gate C) |
+| Q3 | fixed | 3a85cd2 (C2) | `the_servers_own_video_settings_are_offered_and_served_only_where_configured`: the engine was offered without the encoder's report before |
+| Q4 | confirmed first, fixed | 960a93f (E2), 1598274 and 3beeea9 (E3) | the logging build: 7 of 40 runs of the still-picture test failed, the time since the last key frame 1979.9 to 1999.6 ms in the time the encode began and 2001.3 to 2007.9 ms in capture time; `key_due`'s tests; the test 40 of 40 after, the frame socket's five tests 30 of 30 and the library's 40 of 40 under load (gate E); the board (gate F) |
+| Q5 | fixed | a5ccd72 (C1) | `quality::tests::a_pause_makes_no_rate` (fps 60.0 over the pause before), `two_reports_are_paired_only_within_three_seconds`, `a_unit_is_not_compared_with_a_reading_older_than_ten_seconds` |
+| Q6 | fixed | 6b08d47 (D1) | `h264_engine_menu_contract.mjs`, the engine busy while it is the board's choice: the entry was disabled before; now it is choosable with the reason and the retry text, and a click posts `h264_engine` 1 |
+| Q7 | fixed | 3a85cd2 (C2) | the same test as Q3: with the video controls off both settings were served before |
+| Q8 | confirmed first, fixed | b3fdade (C3) | `webrtc::tests::two_engine_choices_made_at_once_agree` and `two_quality_choices_made_at_once_agree`: the file and the channel differed in 50 of 50 repetitions before, in none of 50 after |
+| Q9 | fixed | 2902564 (B2) | `tools/test_quality_monitor.mjs`, "Basic over Direct attributes no encoder to the page" (the Codec row was `H.264 HW 1920x1080`), and the contract's Direct case |
+| Q10 | confirmed first, fixed | 1846708 (C4) | `encoder_report::tests::a_report_and_its_time_come_from_one_file`: a time that was not its file's in 141 to 197 of about 10,900 reads, in 20 of 20 repetitions before, none in 50 after |
+| Q11 | fixed | 2902564 (B2, the pixel ratio), e8b3e8e (D2, the refused choice) | the contract's pixel-ratio case (264 pixels wide after the ratio went from 1 to 2, 528 now) and the menu contract's refused choice in English and Russian |
+| Q12 | accepted, written down | 0aac97b (D3) | the design note's "The window": a screen reader gets the window's name and not the rows; the plan decided against a text alternative, which cost the main thread 4 to 5 ms a second |
+| Q13 | fixed | 9ca364d (E1) | `demand::tests::a_line_that_does_not_end_is_skipped_within_a_bound_and_then_the_connection_ends`: the connection stayed before; it ends after 4 KiB now |
+| Q14 | left | | not in the plan: bumping `time` needs the registry and the advisory database needs a download; the operator's step (below) |
+| Q15 | left | | the repository's pattern for its device probes, on a LAN, for a test board: a plan of its own |
+| Q16 | fixed, in part | 79a4b39 (A3), 0aac97b (D3) | `tools/test_plan_tool_headers.py` (the SPDX line); the design note names the worker's five test globals and says that schema 1 is closed; the web build's chunk-size warning is left, as it was before the plan |
+
+Found while fixing, and not in the review: a third timing-sensitive test of
+the encoder, `frames::tests::a_key_frame_on_request_is_made_once_per_cooldown`,
+failed in the first `scripts/check.sh` run on the tree of D3 (a load flake of
+the host, which two fuzz jobs of the operator also load): it waited for the
+first of twenty request bytes to be read, and the other nineteen asked again
+after the key frame it published. With 50,000 bytes the test as it was failed
+three times in three. Mended in 3beeea9; no finding of the review is
+"not confirmed".
+
+What the operator has to decide, if wanted: the advisory database's update and
+the `time` crate's bump for Q14 (a download); the word to publish anything
+(none of the slots of the fixes is published).

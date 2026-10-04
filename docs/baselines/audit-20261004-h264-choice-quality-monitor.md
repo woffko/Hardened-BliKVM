@@ -17,6 +17,11 @@ The test board runs slot 72 `0.1.0-alpha.16` (source 1498dce), the update
 runtime `0.1.0~dev36` with the encoder driver on, and the H.264 encoder of
 this plan; the engine choice is `hardware`, as the operator left it.
 
+The work was reviewed on 2026-10-04
+(`docs/baselines/audit-20261004-review.md`, findings Q1 to Q16, with the
+status of each fix at its end); the fixes are the plan
+`docs/baselines/work-plan-20261004-review-fixes.md`.
+
 ## Items
 
 | Item | Commits | Outcome and evidence |
