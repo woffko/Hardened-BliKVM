@@ -226,3 +226,19 @@ the gateway nor these crates parse that format: the gateway makes its own
 certificate and `x509-parser` only writes dates with it. The release ships
 the locked version; the lock moves to the fixed one with the next build of
 the update-runtime package, which carries the gateway.
+
+## RustSec scan for 0.1.0-beta.1 (2026-10-04)
+
+The lock of the release has 315 packages, 82 of the workspace and 233
+external. Since alpha.10 it gained two workspace packages, the video engine's
+encoder crate (`bli-kvm-ve-encoder`) and its lab tool (`bli-kvm-ve-lab`, which
+no package carries), and no external one; every external package declares a
+licence expression. `cargo audit --deny warnings`, run without fetching (the
+advisory database as fetched on 2026-10-02, 1,288 advisories), reports the one
+advisory of alpha.10: RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
+`bli-kvm-quic-gateway`, where its fault is not reachable (above). The section
+above expected the fixed version with the next build of the update-runtime
+package. That build, `0.1.0~dev36` (it added the encoder driver), and this
+release's runtime, whose programs are the same bytes, still lock 0.3.45:
+moving the lock needs the crate registry, which neither used. The release
+notes say so.
