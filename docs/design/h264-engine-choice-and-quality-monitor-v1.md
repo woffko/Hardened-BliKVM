@@ -611,3 +611,48 @@ Receipts: `evidence/private/c5-s72-*` (the gate and the regression on slot
 `c5-s71-read-times.json`, `c5-s72-read-times.json`,
 `update-to-seq68-*`, `-seq69-*`, `-seq70-*`, `-seq71-*`, `-seq72-*`,
 `c5-state-after-20261004.json`.
+
+### Review fixes, 2026-10-04
+
+The review of the work above (`docs/baselines/audit-20261004-review.md`) and
+its fixes (`docs/baselines/work-plan-20261004-review-fixes.md`). What changed
+against the design is written here with its reason, and each gate's numbers
+as it is passed.
+
+**Gate B, the page.** Changed against the design:
+
+- The monitor needs workers and `OffscreenCanvas` (Q1). The design drew the
+  rows in a worker and said nothing of a browser that cannot, or refuses, one.
+  Such a browser looped the monitor through 22,000 to 30,000 canvases in three
+  seconds, and where the worker was refused the router's error screen replaced
+  the whole page, at every load, because the open monitor is remembered. The
+  window now says in one line that it needs workers and `OffscreenCanvas` and
+  does nothing else: no rows, no timer, no request. A drawing fallback on the
+  main thread is not built, since it would bring back the 4 to 5 ms a second
+  that the worker removed, and a second renderer to keep right.
+- The Direct path has no encoder of ours (Q9): the Codec row shows `H.264` and
+  the picture's size, the Bitrate row a dash, and Extended has no encoder
+  rows, instead of another viewer's engine and bitrate.
+- The rows follow the display's pixel ratio (Q11): zooming the page or moving
+  it to another display draws them again at the new ratio instead of leaving
+  them blurred.
+
+Numbers (`quality_monitor_contract.mjs`, `tools/test_quality_monitor.mjs`,
+`quality_monitor_gate.mjs`):
+
+| | Before | After |
+| --- | --- | --- |
+| Canvases made in three seconds without `transferControlToOffscreen` | 30,430 | at most one, none left |
+| The page with the worker refused | the router's error screen | the toolbar and the note, no error screen |
+| The rows' pixels after the ratio goes from 1 to 2 | 264 wide, unchanged | 528 within three seconds |
+| The Direct path's Codec row | `H.264 HW 1920x1080` (another viewer's engine) | `H.264 1920x1080` |
+
+The monitor's pure functions have unit tests now (ten cases in
+`tools/test_quality_monitor.mjs`, in `check.sh`). The host gate again, with
+QUIC, the real server, gateway and encoder (x264) over twelve seconds:
+17.75 frames a second shown against 17.73 counted, 0.741 Mbit/s against 0.720,
+a frame's age 4 ms against 4; the open monitor costs the page's main thread
+0.09 ms a second in Basic and 0.42 in Extended, the median of seven pairs
+(bound 2; gate C4 had 0.77 and 0.24).
+
+**Gate B passed.** Receipts: `evidence/private/review-fixes-gate-b.json`.
