@@ -672,3 +672,35 @@ a frame's age 4 ms against 4; the open monitor costs the page's main thread
 (bound 2; gate C4 had 0.77 and 0.24).
 
 **Gate B passed.** Receipts: `evidence/private/review-fixes-gate-b.json`.
+
+**Gate C, the server.** Changed against the design:
+
+- The quality answer makes no rate across a pause (Q5; "Refined in the
+  review fixes" under `GET /api/vm/quality`).
+- The engine choice is offered only with the encoder's report configured, and
+  what is not offered is not served (Q3, Q7; the text about the right under
+  "The choice and where it lives"). A slot on a board whose encoder or drop-in
+  is older no longer offers H.264 HW and H.264 SW that change nothing; and the
+  engine choice and the WebRTC quality, which only the manifest hid where the
+  video controls were off, are refused by the server there too.
+- A choice is stored and sent under one lock (Q8), and a report's time is
+  read from the file that was read (Q10).
+
+Numbers:
+
+| | Before | After |
+| --- | --- | --- |
+| The first quality answer after a pause | an encoder rate over the pause (60 frames a second in the test) | no rate |
+| Two engine choices at once: the file and the channel differ | 50 of 50 repetitions (33 to 40 of 4000 rounds each) | 0 of 50 |
+| A report read while it is replaced: a time that is not its file's | 20 of 20 repetitions (141 to 197 of about 10,900 reads) | 0 of 50 |
+| `the_quality_answer_is_built_once_a_second_from_the_reports` beside 96 busy loops | 2 of 12 runs failed | 30 of 30 passed |
+| The plan's server tests together beside 96 busy loops | 2 of 12 runs failed | 30 of 30 passed |
+
+The manifest and the answers for the four combinations of the video controls
+and the report are held by
+`the_servers_own_video_settings_are_offered_and_served_only_where_configured`;
+the first of its assertions failed before (the engine was offered without the
+report), and with the controls off both settings were served.
+
+**Gate C passed.** Receipts: `evidence/private/review-fixes-20261004/baseline`
+and `gate-c`.
