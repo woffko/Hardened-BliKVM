@@ -420,6 +420,7 @@ pub fn user_id(passwd_file: &str, name: &str) -> Option<u32> {
 mod tests {
     use super::*;
     use bli_kvm_quic_protocol::frame::HEADER_BYTES;
+    use std::sync::atomic::AtomicU32;
 
     fn directory() -> std::path::PathBuf {
         let mut random = [0_u8; 8];
@@ -557,27 +558,47 @@ mod tests {
         wait_until("the clients are not served", || hub.clients() == 2);
         assert!(hub.take_key_request(Instant::now()));
 
-        // More than a queue holds, published without a pause. The client that
-        // reads gets every frame; the other one is not waited for.
+        // More than a queue holds. The client that reads gets every frame; the
+        // other one is not waited for. The publisher is never more than
+        // `AHEAD` frames ahead of the last one the reader took, well inside
+        // what a queue holds: how fast a loaded host lets the reader run is
+        // not what is tested, and a reader that fell a queue behind would be
+        // a slow client like the other one.
+        const AHEAD: u32 = 16;
         let frame = vec![7u8; 256 * 1024];
-        let started = Instant::now();
+        let taken = Arc::new(AtomicU32::new(1));
         hub.publish(&header(Kind::Key, 1, 1, frame.len()), &frame);
-        let reader = thread::spawn(move || {
-            let mut ids = Vec::new();
-            while ids.last() != Some(&200) {
-                ids.push(read_record(&mut reading).0.frame);
-            }
-            ids
-        });
+        let reader = {
+            let taken = Arc::clone(&taken);
+            thread::spawn(move || {
+                let mut ids = Vec::new();
+                while ids.last() != Some(&200) {
+                    let id = read_record(&mut reading).0.frame;
+                    ids.push(id);
+                    taken.store(id, Ordering::Release);
+                }
+                ids
+            })
+        };
+        // The time spent in `publish`, which is what must not wait for a
+        // client; the waits for the reader are not.
+        let mut publishing = Duration::ZERO;
         for id in 2..=200u32 {
+            let waiting = Instant::now();
+            while id > taken.load(Ordering::Acquire) + AHEAD {
+                assert!(
+                    waiting.elapsed() < Duration::from_secs(5),
+                    "the reading client took no frame in five seconds"
+                );
+                thread::sleep(Duration::from_micros(100));
+            }
+            let started = Instant::now();
             hub.publish(&header(Kind::Delta, id, 1, frame.len()), &frame);
-            // The reading client keeps up; the encoder's pace is far below.
-            thread::sleep(Duration::from_micros(300));
+            publishing += started.elapsed();
         }
         assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "publishing waited for a client: {:?}",
-            started.elapsed()
+            publishing < Duration::from_secs(3),
+            "publishing waited for a client: {publishing:?}"
         );
         assert_eq!(reader.join().unwrap(), (1..=200).collect::<Vec<u32>>());
 
