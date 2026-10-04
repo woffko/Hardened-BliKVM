@@ -98,7 +98,8 @@ python3 -m py_compile tools/device/ve_probe_check.py tools/device/ve_memory_scan
   tools/device/ve_capture_play.py tools/device/ve_demand_hold.py \
   tools/device/ve_engine_switch.py tools/device/ve_engine_watch.py \
   tools/device/ve_engine_choose.py tools/device/engine_switch_probe.py \
-  tools/device/frame_socket_tap.py tools/ve-trace/ve_trace_report.py
+  tools/device/frame_socket_tap.py tools/device/ve_device_hold.py \
+  tools/ve-trace/ve_trace_report.py
 sh -n packaging/system-update/initramfs-local-premount
 cargo test -p bli-kvm-server --all-targets --locked --features restricted-control-surface
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
@@ -232,6 +233,7 @@ node --check tools/playwright/quality_monitor_contract.mjs
 node --check tools/playwright/quality_monitor_gate.mjs
 node --check tools/playwright/quality_monitor_device_probe.mjs
 node --check tools/playwright/engine_menu_device_probe.mjs
+node --check tools/playwright/engine_busy_device_probe.mjs
 node --check tools/playwright/app_harness.mjs
 node --check tools/playwright/video_frame_timing_probe.mjs
 
@@ -380,6 +382,7 @@ python3 -m unittest \
   tools/test_ve_module.py \
   tools/test_stress_under_load.py \
   tools/test_plan_tool_headers.py \
+  tools/test_ve_device_hold.py \
   -v
 python3 -m py_compile \
   tools/device/owner_lock_probe.py \

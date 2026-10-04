@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS = (
     "tools/device/engine_switch_probe.py",
     "tools/device/frame_socket_tap.py",
+    "tools/device/ve_device_hold.py",
     "tools/device/ve_engine_choose.py",
     "tools/device/ve_engine_switch.py",
     "tools/device/ve_engine_watch.py",
