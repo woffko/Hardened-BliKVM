@@ -224,3 +224,25 @@ field needs schema 2; not written down). The web build warns of chunks over
   Power menu already polls every five seconds.
 - Repository: no password, key, address or local path added by the plan; all
   28 commits carry the attribution line; no evidence file is tracked.
+
+## Baseline under the load tool (A2, before the fixes)
+
+Made with `scripts/stress-under-load.sh` (1be9448) at 96 busy loops on 64
+cores, one and a half times the cores, on the code of that commit (the review's
+d58ee97 with the tool added); receipts under
+`evidence/private/review-fixes-20261004/baseline`. Every failure is the test
+the review named and the assertion it named.
+
+| Set | Runs | Failed | Test and line |
+|---|---|---|---|
+| the server's `the_quality_answer_is_built_once_a_second_from_the_reports` alone | 12 | 2 | `lib.rs:2417` (Q2) |
+| the plan's four server test groups together | 12 | 2 | the same test, `lib.rs:2417` |
+| the encoder's `frame_socket` tests | 12 | 2 | `on_a_still_picture_a_key_frame_comes_when_it_is_asked_for`, `frame_socket.rs:240` (Q4) |
+| the encoder's library tests | 40 | 2 | `frames::tests::a_client_that_does_not_read_loses_its_queue_and_holds_nobody_up`, `frames.rs:470` (Q4) |
+| `frame_socket` tests of 6522ff5, before the plan | 12 | 5 | the same still-picture test, `frame_socket.rs:239` |
+
+The review's hand-made runs failed more often (3 of 6 and 5 of 6 for the
+server test): the load average there was above 70 by the third run, and the
+failure rate follows the load. The gates after the fixes are 30 runs under
+this tool with no failure (a failure rate of one in six leaves 30 clean runs
+a chance of under 0.5 %).
