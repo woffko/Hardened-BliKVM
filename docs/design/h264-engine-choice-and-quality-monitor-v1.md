@@ -7,9 +7,10 @@ cases, the monitor's rows and where each comes from, the reference and the
 licence question. The record of what was measured follows at its end as the
 work goes on.
 
-Status (2026-10-03): the engine as the board's choice, the menu, the
+Status (2026-10-04): the engine as the board's choice, the menu, the
 board's side of the monitor and the monitor are built; gates C1 (on the
-board) and C4 (on the host) passed; C5 (on the board) is next.
+board), C4 (on the host) and C5 (on the board) passed; the test board runs
+slot 72 `0.1.0-alpha.16` with the engine chosen.
 
 ## The engine as the board's choice
 
@@ -457,3 +458,154 @@ f331041).
 
 Receipts: `evidence/private/c4-gate-final2.json` (and `c4-gate-final.json`,
 `c4-gate-run2.json`, the runs before it).
+
+### C5, 2026-10-04: the board
+
+**Installed** (C5.1): slot 68 (`0.1.0-alpha.13`, source 958c3c7) and the
+encoder of this plan (`4e3d9a8c`, the same binary from that source to
+1498dce) through `deploy_vp8.sh`, whose drop-in now names the encoders'
+reports for the server; slot 69 (`0.1.0-alpha.14`, source 5de8e6c), whose
+monitor counts its draws for the probes; slot 71 (`0.1.0-alpha.15`, source
+e477b42) with the Speed's places below; and slot 72 (`0.1.0-alpha.16`,
+source 1498dce), whose quality answer no longer waits for the update
+status (C5.3 below). Every number of the gate here is slot 72's. The
+update runtime (dev36) and the driver stayed as they were.
+
+**How it was measured** (C5.2): the target showed a still picture, so the
+encoder had a frame every two seconds to encode, most of them key frames.
+Every run began with the board quiet, sampled the units' processor time
+on the board every five seconds and ended where another address
+connected (none did); the monitor was read at every one of its draws.
+Over QUIC (`quic_video_device_probe.mjs` with `QUALITY_MONITOR`, through
+its relays without loss or delay) the probe counts the frames drawn and
+their age by the board's clock; the relays count the QUIC packets whole,
+of which on a still picture a quarter is the transport's own (0.023 Mbit/s
+against 0.0176 of frames), so the Speed is held, as in gate C4, to the
+frames the encoder handed to the gateway: `tools/device/frame_socket_tap.py`
+read them from the frame socket beside the gateway (as the gateway's user,
+the only one the socket admits) and took those whose capture time lies
+within the probe's span. Over WebRTC (`quality_monitor_device_probe.mjs`)
+the page's own connection is read with `getStats()` at the span's ends,
+and the video element's drawn frames. Over MJPEG the monitor has the
+capture's numbers only. The probes count the page's API requests that
+failed.
+
+**The Speed's places.** On slot 69 the monitor's Speed over VP8 was 18%
+above what `getStats()` counted (0.013 against 0.011 Mbit/s): its values
+were 0.00, 0.01 and 0.04 Mbit/s, VP8's small frames of about five
+kilobits shown as ten. The bytes were right; two places were too few for
+a still screen. Below one megabit a second the Speed has three places
+since (C5.2, 724cf3d; "Basic" above).
+
+| Path and engine (slot 72) | Frames a second: the monitor, counted | Mbit/s: the monitor, counted | Age at drawing, median ms: the monitor, the probe | The Codec row |
+| --- | --- | --- | --- | --- |
+| QUIC, video engine | 0.50, 0.50 | 0.018, 0.0176 (frames) | 49, 47 | H.264 HW 1920x1080 |
+| QUIC, x264 | 0.51, 0.50 | 0.021, 0.0199 (frames) | 66, 59 | H.264 SW 1920x1080 |
+| WebRTC H.264, video engine | 0.50, 0.50 | 0.017, 0.017 | estimated (`~`) | H.264 HW 1920x1080 |
+| WebRTC H.264, x264 | 0.50, 0.50 | 0.021, 0.021 | estimated (`~`) | H.264 SW 1920x1080 |
+| WebRTC VP8 | 0.49, 0.48 | 0.011, 0.011 | estimated (`~`) | VP8 1920x1080 |
+| MJPEG | - | - | - | MJPEG 1920x1080, JPEG 100, 4:2:2 |
+
+Every run 120 s (MJPEG 60), 121 draws (60) and none missed; over QUIC 62
+and 61 frames drawn, none given up, no decoder restarted, and the tap had
+the same frames, 40 of them key frames with the engine and 34 with x264.
+Slot 71 gave the same within these bounds (`c5-s71-*`).
+
+**The engine from the menu** (`engine_menu_device_probe.mjs`, the monitor
+open in Basic): five times each way over QUIC and five over WebRTC, H.264
+SW and then H.264 HW clicked in the video menu while the page watched.
+
+| | Over QUIC | Over WebRTC |
+| --- | --- | --- |
+| x264 encoded after the click, ms | 325 to 386 | 369 to 436 |
+| The engine encoded after the click, ms | 377 to 454 | 369 to 464 |
+| The monitor's Codec row named it after the click, ms | 496 to 1,837 | 779 to 2,107 |
+
+The picture went on through every switch; the board's choice was
+`hardware` before and after. The monitor names the new engine with its
+next answer after the encoder's next report: within about two of its
+seconds.
+
+**What the open monitor costs the board** (the same QUIC viewer, 60 s
+each, closed and open in turn; the units' share of a core over the span):
+
+| | Closed (three runs) | Basic (two) | Extended (one) |
+| --- | --- | --- | --- |
+| The web server | 0.23 to 0.25 | 0.62 to 0.63 | 0.66 |
+| The H.264 encoder | 6.22 to 6.26 | 5.91 to 6.03 | 6.04 |
+| nginx | 0.04 to 0.05 | 0.24 | 0.24 |
+
+The web server takes 0.40% of a core more for the monitor's answer once a
+second, nginx 0.19%; the encoder took no more (its share goes with the
+frames it encodes). The QUIC gateway (0.5), Janus (0.4) and uStreamer
+(6.4) did not change.
+
+No API request of the page failed in any of these runs, and the kernel's
+log had no line from the start of these measurements (on slot 69) to
+their end: 466 lines, the last of them 35 s after the board's boot.
+
+**Gate C5 passed**: the menu's choice changed the engine within 0.46 s
+for a watching viewer both ways, over QUIC and WebRTC, and the monitor
+named the engine that encoded; the monitor's Basic numbers agree with the
+probes within the bounds of gate C4; with the monitor open the web
+server's and the encoder's processor time grew by 0.40% of a core (bound
+2); no API error and no kernel line.
+
+**Regression** (C5.3):
+
+- **A slot from before this plan with the new encoder.** The update path
+  takes a slot only with a sequence above the one confirmed, so slot 66
+  could not be installed again; the code of 6522ff5 (the end of the
+  hardware H.264 plan, slot 66's source b31149a in everything a slot
+  holds) was built as slot 70 (`0.1.0-alpha.11`) and installed. Its server
+  sends no `engine` line, and the encoder of this plan kept its own choice,
+  the engine: over QUIC 31 frames of the still picture, 50 ms old in the
+  median when drawn, none given up; over WebRTC 16 frames at 1920x1080,
+  none lost; `h264Encoder: hardware`.
+- **On slot 71** the GUI walks with the monitor closed (desktop, mobile)
+  and open in Basic on a phone passed; open on the desktop (Basic,
+  Extended) they failed on one request each: `GET /api/vm/quality`, given
+  up by the monitor after 0.9 s while the settings' System tab loaded. A
+  fresh answer took 0.51 to 0.61 s, of which nearly all was the update
+  runtime's status (`GET /api/application-update/status` alone: 0.50 to
+  0.62 s); the WiFi scan that the tab makes answered in 86 ms and held
+  nothing up. Since 1498dce the version is read in the background
+  ("`GET /api/vm/quality`" above), and on slot 72 a fresh answer took 11
+  to 20 ms. The firewall probe stopped on slot 71 at the video menu, where
+  it found two H.264 entries instead of one (8ffb18c), after its checks of
+  Restricted's rules and session and before Paranoid; it restored
+  Baseline.
+- **On slot 72**: the GUI walks, desktop and mobile, with the monitor
+  closed, open in Basic and (desktop) in Extended: five walks of 21 steps,
+  no failed request and no page error, the monitor open at the end where
+  it was opened (the open ones made 124 to 133 requests, the closed 61 to
+  64). VP8 and H.264 over WebRTC (`vp8_webrtc_probe.mjs`) decoded 15
+  frames each at 1920x1080 with no packet lost (Chromium dropped one VP8
+  frame). The firewall probe passed: a QUIC
+  session in Baseline and Restricted with the page's two H.264 entries over
+  QUIC and VP8 closed, none in Paranoid, Baseline again at the end. MJPEG
+  (`tools/device/stream_latency_probe.py`): the viewer at full speed had
+  51.5 to 52.5 frames a second and the slow one 40.3, as before; the slow
+  one trailed the full-speed one by 242 to 256 ms in the median in every
+  run (249 to 255 on slot 71, 265 to 271 on slot 66). The probe's limit of
+  300 ms in 90 of 100 was met in three runs of three on slot 71 and two of
+  six on slot 72, where the full-speed viewer's median moved from -46 to
+  +121 ms between runs: the probe turned this host's monotonic times into
+  true time with SNTP readings before and after a run only, and the WSL
+  host's monotonic clock changed its rate within a run (1.030 to 1.047 of
+  true time). Since 7842d22 it reads SNTP every two seconds; three runs
+  then gave 11 to 12 ms for the full-speed viewer in the median and 280 to
+  286 ms for the slow one in 90 of 100, all three within the limit.
+
+**`check.sh`**: green before every slot build. Once, on e477b42, a test of
+the frame socket from the QUIC plan
+(`on_a_still_picture_a_key_frame_comes_when_it_is_asked_for`) got a delta
+frame where it waited for the periodic key frame while slot 70 was built
+beside it on the same host: a load flake, green when run again alone.
+
+Receipts: `evidence/private/c5-s72-*` (the gate and the regression on slot
+72), `c5-s71-*` (slot 71), `c5-old70-*` (slot 70), `c5-quic-*`,
+`c5-webrtc-*`, `c5-mjpeg-basic*` (slot 69), `c5-s71-quality-vs-scan.json`,
+`c5-s71-read-times.json`, `c5-s72-read-times.json`,
+`update-to-seq68-*`, `-seq69-*`, `-seq70-*`, `-seq71-*`, `-seq72-*`,
+`c5-state-after-20261004.json`.
