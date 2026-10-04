@@ -235,8 +235,18 @@ fn on_a_still_picture_a_key_frame_comes_when_it_is_asked_for() {
     assert_eq!(first.kind, Kind::Key);
     let first_at = Instant::now();
     // Without a request the next frame is the periodic one, two seconds
-    // after the first; every frame of a still picture is a key frame.
-    let (periodic, _) = read_record(&mut client);
+    // after the first; every frame of a still picture is a key frame. A
+    // client that comes while the first frame is still being encoded is
+    // let one more frame through a few frames after it, for the same
+    // request: a delta frame, which comes within a second of the first and is
+    // no part of the cadence. The periodic frame is the first one captured at
+    // least 1.5 s after the first.
+    let (periodic, _) = loop {
+        let (header, frame) = read_record(&mut client);
+        if header.capture_micros.saturating_sub(first.capture_micros) >= 1_500_000 {
+            break (header, frame);
+        }
+    };
     assert_eq!(periodic.kind, Kind::Key);
     let period = first_at.elapsed();
     assert!(
