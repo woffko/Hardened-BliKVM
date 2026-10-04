@@ -221,9 +221,13 @@ export type QualityInputs = {
   refreshHz: number | null;
 };
 
-/** The encoder that serves the path, from the board's answer. */
+/**
+ * The encoder that serves the path, from the board's answer. The Direct view
+ * is sent the capture device's own H.264 and no encoder of ours serves it:
+ * what the H.264 encoder reports is another viewer's.
+ */
 function servingEncoder(inputs: QualityInputs): EncoderQuality | null {
-  if (!inputs.board || inputs.codec === 'mjpeg') return null;
+  if (!inputs.board || inputs.codec === 'mjpeg' || inputs.path === 'direct') return null;
   return inputs.codec === 'vp8' ? inputs.board.vp8 : inputs.board.h264;
 }
 

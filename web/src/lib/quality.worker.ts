@@ -54,6 +54,8 @@ const scope = self as unknown as Scope & {
   qualityMonitorSections?: string[];
   /** How often it drew: a probe that reads more often takes every draw once. */
   qualityMonitorDraws?: number;
+  /** The canvas's size in device pixels: whether it is drawn at the display's ratio. */
+  qualityMonitorPixels?: { width: number; height: number };
 };
 
 let url = '';
@@ -128,6 +130,7 @@ function draw() {
     canvas.width = pixelWidth;
     canvas.height = pixelHeight;
   }
+  scope.qualityMonitorPixels = { width: pixelWidth, height: pixelHeight };
   context.setTransform(scale, 0, 0, scale, 0, 0);
   context.clearRect(0, 0, width, total);
   context.textBaseline = 'middle';

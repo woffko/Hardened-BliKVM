@@ -188,7 +188,7 @@ const qualityAsked = (asked) =>
   asked.filter((line) => line === "GET /api/vm/quality").length;
 
 /** What the monitor's worker drew last: every row's value by its key, the
- * labels, and the sections. */
+ * labels, the sections, and the size of its canvas in device pixels. */
 async function drawn(page) {
   for (const worker of page.workers()) {
     const found = await worker
@@ -198,13 +198,14 @@ async function drawn(page) {
               rows: self.qualityMonitorRows,
               labels: self.qualityMonitorLabels,
               sections: self.qualityMonitorSections,
+              pixels: self.qualityMonitorPixels,
             }
           : null,
       )
       .catch(() => null);
     if (found) return found;
   }
-  return { rows: {}, labels: {}, sections: [] };
+  return { rows: {}, labels: {}, sections: [], pixels: null };
 }
 const rows = async (page) => (await drawn(page)).rows;
 
@@ -548,8 +549,45 @@ try {
     await context.close();
   }
 
+  // The page zoomed, or moved to a display of another pixel ratio: the rows
+  // are drawn again at the new ratio and stay sharp.
+  {
+    const { context, page, errors } = await open({
+      mode: "mjpeg",
+      layout: { open: true },
+    });
+    await monitor(page).waitFor();
+    const pixelsUntil = async (check, what) => {
+      const deadline = Date.now() + 3000;
+      for (;;) {
+        const { pixels } = await drawn(page);
+        if (pixels && check(pixels)) return pixels;
+        assert.ok(Date.now() < deadline, `${what}: ${JSON.stringify(pixels)}`);
+        await page.waitForTimeout(100);
+      }
+    };
+    const first = await pixelsUntil((pixels) => pixels.width > 0, "no draw");
+    const session = await context.newCDPSession(page);
+    // As a zoom does, the ratio and the viewport's size change together; the
+    // browser's emulation tells a page of the change of its pixel ratio only
+    // then.
+    await session.send("Emulation.setDeviceMetricsOverride", {
+      width: 1200,
+      height: 700,
+      deviceScaleFactor: 2,
+      mobile: false,
+    });
+    const sharp = await pixelsUntil(
+      (pixels) => pixels.width === first.width * 2,
+      `the rows were not drawn again at twice the pixels of ${first.width}`,
+    );
+    assert.equal(sharp.height, first.height * 2);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
   console.log(
-    "Quality monitor: QM opens and closes it on desktop and phone and can be hidden, dragged, resized, scrolled, opaque and remembered, MJPEG, WebRTC by either engine and VP8 rows, Russian, the board asked only while it is open, and a browser without OffscreenCanvas or with the worker refused told so without a loop or an error screen passed",
+    "Quality monitor: QM opens and closes it on desktop and phone and can be hidden, dragged, resized, scrolled, opaque and remembered, MJPEG, WebRTC by either engine and VP8 rows, Russian, the board asked only while it is open, a browser without OffscreenCanvas or with the worker refused told so without a loop or an error screen, and the rows drawn again when the pixel ratio changes passed",
   );
 } finally {
   await browser.close();

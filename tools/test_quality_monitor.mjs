@@ -269,6 +269,35 @@ test("Basic over MJPEG knows the capture only", { skip }, () => {
   });
 });
 
+test("Basic over Direct attributes no encoder to the page", { skip }, () => {
+  // The Direct view is sent the capture device's own H.264: the encoder that
+  // serves another viewer, and its engine and bitrate, are not this picture's.
+  const direct = inputs({
+    path: "direct",
+    sample: sample({ bytes: 250000 }),
+    rates: rates({
+      megabitsPerSecond: 2,
+      receivedPerSecond: null,
+      decodedPerSecond: null,
+      drawnPerSecond: null,
+      droppedPerSecond: null,
+    }),
+  });
+  const rows = valuesOf(monitor.basicRows(direct, t));
+  assert.equal(rows.path, "H.264 Direct");
+  assert.equal(rows.speed, "2.00 Mbit/s");
+  assert.equal(rows.codec, "H.264 1920x1080");
+  assert.equal(rows.bitrate, "-");
+  // Nor does Extended show the encoder's rows.
+  const board_ = monitor
+    .extendedSections(direct, t)
+    .find((section) => section.key === "board");
+  assert.deepEqual(
+    board_.rows.map((row) => row.key),
+    ["version", "capture", "jpegQuality", "temperature"],
+  );
+});
+
 test(
   "Extended has the sections of its path and leaves out the rest",
   { skip },

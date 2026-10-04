@@ -109,6 +109,31 @@ function useRefreshRate(measure: boolean): number | null {
   return hz;
 }
 
+/**
+ * The display's pixel ratio, followed while the window is open: zooming the
+ * page or moving it to a display of another ratio changes it, and the rows
+ * are drawn again at the new one. A media query for one ratio changes when
+ * that ratio no longer holds, so it is made again for the new one each time.
+ */
+function useDevicePixelRatio(): number {
+  const [ratio, setRatio] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    let query: MediaQueryList | null = null;
+    const watch = () => {
+      query?.removeEventListener('change', renew);
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      query.addEventListener('change', renew);
+    };
+    const renew = () => {
+      setRatio(window.devicePixelRatio || 1);
+      watch();
+    };
+    watch();
+    return () => query?.removeEventListener('change', renew);
+  }, []);
+  return ratio;
+}
+
 /** The text's size of the rows, in CSS pixels. */
 const FONT_PX = { desktop: 12, phone: 10 };
 
@@ -138,6 +163,7 @@ const MonitorBody = memo(
     // refused, gets one line in place of the rows and no second try.
     const [unsupported, setUnsupported] = useState(() => !canDrawInWorker());
     const refreshHz = useRefreshRate(extended && !unsupported);
+    const pixelRatio = useDevicePixelRatio();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const workerRef = useRef<Worker | null>(null);
     // A canvas can be handed to a worker once; a new one is mounted for the
@@ -152,11 +178,11 @@ const MonitorBody = memo(
         codec,
         width,
         fontPx: isDesktop ? FONT_PX.desktop : FONT_PX.phone,
-        scale: window.devicePixelRatio || 1,
+        scale: pixelRatio,
         labels: t('qualityMonitor', { returnObjects: true }) as Record<string, string>,
         refreshHz
       }),
-      [extended, codec, width, isDesktop, t, refreshHz]
+      [extended, codec, width, isDesktop, t, refreshHz, pixelRatio]
     );
     const viewRef = useRef(view);
     viewRef.current = view;
