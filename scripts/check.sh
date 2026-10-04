@@ -62,6 +62,7 @@ BK_JPEG_DAMAGE_FRAMES=20000 cargo test -p bli-kvm-video-encoder --release --lib 
   --features h264,turbojpeg damaged_frames_never_crash
 sh -n scripts/build-libvpx.sh
 sh -n scripts/build-x264.sh
+sh -n scripts/stress-under-load.sh
 sh -n tools/device/deploy_native_profile.sh
 sh -n tools/device/deploy_vp8.sh
 sh -n tools/image/build_sd_image.sh
@@ -376,6 +377,7 @@ python3 -m unittest \
   tools/test_build_system_image_test_fixture.py \
   tools/test_build_system_raw_bundle.py \
   tools/test_ve_module.py \
+  tools/test_stress_under_load.py \
   -v
 python3 -m py_compile \
   tools/device/owner_lock_probe.py \
