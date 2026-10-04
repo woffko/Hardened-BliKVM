@@ -20,7 +20,9 @@ this plan; the engine choice is `hardware`, as the operator left it.
 The work was reviewed on 2026-10-04
 (`docs/baselines/audit-20261004-review.md`, findings Q1 to Q16, with the
 status of each fix at its end); the fixes are the plan
-`docs/baselines/work-plan-20261004-review-fixes.md`.
+`docs/baselines/work-plan-20261004-review-fixes.md`. Since the fixes the test
+board runs slot 73 `0.1.0-alpha.17` (source 39e2c4b) and the encoder
+`8ca21dca`; the rest of this note is as it was written.
 
 ## Items
 

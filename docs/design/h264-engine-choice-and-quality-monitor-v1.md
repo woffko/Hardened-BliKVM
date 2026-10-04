@@ -405,6 +405,14 @@ page's licence statement would name it.
 - **Page** (host, `node --test`): `tools/test_quality_monitor.mjs` holds the
   monitor's pure functions (rates, the rows of each path, the stored window)
   without a browser.
+- **Board** (device probes, run by hand and not by `check.sh`):
+  `engine_menu_device_probe.mjs`, `quality_monitor_device_probe.mjs`,
+  `quic_video_device_probe.mjs` with the frame socket tap
+  (`tools/device/frame_socket_tap.py`), and for the engine busy
+  `engine_busy_device_probe.mjs` with `tools/device/ve_device_hold.py`, a
+  holder that opens the engine's device node as the encoder does and asks it for
+  nothing. The encoder keeps the device open between viewers once it has
+  encoded, so the check restarts its unit first, with nobody watching.
 - **Under load** (host): `scripts/stress-under-load.sh RUNS [LOAD] --
   COMMAND...` runs a command again and again beside busy loops, one and a
   half times the cores by default, and counts the runs that passed. The tests
@@ -798,6 +806,18 @@ with and one without a reason.
   test waits until the hub has read every request it wrote (it waited for the
   first of twenty; with 50,000 it failed three times in three); the tests that
   wait for a new client wait for its request for a key frame too.
+- A fourth, found by the last `check.sh` of phase F: it also runs the encoder's
+  tests without turbojpeg, where the JPEG decoder is slower, and on a host
+  carrying another job's 96 busy loops the first frame took 47 to 78 ms from
+  capture to publication. The client of the still-picture test then connected
+  while that frame was in the pipeline, got it as its key frame, and got a
+  second frame, a delta, that the capture loop had let through for the same
+  request before the first was published (captured 35 to 52 ms after it): the
+  test took that delta for the periodic frame and failed in 29 of 30 runs
+  (58 of 60 with the logging build that showed it). Not the fault of the
+  encoder (a delta of 30 bytes on a still screen) and not Q4's. The test now
+  takes the periodic frame to be the first one captured 1.5 s after the first
+  and still requires a key frame.
 
 Numbers (`scripts/stress-under-load.sh`, 96 busy loops on 64 cores):
 
@@ -805,6 +825,7 @@ Numbers (`scripts/stress-under-load.sh`, 96 busy loops on 64 cores):
 | --- | --- | --- |
 | The still-picture test of the frame socket, alone (the confirmation's logging build before) | 7 of 40 runs failed | 40 of 40 passed |
 | The frame socket's five tests | 2 of 12 runs failed in A2, both on the still-picture test | 30 of 30 passed |
+| The same without turbojpeg, beside another job's 96 busy loops | the still-picture test failed in 29 of 30 runs | the test 60 of 60, the five tests 30 of 30 |
 | The encoder's library tests | 2 of 40 runs failed in A2; 1 of 80 on 960a93f, before E3 | 40 of 40 (the gate), 80 of 80 |
 | The demand, gate and frame hub tests, each group | not run alone | 30 of 30 |
 | A line of a MiB without a newline on the demand connection | read to its end and kept; the connection stayed | the connection ends after 4 KiB; a line of 4096 bytes with its newline is skipped as before |
@@ -815,3 +836,101 @@ the 30 runs, and were not widened.
 
 **Gate E passed.** Receipts: `evidence/private/review-fixes-20261004/e2-confirm`,
 `e3` and `gate-e`.
+
+**Gate F, the board.** Slot 73 (`0.1.0-alpha.17`, source 39e2c4b, built after a
+green `scripts/check.sh` of that tree; a test slot like 67 to 72, not
+published) and the encoder of the same source (`8ca21dca`, through
+`deploy_vp8.sh`) were installed on the test board, the update runtime
+(`0.1.0~dev36`) and the driver as they were. The board's state before the
+install and after all the checks, read through the API, is the state of
+`c5-state-after-20261004.json` field for field: the administration switches,
+the firewall's baseline, the session lock, SSH, QUIC, the video settings (60
+frames a second, quality 100, WebRTC 8000), the engine choice (`hardware`) and
+the catalog with the operator's two images. The kernel's log had 465 lines
+before and has 465 after, the last of them as before; no probe file, process or
+holder is left on the board.
+
+What the board's picture and the host were like: the target's screen was still
+in C5 (0.5 frames a second), moved for about an hour of the checks (16 to 23
+frames a second at 6 Mbit/s, a still stretch of three minutes among them) and
+was still again after it. The checks that need a still picture (b's cost, c)
+were taken in its still periods; the others do not depend on it. Another job on the host ran 96 busy loops beside every probe
+(load average 88 to 98), and the host's monotonic clock ran at 0.917 of true
+time, which each QUIC receipt records (`hostClockRate`): the page counts in
+that clock, so its rates are compared with the board's after the correction.
+In the moving runs the page's decoder restarted 25 to 32 times in a run of 60 s
+(50 and 60 in the runs of 120 s), with the monitor closed as often as open, and
+not once in the still ones; one run of the Extended level failed after its
+measurement, waiting 40 s for the transport status in the settings, and passed
+in two repeats.
+
+a. `GET /api/vm/quality`, read 30 times, each past the cache, so that every
+   answer is built (`f3-f73-quality-reads-idle.json`,
+   `f3-f73c-quality-reads-viewer.json`): median 17.9 ms and longest 40.4 with
+   nobody watching, 17.8 and 41.0 with a viewer and the monitor open; none
+   over 50 ms, all 200. The version is `null` in the first answer after a
+   login and `0.1.0-alpha.17` in the second (in all of them, where the monitor
+   had been asking); with a viewer the encoder's report is in 30 of 30.
+b. The series of C5 (QUIC with the engine and with x264, WebRTC H.264 with
+   either engine, VP8, MJPEG; `c5-f73*`). Still picture, QUIC: the monitor's
+   frames a second 0.54 (0.50 corrected) against 0.50 counted, its Speed
+   0.029 Mbit/s (0.027) against the frames' 0.0262, its delay 79 ms against
+   71; with x264 0.55 (0.50), 0.039 (0.036) against 0.0358, 79 against 74.
+   Moving picture, QUIC with the engine (16.5 and 16.8 frames a second): 16.59
+   corrected against 16.52 and 16.82 against 16.82; 6.288 against 6.191 and
+   6.083 against 5.987 Mbit/s; 378 against 371 ms and 386 against 382. WebRTC:
+   H.264 with the engine 22.01 against 22.29 frames a second and 6.063 against
+   6.136 Mbit/s, x264 11.47 against 11.44 and 3.116 against 3.097, VP8 5.74
+   against 5.74 and 7.588 against 7.554; MJPEG shows its rows. All within the
+   bounds of gate C5 (10%, 10 ms); no API request of the page failed and none
+   went to `/api/hid`. The units' share of a core over the span of a 60 s QUIC
+   viewer, still picture: the web server 0.22 to 0.23 with the monitor closed
+   (three runs), 0.65 and 0.71 in Basic, 0.66 in Extended; the encoder 6.09 to
+   6.31 closed, 6.25 and 6.28 in Basic, 6.28 in Extended: together +0.54 of a
+   core in Basic and +0.53 in Extended (bound 2); nginx +0.19.
+c. The still picture's refresh frames from the tap beside the gateway (the tap
+   ran 150 s each): with the engine 73 of the 73 refresh frames were key
+   frames, 2.000 to 2.025 s apart, and the three frames of a picture that
+   changed were deltas; with x264 74 of 74, 2.000 to 2.026 s apart (a second
+   x264 run on a picture with 33 KB key frames: 74 of 74). On slot 72 25 of 69
+   and 30 of 69 were deltas. The frames' rate over the probe's span, on the
+   picture of C5: 0.0262 against 0.0176 Mbit/s with the engine (+0.0086) and
+   0.0358 against 0.0199 with x264 (+0.0159), within the bound of 0.02. The
+   cost is a key frame every two seconds, so it follows the picture: x264's
+   key frames of 33 KB on the richer picture made the refresh cost 0.13
+   Mbit/s. On the moving picture the key frames came at most 2.057 s apart.
+d. The engine switched from the menu five times each way (`engine_menu_device_probe.mjs`):
+   over QUIC x264 encoded 217 to 623 ms after the click and the engine 478 to
+   685 ms; over WebRTC 376 to 490 and 370 to 536 ms; the monitor named the new
+   engine within 629 to 1,364 ms (QUIC) and 667 to 1,149 ms (WebRTC); the
+   picture went on every time and the choice was `hardware` after both.
+e. The engine busy (`engine_busy_device_probe.mjs`, `ve_device_hold.py`, once
+   over QUIC and once over WebRTC): with the holder on the device and nobody
+   watching, a viewer came in H.264. x264 encoded; the encoder's report (read
+   through the quality answer) said `engineWanted: hardware`, `engine: x264`,
+   `hardwareAvailable: false` and the reason `/dev/hardened-blikvm-ve-enc:
+   Resource busy (os error 16)` 2.35 and 2.39 s after the page arrived; the
+   monitor's Codec row said `H.264 SW 1920x1080`; the menu's H.264 HW entry
+   stayed enabled and checked, with `x264 encodes`, and its tooltip gave the
+   reason and "asks the encoder to try again". After the holder had let go one
+   click on H.264 HW brought the engine back in 636 ms (QUIC) and 455 ms
+   (WebRTC), the monitor named it 785 and 914 ms after the click, the picture
+   went on, exactly one choice of the engine was posted, and the board's choice
+   was `hardware` at the end. No holder, no file and no HID request.
+f. The GUI walks (21 steps each) with the monitor closed, in Basic and, on the
+   desktop, in Extended, and on a phone closed and in Basic: five of five
+   passed with no failed request (70 to 165 API requests in a walk) and no page
+   error; the WebRTC probes (VP8 and H.264), the MJPEG latency (three runs: the full-speed viewer's median 16,
+   16 and 20 ms at 54 frames a second, the slow one's 279 ms and 90 in 100
+   within 297 ms at 40.3) and the firewall probe passed.
+g. The kernel's log and the board's files, processes and holder: as above.
+
+Found on the way: the encoder keeps the engine's device open between viewers
+once it has encoded a stream (the first attempt of the busy check, with nobody
+watching, was refused the device by the encoder itself, which held it), so the
+check restarts the encoder's unit first, which closes it. Nothing else can have
+the engine between two viewers until the encoder restarts: the lab sessions
+stop the unit as before.
+
+**Gate F passed.** Receipts: `evidence/private/c5-f73*`, `f3-f73*`,
+`review-fixes-20261004/board` and `review-fixes-state-*`.

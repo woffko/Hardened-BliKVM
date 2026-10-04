@@ -263,7 +263,7 @@ the gates are in the Record of
 | Q1 | fixed | d667726 (B1) | `quality_monitor_contract.mjs`, the cases without `transferControlToOffscreen` and with the worker refused: 30,430 canvases in three seconds and the router's error screen before; at most one canvas, the note, no request and no error screen after (gate B) |
 | Q2 | fixed | 996d41f (C5) | `the_quality_answer_is_built_once_a_second_from_the_reports`: 2 of 12 runs failed beside 96 busy loops before, 30 of 30 passed after (gate C) |
 | Q3 | fixed | 3a85cd2 (C2) | `the_servers_own_video_settings_are_offered_and_served_only_where_configured`: the engine was offered without the encoder's report before |
-| Q4 | confirmed first, fixed | 960a93f (E2), 1598274 and 3beeea9 (E3) | the logging build: 7 of 40 runs of the still-picture test failed, the time since the last key frame 1979.9 to 1999.6 ms in the time the encode began and 2001.3 to 2007.9 ms in capture time; `key_due`'s tests; the test 40 of 40 after, the frame socket's five tests 30 of 30 and the library's 40 of 40 under load (gate E); the board (gate F) |
+| Q4 | confirmed first, fixed | 960a93f (E2), 1598274 and 3beeea9 (E3), 91e1409 (E4) | the logging build: 7 of 40 runs of the still-picture test failed, the time since the last key frame 1979.9 to 1999.6 ms in the time the encode began and 2001.3 to 2007.9 ms in capture time; `key_due`'s tests; the test 40 of 40 after, the frame socket's five tests 30 of 30 and the library's 40 of 40 under load (gate E); on the board (gate F, slot 73) 73 of 73 refresh frames with the engine and 74 of 74 with x264 were key frames, 2.000 to 2.026 s apart, where 25 and 30 of 69 were deltas on slot 72 |
 | Q5 | fixed | a5ccd72 (C1) | `quality::tests::a_pause_makes_no_rate` (fps 60.0 over the pause before), `two_reports_are_paired_only_within_three_seconds`, `a_unit_is_not_compared_with_a_reading_older_than_ten_seconds` |
 | Q6 | fixed | 6b08d47 (D1) | `h264_engine_menu_contract.mjs`, the engine busy while it is the board's choice: the entry was disabled before; now it is choosable with the reason and the retry text, and a click posts `h264_engine` 1 |
 | Q7 | fixed | 3a85cd2 (C2) | the same test as Q3: with the video controls off both settings were served before |
@@ -284,7 +284,29 @@ the host, which two fuzz jobs of the operator also load): it waited for the
 first of twenty request bytes to be read, and the other nineteen asked again
 after the key frame it published. With 50,000 bytes the test as it was failed
 three times in three. Mended in 3beeea9; no finding of the review is
-"not confirmed".
+"not confirmed". The last `check.sh` of the work found a fourth, in the
+still-picture test again but not at Q4's refresh: on a host with 96 busy loops
+of another job and the build without turbojpeg a client that connects during
+the first frame's encode is let one more frame through, a delta, which the
+test took for the periodic frame (29 of 30 runs failed); mended in 91e1409.
+
+Gate F, on the board (slot 73 `0.1.0-alpha.17` and the encoder `8ca21dca`,
+both from 39e2c4b; numbers in the design note's Record): a to g hold. Found on
+the way, and not defects of the fixes:
+
+- The encoder keeps the engine's device open between viewers once it has
+  encoded a stream, so nothing else can have the engine until the encoder is
+  restarted. The busy-engine check (F3 e) needed that: its first attempt, with
+  nobody watching, was refused the device by the encoder itself, and the check
+  now restarts the encoder's unit before the holder starts.
+- The plan's estimate of the cost of E2, at most 0.02 Mbit/s, holds on the
+  picture it was made for (key frames of 7 to 9 KB: +0.0086 with the engine,
+  +0.0159 with x264); a key frame every two seconds costs its size divided by
+  two seconds, so on a picture with 33 KB key frames x264 spent 0.13 Mbit/s.
+- The target's screen moved for about an hour of the checks and the host
+  carried 96 busy loops of another job and a monotonic clock 8% slow; the
+  checks that need a still picture were taken in its still stretches, and the
+  page's rates are compared with the board's after the clock's correction.
 
 What the operator has to decide, if wanted: the advisory database's update and
 the `time` crate's bump for Q14 (a download); the word to publish anything
