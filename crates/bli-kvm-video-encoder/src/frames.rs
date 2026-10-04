@@ -443,6 +443,16 @@ mod tests {
         panic!("{what}");
     }
 
+    /// Waits until the hub serves `clients` clients and a new one's request
+    /// for a key frame is known: `serve` counts a client first and asks for
+    /// its key frame after.
+    fn wait_for_clients(hub: &FrameHub, clients: usize) {
+        wait_until("the clients are not served", || hub.clients() == clients);
+        wait_until("a new client did not ask for a key frame", || {
+            hub.key_wanted.load(Ordering::Relaxed)
+        });
+    }
+
     fn header(kind: Kind, frame: u32, reference: u32, size: usize) -> RecordHeader {
         RecordHeader {
             kind,
@@ -487,7 +497,7 @@ mod tests {
         assert!(!hub.take_key_request(Instant::now()));
 
         let mut client = UnixStream::connect(&path).unwrap();
-        wait_until("the client is not served", || hub.clients() == 1);
+        wait_for_clients(&hub, 1);
         // A new client asks for a key frame by connecting.
         assert!(hub.take_key_request(Instant::now()));
         // Delta frames before it are not for this client.
@@ -518,7 +528,7 @@ mod tests {
         let path = directory.join("frames.sock");
         let hub = FrameHub::listen(&path, None).unwrap();
         let mut client = UnixStream::connect(&path).unwrap();
-        wait_until("the client is not served", || hub.clients() == 1);
+        wait_for_clients(&hub, 1);
         let start = Instant::now();
         assert!(hub.key_due(start), "for the new client");
         assert!(hub.take_key_request(start), "for the new client");
@@ -536,12 +546,18 @@ mod tests {
         assert!(hub.take_key_request(start + KEY_COOLDOWN));
         assert!(!hub.take_key_request(start + KEY_COOLDOWN * 3));
 
-        // Many requests are one; other bytes are none.
-        client.write_all(&[KEY_REQUEST; 20]).unwrap();
+        // Many requests are one; other bytes are none. The client is served
+        // to its end once it has stopped writing, and by then every byte it
+        // wrote has been read: waiting for the first request only would leave
+        // the others to come after the key frame below, and ask for another.
+        client.write_all(&[KEY_REQUEST; 50_000]).unwrap();
         client.write_all(b"xyz").unwrap();
-        wait_until("the requests did not arrive", || {
-            hub.key_wanted.load(Ordering::Relaxed)
-        });
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        wait_until("the client was not read to its end", || hub.clients() == 0);
+        assert!(
+            hub.key_wanted.load(Ordering::Relaxed),
+            "the requests did not arrive"
+        );
         // A key frame made for another reason answers them.
         publish(&hub, Kind::Key, 10, 10, 50);
         assert!(!hub.take_key_request(start + KEY_COOLDOWN * 10));
@@ -555,7 +571,7 @@ mod tests {
         let hub = FrameHub::listen(&path, None).unwrap();
         let mut slow = UnixStream::connect(&path).unwrap();
         let mut reading = UnixStream::connect(&path).unwrap();
-        wait_until("the clients are not served", || hub.clients() == 2);
+        wait_for_clients(&hub, 2);
         assert!(hub.take_key_request(Instant::now()));
 
         // More than a queue holds. The client that reads gets every frame; the
