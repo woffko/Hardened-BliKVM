@@ -134,13 +134,15 @@ pub(crate) fn read_encoder_report(
     path: &Path,
     codec: &str,
 ) -> Result<Option<(EncoderReport, SystemTime)>, ReportRefusal> {
-    let Ok(modified) = std::fs::metadata(path).and_then(|metadata| metadata.modified()) else {
-        return Ok(None);
-    };
-    let mut bytes = Vec::new();
+    // The time is the open file's: a report that is replaced while it is read
+    // is read whole, with its own time.
     let Ok(file) = std::fs::File::open(path) else {
         return Ok(None);
     };
+    let Ok(modified) = file.metadata().and_then(|metadata| metadata.modified()) else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
     file.take(MAX_REPORT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| ReportRefusal::NotJson)?;
@@ -339,6 +341,63 @@ pub(crate) mod tests {
         std::fs::write(&path, &large).unwrap();
         assert!(read_encoder_report(&path, "h264").unwrap().is_some());
         assert_eq!(ReportRefusal::TooLarge.says(), "larger than a report");
+    }
+
+    /// A report and the time it was written come from one file: a report that
+    /// is replaced while it is read gives the old content with the old time or
+    /// the new with the new, never one with the other's. The writer replaces
+    /// the file as the encoder does, by renaming a new one over it, and every
+    /// file's time says how many frames its content has.
+    #[test]
+    fn a_report_and_its_time_come_from_one_file() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let directory = tempfile::tempdir_in("/dev/shm")
+            .or_else(|_| tempfile::tempdir())
+            .unwrap();
+        let path = directory.path().join("report.json");
+        let temporary = directory.path().join("report.new");
+        let base = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        let write = |frames: u64| {
+            let mut report = whole_report("h264");
+            report["encodedFrames"] = frames.into();
+            std::fs::write(&temporary, report.to_string()).unwrap();
+            let file = std::fs::File::options()
+                .write(true)
+                .open(&temporary)
+                .unwrap();
+            file.set_modified(base + std::time::Duration::from_secs(frames))
+                .unwrap();
+            std::fs::rename(&temporary, &path).unwrap();
+        };
+        write(1);
+        let done = AtomicBool::new(false);
+        let (reads, mismatched) = std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                for frames in 2..=4000 {
+                    write(frames);
+                }
+                done.store(true, Ordering::Release);
+            });
+            let (mut reads, mut mismatched) = (0_u64, 0_u64);
+            while !done.load(Ordering::Acquire) {
+                if let Ok(Some((report, modified))) = read_encoder_report(&path, "h264") {
+                    reads += 1;
+                    if modified != base + std::time::Duration::from_secs(report.encoded_frames) {
+                        mismatched += 1;
+                    }
+                }
+            }
+            writer.join().unwrap();
+            (reads, mismatched)
+        });
+        assert!(
+            reads > 100,
+            "only {reads} reads while the file was replaced"
+        );
+        assert_eq!(
+            mismatched, 0,
+            "{mismatched} of {reads} reads gave a time that is not its file's"
+        );
     }
 
     #[test]
