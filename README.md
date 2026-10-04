@@ -15,7 +15,7 @@ excluded from Git. This source repository is not a complete device image.
 
 ## Status
 
-Alpha. A pre-release carries an SD card image for the BliKVM v4 (Allwinner
+Beta. A pre-release carries an SD card image for the BliKVM v4 (Allwinner
 H616) and a signed application bundle for a board that already runs one; see
 the [releases](https://github.com/woffko/Hardened-BliKVM/releases) for the
 files, how to write the card, the first boot and the known limitations.
@@ -29,9 +29,17 @@ find.
   ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
   storage).
 - **Video**, chosen in the Screen menu: MJPEG (the capture passed through),
-  H.264 (x264) and VP8 (libvpx) over WebRTC with a choice of quality, and
-  H.264 over the QUIC transport. The encoders work only while someone
-  watches.
+  H.264 and VP8 (libvpx) over WebRTC with a choice of quality, and H.264
+  over the QUIC transport. H.264 is encoded by the H616's video engine
+  (H.264 HW) or by x264 (H.264 SW), one choice for the whole board; where
+  the engine cannot be had, x264 encodes and the menu says why
+  ([`docs/design/h616-ve-h264-encoder.md`](docs/design/h616-ve-h264-encoder.md)).
+  The encoders work only while someone watches.
+- **Quality monitor**: QM on the toolbar opens a window over the picture
+  with what arrives (speed, delay, frames a second, codec, bitrate), and in
+  its Extended level the transport's, the board's encoder's and the
+  browser's decoder's numbers
+  ([`docs/design/h264-engine-choice-and-quality-monitor-v1.md`](docs/design/h264-engine-choice-and-quality-monitor-v1.md)).
 - **Transport**: the standard one (HTTPS, WebSocket, WebRTC), or QUIC
   (WebTransport on UDP 443) for the keyboard, the mouse and the H.264
   picture. QUIC has a switch on the board, off by default, and a choice in
@@ -64,7 +72,8 @@ processes instead, each as its own systemd unit with a sandbox:
 | board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
 | `bli-kvm-boardd` | root | the fan and the board's peripherals |
 | uStreamer and the MJPEG proxy | `hardened-blikvm-video` | the capture, and its MJPEG stream for the server |
-| video encoders (VP8, H.264) | dynamic users | encode for Janus and for the QUIC gateway while someone watches |
+| video encoders (VP8, H.264) | dynamic users | encode for Janus and for the QUIC gateway while someone watches; H.264 with the video engine or with x264 |
+| encoder driver (`hardened-blikvm-ve-enc`) | kernel module, loaded by its own unit | gives the H.264 encoder the video engine, to one opener at a time |
 | Janus | dynamic user | WebRTC media, streaming plugin only |
 | QUIC gateway (`bli-kvm-quic-gateway`) | `hardened-blikvm-quic` | QUIC and TLS on UDP 443 while its switch is on; it holds no authority and passes on what the server allows |
 | update supervisor and its helpers | `hardened-blikvm-update` | verify, stage and activate slots, check their health, roll back |
@@ -83,11 +92,13 @@ nginx --> bli-kvm-server ---------> Janus <-- RTP --+              |
 ```
 
 Design notes are under [`docs/design`](docs/design): the QUIC transport, the
-firewall contract, the administration features, the software video encoders,
-the RAW system update. Plans, audits and what was shown on the test board are
-under [`docs/baselines`](docs/baselines); the most recent are
-[`audit-20261002-quic-transport.md`](docs/baselines/audit-20261002-quic-transport.md)
-and [`audit-20260929-review.md`](docs/baselines/audit-20260929-review.md).
+firewall contract, the administration features, the video encoders (software,
+and H.264 on the video engine with its driver), the engine choice and the
+quality monitor, the RAW system update. Plans, audits and what was shown on the
+test board are under [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261004-review.md`](docs/baselines/audit-20261004-review.md),
+[`audit-20261004-h264-choice-quality-monitor.md`](docs/baselines/audit-20261004-h264-choice-quality-monitor.md)
+and [`audit-20261003-hardware-h264.md`](docs/baselines/audit-20261003-hardware-h264.md).
 [`docs/security-boundaries.md`](docs/security-boundaries.md) and
 [`docs/licensing.md`](docs/licensing.md) hold the security model and the
 licences. [`docs/architecture.md`](docs/architecture.md),
