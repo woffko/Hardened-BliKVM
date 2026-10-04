@@ -29,6 +29,10 @@ use std::time::Duration;
 const MAX_REQUEST_BYTES: u64 = 16;
 /// A later line (`kbps N`, `engine software`) is at most this long.
 const MAX_LINE_BYTES: u64 = 32;
+/// A line that is longer is skipped, but only up to this many bytes in all,
+/// its newline included: a client that sends more without one loses its
+/// connection, and is not read to the end of a line that has none.
+const MAX_SKIPPED_BYTES: u64 = 4096;
 /// Bitrates the encoders accept, in kbit/s.
 pub const KBPS_RANGE: std::ops::RangeInclusive<u32> = 64..=20_000;
 
@@ -122,7 +126,8 @@ impl Demand {
         let mut codec = String::new();
         let _ = io::Read::take(&mut reader, MAX_REQUEST_BYTES).read_line(&mut codec);
         // Then `kbps N` and `engine` lines until the connection ends; a line
-        // that is too long or not understood is skipped.
+        // that is too long (within MAX_SKIPPED_BYTES) or not understood is
+        // skipped.
         let mut announced = false;
         loop {
             let mut line = Vec::new();
@@ -131,9 +136,8 @@ impl Demand {
                 Ok(_) => {}
             }
             if line.last() != Some(&b'\n') {
-                // Too long: drop the rest of it.
-                let mut rest = Vec::new();
-                if !matches!(reader.read_until(b'\n', &mut rest), Ok(read) if read > 0) {
+                // Too long: drop the rest of it, within the bound.
+                if !skip_line(&mut reader, line.len() as u64) {
                     break;
                 }
                 continue;
@@ -218,6 +222,18 @@ impl Demand {
                 .expect("demand lock")
                 .0;
         }
+    }
+}
+
+/// Reads on to the end of a line of which `read` bytes were taken and dropped.
+/// False where the line goes on past `MAX_SKIPPED_BYTES` in all or the
+/// connection ended before it did.
+fn skip_line(reader: &mut impl BufRead, read: u64) -> bool {
+    let mut rest = Vec::new();
+    let allowed = MAX_SKIPPED_BYTES.saturating_sub(read);
+    match io::Read::take(reader, allowed).read_until(b'\n', &mut rest) {
+        Ok(taken) if taken > 0 => rest.last() == Some(&b'\n'),
+        _ => false,
     }
 }
 
@@ -363,6 +379,50 @@ mod tests {
         assert_eq!(demand.engine(), Some(EngineChoice::Hardware));
         assert_eq!(EngineChoice::Hardware.name(), "hardware");
         assert_eq!(EngineChoice::Software.name(), "software");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_line_that_does_not_end_is_skipped_within_a_bound_and_then_the_connection_ends() {
+        // The bound the plan names: a line is skipped up to 4 KiB in all.
+        const BOUND: usize = 4096;
+        let directory = tempfile_dir();
+        let path = directory.join("demand.sock");
+        let demand = Demand::listen(&path, None).unwrap();
+
+        // A line of the bound's length, its newline included, is skipped and
+        // the connection goes on.
+        let mut viewer = UnixStream::connect(&path).unwrap();
+        viewer.write_all(b"h264\n").unwrap();
+        viewer.write_all(&vec![b'x'; BOUND - 1]).unwrap();
+        viewer.write_all(b"\nkbps 2500\n").unwrap();
+        wait_until(|| demand.kbps() == Some(2500));
+        assert!(demand.active());
+
+        // One byte more and the line is too long: the connection ends, and
+        // what came after the line is not read.
+        viewer.write_all(&vec![b'x'; BOUND]).unwrap();
+        let _ = viewer.write_all(b"\nkbps 3000\n");
+        wait_until(|| !demand.active());
+        assert_eq!(demand.kbps(), Some(2500));
+
+        // A client that sends a mebibyte without a newline is not read to
+        // its end: the server hangs up after the bound, the writes fail, and
+        // the viewer is gone.
+        let mut flood = UnixStream::connect(&path).unwrap();
+        flood.write_all(b"h264\n").unwrap();
+        wait_until(|| demand.active());
+        let _ = flood.write_all(&vec![b'y'; 1 << 20]);
+        let _ = flood.write_all(b"\nkbps 3000\n");
+        wait_until(|| !demand.active());
+        assert_eq!(demand.kbps(), Some(2500));
+
+        // The next viewer is served as before.
+        let mut next = UnixStream::connect(&path).unwrap();
+        next.write_all(b"h264\nkbps 4000\n").unwrap();
+        wait_until(|| demand.kbps() == Some(4000));
+        drop(next);
+        wait_until(|| !demand.active());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

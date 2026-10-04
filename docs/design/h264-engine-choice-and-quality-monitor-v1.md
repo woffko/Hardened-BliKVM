@@ -67,8 +67,10 @@ The server already writes the codec and `kbps N` on every demand
 connection and a new `kbps` line on every change of the quality. To the
 H.264 encoder it writes `engine hardware` or `engine software` after the
 `kbps` line, and again whenever the choice is made, also where it is the
-one already made. Lines stay below the encoder's bound of 32 bytes. The
-VP8 encoder never gets the line.
+one already made. Lines stay below the encoder's bound of 32 bytes. A
+longer line is skipped, up to 4 KiB in all; a client that sends more without a
+newline loses its connection (review fixes, Q13). The VP8 encoder never gets
+the line.
 
 The encoder counts a line as the choice made, which lets it try again an
 engine it could not have, except a connection's first line where that
