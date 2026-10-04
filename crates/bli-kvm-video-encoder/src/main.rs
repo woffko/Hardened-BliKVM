@@ -37,6 +37,7 @@ use bli_kvm_video_encoder::{
     engine::{Codec, Engine, EngineSettings, Hardware, OpenHardware, add_counters},
     frames::{FrameHub, MonotonicBase, Numbering, user_id},
     h264::H264Preset,
+    key_due,
     mjpeg::MjpegReader,
     report::{
         GateCounts, HardwareCounts, MAX_SIDE, MAX_STAGE_MICROS, Report, SCHEMA, StageMicros,
@@ -100,7 +101,9 @@ const IDLE_GRACE: Duration = Duration::from_secs(2);
 /// A key frame at least this often, whatever the frame rate: frames come only
 /// when the picture changes, Janus cannot pass a viewer's key frame request
 /// on to an RTP source, and a viewer that lost the last key frame (or joined
-/// before its media was up) sees nothing until the next.
+/// before its media was up) sees nothing until the next. The time between
+/// key frames is the time between the captures that made them, as the gate's
+/// is (`key_due`).
 const KEY_FRAME_EVERY: Duration = Duration::from_secs(2);
 /// Decoding and converting a 1080p frame takes about 45 ms on the H616,
 /// more than encoding it with x264 ultrafast (29 ms): two threads take turns
@@ -639,13 +642,15 @@ fn encode_loop(
         last_pts = pts;
         // A new viewer starts from a key frame instead of the next periodic
         // one, a key frame follows at least every KEY_FRAME_EVERY, and a
-        // client of the frame socket may ask for one.
+        // client of the frame socket may ask for one. The last key frame's
+        // time is its frame's capture time, the clock of the gate that
+        // admits the refresh of a still picture.
         let force_key = demand.generation() != generation
-            || last_key.is_none_or(|last| last.elapsed() >= KEY_FRAME_EVERY)
+            || key_due(last_key, decoded.at, KEY_FRAME_EVERY)
             || frames.is_some_and(|hub| hub.take_key_request(Instant::now()));
         generation = demand.generation();
         if force_key {
-            last_key = Some(Instant::now());
+            last_key = Some(decoded.at);
         }
         let encode_start = Instant::now();
         let was_hardware = engine.encoder_name() == "hardware";
@@ -668,7 +673,7 @@ fn encode_loop(
         // those counts like one that was asked for, or two would follow each
         // other whenever the two clocks meet.
         if encoded.iter().any(|output| output.key_frame) {
-            last_key = Some(Instant::now());
+            last_key = Some(decoded.at);
         }
         for packet in packets {
             // Loss is tolerated: the next key frame repairs the view.

@@ -24,6 +24,6 @@ pub mod turbo;
 pub mod vp8;
 pub mod yuv;
 
-pub use gate::{FrameDecision, FrameGate, GatePolicy};
+pub use gate::{FrameDecision, FrameGate, GatePolicy, key_due};
 pub use rtp::{H264Packetizer, RtpError, Vp8Packetizer};
 pub use slot::LatestFrame;

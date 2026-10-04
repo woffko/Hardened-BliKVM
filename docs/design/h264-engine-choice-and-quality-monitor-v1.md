@@ -110,6 +110,16 @@ repeats the choice it has: a new viewer is no choice.
 - The status word (`BLI_KVM_ENCODER_STATUS`) follows what encodes, as
   today; the report (below) says what is wanted and whether the engine can
   be had.
+- **The periodic key frame** is due two seconds after the last, counted in
+  the frames' capture times (`key_due`), the clock of the gate that admits
+  the refresh of a still picture, a frame two seconds after the last it
+  admitted. The last key frame's time is the capture time of the frame that
+  made it, also one the engine made by itself. Counted in the time an encode
+  began, a refresh could be a few milliseconds short of two seconds after its
+  key frame, by whatever the two decodes differ, and be a delta frame with
+  the key frame two seconds later: 25 to 33 of the 69 or 70 refresh frames of
+  the board's still screen were deltas, and the frame socket's test on a
+  loaded host was 7 in 40 (review fixes, Q4).
 
 ### The video menu
 
