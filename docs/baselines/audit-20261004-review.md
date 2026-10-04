@@ -311,3 +311,61 @@ the way, and not defects of the fixes:
 What the operator has to decide, if wanted: the advisory database's update and
 the `time` crate's bump for Q14 (a download); the word to publish anything
 (none of the slots of the fixes is published).
+
+## Release 0.1.0-beta.1 (2026-10-04)
+
+The operator asked for a beta release with the card image, after these fixes.
+Tag `v0.1.0-beta.1` (annotated, on `62e9cf8`: slot 74's source `7f362a7` and
+a document after it) and a GitHub pre-release with:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.1-seq74.tar` | `44168c9cadb692c0f4fada2e230fdf0fd42edf56480abee97d4350d966527d48` |
+| `hardened-blikvm-h616-sd.img.zst` | `be9db430b4622d931b94c7bc319f18e6eb3adf8e737ffe0cd1c9df681c931c82` |
+| `IMAGE-INFO.txt` | `ef09007f20ad33464e297b7fe2b5ee014c119b45817506d07ff0f297e9743036` |
+| `SHA256SUMS` | lists the three above and the unpacked image (`7427278c8af6fe39a9f3b3a45c8f8f312da109cfb273b1a0bfabbe7e3eacab78`) |
+
+- Built after `scripts/check.sh` passed on `7f362a7` (3227 Rust tests, no
+  failure), whose program code is slot 73's: since `39e2c4b` only a test and
+  documents changed. The encoder built from it is `8ca21dca`, the one the
+  board already ran. The update-runtime package built from it has, in its 68
+  programs, units and the driver module, the bytes of the `0.1.0~dev36` the
+  board runs (built from `b31149a`); only its manifest names another source.
+- Slot 74 (`0.1.0-beta.1`) was installed on the test board through the update
+  API and confirmed. With it the board passed the GUI walks at a desktop's and
+  a phone's size, the desktop one also with the monitor open in Extended,
+  without an API error; H.264 and VP8 over WebRTC; the H.264 picture over QUIC
+  (23.4 frames a second of a moving picture, none given up); the phone's reach
+  with the extra keys; 20 reads of the quality answer (median 16.6 ms, the
+  version `0.1.0-beta.1`). The touch probe failed twice before that on its own
+  call: given a base address that ends in a slash it logs in at
+  `//api/auth/login`, which answers with no body. With the address as the
+  probe expects it, it passed with alpha.10's numbers.
+- The image was built from that board (`tools/image/build_sd_image.sh`, release
+  `0.1.0-beta.1`). The builder's own checks passed: no state under `/var/lib`
+  that was not reviewed, no private key or Wi-Fi passphrase, every path the
+  units need, the RAW update step in the initramfs, the encoder driver for
+  the kernel the image boots. Looked at before publishing: the image names
+  its release; slot 74 is current in both stores and 73 the previous one, with
+  71 and 72 kept as on the board (alpha.10's image kept its older test slots
+  the same way); the encoder is `8ca21dca`, the driver module the package's
+  (`a8baacfe`) and its unit enabled; the QUIC gateway's unit is there and not
+  enabled; the server's state (the account, the engine choice, the WebRTC
+  quality, the session lock), the owner's switches, firewall mode and journals
+  and the video settings are absent, so a new card starts at First Setup with
+  every switch off, Baseline, the default capture and bitrate and H.264 HW;
+  the catalog is empty; there is no SSH host key, TLS key or machine id;
+  root's password is `1234` and expired, `blikvm` is locked; the server's
+  drop-in names the encoders' reports; the first-boot marker is set. The
+  compressed image unpacks to the image, and its first partition is the root
+  file system that was looked at. The published files' digests equal the
+  local ones. The image has not been booted from a new card.
+- `cargo audit` on the release's lock reports the one advisory alpha.10 had
+  (`docs/third-party-rust.md`); the release notes say that its fix, expected
+  with the next system build, needs the crate registry and is not in this
+  one.
+- The notes of alpha.10 now begin with a pointer to this release.
+- The board is left as found apart from its slot: the operator's settings
+  field by field as at the end of the fixes, the engine choice `hardware`, the
+  kernel's log unchanged (465 lines), no file or process of the release on
+  it.
