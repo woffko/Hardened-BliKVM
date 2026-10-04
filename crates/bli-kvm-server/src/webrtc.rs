@@ -6,7 +6,12 @@
 //! offer/answer and trickle candidates, keeps the session alive and destroys
 //! it when either side leaves. No Janus request is ever forwarded verbatim.
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, PoisonError},
+    time::Duration,
+};
 
 use axum::{
     extract::{
@@ -61,6 +66,9 @@ pub(crate) struct WebRtcGateway {
     /// The board's choice of the H.264 engine, sent to the H.264 encoder
     /// the same way and changed through the video menu.
     pub engine: tokio::sync::watch::Sender<H264Engine>,
+    /// Held while a choice is stored and sent: two choices made at once leave
+    /// the file, the channel and the encoders with the same one.
+    choices: std::sync::Mutex<()>,
 }
 
 /// The WebRTC qualities the Screen menu offers, in kbit/s.
@@ -222,8 +230,37 @@ impl WebRtcGateway {
                 h264_demand,
                 bitrate: tokio::sync::watch::channel(kbps).0,
                 engine: tokio::sync::watch::channel(engine).0,
+                choices: std::sync::Mutex::new(()),
             })
         })
+    }
+
+    /// Stores the board's choice of the H.264 engine and sends it to the
+    /// encoder's connections, as one step.
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) fn choose_engine(
+        &self,
+        state_dir: &std::path::Path,
+        engine: H264Engine,
+    ) -> std::io::Result<()> {
+        let _held = self.choices.lock().unwrap_or_else(PoisonError::into_inner);
+        store_engine(state_dir, engine)?;
+        self.engine.send_replace(engine);
+        Ok(())
+    }
+
+    /// Stores the WebRTC quality and sends it to the encoders' connections,
+    /// as one step.
+    #[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+    pub(crate) fn choose_bitrate(
+        &self,
+        state_dir: &std::path::Path,
+        kbps: u32,
+    ) -> std::io::Result<()> {
+        let _held = self.choices.lock().unwrap_or_else(PoisonError::into_inner);
+        store_bitrate(state_dir, kbps)?;
+        self.bitrate.send_replace(kbps);
+        Ok(())
     }
 
     /// Asks the codec's encoder to run while the returned guard is held: it
@@ -606,6 +643,85 @@ async fn exchange(
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+
+    /// A directory on memory where there is one: storing a choice syncs a
+    /// file, which costs a disk's time, and a race wants thousands of rounds.
+    fn fast_directory() -> (tempfile::TempDir, usize) {
+        match tempfile::tempdir_in("/dev/shm") {
+            Ok(directory) => (directory, 4000),
+            Err(_) => (tempfile::tempdir().unwrap(), 150),
+        }
+    }
+
+    /// Two choices made at once leave the file and the channel with the same
+    /// one: the store and the send are one step.
+    #[test]
+    fn two_engine_choices_made_at_once_agree() {
+        let (directory, rounds) = fast_directory();
+        let dir = directory.path();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            None,
+            None,
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let mut disagreed = 0;
+        for _ in 0..rounds {
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for engine in [H264Engine::Hardware, H264Engine::Software] {
+                    let (gateway, barrier) = (&gateway, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        gateway.choose_engine(dir, engine).unwrap();
+                    });
+                }
+            });
+            if load_engine(dir) != *gateway.engine.borrow() {
+                disagreed += 1;
+            }
+        }
+        assert_eq!(
+            disagreed, 0,
+            "the file and the channel differ after {disagreed} of {rounds} rounds"
+        );
+    }
+
+    #[test]
+    fn two_quality_choices_made_at_once_agree() {
+        let (directory, rounds) = fast_directory();
+        let dir = directory.path();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            None,
+            None,
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let mut disagreed = 0;
+        for _ in 0..rounds {
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for kbps in [2500, 8000] {
+                    let (gateway, barrier) = (&gateway, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        gateway.choose_bitrate(dir, kbps).unwrap();
+                    });
+                }
+            });
+            if load_bitrate(dir) != *gateway.bitrate.borrow() {
+                disagreed += 1;
+            }
+        }
+        assert_eq!(
+            disagreed, 0,
+            "the file and the channel differ after {disagreed} of {rounds} rounds"
+        );
+    }
 
     /// The encoder learns the bitrate when a viewer comes, and every later
     /// change of the quality while the viewer stays; the guard ends the

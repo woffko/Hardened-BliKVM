@@ -241,13 +241,12 @@ fn set_webrtc_bitrate(state: &AppState, value: i64) -> AppResult<ScreenOutcome> 
             ..ScreenOutcome::default()
         });
     };
-    if let Err(error) = crate::webrtc::store_bitrate(&state.options.state_dir, kbps) {
+    if let Err(error) = gateway.choose_bitrate(&state.options.state_dir, kbps) {
         eprintln!("webrtc: the bitrate could not be saved: {error}");
         return Err(AppError::ServiceUnavailable(
             "the WebRTC quality could not be saved".into(),
         ));
     }
-    gateway.bitrate.send_replace(kbps);
     Ok(ScreenOutcome {
         applied: true,
         webrtc_kbps: Some(kbps),
@@ -283,13 +282,12 @@ fn set_h264_engine(state: &AppState, value: i64) -> AppResult<ScreenOutcome> {
             });
         }
     };
-    if let Err(error) = crate::webrtc::store_engine(&state.options.state_dir, engine) {
+    if let Err(error) = gateway.choose_engine(&state.options.state_dir, engine) {
         eprintln!("webrtc: the H.264 engine could not be saved: {error}");
         return Err(AppError::ServiceUnavailable(
             "the H.264 engine could not be saved".into(),
         ));
     }
-    gateway.engine.send_replace(engine);
     Ok(ScreenOutcome {
         applied: true,
         h264_engine: Some(engine.name()),
