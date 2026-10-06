@@ -28,6 +28,16 @@ pub struct Stream {
 /// `pic_init_qp` of the PPS. A frame's QP is given in its slice header
 /// relative to it, so the PPS does not change with the QP.
 pub const INITIAL_QP: i32 = 26;
+
+/// What the picture's samples mean, as the SPS says it (H.264, table E-3 to
+/// E-5): the capture's JPEG frames are YCbCr of the full range, 0 to 255,
+/// with the BT.601 matrix, of an sRGB picture, and the encoder takes them as
+/// they are. A stream that does not say so is read as the narrow range, 16 to
+/// 235, with the BT.709 matrix: the browser stretches it, the shadows go to
+/// black and the colours shift. The product's x264 says the same.
+pub const COLOUR_PRIMARIES: u8 = 1; // BT.709, which sRGB shares
+pub const TRANSFER_CHARACTERISTICS: u8 = 13; // IEC 61966-2-1, sRGB
+pub const MATRIX_COEFFICIENTS: u8 = 6; // SMPTE 170M, the BT.601 matrix
 /// The bits of `frame_num`.
 pub const FRAME_NUM_BITS: u8 = 8;
 
@@ -179,12 +189,19 @@ pub fn sps(stream: &Stream) -> Vec<HeaderOp> {
         unit.ue(0);
         unit.ue(crop_bottom);
     }
-    // VUI, for one thing only: frames leave the decoder in the order they
+    // VUI, for two things: what the samples mean (the colours, see
+    // COLOUR_PRIMARIES), and that frames leave the decoder in the order they
     // come, at once.
     unit.flag(true); // vui_parameters_present_flag
     unit.flag(false); // aspect_ratio_info_present_flag
     unit.flag(false); // overscan_info_present_flag
-    unit.flag(false); // video_signal_type_present_flag
+    unit.flag(true); // video_signal_type_present_flag
+    unit.u(3, 5); // video_format: unspecified
+    unit.flag(true); // video_full_range_flag
+    unit.flag(true); // colour_description_present_flag
+    unit.u(8, COLOUR_PRIMARIES as u32);
+    unit.u(8, TRANSFER_CHARACTERISTICS as u32);
+    unit.u(8, MATRIX_COEFFICIENTS as u32);
     unit.flag(false); // chroma_loc_info_present_flag
     unit.flag(false); // timing_info_present_flag
     unit.flag(false); // nal_hrd_parameters_present_flag
@@ -424,8 +441,25 @@ mod tests {
             }
             assert_eq!(width_mbs * 16 - right * 2, width);
             assert_eq!(height_mbs * 16 - bottom * 2, height);
-            // The VUI: no flag but the bitstream restriction.
-            assert_eq!(source.bits(10), Some(0b10_0000_0001));
+            // The VUI: the colours as they come, and the bitstream
+            // restriction.
+            assert_eq!(source.bits(4), Some(0b1001), "VUI, signal type");
+            assert_eq!(source.bits(3), Some(5), "video_format: unspecified");
+            assert_eq!(source.bit(), Some(1), "full range");
+            assert_eq!(source.bit(), Some(1), "colour description");
+            assert_eq!(source.bits(8), Some(COLOUR_PRIMARIES as u32));
+            assert_eq!(source.bits(8), Some(TRANSFER_CHARACTERISTICS as u32));
+            assert_eq!(source.bits(8), Some(MATRIX_COEFFICIENTS as u32));
+            assert_eq!(
+                (
+                    COLOUR_PRIMARIES,
+                    TRANSFER_CHARACTERISTICS,
+                    MATRIX_COEFFICIENTS
+                ),
+                (1, 13, 6),
+                "BT.709 primaries, the sRGB curve, the BT.601 matrix"
+            );
+            assert_eq!(source.bits(6), Some(0b00_0001));
             assert_eq!(source.bit(), Some(1));
             assert_eq!(source.ue(), Some(0));
             assert_eq!(source.ue(), Some(0));
