@@ -336,7 +336,11 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
   request, repeated after 1, 2 and 4 s, then none for 10 s; a key frame newer
   than the gap ends it.
 - WebCodecs `VideoDecoder`, tuned for latency, draws to the `#screen` canvas;
-  the picture's size follows the stream.
+  the picture's size follows the stream. Since 2026-10-06 the decoder is told
+  the board's colour space (the capture's JPEG YCbCr: full range, the BT.601
+  matrix, sRGB), so that a stream of an older encoder, which does not say it,
+  is not drawn as the narrow range
+  (`docs/baselines/audit-20261006-colour-range.md`).
 - **The age of a frame** is the time from its capture to its drawing, by
   the board's clock. The page learns that clock from its pings: an answer
   carries the board's time, which is taken for the middle of the round

@@ -2048,6 +2048,21 @@ On the board a choice took effect for a watching viewer within 1.3 s,
 0.13 to 0.45 s in the median, both ways, without an encoder failure or a
 kernel line (gates C1 and C5 of that plan).
 
+### Since 2026-10-06: what the samples mean
+
+The encoders take the capture's JPEG YCbCr as it is: the full range, 0 to
+255, with the BT.601 matrix, of an sRGB picture. Until then no stream said so,
+and a browser read every one of them as the narrow range, 16 to 235, with the
+BT.709 matrix: the picture was drawn darker than as MJPEG, the shadows went to
+black and the colours shifted, whichever engine encoded (the engine's decoded
+planes are its input within 0.04 levels; nothing was lost, only misread). The
+SPS of both engines now has a video signal type: full range, BT.709 primaries,
+the sRGB transfer curve and the BT.601 matrix (`headers.rs`, `COLOUR_PRIMARIES`
+and its siblings; the x264 shim sets the same VUI). Over WebRTC and QUIC the
+page then draws the picture within a quarter of a level of the JPEG on
+average. VP8 has no such field and is still drawn darker. The measurements are
+in `docs/baselines/audit-20261006-colour-range.md`.
+
 ## The H616's register description
 
 Shown on the board so far (V1, V2.1), and the hypothesis for the rest: the

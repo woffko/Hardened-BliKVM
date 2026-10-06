@@ -242,3 +242,9 @@ package. That build, `0.1.0~dev36` (it added the encoder driver), and this
 release's runtime, whose programs are the same bytes, still lock 0.3.45:
 moving the lock needs the crate registry, which neither used. The release
 notes say so.
+
+## RustSec scan for 0.1.0-beta.2 (2026-10-06)
+
+The lock is beta.1's (315 packages). `cargo audit --deny warnings`, run without
+fetching (the database as fetched on 2026-10-02, now 1,290 advisories), reports
+the same one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, as above.
