@@ -287,6 +287,119 @@ mod tests {
         }
     }
 
+    /// The SPS's colour description: full range, primaries, transfer,
+    /// matrix; `None` where the VUI has no video signal type.
+    fn colour_description(frame: &[u8]) -> Option<(u32, u32, u32, u32)> {
+        use bli_kvm_ve_encoder::bits::{BitSource, without_prevention};
+        let start = frame
+            .windows(4)
+            .position(|w| w[..3] == [0, 0, 1] && w[3] & 0x1f == 7)?
+            + 4;
+        let end = frame[start..]
+            .windows(3)
+            .position(|w| w == [0, 0, 1])
+            .map_or(frame.len(), |at| start + at);
+        let rbsp = without_prevention(&frame[start..end]);
+        let mut sps = BitSource::new(&rbsp);
+        let profile = sps.bits(8)?;
+        assert_eq!(profile, 66, "baseline: no chroma format in the SPS");
+        sps.bits(16)?; // constraint flags, level
+        sps.ue()?; // seq_parameter_set_id
+        sps.ue()?; // log2_max_frame_num_minus4
+        match sps.ue()? {
+            0 => {
+                sps.ue()?;
+            }
+            1 => {
+                sps.bit()?;
+                sps.se()?;
+                sps.se()?;
+                for _ in 0..sps.ue()? {
+                    sps.se()?;
+                }
+            }
+            _ => {}
+        }
+        sps.ue()?; // max_num_ref_frames
+        sps.bit()?; // gaps_in_frame_num_value_allowed_flag
+        sps.ue()?;
+        sps.ue()?;
+        if sps.bit()? == 0 {
+            sps.bit()?; // mb_adaptive_frame_field_flag
+        }
+        sps.bit()?; // direct_8x8_inference_flag
+        if sps.bit()? == 1 {
+            for _ in 0..4 {
+                sps.ue()?;
+            }
+        }
+        if sps.bit()? == 0 {
+            return None; // no VUI
+        }
+        if sps.bit()? == 1 && sps.bits(8)? == 255 {
+            sps.bits(32)?; // the sample aspect ratio
+        }
+        if sps.bit()? == 1 {
+            sps.bit()?; // overscan_appropriate_flag
+        }
+        if sps.bit()? == 0 {
+            return None; // no video signal type
+        }
+        sps.bits(3)?; // video_format
+        let full = sps.bit()?;
+        if sps.bit()? == 0 {
+            return Some((full, 2, 2, 2));
+        }
+        Some((full, sps.bits(8)?, sps.bits(8)?, sps.bits(8)?))
+    }
+
+    /// x264 is given the capture's samples as they are, full range with the
+    /// BT.601 matrix, and says so as the video engine's SPS does: a stream
+    /// that says nothing is stretched as the narrow range by the browser.
+    #[test]
+    fn the_stream_says_what_its_samples_mean_as_the_engine_s_does() {
+        use bli_kvm_ve_encoder::headers::{
+            COLOUR_PRIMARIES, MATRIX_COEFFICIENTS, TRANSFER_CHARACTERISTICS,
+        };
+        for preset in [H264Preset::Superfast, H264Preset::Ultrafast] {
+            let mut encoder = H264Encoder::new(H264Config {
+                width: 320,
+                height: 180,
+                fps: 30,
+                kbps: 500,
+                threads: 1,
+                keyframe_interval: 60,
+                preset,
+            })
+            .unwrap();
+            let y = vec![40_u8; 320 * 180];
+            let (u, v) = (vec![128_u8; 160 * 90], vec![128_u8; 160 * 90]);
+            let frames = encoder
+                .encode(
+                    I420 {
+                        y: &y,
+                        u: &u,
+                        v: &v,
+                        y_stride: 320,
+                        uv_stride: 160,
+                    },
+                    0,
+                    true,
+                )
+                .unwrap();
+            assert_eq!(
+                colour_description(&frames[0].data),
+                Some((
+                    1,
+                    COLOUR_PRIMARIES as u32,
+                    TRANSFER_CHARACTERISTICS as u32,
+                    MATRIX_COEFFICIENTS as u32
+                )),
+                "{preset:?}: full range, BT.709 primaries, sRGB, BT.601"
+            );
+        }
+    }
+
     #[test]
     fn a_1080p_stream_matches_the_profile_janus_announces() {
         // Janus offers profile-level-id=42e028: constrained baseline (66 with

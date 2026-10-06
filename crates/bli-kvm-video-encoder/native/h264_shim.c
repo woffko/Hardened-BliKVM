@@ -52,6 +52,14 @@ int bk_h264_open(unsigned width, unsigned height, unsigned fps, unsigned kbps,
   param.rc.i_bitrate = (int)kbps;
   param.rc.i_vbv_max_bitrate = (int)kbps;
   param.rc.i_vbv_buffer_size = (int)kbps;
+  // What the samples mean: the capture's JPEG YCbCr of the full range with
+  // the BT.601 matrix, of an sRGB picture, given to x264 as they are. The SPS
+  // says so as the video engine's does (bli-kvm-ve-encoder, headers.rs): a
+  // stream that says nothing is stretched by the browser as the narrow range.
+  param.vui.b_fullrange = 1;
+  param.vui.i_colorprim = 1;   // BT.709, which sRGB shares
+  param.vui.i_transfer = 13;   // IEC 61966-2-1, sRGB
+  param.vui.i_colmatrix = 6;   // SMPTE 170M, the BT.601 matrix
   if (x264_param_apply_profile(&param, "baseline") < 0) return -2;
   enc = calloc(1, sizeof(*enc));
   if (enc == NULL) return -3;
