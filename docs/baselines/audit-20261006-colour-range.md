@@ -90,3 +90,24 @@ or process of the work is on it, and its kernel log has no line from it.
 - The encoder is part of the system, not of the application: a board gets the
   fixed encoder, and WebRTC H.264 drawn right, with a new card or a RAW system
   update. An application update brings the QUIC half.
+
+## Release 0.1.0-beta.2 (2026-10-06)
+
+The operator asked for an application release after the check, without a
+card. Tag `v0.1.0-beta.2` (annotated, on `5461928`: slot 75's source `3d0d118`
+and documents after it) and a GitHub pre-release with:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-application-0.1.0-beta.2-seq75.tar` | `d9c7f5ce69453303f7109471edc5ef1b5cd474cce0e2710a1c14060e4dae9d3f` |
+| `SHA256SUMS` | lists the bundle |
+
+- `scripts/check.sh` passed on `3d0d118` (3230 Rust tests, no failure); slot
+  75 is the bundle installed and checked on the test board above. The
+  published files' digests equal the local ones.
+- The release has no card image: the bundle brings the QUIC half of the fix to
+  a beta.1 board. Its notes say that WebRTC H.264 needs the fixed encoder,
+  which comes with the next system build, and that VP8 stays darker; beta.1's
+  notes now begin with a pointer to this bundle, and say that beta.1's card
+  image is still the current one.
+- The test board runs slot 75 and the fixed encoder `a09d9750`.
