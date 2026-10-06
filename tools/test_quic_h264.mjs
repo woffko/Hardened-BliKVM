@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { codecOf } from "../web/src/lib/quic/h264.ts";
+import { codecOf, decoderConfig } from "../web/src/lib/quic/h264.ts";
 
 test("the codec string comes from the key frame's parameter set", () => {
   // x264, constrained baseline, level 4.0: a parameter set, a picture
@@ -31,4 +31,20 @@ test("the codec string comes from the key frame's parameter set", () => {
     codecOf(Uint8Array.from({ length: 300 }, (_, index) => index & 0xff)),
     null,
   );
+});
+
+test("the decoder is told what the board's samples mean", () => {
+  // The capture's JPEG YCbCr, full range with the BT.601 matrix, of an sRGB
+  // picture: what Chromium calls JPEG's colour space. An encoder of an older
+  // system does not say so in its stream, and the page draws it the same.
+  assert.deepEqual(decoderConfig("avc1.42c028"), {
+    codec: "avc1.42c028",
+    optimizeForLatency: true,
+    colorSpace: {
+      primaries: "bt709",
+      transfer: "iec61966-2-1",
+      matrix: "smpte170m",
+      fullRange: true,
+    },
+  });
 });

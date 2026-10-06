@@ -22,6 +22,7 @@ import { startApp } from "./app_harness.mjs";
 import {
   Board,
   connected,
+  darkSquareLevel,
   frameNumber,
   launch,
   now,
@@ -219,6 +220,14 @@ try {
     assert.ok(
       advanced >= seconds * FPS * 0.7 && advanced <= seconds * FPS * 1.3,
       `the picture moved ${advanced} frames in ${seconds.toFixed(2)} s`,
+    );
+
+    // The samples mean what the capture's JPEG means, the full range: the
+    // source's dark squares (Y 16) are drawn at 16, not stretched to black.
+    const dark = await darkSquareLevel(page);
+    assert.ok(
+      dark !== null && Math.abs(dark - 16) <= 4,
+      `the dark squares are drawn at ${dark?.toFixed(1)}, not 16`,
     );
 
     const later = await stats(page);

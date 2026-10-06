@@ -104,6 +104,36 @@ export async function startFrameSource(
  * from a screenshot of the canvas; `null` while a square is neither black
  * nor white (no picture yet).
  */
+/**
+ * How light the frame source's dark squares are drawn: the mean of the red,
+ * green and blue of the middle of the sixteenth square, which is dark for
+ * every frame number below 32768. The source writes them as Y 16 with
+ * neutral chroma; read as the board's colour space (the full range) that is
+ * 16, read as the narrow range it is stretched to 0.
+ */
+export async function darkSquareLevel(page) {
+  const box = await page.locator("#screen").boundingBox();
+  if (!box || box.width < 256 || box.height < 16) return null;
+  const png = await page.screenshot({
+    clip: { x: box.x, y: box.y, width: 256, height: 16 },
+  });
+  return page.evaluate(async (base64) => {
+    const image = await createImageBitmap(
+      new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
+        type: "image/png",
+      }),
+    );
+    const canvas = new OffscreenCanvas(256, 16);
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const data = context.getImageData(15 * 16 + 5, 5, 6, 6).data;
+    let sum = 0;
+    for (let index = 0; index < data.length; index += 4)
+      sum += (data[index] + data[index + 1] + data[index + 2]) / 3;
+    return sum / (data.length / 4);
+  }, png.toString("base64"));
+}
+
 export async function frameNumber(page) {
   const box = await page.locator("#screen").boundingBox();
   if (!box || box.width < 256 || box.height < 16) return null;

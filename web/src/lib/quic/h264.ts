@@ -1,7 +1,7 @@
 /**
  * What the decoder must be told about an H.264 stream in Annex B form: its
  * codec string, read from the sequence parameter set that the encoder puts
- * in front of every key frame.
+ * in front of every key frame, and what the board's samples mean.
  */
 
 const NAL_SPS = 7;
@@ -22,4 +22,25 @@ export function codecOf(frame: Uint8Array): string | null {
     index = nal;
   }
   return null;
+}
+
+/**
+ * What the board's samples mean: the capture's JPEG YCbCr, given to the
+ * encoders as it is, is of the full range with the BT.601 matrix, of an sRGB
+ * picture (Chromium calls it JPEG's colour space). The encoders say so in
+ * their streams since the colour fix; an encoder of an older system does not,
+ * and a decoder that is not told takes the narrow range with the BT.709
+ * matrix, which draws the picture darker than the MJPEG one, with other
+ * colours. Told here, the page draws both alike.
+ */
+export const BOARD_COLOR_SPACE: VideoColorSpaceInit = {
+  primaries: 'bt709',
+  transfer: 'iec61966-2-1',
+  matrix: 'smpte170m',
+  fullRange: true
+};
+
+/** The configuration of the decoder for a stream of `codec`. */
+export function decoderConfig(codec: string): VideoDecoderConfig {
+  return { codec, optimizeForLatency: true, colorSpace: { ...BOARD_COLOR_SPACE } };
 }

@@ -5,7 +5,7 @@
  * what the session delivers and sends on what it asks for.
  */
 import { BoardClock } from './board-clock.ts';
-import { codecOf } from './h264.ts';
+import { codecOf, decoderConfig } from './h264.ts';
 import { VideoReceiver, type ReceivedFrame, type ReceiverOutput } from './video-receiver.ts';
 
 export type ToVideoWorker =
@@ -217,7 +217,7 @@ function configure(codec: string) {
       if (decoder === created) failed();
     }
   });
-  created.configure({ codec, optimizeForLatency: true });
+  created.configure(decoderConfig(codec));
   decoder = created;
   configured = codec;
 }
