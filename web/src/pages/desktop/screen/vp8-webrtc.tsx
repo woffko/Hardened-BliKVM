@@ -8,6 +8,7 @@ import * as storage from '@/lib/localstorage.ts';
 import { watchPeer } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
+import { drawsWithGpu, VP8_RANGE_FILTER_ID, vp8RangeTableValues } from '@/lib/vp8-range.ts';
 import { client } from '@/lib/websocket.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
@@ -18,6 +19,11 @@ type ServerMessage =
   | { type: 'offer'; sdp: string }
   | { type: 'started' }
   | { type: 'error'; code: string };
+
+// The board's VP8 samples are of the full range, which VP8 cannot say: the
+// picture is drawn through a table that undoes the browser's stretch, where
+// the browser draws with a GPU.
+const RANGE_TABLE = vp8RangeTableValues();
 
 function parseServerMessage(data: unknown): ServerMessage | null {
   if (typeof data !== 'string' || data.length > 65536) return null;
@@ -50,6 +56,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
   const [attempt, setAttempt] = useState(0);
   const retries = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [rangeFix] = useState(() => codec === 'vp8' && drawsWithGpu());
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
     maxHeight: '100%',
@@ -210,7 +217,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
           id="screen"
           ref={videoRef}
           className={clsx('m-auto block select-none', mouseStyle)}
-          style={mediaStyle}
+          style={rangeFix ? { ...mediaStyle, filter: `url(#${VP8_RANGE_FILTER_ID})` } : mediaStyle}
           muted
           autoPlay
           playsInline
@@ -233,6 +240,18 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
           }}
         />
       </div>
+
+      {rangeFix && (
+        <svg aria-hidden="true" width="0" height="0" className="pointer-events-none absolute">
+          <filter id={VP8_RANGE_FILTER_ID} colorInterpolationFilters="sRGB">
+            <feComponentTransfer>
+              <feFuncR type="table" tableValues={RANGE_TABLE} />
+              <feFuncG type="table" tableValues={RANGE_TABLE} />
+              <feFuncB type="table" tableValues={RANGE_TABLE} />
+            </feComponentTransfer>
+          </filter>
+        </svg>
+      )}
 
       {failure ? (
         <div

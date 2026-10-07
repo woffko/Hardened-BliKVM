@@ -1,0 +1,365 @@
+// The board's VP8 picture drawn as its JPEG is (web/src/lib/vp8-range.ts):
+// the board's samples are of the full range, VP8 cannot say so, and Chromium
+// draws a VP8 frame as of the narrow range. The built page is given, in place
+// of the WebRTC connection, a track of such frames (the board's samples,
+// marked as Chromium marks a decoded VP8 frame) and must draw them as the
+// JPEG with those samples is drawn; in H.264 over the same view, whose stream
+// says what its samples mean, it must draw them unchanged. A browser that
+// draws in software is left drawing VP8 as before (a filter costs it a core):
+// headless Chromium here is one (SwiftShader), and stands in for a browser
+// with a GPU by the renderer name its WebGL is made to give.
+import assert from "node:assert/strict";
+import { defaultManifest, startApp } from "./app_harness.mjs";
+import { launchChromium } from "./quality_fixture.mjs";
+
+const browser = await launchChromium();
+const app = await startApp();
+const MODE_KEY = "hardened-blikvm-video-mode";
+const manifest = defaultManifest();
+manifest.video = {
+  ...manifest.video,
+  transports: ["mjpeg", "web_rtc_janus", "web_rtc_janus_h264"],
+};
+
+// The board's samples (Y, Cb, Cr) in patches: greys from black to white, and
+// colours of a desktop.
+const PATCHES = [
+  [0, 128, 128],
+  [16, 128, 128],
+  [17, 128, 128],
+  [27, 128, 128],
+  [48, 128, 128],
+  [64, 128, 128],
+  [128, 128, 128],
+  [166, 128, 128],
+  [200, 128, 128],
+  [234, 128, 128],
+  [235, 128, 128],
+  [255, 128, 128],
+  [60, 160, 110],
+  [120, 90, 170],
+  [40, 140, 120],
+  [200, 120, 135],
+];
+const COLUMNS = 4;
+const WIDTH = 1280;
+const HEIGHT = 720;
+
+/** The JPEG's drawing of a patch: JFIF YCbCr, full range, BT.601. */
+const jpeg = ([y, cb, cr]) =>
+  [
+    y + 1.402 * (cr - 128),
+    y - 0.344136 * (cb - 128) - 0.714136 * (cr - 128),
+    y + 1.772 * (cb - 128),
+  ].map((value) => Math.round(Math.min(255, Math.max(0, value))));
+
+// A GPU's renderer, as Chromium on Windows names it.
+const GPU =
+  "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)";
+
+async function open(mode, marked, renderer) {
+  const context = await browser.newContext({
+    viewport: { width: WIDTH, height: HEIGHT },
+  });
+  await context.addCookies([
+    { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
+  ]);
+  await context.addInitScript(
+    ([key, mode, patches, columns, width, height, marked, renderer]) => {
+      localStorage.setItem(key, mode);
+      localStorage.setItem("hardened-blikvm-menu-auto-hide", "always");
+      if (renderer) {
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function (name) {
+          // UNMASKED_RENDERER_WEBGL and RENDERER.
+          if (name === 0x9246 || name === 0x1f01) return renderer;
+          return getParameter.call(this, name);
+        };
+      }
+      // The frames a VP8 decoder gives Chromium: the board's samples as they
+      // are, which Chromium takes as of the narrow range with the BT.601
+      // matrix; an H.264 stream of the fixed encoders says full range.
+      const colorSpace =
+        marked === "narrow"
+          ? {
+              primaries: "smpte170m",
+              transfer: "smpte170m",
+              matrix: "smpte170m",
+              fullRange: false,
+            }
+          : {
+              primaries: "bt709",
+              transfer: "iec61966-2-1",
+              matrix: "smpte170m",
+              fullRange: true,
+            };
+      const rows = Math.ceil(patches.length / columns);
+      const luma = new Uint8Array(width * height);
+      const chroma = (width / 2) * (height / 2);
+      const blue = new Uint8Array(chroma);
+      const red = new Uint8Array(chroma);
+      for (let row = 0; row < height; row += 1) {
+        for (let column = 0; column < width; column += 1) {
+          const patch =
+            patches[
+              Math.floor((row * rows) / height) * columns +
+                Math.floor((column * columns) / width)
+            ];
+          luma[row * width + column] = patch[0];
+          if (row % 2 === 0 && column % 2 === 0) {
+            const at = (row / 2) * (width / 2) + column / 2;
+            blue[at] = patch[1];
+            red[at] = patch[2];
+          }
+        }
+      }
+      const samples = new Uint8Array(luma.length + 2 * chroma);
+      samples.set(luma);
+      samples.set(blue, luma.length);
+      samples.set(red, luma.length + chroma);
+      // A track of those frames, twenty a second, until its peer is closed.
+      const picture = () => {
+        const track = new MediaStreamTrackGenerator({ kind: "video" });
+        const writer = track.writable.getWriter();
+        let timestamp = 0;
+        const timer = setInterval(() => {
+          timestamp += 50000;
+          const frame = new VideoFrame(samples, {
+            format: "I420",
+            codedWidth: width,
+            codedHeight: height,
+            timestamp,
+            colorSpace,
+          });
+          writer.write(frame).catch(() => frame.close());
+        }, 50);
+        return {
+          track,
+          stop() {
+            clearInterval(timer);
+            track.stop();
+          },
+        };
+      };
+      class FixturePeer extends EventTarget {
+        connectionState = "connected";
+        onicecandidate = null;
+        onconnectionstatechange = null;
+        #ontrack = null;
+        #picture = null;
+        get ontrack() {
+          return this.#ontrack;
+        }
+        set ontrack(handler) {
+          this.#ontrack = handler;
+          if (!handler) return;
+          setTimeout(() => {
+            this.#picture ??= picture();
+            handler({ track: this.#picture.track });
+          }, 0);
+        }
+        async getStats() {
+          return new Map();
+        }
+        close() {
+          this.#picture?.stop();
+        }
+      }
+      Object.defineProperty(window, "RTCPeerConnection", {
+        value: FixturePeer,
+        configurable: true,
+        writable: true,
+      });
+    },
+    [MODE_KEY, mode, PATCHES, COLUMNS, WIDTH, HEIGHT, marked, renderer],
+  );
+  const page = await context.newPage();
+  page.setDefaultTimeout(8000);
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/api/capabilities", (route) =>
+    route.fulfill({ json: { code: 0, data: manifest } }),
+  );
+  await page.route("**/api/system/firewall**", (route) =>
+    route.fulfill({
+      json: {
+        code: 0,
+        data: { effectiveMode: "baseline", webrtcBlocked: false },
+      },
+    }),
+  );
+  // The board's signalling: the picture flows.
+  await page.routeWebSocket("**/api/stream/webrtc**", (socket) => {
+    socket.send(JSON.stringify({ type: "started" }));
+  });
+  await page.goto(app.baseUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => {
+    const screen = document.querySelector("video#screen");
+    return screen && screen.videoWidth > 0 && screen.readyState >= 2;
+  });
+  // The picture fills the view, so that every patch is large on the screen.
+  await page.waitForTimeout(500);
+  return { context, page, errors };
+}
+
+/** Each patch's mean red, green and blue at its centre, as drawn. */
+async function drawn(page) {
+  const box = await page.locator("video#screen").boundingBox();
+  assert.ok(box && box.width > 200 && box.height > 100, "no picture");
+  const png = await page.screenshot({ clip: box });
+  return page.evaluate(
+    async ({ png, count, columns }) => {
+      const bitmap = await createImageBitmap(
+        new Blob([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], {
+          type: "image/png",
+        }),
+      );
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0);
+      const rows = Math.ceil(count / columns);
+      const width = bitmap.width / columns;
+      const height = bitmap.height / rows;
+      const levels = [];
+      for (let index = 0; index < count; index += 1) {
+        const x = Math.floor((index % columns) * width + width / 2);
+        const y = Math.floor(Math.floor(index / columns) * height + height / 2);
+        const data = context.getImageData(x - 8, y - 8, 16, 16).data;
+        const sum = [0, 0, 0];
+        for (let at = 0; at < data.length; at += 4) {
+          for (let channel = 0; channel < 3; channel += 1)
+            sum[channel] += data[at + channel];
+        }
+        levels.push(sum.map((value) => value / (data.length / 4)));
+      }
+      return levels;
+    },
+    {
+      png: png.toString("base64"),
+      count: PATCHES.length,
+      columns: COLUMNS,
+    },
+  );
+}
+
+/** The largest difference of a drawn channel from the JPEG's drawing. */
+function worst(levels, select) {
+  let largest = 0;
+  PATCHES.forEach((patch, index) => {
+    if (!select(patch)) return;
+    const want = jpeg(patch);
+    for (let channel = 0; channel < 3; channel += 1) {
+      largest = Math.max(
+        largest,
+        Math.abs(levels[index][channel] - want[channel]),
+      );
+    }
+  });
+  return largest;
+}
+
+const grey = (patch) => patch[1] === 128 && patch[2] === 128;
+const kept = (patch) => grey(patch) && patch[0] > 16 && patch[0] < 235;
+const colour = (patch) => !grey(patch);
+
+const measured = {};
+const round = (value) => Math.round(value * 10) / 10;
+
+try {
+  // VP8: drawn through the table, as the JPEG; what the browser made black
+  // or white stays so.
+  {
+    const { context, page, errors } = await open("vp8", "narrow", GPU);
+    const filter = await page.evaluate(
+      () => getComputedStyle(document.getElementById("screen")).filter,
+    );
+    assert.equal(filter, 'url("#vp8-full-range")');
+    const table = await page.evaluate(() =>
+      [
+        ...document.querySelectorAll("#vp8-full-range feComponentTransfer > *"),
+      ].map(
+        (node) =>
+          `${node.tagName}:${node.getAttribute("type")}:${node.getAttribute("tableValues").split(" ").length}`,
+      ),
+    );
+    assert.deepEqual(table, [
+      "feFuncR:table:256",
+      "feFuncG:table:256",
+      "feFuncB:table:256",
+    ]);
+    const levels = await drawn(page);
+    measured.vp8Greys = round(worst(levels, kept));
+    measured.vp8Colours = round(worst(levels, colour));
+    assert.ok(measured.vp8Greys <= 1.5, `greys ${measured.vp8Greys}`);
+    assert.ok(measured.vp8Colours <= 4, `colours ${measured.vp8Colours}`);
+    for (const [index, patch] of PATCHES.entries()) {
+      if (!grey(patch)) continue;
+      if (patch[0] <= 16)
+        assert.deepEqual(levels[index], [0, 0, 0], `${patch}`);
+      if (patch[0] >= 235)
+        assert.deepEqual(levels[index], [255, 255, 255], `${patch}`);
+    }
+    // The same frames without the table: the browser's stretch, darker.
+    await page.evaluate(() => {
+      document.getElementById("screen").style.filter = "none";
+    });
+    await page.waitForTimeout(300);
+    const stretched = await drawn(page);
+    measured.stretched = round(worst(stretched, kept));
+    assert.ok(
+      measured.stretched > 10,
+      "the fixture's frames were not stretched",
+    );
+    assert.ok(stretched[3][0] < 15, `27 drawn as ${stretched[3][0]}`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+  // H.264 in the same view says what its samples mean: drawn unchanged.
+  {
+    const { context, page, errors } = await open("h264", "full", GPU);
+    assert.equal(
+      await page.evaluate(
+        () => getComputedStyle(document.getElementById("screen")).filter,
+      ),
+      "none",
+    );
+    assert.equal(await page.locator("#vp8-full-range").count(), 0);
+    const levels = await drawn(page);
+    measured.h264 = round(Math.max(worst(levels, grey), worst(levels, colour)));
+    assert.ok(measured.h264 <= 1.5, `H.264 ${measured.h264}`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+  // Drawn in software: VP8 as before, without the filter.
+  {
+    const { context, page, errors } = await open("vp8", "narrow", null);
+    assert.match(
+      await page.evaluate(() => {
+        const context = document.createElement("canvas").getContext("webgl");
+        const info = context?.getExtension("WEBGL_debug_renderer_info");
+        return String(
+          info && context.getParameter(info.UNMASKED_RENDERER_WEBGL),
+        );
+      }),
+      /SwiftShader/,
+      "this Chromium draws with a GPU",
+    );
+    assert.equal(
+      await page.evaluate(
+        () => getComputedStyle(document.getElementById("screen")).filter,
+      ),
+      "none",
+    );
+    assert.equal(await page.locator("#vp8-full-range").count(), 0);
+    const levels = await drawn(page);
+    assert.ok(worst(levels, kept) > 10, "drawn otherwise than before");
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+  console.log(
+    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); a browser drawing in software left as before passed`,
+  );
+} finally {
+  await browser.close();
+  await new Promise((resolve) => app.server.close(resolve));
+}

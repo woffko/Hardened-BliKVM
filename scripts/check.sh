@@ -179,6 +179,8 @@ node --test tools/test_quic_messages.mjs
 # The picture's receiver: reassembly, the chain, recovery, and 100000 random
 # and damaged datagrams and streams; the board's clock; the codec string.
 node --test tools/test_quic_video_receiver.mjs tools/test_quic_board_clock.mjs tools/test_quic_h264.mjs
+# The page's table for the board's VP8 picture, and its GPU check.
+node --test tools/test_vp8_range.mjs
 node --test tools/test_impair_proxies.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
@@ -205,6 +207,7 @@ node --check tools/playwright/webrtc_unavailable_contract.mjs
 node --check tools/playwright/csp_contract.mjs
 node --check tools/playwright/menu_autohide_contract.mjs
 node --check tools/playwright/webrtc_quality_contract.mjs
+node --check tools/playwright/vp8_range_contract.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
@@ -884,6 +887,7 @@ node tools/playwright/webrtc_unavailable_contract.mjs
 node tools/playwright/csp_contract.mjs
 node tools/playwright/menu_autohide_contract.mjs
 node tools/playwright/webrtc_quality_contract.mjs
+node tools/playwright/vp8_range_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs
