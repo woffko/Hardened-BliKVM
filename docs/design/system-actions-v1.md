@@ -129,6 +129,15 @@ milliseconds) for an action and the uptime for an acceptance, so the 60 s
 cooldown after an accepted action compares the two clocks and never holds a
 new action.
 
+Found with it: the journal has room for sixteen records and gave none up, so
+the sixteenth system action was a board's last; and the SD image builder
+copied the source board's journal to new cards (the beta.1 image carried the
+test board's eight records, one of them the unaccepted reboot of 2026-10-03,
+which refused a beta.1 card's first reboot). A full journal now makes room in
+the place of the oldest record that settled in an earlier boot
+(`docs/baselines/system-action-policy.md`), and the image builder leaves the
+journal out, so a new card's owner starts an empty one.
+
 ## Memory and swap
 
 - Reads stay in the server (`/api/vm/memory/limit`, `/api/vm/swap` views from

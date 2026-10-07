@@ -565,7 +565,13 @@ impl SystemActionPolicyEngine {
                 SystemActionRejection::CooldownActive,
             ));
         }
-        let Some(slot) = self.state.records.iter().position(Option::is_none) else {
+        let Some(slot) = self
+            .state
+            .records
+            .iter()
+            .position(Option::is_none)
+            .or_else(|| self.reclaimable_slot(environment.current_boot_binding))
+        else {
             return Ok(SystemActionDecision::Reject(
                 SystemActionRejection::JournalFull,
             ));
@@ -792,6 +798,30 @@ impl SystemActionPolicyEngine {
             .generation
             .checked_add(1)
             .ok_or(SystemActionPolicyError::GenerationExhausted)
+    }
+
+    /// A full journal makes room in the place of the oldest record that
+    /// settled in an earlier boot. Its operation cannot be replayed into a
+    /// second action: a request repeated after a boot carries a confirmation
+    /// older than [`MAX_CONFIRMATION_AGE_MS`]. A pending record, and one that
+    /// settled in this boot (the cooldown reads those), are never given up;
+    /// with nothing else, a full journal still rejects the action.
+    fn reclaimable_slot(&self, current_boot_binding: [u8; 16]) -> Option<usize> {
+        self.state
+            .records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| record.map(|record| (index, record)))
+            .filter(|(_, record)| {
+                matches!(
+                    record.phase,
+                    SystemActionPhase::PostBootAccepted | SystemActionPhase::Rejected
+                ) && record
+                    .terminal_boot_binding
+                    .is_some_and(|boot| boot != current_boot_binding)
+            })
+            .min_by_key(|(_, record)| record.prepared_at_ms)
+            .map(|(index, _)| index)
     }
 
     fn cooldown_active(&self, environment: SystemActionEnvironment) -> bool {
@@ -1496,6 +1526,83 @@ mod tests {
             SystemActionDecision::Reject(SystemActionRejection::JournalFull)
         );
         assert_eq!(engine.record_count(), MAX_OPERATION_RECORDS);
+    }
+
+    /// Records that settled in an earlier boot make room in a full journal,
+    /// the oldest first; the rest of the history stays.
+    #[test]
+    fn a_full_journal_gives_up_the_oldest_record_of_an_earlier_boot() {
+        let mut engine = SystemActionPolicyEngine::new();
+        for seed in 1..=MAX_OPERATION_RECORDS as u8 {
+            let now_ms = 100_000 + u64::from(seed) * 10;
+            let operation = request(seed, SystemAction::Reboot, now_ms - 1, BOOT_A);
+            let ticket = prepared_ticket(&mut engine, operation, now_ms);
+            let disabled_backend = SystemActionEligibility {
+                backend_ready: false,
+                ..SystemActionEligibility::verified_for_test()
+            };
+            assert_eq!(
+                engine
+                    .record_dispatch_intent(
+                        ticket,
+                        disabled_backend,
+                        ready_environment(BOOT_A, now_ms + 1),
+                    )
+                    .unwrap(),
+                SystemActionDispatchDecision::PersistRejected(
+                    SystemActionRejection::BackendUnavailable
+                )
+            );
+        }
+        assert_eq!(engine.record_count(), MAX_OPERATION_RECORDS);
+        let (oldest, second) = ([1_u8; 16], [2_u8; 16]);
+        assert_eq!(engine.phase_for(oldest), Some(SystemActionPhase::Rejected));
+
+        // The next boot: the oldest record makes room for the new action.
+        let next = request(99, SystemAction::Reboot, 300_000 - 1, BOOT_B);
+        assert!(matches!(
+            engine
+                .prepare(
+                    next,
+                    SystemActionEligibility::verified_for_test(),
+                    ready_environment(BOOT_B, 300_000),
+                )
+                .unwrap(),
+            SystemActionDecision::PersistPrepared(_)
+        ));
+        assert_eq!(engine.record_count(), MAX_OPERATION_RECORDS);
+        assert_eq!(engine.phase_for(oldest), None);
+        assert_eq!(engine.phase_for(second), Some(SystemActionPhase::Rejected));
+        assert_eq!(
+            engine.phase_for(next.operation_id),
+            Some(SystemActionPhase::Prepared)
+        );
+        // The state restores as it is.
+        let restored = SystemActionPolicyEngine::restore(engine.snapshot()).unwrap();
+        assert_eq!(restored.record_count(), MAX_OPERATION_RECORDS);
+        // A repeat of the dropped operation is refused, not dispatched.
+        let mut repeat = engine;
+        repeat
+            .state
+            .records
+            .iter_mut()
+            .flatten()
+            .filter(|record| record.operation_id == next.operation_id)
+            .for_each(|record| {
+                record.phase = SystemActionPhase::Rejected;
+                record.terminal_boot_binding = Some(BOOT_B);
+                record.terminal_at_ms = Some(300_001);
+            });
+        assert_eq!(
+            repeat
+                .prepare(
+                    request(1, SystemAction::Reboot, 100_009, BOOT_C),
+                    SystemActionEligibility::verified_for_test(),
+                    ready_environment(BOOT_C, 400_000),
+                )
+                .unwrap(),
+            SystemActionDecision::Reject(SystemActionRejection::ConfirmationExpired)
+        );
     }
 
     #[test]
