@@ -89,8 +89,12 @@ class BuildSdImageTests(unittest.TestCase):
             "atx-journal.json",
             "hid-ledger.json",
             "hid-only.env",
+            # The owner's record of the switches kept in system files: a new
+            # card records its own at its first start.
+            "system-switches.json",
         ):
             self.assertIn(f'"$gadget_state/{name}"', self.script, name)
+            self.assertIn(f"-name {name}", self.script, name)
         for leftover in ("kvmd-backup-*", "unit-owner-*", "update-trust-*.json", "web-pre-*"):
             self.assertIn(f'"$gadget_state"/{leftover}', self.script, leftover)
         self.assertIn('"$staging"/etc/hardened-blikvm/update-supervisor-*.json', self.script)

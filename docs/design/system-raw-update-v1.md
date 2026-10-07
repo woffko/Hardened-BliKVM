@@ -136,6 +136,33 @@ first-boot provisioning keeps existing keys, so it is harmless afterwards.
 
 Nothing else is carried: the new image defines the system.
 
+Since 2026-10-07: switches that live in system files. Four of the board's
+settings are not state files but system configuration: whether the OpenSSH
+server, the QUIC gateway and the Tailscale daemon are enabled (their units'
+enablement) and mDNS (`MulticastDNS` in `/etc/systemd/resolved.conf`). The list
+above does not carry them, so a RAW update left them as the new image had them
+(the OpenSSH server and the Tailscale daemon on, the gateway and mDNS off). The
+board owner, which comes with the application slot, records the four in its
+state directory (`/var/lib/hardened-blikvm-gadget/system-switches.json`, with
+the image they were recorded under, `/etc/hardened-blikvm-image`); that
+directory is carried. At its start, when the image is another one than the
+record names, the owner sets them as recorded; under the same image the record
+only follows the board, so the owner never undoes a change made otherwise. It
+records its own changes at once and the Tailscale daemon's enablement whenever
+it reads it. The SD image builder leaves the record out: a new card records its
+own at its first start. The update runtime is not involved, so this works for
+a board whose runtime is older, as long as its application has the owner of
+this change.
+
+Not carried yet (found 2026-10-07, for the next update runtime): the
+application stores of the update runtime 0.1.0~dev36 and later,
+`/var/lib/hardened-blikvm-slots-v2`, `/var/lib/hardened-blikvm-update-v2` and
+`/var/lib/hardened-blikvm-exec-ledger` (and the v1 `hardened-blikvm-update`),
+while `hardened-blikvm-exec` is. After a RAW update the board therefore has the
+image's application state with its own protected copies: consistent where the
+board ran the application the image carries, so a board installs the
+application bundle of the same release before its RAW bundle.
+
 ## Components
 
 - `crates/bli-kvm-system-raw-update`: the stage, boot, booted, confirm,

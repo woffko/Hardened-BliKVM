@@ -132,12 +132,16 @@ assemble() {
     # not belong to a new board. Each service starts clean without its file:
     # every administration switch off, the firewall in Baseline, HID-only
     # off, empty media, ATX and HID journals, and the video settings at the
-    # defaults of the capture unit.
+    # defaults of the capture unit. The record the board owner keeps of the
+    # switches in system files (SSH, QUIC, Tailscale, mDNS) is the source
+    # board'"'"'s: a new card makes its own at its first start, from the units
+    # of the image.
     gadget_state="$staging/var/lib/hardened-blikvm-gadget"
     rm -f "$gadget_state/admin-features.json" "$gadget_state/firewall-mode.json" \
       "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
-      "$gadget_state/hid-only.env" "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
+      "$gadget_state/hid-only.env" "$gadget_state/system-switches.json" \
+      "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
     # The QUIC switch is the enablement of the gateway unit, not a file of
     # the board owner: a new card starts with the gateway disabled
     # (docs/design/quic-transport-v1.md).
@@ -150,7 +154,7 @@ assemble() {
     leftover=$(find "$gadget_state" "$staging/etc/hardened-blikvm" -maxdepth 1 \
       \( -name admin-features.json -o -name firewall-mode.json -o -name journal.json \
       -o -name media-journal.json -o -name atx-journal.json -o -name hid-ledger.json \
-      -o -name hid-only.env -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
+      -o -name hid-only.env -o -name system-switches.json -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
     [ ! -e "$staging/var/lib/hardened-blikvm-video/ustreamer.env" ] || leftover="$leftover ustreamer.env"

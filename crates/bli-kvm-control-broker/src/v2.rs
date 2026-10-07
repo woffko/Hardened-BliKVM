@@ -68,6 +68,8 @@ pub struct ControlV2State {
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
     quic: Option<crate::quic_settings::QuicSettings>,
+    /// The record of the switches kept in system files, across a RAW update.
+    system_switches: Option<crate::system_switches::SystemSwitches>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
     hostname: Option<crate::hostname_settings::HostnameSettings>,
     wifi: Option<crate::network_settings::SharedWifi>,
@@ -106,6 +108,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -230,6 +233,24 @@ impl ControlV2State {
         self.quic = Some(quic);
     }
 
+    /// Keeps the record of the switches held in system files, and sets them
+    /// as recorded when the system image is a new one (after a RAW update).
+    /// Called once the SSH, QUIC and mDNS surfaces are attached.
+    pub fn with_system_switches(
+        &mut self,
+        mut switches: crate::system_switches::SystemSwitches,
+    ) -> crate::system_switches::Reconciled {
+        let reconciled = switches.reconcile(self.mdns.as_mut());
+        self.system_switches = Some(switches);
+        reconciled
+    }
+
+    fn note_switch(&mut self, switch: crate::system_switches::Switch, enabled: bool) {
+        if let Some(switches) = self.system_switches.as_mut() {
+            switches.note(switch, enabled);
+        }
+    }
+
     pub fn with_admin_features(&mut self, features: crate::admin_features::AdminFeaturesState) {
         self.admin_features = Some(features);
     }
@@ -307,6 +328,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -343,6 +365,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -379,6 +402,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -429,6 +453,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -467,6 +492,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -511,6 +537,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -588,6 +615,9 @@ impl ControlV2State {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
         let status = tailscale.status();
+        // The administration helper switches the daemon: the record follows
+        // what the owner reads.
+        self.note_switch(crate::system_switches::Switch::Tailscaled, status.enabled);
         ControlResponse::TailscaleState {
             installed: status.installed,
             running: status.running,
@@ -704,7 +734,11 @@ impl ControlV2State {
         let Some(state) = self.mdns.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        state.handle(enabled)
+        let response = state.handle(enabled);
+        if matches!(response, ControlResponse::Applied) {
+            self.note_switch(crate::system_switches::Switch::Mdns, enabled);
+        }
+        response
     }
 
     fn handle_mdns_state(&self) -> ControlResponse {
@@ -776,6 +810,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            system_switches: None,
             ipv4: None,
             hostname: None,
             wifi: None,
@@ -887,7 +922,13 @@ impl ControlV2State {
                 }
             }
             PlatformControlRequestV2::Ssh { enabled } => match self.ssh.as_mut() {
-                Some(ssh) => ssh.handle(*enabled),
+                Some(ssh) => {
+                    let response = ssh.handle(*enabled);
+                    if matches!(response, ControlResponse::Applied) {
+                        self.note_switch(crate::system_switches::Switch::Ssh, *enabled);
+                    }
+                    response
+                }
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::Hostname { name } => match self.hostname.as_mut() {
@@ -909,7 +950,13 @@ impl ControlV2State {
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::Quic { enabled } => match self.quic.as_mut() {
-                Some(quic) => quic.handle(*enabled),
+                Some(quic) => {
+                    let response = quic.handle(*enabled);
+                    if matches!(response, ControlResponse::Applied) {
+                        self.note_switch(crate::system_switches::Switch::Quic, *enabled);
+                    }
+                    response
+                }
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::QuicState {} => match self.quic.as_mut() {
@@ -1429,6 +1476,81 @@ fn atx_code(rejection: AtxRejection) -> ControlRejectionCode {
 
 #[cfg(test)]
 mod tests {
+    /// The SSH and QUIC switches set through the owner reach the record that
+    /// a RAW update carries (`system_switches`).
+    #[tokio::test]
+    async fn a_switch_set_through_the_owner_is_recorded_for_a_raw_update() {
+        use crate::system_switches::SystemSwitches;
+        use crate::tailscale::TailscaleRunner;
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Units(Arc<Mutex<HashMap<String, bool>>>);
+
+        impl TailscaleRunner for Units {
+            fn run(&mut self, _program: &str, args: &[&str]) -> Result<String, String> {
+                let mut units = self.0.lock().unwrap();
+                match args {
+                    ["show", "--property=UnitFileState", "--value", unit] => {
+                        Ok(match units.get(*unit) {
+                            Some(true) => "enabled".to_string(),
+                            Some(false) => "disabled".to_string(),
+                            None => String::new(),
+                        })
+                    }
+                    [.., verb @ ("enable" | "disable"), "--now", unit] => {
+                        units.insert(unit.to_string(), *verb == "enable");
+                        Ok(String::new())
+                    }
+                    _ => Ok(String::new()),
+                }
+            }
+
+            fn path_exists(&mut self, _path: &str) -> bool {
+                false
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("image"), "image A\n").unwrap();
+        let units = Units::default();
+        units.0.lock().unwrap().extend([
+            ("ssh.service".to_string(), true),
+            ("hardened-blikvm-quic.service".to_string(), false),
+        ]);
+        // An owner that serves requests, without any device profile.
+        let mut state = ControlV2State::disabled();
+        state.enabled = true;
+        state.with_ssh(crate::ssh_settings::SshSettings::open(Box::new(
+            units.clone(),
+        )));
+        state.with_quic(crate::quic_settings::QuicSettings::open(Box::new(
+            units.clone(),
+        )));
+        state.with_system_switches(SystemSwitches::open(
+            directory.path().join("record.json"),
+            directory.path().join("image"),
+            Box::new(units.clone()),
+        ));
+        for request in [
+            PlatformControlRequestV2::Quic { enabled: true },
+            PlatformControlRequestV2::Ssh { enabled: false },
+        ] {
+            assert_eq!(
+                state.handle(&request, Instant::now()).await,
+                ControlResponse::Applied
+            );
+        }
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.path().join("record.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            (record["ssh"].clone(), record["quic"].clone()),
+            (serde_json::json!(false), serde_json::json!(true))
+        );
+    }
+
     #[cfg(feature = "gadget-hid-profile")]
     #[tokio::test]
     async fn hid_reconciliation_observation_preserves_pending_ledger_without_device_access() {

@@ -459,6 +459,21 @@ async fn board_state(
         Box::new(crate::video_settings::ExecVideoRestartRunner),
         true,
     ));
+    // The switches kept in system files outlive a RAW system update: after a
+    // new image they are set as the board had them.
+    match state.with_system_switches(crate::system_switches::SystemSwitches::open(
+        crate::system_switches::SWITCHES_RECORD,
+        crate::system_switches::IMAGE_IDENTITY,
+        Box::new(crate::tailscale::SystemTailscaleRunner),
+    )) {
+        crate::system_switches::Reconciled::Restored { failed } if !failed.is_empty() => {
+            eprintln!("board profile: switches not set as before the new image: {failed:?}");
+        }
+        crate::system_switches::Reconciled::Restored { .. } => {
+            eprintln!("board profile: switches set as before the new image");
+        }
+        _ => {}
+    }
     // The bounded network writes stay refused until the operator enables them
     // for the owner as well as for the server.
     #[cfg(feature = "network-write-profile")]
