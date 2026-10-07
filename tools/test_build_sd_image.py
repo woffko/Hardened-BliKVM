@@ -113,6 +113,13 @@ class BuildSdImageTests(unittest.TestCase):
         self.assertIn(f'"{journal}/journal-b.bin"', self.script)
         self.assertIn(f'find "{journal}" -type f', self.script)
         self.assertIn("source board state remains: the system-action journal", self.script)
+        # The owner makes it at its first start: the units that name it are
+        # not held to it by the image's check of the paths units need.
+        self.assertIn(
+            'created_at_first_boot="$created_at_first_boot '
+            '/var/lib/hardened-blikvm-system-actions/journal-a.bin"',
+            self.script,
+        )
         # The directory stays: the owner's store wants it, and the image's
         # reviewed state under var/lib names it.
         self.assertIn(

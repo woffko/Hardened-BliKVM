@@ -305,6 +305,10 @@ assemble() {
   # rendered units in /etc/systemd/system, the packaged units that are
   # enabled, and the socket-activated services behind enabled sockets.
   created_at_first_boot="/etc/hardened-blikvm/tls.crt /etc/hardened-blikvm/tls.key /etc/hardened-blikvm-gadget/serial"
+  # The board owner makes the system-action journal at its first start; the
+  # units that read it are installed, not enabled (the acceptance unit is
+  # started by hand).
+  created_at_first_boot="$created_at_first_boot /var/lib/hardened-blikvm-system-actions/journal-a.bin"
   # Default-off features whose files appear only once switched on.
   optional_until_enabled="/mnt/.hardened-system-update /mnt/.hardened-system-update/apply.json /var/lib/hardened-blikvm-picoclaw-runtime/picoclaw"
   enabled=$(find "$staging/etc/systemd/system" -path "*.wants/hardened-blikvm-*" -exec basename {} \; | sort -u)
