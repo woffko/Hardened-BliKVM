@@ -2060,8 +2060,9 @@ SPS of both engines now has a video signal type: full range, BT.709 primaries,
 the sRGB transfer curve and the BT.601 matrix (`headers.rs`, `COLOUR_PRIMARIES`
 and its siblings; the x264 shim sets the same VUI). Over WebRTC and QUIC the
 page then draws the picture within a quarter of a level of the JPEG on
-average. VP8 has no such field and is still drawn darker. The measurements are
-in `docs/baselines/audit-20261006-colour-range.md`.
+average. VP8 has no such field; since 2026-10-07 the page draws it through a
+table where the browser has a GPU (`h616-software-video-encoder.md`). The
+measurements are in `docs/baselines/audit-20261006-colour-range.md`.
 
 ## The H616's register description
 

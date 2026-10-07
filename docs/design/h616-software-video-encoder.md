@@ -296,6 +296,38 @@ browsers, glass-to-glass latency and MJPEG/VP8 switching.
 - MJPEG still offers no quality: the capture device compresses the JPEG
   itself.
 
+## The VP8 picture's range (2026-10-07)
+
+- The encoders are given the capture's JPEG YCbCr as it is: of the full
+  range, 0 to 255, with the BT.601 matrix. H.264 says so in its SPS since
+  2026-10-06 (`h616-ve-h264-encoder.md`); VP8 has no field for it, and a
+  browser takes a VP8 frame as of the narrow range, 16 to 235, with the
+  BT.601 matrix: every colour channel is drawn as 255/219 (level - 16), and
+  the picture darker than as MJPEG. The board does not convert the samples
+  for VP8: that would be a pass over every frame on the board and a seventh
+  of the levels.
+- The page draws the VP8 picture through an SVG filter, a table per channel
+  that undoes the stretch (`web/src/lib/vp8-range.ts`): the levels 17 to 234
+  come back within one, black and white stay black and white (the stretch
+  made every level up to 16 black and every level from 235 white), and the
+  colours come out 2 % less saturated than MJPEG's, the difference of the two
+  ranges' chroma scales. Only VP8 is filtered, not H.264 over the same view.
+- The browser applies the filter as it draws each frame. With the machine's
+  GPU that is next to nothing; drawn in software, any filter on the picture
+  (the table, a colour matrix or CSS contrast alike) cost Chromium on
+  SwiftShader a processor core more at 1920x1080 and 30 frames a second, and
+  26 frames of 30 drawn. The page asks WebGL once for its renderer: no WebGL,
+  or a software rasterizer (SwiftShader, llvmpipe, softpipe, Microsoft's
+  Basic Render Driver), leaves VP8 drawn as before.
+- A board whose encoder gives VP8 the narrow range must say so to the page,
+  which would otherwise stretch its picture the other way.
+- Tests: `tools/test_vp8_range.mjs` (the table and the renderer names) and
+  `tools/playwright/vp8_range_contract.mjs` (the built page, given a track of
+  the board's samples marked as Chromium marks a decoded VP8 frame, draws them
+  as the JPEG with a GPU, H.264 over the same view unchanged, and VP8 as
+  before when it draws in software). The board's measurements are in
+  `docs/baselines/audit-20261006-colour-range.md`.
+
 ## The frame socket and QUIC viewers (2026-10-02, QUIC plan Q3)
 
 The H.264 unit serves its encoded frames to the QUIC gateway as well
