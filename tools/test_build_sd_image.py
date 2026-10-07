@@ -105,6 +105,21 @@ class BuildSdImageTests(unittest.TestCase):
         self.assertIn('-not -path "$staging/etc/hardened-blikvm/firewall-mode.json"', self.script)
         self.assertIn("source board state remains", self.script)
 
+    def test_a_new_card_has_an_empty_system_action_journal(self) -> None:
+        # The source board's reboots, one perhaps still pending, would refuse
+        # a new card's first reboot or fill its sixteen places.
+        journal = "$staging/var/lib/hardened-blikvm-system-actions"
+        self.assertIn(f'"{journal}/journal-a.bin"', self.script)
+        self.assertIn(f'"{journal}/journal-b.bin"', self.script)
+        self.assertIn(f'find "{journal}" -type f', self.script)
+        self.assertIn("source board state remains: the system-action journal", self.script)
+        # The directory stays: the owner's store wants it, and the image's
+        # reviewed state under var/lib names it.
+        self.assertIn(
+            " hardened-blikvm-system-actions ",
+            self.script.split('known_state="', 1)[1].split('"', 1)[0],
+        )
+
     def test_the_quic_gateway_is_disabled_on_a_new_card(self) -> None:
         # The board's QUIC switch is the unit's enablement: the link a source
         # board with QUIC switched on carries must not reach the image.

@@ -142,6 +142,15 @@ assemble() {
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
       "$gadget_state/hid-only.env" "$gadget_state/system-switches.json" \
       "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
+    # The system-action journal is the source board'"'"'s reboots under its boot
+    # identities, one perhaps not yet accepted, and it has room for sixteen:
+    # a new card'"'"'s owner starts an empty one.
+    rm -f "$staging/var/lib/hardened-blikvm-system-actions/journal-a.bin" \
+      "$staging/var/lib/hardened-blikvm-system-actions/journal-b.bin"
+    if [ -n "$(find "$staging/var/lib/hardened-blikvm-system-actions" -type f 2>/dev/null | head -n 1)" ]; then
+      echo "source board state remains: the system-action journal" >&2
+      exit 1
+    fi
     # The QUIC switch is the enablement of the gateway unit, not a file of
     # the board owner: a new card starts with the gateway disabled
     # (docs/design/quic-transport-v1.md).
