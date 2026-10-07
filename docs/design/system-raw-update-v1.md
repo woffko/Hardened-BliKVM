@@ -152,7 +152,11 @@ records its own changes at once and the Tailscale daemon's enablement whenever
 it reads it. The SD image builder leaves the record out: a new card records its
 own at its first start. The update runtime is not involved, so this works for
 a board whose runtime is older, as long as its application has the owner of
-this change.
+this change. The owner knows a new root by the image name, the release and
+the day of its build: a root of the release the board already runs (the same
+bundle again, or another build of that day) is taken for the board's own, and
+the switches stay as that image has them (seen on the test board with two
+builds of 0.1.0-beta.3).
 
 Not carried yet (found 2026-10-07, for the next update runtime): the
 application stores of the update runtime 0.1.0~dev36 and later,

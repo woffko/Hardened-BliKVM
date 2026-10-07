@@ -86,10 +86,13 @@ or process of the work is on it, and its kernel log has no line from it.
 
 - VP8 has no field for the range: it is still drawn darker. Converting the
   capture's samples to the narrow range for VP8 alone would cost a pass over
-  every frame and a seventh of the levels; not done.
+  every frame and a seventh of the levels; not done. Since 2026-10-07 the page
+  draws it through a table where the browser has a GPU
+  (`audit-20261007-beta3.md`).
 - The encoder is part of the system, not of the application: a board gets the
   fixed encoder, and WebRTC H.264 drawn right, with a new card or a RAW system
-  update. An application update brings the QUIC half.
+  update. An application update brings the QUIC half. Both came with
+  0.1.0-beta.3's card image and RAW system bundle (`audit-20261007-beta3.md`).
 
 ## Release 0.1.0-beta.2 (2026-10-06)
 

@@ -16,9 +16,12 @@ excluded from Git. This source repository is not a complete device image.
 ## Status
 
 Beta. A pre-release carries an SD card image for the BliKVM v4 (Allwinner
-H616) and a signed application bundle for a board that already runs one; see
-the [releases](https://github.com/woffko/Hardened-BliKVM/releases) for the
-files, how to write the card, the first boot and the known limitations.
+H616), a signed application bundle for a board that already runs one, and
+(since 0.1.0-beta.3) a signed RAW system bundle that gives such a board the
+image's system; see the
+[releases](https://github.com/woffko/Hardened-BliKVM/releases) for the files,
+how to write the card or update a board, the first boot and the known
+limitations.
 Everything was verified on one board. Expect rough edges and report what you
 find.
 
@@ -50,7 +53,9 @@ find.
   of the main connection), a firewall with four modes and a confirmation that
   rolls back by itself, time, system log, Tailscale, account, session lock.
 - **Updates**: signed application slots with a health check and automatic
-  rollback, and signed RAW system updates behind their own switch.
+  rollback, and signed RAW system updates behind their own switch, which
+  keep the board's accounts, keys, network settings and switches and write
+  the old system back if the new one does not start.
 - **Administration features** that stay off until they are switched on: web
   terminal, scripts, remote ISO download, PicoClaw, RAW system updates. Each
   switch is enforced below the web server
