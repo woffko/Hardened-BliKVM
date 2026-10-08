@@ -22,6 +22,18 @@ export const MODES: Record<Exclude<UpscaleMode, 'plain'>, { sigma: number; edge:
   high: { sigma: 12, edge: 2.0 }
 };
 
+/** How a view's frames are drawn, for the quality monitor. */
+export type UpscaleReport = {
+  /**
+   * `off`: the view's plain path, without WebGL; `plain`: through WebGL at
+   * the frame's own size; or the sharpness the picture is enlarged with.
+   */
+  mode: 'off' | UpscaleMode;
+  /** Medians over the last seconds: a frame's drawing on its thread, and on the GPU where the browser tells. */
+  drawMs: number | null;
+  gpuMs: number | null;
+};
+
 export type DrawOptions = {
   mode: UpscaleMode;
   /** The board's VP8 picture: undo the browser's narrow-range stretch. */
@@ -87,10 +99,19 @@ function texture(gl: WebGL2RenderingContext, filter: number): WebGLTexture {
   return made;
 }
 
+/** EXT_disjoint_timer_query_webgl2's names this file uses. */
+type TimerQuery = { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number };
+
 export class Upscaler {
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
   readonly gl: WebGL2RenderingContext;
   private state: State | null = null;
+  /** GPU timer queries where the browser offers them, one frame in flight. */
+  private timer: TimerQuery | null = null;
+  private query: WebGLQuery | null = null;
+  private queryInFlight = false;
+  /** The GPU's time of the frames measured since the last `takeGpuTimes`, ms. */
+  private gpuTimes: number[] = [];
 
   /** A WebGL2 upscaler on `canvas`, or null where the browser has no WebGL2. */
   static on(
@@ -135,6 +156,9 @@ export class Upscaler {
   private make(): State | null {
     const gl = this.gl;
     if (gl.isContextLost()) return null;
+    this.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerQuery | null;
+    this.query = this.timer ? gl.createQuery() : null;
+    this.queryInFlight = false;
     const vao = gl.createVertexArray();
     const deringedFramebuffer = gl.createFramebuffer();
     if (!vao || !deringedFramebuffer) return null;
@@ -162,6 +186,7 @@ export class Upscaler {
     const state = this.state;
     if (!state || gl.isContextLost() || width <= 0 || height <= 0) return false;
     const [outWidth, outHeight] = [gl.drawingBufferWidth, gl.drawingBufferHeight];
+    const timing = this.beginTiming();
 
     // The frame, uploaded into the texture of its size.
     gl.activeTexture(gl.TEXTURE0);
@@ -235,7 +260,37 @@ export class Upscaler {
       gl.uniform1f(uniforms.get('uEdgeSharpness')!, MODES[options.mode].edge);
     gl.bindVertexArray(state.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (timing && this.timer) gl.endQuery(this.timer.TIME_ELAPSED_EXT);
     return true;
+  }
+
+  /**
+   * Starts timing this frame on the GPU when the browser can and no frame
+   * is being timed; collects the last frame's time once it is known.
+   */
+  private beginTiming(): boolean {
+    const gl = this.gl;
+    const timer = this.timer;
+    const query = this.query;
+    if (!timer || !query) return false;
+    if (this.queryInFlight) {
+      if (!gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) return false;
+      const nanoseconds = gl.getQueryParameter(query, gl.QUERY_RESULT) as number;
+      if (!gl.getParameter(timer.GPU_DISJOINT_EXT) && this.gpuTimes.length < 1000) {
+        this.gpuTimes.push(nanoseconds / 1e6);
+      }
+      this.queryInFlight = false;
+    }
+    gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
+    this.queryInFlight = true;
+    return true;
+  }
+
+  /** The GPU's time of the frames measured since the last call, ms; empty where the browser does not tell. */
+  takeGpuTimes(): number[] {
+    const times = this.gpuTimes;
+    this.gpuTimes = [];
+    return times;
   }
 
   /** Lets go of the GPU's objects; the canvas keeps its context. */
@@ -248,6 +303,8 @@ export class Upscaler {
     gl.deleteTexture(state.deringed);
     gl.deleteFramebuffer(state.deringedFramebuffer);
     gl.deleteVertexArray(state.vao);
+    if (this.query) gl.deleteQuery(this.query);
+    this.query = null;
     for (const { program } of [state.dering, state.sgsr, state.bilinear]) gl.deleteProgram(program);
   }
 }

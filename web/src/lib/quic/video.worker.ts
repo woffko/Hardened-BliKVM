@@ -4,12 +4,24 @@
  * WebCodecs and draws them on the canvas it was given. The page hands it
  * what the session delivers and sends on what it asks for.
  */
+import { drawing, type Sharpness } from '../upscale/settings.ts';
+import { Upscaler, type UpscaleReport } from '../upscale/upscaler.ts';
 import { BoardClock } from './board-clock.ts';
 import { codecOf, decoderConfig } from './h264.ts';
 import { VideoReceiver, type ReceivedFrame, type ReceiverOutput } from './video-receiver.ts';
 
 export type ToVideoWorker =
-  | { type: 'canvas'; canvas: OffscreenCanvas }
+  /**
+   * The canvas to draw on, and whether to upscale: with a sharpness the
+   * worker draws through WebGL2 (docs/design/screen-upscaling-v1.md), `off`
+   * with a 2D context as before. A canvas has one kind of context: the
+   * page hands over a new canvas to change it.
+   */
+  | { type: 'canvas'; canvas: OffscreenCanvas; upscale: Sharpness | 'off' }
+  /** The picture's size on the page, in CSS pixels, and the display's pixel ratio. */
+  | { type: 'view'; width: number; height: number; pixelRatio: number }
+  /** Another sharpness, while upscaling. */
+  | { type: 'sharpness'; sharpness: Sharpness }
   /** A new session or subscription: nothing received before it counts. */
   | { type: 'begin' }
   | { type: 'datagram'; data: ArrayBuffer }
@@ -58,11 +70,21 @@ export type VideoStats = {
   bytes: number;
   received: number;
   decodeMedianMs: number | null;
+  /** How the frames are drawn: the plain path, or through the upscaler, and its time. */
+  upscale: UpscaleReport;
+  /** The canvas's buffer: the frame's size, or the size it is shown at when upscaled. */
+  canvasWidth: number;
+  canvasHeight: number;
 };
 
 export type FromVideoWorker =
   | { type: 'request'; stream: number; lastFrame: number; dropped: number }
   | { type: 'picture'; width: number; height: number }
+  /**
+   * The upscaler cannot draw: no WebGL2 here, or its context was lost. The
+   * page goes on with the plain path.
+   */
+  | { type: 'upscaler'; state: 'unavailable' | 'lost' }
   | ({ type: 'stats' } & VideoStats);
 
 /** How often frames that wait are looked at, and a due request is made. */
@@ -87,6 +109,18 @@ const receiver = new VideoReceiver();
 const clock = new BoardClock();
 let canvas: OffscreenCanvas | null = null;
 let context: OffscreenCanvasRenderingContext2D | null = null;
+/** The upscaler, when the page asked for one and WebGL2 is here; its sharpness. */
+let upscaler: Upscaler | null = null;
+let sharpness: Sharpness = 'medium';
+/** Where the picture is shown; until the page says, the frame's own size. */
+let view: { width: number; height: number; pixelRatio: number } | null = null;
+/** The frame's size the page was last told. */
+let pictureWidth = 0;
+let pictureHeight = 0;
+/** How the last frame was drawn, and the draws' times in the last seconds. */
+let drawnMode: UpscaleReport['mode'] = 'off';
+let drawTimes: { at: number; ms: number }[] = [];
+let gpuTimes: { at: number; ms: number }[] = [];
 let decoder: VideoDecoder | null = null;
 let configured: string | null = null;
 let frames = 0;
@@ -142,19 +176,44 @@ function closeDecoder() {
   }
 }
 
+/** Draws a frame through the upscaler, into a buffer of the size it is shown at. */
+function upscaled(target: OffscreenCanvas, frame: VideoFrame, scaler: Upscaler) {
+  const width = frame.displayWidth;
+  const height = frame.displayHeight;
+  const how = view
+    ? drawing(width, height, view.width, view.height, view.pixelRatio, sharpness)
+    : { mode: 'plain' as const, width, height };
+  if (target.width !== how.width || target.height !== how.height) {
+    target.width = how.width;
+    target.height = how.height;
+  }
+  const started = performance.now();
+  if (scaler.draw(frame, width, height, { mode: how.mode })) {
+    const ended = performance.now();
+    drawTimes.push({ at: ended, ms: ended - started });
+    for (const ms of scaler.takeGpuTimes()) gpuTimes.push({ at: ended, ms });
+    drawnMode = how.mode;
+  }
+}
+
 function draw(frame: VideoFrame) {
   const now = performance.now();
-  if (canvas && context) {
-    if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-      canvas.width = frame.displayWidth;
-      canvas.height = frame.displayHeight;
-      scope.postMessage({
-        type: 'picture',
-        width: frame.displayWidth,
-        height: frame.displayHeight
-      });
+  if (canvas && (upscaler || context)) {
+    if (frame.displayWidth !== pictureWidth || frame.displayHeight !== pictureHeight) {
+      pictureWidth = frame.displayWidth;
+      pictureHeight = frame.displayHeight;
+      scope.postMessage({ type: 'picture', width: pictureWidth, height: pictureHeight });
     }
-    context.drawImage(frame, 0, 0);
+    if (upscaler) {
+      upscaled(canvas, frame, upscaler);
+    } else if (context) {
+      if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+        canvas.width = frame.displayWidth;
+        canvas.height = frame.displayHeight;
+      }
+      context.drawImage(frame, 0, 0);
+      drawnMode = 'off';
+    }
   }
   frames += 1;
   const started = handedAt.get(frame.timestamp);
@@ -260,6 +319,10 @@ setInterval(() => handle(receiver.poll(performance.now())), POLL_MS);
 setInterval(() => {
   const now = performance.now();
   drawn = drawn.filter((frame) => now - frame.at <= WINDOW_MS);
+  drawTimes = drawTimes.filter((frame) => now - frame.at <= WINDOW_MS);
+  gpuTimes = gpuTimes.filter((frame) => now - frame.at <= WINDOW_MS);
+  const drawSorted = drawTimes.map((frame) => frame.ms).sort((left, right) => left - right);
+  const gpuSorted = gpuTimes.map((frame) => frame.ms).sort((left, right) => left - right);
   aged = aged.filter((frame) => now - frame.at <= WINDOW_MS);
   decodeTimes = decodeTimes.filter((frame) => now - frame.at <= WINDOW_MS);
   const decodeSorted = decodeTimes.map((frame) => frame.ms).sort((left, right) => left - right);
@@ -282,7 +345,14 @@ setInterval(() => {
     queued: decoder?.decodeQueueSize ?? 0,
     bytes,
     received: handed,
-    decodeMedianMs: decodeSorted.length ? percentile(decodeSorted, 0.5) : null
+    decodeMedianMs: decodeSorted.length ? percentile(decodeSorted, 0.5) : null,
+    upscale: {
+      mode: drawnMode,
+      drawMs: drawSorted.length ? percentile(drawSorted, 0.5) : null,
+      gpuMs: gpuSorted.length ? percentile(gpuSorted, 0.5) : null
+    },
+    canvasWidth: canvas?.width ?? 0,
+    canvasHeight: canvas?.height ?? 0
   });
 }, STATS_MS);
 
@@ -292,7 +362,21 @@ scope.onmessage = (event) => {
   switch (message.type) {
     case 'canvas':
       canvas = message.canvas;
-      context = canvas.getContext('2d');
+      if (message.upscale !== 'off') {
+        sharpness = message.upscale;
+        upscaler = Upscaler.on(canvas, {
+          onLost: () => scope.postMessage({ type: 'upscaler', state: 'lost' })
+        });
+        if (!upscaler) scope.postMessage({ type: 'upscaler', state: 'unavailable' });
+      } else {
+        context = canvas.getContext('2d');
+      }
+      break;
+    case 'view':
+      view = { width: message.width, height: message.height, pixelRatio: message.pixelRatio };
+      break;
+    case 'sharpness':
+      sharpness = message.sharpness;
       break;
     case 'begin':
       receiver.reset();

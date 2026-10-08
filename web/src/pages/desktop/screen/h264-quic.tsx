@@ -9,8 +9,9 @@ import { quicSession } from '@/lib/quic/session.ts';
 import type { FromVideoWorker, ToVideoWorker } from '@/lib/quic/video.worker.ts';
 import VideoWorker from '@/lib/quic/video.worker.ts?worker';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, upscaleStoppedAtom, videoScaleAtom } from '@/jotai/screen.ts';
 import { quicVideoAtom, quicVideoGivenUpAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
+import { useUpscale } from '@/hooks/useUpscale.ts';
 
 import { useScreenFit } from './use-screen-fit.ts';
 
@@ -28,7 +29,8 @@ function buffer(bytes: Uint8Array): ArrayBuffer {
 
 // H.264 over the QUIC session: the session delivers datagrams and key-frame
 // streams, a worker puts the frames together, decodes them with WebCodecs
-// and draws them on this canvas.
+// and draws them on this canvas, through the upscaler when upscaling is on
+// (docs/design/screen-upscaling-v1.md).
 export const H264Quic = () => {
   const [resolution, setResolution] = useAtom(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
@@ -36,15 +38,26 @@ export const H264Quic = () => {
   const video = useAtomValue(quicVideoAtom);
   const setStats = useSetAtom(quicVideoStatsAtom);
   const setGivenUp = useSetAtom(quicVideoGivenUpAtom);
+  const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
+  const upscale = useUpscale();
+  // A canvas has one kind of context: drawing through the upscaler or
+  // plainly is a canvas, and a worker, of its own.
+  const upscaling = upscale !== 'off';
+  const upscaleRef = useRef(upscale);
+  upscaleRef.current = upscale;
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const workerRef = useRef<Worker | null>(null);
   // A canvas can be handed to a worker once; a new one is mounted for the
   // next worker.
   const [canvasKey, setCanvasKey] = useState(0);
-  const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
     maxHeight: '100%',
     objectFit: 'scale-down'
   });
+  // Where the picture is shown, for the worker to draw it at that size.
+  const viewRef = useRef({ width: drawn.width, height: drawn.height, pixelRatio });
+  viewRef.current = { width: drawn.width, height: drawn.height, pixelRatio };
 
   useEffect(() => {
     const scale = storage.getVideoScale();
@@ -63,9 +76,11 @@ export const H264Quic = () => {
       return;
     }
     const worker = new VideoWorker();
+    workerRef.current = worker;
     const post = (message: ToVideoWorker, transfer: Transferable[] = []) =>
       worker.postMessage(message, transfer);
-    post({ type: 'canvas', canvas: offscreen }, [offscreen]);
+    post({ type: 'canvas', canvas: offscreen, upscale: upscaleRef.current }, [offscreen]);
+    post({ type: 'view', ...viewRef.current });
     // The frames drawn at the last report, and when one was last drawn.
     let frames = 0;
     let progressAt = performance.now();
@@ -74,6 +89,11 @@ export const H264Quic = () => {
       switch (message.type) {
         case 'request':
           quicSession.requestKeyFrame(message.stream, message.lastFrame, message.dropped);
+          break;
+        case 'upscaler':
+          // No WebGL2 here, or its context lost: the plain path for this
+          // page load, on a canvas of its own.
+          setUpscaleStopped(message.state);
           break;
         case 'picture':
           // The decoded frame's size is the target's real resolution.
@@ -101,7 +121,10 @@ export const H264Quic = () => {
             queued: message.queued,
             bytes: message.bytes,
             received: message.received,
-            decodeMedianMs: message.decodeMedianMs
+            decodeMedianMs: message.decodeMedianMs,
+            upscale: message.upscale,
+            canvasWidth: message.canvasWidth,
+            canvasHeight: message.canvasHeight
           });
           // What a probe reads without opening Settings.
           canvas.dataset.quicFrames = String(message.frames);
@@ -113,6 +136,8 @@ export const H264Quic = () => {
           canvas.dataset.quicDropped = String(message.dropped);
           canvas.dataset.quicRequests = String(message.requests);
           canvas.dataset.quicResets = String(message.resets);
+          canvas.dataset.quicUpscale = message.upscale.mode;
+          canvas.dataset.quicBuffer = `${message.canvasWidth}x${message.canvasHeight}`;
           break;
       }
     };
@@ -134,9 +159,28 @@ export const H264Quic = () => {
     return () => {
       quicSession.unwatch();
       worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
       setStats(null);
     };
-  }, [canvasKey, setGivenUp, setResolution, setStats]);
+  }, [canvasKey, upscaling, setGivenUp, setResolution, setStats, setUpscaleStopped]);
+
+  useEffect(() => {
+    workerRef.current?.postMessage({
+      type: 'view',
+      width: drawn.width,
+      height: drawn.height,
+      pixelRatio
+    } satisfies ToVideoWorker);
+  }, [drawn.width, drawn.height, pixelRatio]);
+
+  useEffect(() => {
+    if (upscale !== 'off') {
+      workerRef.current?.postMessage({
+        type: 'sharpness',
+        sharpness: upscale
+      } satisfies ToVideoWorker);
+    }
+  }, [upscale]);
 
   return (
     <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden">
@@ -146,7 +190,7 @@ export const H264Quic = () => {
         className="flex h-full min-h-0 w-full min-w-0 items-start justify-start overflow-auto overscroll-contain bg-black"
       >
         <canvas
-          key={canvasKey}
+          key={`${canvasKey}:${upscaling ? 'upscaled' : 'plain'}`}
           id="screen"
           ref={canvasRef}
           data-video-transport="quic"
