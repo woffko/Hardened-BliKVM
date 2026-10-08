@@ -6,6 +6,7 @@
 import type { PageSample } from '@/lib/quality-monitor.ts';
 import type { QuicStatus } from '@/lib/quic/session.ts';
 import type { VideoStats } from '@/lib/quic/video.worker.ts';
+import type { UpscaleReport } from '@/lib/upscale/upscaler.ts';
 
 let watchedPeer: RTCPeerConnection | null = null;
 /** The last `getStats()` totals, for what is measured between two reads. */
@@ -24,6 +25,16 @@ export function watchPeer(peer: RTCPeerConnection): () => void {
   return () => {
     if (watchedPeer === peer) watchedPeer = null;
   };
+}
+
+/**
+ * How the WebRTC view draws its frames while it draws them through the
+ * upscaler (docs/design/screen-upscaling-v1.md); null otherwise.
+ */
+let videoUpscale: UpscaleReport | null = null;
+
+export function reportVideoUpscale(report: UpscaleReport | null): void {
+  videoUpscale = report;
 }
 
 /** What the Direct view was sent, since the picture began. */
@@ -142,13 +153,17 @@ export async function sampleWebRtc(): Promise<PageSample> {
         ? (decodeTime / decoded) * 1000
         : null;
   // What the video element drew: its own count, where it keeps one.
-  const video = document.querySelector('video#screen') as HTMLVideoElement | null;
+  // The screen, or the video the upscaled screen is drawn from.
+  const video = document.querySelector(
+    'video#screen, video[data-upscale-source]'
+  ) as HTMLVideoElement | null;
   const playback = video?.getVideoPlaybackQuality?.();
   const implementation =
     typeof inbound.decoderImplementation === 'string' ? inbound.decoderImplementation : null;
   const hardware = inbound.powerEfficientDecoder === true;
   return {
     ...sample,
+    upscale: videoUpscale,
     bytes: number(inbound.bytesReceived),
     framesReceived: number(inbound.framesReceived),
     framesDecoded: number(inbound.framesDecoded),

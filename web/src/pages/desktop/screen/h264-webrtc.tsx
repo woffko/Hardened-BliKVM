@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Spin } from 'antd';
-import clsx from 'clsx';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
 import { watchPeer } from '@/lib/page-video.ts';
-import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, upscaleStoppedAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { useUpscale } from '@/hooks/useUpscale.ts';
 
+import { UpscaledVideo } from './upscaled-video.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
 
 type SignalingMessage = {
@@ -35,7 +35,9 @@ export const H264Webrtc = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const videoOfferSent = useRef(false);
   const videoIceCandidates = useRef<RTCIceCandidate[]>([]);
-  const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
+  const upscale = useUpscale();
+  const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
     maxHeight: '100%',
     objectFit: 'scale-down'
@@ -244,20 +246,17 @@ export const H264Webrtc = () => {
         data-kvm-screen-scroll
         className="flex h-full min-h-0 w-full min-w-0 items-start justify-start overflow-auto overscroll-contain bg-black"
       >
-        <video
-          id="screen"
-          ref={videoRef}
-          {...pictureAttributes(resolution)}
-          className={clsx('m-auto block select-none', mouseStyle)}
-          style={mediaStyle}
-          muted
-          autoPlay
-          playsInline
-          controls={false}
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-          }}
+        <UpscaledVideo
+          videoRef={videoRef}
+          upscale={upscale}
+          vp8Range={false}
+          videoStyle={mediaStyle}
+          mediaStyle={mediaStyle}
+          drawn={drawn}
+          pixelRatio={pixelRatio}
+          resolution={resolution}
+          mouseStyle={mouseStyle}
+          onStopped={setUpscaleStopped}
           onPlaying={() => {
             setIsLoading(false);
           }}
