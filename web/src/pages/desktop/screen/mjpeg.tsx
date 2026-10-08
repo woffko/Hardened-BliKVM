@@ -5,6 +5,7 @@ import { useAtom, useAtomValue } from 'jotai';
 import { stopFrameDetect } from '@/api/stream.ts';
 import { getFrameDetect } from '@/lib/localstorage.ts';
 import * as storage from '@/lib/localstorage.ts';
+import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
 import { client } from '@/lib/websocket.ts';
@@ -106,6 +107,7 @@ export const Mjpeg = () => {
     >
       <img
         id="screen"
+        {...pictureAttributes(resolution)}
         className={clsx('m-auto block select-none', mouseStyle)}
         style={{
           ...mediaStyle,

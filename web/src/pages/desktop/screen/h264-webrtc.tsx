@@ -6,6 +6,7 @@ import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
 import { watchPeer } from '@/lib/page-video.ts';
+import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
@@ -246,6 +247,7 @@ export const H264Webrtc = () => {
         <video
           id="screen"
           ref={videoRef}
+          {...pictureAttributes(resolution)}
           className={clsx('m-auto block select-none', mouseStyle)}
           style={mediaStyle}
           muted

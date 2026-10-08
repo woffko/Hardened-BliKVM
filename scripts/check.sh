@@ -181,6 +181,8 @@ node --test tools/test_quic_messages.mjs
 node --test tools/test_quic_video_receiver.mjs tools/test_quic_board_clock.mjs tools/test_quic_h264.mjs
 # The page's table for the board's VP8 picture, and its GPU check.
 node --test tools/test_vp8_range.mjs
+# Where the pointer falls in the picture, whatever the screen element holds.
+node --test tools/test_pointer_map.mjs
 # The upscaler bench of phase 0 of the screen-upscaling plan: its measures, and its tools parse.
 node --test tools/test_upscale_bench.mjs
 node --check tools/upscale/bench.js
@@ -944,6 +946,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
+pnpm_web exec prettier --check '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

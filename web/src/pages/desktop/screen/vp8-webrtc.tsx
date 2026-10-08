@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import * as storage from '@/lib/localstorage.ts';
 import { watchPeer } from '@/lib/page-video.ts';
+import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { checkSession } from '@/lib/session-check.ts';
 import { drawsWithGpu, VP8_RANGE_FILTER_ID, vp8RangeTableValues } from '@/lib/vp8-range.ts';
@@ -216,6 +217,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
         <video
           id="screen"
           ref={videoRef}
+          {...pictureAttributes(resolution)}
           className={clsx('m-auto block select-none', mouseStyle)}
           style={rangeFix ? { ...mediaStyle, filter: `url(#${VP8_RANGE_FILTER_ID})` } : mediaStyle}
           muted

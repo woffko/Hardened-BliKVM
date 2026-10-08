@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 
 import * as storage from '@/lib/localstorage.ts';
+import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { quicSession } from '@/lib/quic/session.ts';
 import type { FromVideoWorker, ToVideoWorker } from '@/lib/quic/video.worker.ts';
 import VideoWorker from '@/lib/quic/video.worker.ts?worker';
@@ -149,6 +150,7 @@ export const H264Quic = () => {
           id="screen"
           ref={canvasRef}
           data-video-transport="quic"
+          {...pictureAttributes(resolution)}
           className={clsx('m-auto block select-none', mouseStyle)}
           style={mediaStyle}
         ></canvas>

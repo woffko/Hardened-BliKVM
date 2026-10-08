@@ -5,6 +5,7 @@ import { w3cwebsocket as W3cWebSocket } from 'websocket';
 
 import * as storage from '@/lib/localstorage.ts';
 import { directCounters } from '@/lib/page-video.ts';
+import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
@@ -91,6 +92,7 @@ export const H264Direct = () => {
       <canvas
         id="screen"
         ref={canvasRef}
+        {...pictureAttributes(resolution)}
         className={clsx('m-auto block select-none', mouseStyle)}
         style={mediaStyle}
       ></canvas>
