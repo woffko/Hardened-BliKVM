@@ -4,7 +4,7 @@ import { useAtomValue } from 'jotai';
 import { MouseReportRelative } from '@/lib/mouse.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { pointerSensitivityAtom, scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, screenElementAtom } from '@/jotai/screen.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import {
@@ -40,6 +40,8 @@ export const MobileTrackpad = () => {
   const scrollInterval = useAtomValue(scrollIntervalAtom);
   const pointerSensitivity = useAtomValue(pointerSensitivityAtom);
   const resolution = useAtomValue(resolutionAtom);
+  // The element the view draws on; input binds to it again when it changes.
+  const screenFromView = useAtomValue(screenElementAtom);
   const { restricted, reportHid } = useHidLease();
 
   const mouseRef = useRef(new MouseReportRelative());
@@ -57,7 +59,7 @@ export const MobileTrackpad = () => {
   const drainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const screen = document.getElementById('screen') as HTMLElement | null;
+    const screen = (screenFromView ?? document.getElementById('screen')) as HTMLElement | null;
     if (!screen) return;
 
     const target = (document.getElementById('kvm-pointer-surface') ?? screen) as HTMLElement;
@@ -366,7 +368,15 @@ export const MobileTrackpad = () => {
       sendReport(mouse.reset());
       emitMobileCursorHide(0);
     };
-  }, [scrollDirection, scrollInterval, pointerSensitivity, resolution, restricted, reportHid]);
+  }, [
+    screenFromView,
+    scrollDirection,
+    scrollInterval,
+    pointerSensitivity,
+    resolution,
+    restricted,
+    reportHid
+  ]);
 
   return null;
 };

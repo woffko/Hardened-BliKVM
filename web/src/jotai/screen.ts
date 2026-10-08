@@ -36,3 +36,8 @@ export const upscaleAtom = atom<UpscaleSetting>(storedUpscale());
 // Why upscaling stopped for this page load, null while it may run: no
 // WebGL2 where the view draws, its context lost, or frames lost to it.
 export const upscaleStoppedAtom = atom<UpscaleStop | null>(null);
+
+// The element the picture is drawn on (`#screen`), as the view mounts it:
+// input binds to it anew when a view replaces it (an upscaled canvas for its
+// video, a new canvas for a new worker).
+export const screenElementAtom = atom<HTMLElement | null>(null);

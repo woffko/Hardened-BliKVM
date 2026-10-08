@@ -11,6 +11,7 @@ import VideoWorker from '@/lib/quic/video.worker.ts?worker';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, upscaleStoppedAtom, videoScaleAtom } from '@/jotai/screen.ts';
 import { quicVideoAtom, quicVideoGivenUpAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
+import { useScreenRef } from '@/hooks/useScreenRef.ts';
 import { useUpscale } from '@/hooks/useUpscale.ts';
 
 import { useScreenFit } from './use-screen-fit.ts';
@@ -45,7 +46,8 @@ export const H264Quic = () => {
   const upscaling = upscale !== 'off';
   const upscaleRef = useRef(upscale);
   upscaleRef.current = upscale;
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const screenRef = useScreenRef(canvasRef);
   const workerRef = useRef<Worker | null>(null);
   // A canvas can be handed to a worker once; a new one is mounted for the
   // next worker.
@@ -192,7 +194,7 @@ export const H264Quic = () => {
         <canvas
           key={`${canvasKey}:${upscaling ? 'upscaled' : 'plain'}`}
           id="screen"
-          ref={canvasRef}
+          ref={screenRef}
           data-video-transport="quic"
           {...pictureAttributes(resolution)}
           className={clsx('m-auto block select-none', mouseStyle)}

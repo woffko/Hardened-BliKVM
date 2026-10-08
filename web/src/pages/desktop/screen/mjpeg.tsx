@@ -12,6 +12,7 @@ import { client } from '@/lib/websocket.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
+import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
 import { useScreenFit } from './use-screen-fit.ts';
 
@@ -26,6 +27,7 @@ export const Mjpeg = () => {
   const [streamNonce, setStreamNonce] = useState(0);
   const [retries, setRetries] = useState(0);
   const streamInputs = useRef({ isWritable });
+  const screenRef = useScreenRef<HTMLImageElement>();
   const streamURL = `${getBaseUrl('http')}/api/stream/mjpeg`;
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
@@ -107,6 +109,7 @@ export const Mjpeg = () => {
     >
       <img
         id="screen"
+        ref={screenRef}
         {...pictureAttributes(resolution)}
         className={clsx('m-auto block select-none', mouseStyle)}
         style={{

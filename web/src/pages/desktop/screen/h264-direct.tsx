@@ -9,6 +9,7 @@ import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse';
 import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
 import DirectWorker from './direct.worker.ts?worker';
 import { useScreenFit } from './use-screen-fit.ts';
@@ -18,7 +19,8 @@ export const H264Direct = () => {
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const screenRef = useScreenRef(canvasRef);
   const workerRef = useRef<Worker | null>(null);
   const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
@@ -91,7 +93,7 @@ export const H264Direct = () => {
     >
       <canvas
         id="screen"
-        ref={canvasRef}
+        ref={screenRef}
         {...pictureAttributes(resolution)}
         className={clsx('m-auto block select-none', mouseStyle)}
         style={mediaStyle}

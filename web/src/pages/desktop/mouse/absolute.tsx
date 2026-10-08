@@ -6,7 +6,7 @@ import { MouseReportAbsolute } from '@/lib/mouse.ts';
 import { pictureSize, pointInPicture } from '@/lib/pointer-map.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
+import { resolutionAtom, screenElementAtom, videoScaleAtom } from '@/jotai/screen.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 import { useIsTouchLayout } from '@/hooks/useResponsiveLayout.ts';
 
@@ -32,6 +32,8 @@ const CURSOR_VIEW_MARGIN = 48;
 export const Absolute = () => {
   const isTouchLayout = useIsTouchLayout();
   const resolution = useAtomValue(resolutionAtom);
+  // The element the view draws on; input binds to it again when it changes.
+  const screenFromView = useAtomValue(screenElementAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
   const scrollDirection = useAtomValue(scrollDirectionAtom);
   const scrollInterval = useAtomValue(scrollIntervalAtom);
@@ -108,7 +110,7 @@ export const Absolute = () => {
   }, [isTouchLayout, resolution?.height, resolution?.width]);
 
   useEffect(() => {
-    const screen = document.getElementById('screen') as HTMLElement | null;
+    const screen = (screenFromView ?? document.getElementById('screen')) as HTMLElement | null;
     if (!screen) return;
     const screenElement = screen;
     const pointerSurface = document.getElementById('kvm-pointer-surface') as HTMLElement | null;
@@ -591,7 +593,7 @@ export const Absolute = () => {
         clearTimeout(longPressTimerRef.current);
       }
     };
-  }, [isTouchLayout, resolution, scrollDirection, scrollInterval, setVideoScale]);
+  }, [isTouchLayout, resolution, screenFromView, scrollDirection, scrollInterval, setVideoScale]);
 
   // Mouse event handler
   function handleMouseEvent(event: MouseAbsoluteEvent) {
