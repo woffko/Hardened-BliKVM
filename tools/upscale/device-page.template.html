@@ -1,0 +1,575 @@
+<title>BLi-KVM Upscaler Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+/>
+<style>
+  /* Layout: one column of instrument panels, readable on a phone held upright; numbers in a mono face. */
+  :root {
+    --bg: #eef2f4;
+    --panel: #ffffff;
+    --ink: #142028;
+    --muted: #55656f;
+    --line: #d3dce1;
+    --accent: #0a6c96;
+    --accent-ink: #ffffff;
+    --good: #1c7a3d;
+    --warn: #9a5800;
+    --bad: #b3261e;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+    --display: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1418;
+      --panel: #151d23;
+      --ink: #e2e9ed;
+      --muted: #94a5af;
+      --line: #27343c;
+      --accent: #5ab6de;
+      --accent-ink: #062030;
+      --good: #57c785;
+      --warn: #e2a64e;
+      --bad: #f0786f;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1418;
+    --panel: #151d23;
+    --ink: #e2e9ed;
+    --muted: #94a5af;
+    --line: #27343c;
+    --accent: #5ab6de;
+    --accent-ink: #062030;
+    --good: #57c785;
+    --warn: #e2a64e;
+    --bad: #f0786f;
+    color-scheme: dark;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding-inline: 16px;
+    padding-block: 28px 56px;
+    display: grid;
+    gap: 18px;
+  }
+  header {
+    display: grid;
+    gap: 6px;
+  }
+  .eyebrow {
+    font: 500 12px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1,
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h1 {
+    font-size: 30px;
+    line-height: 1.15;
+  }
+  h2 {
+    font-size: 19px;
+  }
+  p {
+    margin: 0;
+    max-width: 66ch;
+  }
+  .lede {
+    color: var(--muted);
+  }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 18px;
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 16px;
+    margin: 0;
+  }
+  dt {
+    color: var(--muted);
+  }
+  dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  button {
+    font: 600 15px/1 var(--sans);
+    padding: 11px 16px;
+    border-radius: 5px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-ink);
+    cursor: pointer;
+  }
+  button.quiet {
+    background: transparent;
+    color: var(--accent);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  button:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .status {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--muted);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  progress {
+    width: 100%;
+    height: 8px;
+    accent-color: var(--accent);
+  }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+  th,
+  td {
+    text-align: right;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  th:first-child,
+  td:first-child {
+    text-align: left;
+  }
+  th {
+    font: 500 12px/1.3 var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  td {
+    font: 13px/1.4 var(--mono);
+  }
+  .chip {
+    display: inline-block;
+    min-width: 4.5em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+  }
+  .good {
+    color: var(--good);
+  }
+  .warn {
+    color: var(--warn);
+  }
+  .bad {
+    color: var(--bad);
+  }
+  .muted {
+    color: var(--muted);
+  }
+  details summary {
+    cursor: pointer;
+    color: var(--accent);
+  }
+  pre {
+    font: 12px/1.45 var(--mono);
+    overflow-x: auto;
+    max-height: 320px;
+    background: var(--bg);
+    padding: 10px;
+    border-radius: 4px;
+    margin: 8px 0 0;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    background: #000000;
+    z-index: 10;
+    cursor: none;
+  }
+  #stage canvas {
+    display: block;
+  }
+  #sustain {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  #sustain-label {
+    position: absolute;
+    left: 16px;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    z-index: 1;
+    font: 500 14px/1.3 var(--mono);
+    background: var(--panel);
+    color: var(--ink);
+    padding: 8px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+    }
+  }
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">BLi-KVM · screen upscaling · phase 0</span>
+    <h1>BLi-KVM Upscaler Bench</h1>
+    <p class="lede">
+      The KVM captures the target's screen at 1920×1080. This page measures how fast this device's GPU enlarges such a
+      frame with each candidate upscaler, so the KVM page can pick one that never drops a frame. The results are kept
+      with this page; nothing else is sent anywhere.
+    </p>
+  </header>
+
+  <section aria-labelledby="device-title">
+    <h2 id="device-title">This device</h2>
+    <dl id="device">
+      <dt>GPU</dt>
+      <dd id="device-gpu">checking…</dd>
+      <dt>Screen</dt>
+      <dd id="device-screen">checking…</dd>
+      <dt>Float targets</dt>
+      <dd id="device-float">checking…</dd>
+    </dl>
+  </section>
+
+  <section aria-labelledby="run-title">
+    <h2 id="run-title">Benchmark</h2>
+    <p>
+      Takes about four minutes. Keep this tab in front and the screen on, and do not switch apps: for the last three
+      minutes the picture fills the window while five upscalers each draw a 30 frames a second feed for 30 seconds.
+    </p>
+    <div class="actions">
+      <button id="run" type="button">Run benchmark</button>
+      <span class="status" id="run-status" aria-live="polite">Not run yet on this device.</span>
+    </div>
+    <progress id="run-progress" value="0" max="1" hidden></progress>
+    <div class="table-wrap">
+      <table id="cost-table" aria-describedby="cost-note">
+        <thead>
+          <tr>
+            <th scope="col">Upscaler</th>
+            <th scope="col">2560×1440</th>
+            <th scope="col" id="screen-col">Screen</th>
+            <th scope="col">3840×2160</th>
+            <th scope="col">Lost / 30 s</th>
+          </tr>
+        </thead>
+        <tbody id="cost-body"></tbody>
+      </table>
+    </div>
+    <p class="status" id="cost-note">
+      Milliseconds per frame, the 1920×1080 frame already on the GPU. Budget per 2560×1440 frame: 1 ms on a desktop,
+      2 ms on a phone. Lost frames: frames of the 30 per second feed that were never drawn.
+    </p>
+    <div class="actions">
+      <span class="status" id="save-status">Results are saved with this page when the run ends.</span>
+      <button id="copy" type="button" class="quiet" hidden>Copy results</button>
+    </div>
+    <details>
+      <summary>Raw results</summary>
+      <pre id="raw">No results yet.</pre>
+    </details>
+  </section>
+
+  <section aria-labelledby="picture-title">
+    <h2 id="picture-title">Picture for the capture test</h2>
+    <p>
+      Open this page on the computer the KVM is connected to, with its desktop at 2560×1440, and press Show picture. It
+      fills the screen at one picture pixel per screen pixel, so the KVM's captured frame can be compared with the
+      original. Press Esc to close it.
+    </p>
+    <div class="actions">
+      <button id="show" type="button">Show picture</button>
+      <span class="status" id="show-status" aria-live="polite"></span>
+    </div>
+  </section>
+</main>
+
+<div id="stage" hidden><canvas id="stage-canvas"></canvas></div>
+<div id="sustain" hidden><span id="sustain-label"></span></div>
+<img id="calibration-source" alt="" hidden src="@CALIBRATION@" />
+
+<script type="module">
+  /*@BENCH@*/
+
+  const ANIME4K = "@ANIME4K@";
+  // The candidates still in the running after the quality measures, and the finalists drawn for 30 s each.
+  const MEASURED = [
+    "bilinear",
+    "bicubic",
+    "lanczos2",
+    "sgsr",
+    "fsr-easu",
+    "dering-12+bilinear",
+    "dering-12+bicubic",
+    "dering-12+sgsr",
+    "dering-12+fsr-easu",
+    "anime4k-s",
+    "anime4k-m",
+  ];
+  const SUSTAINED = ["bilinear", "sgsr", "fsr-easu", "dering-12+sgsr", "dering-12+fsr-easu"];
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (ms) => (ms == null ? "–" : ms < 10 ? ms.toFixed(2) : ms.toFixed(1));
+
+  function screenSize() {
+    const dpr = devicePixelRatio;
+    let w = Math.round(screen.width * dpr);
+    let h = Math.round(screen.height * dpr);
+    if (h > w) [w, h] = [h, w];
+    return [Math.min(w, 3840), Math.min(h, 2160)];
+  }
+
+  function isPhone() {
+    return matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 900;
+  }
+
+  function budgetClass(ms) {
+    if (ms == null) return "muted";
+    const budget = isPhone() ? 2 : 1;
+    return ms <= budget ? "good" : ms <= budget * 4 ? "warn" : "bad";
+  }
+
+  let gl0 = null;
+  try {
+    gl0 = document.createElement("canvas").getContext("webgl2");
+  } catch {}
+  const [sw, sh] = screenSize();
+  const SIZES = [[2560, 1440], [sw, sh], [3840, 2160]].filter((s, i, all) => all.findIndex((t) => t[0] === s[0] && t[1] === s[1]) === i);
+  $("device-screen").textContent = `${screen.width}×${screen.height} at ${devicePixelRatio}× = ${sw}×${sh} pixels`;
+  $("screen-col").textContent = `${sw}×${sh}`;
+  if (gl0) {
+    const info = deviceInfo(gl0);
+    $("device-gpu").textContent = info.renderer;
+    $("device-float").textContent = info.floatTargets ? "yes (the Anime4K upscalers can run)" : "no (the Anime4K upscalers are skipped)";
+    gl0.getExtension("WEBGL_lose_context")?.loseContext();
+  } else {
+    $("device-gpu").textContent = "no WebGL2: this browser cannot run the upscalers";
+    $("device-float").textContent = "–";
+    $("run").disabled = true;
+  }
+
+  const results = { savedAt: null, cost: null, sustained: [] };
+
+  function render() {
+    const body = $("cost-body");
+    body.replaceChildren();
+    const rows = results.cost?.rows ?? [];
+    const names = [...new Set(rows.map((r) => r.candidate))];
+    const sizes = [`2560x1440`, `${sw}x${sh}`, `3840x2160`];
+    for (const name of names) {
+      const tr = document.createElement("tr");
+      const th = document.createElement("td");
+      th.textContent = name;
+      tr.append(th);
+      sizes.forEach((size, i) => {
+        const td = document.createElement("td");
+        const row = rows.find((r) => r.candidate === name && r.size === size);
+        if (row) {
+          const chip = document.createElement("span");
+          chip.className = i === 0 ? `chip ${budgetClass(row.ms)}` : row.ms == null ? "muted" : "";
+          chip.textContent = row.ms == null ? row.note ?? "–" : fmt(row.ms);
+          td.append(chip);
+        }
+        tr.append(td);
+      });
+      const td = document.createElement("td");
+      const run = results.sustained.find((r) => r.candidate === name);
+      td.textContent = run ? (run.skipped ? "skipped" : `${run.lost} of ${run.arrived}`) : "";
+      if (run && !run.skipped) td.className = run.lost === 0 ? "good" : run.lost <= 3 ? "warn" : "bad";
+      tr.append(td);
+      body.append(tr);
+    }
+    $("raw").textContent = results.cost ? JSON.stringify(results, null, 1) : "No results yet.";
+  }
+
+  async function save() {
+    const db = window.claude?.use ? await window.claude.use("db") : null;
+    if (!db) {
+      $("save-status").textContent = "This view cannot save results. Copy them and send them over.";
+      $("copy").hidden = false;
+      return;
+    }
+    try {
+      const ref = await db.collection("runs").add(JSON.parse(JSON.stringify(results)));
+      $("save-status").textContent = `Saved as run ${ref.id}.`;
+    } catch (error) {
+      $("save-status").textContent = `Saving failed (${error?.code ?? error}). Copy the results and send them over.`;
+      $("copy").hidden = false;
+    }
+  }
+
+  $("copy").addEventListener("click", async () => {
+    const text = JSON.stringify(results);
+    try {
+      await navigator.clipboard.writeText(text);
+      $("save-status").textContent = "Results copied.";
+    } catch {
+      const range = document.createRange();
+      $("raw").parentElement.open = true;
+      range.selectNodeContents($("raw"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      $("save-status").textContent = "Copying was refused; the results are selected below.";
+    }
+  });
+
+  $("run").addEventListener("click", async () => {
+    $("run").disabled = true;
+    $("run-progress").hidden = false;
+    let lock = null;
+    try {
+      lock = await navigator.wakeLock?.request("screen");
+    } catch {}
+    const total = MEASURED.length * SIZES.length + SUSTAINED.length;
+    let done = 0;
+    const step = (text) => {
+      $("run-status").textContent = text;
+      $("run-progress").value = done / total;
+    };
+    try {
+      step("Measuring the cost of each upscaler…");
+      results.cost = await runCost({
+        anime4k: ANIME4K,
+        candidates: MEASURED,
+        sizes: SIZES,
+        onProgress: (partial) => {
+          results.cost = partial;
+          done = partial.rows.length;
+          step(`Measured ${done} of ${MEASURED.length * SIZES.length}…`);
+          render();
+        },
+      });
+      results.sustained = [];
+      for (const name of SUSTAINED) {
+        const cost = results.cost.rows.find((r) => r.candidate === name && r.size === `${sw}x${sh}`);
+        if (!cost || cost.ms == null || cost.ms > 30) {
+          results.sustained.push({ candidate: name, skipped: true, reason: cost?.ms == null ? cost?.note ?? "not measured" : "over 30 ms a frame" });
+          done++;
+          render();
+          continue;
+        }
+        $("sustain").hidden = false;
+        $("sustain-label").textContent = `${name}: drawing a 30 frames a second feed for 30 s`;
+        step(`Drawing with ${name} for 30 s…`);
+        results.sustained.push(await runSustained({ anime4k: ANIME4K, candidate: name, w: sw, h: sh, seconds: 30, host: $("sustain") }));
+        $("sustain").hidden = true;
+        done++;
+        render();
+      }
+      results.savedAt = new Date().toISOString();
+      step("Done.");
+      render();
+      await save();
+    } catch (error) {
+      $("sustain").hidden = true;
+      step(`Stopped: ${error?.message ?? error}`);
+      render();
+      await save();
+    } finally {
+      $("run").disabled = false;
+      $("run-progress").hidden = true;
+      lock?.release?.().catch(() => {});
+    }
+  });
+
+  // The calibration picture, drawn at one picture pixel per device pixel in full screen.
+  const stage = $("stage");
+  const canvas = $("stage-canvas");
+  function drawPicture() {
+    const dpr = devicePixelRatio;
+    const box = stage.getBoundingClientRect();
+    // A fractional pixel ratio can leave the full-screen box half a pixel off the screen's size.
+    const near = (value, want) => (Math.abs(value - want) <= 1 ? want : value);
+    const w = near(Math.round(box.width * dpr), 2560);
+    const h = near(Math.round(box.height * dpr), 1440);
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = `${w / dpr}px`;
+    canvas.style.height = `${h / dpr}px`;
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    const picture = $("calibration-source");
+    if (w === 2560 && h === 1440) {
+      ctx.drawImage(picture, 0, 0);
+      $("show-status").textContent = "Shown at 2560×1440.";
+    } else {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `${Math.round(20 * dpr)}px sans-serif`;
+      const words = `This screen is ${w}×${h} pixels. Set the desktop to 2560×1440 and show the picture again.`.split(" ");
+      let line = "", y = 60 * dpr;
+      for (const word of words) {
+        if (line && ctx.measureText(`${line} ${word}`).width > w - 48 * dpr) {
+          ctx.fillText(line, 24 * dpr, y);
+          line = word;
+          y += 30 * dpr;
+        } else line = line ? `${line} ${word}` : word;
+      }
+      ctx.fillText(line, 24 * dpr, y);
+      $("show-status").textContent = `The screen is ${w}×${h}, not 2560×1440.`;
+    }
+  }
+  $("show").addEventListener("click", async () => {
+    stage.hidden = false;
+    try {
+      await stage.requestFullscreen({ navigationUI: "hide" });
+    } catch {
+      stage.hidden = true;
+      $("show-status").textContent = "Full screen was refused. Open the page in a desktop browser and try again.";
+      return;
+    }
+    requestAnimationFrame(() => requestAnimationFrame(drawPicture));
+  });
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement) stage.hidden = true;
+    else requestAnimationFrame(drawPicture);
+  });
+  render();
+</script>
