@@ -27,6 +27,12 @@ const TEXTS = {
   "qualityMonitor.jpegQuality": "JPEG {{value}}",
   "qualityMonitor.videoEngine": "video engine",
   "qualityMonitor.chosen": "{{value}} chosen",
+  "qualityMonitor.upscaleOff": "off",
+  "qualityMonitor.upscaleNotEnlarged": "on, not enlarged",
+  "qualityMonitor.upscaleWith": "deringing and SGSR, {{sharpness}}",
+  "qualityMonitor.upscaleGpu": "{{value}} ms on the GPU",
+  "qualityMonitor.upscaleDraw": "{{value}} ms to draw",
+  "screen.upscaleMedium": "Medium",
 };
 const t = (key, options) =>
   (TEXTS[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -48,6 +54,7 @@ const sample = (over = {}) => ({
   decoder: null,
   width: null,
   height: null,
+  upscale: null,
   quic: null,
   webrtc: null,
   ...over,
@@ -503,3 +510,25 @@ test(
     assert.doesNotThrow(() => monitor.saveLayout(layout));
   },
 );
+
+test("the local section says how the view draws its frames", { skip }, () => {
+  const rowOf = (upscale) =>
+    monitor
+      .extendedSections(inputs({ sample: sample({ upscale }) }), t)
+      .find((section) => section.key === "local")
+      .rows.find((row) => row.key === "upscaler")?.value;
+  assert.equal(rowOf(null), undefined);
+  assert.equal(rowOf({ mode: "off", drawMs: null, gpuMs: null }), "off");
+  assert.equal(
+    rowOf({ mode: "plain", drawMs: 0.1, gpuMs: null }),
+    "on, not enlarged",
+  );
+  assert.equal(
+    rowOf({ mode: "medium", drawMs: 0.4, gpuMs: 0.27 }),
+    "deringing and SGSR, medium, 0.27 ms on the GPU",
+  );
+  assert.equal(
+    rowOf({ mode: "medium", drawMs: 0.4, gpuMs: null }),
+    "deringing and SGSR, medium, 0.40 ms to draw",
+  );
+});

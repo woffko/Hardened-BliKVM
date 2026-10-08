@@ -42,6 +42,7 @@ const empty = (at: number): PageSample => ({
   decoder: null,
   width: null,
   height: null,
+  upscale: null,
   quic: null,
   webrtc: null
 });
@@ -61,6 +62,7 @@ export function sampleQuic(status: QuicStatus, stats: VideoStats | null): PageSa
     delayMs: stats.ageMedianMs,
     decodeMs: stats.decodeMedianMs,
     decoder: 'WebCodecs',
+    upscale: stats.upscale,
     quic: {
       roundTripMs: connected?.roundTripMs ?? null,
       packetsLost: connected?.counters?.packetsLost ?? null,

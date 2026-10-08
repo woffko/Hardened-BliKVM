@@ -3,6 +3,8 @@
 // `GET /api/vm/quality`, what the page measures of its own picture, and the
 // rows of its two levels made from both.
 
+import type { UpscaleReport } from './upscale/upscaler.ts';
+
 const LAYOUT_KEY = 'hardened-blikvm-quality-monitor';
 
 export type QualityLevel = 'basic' | 'extended';
@@ -138,6 +140,8 @@ export type PageSample = {
   decoder: string | null;
   width: number | null;
   height: number | null;
+  /** How the view draws its frames, where it says (the QUIC view). */
+  upscale: UpscaleReport | null;
   /** QUIC: the session's and the gateway's counters. */
   quic: {
     roundTripMs: number | null;
@@ -189,6 +193,23 @@ export function pageRates(previous: PageSample | null, current: PageSample): Pag
     drawnPerSecond: rate((sample) => sample.framesDrawn),
     droppedPerSecond: rate((sample) => sample.framesDropped)
   };
+}
+
+/** How the frames are drawn, as the monitor's row says it. */
+function upscaleText(report: UpscaleReport, t: Translate): string {
+  if (report.mode === 'off') return t('qualityMonitor.upscaleOff');
+  if (report.mode === 'plain') return t('qualityMonitor.upscaleNotEnlarged');
+  const sharpness = t(
+    `screen.upscale${report.mode[0].toUpperCase()}${report.mode.slice(1)}`
+  ).toLowerCase();
+  const how = t('qualityMonitor.upscaleWith', { sharpness });
+  if (report.gpuMs !== null) {
+    return `${how}, ${t('qualityMonitor.upscaleGpu', { value: report.gpuMs.toFixed(2) })}`;
+  }
+  if (report.drawMs !== null) {
+    return `${how}, ${t('qualityMonitor.upscaleDraw', { value: report.drawMs.toFixed(2) })}`;
+  }
+  return how;
 }
 
 /** One row: what it is, and its value as shown; `-` where not known. */
@@ -443,6 +464,7 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
     );
     put('decodeTime', 'qualityMonitor.decodeTime', `${fixed(sample?.decodeMs, 1)} ms`);
   }
+  if (sample?.upscale) put('upscaler', 'qualityMonitor.upscaler', upscaleText(sample.upscale, t));
   put('refresh', 'qualityMonitor.refresh', `${fixed(inputs.refreshHz)} Hz`);
 
   return [
