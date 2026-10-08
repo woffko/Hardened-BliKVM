@@ -11,7 +11,10 @@
 // loss it asks for none. Where the picture cannot be had over the session,
 // H.264 stays on WebRTC and Settings says why. In the Restricted firewall
 // mode, which closes WebRTC's ports and admits the session's, H.264 is to be
-// had over the session and nothing else is.
+// had over the session and nothing else is. With upscaling on, the picture
+// is drawn through the page's upscaler and stays readable, of the same
+// levels, sharper than the browser's stretch, and the pointer lands where it
+// is on the picture.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
@@ -29,6 +32,7 @@ import {
   openPage,
   openSettings,
   sleep,
+  squareEdgeRise,
   startFrameSource,
   until,
   VIDEO_MODE_KEY,
@@ -320,6 +324,205 @@ try {
     assert.equal(await menuEntry(page), "H.264 (WebRTC)");
     assert.deepEqual(errors, []);
     await finish(page, context);
+  }
+
+  // Upscaling (docs/design/screen-upscaling-v1.md). In a browser that draws
+  // with a GPU (its WebGL renderer named as one) the picture shown at 200 %:
+  // without upscaling the browser stretches the frame's canvas; with Auto the
+  // worker draws through WebGL2 into a canvas of the shown size. The frame's
+  // number reads and moves on, the dark squares are still drawn at 16, the
+  // squares' edges rise at least a quarter more narrowly than the browser's
+  // stretch, and the pointer lands where it is on the picture, from a mouse
+  // and from a finger.
+  {
+    const GPU =
+      "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)";
+    const zoomed = (upscale) => (context) =>
+      context.addInitScript(
+        ([gpu, upscale]) => {
+          localStorage.setItem("hardened-blikvm-video-scale", "2");
+          localStorage.setItem(
+            "hardened-blikvm-upscale",
+            JSON.stringify({ mode: upscale, sharpness: "medium" }),
+          );
+          const getParameter = WebGLRenderingContext.prototype.getParameter;
+          WebGLRenderingContext.prototype.getParameter = function (name) {
+            // UNMASKED_RENDERER_WEBGL and RENDERER.
+            if (name === 0x9246 || name === 0x1f01) return gpu;
+            return getParameter.call(this, name);
+          };
+        },
+        [GPU, upscale],
+      );
+    const drawnAs = (page) =>
+      page.evaluate(() => {
+        const canvas = document.querySelector("canvas#screen");
+        return {
+          mode: canvas.dataset.quicUpscale,
+          buffer: canvas.dataset.quicBuffer,
+          picture: `${canvas.dataset.pictureWidth}x${canvas.dataset.pictureHeight}`,
+        };
+      });
+    /**
+     * The squares' edge rise and dark level over a few frames, to step over
+     * frames with few boundaries.
+     */
+    const squares = async (page) => {
+      const seen = [];
+      for (let attempt = 0; attempt < 8 && seen.length < 3; attempt += 1) {
+        const value = await squareEdgeRise(page, 2);
+        if (value?.dark !== null && value !== null) seen.push(value);
+        await sleep(150);
+      }
+      assert.ok(seen.length, "no square boundary seen");
+      const mean = (pick) =>
+        seen.reduce((sum, value) => sum + pick(value), 0) / seen.length;
+      return { rise: mean((v) => v.rise), dark: mean((v) => v.dark) };
+    };
+
+    let plainRise;
+    {
+      const { context, page, errors } = await open({ prepare: zoomed("off") });
+      await playing(page);
+      await until("the plain picture reports itself", async () =>
+        (await drawnAs(page)).mode === "off" ? true : null,
+      );
+      assert.equal((await drawnAs(page)).buffer, "640x360");
+      plainRise = (await squares(page)).rise;
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
+
+    {
+      const { context, page, errors } = await open({ prepare: zoomed("auto") });
+      await playing(page);
+      await until("the picture is upscaled", async () =>
+        (await drawnAs(page)).mode === "medium" ? true : null,
+      );
+      assert.deepEqual(await drawnAs(page), {
+        mode: "medium",
+        buffer: "1280x720",
+        picture: "640x360",
+      });
+      const before = await frameNumber(page, 2);
+      await sleep(1000);
+      const after = await frameNumber(page, 2);
+      assert.ok(
+        before !== null && after !== null && after > before,
+        `the upscaled picture's number went from ${before} to ${after}`,
+      );
+      const upscaled = await squares(page);
+      assert.ok(
+        Math.abs(upscaled.dark - 16) <= 4,
+        `the upscaled dark squares are drawn at ${upscaled.dark.toFixed(1)}, not 16`,
+      );
+      const upscaledRise = upscaled.rise;
+      assert.ok(
+        upscaledRise <= plainRise * 0.75,
+        `the squares' edges rise in ${upscaledRise.toFixed(2)} px upscaled, ${plainRise.toFixed(2)} px stretched`,
+      );
+      const seen = await stats(page);
+      assert.equal(seen.dropped, 0);
+      assert.equal(seen.resets, 0);
+
+      // The pointer: the mouse at a point of the picture. Without the
+      // board's power control the page sends the report over its WebSocket
+      // at once (with it, only once remote control is enabled).
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
+    {
+      board.powerControl = false;
+      const sent = [];
+      const { context, page, errors } = await open({
+        prepare: async (context) => {
+          await zoomed("auto")(context);
+          await context.routeWebSocket("**/api/ws", (socket) =>
+            socket.onMessage((message) => {
+              if (typeof message !== "string") sent.push([...message]);
+            }),
+          );
+        },
+      });
+      await playing(page);
+      await until("the picture is upscaled", async () =>
+        (await drawnAs(page)).mode === "medium" ? true : null,
+      );
+      const box = await page.locator("canvas#screen").boundingBox();
+      const point = { x: 201, y: 401 };
+      await page.mouse.move(box.x + point.x, box.y + point.y);
+      // MessageEvent.Mouse, then the absolute report: buttons, x, y, wheel.
+      const report = await until(
+        "the mouse's report is sent",
+        () => sent.filter((data) => data[0] === 2).at(-1) ?? null,
+      );
+      const at = (low, high) => report[low] | (report[high] << 8);
+      assert.equal(at(2, 3), Math.round((0x7fff * point.x) / box.width));
+      assert.equal(at(4, 5), Math.round((0x7fff * point.y) / box.height));
+      board.powerControl = true;
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+      board.leases.length = 0;
+    }
+    // A finger on a phone: the cursor moves by the finger's way over the
+    // picture as it is laid out, whatever the canvas holds.
+    {
+      const { context, page, errors } = await open({
+        mobile: true,
+        prepare: zoomed("auto"),
+      });
+      await playing(page);
+      await until("the phone's picture is upscaled", async () =>
+        (await drawnAs(page)).mode === "medium" ? true : null,
+      );
+      const touch = await context.newCDPSession(page);
+      const drag = async (distance) => {
+        const box = await page.locator("canvas#screen").boundingBox();
+        const view = await page
+          .locator("[data-kvm-screen-scroll]")
+          .boundingBox();
+        const x = view.x + view.width / 2 - distance / 2;
+        const y = view.y + view.height / 2;
+        await touch.send("Input.dispatchTouchEvent", {
+          type: "touchStart",
+          touchPoints: [{ x, y }],
+        });
+        for (let step = 1; step <= 10; step += 1) {
+          await touch.send("Input.dispatchTouchEvent", {
+            type: "touchMove",
+            touchPoints: [{ x: x + (distance * step) / 10, y }],
+          });
+        }
+        await touch.send("Input.dispatchTouchEvent", {
+          type: "touchEnd",
+          touchPoints: [],
+        });
+        return box.width;
+      };
+      // Where the cursor is on the picture, as a share of its width.
+      const cursor = () =>
+        page.evaluate(() => {
+          const screen = document
+            .getElementById("screen")
+            .getBoundingClientRect();
+          const mark = document.querySelector('[data-testid="mobile-cursor"]');
+          return (
+            (Number.parseFloat(mark.style.left) - screen.left) / screen.width
+          );
+        });
+      await drag(-40);
+      await sleep(200);
+      const from = await cursor();
+      const width = await drag(60);
+      await sleep(200);
+      const to = await cursor();
+      assert.ok(
+        Math.abs((to - from) * width - 60) <= 2,
+        `a finger moved 60 px, the cursor ${((to - from) * width).toFixed(1)} px`,
+      );
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
   }
 
   // A path that loses datagrams: the picture goes on and never steps back,

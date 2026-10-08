@@ -111,59 +111,157 @@ export async function startFrameSource(
  * neutral chroma; read as the board's colour space (the full range) that is
  * 16, read as the narrow range it is stretched to 0.
  */
-export async function darkSquareLevel(page) {
+export async function darkSquareLevel(page, scale = 1) {
   const box = await page.locator("#screen").boundingBox();
-  if (!box || box.width < 256 || box.height < 16) return null;
+  if (!box || box.width < 256 * scale || box.height < 16 * scale) return null;
   const png = await page.screenshot({
-    clip: { x: box.x, y: box.y, width: 256, height: 16 },
+    clip: { x: box.x, y: box.y, width: 256 * scale, height: 16 * scale },
   });
-  return page.evaluate(async (base64) => {
-    const image = await createImageBitmap(
-      new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
-        type: "image/png",
-      }),
-    );
-    const canvas = new OffscreenCanvas(256, 16);
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0);
-    const data = context.getImageData(15 * 16 + 5, 5, 6, 6).data;
-    let sum = 0;
-    for (let index = 0; index < data.length; index += 4)
-      sum += (data[index] + data[index + 1] + data[index + 2]) / 3;
-    return sum / (data.length / 4);
-  }, png.toString("base64"));
+  return page.evaluate(
+    async ({ base64, scale }) => {
+      const image = await createImageBitmap(
+        new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
+          type: "image/png",
+        }),
+      );
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      const data = context.getImageData(
+        Math.round((15 * 16 + 5) * scale),
+        Math.round(5 * scale),
+        Math.round(6 * scale),
+        Math.round(6 * scale),
+      ).data;
+      let sum = 0;
+      for (let index = 0; index < data.length; index += 4)
+        sum += (data[index] + data[index + 1] + data[index + 2]) / 3;
+      return sum / (data.length / 4);
+    },
+    { base64: png.toString("base64"), scale },
+  );
 }
 
-export async function frameNumber(page) {
+export async function frameNumber(page, scale = 1) {
   const box = await page.locator("#screen").boundingBox();
-  if (!box || box.width < 256 || box.height < 16) return null;
+  if (!box || box.width < 256 * scale || box.height < 16 * scale) return null;
   const png = await page.screenshot({
-    clip: { x: box.x, y: box.y, width: 256, height: 16 },
+    clip: { x: box.x, y: box.y, width: 256 * scale, height: 16 * scale },
   });
   // Decoded in the page: the middle of each square.
-  return page.evaluate(async (base64) => {
-    const image = await createImageBitmap(
-      new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
-        type: "image/png",
-      }),
-    );
-    const canvas = new OffscreenCanvas(256, 16);
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0);
-    let number = 0;
-    for (let bit = 0; bit < 16; bit += 1) {
-      const [red, green, blue] = context.getImageData(
-        bit * 16 + 8,
-        8,
-        1,
-        1,
-      ).data;
-      const light = (red + green + blue) / 3;
-      if (light > 180) number |= 1 << bit;
-      else if (light > 75) return null;
-    }
-    return number;
-  }, png.toString("base64"));
+  return page.evaluate(
+    async ({ base64, scale }) => {
+      const image = await createImageBitmap(
+        new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
+          type: "image/png",
+        }),
+      );
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      let number = 0;
+      for (let bit = 0; bit < 16; bit += 1) {
+        const [red, green, blue] = context.getImageData(
+          Math.round((bit * 16 + 8) * scale),
+          Math.round(8 * scale),
+          1,
+          1,
+        ).data;
+        const light = (red + green + blue) / 3;
+        if (light > 180) number |= 1 << bit;
+        else if (light > 75) return null;
+      }
+      return number;
+    },
+    { base64: png.toString("base64"), scale },
+  );
+}
+
+/**
+ * How sharply the page draws the edges of the frame number's squares, shown
+ * `scale` times their size: across every boundary between a white and a dark
+ * square among the first `squares` (those the page's menu bar never covers),
+ * the profile over the squares' middle rows, and the distance from its 10 %
+ * to its 90 % level, in CSS pixels; the mean over the boundaries, and the
+ * mean level of the dark squares' middles. `null` when the frame has no such
+ * boundary.
+ */
+export async function squareEdgeRise(page, scale = 1, squares = 12) {
+  const box = await page.locator("#screen").boundingBox();
+  if (!box || box.width < 256 * scale || box.height < 16 * scale) return null;
+  const png = await page.screenshot({
+    clip: { x: box.x, y: box.y, width: 256 * scale, height: 16 * scale },
+  });
+  return page.evaluate(
+    async ({ base64, scale, squares }) => {
+      const image = await createImageBitmap(
+        new Blob([Uint8Array.from(atob(base64), (one) => one.charCodeAt(0))], {
+          type: "image/png",
+        }),
+      );
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(image, 0, 0);
+      const { data, width } = context.getImageData(
+        0,
+        0,
+        image.width,
+        image.height,
+      );
+      const light = (x, y) => {
+        const at = 4 * (y * width + x);
+        return (data[at] + data[at + 1] + data[at + 2]) / 3;
+      };
+      const middle = Math.round(8 * scale);
+      const bits = [];
+      const darks = [];
+      for (let bit = 0; bit < squares; bit += 1) {
+        const level = light(Math.round((bit * 16 + 8) * scale), middle);
+        bits.push(level > 128);
+        if (level < 75) darks.push(level);
+      }
+      const reach = Math.round(6 * scale);
+      const rises = [];
+      for (let bit = 0; bit < squares - 1; bit += 1) {
+        if (bits[bit] === bits[bit + 1]) continue;
+        const edge = Math.round((bit + 1) * 16 * scale);
+        const profile = [];
+        for (let dx = -reach; dx < reach; dx += 1) {
+          let sum = 0;
+          let rows = 0;
+          for (
+            let y = Math.round(4 * scale);
+            y < Math.round(12 * scale);
+            y += 1
+          ) {
+            sum += light(edge + dx, y);
+            rows += 1;
+          }
+          profile.push(sum / rows);
+        }
+        const low = profile[0];
+        const high = profile[profile.length - 1];
+        const level = (share) => {
+          const wanted = low + (high - low) * share;
+          for (let at = 1; at < profile.length; at += 1) {
+            const [a, b] = [profile[at - 1], profile[at]];
+            if ((a - wanted) * (b - wanted) <= 0 && a !== b) {
+              return at - 1 + (wanted - a) / (b - a);
+            }
+          }
+          return null;
+        };
+        const [from, to] = [level(0.1), level(0.9)];
+        if (from !== null && to !== null) rises.push(Math.abs(to - from));
+      }
+      const mean = (values) =>
+        values.reduce((sum, value) => sum + value, 0) / values.length;
+      return rises.length
+        ? { rise: mean(rises), dark: darks.length ? mean(darks) : null }
+        : null;
+    },
+    { base64: png.toString("base64"), scale, squares },
+  );
 }
 
 /**
@@ -214,6 +312,9 @@ export class Board {
     this.unknownToken = false;
     this.clock = false;
     this.tooManySessions = false;
+    // The board's power control: without it the page sends input over its
+    // WebSocket at once, with no lease (the restricted controls need both).
+    this.powerControl = true;
     this.loggedOut = false;
     // What the gateway said about itself, `null` while it is not on the link.
     this.hello = null;
@@ -456,6 +557,14 @@ export class Board {
           system_settings: feature("read_only"),
         },
       },
+      ...(this.powerControl
+        ? {}
+        : {
+            power: {
+              ...defaultManifest().power,
+              status: feature("read_only"),
+            },
+          }),
     });
     await page.route("**/api/capabilities", (route) =>
       route.fulfill({ json: { code: 0, data: manifest } }),
