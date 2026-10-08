@@ -93,6 +93,12 @@ edge rise by at least 25 % against bilinear (or raises SSIM by at least
 (desktop) or 2 ms (phone) per 2560x1440 frame. Where none passes on phones,
 phones get bicubic or nothing. Time box: 8 hours.
 
+Result (2026-10-08, `audit-20261008-upscaling-gate0.md`): passed for both
+classes by a deringing pass (a 5x5 bilateral filter on the 1920x1080 frame)
+followed by SGSR 1. The deringing pass was added after the real pair showed
+that the bridge's JPEG ringing beside text kept every planned candidate over
+the halo limit. Only SGSR's code (BSD-3-Clause) ships.
+
 ## Phase 1: the rendering core
 
 1. `web/src/lib/upscale/`: a WebGL2 renderer that takes a `VideoFrame`, a
