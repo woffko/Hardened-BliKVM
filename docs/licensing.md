@@ -78,6 +78,19 @@ texts are installed with the encoder under
 
 All three are compatible with the project's GPL-3.0-only.
 
+## Shader code in the web page
+
+The page's upscaler (`web/src/lib/upscale/shaders.ts`,
+`docs/design/screen-upscaling-v1.md`) ports Qualcomm's Snapdragon Game Super
+Resolution 1 shader (`sgsr1_shader_mobile.frag`, BSD-3-Clause) from
+`SnapdragonStudios/snapdragon-gsr` at commit `d926f074bcb9`, the file checked
+by SHA-256. The source file keeps its notice and lists the changes; the
+licence's text ships beside the built page as `THIRD-PARTY-NOTICES.txt`
+(`web/public/`), as the licence asks of binary distributions. BSD-3-Clause is
+compatible with the project's GPL-3.0-only. The lab tools that chose it
+(`tools/upscale/`, never shipped) list what they port and load in their own
+`THIRD-PARTY-NOTICES.txt`.
+
 ## Rust crates of the QUIC gateway
 
 The QUIC transport (`docs/design/quic-transport-v1.md`) adds a QUIC and TLS

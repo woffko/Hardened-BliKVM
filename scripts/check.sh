@@ -214,6 +214,8 @@ node --check tools/playwright/csp_contract.mjs
 node --check tools/playwright/menu_autohide_contract.mjs
 node --check tools/playwright/webrtc_quality_contract.mjs
 node --check tools/playwright/vp8_range_contract.mjs
+node --check tools/playwright/upscale_renderer_contract.mjs
+node --check tools/playwright/upscale_reference.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
@@ -885,6 +887,9 @@ node tools/test_status_soak.mjs
 node tools/playwright/local_application_upload.mjs
 node tools/playwright/local_upload_logout.mjs
 pnpm_web build
+# The licence of the shader code the page ships (docs/licensing.md).
+grep -q 'Qualcomm Innovation Center' web/dist/THIRD-PARTY-NOTICES.txt
+grep -q 'Neither the name of the copyright holder' web/dist/THIRD-PARTY-NOTICES.txt
 pnpm_web lint
 node tools/playwright/restricted_control_lifecycle.mjs
 node tools/playwright/network_contract.mjs
@@ -894,6 +899,8 @@ node tools/playwright/csp_contract.mjs
 node tools/playwright/menu_autohide_contract.mjs
 node tools/playwright/webrtc_quality_contract.mjs
 node tools/playwright/vp8_range_contract.mjs
+# The page's upscaler against its CPU reference, its frames and its lost context.
+node tools/playwright/upscale_renderer_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs
