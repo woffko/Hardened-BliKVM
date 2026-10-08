@@ -15,6 +15,7 @@ import { FrameDetect } from './frame-detect';
 import { Quality } from './quality';
 import { Resolution } from './resolution';
 import { Scale } from './scale';
+import { Upscale } from './upscale';
 import { VideoMode } from './video-mode';
 import { WebrtcQuality } from './webrtc-quality';
 
@@ -154,6 +155,7 @@ export const Screen = () => {
         />
       )}
       <Scale />
+      <Upscale />
       {isWritable && videoMode === 'mjpeg' && videoSettings.includes('frame_detect') && (
         <FrameDetect />
       )}
