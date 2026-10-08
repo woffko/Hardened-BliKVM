@@ -7,8 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-/** Playwright's Chromium, where the installer puts it for this user. */
-export async function launchChromium() {
+/** Playwright's Chromium, where the installer puts it for this user; `options` adds launch options. */
+export async function launchChromium(options = {}) {
   const { chromium } = await import(
     pathToFileURL(
       process.env.PLAYWRIGHT_MODULE ??
@@ -26,6 +26,7 @@ export async function launchChromium() {
         os.homedir(),
         ".cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
       ),
+    ...options,
   });
 }
 

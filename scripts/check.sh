@@ -181,6 +181,12 @@ node --test tools/test_quic_messages.mjs
 node --test tools/test_quic_video_receiver.mjs tools/test_quic_board_clock.mjs tools/test_quic_h264.mjs
 # The page's table for the board's VP8 picture, and its GPU check.
 node --test tools/test_vp8_range.mjs
+# The upscaler bench of phase 0 of the screen-upscaling plan: its measures, and its tools parse.
+node --test tools/test_upscale_bench.mjs
+node --check tools/upscale/bench.js
+node --check tools/upscale/patterns.js
+node --check tools/upscale/run_quality.mjs
+node --check tools/upscale/build_device_page.mjs
 node --test tools/test_impair_proxies.mjs
 node --test tools/test_virtual_media_probe_app.mjs
 node --test tools/test_virtual_media_acceptance.mjs
