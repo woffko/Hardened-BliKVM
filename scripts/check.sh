@@ -218,6 +218,7 @@ node --check tools/playwright/webrtc_quality_contract.mjs
 node --check tools/playwright/vp8_range_contract.mjs
 node --check tools/playwright/upscale_renderer_contract.mjs
 node --check tools/playwright/upscale_reference.mjs
+node --check tools/playwright/screen_enlargement_contract.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
@@ -903,6 +904,7 @@ node tools/playwright/webrtc_quality_contract.mjs
 node tools/playwright/vp8_range_contract.mjs
 # The page's upscaler against its CPU reference, its frames and its lost context.
 node tools/playwright/upscale_renderer_contract.mjs
+node tools/playwright/screen_enlargement_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs

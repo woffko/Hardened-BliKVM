@@ -2,10 +2,20 @@ import type { CSSProperties, RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Resolution } from '@/types';
+import { usePixelRatio } from '@/hooks/usePixelRatio.ts';
 
 type ScreenFit = {
   containerRef: RefObject<HTMLDivElement>;
   mediaStyle: CSSProperties;
+  /** The picture's size on the page, in CSS pixels. */
+  drawn: { width: number; height: number };
+  /** Device pixels per CSS pixel. */
+  pixelRatio: number;
+  /**
+   * How much the picture is enlarged on the display: the fit, times the
+   * zoom, times the pixel ratio; above 1 the browser enlarges it.
+   */
+  enlargement: number;
 };
 
 const FALLBACK_SCREEN_WIDTH = 1920;
@@ -18,6 +28,7 @@ export function useScreenFit(
 ): ScreenFit {
   const containerRef = useRef<HTMLDivElement>(null);
   const [fitScale, setFitScale] = useState(1);
+  const pixelRatio = usePixelRatio();
 
   useEffect(() => {
     function updateFitScale() {
@@ -74,30 +85,41 @@ export function useScreenFit(
     return () => window.cancelAnimationFrame(frame);
   }, [fitScale, resolution?.height, resolution?.width, videoScale]);
 
-  const mediaStyle = useMemo<CSSProperties>(() => {
+  const drawn = useMemo(() => {
     const scale = fitScale * videoScale;
     const width =
       resolution?.width && resolution.width > 0 ? resolution.width : FALLBACK_SCREEN_WIDTH;
     const height =
       resolution?.height && resolution.height > 0 ? resolution.height : FALLBACK_SCREEN_HEIGHT;
+    return {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale))
+    };
+  }, [fitScale, resolution?.height, resolution?.width, videoScale]);
 
+  const mediaStyle = useMemo<CSSProperties>(() => {
     if (!resolution?.width || !resolution?.height) {
       return {
         ...fallbackStyle,
-        width: Math.max(1, Math.round(width * scale)),
-        height: Math.max(1, Math.round(height * scale)),
+        ...drawn,
         maxWidth: undefined,
         maxHeight: undefined,
         objectFit: 'cover'
       };
     }
 
-    return {
-      width: Math.max(1, Math.round(resolution.width * scale)),
-      height: Math.max(1, Math.round(resolution.height * scale)),
-      objectFit: 'cover'
-    };
-  }, [fallbackStyle, fitScale, resolution?.height, resolution?.width, videoScale]);
+    return { ...drawn, objectFit: 'cover' };
+  }, [drawn, fallbackStyle, resolution?.height, resolution?.width]);
 
-  return { containerRef, mediaStyle };
+  const enlargement = fitScale * videoScale * pixelRatio;
+
+  // What a probe reads without opening a menu.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.dataset.pictureEnlargement = enlargement.toFixed(3);
+    container.dataset.picturePixelRatio = String(pixelRatio);
+  }, [enlargement, pixelRatio]);
+
+  return { containerRef, mediaStyle, drawn, pixelRatio, enlargement };
 }
