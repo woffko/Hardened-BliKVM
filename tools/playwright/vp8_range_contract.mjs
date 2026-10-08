@@ -57,17 +57,37 @@ const jpeg = ([y, cb, cr]) =>
 const GPU =
   "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)";
 
-async function open(mode, marked, renderer) {
+async function open(
+  mode,
+  marked,
+  renderer,
+  { upscale = "off", ratio = 1, sent = null } = {},
+) {
   const context = await browser.newContext({
     viewport: { width: WIDTH, height: HEIGHT },
+    deviceScaleFactor: ratio,
   });
   await context.addCookies([
     { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
   ]);
   await context.addInitScript(
-    ([key, mode, patches, columns, width, height, marked, renderer]) => {
+    ([
+      key,
+      mode,
+      patches,
+      columns,
+      width,
+      height,
+      marked,
+      renderer,
+      upscale,
+    ]) => {
       localStorage.setItem(key, mode);
       localStorage.setItem("hardened-blikvm-menu-auto-hide", "always");
+      localStorage.setItem(
+        "hardened-blikvm-upscale",
+        JSON.stringify({ mode: upscale, sharpness: "medium" }),
+      );
       if (renderer) {
         const getParameter = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function (name) {
@@ -171,15 +191,47 @@ async function open(mode, marked, renderer) {
         writable: true,
       });
     },
-    [MODE_KEY, mode, PATCHES, COLUMNS, WIDTH, HEIGHT, marked, renderer],
+    [
+      MODE_KEY,
+      mode,
+      PATCHES,
+      COLUMNS,
+      WIDTH,
+      HEIGHT,
+      marked,
+      renderer,
+      upscale,
+    ],
   );
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  // Where the input is watched: without the board's power control the page
+  // sends it over its WebSocket at once, with no lease.
   await page.route("**/api/capabilities", (route) =>
-    route.fulfill({ json: { code: 0, data: manifest } }),
+    route.fulfill({
+      json: {
+        code: 0,
+        data: sent
+          ? {
+              ...manifest,
+              power: {
+                ...manifest.power,
+                status: { ...manifest.power.status, availability: "read_only" },
+              },
+            }
+          : manifest,
+      },
+    }),
   );
+  if (sent) {
+    await page.routeWebSocket("**/api/ws", (socket) =>
+      socket.onMessage((message) => {
+        if (typeof message !== "string") sent.push([...message]);
+      }),
+    );
+  }
   await page.route("**/api/system/firewall**", (route) =>
     route.fulfill({
       json: {
@@ -194,8 +246,11 @@ async function open(mode, marked, renderer) {
   });
   await page.goto(app.baseUrl, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => {
-    const screen = document.querySelector("video#screen");
-    return screen && screen.videoWidth > 0 && screen.readyState >= 2;
+    // The video: the screen itself, or the source of the upscaled one.
+    const video = document.querySelector(
+      "video#screen, video[data-upscale-source]",
+    );
+    return video && video.videoWidth > 0 && video.readyState >= 2;
   });
   // The picture fills the view, so that every patch is large on the screen.
   await page.waitForTimeout(500);
@@ -204,7 +259,7 @@ async function open(mode, marked, renderer) {
 
 /** Each patch's mean red, green and blue at its centre, as drawn. */
 async function drawn(page) {
-  const box = await page.locator("video#screen").boundingBox();
+  const box = await page.locator("#screen").boundingBox();
   assert.ok(box && box.width > 200 && box.height > 100, "no picture");
   const png = await page.screenshot({ clip: box });
   return page.evaluate(
@@ -314,6 +369,89 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  // Upscaled (docs/design/screen-upscaling-v1.md): on a display of pixel
+  // ratio 2 the picture is shown twice its size, and with Auto a canvas draws
+  // it through the upscaler. VP8 goes through the table in the shader, as
+  // the JPEG, and H.264 is drawn unchanged, within the same tolerances.
+  for (const [codec, marked] of [
+    ["vp8", "narrow"],
+    ["h264", "full"],
+  ]) {
+    const sent = [];
+    const { context, page, errors } = await open(codec, marked, GPU, {
+      upscale: "auto",
+      ratio: 2,
+      sent,
+    });
+    await page.waitForFunction(
+      () =>
+        document.querySelector("canvas#screen")?.dataset.upscale === "medium",
+    );
+    // The buffer has the picture's device pixels: its CSS size times 2.
+    const buffer = await page.evaluate(() => {
+      const canvas = document.querySelector("canvas#screen");
+      const box = canvas.getBoundingClientRect();
+      return {
+        reported: canvas.dataset.upscaleBuffer,
+        shown: `${Math.round(box.width * 2)}x${Math.round(box.height * 2)}`,
+      };
+    });
+    assert.equal(buffer.reported, buffer.shown);
+    // No SVG filter is applied to anything: the shader has the table.
+    assert.equal(
+      await page.evaluate(() =>
+        [...document.querySelectorAll("#screen, video")].some(
+          (element) => getComputedStyle(element).filter !== "none",
+        ),
+      ),
+      false,
+    );
+    const levels = await drawn(page);
+    if (codec === "vp8") {
+      measured.upscaledVp8Greys = round(worst(levels, kept));
+      measured.upscaledVp8Colours = round(worst(levels, colour));
+      assert.ok(
+        measured.upscaledVp8Greys <= 1.5,
+        `greys ${measured.upscaledVp8Greys}`,
+      );
+      assert.ok(
+        measured.upscaledVp8Colours <= 4,
+        `colours ${measured.upscaledVp8Colours}`,
+      );
+      for (const [index, patch] of PATCHES.entries()) {
+        if (!grey(patch)) continue;
+        if (patch[0] <= 16)
+          assert.deepEqual(levels[index], [0, 0, 0], `${patch}`);
+        if (patch[0] >= 235)
+          assert.deepEqual(levels[index], [255, 255, 255], `${patch}`);
+      }
+      // The pointer lands on the picture where it is: the canvas is the
+      // screen now, and the mouse bound to it.
+      const box = await page.locator("canvas#screen").boundingBox();
+      // A mouse event's position is in whole pixels.
+      const [x, y] = [Math.round(box.x) + 300, Math.round(box.y) + 200];
+      await page.mouse.move(x, y);
+      let report = null;
+      for (let attempt = 0; attempt < 40 && !report; attempt += 1) {
+        report = sent.filter((data) => data[0] === 2).at(-1) ?? null;
+        if (!report) await page.waitForTimeout(50);
+      }
+      assert.ok(report, "no mouse report sent");
+      const at = (low, high) => report[low] | (report[high] << 8);
+      // Within two of 32767: the layout's fractions of a pixel.
+      const near = (got, want) =>
+        assert.ok(Math.abs(got - want) <= 2, `${got} for ${want}`);
+      near(at(2, 3), Math.round((0x7fff * (x - box.x)) / box.width));
+      near(at(4, 5), Math.round((0x7fff * (y - box.y)) / box.height));
+    } else {
+      measured.upscaledH264 = round(
+        Math.max(worst(levels, grey), worst(levels, colour)),
+      );
+      assert.ok(measured.upscaledH264 <= 1.5, `H.264 ${measured.upscaledH264}`);
+    }
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
   // H.264 in the same view says what its samples mean: drawn unchanged.
   {
     const { context, page, errors } = await open("h264", "full", GPU);
@@ -357,7 +495,7 @@ try {
     await context.close();
   }
   console.log(
-    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); a browser drawing in software left as before passed`,
+    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a browser drawing in software left as before passed`,
   );
 } finally {
   await browser.close();
