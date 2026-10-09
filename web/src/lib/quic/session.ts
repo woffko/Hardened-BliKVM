@@ -265,6 +265,8 @@ class QuicSession {
   private status: QuicStatus = { state: 'off' };
   /** Where the picture goes while the page watches it. */
   private sink: VideoSink | null = null;
+  /** Sessions opened since the page was loaded: one more for every one lost and opened again. */
+  private opened = 0;
 
   getStatus(): QuicStatus {
     return this.status;
@@ -273,6 +275,11 @@ class QuicSession {
   /** Whether a session is open: the HID lease can go over it. */
   isOpen(): boolean {
     return this.open !== null;
+  }
+
+  /** For the quality monitor: the sessions opened since the page was loaded. */
+  sessionsOpened(): number {
+    return this.opened;
   }
 
   /**
@@ -419,6 +426,7 @@ class QuicSession {
 
     for (;;) {
       this.open = attempt;
+      this.opened += 1;
       this.set({ state: 'connected', roundTripMs: null, counters: null });
       this.deliver(attempt);
       this.subscribe(attempt);

@@ -91,6 +91,8 @@ const en = {
       framesReceived: 'Frames received',
       givenUp: 'Given up',
       keyFrameRequests: 'Key-frame requests',
+      decoderRestarts: 'Decoder restarts',
+      sessionsOpened: 'Sessions opened',
       gatewayFrames: 'Gateway sent/dropped/key',
       candidates: 'Candidates',
       packets: 'Packets received/lost',

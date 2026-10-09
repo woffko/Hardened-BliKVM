@@ -148,6 +148,8 @@ export type PageSample = {
   /** QUIC: the session's and the gateway's counters. */
   quic: {
     roundTripMs: number | null;
+    /** Sessions opened since the page was loaded: more than one, one was lost. */
+    sessionsOpened: number;
     packetsLost: number | null;
     givenUp: number;
     keyFrameRequests: number;
@@ -352,10 +354,12 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
   if (path === 'quic' && sample?.quic) {
     const quic = sample.quic;
     row('quicRoundTrip', 'qualityMonitor.roundTrip', `${fixed(quic.roundTripMs, 1)} ms`);
+    row('quicSessions', 'qualityMonitor.sessionsOpened', fixed(quic.sessionsOpened));
     row('quicLost', 'qualityMonitor.datagramsLost', fixed(quic.packetsLost));
     row('quicFrames', 'qualityMonitor.framesReceived', fixed(sample.framesReceived));
     row('quicGivenUp', 'qualityMonitor.givenUp', fixed(quic.givenUp));
     row('quicRequests', 'qualityMonitor.keyFrameRequests', fixed(quic.keyFrameRequests));
+    row('quicResets', 'qualityMonitor.decoderRestarts', fixed(quic.resets));
     row(
       'quicGateway',
       'qualityMonitor.gatewayFrames',

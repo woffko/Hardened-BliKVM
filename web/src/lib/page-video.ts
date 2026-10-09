@@ -49,7 +49,11 @@ const empty = (at: number): PageSample => ({
 });
 
 /** The QUIC session's picture, from what its view and the session keep. */
-export function sampleQuic(status: QuicStatus, stats: VideoStats | null): PageSample {
+export function sampleQuic(
+  status: QuicStatus,
+  stats: VideoStats | null,
+  sessionsOpened: number
+): PageSample {
   const sample = empty(performance.now());
   if (!stats) return sample;
   const connected = status.state === 'connected' ? status : null;
@@ -66,6 +70,7 @@ export function sampleQuic(status: QuicStatus, stats: VideoStats | null): PageSa
     upscale: stats.upscale,
     quic: {
       roundTripMs: connected?.roundTripMs ?? null,
+      sessionsOpened,
       packetsLost: connected?.counters?.packetsLost ?? null,
       givenUp: stats.dropped,
       keyFrameRequests: stats.requests,

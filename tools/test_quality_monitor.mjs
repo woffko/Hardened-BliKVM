@@ -319,10 +319,11 @@ test(
         decodeMs: 3.2,
         quic: {
           roundTripMs: 3,
+          sessionsOpened: 2,
           packetsLost: 0,
           givenUp: 0,
           keyFrameRequests: 1,
-          resets: 0,
+          resets: 3,
           gatewayFramesSent: 100,
           gatewayFramesDropped: 0,
           gatewayKeyFrames: 5,
@@ -342,12 +343,19 @@ test(
     );
     assert.deepEqual(byKey.transport, [
       "quicRoundTrip",
+      "quicSessions",
       "quicLost",
       "quicFrames",
       "quicGivenUp",
       "quicRequests",
+      "quicResets",
       "quicGateway",
     ]);
+    // A session lost and opened again, and the decoder started again: the
+    // marks of a picture that stood still.
+    const transport = valuesOf(sections[1].rows);
+    assert.equal(transport.quicSessions, "2");
+    assert.equal(transport.quicResets, "3");
     assert.deepEqual(byKey.board, [
       "version",
       "capture",

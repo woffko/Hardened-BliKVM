@@ -95,6 +95,8 @@ const ru = {
       framesReceived: 'Получено кадров',
       givenUp: 'Брошено',
       keyFrameRequests: 'Запросы ключевых кадров',
+      decoderRestarts: 'Перезапуски декодера',
+      sessionsOpened: 'Открыто сессий',
       gatewayFrames: 'Шлюз: отправлено/сброшено/ключевых',
       candidates: 'Кандидаты',
       packets: 'Пакеты: получено/потеряно',

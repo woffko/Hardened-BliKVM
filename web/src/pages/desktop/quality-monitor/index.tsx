@@ -22,6 +22,7 @@ import {
 } from '@/lib/quality-monitor.ts';
 import type { FromQualityWorker, QualityView, ToQualityWorker } from '@/lib/quality.worker.ts';
 import QualityWorker from '@/lib/quality.worker.ts?worker';
+import { quicSession } from '@/lib/quic/session.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { qualityMonitorAtom } from '@/jotai/quality-monitor.ts';
 import { upscaleStoppedAtom, videoModeAtom } from '@/jotai/screen.ts';
@@ -81,7 +82,11 @@ async function pathSample(path: VideoPath): Promise<PageSample> {
   switch (path) {
     case 'quic': {
       const store = getDefaultStore();
-      return sampleQuic(store.get(quicStatusAtom), store.get(quicVideoStatsAtom));
+      return sampleQuic(
+        store.get(quicStatusAtom),
+        store.get(quicVideoStatsAtom),
+        quicSession.sessionsOpened()
+      );
     }
     case 'webrtc':
       return sampleWebRtc();
