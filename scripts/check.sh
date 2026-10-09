@@ -187,6 +187,8 @@ node --test tools/test_pointer_map.mjs
 node --test tools/test_upscale_settings.mjs
 # The upscaler's watchdog: when frames are lost to it.
 node --test tools/test_upscale_watchdog.mjs
+# The JPEG frames of an MJPEG stream, as the upscaled MJPEG view cuts them.
+node --test tools/test_mjpeg_parts.mjs
 # The upscaler bench of phase 0 of the screen-upscaling plan: its measures, and its tools parse.
 node --test tools/test_upscale_bench.mjs
 node --check tools/upscale/bench.js
@@ -223,6 +225,7 @@ node --check tools/playwright/vp8_range_contract.mjs
 node --check tools/playwright/upscale_renderer_contract.mjs
 node --check tools/playwright/upscale_reference.mjs
 node --check tools/playwright/screen_enlargement_contract.mjs
+node --check tools/playwright/mjpeg_upscale_contract.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
@@ -909,6 +912,7 @@ node tools/playwright/vp8_range_contract.mjs
 # The page's upscaler against its CPU reference, its frames and its lost context.
 node tools/playwright/upscale_renderer_contract.mjs
 node tools/playwright/screen_enlargement_contract.mjs
+node tools/playwright/mjpeg_upscale_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs
@@ -952,7 +956,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
-pnpm_web exec prettier --check '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs'
+pnpm_web exec prettier --check '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

@@ -28,8 +28,8 @@ export function watchPeer(peer: RTCPeerConnection): () => void {
 }
 
 /**
- * How the WebRTC view draws its frames while it draws them through the
- * upscaler (docs/design/screen-upscaling-v1.md); null otherwise.
+ * How the WebRTC or MJPEG view draws its frames while it draws them through
+ * the upscaler (docs/design/screen-upscaling-v1.md); null otherwise.
  */
 let videoUpscale: UpscaleReport | null = null;
 
@@ -197,5 +197,6 @@ export async function sampleWebRtc(): Promise<PageSample> {
 
 /** Nothing the page counts: the MJPEG image counts nothing. */
 export function sampleNothing(): PageSample {
-  return empty(performance.now());
+  // The MJPEG view counts nothing of its own, but says how it draws when upscaled.
+  return { ...empty(performance.now()), upscale: videoUpscale };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 
 import { stopFrameDetect } from '@/api/stream.ts';
 import { getFrameDetect } from '@/lib/localstorage.ts';
@@ -11,9 +11,16 @@ import { checkSession } from '@/lib/session-check.ts';
 import { client } from '@/lib/websocket.ts';
 import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
-import { resolutionAtom, videoScaleAtom, videoStreamGenerationAtom } from '@/jotai/screen.ts';
+import {
+  resolutionAtom,
+  upscaleStoppedAtom,
+  videoScaleAtom,
+  videoStreamGenerationAtom
+} from '@/jotai/screen.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
+import { useUpscale } from '@/hooks/useUpscale.ts';
 
+import { UpscaledMjpeg } from './upscaled-mjpeg.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
 
 export const Mjpeg = () => {
@@ -30,7 +37,9 @@ export const Mjpeg = () => {
   const screenRef = useScreenRef<HTMLImageElement>();
   const streamURL = `${getBaseUrl('http')}/api/stream/mjpeg`;
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
-  const { containerRef, mediaStyle } = useScreenFit(resolution, videoScale, {
+  const upscale = useUpscale();
+  const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
     maxWidth: '100%',
     maxHeight: '100%',
     objectFit: 'scale-down'
@@ -107,33 +116,54 @@ export const Mjpeg = () => {
       data-kvm-screen-scroll
       className="flex h-full min-h-0 w-full min-w-0 items-start justify-start overflow-auto overscroll-contain bg-black"
     >
-      <img
-        id="screen"
-        ref={screenRef}
-        {...pictureAttributes(resolution)}
-        className={clsx('m-auto block select-none', mouseStyle)}
-        style={{
-          ...mediaStyle,
-          visibility: hasError ? 'hidden' : 'visible'
-        }}
-        src={streamSrc}
-        onLoad={(event) => {
-          setRetries(0);
-          const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
-          // The frame size is the target's real resolution: the fit and the
-          // pointer mapping must use it, not a stale stored value.
-          if (
-            width > 0 &&
-            height > 0 &&
-            (width !== resolution?.width || height !== resolution?.height)
-          ) {
-            setResolution({ width, height });
-            storage.setResolution({ width, height });
-          }
-        }}
-        onError={() => setHasError(true)}
-        alt="screen"
-      />
+      {upscale !== 'off' ? (
+        <UpscaledMjpeg
+          url={streamSrc}
+          sharpness={upscale}
+          mediaStyle={mediaStyle}
+          drawn={drawn}
+          pixelRatio={pixelRatio}
+          resolution={resolution}
+          mouseStyle={mouseStyle}
+          onPicture={(width, height) => {
+            setRetries(0);
+            if (width !== resolution?.width || height !== resolution?.height) {
+              setResolution({ width, height });
+              storage.setResolution({ width, height });
+            }
+          }}
+          onError={() => setHasError(true)}
+          onStopped={setUpscaleStopped}
+        />
+      ) : (
+        <img
+          id="screen"
+          ref={screenRef}
+          {...pictureAttributes(resolution)}
+          className={clsx('m-auto block select-none', mouseStyle)}
+          style={{
+            ...mediaStyle,
+            visibility: hasError ? 'hidden' : 'visible'
+          }}
+          src={streamSrc}
+          onLoad={(event) => {
+            setRetries(0);
+            const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+            // The frame size is the target's real resolution: the fit and the
+            // pointer mapping must use it, not a stale stored value.
+            if (
+              width > 0 &&
+              height > 0 &&
+              (width !== resolution?.width || height !== resolution?.height)
+            ) {
+              setResolution({ width, height });
+              storage.setResolution({ width, height });
+            }
+          }}
+          onError={() => setHasError(true)}
+          alt="screen"
+        />
+      )}
     </div>
   );
 };
