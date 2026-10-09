@@ -29,9 +29,9 @@ const TEXTS = {
   "qualityMonitor.chosen": "{{value}} chosen",
   "qualityMonitor.upscaleOff": "off",
   "qualityMonitor.upscaleNotEnlarged": "on, not enlarged",
-  "qualityMonitor.upscaleWith": "deringing and SGSR, {{sharpness}}",
-  "qualityMonitor.upscaleGpu": "{{value}} ms on the GPU",
-  "qualityMonitor.upscaleDraw": "{{value}} ms to draw",
+  "qualityMonitor.upscaleWith": "SGSR, {{sharpness}}",
+  "qualityMonitor.upscaleGpu": "{{value}} ms GPU",
+  "qualityMonitor.upscaleDraw": "{{value}} ms",
   "qualityMonitor.upscaleMedium": "medium",
 };
 const t = (key, options) =>
@@ -528,10 +528,10 @@ test("the local section says how the view draws its frames", { skip }, () => {
   );
   assert.equal(
     rowOf({ mode: "medium", drawMs: 0.4, gpuMs: 0.27 }),
-    "deringing and SGSR, medium, 0.27 ms on the GPU",
+    "SGSR, medium, 0.27 ms GPU",
   );
   assert.equal(
     rowOf({ mode: "medium", drawMs: 0.4, gpuMs: null }),
-    "deringing and SGSR, medium, 0.40 ms to draw",
+    "SGSR, medium, 0.40 ms",
   );
 });
