@@ -4,7 +4,7 @@
  * preceded by its length as two bytes, most significant first.
  */
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 export const SESSION_PATH = '/kvm';
 /** A control or input message, without its two length bytes. */
 export const MAX_MESSAGE_BYTES = 4096;
@@ -15,7 +15,8 @@ export type VideoState = 'started' | 'stopped' | 'unavailable';
 
 export type PageControl =
   | { t: 'hello'; protocol: number; token: string }
-  | { t: 'ping'; id: number; pageTime: number }
+  /** `received`: the capture time of the newest frame received whole, while the page watches. */
+  | { t: 'ping'; id: number; pageTime: number; received?: number }
   | { t: 'video'; subscribe: boolean }
   | { t: 'keyframe'; stream: number; lastFrame: number; dropped: number }
   | { t: 'bye' };

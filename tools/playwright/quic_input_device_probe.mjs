@@ -278,7 +278,7 @@ try {
       const hearControl = reading(control.readable);
       await control.writable
         .getWriter()
-        .write(frame({ t: "hello", protocol: 1, token: grant.token }));
+        .write(frame({ t: "hello", protocol: 2, token: grant.token }));
       const welcome = await hearControl();
       if (welcome?.t !== "welcome")
         return { error: `no welcome: ${welcome?.t}` };

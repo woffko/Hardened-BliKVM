@@ -56,7 +56,10 @@ fn server_config(
         .stream_receive_window(STREAM_RECEIVE_WINDOW.into())
         .receive_window(RECEIVE_WINDOW.into())
         .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER))
-        .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER);
+        .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER)
+        .congestion_controller_factory(
+            std::sync::Arc::new(quinn::congestion::BbrConfig::default()),
+        );
     let builder = ServerConfig::builder();
     // The IPv6 wildcard also takes IPv4 peers; any other address is taken
     // as it is written.

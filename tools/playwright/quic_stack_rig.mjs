@@ -319,7 +319,7 @@ export function installClient() {
       const controlWriter = control.writable.getWriter();
       const hearControl = reading(control.readable);
       await controlWriter.write(
-        frame({ t: "hello", protocol: 1, token: grant.token }),
+        frame({ t: "hello", protocol: 2, token: grant.token }),
       );
       const welcome = await hearControl();
       if (welcome?.t !== "welcome")

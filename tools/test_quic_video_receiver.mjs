@@ -684,3 +684,78 @@ test("100000 random and damaged datagrams and streams: bounded, and never a fram
     `${receiver.counters.refused} refused`,
   );
 });
+
+// A group's stream (protocol 2): a key frame, then whole delta frames.
+const groupDelta = (frame, reference, size) =>
+  join(
+    header({ index: 0, count: 1, frame, reference, size }),
+    payload(frame, size),
+  );
+
+test("a group's stream is cut into its frames however its bytes come", async () => {
+  const { GroupRecords } = await import("../web/src/lib/quic/group.ts");
+  const stream = join(
+    keyFrame(10, 5000),
+    groupDelta(11, 10, 1),
+    groupDelta(12, 10, 70_000),
+    groupDelta(13, 10, 3),
+  );
+  for (const size of [1, 7, 4096, stream.length]) {
+    const records = new GroupRecords();
+    const found = [];
+    for (let at = 0; at < stream.length; at += size) {
+      found.push(...records.push(stream.subarray(at, at + size)));
+    }
+    assert.equal(found.length, 4, `chunks of ${size}`);
+    assert.deepEqual(found[0], keyFrame(10, 5000));
+    assert.deepEqual(found[2], groupDelta(12, 10, 70_000));
+  }
+  // A group begins with its key frame, and has no other.
+  assert.throws(
+    () => new GroupRecords().push(groupDelta(11, 10, 100)),
+    /not a group/,
+  );
+  const twice = new GroupRecords();
+  twice.push(keyFrame(10, 100));
+  assert.throws(() => twice.push(keyFrame(20, 100)), /not a group/);
+  // A delta frame in fragments is not a group's.
+  const cut = new GroupRecords();
+  cut.push(keyFrame(10, 100));
+  assert.throws(
+    () => cut.push(fragments(11, 10, 3000)[0]),
+    /delta frame in fragments/,
+  );
+  assert.throws(
+    () => new GroupRecords().push(new Uint8Array(40)),
+    /not a frame header/,
+  );
+  // A frame larger than any is refused by its header, before its bytes.
+  assert.throws(
+    () =>
+      new GroupRecords().push(
+        header({ key: true, frame: 10, size: 4 * 1024 * 1024 + 1 }),
+      ),
+    /not a frame header/,
+  );
+});
+
+test("a group's delta frames follow its key frame, whatever their size", () => {
+  const receiver = new VideoReceiver();
+  assert.deepEqual(ids(receiver.keyFrame(keyFrame(10, 5000), 0)), [10]);
+  for (const [frame, size] of [
+    [11, 1],
+    [12, 300_000],
+    [13, 2],
+  ]) {
+    assert.deepEqual(
+      ids(receiver.groupFrame(groupDelta(frame, 10, size), frame)),
+      [frame],
+    );
+  }
+  // What is not a whole delta frame of a group is refused.
+  receiver.groupFrame(keyFrame(20, 100), 20);
+  receiver.groupFrame(fragments(14, 10, 3000)[0], 21);
+  receiver.groupFrame(groupDelta(14, 10, 100).subarray(0, 50), 22);
+  assert.equal(receiver.counters.refused, 3);
+  assert.equal(receiver.counters.requests, 0);
+});

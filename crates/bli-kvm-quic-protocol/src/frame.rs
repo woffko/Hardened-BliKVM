@@ -1,6 +1,7 @@
-//! The header of an encoded frame. A key frame travels on a stream of its own
-//! and a delta frame as datagrams; both begin with these 32 bytes, integers
-//! most significant byte first:
+//! The header of an encoded frame. A group of pictures travels on a stream of
+//! its own, its key frame first and then its delta frames whole (fragment 0 of
+//! 1); version 1 sent the delta frames as datagrams, cut into fragments. Every
+//! frame begins with these 32 bytes, integers most significant byte first:
 //!
 //! | Offset | Size | Field |
 //! | --- | --- | --- |
@@ -75,6 +76,26 @@ impl FrameHeader {
             stream,
             frame,
             reference: frame,
+            size,
+            capture_micros,
+        }
+    }
+
+    /// The header of a whole delta frame, as a group's stream carries it.
+    pub fn whole_delta(
+        stream: u32,
+        frame: u32,
+        reference: u32,
+        size: u32,
+        capture_micros: u64,
+    ) -> Self {
+        Self {
+            kind: Kind::Delta,
+            fragment_index: 0,
+            fragment_count: 1,
+            stream,
+            frame,
+            reference,
             size,
             capture_micros,
         }

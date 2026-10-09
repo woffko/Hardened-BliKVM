@@ -249,7 +249,7 @@ async function inPage([kind, pings, known]) {
   const control = await transport.createBidirectionalStream();
   const writer = control.writable.getWriter();
   const hear = reading(control.readable);
-  await writer.write(frame({ t: "hello", protocol: 1, token: grant.token }));
+  await writer.write(frame({ t: "hello", protocol: 2, token: grant.token }));
   const welcome = await hear();
   const trips = [];
   if (welcome?.t === "welcome") {

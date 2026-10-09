@@ -12,11 +12,12 @@ import { decodeHeader, HEADER_BYTES, MAX_DATAGRAM_BYTES, type FrameHeader } from
 export const MAX_ASSEMBLING_FRAMES = 4;
 export const MAX_ASSEMBLING_BYTES = 2 * 1024 * 1024;
 /**
- * Frames that may wait at once, complete or not, and their bytes. A key
- * frame comes whole on a stream of its own, and on a slow or lossy path
- * after the delta frames that refer to it; those wait for it here (the
- * reference barrier) rather than be given up and a key frame asked for
- * again, which on such a path would come late in its turn.
+ * Frames that may wait at once, complete or not, and their bytes. A delta
+ * frame whole before its key frame waits for it here (the reference
+ * barrier) rather than be given up and a key frame asked for again, which
+ * on a slow or lossy path would come late in its turn. Protocol 1 sent a
+ * key frame on a stream and a delta frame as datagrams, which could
+ * overtake it; a group's stream (protocol 2) brings them in order.
  */
 export const MAX_PENDING_FRAMES = 120;
 export const MAX_PENDING_BYTES = 16 * 1024 * 1024;
@@ -142,7 +143,26 @@ export class VideoReceiver {
     return this.recovery !== null;
   }
 
-  /** A datagram as it arrived: one fragment of a delta frame. */
+  /**
+   * A whole delta frame from a group's stream (protocol 2): the stream brings
+   * a group's frames in order, after its key frame, and never loses one.
+   */
+  groupFrame(bytes: Uint8Array, now: number): ReceiverOutput {
+    const header = decodeHeader(bytes);
+    if (
+      !header ||
+      header.key ||
+      header.fragmentCount !== 1 ||
+      bytes.length !== HEADER_BYTES + header.size
+    ) {
+      this.counters.refused += 1;
+      return this.settle(now, []);
+    }
+    this.fragment(header, bytes.subarray(HEADER_BYTES), now);
+    return this.settle(now, this.drain());
+  }
+
+  /** A datagram as it arrived: one fragment of a delta frame (protocol 1). */
   datagram(bytes: Uint8Array, now: number): ReceiverOutput {
     const header = bytes.length <= MAX_DATAGRAM_BYTES ? decodeHeader(bytes) : null;
     if (!header || header.key) {

@@ -148,7 +148,7 @@ fn page_messages_survive_random_and_damaged_bytes() {
     let mut random = Random(0x2545_f491_4f6c_dd1d);
     let valid: Vec<Vec<u8>> = vec![
         page::encode(&PageControl::Hello { protocol: 1, token: "0f".repeat(32) }).unwrap(),
-        page::encode(&PageControl::Ping { id: 9, page_time: 1234.5 }).unwrap(),
+        page::encode(&PageControl::Ping { id: 9, page_time: 1234.5, received: None }).unwrap(),
         page::encode(&PageControl::Keyframe { stream: 1, last_frame: 2, dropped: 3 }).unwrap(),
         page::encode(&PageControl::Video { subscribe: true }).unwrap(),
         page::encode(&InputRequest {

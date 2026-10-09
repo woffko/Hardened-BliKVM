@@ -330,11 +330,20 @@ async fn run(
                 let reply = match message {
                     // The board's time is the system's monotonic clock, the
                     // one a frame's capture time is given in.
-                    Some(PageControl::Ping { id, page_time }) => GatewayControl::Pong {
+                    Some(PageControl::Ping {
                         id,
                         page_time,
-                        board_time: monotonic_micros(),
-                    },
+                        received,
+                    }) => {
+                        if let Some(received) = received {
+                            video_control.page_received.fetch_max(received, Ordering::AcqRel);
+                        }
+                        GatewayControl::Pong {
+                            id,
+                            page_time,
+                            board_time: monotonic_micros(),
+                        }
+                    }
                     Some(PageControl::Video { subscribe: true }) => {
                         if watching.is_some() {
                             // It watches already: it starts again from a key frame.

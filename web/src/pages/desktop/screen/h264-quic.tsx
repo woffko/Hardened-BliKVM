@@ -182,6 +182,10 @@ export const H264Quic = () => {
         const data = buffer(bytes);
         post({ type: 'keyframe', data }, [data]);
       },
+      groupFrame: (bytes) => {
+        const data = buffer(bytes);
+        post({ type: 'groupframe', data }, [data]);
+      },
       pong: (roundTripMs, boardMicros, at) => post({ type: 'pong', roundTripMs, boardMicros, at })
     });
     return () => {

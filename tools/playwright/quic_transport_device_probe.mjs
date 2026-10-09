@@ -319,7 +319,7 @@ try {
         buffer = joined;
       }
     };
-    await say({ t: "hello", protocol: 1, token: grant.token });
+    await say({ t: "hello", protocol: 2, token: grant.token });
     const welcome = await hear();
     if (welcome?.t !== "welcome") return { error: `no welcome: ${welcome?.t}` };
     const welcomed = performance.now();

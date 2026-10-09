@@ -1472,6 +1472,7 @@ async fn a_page_opens_a_session_through_the_real_gateway_and_a_logout_ends_it() 
         .say(&PageControl::Ping {
             id: 5,
             page_time: 2.5,
+            received: None,
         })
         .await;
     assert!(matches!(

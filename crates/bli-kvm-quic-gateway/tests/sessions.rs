@@ -15,7 +15,7 @@ use std::{
 use bli_kvm_quic_gateway::{Gateway, config::Config};
 use bli_kvm_quic_protocol::{
     PROTOCOL,
-    frame::{self, FrameHeader, HEADER_BYTES, Kind, RecordHeader},
+    frame::{FrameHeader, HEADER_BYTES, Kind, RecordHeader},
     link::{self, EndReason, GatewayToServer, RedeemRefusal, ServerToGateway},
     page::{
         self, Closing, GatewayControl, InputRequest, InputResponse, MessageReader, PageControl,
@@ -302,6 +302,7 @@ impl Board {
             send,
             receive,
             reader: MessageReader::new(),
+            group: None,
         };
         page.say(hello).await;
         page
@@ -337,6 +338,8 @@ struct Page {
     send: SendStream,
     receive: RecvStream,
     reader: MessageReader,
+    /// The stream of the group being read.
+    group: Option<RecvStream>,
 }
 
 impl Page {
@@ -395,6 +398,7 @@ async fn a_page_with_a_token_is_welcomed_and_its_pings_are_answered() {
         page.say(&PageControl::Ping {
             id,
             page_time: 1000.5 + f64::from(id),
+            received: None,
         })
         .await;
         match page.hear_but_counters().await {
@@ -513,6 +517,7 @@ async fn what_is_not_a_proper_hello_is_refused_without_asking_the_server() {
             &PageControl::Ping {
                 id: 1,
                 page_time: 0.0,
+                received: None,
             },
         )
         .await;
@@ -536,6 +541,7 @@ async fn what_is_not_a_proper_hello_is_refused_without_asking_the_server() {
         send,
         receive,
         reader: MessageReader::new(),
+        group: None,
     };
     assert_eq!(
         page.hear().await,
@@ -669,6 +675,7 @@ async fn a_lost_link_ends_every_session_and_nobody_is_served_until_it_is_back() 
         send,
         receive,
         reader: MessageReader::new(),
+        group: None,
     };
     assert!(matches!(
         page.hear().await,
@@ -794,6 +801,7 @@ async fn the_certificate_is_replaced_and_open_sessions_go_on() {
     page.say(&PageControl::Ping {
         id: 7,
         page_time: 1.0,
+        received: None,
     })
     .await;
     assert!(matches!(
@@ -1195,62 +1203,65 @@ impl Board {
 }
 
 impl Page {
-    /// The next key frame's stream, read to its end: its header and bytes.
-    async fn key_frame(&self) -> Result<(FrameHeader, Vec<u8>), String> {
-        let mut stream = timeout(PATIENCE, self.connection.accept_uni())
+    /// The next group's stream, kept to read the group from, and its key
+    /// frame: the header and the bytes.
+    async fn key_frame(&mut self) -> Result<(FrameHeader, Vec<u8>), String> {
+        let stream = timeout(PATIENCE, self.connection.accept_uni())
             .await
-            .expect("no key frame stream came")
+            .expect("no group stream came")
             .map_err(|error| error.to_string())?;
-        let mut bytes = Vec::new();
-        let mut buffer = vec![0u8; 64 * 1024];
-        loop {
-            match timeout(PATIENCE, stream.read(&mut buffer))
+        self.group = Some(stream);
+        let (header, bytes) = self.record().await?;
+        assert_eq!(header.kind, Kind::Key);
+        Ok((header, bytes))
+    }
+
+    /// The group's next delta frame: whole, fragment 0 of 1.
+    async fn delta_frame(&mut self) -> (FrameHeader, Vec<u8>) {
+        let (header, bytes) = self.record().await.expect("the group ended");
+        assert_eq!(header.kind, Kind::Delta);
+        assert_eq!((header.fragment_index, header.fragment_count), (0, 1));
+        (header, bytes)
+    }
+
+    /// How the group's stream ends once its frames are read: `Ok` when it was
+    /// finished, the error when it was reset.
+    async fn group_end(&mut self) -> Result<(), String> {
+        let stream = self.group.as_mut().expect("no group");
+        let mut buffer = [0u8; 1];
+        match timeout(PATIENCE, stream.read(&mut buffer))
+            .await
+            .expect("the group stream did not end")
+        {
+            Ok(None) => Ok(()),
+            Ok(Some(_)) => panic!("a frame more in the group"),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// A frame of the group's stream: its header, then its bytes.
+    async fn record(&mut self) -> Result<(FrameHeader, Vec<u8>), String> {
+        let head = self.read_exact(HEADER_BYTES).await?;
+        let header = FrameHeader::decode(&head).map_err(|error| error.to_string())?;
+        let bytes = self.read_exact(header.size as usize).await?;
+        Ok((header, bytes))
+    }
+
+    async fn read_exact(&mut self, count: usize) -> Result<Vec<u8>, String> {
+        let stream = self.group.as_mut().expect("no group");
+        let mut out = vec![0u8; count];
+        let mut filled = 0;
+        while filled < count {
+            match timeout(PATIENCE, stream.read(&mut out[filled..]))
                 .await
-                .expect("the key frame stream stalled")
+                .expect("the group stream stalled")
             {
-                Ok(Some(count)) => bytes.extend_from_slice(&buffer[..count]),
-                Ok(None) => break,
+                Ok(Some(read)) => filled += read,
+                Ok(None) => return Err("the group ended".into()),
                 Err(error) => return Err(error.to_string()),
             }
         }
-        let header = FrameHeader::decode(&bytes).map_err(|error| error.to_string())?;
-        Ok((header, bytes[HEADER_BYTES..].to_vec()))
-    }
-
-    /// The datagrams of one delta frame, put together.
-    async fn delta_frame(&self) -> (FrameHeader, Vec<u8>) {
-        let mut parts: Vec<Option<Vec<u8>>> = Vec::new();
-        let mut first: Option<FrameHeader> = None;
-        loop {
-            let datagram = timeout(PATIENCE, self.connection.receive_datagram())
-                .await
-                .expect("no datagram came")
-                .unwrap();
-            let bytes = datagram.payload();
-            assert!(bytes.len() <= 1200, "a datagram of {} bytes", bytes.len());
-            let header = FrameHeader::decode(&bytes).unwrap();
-            assert_eq!(header.kind, Kind::Delta);
-            let known = *first.get_or_insert(header);
-            assert_eq!(
-                (header.stream, header.frame, header.reference, header.size),
-                (known.stream, known.frame, known.reference, known.size)
-            );
-            parts.resize(usize::from(header.fragment_count), None);
-            parts[usize::from(header.fragment_index)] = Some(bytes[HEADER_BYTES..].to_vec());
-            if parts.iter().all(Option::is_some) {
-                // Every fragment but the last has the same length.
-                let capacity = parts[0].as_ref().unwrap().len();
-                for (index, part) in parts.iter().enumerate() {
-                    let mut numbered = known;
-                    numbered.fragment_index = index as u16;
-                    assert_eq!(
-                        frame::expected_fragment_bytes(&numbered, capacity),
-                        Some(part.as_ref().unwrap().len())
-                    );
-                }
-                return (known, parts.into_iter().flatten().flatten().collect());
-            }
-        }
+        Ok(out)
     }
 
     /// The next message that says something about the picture.
@@ -1282,6 +1293,15 @@ impl Page {
             }
         }
     }
+
+    /// Reads the counters until they say what is expected: those that came
+    /// while the page did not read are older.
+    async fn counters_become(&mut self, expected: (u64, u64, u64)) {
+        let found = async { while self.counters().await != expected {} };
+        timeout(PATIENCE, found)
+            .await
+            .unwrap_or_else(|_| panic!("the counters never said {expected:?}"));
+    }
 }
 
 fn started() -> GatewayControl {
@@ -1304,11 +1324,12 @@ fn video_state(state: page::VideoState, reason: Option<&str>) -> GatewayControl 
     }
 }
 
-/// A session that watches gets the encoder's frames: a key frame whole on a
-/// stream of its own, a delta frame as datagrams, every one with the ids the
-/// encoder gave it.
+/// A session that watches gets the encoder's frames in groups: a key frame
+/// and then its delta frames, whole and in order, on a stream of their own,
+/// every one with the ids the encoder gave it. A group that the transport
+/// has taken whole is finished when the next one begins.
 #[tokio::test]
-async fn the_picture_is_key_frames_on_streams_and_delta_frames_as_datagrams() {
+async fn the_picture_is_groups_of_pictures_on_streams() {
     let (board, encoder) = Board::with_encoder().await;
     let mut page = board.welcomed(&board.server.token("6a")).await;
     assert_eq!(
@@ -1330,26 +1351,20 @@ async fn the_picture_is_key_frames_on_streams_and_delta_frames_as_datagrams() {
     assert_eq!(key, FrameHeader::key(77, 5, 40_000, 5000));
     assert_eq!(bytes, Encoder::frame(5, 40_000));
 
-    // Delta frames of one datagram, of several, and of exactly two.
-    let limit = 1200 - HEADER_BYTES;
-    for (frame, size) in [
-        (6u32, 300usize),
-        (7, 9000),
-        (8, 2 * limit),
-        (9, 2 * limit + 1),
-    ] {
+    // Delta frames small and large come whole, after their key frame.
+    for (frame, size) in [(6u32, 300usize), (7, 9000), (8, 200_000), (9, 1)] {
         encoder.send(Kind::Delta, frame, 5, size);
         let (header, bytes) = page.delta_frame().await;
         assert_eq!(
-            (header.stream, header.frame, header.reference),
-            (77, frame, 5)
+            header,
+            FrameHeader::whole_delta(77, frame, 5, size as u32, u64::from(frame) * 1000)
         );
-        assert_eq!(header.capture_micros, u64::from(frame) * 1000);
-        assert_eq!(usize::from(header.fragment_count), size.div_ceil(limit));
         assert_eq!(bytes, Encoder::frame(frame, size));
     }
-    // The next key frame, of the same stream and size: no second "started".
+    // The next key frame, of the same stream and size: no second "started",
+    // and a stream of its own; the first group's ends as it should.
     encoder.send(Kind::Key, 10, 10, 2000);
+    assert_eq!(page.group_end().await, Ok(()));
     assert_eq!(page.key_frame().await.unwrap().0.frame, 10);
     encoder.send(Kind::Delta, 11, 10, 100);
     assert_eq!(page.delta_frame().await.0.reference, 10);
@@ -1400,8 +1415,8 @@ async fn a_page_that_lost_a_frame_gets_a_key_frame_and_nothing_before_it() {
     encoder.send(Kind::Key, 7, 7, 1000);
     encoder.send(Kind::Delta, 8, 7, 500);
     assert_eq!(page.key_frame().await.unwrap().0.frame, 7);
-    // The first datagram after the request is of the frame after the key
-    // frame: 5 and 6 were held back.
+    // The next frame after the request is the one after the key frame: 5
+    // and 6 were held back.
     assert_eq!(page.delta_frame().await.0.frame, 8);
     let (sent, dropped, keys) = page.counters().await;
     assert_eq!((sent, dropped, keys), (4, 3, 2));
@@ -1412,10 +1427,10 @@ async fn a_page_that_lost_a_frame_gets_a_key_frame_and_nothing_before_it() {
     assert_eq!(board.server.seen.lock().unwrap().videos.len(), 1);
 }
 
-/// A key frame that is still on its way when a newer one is ready gives way:
-/// its stream is reset, and the newer one arrives whole.
+/// A group still on its way when the next key frame is ready gives way: its
+/// stream is reset, and the next group arrives whole.
 #[tokio::test]
-async fn a_newer_key_frame_overtakes_one_that_is_still_on_its_way() {
+async fn a_group_still_behind_gives_way_to_the_next() {
     let (board, encoder) = Board::with_encoder().await;
     let mut page = board.welcomed(&board.server.token("6c")).await;
     page.say(&PageControl::Video { subscribe: true }).await;
@@ -1442,14 +1457,17 @@ async fn a_newer_key_frame_overtakes_one_that_is_still_on_its_way() {
             Err(error) => break Err(error),
         }
     };
-    assert!(ending.is_err(), "the overtaken key frame arrived whole");
+    assert!(ending.is_err(), "the overtaken group arrived whole");
     assert!(read < 3 * 1024 * 1024);
 }
 
-/// A delta frame that the endpoint has no room for is not sent in part: it
-/// is dropped whole, and the session starts again from a key frame.
+/// A page whose oldest frame not received has been on its way more than
+/// 1.5 s (by the newest frame it says, in its pings, that it received), with
+/// more on its way than a key frame, has its group reset: what is queued is
+/// dropped, and the picture starts again from a key frame that the encoder
+/// is asked for.
 #[tokio::test]
-async fn a_frame_without_room_is_dropped_whole() {
+async fn a_page_too_far_behind_starts_again_from_a_key_frame() {
     let (board, encoder) = Board::with_encoder().await;
     let mut page = board.welcomed(&board.server.token("6d")).await;
     page.say(&PageControl::Video { subscribe: true }).await;
@@ -1457,16 +1475,159 @@ async fn a_frame_without_room_is_dropped_whole() {
     encoder.send(Kind::Key, 1, 1, 1000);
     assert_eq!(page.video().await, started());
     page.key_frame().await.unwrap();
-    // More than the endpoint's datagram buffer holds.
-    encoder.send(Kind::Delta, 2, 1, 600 * 1024);
+    encoder.send(Kind::Delta, 2, 1, 400);
+    page.delta_frame().await;
+    // The page says it has frame 2 (captured at 2 ms).
+    page.say(&PageControl::Ping {
+        id: 1,
+        page_time: 1.0,
+        received: Some(2000),
+    })
+    .await;
+    assert!(matches!(
+        page.hear_but_counters().await,
+        Some(GatewayControl::Pong { id: 1, .. })
+    ));
+    // Frame 3, larger than the key frame, arrives, and the page does not say
+    // so: 1.6 s later, the next frame finds it too far behind.
+    encoder.send(Kind::Delta, 3, 1, 2000);
+    assert_eq!(page.delta_frame().await.0.frame, 3);
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    encoder.send(Kind::Delta, 4, 1, 400);
     encoder.asked(2).await;
+    assert!(page.group_end().await.is_err(), "the group was not reset");
+    encoder.send(Kind::Delta, 5, 1, 400);
+    encoder.send(Kind::Key, 6, 6, 1000);
+    encoder.send(Kind::Delta, 7, 6, 400);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 6);
+    assert_eq!(page.delta_frame().await.0.frame, 7);
+    // Sent: 1, 2, 3, 6 and 7; dropped: 4 and 5.
+    page.counters_become((5, 2, 2)).await;
+}
+
+/// A page 1.6 s behind with less on its way than a key frame keeps its
+/// group: a new key frame would take longer than what is on its way.
+#[tokio::test]
+async fn less_on_its_way_than_a_key_frame_is_waited_for() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("71")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 1000);
+    assert_eq!(page.video().await, started());
+    page.key_frame().await.unwrap();
+    page.say(&PageControl::Ping {
+        id: 1,
+        page_time: 1.0,
+        received: Some(1000),
+    })
+    .await;
+    assert!(matches!(
+        page.hear_but_counters().await,
+        Some(GatewayControl::Pong { id: 1, .. })
+    ));
+    encoder.send(Kind::Delta, 2, 1, 400);
+    assert_eq!(page.delta_frame().await.0.frame, 2);
+    tokio::time::sleep(Duration::from_millis(1600)).await;
     encoder.send(Kind::Delta, 3, 1, 400);
-    encoder.send(Kind::Key, 4, 4, 1000);
-    encoder.send(Kind::Delta, 5, 4, 400);
-    assert_eq!(page.key_frame().await.unwrap().0.frame, 4);
-    // Nothing of frame 2, and frame 3 was held back with it.
-    assert_eq!(page.delta_frame().await.0.frame, 5);
-    assert_eq!(page.counters().await, (3, 2, 2));
+    assert_eq!(page.delta_frame().await.0.frame, 3);
+    page.counters_become((3, 0, 1)).await;
+    assert_eq!(encoder.asked.load(Ordering::SeqCst), 1);
+}
+
+/// A key frame that the page has not received half a second after it was
+/// sent shows a path slow over key frames: the next key frame, which would
+/// only wait behind it, is left out with its delta frames, the group before
+/// is finished, and the key frame after starts a group once the page has
+/// the first.
+#[tokio::test]
+async fn the_next_key_frame_waits_for_a_slow_one() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("70")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 1000);
+    assert_eq!(page.video().await, started());
+    page.key_frame().await.unwrap();
+    encoder.send(Kind::Delta, 2, 1, 400);
+    assert_eq!(page.delta_frame().await.0.frame, 2);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    encoder.send(Kind::Key, 3, 3, 1000);
+    encoder.send(Kind::Delta, 4, 3, 400);
+    assert!(page.group_end().await.is_ok(), "the first group was reset");
+    page.say(&PageControl::Ping {
+        id: 1,
+        page_time: 1.0,
+        received: Some(2000),
+    })
+    .await;
+    assert!(matches!(
+        page.hear_but_counters().await,
+        Some(GatewayControl::Pong { id: 1, .. })
+    ));
+    encoder.send(Kind::Key, 5, 5, 1000);
+    encoder.send(Kind::Delta, 6, 5, 400);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 5);
+    assert_eq!(page.delta_frame().await.0.frame, 6);
+    // Sent: 1, 2, 5 and 6; left out: 3 and 4.
+    page.counters_become((4, 2, 2)).await;
+}
+
+/// A page that gives the picture up has its groups' streams reset: what the
+/// transport still holds of them is not sent for nobody.
+#[tokio::test]
+async fn a_page_that_gives_the_picture_up_has_its_groups_reset() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("72")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    // More than the page lets a stream send before it reads.
+    encoder.send(Kind::Key, 1, 1, 3 * 1024 * 1024);
+    assert_eq!(page.video().await, started());
+    let mut first = timeout(PATIENCE, page.connection.accept_uni())
+        .await
+        .unwrap()
+        .unwrap();
+    page.say(&PageControl::Video { subscribe: false }).await;
+    assert_eq!(
+        page.video().await,
+        video_state(page::VideoState::Stopped, None)
+    );
+    let mut buffer = vec![0u8; 64 * 1024];
+    let ending = loop {
+        match timeout(PATIENCE, first.read(&mut buffer)).await.unwrap() {
+            Ok(Some(_)) => {}
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error),
+        }
+    };
+    assert!(ending.is_err(), "the group arrived whole");
+}
+
+/// A page that stays a second behind is no reason to give a group up while
+/// its key frame is still on its way: a slow path would only wait for
+/// another. A page that says nothing of a frame it has had for long enough
+/// is.
+#[tokio::test]
+async fn a_key_frame_on_a_slow_path_is_waited_for() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("6f")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 1000);
+    assert_eq!(page.video().await, started());
+    page.key_frame().await.unwrap();
+    // The page says nothing of the key frame for 1.6 s: the group goes on.
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    encoder.send(Kind::Delta, 2, 1, 400);
+    assert_eq!(page.delta_frame().await.0.frame, 2);
+    page.counters_become((2, 0, 1)).await;
+    // Past four seconds it is given up.
+    tokio::time::sleep(Duration::from_millis(2600)).await;
+    encoder.send(Kind::Delta, 3, 1, 400);
+    encoder.asked(2).await;
+    assert!(page.group_end().await.is_err(), "the group was not reset");
+    page.counters_become((2, 1, 1)).await;
 }
 
 /// Why there is no picture: the server refuses, there is no encoder, or the
@@ -1560,7 +1721,7 @@ async fn two_sessions_share_the_encoders_frames() {
     encoder.send(Kind::Key, 3, 3, 800);
     encoder.send(Kind::Delta, 4, 3, 300);
     assert_eq!(second.video().await, started());
-    for page in [&first, &second] {
+    for page in [&mut first, &mut second] {
         assert_eq!(page.key_frame().await.unwrap().0.frame, 3);
         assert_eq!(page.delta_frame().await.0.frame, 4);
     }

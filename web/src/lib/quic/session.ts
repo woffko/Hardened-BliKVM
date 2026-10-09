@@ -10,6 +10,8 @@ import { getDefaultStore } from 'jotai';
 import { getTransport, requestQuicSession } from '@/api/transport.ts';
 import { quicStatusAtom, quicVideoAtom } from '@/jotai/transport.ts';
 
+import { decodeHeader } from './frame.ts';
+import { GroupRecords } from './group.ts';
 import {
   encodeMessage,
   hashBytes,
@@ -60,6 +62,8 @@ export type VideoSink = {
   datagram(bytes: Uint8Array): void;
   /** A key frame as its stream delivered it: the header and the frame. */
   keyFrame(bytes: Uint8Array): void;
+  /** A whole delta frame of a group's stream, after its key frame: the header and the frame. */
+  groupFrame(bytes: Uint8Array): void;
   /**
    * A ping answered: its round trip, the board's clock in the answer, and
    * when the answer arrived (`performance.timeOrigin + performance.now()`).
@@ -94,8 +98,6 @@ const PING_INTERVAL_MS = 2000;
 const CLOCK_PING_INTERVAL_MS = 250;
 /** A session whose pings stay unanswered this long is lost. */
 const PONG_TIMEOUT_MS = 6000;
-/** A key frame's stream may carry this much: a header and the largest frame. */
-const MAX_KEY_FRAME_BYTES = 32 + 4 * 1024 * 1024;
 /**
  * Datagrams the browser keeps for the page to read. A frame's fragments
  * arrive together; the default would drop most of them.
@@ -115,6 +117,8 @@ type Open = {
   messages: MessageReader;
   /** The input stream, opened when the first request is made. */
   input: Promise<InputChannel> | null;
+  /** The capture time of the newest frame received whole, told in pings. */
+  received: number;
   /**
    * Unsubscriptions whose answer has not come: the gateway answers each
    * with "stopped", which may come after the page watches again (a view that
@@ -355,32 +359,38 @@ class QuicSession {
         if (this.open === open) this.sink?.datagram(value);
       }
     };
-    const keyFrame = async (stream: ReadableStream<Uint8Array>) => {
+    // A group's stream: its key frame, then its delta frames, each handed
+    // on as soon as it is whole. A stream that is reset was overtaken by the
+    // next group, or fell behind.
+    const group = async (stream: ReadableStream<Uint8Array>) => {
       const reader = stream.getReader();
-      const parts: Uint8Array[] = [];
-      let size = 0;
+      const records = new GroupRecords();
+      let first = true;
       for (;;) {
         const { value, done } = await reader.read();
-        if (done) break;
-        size += value.length;
-        if (size > MAX_KEY_FRAME_BYTES) return reader.cancel().catch(() => undefined);
-        parts.push(value);
+        if (done) return;
+        let whole: Uint8Array[];
+        try {
+          whole = records.push(value);
+        } catch {
+          return reader.cancel().catch(() => undefined);
+        }
+        for (const record of whole) {
+          if (this.open !== open) return reader.cancel().catch(() => undefined);
+          const capture = decodeHeader(record)?.captureMicros ?? 0;
+          open.received = Math.max(open.received, capture);
+          if (first) this.sink?.keyFrame(record);
+          else this.sink?.groupFrame(record);
+          first = false;
+        }
       }
-      const bytes = new Uint8Array(size);
-      let offset = 0;
-      for (const part of parts) {
-        bytes.set(part, offset);
-        offset += part.length;
-      }
-      if (this.open === open) this.sink?.keyFrame(bytes);
     };
     const streams = async () => {
       const reader = transport.incomingUnidirectionalStreams.getReader();
       for (;;) {
         const { value, done } = await reader.read();
         if (done) return;
-        // A key frame that was overtaken ends in a reset: it is not one.
-        keyFrame(value as ReadableStream<Uint8Array>).catch(() => undefined);
+        group(value as ReadableStream<Uint8Array>).catch(() => undefined);
       }
     };
     datagrams().catch(() => undefined);
@@ -527,7 +537,8 @@ class QuicSession {
           reader: stream.readable.getReader(),
           messages: new MessageReader(),
           input: null,
-          stopsAwaited: 0
+          stopsAwaited: 0,
+          received: 0
         };
         await open.writer.write(
           encodeMessage({ t: 'hello', protocol: PROTOCOL, token: grant.token })
@@ -570,7 +581,14 @@ class QuicSession {
       const send = () => {
         pingId += 1;
         open.writer
-          .write(encodeMessage({ t: 'ping', id: pingId, pageTime: performance.now() }))
+          .write(
+            encodeMessage({
+              t: 'ping',
+              id: pingId,
+              pageTime: performance.now(),
+              ...(this.sink && open.received > 0 ? { received: open.received } : {})
+            })
+          )
           .catch(() => finish('lost'));
         return pingId;
       };

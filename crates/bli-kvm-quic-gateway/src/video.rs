@@ -1,17 +1,42 @@
 //! The picture for one session: frames from the encoder, sent as the
-//! transport's design says. A key frame travels whole on a unidirectional
-//! stream of its own; if a newer one is ready before it is through, its
-//! stream is reset. A delta frame is cut into datagrams that are handed to
-//! the endpoint together, or not at all. A session that lost a frame gets no
-//! more delta frames until the next key frame, which is asked for.
+//! transport's design says. A group of pictures, a key frame and the delta
+//! frames that refer to it, travels in order on a unidirectional stream of
+//! its own, written by a task of its own so that the encoder's frames are
+//! never held up by the path. The transport retransmits what the path loses:
+//! a lost packet delays the group by a round trip instead of breaking the
+//! chain of delta frames until the next key frame, as a lost datagram did. A
+//! session that lost a frame gets no more delta frames until the next key
+//! frame, which is asked for.
+//!
+//! The page says in its pings which frame it last received whole. How long
+//! the oldest frame it has not received has been on its way is its lag. The
+//! transport takes what it is given into a buffer of its own long before the
+//! path carries it, so what is on its way is judged by the page's word:
+//!
+//! - When the next key frame is ready, the group before is finished, and its
+//!   frames still on their way go on; but if the page is more than 1.5 s
+//!   behind, it is reset with every earlier group still on its way, and the
+//!   page goes on from the new key frame.
+//! - A key frame that the page has not received half a second after it was
+//!   sent shows a path that takes long over key frames: the next key frame
+//!   would only wait behind it, and is left out with the frames that refer to
+//!   it, until the one after. Four seconds without it, its group is given up.
+//! - A page that falls more than 1.5 s behind, with more on its way than a
+//!   key frame, has every group reset, and the picture starts again from a
+//!   key frame that is asked for: the page then shows the present instead of
+//!   a picture that grows older on a path that cannot carry it.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use bli_kvm_quic_protocol::{
-    frame::{self, FrameHeader, Kind, MAX_DATAGRAM_BYTES},
+    frame::{FrameHeader, Kind},
     page::{GatewayControl, VideoState},
 };
 use tokio::sync::{Notify, mpsc};
@@ -25,6 +50,8 @@ pub struct VideoCounters {
     pub frames_sent: AtomicU64,
     pub frames_dropped: AtomicU64,
     pub key_frames: AtomicU64,
+    /// Groups reset because the page fell too far behind.
+    pub groups_abandoned: AtomicU64,
 }
 
 /// What the session's control side tells its picture.
@@ -32,19 +59,242 @@ pub struct VideoCounters {
 pub struct VideoControl {
     /// The page asked for a key frame: it can decode nothing until one comes.
     pub page_needs_key: AtomicBool,
+    /// The capture time of the newest frame the page has said it received
+    /// whole, from its pings; zero until it says.
+    pub page_received: AtomicU64,
 }
 
-/// A stream that is reset when its key frame is overtaken.
-const OVERTAKEN: u32 = 1;
-/// Key frames give way to the control and the input stream.
-const KEY_FRAME_PRIORITY: i32 = -1;
+/// A page whose oldest frame not received has been on its way this long,
+/// with more on its way than a key frame, starts again from a key frame.
+const MAX_PAGE_LAG: Duration = Duration::from_millis(1500);
+/// A key frame not received this long after it was sent is slow: the next
+/// is left out until it arrives...
+const SLOW_KEY: Duration = Duration::from_millis(500);
+/// ... and waited for this long before its group is given up.
+const MAX_KEY_WAIT: Duration = Duration::from_secs(4);
+/// The frames sent that are remembered until the page says it received them.
+const MAX_UNRECEIVED: usize = 1024;
 
-/// Writes one key frame on a stream of its own, unless `overtaken` comes
-/// first.
-async fn send_key_frame(connection: Connection, bytes: Vec<u8>, overtaken: Arc<Notify>) {
+/// A group's stream that is reset because the next group overtook it.
+const OVERTAKEN: u32 = 1;
+/// Groups give way to the control and the input stream.
+const GROUP_PRIORITY: i32 = -1;
+
+/// The frames sent that the page has not said it received, oldest first:
+/// each one's capture time, when it was sent and its size.
+#[derive(Debug, Default)]
+struct Unreceived {
+    frames: VecDeque<(u64, Instant, usize)>,
+    bytes: usize,
+}
+
+impl Unreceived {
+    fn sent(&mut self, capture_micros: u64, now: Instant, bytes: usize) {
+        if self.frames.len() == MAX_UNRECEIVED {
+            self.pop();
+        }
+        self.frames.push_back((capture_micros, now, bytes));
+        self.bytes += bytes;
+    }
+
+    fn pop(&mut self) {
+        if let Some((_, _, bytes)) = self.frames.pop_front() {
+            self.bytes -= bytes;
+        }
+    }
+
+    /// The page's lag: how long the oldest frame it has not received, by the
+    /// newest it received, has been on its way; nothing if it has them all.
+    fn lag(&mut self, received: u64, now: Instant) -> Duration {
+        while self
+            .frames
+            .front()
+            .is_some_and(|(capture_micros, _, _)| *capture_micros <= received)
+        {
+            self.pop();
+        }
+        self.frames.front().map_or(Duration::ZERO, |(_, sent, _)| {
+            now.saturating_duration_since(*sent)
+        })
+    }
+
+    /// The frames sent so far will not arrive: their group was reset.
+    fn forget(&mut self) {
+        self.frames.clear();
+        self.bytes = 0;
+    }
+}
+
+/// The stream of the group under way, as the frame loop sees it.
+struct Group {
+    frames: mpsc::UnboundedSender<(Vec<u8>, u64)>,
+    /// The capture time of the last frame the transport took, and of the
+    /// last frame handed to the writer.
+    taken: Arc<AtomicU64>,
+    handed: u64,
+    /// The size of the group's key frame.
+    key_bytes: usize,
+    stream: StreamEnd,
+}
+
+/// How the frame loop ends a group's stream once it has let it go: reset,
+/// unless the writer has closed it already.
+struct StreamEnd {
+    reset: Arc<Notify>,
+    /// The writer is done: the stream finished and acknowledged, or reset.
+    closed: Arc<AtomicBool>,
+}
+
+impl StreamEnd {
+    fn reset(&self) {
+        if !self.closed.load(Ordering::Acquire) {
+            self.reset.notify_one();
+        }
+    }
+}
+
+impl Group {
+    /// Opens the group's stream with its key frame.
+    fn open(connection: &Connection, key: Vec<u8>, capture_micros: u64) -> Self {
+        let key_bytes = key.len();
+        let (frames, receiver) = mpsc::unbounded_channel();
+        let taken = Arc::new(AtomicU64::new(0));
+        let stream = StreamEnd {
+            reset: Arc::new(Notify::new()),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
+        tokio::spawn(write_group(
+            connection.clone(),
+            (key, capture_micros),
+            receiver,
+            Arc::clone(&taken),
+            Arc::clone(&stream.reset),
+            Arc::clone(&stream.closed),
+        ));
+        Self {
+            frames,
+            taken,
+            handed: capture_micros,
+            key_bytes,
+            stream,
+        }
+    }
+
+    /// Hands a delta frame of the group to its writer; false where the
+    /// writer has ended (its stream failed).
+    fn push(&mut self, bytes: Vec<u8>, capture_micros: u64) -> bool {
+        self.handed = capture_micros;
+        self.frames.send((bytes, capture_micros)).is_ok()
+    }
+}
+
+/// The groups of a picture: the one under way, and those finished whose
+/// streams may still be on their way. The transport takes what it is given
+/// into its own buffer long before the path carries it, so a finished group
+/// is only through once the page has it.
+#[derive(Default)]
+struct Groups {
+    current: Option<Group>,
+    finishing: Vec<StreamEnd>,
+    /// The newest group's key frame: its capture time and when it was sent.
+    key: Option<(u64, Instant)>,
+    /// The picture ended with the encoder's socket: what is on its way may
+    /// still arrive. Otherwise the page gave the picture up, and every
+    /// stream still under way is reset.
+    ended: bool,
+}
+
+impl Groups {
+    /// The next group starts with its key frame, sent now. The one before is
+    /// finished, unless the page is behind it, or the transport has not
+    /// taken all of it: then it is reset, with every earlier one still on
+    /// its way. True if it was.
+    fn start(&mut self, next: Group, behind: bool, now: Instant) -> bool {
+        self.finishing
+            .retain(|stream| !stream.closed.load(Ordering::Acquire));
+        let reset = match self.current.take() {
+            Some(earlier) if behind || earlier.taken.load(Ordering::Acquire) < earlier.handed => {
+                earlier.stream.reset();
+                self.give_up();
+                true
+            }
+            Some(earlier) => {
+                self.finish(earlier);
+                false
+            }
+            None => false,
+        };
+        self.key = Some((next.handed, now));
+        self.current = Some(next);
+        reset
+    }
+
+    /// The group under way gets no more frames: its writer finishes its
+    /// stream once the frames it has are written.
+    fn finish_current(&mut self) {
+        if let Some(current) = self.current.take() {
+            self.finish(current);
+        }
+    }
+
+    fn finish(&mut self, group: Group) {
+        // Dropping its sender lets the writer finish the stream.
+        self.finishing.push(group.stream);
+    }
+
+    /// How long the newest key frame has been on its way, if the page has
+    /// not said it received it.
+    fn key_waited(&self, received: u64, now: Instant) -> Option<Duration> {
+        self.key
+            .filter(|(capture_micros, _)| received < *capture_micros)
+            .map(|(_, sent)| now.saturating_duration_since(sent))
+    }
+
+    /// Every stream still under way is reset.
+    fn give_up(&mut self) {
+        if let Some(current) = self.current.take() {
+            current.stream.reset();
+        }
+        for stream in self.finishing.drain(..) {
+            stream.reset();
+        }
+        self.key = None;
+    }
+}
+
+impl Drop for Groups {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.give_up();
+        }
+    }
+}
+
+/// Writes a group on a stream of its own: its key frame, then its delta
+/// frames as they come, until the frame loop lets it go (the stream is
+/// finished) or resets it.
+async fn write_group(
+    connection: Connection,
+    key: (Vec<u8>, u64),
+    frames: mpsc::UnboundedReceiver<(Vec<u8>, u64)>,
+    taken: Arc<AtomicU64>,
+    reset: Arc<Notify>,
+    closed: Arc<AtomicBool>,
+) {
+    write_frames(connection, key, frames, taken, reset).await;
+    closed.store(true, Ordering::Release);
+}
+
+async fn write_frames(
+    connection: Connection,
+    key: (Vec<u8>, u64),
+    mut frames: mpsc::UnboundedReceiver<(Vec<u8>, u64)>,
+    taken: Arc<AtomicU64>,
+    reset: Arc<Notify>,
+) {
     let opening = tokio::select! {
         opening = connection.open_uni() => opening,
-        () = overtaken.notified() => return,
+        () = reset.notified() => return,
     };
     let Ok(opening) = opening else {
         return;
@@ -54,17 +304,22 @@ async fn send_key_frame(connection: Connection, bytes: Vec<u8>, overtaken: Arc<N
             Ok(stream) => stream,
             Err(_) => return,
         },
-        () = overtaken.notified() => return,
+        () = reset.notified() => return,
     };
-    stream.set_priority(KEY_FRAME_PRIORITY);
+    stream.set_priority(GROUP_PRIORITY);
     tokio::select! {
         written = async {
-            stream.write_all(&bytes).await?;
+            stream.write_all(&key.0).await?;
+            taken.store(key.1, Ordering::Release);
+            while let Some((bytes, capture_micros)) = frames.recv().await {
+                stream.write_all(&bytes).await?;
+                taken.store(capture_micros, Ordering::Release);
+            }
             stream.finish().await
         } => {
             let _ = written;
         }
-        () = overtaken.notified() => {
+        () = reset.notified() => {
             let _ = stream.reset(VarInt::from_u32(OVERTAKEN));
         }
     }
@@ -83,7 +338,8 @@ pub async fn serve(
     // Nothing can be decoded before a key frame.
     let mut needs_key = true;
     let mut announced: Option<(u32, u16, u16)> = None;
-    let mut key_in_flight: Option<Arc<Notify>> = None;
+    let mut groups = Groups::default();
+    let mut unreceived = Unreceived::default();
     while let Some(record) = subscription.frames.recv().await {
         if subscription.take_lagged() {
             // Frames were lost to a full queue: the chain is broken.
@@ -96,6 +352,10 @@ pub async fn serve(
             subscription.request_key();
         }
         let header = &record.header;
+        let now = Instant::now();
+        let received = control.page_received.load(Ordering::Acquire);
+        let lag = unreceived.lag(received, now);
+        let key_waited = groups.key_waited(received, now);
         match header.kind {
             Kind::Key => {
                 let Ok(head) = FrameHeader::key(
@@ -120,49 +380,73 @@ pub async fn serve(
                         })
                         .await;
                 }
-                // A key frame still on its way is overtaken by this one.
-                if let Some(earlier) = key_in_flight.take() {
-                    earlier.notify_one();
+                if key_waited.is_some_and(|waited| waited > SLOW_KEY && waited <= MAX_KEY_WAIT) {
+                    // The page still waits for the key frame before: this one
+                    // would only wait behind it, and is left out with the
+                    // frames that refer to it, the group before finished.
+                    groups.finish_current();
+                    counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
+                    continue;
                 }
-                let overtaken = Arc::new(Notify::new());
-                key_in_flight = Some(Arc::clone(&overtaken));
                 let mut bytes = Vec::with_capacity(head.len() + record.data.len());
                 bytes.extend_from_slice(&head);
                 bytes.extend_from_slice(&record.data);
-                tokio::spawn(send_key_frame(connection.clone(), bytes, overtaken));
+                let size = bytes.len();
+                let next = Group::open(&connection, bytes, header.capture_micros);
+                // The group before is finished, or reset with every earlier
+                // one if the page is far behind.
+                let behind =
+                    lag > MAX_PAGE_LAG || key_waited.is_some_and(|waited| waited > MAX_KEY_WAIT);
+                if groups.start(next, behind, now) {
+                    unreceived.forget();
+                }
+                unreceived.sent(header.capture_micros, now, size);
                 needs_key = false;
                 counters.key_frames.fetch_add(1, Ordering::Relaxed);
                 counters.frames_sent.fetch_add(1, Ordering::Relaxed);
             }
             Kind::Delta => {
-                if needs_key {
+                let Some(current) = groups.current.as_mut().filter(|_| !needs_key) else {
                     counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
                     continue;
+                };
+                let given_up = match key_waited {
+                    // A key frame on its way too long.
+                    Some(waited) => waited > MAX_KEY_WAIT,
+                    // More on its way than a key frame, for too long.
+                    None => lag > MAX_PAGE_LAG && unreceived.bytes > current.key_bytes,
+                };
+                if given_up {
+                    // The path does not carry the picture: what is queued is
+                    // dropped and the picture starts again from a key frame.
+                    groups.give_up();
+                    unreceived.forget();
+                    counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
+                    counters.groups_abandoned.fetch_add(1, Ordering::Relaxed);
+                    needs_key = true;
+                    subscription.request_key();
+                    continue;
                 }
-                let limit = connection
-                    .max_datagram_size()
-                    .unwrap_or(0)
-                    .min(MAX_DATAGRAM_BYTES);
-                let fragments = frame::fragment(
+                let Ok(head) = FrameHeader::whole_delta(
                     header.stream,
                     header.frame,
                     header.reference,
+                    header.size,
                     header.capture_micros,
-                    &record.data,
-                    limit,
-                );
-                let sent = fragments.is_ok_and(|fragments| {
-                    // The whole frame, or nothing of it: half a frame is of
-                    // no use, and it would take the place of a later one.
-                    let bytes: usize = fragments.iter().map(Vec::len).sum();
-                    connection.quic_connection().datagram_send_buffer_space() >= bytes
-                        && fragments
-                            .into_iter()
-                            .all(|fragment| connection.send_datagram(fragment).is_ok())
-                });
-                if sent {
+                )
+                .encode() else {
+                    continue;
+                };
+                let mut bytes = Vec::with_capacity(head.len() + record.data.len());
+                bytes.extend_from_slice(&head);
+                bytes.extend_from_slice(&record.data);
+                let size = bytes.len();
+                if current.push(bytes, header.capture_micros) {
+                    unreceived.sent(header.capture_micros, now, size);
                     counters.frames_sent.fetch_add(1, Ordering::Relaxed);
                 } else {
+                    // The group's stream failed: the chain is broken.
+                    groups.give_up();
                     counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
                     needs_key = true;
                     subscription.request_key();
@@ -170,10 +454,10 @@ pub async fn serve(
             }
         }
     }
-    if let Some(earlier) = key_in_flight.take() {
-        earlier.notify_one();
-    }
-    // The encoder's socket ended: the page is told, and may ask again.
+    // The encoder's socket ended: what is on its way is finished, the page
+    // is told, and may ask again.
+    groups.ended = true;
+    drop(groups);
     let _ = events
         .send(GatewayControl::Video {
             state: VideoState::Stopped,

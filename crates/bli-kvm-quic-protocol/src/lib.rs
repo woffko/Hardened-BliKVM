@@ -14,5 +14,7 @@ pub mod frame;
 pub mod link;
 pub mod page;
 
-/// The version every side sends first and requires of the other.
-pub const PROTOCOL: u16 = 1;
+/// The version every side sends first and requires of the other. Version 2
+/// sends a group of pictures (a key frame and its delta frames) on a stream
+/// of its own instead of the delta frames as datagrams.
+pub const PROTOCOL: u16 = 2;

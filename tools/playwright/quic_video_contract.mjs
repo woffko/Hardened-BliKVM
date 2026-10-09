@@ -6,9 +6,9 @@
 //
 // With QUIC chosen and H.264 the Screen menu's mode, headless Chromium
 // decodes the stream with WebCodecs: the frame's number is read back from
-// the canvas. Under loss the picture goes on, never shows an older frame
-// after a newer one, and asks for a bounded number of key frames; without
-// loss it asks for none. Where the picture cannot be had over the session,
+// the canvas. Under loss the transport sends again what the path lost: the
+// picture goes on, never shows an older frame after a newer one, and gives
+// up and asks for nothing. Where the picture cannot be had over the session,
 // H.264 stays on WebRTC and Settings says why. In the Restricted firewall
 // mode, which closes WebRTC's ports and admits the session's, H.264 is to be
 // had over the session and nothing else is. With upscaling on, the picture
@@ -617,12 +617,13 @@ try {
         await until(`the picture is drawn ${mode}`, async () =>
           (await drawnAs(page)).mode === mode ? true : null,
         );
+        // The worker reports its count once a second, on a timer that its
+        // draws can hold back a little: the picture goes on within three.
         const first = await stats(page);
-        await sleep(1000);
-        const then = await stats(page);
-        assert.ok(
-          then.frames > first.frames,
-          `drawn ${mode}, the picture stood at ${then.frames} frames`,
+        await until(
+          `the picture goes on, drawn ${mode}`,
+          async () => ((await stats(page)).frames > first.frames ? true : null),
+          3000,
         );
       }
       assert.equal(await page.getByTestId("transport-notice").count(), 0);
@@ -681,14 +682,20 @@ try {
         (await drawnAs(page)).mode === "medium" ? true : null,
       );
       const before = await stats(page);
+      const lostBefore = relay.counters().toClient.dropped;
       relay.impair({ loss: LOSS });
       await sleep(LOSSY_MS);
       relay.impair({ loss: 0 });
       await sleep(1500);
       const lossy = await stats(page);
       assert.ok(
-        lossy.requests > before.requests,
-        "the lossy path asked for no key frame",
+        relay.counters().toClient.dropped > lostBefore,
+        "the path lost nothing",
+      );
+      // The transport sends what the path lost again: the picture goes on.
+      assert.ok(
+        lossy.frames - before.frames >= (LOSSY_MS / 1000) * WHOLE_FPS,
+        `${lossy.frames - before.frames} frames drawn over the lossy path`,
       );
       assert.equal((await drawnAs(page)).mode, "medium");
       assert.equal(await page.getByTestId("upscale-notice").count(), 0);
@@ -730,15 +737,15 @@ try {
       assert.deepEqual(errors, []);
       await finish(page, context);
       console.log(
-        `QUIC upscaled: a lossy path left upscaling on (${lossy.requests - before.requests} key frames asked for); a slowed draw stopped it after ${(stoppedAfter / 1000).toFixed(1)} s`,
+        `QUIC upscaled: a lossy path left upscaling on (${lossy.frames - before.frames} frames drawn over it); a slowed draw stopped it after ${(stoppedAfter / 1000).toFixed(1)} s`,
       );
     }
   }
 
-  // A path that loses datagrams: the picture goes on and never steps back,
-  // key frames are asked for no faster than the encoder makes them, and
-  // once the path is clean again the picture is whole and nothing more is
-  // asked for.
+  // A path that loses packets: the transport sends again what it lost, a
+  // group of pictures on its stream a round trip late, so the picture goes
+  // on at its rate and never steps back, no frame is given up and no key
+  // frame asked for, and once the path is clean again the picture is whole.
   {
     const { context, page, errors } = await open();
     const before = await playing(page, 60);
@@ -787,23 +794,14 @@ try {
       `the picture stood still: ${numbers}`,
     );
     assert.ok(
-      atEnd.frames - before.frames >= (LOSSY_MS / 1000) * 5,
+      atEnd.frames - before.frames >= (LOSSY_MS / 1000) * WHOLE_FPS,
       `${atEnd.frames - before.frames} frames were drawn under loss`,
     );
-    // The loss broke the chain more than once. A round of recovery ends with
-    // a key frame, and the encoder makes one on request no more often than
-    // every quarter of a second; a request is repeated only after a second
-    // without one. The last round ends within a second of the loss.
-    const rounds = 4 * (LOSSY_MS / 1000 + 1) + 1;
-    assert.ok(whole.requests >= 2, `${whole.requests} key-frame requests`);
-    assert.ok(
-      whole.requests <= rounds,
-      `${whole.requests} key-frame requests, more than ${rounds}`,
-    );
-    assert.ok(whole.dropped > 0);
+    assert.equal(whole.requests, 0, "key frames were asked for");
+    assert.equal(whole.dropped, 0, "frames were given up");
     console.log(
       `${LOSS * 100}% loss for ${(LOSSY_MS / 1000).toFixed(0)} s: ` +
-        `${lost} datagrams lost towards the page, ` +
+        `${lost} packets lost towards the page, ` +
         `${atEnd.frames - before.frames} frames drawn, ` +
         `${whole.dropped} given up, ${whole.requests} key-frame requests, ` +
         `whole and calm again ${(seconds - LOSSY_MS / 1000).toFixed(1)} s after it`,

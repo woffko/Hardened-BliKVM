@@ -33,6 +33,8 @@ export type ToVideoWorker =
   | { type: 'begin' }
   | { type: 'datagram'; data: ArrayBuffer }
   | { type: 'keyframe'; data: ArrayBuffer }
+  /** A whole delta frame of a group's stream (protocol 2). */
+  | { type: 'groupframe'; data: ArrayBuffer }
   /**
    * A ping answered: its round trip, the board's clock in the answer, and
    * when the answer arrived, as `performance.timeOrigin + performance.now()`
@@ -450,6 +452,10 @@ scope.onmessage = (event) => {
     case 'keyframe':
       bytes += message.data.byteLength;
       handle(receiver.keyFrame(new Uint8Array(message.data), now));
+      break;
+    case 'groupframe':
+      bytes += message.data.byteLength;
+      handle(receiver.groupFrame(new Uint8Array(message.data), now));
       break;
     case 'pong': {
       // When the answer arrived, on this worker's clock; the middle of its

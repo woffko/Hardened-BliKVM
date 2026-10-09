@@ -381,10 +381,10 @@ export class Board {
   hear(message) {
     switch (message.t) {
       case "hello":
-        assert.equal(message.protocol, 1);
+        assert.equal(message.protocol, 2);
         assert.match(message.certificateSha256, /^[0-9a-f]{64}$/);
         this.hello = message;
-        this.say({ t: "hello", protocol: 1 });
+        this.say({ t: "hello", protocol: 2 });
         break;
       case "redeem":
         this.redeemed.push(message.token);

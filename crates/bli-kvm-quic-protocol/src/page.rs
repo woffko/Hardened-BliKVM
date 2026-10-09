@@ -26,10 +26,14 @@ pub enum PageControl {
         protocol: u16,
         token: String,
     },
-    /// The page's clock in milliseconds, returned unchanged.
+    /// The page's clock in milliseconds, returned unchanged. While it watches
+    /// the picture, `received`: the capture time of the newest frame it has
+    /// received whole, for the gateway to see how far behind the page is.
     Ping {
         id: u32,
         page_time: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        received: Option<u64>,
     },
     Video {
         subscribe: bool,
@@ -288,6 +292,7 @@ mod tests {
         let first = encode(&PageControl::Ping {
             id: 1,
             page_time: 10.5,
+            received: None,
         })
         .unwrap();
         let second = encode(&PageControl::Bye {}).unwrap();
@@ -307,7 +312,8 @@ mod tests {
             vec![
                 PageControl::Ping {
                     id: 1,
-                    page_time: 10.5
+                    page_time: 10.5,
+                    received: None
                 },
                 PageControl::Bye {}
             ]
