@@ -122,6 +122,9 @@ const en = {
       upscaleWith: 'deringing and SGSR, {{sharpness}}',
       upscaleGpu: '{{value}} ms on the GPU',
       upscaleDraw: '{{value}} ms to draw',
+      upscaleLow: 'low',
+      upscaleMedium: 'medium',
+      upscaleHigh: 'high',
       refresh: 'Display refresh'
     },
     screen: {

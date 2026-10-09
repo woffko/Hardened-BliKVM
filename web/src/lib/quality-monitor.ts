@@ -199,9 +199,10 @@ export function pageRates(previous: PageSample | null, current: PageSample): Pag
 function upscaleText(report: UpscaleReport, t: Translate): string {
   if (report.mode === 'off') return t('qualityMonitor.upscaleOff');
   if (report.mode === 'plain') return t('qualityMonitor.upscaleNotEnlarged');
+  // The monitor draws in a worker, which has the monitor's own labels only.
   const sharpness = t(
-    `screen.upscale${report.mode[0].toUpperCase()}${report.mode.slice(1)}`
-  ).toLowerCase();
+    `qualityMonitor.upscale${report.mode[0].toUpperCase()}${report.mode.slice(1)}`
+  );
   const how = t('qualityMonitor.upscaleWith', { sharpness });
   if (report.gpuMs !== null) {
     return `${how}, ${t('qualityMonitor.upscaleGpu', { value: report.gpuMs.toFixed(2) })}`;

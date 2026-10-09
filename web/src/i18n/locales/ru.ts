@@ -126,6 +126,9 @@ const ru = {
       upscaleWith: 'подавление звона и SGSR, {{sharpness}}',
       upscaleGpu: '{{value}} мс на видеокарте',
       upscaleDraw: '{{value}} мс на отрисовку',
+      upscaleLow: 'низкая',
+      upscaleMedium: 'средняя',
+      upscaleHigh: 'высокая',
       refresh: 'Частота экрана'
     },
     screen: {

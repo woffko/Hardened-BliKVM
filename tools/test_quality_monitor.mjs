@@ -32,7 +32,7 @@ const TEXTS = {
   "qualityMonitor.upscaleWith": "deringing and SGSR, {{sharpness}}",
   "qualityMonitor.upscaleGpu": "{{value}} ms on the GPU",
   "qualityMonitor.upscaleDraw": "{{value}} ms to draw",
-  "screen.upscaleMedium": "Medium",
+  "qualityMonitor.upscaleMedium": "medium",
 };
 const t = (key, options) =>
   (TEXTS[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -512,9 +512,12 @@ test(
 );
 
 test("the local section says how the view draws its frames", { skip }, () => {
+  // The monitor draws in a worker, which has the monitor's own labels only.
+  const workerT = (key, options) =>
+    key.startsWith("qualityMonitor.") ? t(key, options) : key;
   const rowOf = (upscale) =>
     monitor
-      .extendedSections(inputs({ sample: sample({ upscale }) }), t)
+      .extendedSections(inputs({ sample: sample({ upscale }) }), workerT)
       .find((section) => section.key === "local")
       .rows.find((row) => row.key === "upscaler")?.value;
   assert.equal(rowOf(null), undefined);
