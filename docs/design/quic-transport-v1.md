@@ -262,8 +262,7 @@ server answers `clock` instead.
 Limits: 8 connections, 2 per web session; 64 tokens waiting, the oldest
 giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s,
 and every 250 ms while it watches the picture (for the board's clock, see
-"Receiver", and to say which frame it last received whole, see "Gateway,
-sending"). A gateway that connects anew replaces the one before it, and
+"Receiver"). A gateway that connects anew replaces the one before it, and
 the sessions and tokens of that one are forgotten.
 
 A gateway that stops leaves the link before it closes its connections and
@@ -299,7 +298,7 @@ two bytes (at most 4096); unknown fields and types are refused.
 
 | From | Message |
 | --- | --- |
-| page | `hello` (protocol, token); `ping` (id, page time, and while it watches `received`: the capture time of the newest frame it received whole); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
+| page | `hello` (protocol, token); `ping` (id, page time); `received` (the capture time of a frame of a group received whole, as it arrives; not answered); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
 | gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, packets lost, frames sent and dropped, key frames sent, the share of the chosen bitrate that the path carries in percent), every 2 s; `closing` (reason) |
 
 The gateway answers a `video` that unsubscribes with `video` stopped. A
@@ -396,10 +395,12 @@ path's live limit.
 - The session (`session.ts`) reads the groups' streams and hands their
   frames to the worker as each is whole (`group.ts`): the first must be a
   key frame and the rest whole delta frames, or the stream is refused. A
-  stream that ends in a reset was given up by the gateway. Four times a
-  second its pings tell the gateway the capture time of the newest frame it
-  received whole. It still reads datagrams, keeping 4096 for the page to
-  read, as protocol 1 needed.
+  stream that ends in a reset was given up by the gateway. It tells the
+  gateway each frame as it arrives (`received`, its capture time): by an
+  event and not by a timer, which the browser slows down on a hidden page
+  (Chromium to once a minute after five minutes), and which would have
+  looked like a queue. It still reads datagrams, keeping 4096 for the page
+  to read, as protocol 1 needed.
 - The worker reports once a second: frames drawn, frames in the last
   second and frames a second over the last five (a still screen gives one
   frame every 2 s, and Settings shows the latter), the age of the frames
@@ -479,12 +480,12 @@ for the share of the chosen bitrate that its path carries
 encoder at the chosen bitrate times the least share of the sessions that
 watch, never below a quarter of it.
 
-- **The queue.** The least lag of each second stands for the path in that
-  second: the page reports four times a second, and the least lag is the
-  one just after it said. The least of those over half a minute is the path
-  without a queue, its round trip and the page's own delay in saying. A
-  second more than 300 ms above it has a queue; one no more than 100 ms
-  above it keeps up.
+- **The queue.** The page says each frame as it arrives, and the least lag
+  of each second stands for the path in that second: the moments when
+  frames are on their way count for nothing. The least of those over half a
+  minute is the path without a queue, its round trip and the page's own
+  delay in saying. A second more than 300 ms above it has a queue; one no
+  more than 100 ms above it keeps up.
 - **Down** by a quarter when a second has a queue that does not drain (its
   least lag no shorter than the second's before), and when a group is given
   up; at most once in 2 s, in which the lower bitrate shows, and not in a

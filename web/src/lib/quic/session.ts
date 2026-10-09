@@ -117,8 +117,6 @@ type Open = {
   messages: MessageReader;
   /** The input stream, opened when the first request is made. */
   input: Promise<InputChannel> | null;
-  /** The capture time of the newest frame received whole, told in pings. */
-  received: number;
   /**
    * Unsubscriptions whose answer has not come: the gateway answers each
    * with "stopped", which may come after the page watches again (a view that
@@ -360,8 +358,10 @@ class QuicSession {
       }
     };
     // A group's stream: its key frame, then its delta frames, each handed
-    // on as soon as it is whole. A stream that is reset was overtaken by the
-    // next group, or fell behind.
+    // on as soon as it is whole and said to the gateway, which judges by it
+    // what is still on its way; as it arrives, not by a timer, which a
+    // hidden page's browser slows down. A stream that is reset was overtaken
+    // by the next group, or fell behind.
     const group = async (stream: ReadableStream<Uint8Array>) => {
       const reader = stream.getReader();
       const records = new GroupRecords();
@@ -377,11 +377,13 @@ class QuicSession {
         }
         for (const record of whole) {
           if (this.open !== open) return reader.cancel().catch(() => undefined);
-          const capture = decodeHeader(record)?.captureMicros ?? 0;
-          open.received = Math.max(open.received, capture);
-          if (first) this.sink?.keyFrame(record);
-          else this.sink?.groupFrame(record);
+          const key = first;
           first = false;
+          if (!this.sink) continue;
+          const capture = decodeHeader(record)?.captureMicros ?? 0;
+          open.writer.write(encodeMessage({ t: 'received', capture })).catch(() => undefined);
+          if (key) this.sink.keyFrame(record);
+          else this.sink.groupFrame(record);
         }
       }
     };
@@ -537,8 +539,7 @@ class QuicSession {
           reader: stream.readable.getReader(),
           messages: new MessageReader(),
           input: null,
-          stopsAwaited: 0,
-          received: 0
+          stopsAwaited: 0
         };
         await open.writer.write(
           encodeMessage({ t: 'hello', protocol: PROTOCOL, token: grant.token })
@@ -581,14 +582,7 @@ class QuicSession {
       const send = () => {
         pingId += 1;
         open.writer
-          .write(
-            encodeMessage({
-              t: 'ping',
-              id: pingId,
-              pageTime: performance.now(),
-              ...(this.sink && open.received > 0 ? { received: open.received } : {})
-            })
-          )
+          .write(encodeMessage({ t: 'ping', id: pingId, pageTime: performance.now() }))
           .catch(() => finish('lost'));
         return pingId;
       };

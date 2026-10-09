@@ -8,7 +8,7 @@
 //! session that lost a frame gets no more delta frames until the next key
 //! frame, which is asked for.
 //!
-//! The page says in its pings which frame it last received whole. How long
+//! The page says which frames it received whole, each as it arrives. How long
 //! the oldest frame it has not received has been on its way is its lag, and
 //! the lag sets the share of the chosen bitrate that the session asks for
 //! (`share.rs`). The transport takes what it is given into a buffer of its
@@ -65,7 +65,7 @@ pub struct VideoControl {
     /// The page asked for a key frame: it can decode nothing until one comes.
     pub page_needs_key: AtomicBool,
     /// The capture time of the newest frame the page has said it received
-    /// whole, from its pings; zero until it says.
+    /// whole; zero until it says.
     pub page_received: AtomicU64,
     /// The share of the chosen bitrate, in percent, that the session's path
     /// carries: the picture sets it, the session tells the server.

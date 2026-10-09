@@ -6,11 +6,11 @@
 //! less than the encoder makes, and climbs back while the page keeps up.
 //!
 //! The page's lag is how long the oldest frame it has not said it received
-//! has been on its way (`video.rs`). The least lag of each second stands for
-//! the path in that second: the page says what it received four times a
-//! second, and the least lag is the one just after it said. The least of
-//! those over half a minute is the path without a queue: its round trip and
-//! the page's own delay in saying.
+//! has been on its way (`video.rs`). The page says each frame as it
+//! arrives, and the least lag of each second stands for the path in that
+//! second: the moments when frames are on their way count for nothing. The
+//! least of those over half a minute is the path without a queue: its round
+//! trip and the page's own delay in saying.
 
 use std::{
     collections::VecDeque,
@@ -182,8 +182,8 @@ mod tests {
         asked
     }
 
-    /// A path that keeps up: the page reports four times a second, so the
-    /// lag rises from its round trip to a quarter second more and drops.
+    /// A path that keeps up: the lag rises from its round trip by up to a
+    /// quarter second while frames are on their way, and drops.
     fn keeping_up(at: Duration) -> Duration {
         Duration::from_millis(40) + Duration::from_millis((at.as_millis() % 250) as u64)
     }

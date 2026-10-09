@@ -15,8 +15,9 @@ export type VideoState = 'started' | 'stopped' | 'unavailable';
 
 export type PageControl =
   | { t: 'hello'; protocol: number; token: string }
-  /** `received`: the capture time of the newest frame received whole, while the page watches. */
-  | { t: 'ping'; id: number; pageTime: number; received?: number }
+  | { t: 'ping'; id: number; pageTime: number }
+  /** A frame of a group arrived whole: its capture time, said as it arrives. Not answered. */
+  | { t: 'received'; capture: number }
   | { t: 'video'; subscribe: boolean }
   | { t: 'keyframe'; stream: number; lastFrame: number; dropped: number }
   | { t: 'bye' };

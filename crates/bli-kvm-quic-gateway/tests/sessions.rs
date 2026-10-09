@@ -404,7 +404,6 @@ async fn a_page_with_a_token_is_welcomed_and_its_pings_are_answered() {
         page.say(&PageControl::Ping {
             id,
             page_time: 1000.5 + f64::from(id),
-            received: None,
         })
         .await;
         match page.hear_but_counters().await {
@@ -523,7 +522,6 @@ async fn what_is_not_a_proper_hello_is_refused_without_asking_the_server() {
             &PageControl::Ping {
                 id: 1,
                 page_time: 0.0,
-                received: None,
             },
         )
         .await;
@@ -807,7 +805,6 @@ async fn the_certificate_is_replaced_and_open_sessions_go_on() {
     page.say(&PageControl::Ping {
         id: 7,
         page_time: 1.0,
-        received: None,
     })
     .await;
     assert!(matches!(
@@ -1500,10 +1497,11 @@ async fn a_page_too_far_behind_starts_again_from_a_key_frame() {
     encoder.send(Kind::Delta, 2, 1, 400);
     page.delta_frame().await;
     // The page says it has frame 2 (captured at 2 ms).
+    page.say(&PageControl::Received { capture: 2000 }).await;
+    // Its ping's answer says the gateway has read it.
     page.say(&PageControl::Ping {
         id: 1,
         page_time: 1.0,
-        received: Some(2000),
     })
     .await;
     assert!(matches!(
@@ -1545,10 +1543,11 @@ async fn less_on_its_way_than_a_key_frame_is_waited_for() {
     encoder.send(Kind::Key, 1, 1, 1000);
     assert_eq!(page.video().await, started());
     page.key_frame().await.unwrap();
+    page.say(&PageControl::Received { capture: 1000 }).await;
+    // Its ping's answer says the gateway has read it.
     page.say(&PageControl::Ping {
         id: 1,
         page_time: 1.0,
-        received: Some(1000),
     })
     .await;
     assert!(matches!(
@@ -1584,10 +1583,11 @@ async fn the_next_key_frame_waits_for_a_slow_one() {
     encoder.send(Kind::Key, 3, 3, 1000);
     encoder.send(Kind::Delta, 4, 3, 400);
     assert!(page.group_end().await.is_ok(), "the first group was reset");
+    page.say(&PageControl::Received { capture: 2000 }).await;
+    // Its ping's answer says the gateway has read it.
     page.say(&PageControl::Ping {
         id: 1,
         page_time: 1.0,
-        received: Some(2000),
     })
     .await;
     assert!(matches!(

@@ -26,14 +26,16 @@ pub enum PageControl {
         protocol: u16,
         token: String,
     },
-    /// The page's clock in milliseconds, returned unchanged. While it watches
-    /// the picture, `received`: the capture time of the newest frame it has
-    /// received whole, for the gateway to see how far behind the page is.
+    /// The page's clock in milliseconds, returned unchanged.
     Ping {
         id: u32,
         page_time: f64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        received: Option<u64>,
+    },
+    /// A frame of a group arrived whole: its capture time, said as it
+    /// arrives, for the gateway to see what is still on its way. It is not
+    /// answered.
+    Received {
+        capture: u64,
     },
     Video {
         subscribe: bool,
@@ -241,6 +243,10 @@ mod tests {
             "{text}"
         );
 
+        let received =
+            serde_json::to_string(&PageControl::Received { capture: 1_234_567 }).unwrap();
+        assert_eq!(received, r#"{"t":"received","capture":1234567}"#);
+
         let keyframe = serde_json::to_string(&PageControl::Keyframe {
             stream: 7,
             last_frame: 41,
@@ -299,6 +305,8 @@ mod tests {
             r#"{"protocol":1,"token":"x"}"#,
             r#"{"t":"ping","id":1}"#,
             r#"{"t":"ping","id":-1,"pageTime":1}"#,
+            r#"{"t":"ping","id":1,"pageTime":1,"received":5}"#,
+            r#"{"t":"received","capture":-1}"#,
             r#"[1,2,3]"#,
         ] {
             assert!(serde_json::from_str::<PageControl>(text).is_err(), "{text}");
@@ -311,7 +319,6 @@ mod tests {
         let first = encode(&PageControl::Ping {
             id: 1,
             page_time: 10.5,
-            received: None,
         })
         .unwrap();
         let second = encode(&PageControl::Bye {}).unwrap();
@@ -332,7 +339,6 @@ mod tests {
                 PageControl::Ping {
                     id: 1,
                     page_time: 10.5,
-                    received: None
                 },
                 PageControl::Bye {}
             ]
