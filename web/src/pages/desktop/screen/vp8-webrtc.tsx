@@ -66,7 +66,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
   const [rangeFix] = useState(() => codec === 'vp8' && drawsWithGpu());
   const { upscale, fit } = useUpscaleView();
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+  const { containerRef, mediaStyle, settled, pixelRatio } = useScreenFit(
     resolution,
     videoScale,
     {
@@ -235,7 +235,7 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
             rangeFix ? { ...mediaStyle, filter: `url(#${VP8_RANGE_FILTER_ID})` } : mediaStyle
           }
           mediaStyle={mediaStyle}
-          drawn={drawn}
+          drawn={settled}
           pixelRatio={pixelRatio}
           resolution={resolution}
           mouseStyle={mouseStyle}

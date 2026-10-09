@@ -533,6 +533,52 @@ try {
         Math.abs((to - from) * width - 60) <= 2,
         `a finger moved 60 px, the cursor ${((to - from) * width).toFixed(1)} px`,
       );
+
+      // A pinch: the canvas keeps its buffer while the fingers move (the
+      // browser stretches it), and is drawn at the picture's new size once
+      // they have stopped for a moment. The fingers part by 3 px a step,
+      // every step a larger zoom, short of the touch zoom's 400 %.
+      const before = (await drawnAs(page)).buffer;
+      const view = await page.locator("[data-kvm-screen-scroll]").boundingBox();
+      const [cx, cy] = [view.x + view.width / 2, view.y + view.height / 2];
+      const fingers = (spread) => [
+        { x: cx - spread, y: cy, id: 1 },
+        { x: cx + spread, y: cy, id: 2 },
+      ];
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: fingers(30),
+      });
+      const during = new Set();
+      for (let step = 1; step <= 16; step += 1) {
+        await touch.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: fingers(30 + step * 1.5),
+        });
+        during.add((await drawnAs(page)).buffer);
+        await sleep(80);
+      }
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+      assert.deepEqual(
+        [...during],
+        [before],
+        "the buffer followed the fingers",
+      );
+      const after = await until(
+        "the buffer follows the pinch's final size",
+        async () => {
+          const box = await page.locator("canvas#screen").boundingBox();
+          const shown = `${Math.round(box.width)}x${Math.round(box.height)}`;
+          const { buffer } = await drawnAs(page);
+          return buffer === shown && buffer !== before ? buffer : null;
+        },
+      );
+      console.log(
+        `QUIC upscaled on a phone: a pinch kept the ${before} buffer while the fingers moved and drew at ${after} once they stopped`,
+      );
       assert.deepEqual(errors, []);
       await finish(page, context);
     }

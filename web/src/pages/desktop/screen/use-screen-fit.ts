@@ -10,6 +10,12 @@ type ScreenFit = {
   mediaStyle: CSSProperties;
   /** The picture's size on the page, in CSS pixels. */
   drawn: { width: number; height: number };
+  /**
+   * The same once it has stopped changing for a moment: what a canvas
+   * buffer follows, so that a pinch is stretched by the browser while it
+   * goes on and drawn again at its final size.
+   */
+  settled: { width: number; height: number };
   /** Device pixels per CSS pixel. */
   pixelRatio: number;
   /**
@@ -21,6 +27,8 @@ type ScreenFit = {
 
 const FALLBACK_SCREEN_WIDTH = 1920;
 const FALLBACK_SCREEN_HEIGHT = 1080;
+/** How long the drawn size must stay before a buffer follows it. */
+const SETTLE_MS = 150;
 
 export function useScreenFit(
   resolution: Resolution | null,
@@ -117,6 +125,13 @@ export function useScreenFit(
 
   const enlargement = fitScale * videoScale * pixelRatio;
 
+  const [settled, setSettled] = useState(drawn);
+  useEffect(() => {
+    if (settled.width === drawn.width && settled.height === drawn.height) return;
+    const timer = window.setTimeout(() => setSettled(drawn), SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [drawn, settled]);
+
   // What a probe reads without opening a menu.
   useEffect(() => {
     const container = containerRef.current;
@@ -125,5 +140,5 @@ export function useScreenFit(
     container.dataset.picturePixelRatio = String(pixelRatio);
   }, [enlargement, pixelRatio]);
 
-  return { containerRef, mediaStyle, drawn, pixelRatio, enlargement };
+  return { containerRef, mediaStyle, drawn, settled, pixelRatio, enlargement };
 }

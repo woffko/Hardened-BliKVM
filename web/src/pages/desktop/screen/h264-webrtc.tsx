@@ -37,7 +37,7 @@ export const H264Webrtc = () => {
   const videoIceCandidates = useRef<RTCIceCandidate[]>([]);
   const { upscale, fit } = useUpscaleView();
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+  const { containerRef, mediaStyle, settled, pixelRatio } = useScreenFit(
     resolution,
     videoScale,
     {
@@ -257,7 +257,7 @@ export const H264Webrtc = () => {
           vp8Range={false}
           videoStyle={mediaStyle}
           mediaStyle={mediaStyle}
-          drawn={drawn}
+          drawn={settled}
           pixelRatio={pixelRatio}
           resolution={resolution}
           mouseStyle={mouseStyle}

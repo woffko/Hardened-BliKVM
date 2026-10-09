@@ -39,7 +39,7 @@ export const Mjpeg = () => {
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
   const { upscale, fit } = useUpscaleView();
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+  const { containerRef, mediaStyle, settled, pixelRatio } = useScreenFit(
     resolution,
     videoScale,
     {
@@ -126,7 +126,7 @@ export const Mjpeg = () => {
           url={streamSrc}
           sharpness={upscale}
           mediaStyle={mediaStyle}
-          drawn={drawn}
+          drawn={settled}
           pixelRatio={pixelRatio}
           resolution={resolution}
           mouseStyle={mouseStyle}

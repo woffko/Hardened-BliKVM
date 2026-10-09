@@ -52,7 +52,7 @@ export const H264Quic = () => {
   // A canvas can be handed to a worker once; a new one is mounted for the
   // next worker.
   const [canvasKey, setCanvasKey] = useState(0);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+  const { containerRef, mediaStyle, settled, pixelRatio } = useScreenFit(
     resolution,
     videoScale,
     {
@@ -63,8 +63,8 @@ export const H264Quic = () => {
     fit
   );
   // Where the picture is shown, for the worker to draw it at that size.
-  const viewRef = useRef({ width: drawn.width, height: drawn.height, pixelRatio });
-  viewRef.current = { width: drawn.width, height: drawn.height, pixelRatio };
+  const viewRef = useRef({ width: settled.width, height: settled.height, pixelRatio });
+  viewRef.current = { width: settled.width, height: settled.height, pixelRatio };
 
   useEffect(() => {
     const scale = storage.getVideoScale();
@@ -174,11 +174,11 @@ export const H264Quic = () => {
   useEffect(() => {
     workerRef.current?.postMessage({
       type: 'view',
-      width: drawn.width,
-      height: drawn.height,
+      width: settled.width,
+      height: settled.height,
       pixelRatio
     } satisfies ToVideoWorker);
-  }, [drawn.width, drawn.height, pixelRatio]);
+  }, [settled.width, settled.height, pixelRatio]);
 
   useEffect(() => {
     if (upscale !== 'off') {
