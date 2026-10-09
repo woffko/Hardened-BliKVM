@@ -151,7 +151,10 @@ focus the page sends no key to the target, as for its other fields.
   GPU's, where the browser offers timer queries) and the canvas's buffer.
   The quality monitor's Extended view has an Upscaling row:
   `SGSR, medium, 0.27 ms GPU` (SGSR naming the deringing pass and SGSR),
-  `on, not enlarged`, `off`, or why it stopped (`stopped: frames lost`).
+  `on, not enlarged`, `off`, or why it stopped (`stopped: frames lost`);
+  below it, while frames are drawn through the upscaler in any view, the
+  watchdog's count: "Upscaled, drawn/came a s", `29.8 / 30.0` (the
+  canvases carry it too, `data-quic-upscale-frames`, `data-upscale-frames`).
   The new canvas's worker unwatches the picture and watches it again at
   once; the session passes over the "stopped" with which the gateway
   answers the unwatching (`docs/design/quic-transport-v1.md`, "Messages"),
@@ -207,7 +210,9 @@ focus the page sends no key to the target, as for its other fields.
   time (`X-Timestamp`, as the board's streamer says it). A page seen again
   starts the count over. On the host a draw slowed by 240 ms a frame stops
   it within 1 to 9 s in each view, and a QUIC path losing 3 % of its
-  datagrams for 8 s leaves it on.
+  datagrams for 8 s leaves it on. The quality monitor shows its count
+  (above), which is what the gates' "no frame lost to the upscaler" is read
+  from on the operator's devices.
 
 ## Tests
 
@@ -240,8 +245,12 @@ focus the page sends no key to the target, as for its other fields.
   capture times, and what is not a stream.
 - `tools/playwright/vp8_range_contract.mjs`: upscaled at a pixel ratio of 2,
   VP8's greys within 1.5 levels of the JPEG and its colours within 4, H.264
-  within 1.5, the buffer of the shown device pixels, no SVG filter, the
-  mouse where it is; a slowed draw stops upscaling and the video plays.
+  within 1.5, the buffer of the shown device pixels, every frame that came
+  drawn, no SVG filter, the mouse where it is; a slowed draw stops
+  upscaling and the video plays; a browser drawing in software keeps the
+  video as the screen with upscaling Auto. Its track plays ten frames a
+  second: SwiftShader draws the 2556x1438 buffer on the page's thread at a
+  cost no GPU has.
 - `tools/playwright/mjpeg_upscale_contract.mjs`: the stream's patches
   within 2 levels of the plain image, the squares' edges rising at least
   15 % more narrowly than the browser's own scaling of it, the mouse where
