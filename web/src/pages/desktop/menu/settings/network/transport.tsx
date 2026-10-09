@@ -281,6 +281,7 @@ export const Transport = ({ readOnly = false }: { readOnly?: boolean }) => {
           data-frames-dropped={counters?.framesDropped}
           data-key-frames={counters?.keyFrames}
           data-packets-lost={counters?.packetsLost}
+          data-bitrate-share={counters?.bitrateShare}
         >
           {statusText}
         </span>

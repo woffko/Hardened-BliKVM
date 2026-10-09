@@ -327,6 +327,7 @@ test(
           gatewayFramesSent: 100,
           gatewayFramesDropped: 0,
           gatewayKeyFrames: 5,
+          bitrateShare: 75,
         },
       }),
     });
@@ -350,12 +351,15 @@ test(
       "quicRequests",
       "quicResets",
       "quicGateway",
+      "quicShare",
     ]);
     // A session lost and opened again, and the decoder started again: the
     // marks of a picture that stood still.
     const transport = valuesOf(sections[1].rows);
     assert.equal(transport.quicSessions, "2");
     assert.equal(transport.quicResets, "3");
+    // The path carries three quarters of the chosen bitrate.
+    assert.equal(transport.quicShare, "75 %");
     assert.deepEqual(byKey.board, [
       "version",
       "capture",

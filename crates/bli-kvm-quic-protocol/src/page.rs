@@ -116,14 +116,17 @@ pub enum GatewayControl {
         reason: Option<String>,
     },
     /// The connection as the gateway sees it: the round-trip time, packets
-    /// the transport gave up as lost, and what the gateway sent or had to
-    /// drop of the picture.
+    /// the transport gave up as lost, what the gateway sent or had to drop
+    /// of the picture, and the share of the chosen bitrate, in percent, that
+    /// the session's path carries (`docs/design/quic-transport-v1.md`, "The
+    /// bitrate").
     Counters {
         round_trip_micros: u32,
         packets_lost: u64,
         frames_sent: u64,
         frames_dropped: u64,
         key_frames: u64,
+        bitrate_share: u8,
     },
     Closing {
         reason: Closing,
@@ -269,6 +272,22 @@ mod tests {
         assert_eq!(
             video,
             r#"{"t":"video","state":"unavailable","reason":"encoder"}"#
+        );
+        let counters = serde_json::to_string(&GatewayControl::Counters {
+            round_trip_micros: 40_000,
+            packets_lost: 3,
+            frames_sent: 300,
+            frames_dropped: 2,
+            key_frames: 6,
+            bitrate_share: 75,
+        })
+        .unwrap();
+        assert_eq!(
+            counters,
+            concat!(
+                r#"{"t":"counters","roundTripMicros":40000,"packetsLost":3,"#,
+                r#""framesSent":300,"framesDropped":2,"keyFrames":6,"bitrateShare":75}"#
+            )
         );
     }
 

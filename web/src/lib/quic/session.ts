@@ -650,7 +650,8 @@ class QuicSession {
                 packetsLost: message.packetsLost,
                 framesSent: message.framesSent,
                 framesDropped: message.framesDropped,
-                keyFrames: message.keyFrames
+                keyFrames: message.keyFrames,
+                bitrateShare: message.bitrateShare
               };
               publish();
               break;

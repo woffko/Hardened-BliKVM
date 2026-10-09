@@ -9,6 +9,11 @@ use thiserror::Error;
 /// A link message, without its four length bytes.
 pub const MAX_LINK_MESSAGE_BYTES: usize = 64 * 1024;
 
+/// The least share of the chosen bitrate, in percent, that a session asks
+/// for in [`GatewayToServer::VideoShare`]: below it the picture is not worth
+/// having.
+pub const LEAST_VIDEO_SHARE: u8 = 25;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "t",
@@ -46,6 +51,11 @@ pub enum GatewayToServer {
         session: String,
         subscribe: bool,
     },
+    /// The share of the chosen bitrate, in percent, that a session's path
+    /// carries, whenever it changes (`docs/design/quic-transport-v1.md`,
+    /// "The bitrate"). The server runs the H.264 encoder at the chosen
+    /// bitrate times the least share of the sessions that watch.
+    VideoShare { session: String, percent: u8 },
     /// A session's connection is gone.
     Closed { session: String },
 }
@@ -160,6 +170,24 @@ mod tests {
         assert!(
             text.contains(r#""certificateSha256""#) && text.contains(r#""notBefore":10"#),
             "{text}"
+        );
+
+        let share = serde_json::to_string(&GatewayToServer::VideoShare {
+            session: "s".into(),
+            percent: 75,
+        })
+        .unwrap();
+        assert_eq!(share, r#"{"t":"video_share","session":"s","percent":75}"#);
+        assert_eq!(
+            decode::<GatewayToServer>(share.as_bytes()),
+            Ok(GatewayToServer::VideoShare {
+                session: "s".into(),
+                percent: 75,
+            })
+        );
+        assert!(
+            decode::<GatewayToServer>(br#"{"t":"video_share","session":"s","percent":300}"#)
+                .is_err()
         );
 
         let redeemed = serde_json::to_string(&ServerToGateway::Redeemed {

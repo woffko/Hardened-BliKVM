@@ -324,6 +324,8 @@ async fn run(
     let video_control = Arc::new(VideoControl::default());
     let video_counters = Arc::new(VideoCounters::default());
     let (events, mut video_events) = mpsc::channel::<GatewayControl>(4);
+    // The share of the bitrate the picture finds the path carries.
+    let mut shares = video_control.share.subscribe();
     loop {
         tokio::select! {
             message = control.read() => {
@@ -413,6 +415,10 @@ async fn run(
                     return None;
                 }
             }
+            Ok(()) = shares.changed() => {
+                let percent = *shares.borrow_and_update();
+                picture.link.video_share(picture.session, percent);
+            }
             _ = counters.tick() => {
                 let stats = connection.quic_connection().stats();
                 let message = GatewayControl::Counters {
@@ -421,6 +427,7 @@ async fn run(
                     frames_sent: video_counters.frames_sent.load(Ordering::Relaxed),
                     frames_dropped: video_counters.frames_dropped.load(Ordering::Relaxed),
                     key_frames: video_counters.key_frames.load(Ordering::Relaxed),
+                    bitrate_share: *video_control.share.borrow(),
                 };
                 if !control.write(&message).await {
                     return None;

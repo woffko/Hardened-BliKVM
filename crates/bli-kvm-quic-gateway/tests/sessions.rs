@@ -71,6 +71,8 @@ struct Seen {
     videos: Vec<(String, bool)>,
     /// Why the server refuses the picture, if it does.
     video_refusal: Option<String>,
+    /// The shares of the bitrate the sessions asked for.
+    shares: Vec<(String, u8)>,
 }
 
 /// The web server's side of the link.
@@ -134,6 +136,10 @@ impl Server {
                                 }
                                 GatewayToServer::Closed { session } => {
                                     state.lock().unwrap().closed.push(session);
+                                    None
+                                }
+                                GatewayToServer::VideoShare { session, percent } => {
+                                    state.lock().unwrap().shares.push((session, percent));
                                     None
                                 }
                                 GatewayToServer::Lease { id, session, request } => {
@@ -1302,6 +1308,22 @@ impl Page {
             .await
             .unwrap_or_else(|_| panic!("the counters never said {expected:?}"));
     }
+
+    /// Reads the counters until they give this share of the bitrate.
+    async fn bitrate_share_becomes(&mut self, expected: u8) {
+        let found = async {
+            loop {
+                if let Some(GatewayControl::Counters { bitrate_share, .. }) = self.hear().await
+                    && bitrate_share == expected
+                {
+                    return;
+                }
+            }
+        };
+        timeout(PATIENCE, found)
+            .await
+            .unwrap_or_else(|_| panic!("the counters never gave a share of {expected}"));
+    }
 }
 
 fn started() -> GatewayControl {
@@ -1462,10 +1484,10 @@ async fn a_group_still_behind_gives_way_to_the_next() {
 }
 
 /// A page whose oldest frame not received has been on its way more than
-/// 1.5 s (by the newest frame it says, in its pings, that it received), with
-/// more on its way than a key frame, has its group reset: what is queued is
-/// dropped, and the picture starts again from a key frame that the encoder
-/// is asked for.
+/// 1.5 s (by the newest frame it says, in its pings, that it received) has
+/// its group reset: what is queued is dropped, the picture starts again from
+/// a key frame that the encoder is asked for, and the session asks the
+/// server for a quarter less of the bitrate.
 #[tokio::test]
 async fn a_page_too_far_behind_starts_again_from_a_key_frame() {
     let (board, encoder) = Board::with_encoder().await;
@@ -1503,6 +1525,13 @@ async fn a_page_too_far_behind_starts_again_from_a_key_frame() {
     assert_eq!(page.delta_frame().await.0.frame, 7);
     // Sent: 1, 2, 3, 6 and 7; dropped: 4 and 5.
     page.counters_become((5, 2, 2)).await;
+    page.bitrate_share_becomes(75).await;
+    let shares = eventually(|| {
+        let seen = board.server.seen.lock().unwrap();
+        (!seen.shares.is_empty()).then(|| seen.shares.clone())
+    })
+    .await;
+    assert_eq!(shares, [("session-1".to_string(), 75)]);
 }
 
 /// A page 1.6 s behind with less on its way than a key frame keeps its

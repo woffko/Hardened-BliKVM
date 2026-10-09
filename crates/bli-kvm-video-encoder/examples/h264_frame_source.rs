@@ -10,12 +10,19 @@
 //! number in binary, least significant bit first, white for one. A decoder's
 //! output can be told apart frame by frame from those squares. A key frame
 //! is made for the first frame, on request, and every KEY_EVERY_MS
-//! milliseconds (0: never by itself).
+//! milliseconds (0: never by itself). A line `kbps N` on the standard input
+//! changes the bitrate from the next frame on, as the encoder unit's demand
+//! socket does.
 
 use std::{
     env,
+    io::BufRead,
     path::PathBuf,
     process::ExitCode,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -94,6 +101,20 @@ fn run() -> Result<(), String> {
         0,
     )?;
     let mut numbering = Numbering::new(std::process::id().max(1));
+    let asked = Arc::new(AtomicU32::new(kbps));
+    let reading = Arc::clone(&asked);
+    thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { return };
+            if let Some(kbps) = line
+                .strip_prefix("kbps ")
+                .and_then(|value| value.trim().parse::<u32>().ok())
+            {
+                reading.store(kbps, Ordering::Relaxed);
+            }
+        }
+    });
+    let mut kbps = kbps;
     println!("listening");
     let start = Instant::now();
     let interval = Duration::from_micros(1_000_000 / u64::from(fps));
@@ -106,6 +127,11 @@ fn run() -> Result<(), String> {
         // Nobody listens: the picture moves on, nothing is encoded.
         if hub.clients() == 0 {
             continue;
+        }
+        let wanted = asked.load(Ordering::Relaxed);
+        if wanted != kbps {
+            engine.set_bitrate(wanted)?;
+            kbps = wanted;
         }
         let now = Instant::now();
         let force_key = last_key.is_none()

@@ -17,14 +17,14 @@ use std::{
 use axum::{Extension, Json, extract::State, http::StatusCode};
 use bli_kvm_quic_protocol::{
     PROTOCOL,
-    link::{self, EndReason, GatewayToServer, RedeemRefusal, ServerToGateway},
+    link::{self, EndReason, GatewayToServer, LEAST_VIDEO_SHARE, RedeemRefusal, ServerToGateway},
 };
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
-    sync::mpsc,
+    sync::{mpsc, watch},
 };
 
 use crate::{
@@ -49,6 +49,8 @@ const OUTBOX: usize = 256;
 /// one per session and waits for its answer, so this is never reached by a
 /// gateway that keeps to the protocol.
 const LEASE_QUEUE: usize = 64;
+/// The whole chosen bitrate, in percent.
+pub(crate) const FULL_SHARE: u8 = 100;
 
 struct Gateway {
     /// Which connection this is: a later one replaces an earlier one.
@@ -73,6 +75,9 @@ struct Open {
     lease: Option<String>,
     /// While it watches: the H.264 encoder's demand, held for it.
     video: Option<crate::webrtc::DemandGuard>,
+    /// The share of the chosen bitrate, in percent, that its path carries,
+    /// as the gateway last said.
+    share: u8,
 }
 
 /// A lease that a session which ended had taken: the web session's token and
@@ -98,9 +103,22 @@ impl Inner {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct QuicTransport {
     inner: Mutex<Inner>,
+    /// The least share of the chosen bitrate, in percent, that the sessions
+    /// which watch ask for (`docs/design/quic-transport-v1.md`, "The
+    /// bitrate"); whole while none asks for less. The H.264 encoder runs at
+    /// the chosen bitrate times it.
+    share: watch::Sender<u8>,
+}
+
+impl Default for QuicTransport {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::default(),
+            share: watch::Sender::new(FULL_SHARE),
+        }
+    }
 }
 
 /// Why a page gets no token.
@@ -126,6 +144,25 @@ fn random_hex(bytes: usize) -> String {
 }
 
 impl QuicTransport {
+    /// The least share of the chosen bitrate that the sessions which watch
+    /// ask for, as it changes.
+    pub(crate) fn share(&self) -> watch::Receiver<u8> {
+        self.share.subscribe()
+    }
+
+    /// Takes the least share afresh after the sessions changed.
+    fn reshare(&self, inner: &Inner) {
+        let least = inner
+            .sessions
+            .values()
+            .filter(|open| open.video.is_some())
+            .map(|open| open.share)
+            .min()
+            .unwrap_or(FULL_SHARE);
+        self.share
+            .send_if_modified(|share| std::mem::replace(share, least) != least);
+    }
+
     /// The gateway's port while one is on the link.
     fn port(&self) -> Option<u16> {
         self.inner
@@ -197,6 +234,7 @@ impl QuicTransport {
                 web: entry.session,
                 lease: None,
                 video: None,
+                share: FULL_SHARE,
             },
         );
         Ok(reference)
@@ -204,7 +242,9 @@ impl QuicTransport {
 
     /// The session's connection is gone; the answer is the lease it held.
     fn closed(&self, reference: &str) -> Option<HeldLease> {
-        let open = self.inner.lock().unwrap().sessions.remove(reference)?;
+        let mut inner = self.inner.lock().unwrap();
+        let open = inner.sessions.remove(reference)?;
+        self.reshare(&inner);
         Some((open.web.token, open.lease?))
     }
 
@@ -234,12 +274,22 @@ impl QuicTransport {
     /// lets it go. `false` if the session is no longer there; the demand is
     /// then let go with the guard.
     fn set_video(&self, reference: &str, video: Option<crate::webrtc::DemandGuard>) -> bool {
-        match self.inner.lock().unwrap().sessions.get_mut(reference) {
-            Some(open) => {
-                open.video = video;
-                true
-            }
-            None => false,
+        let mut inner = self.inner.lock().unwrap();
+        let Some(open) = inner.sessions.get_mut(reference) else {
+            return false;
+        };
+        open.video = video;
+        self.reshare(&inner);
+        true
+    }
+
+    /// Notes the share of the chosen bitrate that a session's path carries,
+    /// within the least a session may ask for and the whole.
+    fn set_share(&self, reference: &str, percent: u8) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(open) = inner.sessions.get_mut(reference) {
+            open.share = percent.clamp(LEAST_VIDEO_SHARE, FULL_SHARE);
+            self.reshare(&inner);
         }
     }
 
@@ -256,6 +306,7 @@ impl QuicTransport {
         for reference in &ended {
             inner.sessions.remove(reference);
         }
+        self.reshare(&inner);
         ended
     }
 
@@ -267,6 +318,7 @@ impl QuicTransport {
         inner.generations += 1;
         let generation = inner.generations;
         let held = inner.drop_sessions();
+        self.reshare(&inner);
         inner.tokens.clear();
         inner.gateway = Some(Gateway {
             generation,
@@ -305,7 +357,9 @@ impl QuicTransport {
         {
             inner.gateway = None;
             inner.tokens.clear();
-            return inner.drop_sessions();
+            let held = inner.drop_sessions();
+            self.reshare(&inner);
+            return held;
         }
         Vec::new()
     }
@@ -663,6 +717,9 @@ async fn serve(state: AppState, transport: Arc<QuicTransport>, stream: UnixStrea
                     if let Some(held) = transport.closed(&session) {
                         release(held);
                     }
+                }
+                GatewayToServer::VideoShare { session, percent } => {
+                    transport.set_share(&session, percent);
                 }
                 GatewayToServer::Lease {
                     id,

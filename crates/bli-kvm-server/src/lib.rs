@@ -566,6 +566,11 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             .map(|_| Arc::new(quic::QuicTransport::default())),
         options: Arc::new(options.clone()),
     };
+    // The H.264 encoder runs at the share of the chosen bitrate that the
+    // QUIC sessions' paths carry.
+    if let (Some(webrtc), Some(quic)) = (state.webrtc.as_ref(), state.quic.as_ref()) {
+        webrtc.follow_share(quic.share());
+    }
     quic::listen(&state);
 
     let public = Router::new()

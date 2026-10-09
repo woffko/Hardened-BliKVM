@@ -1,8 +1,10 @@
 // A UDP relay that impairs what passes through it, for measuring the QUIC
 // transport on a bad path without touching the network of the host: every
 // datagram is delayed by a fixed time each way, and dropped with a given
-// probability. Each client address gets a socket of its own towards the
-// target, so answers find their way back.
+// probability. A narrow path lets datagrams through no faster than a given
+// rate each way, and drops those that would wait in its queue too long.
+// Each client address gets a socket of its own towards the target, so
+// answers find their way back.
 //
 // The random numbers come from seeded generators, one for each direction:
 // the same seed drops the same datagrams of the same traffic.
@@ -10,6 +12,7 @@
 // Usage:
 //   node udp_impair_proxy.mjs --listen HOST:PORT --target HOST:PORT
 //        [--delay-ms N] [--jitter-ms N] [--loss P] [--seed N]
+//        [--rate-kbps N] [--queue-ms N]
 // It prints one JSON line when it listens, and its counters as one JSON line
 // when it ends (SIGINT or SIGTERM). `startUdpProxy` does the same from a
 // script, which may also change the impairment while the relay runs
@@ -39,16 +42,21 @@ export function endpoint(value) {
   return { host: match[1].replace(/^\[|\]$/g, ""), port: Number(match[2]) };
 }
 
-function checked({ delayMs, jitterMs, loss }) {
+function checked({ delayMs, jitterMs, loss, rateKbps, queueMs }) {
   if (!(loss >= 0 && loss < 1)) throw new Error("loss must be in [0, 1)");
-  if (!(delayMs >= 0 && jitterMs >= 0)) throw new Error("times must be >= 0");
-  return { delayMs, jitterMs, loss };
+  if (!(delayMs >= 0 && jitterMs >= 0 && queueMs >= 0)) {
+    throw new Error("times must be >= 0");
+  }
+  if (!(rateKbps >= 0)) throw new Error("the rate must be >= 0");
+  return { delayMs, jitterMs, loss, rateKbps, queueMs };
 }
 
 /**
  * Starts the relay. `loss` is a probability from 0 to 1 and applies to each
  * direction; `delayMs` is added each way, `jitterMs` is the width of a
- * uniform spread around it (0 keeps the order of datagrams).
+ * uniform spread around it (0 keeps the order of datagrams). `rateKbps`
+ * (0: none) is the path's rate each way, and a datagram that would wait more
+ * than `queueMs` for its turn is dropped.
  */
 export async function startUdpProxy({
   listen,
@@ -56,9 +64,11 @@ export async function startUdpProxy({
   delayMs = 0,
   jitterMs = 0,
   loss = 0,
+  rateKbps = 0,
+  queueMs = 200,
   seed = 1,
 }) {
-  let impairment = checked({ delayMs, jitterMs, loss });
+  let impairment = checked({ delayMs, jitterMs, loss, rateKbps, queueMs });
   // One generator for each direction, so what is lost one way does not
   // depend on how the two directions happen to interleave.
   const random = {
@@ -69,19 +79,46 @@ export async function startUdpProxy({
   const front = dgram.createSocket(listen.host.includes(":") ? "udp6" : "udp4");
   const clients = new Map();
   const counters = {
-    toTarget: { received: 0, dropped: 0, forwarded: 0, bytes: 0 },
-    toClient: { received: 0, dropped: 0, forwarded: 0, bytes: 0 },
+    toTarget: {
+      received: 0,
+      dropped: 0,
+      overflowed: 0,
+      forwarded: 0,
+      bytes: 0,
+    },
+    toClient: {
+      received: 0,
+      dropped: 0,
+      overflowed: 0,
+      forwarded: 0,
+      bytes: 0,
+    },
   };
+  // When each direction of the narrow path is free for the next datagram.
+  const free = { toTarget: 0, toClient: 0 };
   const timers = new Set();
   let closed = false;
 
   const pass = (direction, datagram, send) => {
     const counter = counters[direction];
-    const { delayMs, jitterMs, loss } = impairment;
+    const { delayMs, jitterMs, loss, rateKbps, queueMs } = impairment;
     counter.received += 1;
     if (loss > 0 && random[direction]() < loss) {
       counter.dropped += 1;
       return;
+    }
+    // Its turn on the narrow path: after the datagrams before it, each
+    // taking its size at the rate (kbit/s are bits a millisecond).
+    let queued = 0;
+    if (rateKbps > 0) {
+      const now = performance.now();
+      const turn = Math.max(now, free[direction]);
+      if (turn - now > queueMs) {
+        counter.overflowed += 1;
+        return;
+      }
+      free[direction] = turn + (datagram.length * 8) / rateKbps;
+      queued = free[direction] - now;
     }
     const forward = () => {
       if (closed) return;
@@ -90,7 +127,9 @@ export async function startUdpProxy({
       send(datagram);
     };
     const wait =
-      delayMs + (jitterMs > 0 ? (random[direction]() - 0.5) * jitterMs : 0);
+      queued +
+      delayMs +
+      (jitterMs > 0 ? (random[direction]() - 0.5) * jitterMs : 0);
     if (wait <= 0) {
       forward();
       return;
@@ -178,6 +217,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     delayMs: Number(given["delay-ms"] ?? 0),
     jitterMs: Number(given["jitter-ms"] ?? 0),
     loss: Number(given.loss ?? 0),
+    rateKbps: Number(given["rate-kbps"] ?? 0),
+    queueMs: Number(given["queue-ms"] ?? 200),
     seed: Number(given.seed ?? 1),
   });
   console.log(JSON.stringify({ listening: proxy.port }));

@@ -62,7 +62,8 @@ export async function until(what, condition, patience = PATIENCE) {
  * The encoder's frame socket without a board: a moving test picture from the
  * encoder's own x264 engine (the encoder crate's `h264_frame_source`). The
  * frame's number stands in the picture's top-left corner as sixteen squares
- * of 16 pixels, least significant bit first, white for one.
+ * of 16 pixels, least significant bit first, white for one. `setKbps`
+ * changes its bitrate as it runs, as the server does the encoder unit's.
  */
 export async function startFrameSource(
   socketPath,
@@ -75,7 +76,7 @@ export async function startFrameSource(
   const child = spawn(
     file,
     [socketPath, width, height, fps, kbps, keyEveryMs].map(String),
-    { stdio: ["ignore", "pipe", "pipe"] },
+    { stdio: ["pipe", "pipe", "pipe"] },
   );
   let said = "";
   let exited = false;
@@ -86,10 +87,12 @@ export async function startFrameSource(
     assert.ok(!exited, `the frame source ended: ${said}`);
     return said.includes("listening");
   });
+  child.stdin.on("error", () => undefined);
   return {
     width,
     height,
     fps,
+    setKbps: (kbps) => child.stdin.write(`kbps ${Math.round(kbps)}\n`),
     stop: () =>
       new Promise((resolve) => {
         if (exited) return resolve();
@@ -335,10 +338,14 @@ export class Board {
     this.leaseDelayMs = 0;
     this.leaseAnswer = null;
     // The sessions the server holds the encoder's demand for, what was asked
-    // about the picture, and why the server would not have one.
+    // about the picture, why the server would not have one, and the shares of
+    // the bitrate the sessions' paths carry.
     this.watching = new Set();
     this.videoRequests = [];
     this.videoRefusal = null;
+    this.shares = [];
+    // What the server does with a share, if more than noting it.
+    this.onShare = null;
     this.link = net.createServer((socket) => this.serve(socket));
   }
 
@@ -427,6 +434,13 @@ export class Board {
           request: message.request,
         });
         this.answerLease(message);
+        break;
+      case "video_share":
+        this.shares.push({
+          session: message.session,
+          percent: message.percent,
+        });
+        this.onShare?.(message.session, message.percent);
         break;
       default:
         assert.fail(`unexpected link message: ${JSON.stringify(message)}`);

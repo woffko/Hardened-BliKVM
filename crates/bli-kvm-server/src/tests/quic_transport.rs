@@ -1279,6 +1279,76 @@ async fn without_an_encoder_there_is_no_picture() {
     );
 }
 
+/// The share of the chosen bitrate that a watching session's path carries
+/// reaches the H.264 encoder: the chosen bitrate times the least share of
+/// the sessions that watch, never less than the least a session may ask
+/// for. A session that gives the picture up or ends counts no longer; one
+/// that watches again counts with the share it had.
+#[tokio::test]
+async fn the_least_share_of_the_watching_sessions_reaches_the_encoder() {
+    let root = tempdir().unwrap();
+    let socket = root.path().join("link.sock");
+    let demand_path = root.path().join("h264.sock");
+    let demand = Demand(tokio::net::UnixListener::bind(&demand_path).unwrap());
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        quic_link_socket: Some(socket.clone()),
+        webrtc_janus: Some("127.0.0.1:8188".parse().unwrap()),
+        webrtc_h264_demand_socket: Some(demand_path),
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let page = Page { app, cookie, csrf };
+    let mut gateway = Gateway::greeted(&socket, &"9f".repeat(32)).await;
+    let first = session_of(gateway.redeem(1, &page.token().await).await);
+    let second = session_of(gateway.redeem(2, &page.token().await).await);
+    let share = |session: &str, percent: u8| GatewayToServer::VideoShare {
+        session: session.into(),
+        percent,
+    };
+    // The second's share counts only once it watches.
+    gateway.say(&share(&second, 40)).await;
+    assert_eq!(gateway.video(3, &first, true).await, video_answer(3, None));
+    let mut held = demand.held().await;
+    for expected in ["h264", "kbps 2500", "engine hardware"] {
+        assert_eq!(line(&mut held).await.as_deref(), Some(expected));
+    }
+    gateway.say(&share(&first, 75)).await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 1875"));
+
+    // Both watch: the second's is the least.
+    assert_eq!(gateway.video(4, &second, true).await, video_answer(4, None));
+    let mut also = demand.held().await;
+    for expected in ["h264", "kbps 1875", "engine hardware", "kbps 1000"] {
+        assert_eq!(line(&mut also).await.as_deref(), Some(expected));
+    }
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 1000"));
+    // The second gives the picture up: the first's counts again.
+    assert_eq!(
+        gateway.video(5, &second, false).await,
+        video_answer(5, None)
+    );
+    assert_eq!(line(&mut also).await, None);
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 1875"));
+    gateway.say(&share(&first, 100)).await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 2500"));
+    gateway.say(&share(&first, 0)).await;
+    assert_eq!(line(&mut held).await.as_deref(), Some("kbps 625"));
+
+    // The first ends; the second watches again, with the share it had.
+    gateway
+        .say(&GatewayToServer::Closed {
+            session: first.clone(),
+        })
+        .await;
+    assert_eq!(line(&mut held).await, None);
+    assert_eq!(gateway.video(6, &second, true).await, video_answer(6, None));
+    let mut again = demand.held().await;
+    for expected in ["h264", "kbps 2500", "engine hardware", "kbps 1000"] {
+        assert_eq!(line(&mut again).await.as_deref(), Some(expected));
+    }
+}
+
 /// The quality the operator chooses reaches the encoder over the demand a
 /// QUIC session holds, as it does over a WebRTC viewer's.
 #[cfg(feature = "restricted-control-surface")]

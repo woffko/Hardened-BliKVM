@@ -98,6 +98,7 @@ const ru = {
       decoderRestarts: 'Перезапуски декодера',
       sessionsOpened: 'Открыто сессий',
       gatewayFrames: 'Шлюз: отправлено/сброшено/ключевых',
+      bitrateShare: 'Битрейт, который несёт путь',
       candidates: 'Кандидаты',
       packets: 'Пакеты: получено/потеряно',
       jitter: 'Джиттер',

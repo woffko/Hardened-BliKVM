@@ -94,6 +94,7 @@ const en = {
       decoderRestarts: 'Decoder restarts',
       sessionsOpened: 'Sessions opened',
       gatewayFrames: 'Gateway sent/dropped/key',
+      bitrateShare: 'Bitrate this path carries',
       candidates: 'Candidates',
       packets: 'Packets received/lost',
       jitter: 'Jitter',

@@ -12,6 +12,7 @@ pub mod frames;
 pub mod input;
 pub mod link;
 pub mod session;
+pub mod share;
 pub mod video;
 
 use std::{

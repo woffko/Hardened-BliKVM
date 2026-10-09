@@ -21,6 +21,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use bli_kvm_quic_protocol::link::LEAST_VIDEO_SHARE;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -37,6 +38,7 @@ use tokio_tungstenite::{
 use crate::{
     AppState,
     auth::{middleware::CurrentSession, session::Session},
+    quic::FULL_SHARE,
     ws::origin_allowed,
 };
 
@@ -66,6 +68,11 @@ pub(crate) struct WebRtcGateway {
     /// The board's choice of the H.264 engine, sent to the H.264 encoder
     /// the same way and changed through the video menu.
     pub engine: tokio::sync::watch::Sender<H264Engine>,
+    /// The share of the bitrate, in percent, that the QUIC sessions which
+    /// watch ask for (`docs/design/quic-transport-v1.md`, "The bitrate"),
+    /// where the board has the QUIC transport: the H.264 encoder, which
+    /// every viewer of H.264 shares, is sent the chosen bitrate times it.
+    h264_share: std::sync::OnceLock<tokio::sync::watch::Receiver<u8>>,
     /// Held while a choice is stored and sent: two choices made at once leave
     /// the file, the channel and the encoders with the same one.
     choices: std::sync::Mutex<()>,
@@ -230,9 +237,16 @@ impl WebRtcGateway {
                 h264_demand,
                 bitrate: tokio::sync::watch::channel(kbps).0,
                 engine: tokio::sync::watch::channel(engine).0,
+                h264_share: std::sync::OnceLock::new(),
                 choices: std::sync::Mutex::new(()),
             })
         })
+    }
+
+    /// The H.264 encoder follows the share of the bitrate that the QUIC
+    /// sessions ask for from now on.
+    pub(crate) fn follow_share(&self, share: tokio::sync::watch::Receiver<u8>) {
+        let _ = self.h264_share.set(share);
     }
 
     /// Stores the board's choice of the H.264 engine and sends it to the
@@ -266,10 +280,12 @@ impl WebRtcGateway {
     /// Asks the codec's encoder to run while the returned guard is held: it
     /// otherwise decodes and encodes every changed frame for nobody. The
     /// first line names the codec, the next the bitrate, and a new `kbps`
-    /// line follows every change of the quality. The H.264 encoder also
-    /// gets the board's choice of the engine after the bitrate, and an
-    /// `engine` line whenever the choice is made. An encoder without the
-    /// socket runs anyway, so a failure only means no demand is signalled.
+    /// line follows every change of the quality. The H.264 encoder is asked
+    /// for the chosen bitrate times the share that the QUIC sessions ask
+    /// for, and for the new bitrate whenever the share changes; it also gets
+    /// the board's choice of the engine after the bitrate, and an `engine`
+    /// line whenever the choice is made. An encoder without the socket runs
+    /// anyway, so a failure only means no demand is signalled.
     ///
     /// The connection is the demand. An encoder that ends, to be started
     /// again by its unit, takes it along: the guard then asks again until
@@ -286,12 +302,13 @@ impl WebRtcGateway {
         let codec = codec.name();
         let mut bitrate = self.bitrate.subscribe();
         let mut engine = self.engine.subscribe();
-        let kbps = *bitrate.borrow_and_update();
+        let mut share = chooses.then(|| self.h264_share.get().cloned()).flatten();
+        let mut sent = asked_kbps(&mut bitrate, &mut share);
         let chosen = chooses.then(|| *engine.borrow_and_update());
-        let mut connection = open_demand(&socket, codec, kbps, chosen).await?;
+        let mut connection = open_demand(&socket, codec, sent, chosen).await?;
         Some(DemandGuard(tokio::spawn(async move {
-            // Nobody changes the quality or the engine once its sender is
-            // gone.
+            // Nobody changes the quality, the share or the engine once its
+            // sender is gone.
             let mut quality_changes = true;
             let mut engine_changes = chooses;
             loop {
@@ -303,12 +320,16 @@ impl WebRtcGateway {
                             quality_changes = false;
                             false
                         } else {
-                            let kbps = *bitrate.borrow_and_update();
-                            connection
-                                .write_all(format!("kbps {kbps}\n").as_bytes())
-                                .await
-                                .is_err()
+                            let kbps = asked_kbps(&mut bitrate, &mut share);
+                            ask_kbps(&mut connection, &mut sent, kbps).await
                         }
+                    }
+                    changed = share_changed(&mut share) => {
+                        if changed.is_err() {
+                            share = None;
+                        }
+                        let kbps = asked_kbps(&mut bitrate, &mut share);
+                        ask_kbps(&mut connection, &mut sent, kbps).await
                     }
                     changed = engine.changed(), if engine_changes => {
                         if changed.is_err() {
@@ -329,9 +350,9 @@ impl WebRtcGateway {
                 }
                 connection = loop {
                     tokio::time::sleep(DEMAND_RETRY).await;
-                    let kbps = *bitrate.borrow_and_update();
+                    sent = asked_kbps(&mut bitrate, &mut share);
                     let chosen = chooses.then(|| *engine.borrow_and_update());
-                    if let Some(connection) = open_demand(&socket, codec, kbps, chosen).await {
+                    if let Some(connection) = open_demand(&socket, codec, sent, chosen).await {
                         break connection;
                     }
                 };
@@ -342,6 +363,45 @@ impl WebRtcGateway {
 
 /// Between attempts to reach an encoder that went away.
 const DEMAND_RETRY: Duration = Duration::from_millis(500);
+
+/// The bitrate an encoder is asked for: the chosen one, times the share of
+/// it that the QUIC sessions ask for where the encoder follows it.
+fn asked_kbps(
+    bitrate: &mut tokio::sync::watch::Receiver<u32>,
+    share: &mut Option<tokio::sync::watch::Receiver<u8>>,
+) -> u32 {
+    let kbps = *bitrate.borrow_and_update();
+    match share {
+        Some(share) => {
+            let percent = (*share.borrow_and_update()).clamp(LEAST_VIDEO_SHARE, FULL_SHARE);
+            (u64::from(kbps) * u64::from(percent) / u64::from(FULL_SHARE)) as u32
+        }
+        None => kbps,
+    }
+}
+
+/// A change of the share, where the encoder follows one; otherwise never.
+async fn share_changed(
+    share: &mut Option<tokio::sync::watch::Receiver<u8>>,
+) -> Result<(), tokio::sync::watch::error::RecvError> {
+    match share {
+        Some(share) => share.changed().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Sends the encoder a `kbps` line for a bitrate it was not sent last; true
+/// if the connection is lost.
+async fn ask_kbps(connection: &mut UnixStream, sent: &mut u32, kbps: u32) -> bool {
+    if kbps == *sent {
+        return false;
+    }
+    *sent = kbps;
+    connection
+        .write_all(format!("kbps {kbps}\n").as_bytes())
+        .await
+        .is_err()
+}
 
 /// A demand connection of the encoder behind `socket`, with its first
 /// lines: the codec, the bitrate and, for H.264, the engine.
@@ -833,6 +893,89 @@ mod tests {
         for expected in ["h264", "kbps 8000", "engine software"] {
             assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
         }
+    }
+
+    /// The H.264 encoder is asked for the chosen bitrate times the share
+    /// that the QUIC sessions ask for, and again whenever either changes, a
+    /// new connection too; the VP8 encoder only for the chosen bitrate.
+    #[tokio::test]
+    async fn the_h264_demand_follows_the_quic_sessions_share() {
+        let directory = tempfile::tempdir().unwrap();
+        let h264 = directory.path().join("h264.sock");
+        let vp8 = directory.path().join("vp8.sock");
+        let h264_listener = tokio::net::UnixListener::bind(&h264).unwrap();
+        let vp8_listener = tokio::net::UnixListener::bind(&vp8).unwrap();
+        let gateway = WebRtcGateway::new(
+            "127.0.0.1:8188".parse().unwrap(),
+            Some(vp8),
+            Some(h264),
+            2500,
+            H264Engine::Hardware,
+        )
+        .unwrap();
+        let share = tokio::sync::watch::Sender::new(FULL_SHARE);
+        gateway.follow_share(share.subscribe());
+        share.send_replace(50);
+        let (guard, accepted) = tokio::join!(
+            gateway.hold_demand(StreamCodec::H264),
+            h264_listener.accept()
+        );
+        let _guard = guard.unwrap();
+        let mut lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["h264", "kbps 1250", "engine hardware"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+        let (vp8_guard, accepted) =
+            tokio::join!(gateway.hold_demand(StreamCodec::Vp8), vp8_listener.accept());
+        let _vp8_guard = vp8_guard.unwrap();
+        let mut vp8_lines = TokioBufReader::new(accepted.unwrap().0).lines();
+        for expected in ["vp8", "kbps 2500"] {
+            assert_eq!(
+                vp8_lines.next_line().await.unwrap().as_deref(),
+                Some(expected)
+            );
+        }
+
+        share.send_replace(75);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 1875")
+        );
+        gateway.bitrate.send_replace(8000);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 6000")
+        );
+        assert_eq!(
+            vp8_lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000")
+        );
+        // Below the least share a session may ask for is the least.
+        share.send_replace(5);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 2000")
+        );
+        share.send_replace(FULL_SHARE);
+        assert_eq!(
+            lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 8000")
+        );
+        share.send_replace(50);
+        // The encoder ends and comes back: its new connection is asked for
+        // the share.
+        drop(lines);
+        let (accepted, _) = h264_listener.accept().await.unwrap();
+        let mut lines = TokioBufReader::new(accepted).lines();
+        for expected in ["h264", "kbps 4000", "engine hardware"] {
+            assert_eq!(lines.next_line().await.unwrap().as_deref(), Some(expected));
+        }
+        // VP8 heard of none of it.
+        gateway.bitrate.send_replace(1500);
+        assert_eq!(
+            vp8_lines.next_line().await.unwrap().as_deref(),
+            Some("kbps 1500")
+        );
     }
 
     #[test]

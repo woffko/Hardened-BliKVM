@@ -27,6 +27,8 @@ export type GatewayCounters = {
   framesSent: number;
   framesDropped: number;
   keyFrames: number;
+  /** The share of the chosen bitrate, in percent, that the session's path carries. */
+  bitrateShare: number;
 };
 
 export type GatewayControl =

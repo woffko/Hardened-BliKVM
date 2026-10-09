@@ -207,6 +207,15 @@ impl Link {
         }
     }
 
+    /// The share of the chosen bitrate, in percent, that a session's path
+    /// carries; the server runs the H.264 encoder at the least of them.
+    pub fn video_share(&self, session: &str, percent: u8) {
+        self.send(&GatewayToServer::VideoShare {
+            session: session.to_owned(),
+            percent,
+        });
+    }
+
     /// A session's connection is gone.
     pub fn closed(&self, session: &str) {
         let known = self

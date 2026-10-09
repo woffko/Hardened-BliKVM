@@ -238,6 +238,7 @@ node --check tools/playwright/quic_input_stack_contract.mjs
 node --check tools/playwright/quic_input_latency.mjs
 node --check tools/playwright/quic_input_device_probe.mjs
 node --check tools/playwright/quic_video_contract.mjs
+node --check tools/playwright/quic_share_contract.mjs
 node --check tools/playwright/quic_video_device_probe.mjs
 node --check tools/playwright/quic_video_measure.mjs
 node --check tools/playwright/quic_firewall_device_probe.mjs
@@ -928,6 +929,8 @@ BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_SERVER="$
 # gateway, a relay that loses datagrams, and Chromium's decoder.
 cargo build --locked -p bli-kvm-video-encoder --features h264 --example h264_frame_source
 BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAME_SOURCE="$target_root/debug/examples/h264_frame_source" node tools/playwright/quic_video_contract.mjs
+# The share of the bitrate: a path narrowed below the picture's rate.
+BLI_KVM_QUIC_GATEWAY="$target_root/debug/bli-kvm-quic-gateway" BLI_KVM_H264_FRAME_SOURCE="$target_root/debug/examples/h264_frame_source" node tools/playwright/quic_share_contract.mjs
 # The lab tool of the hardware H.264 plan: Chromium decodes what its
 # software stand-in makes through the register plans of both open maps.
 cargo build --locked -p bli-kvm-ve-lab

@@ -9,13 +9,15 @@
 //! frame, which is asked for.
 //!
 //! The page says in its pings which frame it last received whole. How long
-//! the oldest frame it has not received has been on its way is its lag. The
-//! transport takes what it is given into a buffer of its own long before the
-//! path carries it, so what is on its way is judged by the page's word:
+//! the oldest frame it has not received has been on its way is its lag, and
+//! the lag sets the share of the chosen bitrate that the session asks for
+//! (`share.rs`). The transport takes what it is given into a buffer of its
+//! own long before the path carries it, so what is on its way is judged by
+//! the page's word:
 //!
 //! - When the next key frame is ready, the group before is finished, and its
-//!   frames still on their way go on; but if the page is more than 1.5 s
-//!   behind, it is reset with every earlier group still on its way, and the
+//!   frames still on their way go on; but if a queue has built in front of
+//!   the page, it is reset with every earlier group still on its way, and the
 //!   page goes on from the new key frame.
 //! - A key frame that the page has not received half a second after it was
 //!   sent shows a path that takes long over key frames: the next key frame
@@ -39,10 +41,13 @@ use bli_kvm_quic_protocol::{
     frame::{FrameHeader, Kind},
     page::{GatewayControl, VideoState},
 };
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, watch};
 use wtransport::{Connection, VarInt};
 
-use crate::frames::Subscription;
+use crate::{
+    frames::Subscription,
+    share::{FULL, PathShare},
+};
 
 /// What a session's picture has cost and lost, for its counters.
 #[derive(Debug, Default)]
@@ -54,14 +59,27 @@ pub struct VideoCounters {
     pub groups_abandoned: AtomicU64,
 }
 
-/// What the session's control side tells its picture.
-#[derive(Debug, Default)]
+/// What the session's control side and its picture tell each other.
+#[derive(Debug)]
 pub struct VideoControl {
     /// The page asked for a key frame: it can decode nothing until one comes.
     pub page_needs_key: AtomicBool,
     /// The capture time of the newest frame the page has said it received
     /// whole, from its pings; zero until it says.
     pub page_received: AtomicU64,
+    /// The share of the chosen bitrate, in percent, that the session's path
+    /// carries: the picture sets it, the session tells the server.
+    pub share: watch::Sender<u8>,
+}
+
+impl Default for VideoControl {
+    fn default() -> Self {
+        Self {
+            page_needs_key: AtomicBool::new(false),
+            page_received: AtomicU64::new(0),
+            share: watch::Sender::new(FULL),
+        }
+    }
 }
 
 /// A page whose oldest frame not received has been on its way this long,
@@ -340,6 +358,12 @@ pub async fn serve(
     let mut announced: Option<(u32, u16, u16)> = None;
     let mut groups = Groups::default();
     let mut unreceived = Unreceived::default();
+    let mut share = PathShare::new(*control.share.borrow(), Instant::now());
+    let tell = |percent: Option<u8>| {
+        if let Some(percent) = percent {
+            control.share.send_replace(percent);
+        }
+    };
     while let Some(record) = subscription.frames.recv().await {
         if subscription.take_lagged() {
             // Frames were lost to a full queue: the chain is broken.
@@ -355,6 +379,7 @@ pub async fn serve(
         let now = Instant::now();
         let received = control.page_received.load(Ordering::Acquire);
         let lag = unreceived.lag(received, now);
+        tell(share.lag(now, lag));
         let key_waited = groups.key_waited(received, now);
         match header.kind {
             Kind::Key => {
@@ -394,9 +419,10 @@ pub async fn serve(
                 let size = bytes.len();
                 let next = Group::open(&connection, bytes, header.capture_micros);
                 // The group before is finished, or reset with every earlier
-                // one if the page is far behind.
-                let behind =
-                    lag > MAX_PAGE_LAG || key_waited.is_some_and(|waited| waited > MAX_KEY_WAIT);
+                // one if a queue has built in front of the page.
+                let behind = share.queued()
+                    || lag > MAX_PAGE_LAG
+                    || key_waited.is_some_and(|waited| waited > MAX_KEY_WAIT);
                 if groups.start(next, behind, now) {
                     unreceived.forget();
                 }
@@ -421,6 +447,7 @@ pub async fn serve(
                     // dropped and the picture starts again from a key frame.
                     groups.give_up();
                     unreceived.forget();
+                    tell(share.gave_up(now));
                     counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
                     counters.groups_abandoned.fetch_add(1, Ordering::Relaxed);
                     needs_key = true;

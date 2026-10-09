@@ -157,6 +157,11 @@ export type PageSample = {
     gatewayFramesSent: number | null;
     gatewayFramesDropped: number | null;
     gatewayKeyFrames: number | null;
+    /**
+     * The share of the chosen bitrate, in percent, that the session's path
+     * carries: the board's H.264 encoder runs at the least of the sessions'.
+     */
+    bitrateShare: number | null;
   } | null;
   /** WebRTC: `getStats()`. */
   webrtc: {
@@ -364,6 +369,11 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
       'quicGateway',
       'qualityMonitor.gatewayFrames',
       `${fixed(quic.gatewayFramesSent)} / ${fixed(quic.gatewayFramesDropped)} / ${fixed(quic.gatewayKeyFrames)}`
+    );
+    row(
+      'quicShare',
+      'qualityMonitor.bitrateShare',
+      quic.bitrateShare === null ? NOT_KNOWN : `${fixed(quic.bitrateShare)} %`
     );
   }
   if (path === 'webrtc' && sample?.webrtc) {

@@ -88,7 +88,8 @@ export function sampleQuic(
       resets: stats.resets,
       gatewayFramesSent: connected?.counters?.framesSent ?? null,
       gatewayFramesDropped: connected?.counters?.framesDropped ?? null,
-      gatewayKeyFrames: connected?.counters?.keyFrames ?? null
+      gatewayKeyFrames: connected?.counters?.keyFrames ?? null,
+      bitrateShare: connected?.counters?.bitrateShare ?? null
     }
   };
 }

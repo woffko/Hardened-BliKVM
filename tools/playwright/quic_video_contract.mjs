@@ -298,6 +298,9 @@ try {
     );
     assert.equal(await status.getAttribute("data-frames-dropped"), "0");
     assert.ok(Number(await status.getAttribute("data-key-frames")) >= 1);
+    // The path carries the whole bitrate: nothing less is asked for.
+    assert.equal(await status.getAttribute("data-bitrate-share"), "100");
+    assert.deepEqual(board.shares, []);
     await videoLineSays(page, "quic");
     assert.match(
       await videoLine(page).innerText(),
