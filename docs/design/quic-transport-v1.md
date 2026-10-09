@@ -296,6 +296,13 @@ two bytes (at most 4096); unknown fields and types are refused.
 | page | `hello` (protocol, token); `ping` (id, page time); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
 | gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, packets lost, frames sent and dropped, key frames sent), every 2 s; `closing` (reason) |
 
+The gateway answers a `video` that unsubscribes with `video` stopped. A
+view that mounts a new canvas (upscaling switched on or off) unsubscribes
+and subscribes at once, and that answer comes after the new subscription:
+the page counts its unsubscriptions and passes over the stopped that
+answers each, which it once took for the picture being unavailable
+(2026-10-09).
+
 **Input stream** (opened by the page): each message is a request of the HID
 lease API as the page sends it to `/api/hid/lease` today (acquire, renew,
 report, release) with a sequence number, and each answer is that API's
@@ -556,12 +563,19 @@ the lease like a client that vanished.
   | switched off, `blocked`, no WebTransport | `GET /api/transport`, the browser | offers only Standard and says why |
   | the gateway is switched on but not on the link | `GET /api/transport` | the same, and looks again every 2 s |
   | not served from the gateway's port (a forwarded port) | the port in the answer | the same: the page's policy would not let it connect |
-  | `timeout`, `lost`, `unavailable` | the session | notice with "Retry"; Standard for this page load |
-  | `handshake`, `token`, `protocol`, `sessions`, `hello` | the gateway | notice with the reason; no retry by itself |
+  | `timeout`, `lost`, `unavailable` | the session | notice with "Retry"; Standard until a session opens again |
+  | `sessions` | the gateway | notice with the reason; Standard until a session opens again |
+  | `handshake`, `token`, `protocol`, `hello` | the gateway | notice with the reason; no retry by itself |
   | `clock` | the session request | notice with the reason |
 
   A notice is raised once per failure; Settings shows the same reason in the
   status line, with "Retry" unless the page could never have a session.
+  After `timeout`, `lost`, `unavailable` and `sessions` the page also tries
+  again by itself (2026-10-09): when it is looked at again (a phone's
+  screen that was off) and every 35 s while it is, without raising the
+  notice again. A refusal for too many sessions is among them because a
+  session the page lost on a bad path still counts until the gateway lets it
+  go, 30 s after its last packet.
 - **The picture.** With QUIC chosen and H.264 the Screen menu's mode, the
   picture comes over the session and the menu's entry reads "H.264 (QUIC)".
   The page does not start WebRTC first and switch: it waits for the session,
@@ -569,7 +583,9 @@ the lease like a client that vanished.
   and the entry reads "H.264 (WebRTC)", when
   - this browser has no H.264 decoder in WebCodecs (asked once, with
     `VideoDecoder.isConfigSupported`);
-  - the session failed, for the rest of this page load or until "Retry";
+  - the session failed, until a session is open again (the page's own
+    attempts or "Retry"): the picture then comes back over it, as it does
+    after a stall;
   - the gateway has no picture for the session: `unavailable` with the
     server's reason (`unavailable`: no H.264 encoder on this board;
     `encoder`: it could not be reached), or `stopped` after an encoder that

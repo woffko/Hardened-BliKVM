@@ -6,10 +6,14 @@ renderer's contract, how the pointer and the enlargement are worked out,
 how each view draws through it, the settings and the safeguards. The record
 of what was measured follows the design as the work goes on.
 
-Status (2026-10-08): phase 1 done. Gate 0 chose the algorithm
-(`docs/baselines/audit-20261008-upscaling-gate0.md`); the renderer, the
-pointer mapping and the enlargement are built and tested on the host; no
-view draws through the renderer yet.
+Status (2026-10-09): phase 2 built, gate 2 to be checked again. Gate 0
+chose the algorithm (`docs/baselines/audit-20261008-upscaling-gate0.md`);
+the renderer, the pointer mapping and the enlargement are built and tested
+on the host; the QUIC view draws through the renderer, the setting is in the
+Screen menu, and the watchdog stops upscaling where frames are lost to it.
+The operator's phone found the QUIC picture standing still with upscaling
+on; the causes and their fixes, and the gates' records, are in
+`docs/baselines/audit-20261009-upscaling-phases.md`.
 
 ## The algorithm
 
@@ -101,6 +105,59 @@ the current ratio (`usePixelRatio`), which a browser's zoom or a move to
 another display changes. The scroll view carries
 `data-picture-enlargement` and `data-picture-pixel-ratio` for probes.
 
+## The setting
+
+`web/src/lib/upscale/settings.ts`: Off or Auto and a sharpness (low, medium
+or high), kept by the browser (`hardened-blikvm-upscale` in its local
+storage), Off by default. The Screen menu's Upscaling entry sets it
+(`menu/screen/upscale.tsx`), and says when the browser draws without a GPU
+and why upscaling stopped on the page. Upscaling runs where the setting is
+Auto, the browser draws with a GPU (`drawsWithGpu`, the renderer WebGL
+names is not a software rasterizer) and nothing has stopped it on this
+page load: no WebGL2 where the view draws, its context lost, or frames lost
+to it (the watchdog, below; `upscaleStoppedAtom`); the view then goes on
+plainly. A frame shown more
+than 1.1 times its size (the enlargement above) is drawn with the
+sharpness into a buffer of the shown device pixels, at most 3840x2160 and
+of the picture's shape (`drawing`, `bufferSize`); otherwise at its own
+size, plainly, the browser scaling the canvas.
+
+## The views
+
+- QUIC (`screen/h264-quic.tsx`, `lib/quic/video.worker.ts`): the worker is
+  handed a canvas for WebGL2 when upscaling, for a 2D context otherwise (a
+  canvas has one kind of context, so the view mounts a new canvas and
+  worker when upscaling starts or stops). The page tells the worker where
+  the picture is shown (its CSS size and the pixel ratio) and the
+  sharpness; the worker reports how it draws, its time per frame (the
+  GPU's, where the browser offers timer queries) and the canvas's buffer.
+  The quality monitor's Extended view has an Upscaling row:
+  `SGSR, medium, 0.27 ms GPU` (SGSR naming the deringing pass and SGSR),
+  `on, not enlarged`, `off`, or why it stopped (`stopped: frames lost`).
+  The new canvas's worker unwatches the picture and watches it again at
+  once; the session passes over the "stopped" with which the gateway
+  answers the unwatching (`docs/design/quic-transport-v1.md`, "Messages"),
+  which once came after the new subscription and sent H.264 to WebRTC.
+
+## The safeguards
+
+- No GPU (`drawsWithGpu`), no WebGL2 where the view draws, or a lost
+  context: the plain path, without a notice; the Screen menu and the
+  monitor's row say why.
+- The watchdog (`web/src/lib/upscale/watchdog.ts`): while a view draws
+  through the upscaler it counts the frames it received and the frames it
+  drew; when fewer than 90 % of the frames of the last five seconds were
+  drawn, upscaling stops for the page load, the page says so once in a
+  notice ("Upscaling switched off"), and the view goes on plainly. It does
+  not judge before five seconds were counted, nor on fewer than 15 frames
+  (a still screen sends one every two seconds). A view counts as received
+  only what it could have drawn: the QUIC worker the frames it hands to the
+  decoder, so that frames the network lost (never complete, or after a
+  break in the chain) do not count against the upscaler; a new session
+  starts the count over. On the host a draw slowed by 240 ms a frame in the
+  worker stops it within two seconds, and a path losing 3 % of its
+  datagrams for 8 s leaves it on.
+
 ## Tests
 
 - `tools/playwright/upscale_renderer_contract.mjs`: in Chromium drawing with
@@ -118,6 +175,22 @@ another display changes. The scroll view carries
 - `tools/playwright/screen_enlargement_contract.mjs`: the enlargement
   reported against the view's geometry, through a pixel-ratio change, a
   resize and the zoom.
+- `tools/test_upscale_settings.mjs`: the setting as the browser keeps it,
+  the buffer's size, and when a frame is enlarged.
+- `tools/test_upscale_watchdog.mjs`: the watchdog's rule: every frame drawn,
+  one in ten lost, one in five drawn, a decoder that falls behind, the first
+  five seconds, a still screen, and a new session.
+- `tools/test_quality_monitor.mjs`: the Upscaling row in each case,
+  stopped included.
+- `tools/playwright/quic_video_contract.mjs`: the QUIC picture at 200 %,
+  plain and upscaled: the upscaled canvas has the shown size, the frame's
+  number reads, the dark squares stay at 16, the squares' edges rise at
+  least a quarter more narrowly than the browser's stretch of the plain
+  canvas, nothing is dropped, and the mouse and a finger land where they
+  are on the picture. Upscaling switched off, on and off in the Screen menu
+  on a live page, the picture stays on the session and moves on; a lossy
+  path leaves upscaling on, and a draw slowed in the worker stops it with
+  the notice while the picture goes on plainly.
 
 ## Measured
 

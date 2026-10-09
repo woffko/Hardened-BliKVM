@@ -217,9 +217,13 @@ counted over the same two minutes, every byte counted right.
 
 **Transport** (rows of the path in use only):
 
-- QUIC: round trip, datagrams lost, frames received, given up and asked
-  for again (key-frame requests), and the gateway's frames sent, dropped
-  and key frames, all from the session's own counters.
+- QUIC: round trip, the sessions opened since the page was loaded (more
+  than one: a session was lost and opened anew), datagrams lost, frames
+  received, given up and asked for again (key-frame requests), the
+  decoder's restarts, and the gateway's frames sent, dropped and key
+  frames, all from the session's own counters. A picture that stands still
+  shows in one of them: a session lost, a frame given up, or the decoder
+  started again.
 - WebRTC, from `getStats()`: the selected candidate pair's round trip and
   its type, packets received and lost, jitter, the jitter buffer's delay a
   frame, NACK, PLI and FIR counts, frames received, decoded and dropped.
