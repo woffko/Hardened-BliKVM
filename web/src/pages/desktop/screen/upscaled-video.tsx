@@ -7,6 +7,7 @@ import { reportVideoUpscale } from '@/lib/page-video.ts';
 import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { drawing, type Sharpness } from '@/lib/upscale/settings.ts';
 import { Upscaler, type UpscaleReport } from '@/lib/upscale/upscaler.ts';
+import { UpscaleWatchdog, type UpscaleStop } from '@/lib/upscale/watchdog.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
 type Props = {
@@ -24,8 +25,8 @@ type Props = {
   mouseStyle: string;
   onResize?: (event: SyntheticEvent<HTMLVideoElement>) => void;
   onPlaying?: (event: SyntheticEvent<HTMLVideoElement>) => void;
-  /** Upscaling cannot go on: no WebGL2 here, or its context lost. */
-  onStopped: (reason: 'unavailable' | 'lost') => void;
+  /** Upscaling cannot go on: no WebGL2 here, its context lost, or frames lost to it. */
+  onStopped: (reason: UpscaleStop) => void;
 };
 
 /** How often what the drawing measures is handed to the quality monitor. */
@@ -44,7 +45,10 @@ const median = (values: number[]) => {
  * the video element is the screen. Upscaled, the video plays out of sight
  * and a canvas is the screen: each frame the video presents
  * (`requestVideoFrameCallback`, else every animation frame) is drawn through
- * the upscaler into a buffer of the size the picture is shown at.
+ * the upscaler into a buffer of the size the picture is shown at. The
+ * watchdog compares the frames the video presented with those drawn: a draw
+ * that holds the page's thread up lets the video present frames it never
+ * hears of.
  */
 export const UpscaledVideo = ({
   videoRef,
@@ -91,7 +95,19 @@ export const UpscaledVideo = ({
     let draws: { at: number; ms: number }[] = [];
     let gpu: { at: number; ms: number }[] = [];
     const frameCallbacks = 'requestVideoFrameCallback' in video;
-    const paint = () => {
+    // Without frame callbacks the frames the video presented are not known.
+    const watchdog = frameCallbacks ? new UpscaleWatchdog(performance.now()) : null;
+    let watchdogTold = false;
+    let presentedBefore: number | null = null;
+    // A hidden page is shown no frames; the count starts over when it is seen.
+    const seen = () => {
+      if (document.hidden) return;
+      watchdog?.reset(performance.now());
+      presentedBefore = null;
+    };
+    document.addEventListener('visibilitychange', seen);
+    /** Draws the video's current frame; whether it was drawn. */
+    const paint = (): boolean => {
       const width = video.videoWidth;
       const height = video.videoHeight;
       const view = viewRef.current;
@@ -114,24 +130,38 @@ export const UpscaledVideo = ({
           draws.push({ at: now, ms: now - started });
           for (const ms of upscaler.takeGpuTimes()) gpu.push({ at: now, ms });
           mode = how.mode;
+          return true;
         }
       }
+      return false;
     };
-    const draw = () => {
+    const draw = (_now?: number, metadata?: VideoFrameCallbackMetadata) => {
       if (ended) return;
-      paint();
+      const drew = paint();
+      if (watchdog && metadata) {
+        const at = performance.now();
+        const came =
+          presentedBefore === null ? 1 : Math.max(1, metadata.presentedFrames - presentedBefore);
+        presentedBefore = metadata.presentedFrames;
+        for (let frame = 0; frame < came; frame += 1) watchdog.receive(at);
+        if (drew) watchdog.draw(at);
+      }
       handle = frameCallbacks
         ? video.requestVideoFrameCallback(draw)
         : window.requestAnimationFrame(draw);
     };
     redrawRef.current = () => {
-      if (!ended) window.requestAnimationFrame(() => !ended && paint());
+      if (!ended) window.requestAnimationFrame(() => void (!ended && paint()));
     };
     handle = frameCallbacks
       ? video.requestVideoFrameCallback(draw)
       : window.requestAnimationFrame(draw);
     const reporter = window.setInterval(() => {
       const now = performance.now();
+      if (watchdog && !watchdogTold && watchdog.losing(now)) {
+        watchdogTold = true;
+        stoppedRef.current('slow');
+      }
       draws = draws.filter((entry) => now - entry.at <= WINDOW_MS);
       gpu = gpu.filter((entry) => now - entry.at <= WINDOW_MS);
       const report: UpscaleReport = {
@@ -147,6 +177,7 @@ export const UpscaledVideo = ({
     return () => {
       ended = true;
       redrawRef.current = null;
+      document.removeEventListener('visibilitychange', seen);
       if (frameCallbacks) video.cancelVideoFrameCallback(handle);
       else window.cancelAnimationFrame(handle);
       window.clearInterval(reporter);

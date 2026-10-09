@@ -4,13 +4,40 @@
 // its size. Plainly the browser scales the <img>; with Auto the page reads the stream itself and draws its frames
 // through the upscaler into a canvas of the shown size. The patches come out at the plain image's levels, the
 // squares' edges rise at least 15 % more narrowly than the browser's own scaling of the image (which is better than
-// bilinear), the frames read are drawn, and the mouse lands where it is on the picture.
+// bilinear), the frames read are drawn, and the mouse lands where it is on the picture. With a stream that goes on and a
+// draw slowed on the page's thread, the watchdog stops upscaling and the image is the screen again.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
 
+/** The frames of the stream that goes on, once they are made. */
+let liveFrames = [];
+/** A stream that goes on, at 20 frames a second, each saying when it was captured as the board's streamer does. */
+function live(request, response) {
+  response.writeHead(200, {
+    "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+    "Cache-Control": "no-store",
+  });
+  const started = Date.now() / 1000;
+  let index = 0;
+  const send = () => {
+    const jpeg = liveFrames[index % liveFrames.length];
+    const seconds = (started + index * 0.05).toFixed(6);
+    index += 1;
+    response.write(
+      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\nX-Timestamp: ${seconds}\r\n\r\n`,
+    );
+    response.write(jpeg);
+    response.write("\r\n");
+  };
+  send();
+  const timer = setInterval(send, 50);
+  // The response's close: a request's comes as soon as it has been read.
+  response.on("close", () => clearInterval(timer));
+}
+
 const browser = await launchChromium();
-const app = await startApp();
+const app = await startApp({ mjpeg: live });
 const GPU =
   "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)";
 const WIDTH = 640;
@@ -64,7 +91,8 @@ async function makeFrames() {
 }
 
 const frames = await makeFrames();
-const stream = Buffer.concat(
+liveFrames = frames;
+const whole = Buffer.concat(
   frames.flatMap((jpeg) => [
     Buffer.from(
       `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`,
@@ -74,7 +102,7 @@ const stream = Buffer.concat(
   ]),
 );
 
-async function open(upscale, sent = null) {
+async function open(upscale, sent = null, { stream = "whole" } = {}) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: 2,
@@ -125,15 +153,18 @@ async function open(upscale, sent = null) {
       }),
     );
   }
-  await page.route("**/api/stream/mjpeg**", (route) =>
-    route.fulfill({
-      status: 200,
-      headers: {
-        "content-type": "multipart/x-mixed-replace; boundary=frame",
-      },
-      body: stream,
-    }),
-  );
+  // The whole stream at once, or the server's stream that goes on.
+  if (stream === "whole") {
+    await page.route("**/api/stream/mjpeg**", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "multipart/x-mixed-replace; boundary=frame",
+        },
+        body: whole,
+      }),
+    );
+  }
   await page.goto(app.baseUrl, { waitUntil: "domcontentloaded" });
   await page.locator("#screen").waitFor();
   return { context, page, errors };
@@ -289,8 +320,41 @@ try {
   assert.deepEqual(errors, []);
   await context.close();
 
+  // The watchdog: a stream that goes on and a draw slowed on the page's
+  // thread. The frames come together after each slow draw, but each says
+  // when it was captured: fewer than 90 % of them are drawn, upscaling stops
+  // for the page load with a notice, and the stream's image is the screen
+  // again.
+  let stoppedAfter;
+  {
+    const { context, page, errors } = await open("auto", null, {
+      stream: "live",
+    });
+    await page.waitForFunction(
+      () =>
+        document.querySelector("canvas#screen")?.dataset.upscale === "medium",
+    );
+    await page.evaluate(() => {
+      const draw = WebGL2RenderingContext.prototype.drawArrays;
+      WebGL2RenderingContext.prototype.drawArrays = function (...args) {
+        const until = performance.now() + 120;
+        while (performance.now() < until);
+        return draw.apply(this, args);
+      };
+    });
+    const slowed = Date.now();
+    await page.getByTestId("upscale-notice").waitFor({ timeout: 15000 });
+    stoppedAfter = (Date.now() - slowed) / 1000;
+    await page.waitForFunction(() => {
+      const image = document.querySelector("img#screen");
+      return image && image.naturalWidth > 0;
+    });
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
   console.log(
-    `MJPEG upscaled: the stream read and its frames drawn (${state.frames} received/decoded/drawn) into a ${state.buffer} canvas, the patches within ${worst.toFixed(1)} of the plain image, the squares' edges rising in ${upscaled.rise.toFixed(2)} px against ${plain.rise.toFixed(2)} px stretched, the pointer where it is passed`,
+    `MJPEG upscaled: the stream read and its frames drawn (${state.frames} received/decoded/drawn) into a ${state.buffer} canvas, the patches within ${worst.toFixed(1)} of the plain image, the squares' edges rising in ${upscaled.rise.toFixed(2)} px against ${plain.rise.toFixed(2)} px stretched, the pointer where it is, a slowed draw stopped by the watchdog after ${stoppedAfter.toFixed(1)} s passed`,
   );
 } finally {
   await browser.close();

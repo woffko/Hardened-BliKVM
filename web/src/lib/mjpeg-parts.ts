@@ -3,8 +3,12 @@
  * upscaled MJPEG view reads it (docs/design/screen-upscaling-v1.md): each
  * part's bytes once it is complete. A part says its length
  * (`Content-Length`, as the board's streamer does); one that does not ends
- * at the next boundary.
+ * at the next boundary. The board's streamer also says when each frame was
+ * captured (`X-Timestamp`, seconds).
  */
+
+/** A frame of the stream, and when it was captured (ms), where the stream says. */
+export type MjpegPart = { jpeg: Uint8Array; capturedMs: number | null };
 
 /** The boundary a `multipart/x-mixed-replace` content type names, or null. */
 export function boundaryOf(contentType: string | null): string | null {
@@ -33,6 +37,7 @@ export class MjpegParts {
   /** Where the current part's body starts, and its length when it says. */
   private body = -1;
   private length: number | null = null;
+  private capturedMs: number | null = null;
   private readonly delimiter: Uint8Array;
   private readonly headersEnd = encoder.encode('\r\n\r\n');
   private readonly maxPart: number;
@@ -45,12 +50,12 @@ export class MjpegParts {
   }
 
   /** Takes the next bytes of the stream; returns the parts they complete. */
-  push(chunk: Uint8Array): Uint8Array[] {
+  push(chunk: Uint8Array): MjpegPart[] {
     const joined = new Uint8Array(this.buffer.length + chunk.length);
     joined.set(this.buffer);
     joined.set(chunk, this.buffer.length);
     this.buffer = joined;
-    const parts: Uint8Array[] = [];
+    const parts: MjpegPart[] = [];
     for (;;) {
       if (this.body < 0) {
         const start = indexOf(this.buffer, this.delimiter, 0);
@@ -68,13 +73,15 @@ export class MjpegParts {
         const headers = decoder.decode(this.buffer.subarray(start, end));
         const length = /\r\ncontent-length:\s*(\d+)/i.exec(headers);
         this.length = length ? Number(length[1]) : null;
+        const captured = /\r\nx-timestamp:\s*(\d+(?:\.\d+)?)/i.exec(headers);
+        this.capturedMs = captured ? Number(captured[1]) * 1000 : null;
         if (this.length !== null && this.length > this.maxPart) throw new Error('part too large');
         this.buffer = this.buffer.slice(end + this.headersEnd.length);
         this.body = 0;
       }
       if (this.length !== null) {
         if (this.buffer.length < this.length) break;
-        parts.push(this.buffer.slice(0, this.length));
+        parts.push({ jpeg: this.buffer.slice(0, this.length), capturedMs: this.capturedMs });
         this.buffer = this.buffer.slice(this.length);
       } else {
         const next = indexOf(this.buffer, this.delimiter, 0);
@@ -85,7 +92,7 @@ export class MjpegParts {
         // The body ends before the CRLF that precedes the delimiter.
         let end = next;
         if (end >= 2 && this.buffer[end - 2] === 0x0d && this.buffer[end - 1] === 0x0a) end -= 2;
-        parts.push(this.buffer.slice(0, end));
+        parts.push({ jpeg: this.buffer.slice(0, end), capturedMs: this.capturedMs });
         this.buffer = this.buffer.slice(next);
       }
       this.body = -1;

@@ -452,6 +452,43 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  // The watchdog: a draw slowed on the page's thread lets the video present
+  // frames the canvas never draws (the video counts them itself). Within
+  // seconds upscaling stops for the page load with a notice, and the video
+  // is the screen again and plays.
+  {
+    const { context, page, errors } = await open("vp8", "narrow", GPU, {
+      upscale: "auto",
+      ratio: 2,
+    });
+    await page.waitForFunction(
+      () =>
+        document.querySelector("canvas#screen")?.dataset.upscale === "medium",
+    );
+    await page.evaluate(() => {
+      const draw = WebGL2RenderingContext.prototype.drawArrays;
+      WebGL2RenderingContext.prototype.drawArrays = function (...args) {
+        const until = performance.now() + 120;
+        while (performance.now() < until);
+        return draw.apply(this, args);
+      };
+    });
+    const slowed = Date.now();
+    await page.getByTestId("upscale-notice").waitFor({ timeout: 15000 });
+    measured.watchdog = round((Date.now() - slowed) / 1000);
+    await page.waitForFunction(
+      () =>
+        document.querySelector("video#screen") &&
+        !document.querySelector("canvas#screen"),
+    );
+    const playedAt = () =>
+      page.evaluate(() => document.querySelector("video#screen").currentTime);
+    const before = await playedAt();
+    await page.waitForTimeout(500);
+    assert.ok((await playedAt()) > before, "the video stands still");
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
   // H.264 in the same view says what its samples mean: drawn unchanged.
   {
     const { context, page, errors } = await open("h264", "full", GPU);
@@ -495,7 +532,7 @@ try {
     await context.close();
   }
   console.log(
-    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a browser drawing in software left as before passed`,
+    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a slowed draw stopped by the watchdog after ${measured.watchdog} s; a browser drawing in software left as before passed`,
   );
 } finally {
   await browser.close();

@@ -117,6 +117,9 @@ export async function startApp({
   dist,
   manifest = defaultManifest(),
   hidLeaseApplied = true,
+  // Serves `/api/stream/mjpeg` as `(request, response)`: a stream that goes
+  // on, where a page route can answer only with a whole body.
+  mjpeg = null,
 } = {}) {
   const root = dist ?? path.resolve("web/dist");
   const requests = [];
@@ -218,6 +221,10 @@ export async function startApp({
       }
       if (route === "/api/virtual-media" && request.method === "POST") {
         json({ code: 0, data: { applied: true } });
+        return;
+      }
+      if (route === "/api/stream/mjpeg" && mjpeg) {
+        mjpeg(request, response);
         return;
       }
       if (route === "/api/stream/mjpeg") {

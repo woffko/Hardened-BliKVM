@@ -1,7 +1,7 @@
 // The JPEG frames of an MJPEG stream as the upscaled MJPEG view cuts them
 // (web/src/lib/mjpeg-parts.ts): parts that say their length, parts that end
-// at the next boundary, any split of the bytes into chunks, and what is not
-// a stream. The file is TypeScript, which Node reads by stripping its types;
+// at the next boundary, any split of the bytes into chunks, when each was
+// captured, and what is not a stream. The file is TypeScript, which Node reads by stripping its types;
 // where this Node cannot, the tests are skipped and say so.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -42,10 +42,10 @@ const body = (seed, length) => {
   out.set([0xff, 0xd9], length - 2);
   return out;
 };
-const withLength = (part) =>
+const withLength = (part, seconds = "1791529729.869000") =>
   join(
     bytes(
-      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${part.length}\r\nX-Timestamp: 1.0\r\n\r\n`,
+      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${part.length}\r\nX-Timestamp: ${seconds}\r\n\r\n`,
     ),
     part,
     bytes("\r\n"),
@@ -89,7 +89,7 @@ test(
     for (const size of [1, 7, 4096, stream.length]) {
       const found = cut(stream, size);
       assert.equal(found.length, 3, `chunks of ${size}`);
-      found.forEach((part, index) => assert.deepEqual(part, parts[index]));
+      found.forEach((part, index) => assert.deepEqual(part.jpeg, parts[index]));
     }
   },
 );
@@ -103,9 +103,29 @@ test("parts without a length end at the next boundary", { skip }, () => {
   for (const size of [1, 5, stream.length]) {
     const found = cut(stream, size);
     assert.equal(found.length, 2, `chunks of ${size}`);
-    found.forEach((part, index) => assert.deepEqual(part, parts[index]));
+    found.forEach((part, index) => {
+      assert.deepEqual(part.jpeg, parts[index]);
+      assert.equal(part.capturedMs, null);
+    });
   }
 });
+
+test(
+  "each part says when it was captured, as the board's streamer says it",
+  { skip },
+  () => {
+    const stream = join(
+      withLength(body(1, 100), "1791529729.869000"),
+      withLength(body(2, 100), "1791529729.889500"),
+    );
+    const found = cut(stream, 7);
+    assert.equal(found.length, 2);
+    assert.equal(found[0].capturedMs, 1791529729869);
+    assert.ok(
+      Math.abs(found[1].capturedMs - found[0].capturedMs - 20.5) < 0.01,
+    );
+  },
+);
 
 test("what is not a stream, or a part too large, is refused", { skip }, () => {
   const parts = new mjpeg.MjpegParts("frame");

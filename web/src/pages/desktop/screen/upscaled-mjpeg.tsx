@@ -8,6 +8,7 @@ import { reportVideoUpscale } from '@/lib/page-video.ts';
 import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { drawing, type Sharpness } from '@/lib/upscale/settings.ts';
 import { Upscaler, type UpscaleReport } from '@/lib/upscale/upscaler.ts';
+import { UpscaleWatchdog, type UpscaleStop } from '@/lib/upscale/watchdog.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
 type Props = {
@@ -23,12 +24,20 @@ type Props = {
   onPicture: (width: number, height: number) => void;
   /** The stream broke or ended: the view asks for it again, as for its image. */
   onError: () => void;
-  /** Upscaling cannot go on: no WebGL2 here, or its context lost. */
-  onStopped: (reason: 'unavailable' | 'lost') => void;
+  /** Upscaling cannot go on: no WebGL2 here, its context lost, or frames lost to it. */
+  onStopped: (reason: UpscaleStop) => void;
 };
 
 const REPORT_MS = 1000;
 const WINDOW_MS = 5000;
+/**
+ * For the watchdog, frames are counted as received at most one in this
+ * time by their capture (`X-Timestamp`): a stream faster than the display
+ * shows fewer of its frames on an image too. The page's own clock will not
+ * do: a draw that holds up the page's thread holds up the reading of the
+ * stream as well, and its frames then come together.
+ */
+const DUE_MS = 20;
 
 const median = (values: number[]) => {
   if (!values.length) return null;
@@ -42,7 +51,8 @@ const median = (values: number[]) => {
  * decoded off the page's thread (`createImageBitmap`) and the newest drawn
  * on the next animation frame through the upscaler. A frame is uploaded
  * once, not on every animation frame as an `<img>` would have to be; a
- * hidden page decodes nothing.
+ * hidden page decodes nothing. The watchdog counts the frames drawn against
+ * those that came (`DUE_MS`).
  */
 export const UpscaledMjpeg = ({
   url,
@@ -91,6 +101,17 @@ export const UpscaledMjpeg = ({
     let draws: { at: number; ms: number }[] = [];
     let gpu: { at: number; ms: number }[] = [];
     const counts = { received: 0, decoded: 0, drawn: 0 };
+    const watchdog = new UpscaleWatchdog(performance.now());
+    let watchdogTold = false;
+    // The capture time of the last frame counted as received.
+    let countedMs: number | null = null;
+    // A hidden page decodes nothing; the count starts over when it is seen.
+    const seen = () => {
+      if (document.hidden) return;
+      watchdog.reset(performance.now());
+      countedMs = null;
+    };
+    document.addEventListener('visibilitychange', seen);
 
     const decode = async (jpeg: Uint8Array) => {
       if (decoding) {
@@ -127,6 +148,8 @@ export const UpscaledMjpeg = ({
       if (ended) return;
       let bitmap = ready;
       ready = null;
+      // A frame not drawn before, not one drawn again at another size.
+      const fresh = bitmap !== null;
       if (bitmap) {
         shown?.close();
         shown = bitmap;
@@ -158,6 +181,7 @@ export const UpscaledMjpeg = ({
           }
           mode = how.mode;
           counts.drawn += 1;
+          if (fresh) watchdog.draw(now);
           canvas.dataset.upscaleBuffer = `${canvas.width}x${canvas.height}`;
           canvas.dataset.mjpegFrames = `${counts.received}/${counts.decoded}/${counts.drawn}`;
         }
@@ -173,6 +197,10 @@ export const UpscaledMjpeg = ({
 
     const reporter = window.setInterval(() => {
       const now = performance.now();
+      if (!watchdogTold && watchdog.losing(now)) {
+        watchdogTold = true;
+        callbacks.current.onStopped('slow');
+      }
       draws = draws.filter((entry) => now - entry.at <= WINDOW_MS);
       gpu = gpu.filter((entry) => now - entry.at <= WINDOW_MS);
       reportVideoUpscale({
@@ -200,10 +228,16 @@ export const UpscaledMjpeg = ({
         for (;;) {
           const { value, done } = await reader.read();
           if (done || ended) break;
-          for (const jpeg of parts.push(value)) {
+          for (const part of parts.push(value)) {
             counts.received += 1;
             // A hidden page decodes nothing; the next frame is shown when it is back.
-            if (!document.hidden) void decode(jpeg);
+            if (document.hidden) continue;
+            const captured = part.capturedMs;
+            if (captured === null || countedMs === null || captured - countedMs >= DUE_MS) {
+              countedMs = captured;
+              watchdog.receive(performance.now());
+            }
+            void decode(part.jpeg);
           }
         }
         // The stream ended: its last frame is drawn before it is asked for again.
@@ -218,6 +252,7 @@ export const UpscaledMjpeg = ({
 
     return () => {
       ended = true;
+      document.removeEventListener('visibilitychange', seen);
       controller.abort();
       window.cancelAnimationFrame(animation);
       window.clearInterval(reporter);
