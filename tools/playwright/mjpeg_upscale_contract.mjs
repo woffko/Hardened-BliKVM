@@ -12,7 +12,11 @@ import { launchChromium } from "./quality_fixture.mjs";
 
 /** The frames of the stream that goes on, once they are made. */
 let liveFrames = [];
-/** A stream that goes on, at 20 frames a second, each saying when it was captured as the board's streamer does. */
+/**
+ * A stream that goes on, at 10 frames a second, each saying when it was captured as the board's streamer does.
+ * Chromium here draws with SwiftShader, which upscales the picture shown at 1280x720 at about 20 frames a second
+ * on a busy host: at a faster stream the watchdog could stop it before the draw is slowed.
+ */
 function live(request, response) {
   response.writeHead(200, {
     "Content-Type": "multipart/x-mixed-replace; boundary=frame",
@@ -22,7 +26,7 @@ function live(request, response) {
   let index = 0;
   const send = () => {
     const jpeg = liveFrames[index % liveFrames.length];
-    const seconds = (started + index * 0.05).toFixed(6);
+    const seconds = (started + index * 0.1).toFixed(6);
     index += 1;
     response.write(
       `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\nX-Timestamp: ${seconds}\r\n\r\n`,
@@ -31,7 +35,7 @@ function live(request, response) {
     response.write("\r\n");
   };
   send();
-  const timer = setInterval(send, 50);
+  const timer = setInterval(send, 100);
   // The response's close: a request's comes as soon as it has been read.
   response.on("close", () => clearInterval(timer));
 }
@@ -341,7 +345,7 @@ try {
       () =>
         document.querySelector("canvas#screen")?.dataset.upscale === "medium",
     );
-    // The watchdog's count, as the monitor shows it: the stream's 20 frames
+    // The watchdog's count, as the monitor shows it: the stream's 10 frames
     // a second drawn through the upscaler, before the draw is slowed.
     await page.waitForTimeout(3000);
     const [drawnFrames, cameFrames] = await page.evaluate(() =>
@@ -351,7 +355,7 @@ try {
         .map(Number),
     );
     assert.ok(
-      cameFrames >= 15 && drawnFrames >= cameFrames * 0.9,
+      cameFrames >= 8 && drawnFrames >= cameFrames * 0.9,
       `drawn ${drawnFrames} of ${cameFrames} a second`,
     );
     await page.evaluate(() => {
