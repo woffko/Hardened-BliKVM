@@ -343,7 +343,14 @@ try {
           localStorage.setItem("hardened-blikvm-video-scale", "2");
           localStorage.setItem(
             "hardened-blikvm-upscale",
-            JSON.stringify({ mode: upscale, sharpness: "medium" }),
+            // The picture at the size of a target as large as it (its own),
+            // times the zoom: shown at 200 %, as without Fill.
+            JSON.stringify({
+              mode: upscale,
+              sharpness: "medium",
+              size: "target",
+              target: { width: 640, height: 360 },
+            }),
           );
           const getParameter = WebGLRenderingContext.prototype.getParameter;
           WebGLRenderingContext.prototype.getParameter = function (name) {

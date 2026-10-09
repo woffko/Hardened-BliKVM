@@ -16,7 +16,7 @@ import {
   videoScaleAtom,
   videoStreamGenerationAtom
 } from '@/jotai/screen.ts';
-import { useUpscale } from '@/hooks/useUpscale.ts';
+import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
 import { UpscaledVideo } from './upscaled-video.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
@@ -64,13 +64,18 @@ export const Vp8Webrtc = ({ codec }: { codec: 'vp8' | 'h264' }) => {
   const retries = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [rangeFix] = useState(() => codec === 'vp8' && drawsWithGpu());
-  const upscale = useUpscale();
+  const { upscale, fit } = useUpscaleView();
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'scale-down'
-  });
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+    resolution,
+    videoScale,
+    {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'scale-down'
+    },
+    fit
+  );
 
   useEffect(() => {
     // A VPN or privacy extension can replace RTCPeerConnection; report it

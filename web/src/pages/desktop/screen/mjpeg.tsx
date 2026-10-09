@@ -18,7 +18,7 @@ import {
   videoStreamGenerationAtom
 } from '@/jotai/screen.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
-import { useUpscale } from '@/hooks/useUpscale.ts';
+import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
 import { UpscaledMjpeg } from './upscaled-mjpeg.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
@@ -37,13 +37,18 @@ export const Mjpeg = () => {
   const screenRef = useScreenRef<HTMLImageElement>();
   const streamURL = `${getBaseUrl('http')}/api/stream/mjpeg`;
   const streamSrc = hasError ? undefined : `${streamURL}?v=${streamNonce}`;
-  const upscale = useUpscale();
+  const { upscale, fit } = useUpscaleView();
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'scale-down'
-  });
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+    resolution,
+    videoScale,
+    {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'scale-down'
+    },
+    fit
+  );
 
   useEffect(() => {
     // stop frame detect for a while

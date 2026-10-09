@@ -40,12 +40,35 @@ test(
     assert.deepEqual(settings.DEFAULT_UPSCALE, {
       mode: "off",
       sharpness: "medium",
+      size: "fill",
+      target: null,
     });
-    settings.writeUpscale(storage, { mode: "auto", sharpness: "high" });
+    const target = { width: 2560, height: 1440 };
+    settings.writeUpscale(storage, {
+      mode: "auto",
+      sharpness: "high",
+      size: "target",
+      target,
+    });
     assert.deepEqual(settings.readUpscale(storage), {
       mode: "auto",
       sharpness: "high",
+      size: "target",
+      target,
     });
+    // A setting kept before the size was there, and a target that makes no sense.
+    assert.deepEqual(
+      settings.readUpscale(memory('{"mode":"auto","sharpness":"low"}')),
+      { mode: "auto", sharpness: "low", size: "fill", target: null },
+    );
+    assert.deepEqual(
+      settings.readUpscale(
+        memory(
+          '{"mode":"auto","sharpness":"low","size":"target","target":{"width":5,"height":1440}}',
+        ),
+      ),
+      { mode: "auto", sharpness: "low", size: "fill", target: null },
+    );
     for (const stored of [
       "not json",
       "null",
@@ -64,6 +87,8 @@ test(
       {
         mode: "auto",
         sharpness: "medium",
+        size: "fill",
+        target: null,
       },
     );
     const refusing = {
@@ -133,5 +158,42 @@ test(
         `${width} at ${ratio}`,
       );
     }
+  },
+);
+
+test(
+  "the picture fits its view, fills it when upscaled, or takes the target's size",
+  { skip },
+  () => {
+    const picture = { width: 1920, height: 1080 };
+    // A window larger than the picture, and one smaller.
+    const large = { width: 2560, height: 1390 };
+    const small = { width: 1280, height: 720 };
+    assert.equal(settings.fitScale(large, picture, "fit"), 1);
+    assert.equal(settings.fitScale(large, picture, "fill"), 1390 / 1080);
+    assert.equal(settings.fitScale(small, picture, "fit"), 1280 / 1920);
+    assert.equal(settings.fitScale(small, picture, "fill"), 1280 / 1920);
+    assert.equal(
+      settings.fitScale(small, picture, {
+        target: { width: 2560, height: 1440 },
+      }),
+      2560 / 1920,
+    );
+    assert.equal(
+      settings.fitScale({ width: 1, height: 1 }, picture, "fit"),
+      0.05,
+    );
+    const setting = {
+      ...settings.DEFAULT_UPSCALE,
+      mode: "auto",
+      size: "target",
+      target: { width: 2560, height: 1440 },
+    };
+    assert.equal(settings.fitFor(setting, false), "fit");
+    assert.deepEqual(settings.fitFor(setting, true), {
+      target: { width: 2560, height: 1440 },
+    });
+    assert.equal(settings.fitFor({ ...setting, size: "fill" }, true), "fill");
+    assert.equal(settings.fitFor({ ...setting, target: null }, true), "fill");
   },
 );

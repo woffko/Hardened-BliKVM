@@ -12,7 +12,7 @@ import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, upscaleStoppedAtom, videoScaleAtom } from '@/jotai/screen.ts';
 import { quicVideoAtom, quicVideoGivenUpAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
-import { useUpscale } from '@/hooks/useUpscale.ts';
+import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
 import { useScreenFit } from './use-screen-fit.ts';
 
@@ -40,7 +40,7 @@ export const H264Quic = () => {
   const setStats = useSetAtom(quicVideoStatsAtom);
   const setGivenUp = useSetAtom(quicVideoGivenUpAtom);
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const upscale = useUpscale();
+  const { upscale, fit } = useUpscaleView();
   // A canvas has one kind of context: drawing through the upscaler or
   // plainly is a canvas, and a worker, of its own.
   const upscaling = upscale !== 'off';
@@ -52,11 +52,16 @@ export const H264Quic = () => {
   // A canvas can be handed to a worker once; a new one is mounted for the
   // next worker.
   const [canvasKey, setCanvasKey] = useState(0);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'scale-down'
-  });
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+    resolution,
+    videoScale,
+    {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'scale-down'
+    },
+    fit
+  );
   // Where the picture is shown, for the worker to draw it at that size.
   const viewRef = useRef({ width: drawn.width, height: drawn.height, pixelRatio });
   viewRef.current = { width: drawn.width, height: drawn.height, pixelRatio };

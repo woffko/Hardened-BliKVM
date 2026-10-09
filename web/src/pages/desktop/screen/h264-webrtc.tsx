@@ -8,7 +8,7 @@ import { watchPeer } from '@/lib/page-video.ts';
 import { getBaseUrl } from '@/lib/service.ts';
 import { mouseStyleAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, upscaleStoppedAtom, videoScaleAtom } from '@/jotai/screen.ts';
-import { useUpscale } from '@/hooks/useUpscale.ts';
+import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
 import { UpscaledVideo } from './upscaled-video.tsx';
 import { useScreenFit } from './use-screen-fit.ts';
@@ -35,13 +35,18 @@ export const H264Webrtc = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const videoOfferSent = useRef(false);
   const videoIceCandidates = useRef<RTCIceCandidate[]>([]);
-  const upscale = useUpscale();
+  const { upscale, fit } = useUpscaleView();
   const setUpscaleStopped = useSetAtom(upscaleStoppedAtom);
-  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(resolution, videoScale, {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'scale-down'
-  });
+  const { containerRef, mediaStyle, drawn, pixelRatio } = useScreenFit(
+    resolution,
+    videoScale,
+    {
+      maxWidth: '100%',
+      maxHeight: '100%',
+      objectFit: 'scale-down'
+    },
+    fit
+  );
 
   useEffect(() => {
     const url = `${getBaseUrl('ws')}/api/stream/h264`;

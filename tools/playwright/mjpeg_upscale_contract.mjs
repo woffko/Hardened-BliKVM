@@ -111,11 +111,18 @@ async function open(upscale, sent = null, { stream = "whole" } = {}) {
     { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
   ]);
   await context.addInitScript(
-    ([gpu, upscale]) => {
+    ([gpu, upscale, width, height]) => {
       localStorage.setItem("hardened-blikvm-menu-auto-hide", "always");
       localStorage.setItem(
         "hardened-blikvm-upscale",
-        JSON.stringify({ mode: upscale, sharpness: "medium" }),
+        // Upscaled at the size of a target as large as the picture: the
+        // same layout as the plain image's, so the two compare.
+        JSON.stringify({
+          mode: upscale,
+          sharpness: "medium",
+          size: "target",
+          target: { width, height },
+        }),
       );
       const getParameter = WebGLRenderingContext.prototype.getParameter;
       WebGLRenderingContext.prototype.getParameter = function (name) {
@@ -123,7 +130,7 @@ async function open(upscale, sent = null, { stream = "whole" } = {}) {
         return getParameter.call(this, name);
       };
     },
-    [GPU, upscale],
+    [GPU, upscale, WIDTH, HEIGHT],
   );
   const page = await context.newPage();
   page.setDefaultTimeout(8000);

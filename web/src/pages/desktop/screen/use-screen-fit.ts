@@ -2,6 +2,7 @@ import type { CSSProperties, RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Resolution } from '@/types';
+import { fitScale as scaleToFit, type Fit } from '@/lib/upscale/settings.ts';
 import { usePixelRatio } from '@/hooks/usePixelRatio.ts';
 
 type ScreenFit = {
@@ -24,11 +25,15 @@ const FALLBACK_SCREEN_HEIGHT = 1080;
 export function useScreenFit(
   resolution: Resolution | null,
   videoScale: number,
-  fallbackStyle: CSSProperties
+  fallbackStyle: CSSProperties,
+  fit: Fit = 'fit'
 ): ScreenFit {
   const containerRef = useRef<HTMLDivElement>(null);
   const [fitScale, setFitScale] = useState(1);
   const pixelRatio = usePixelRatio();
+  const fitKey = typeof fit === 'string' ? fit : `${fit.target.width}x${fit.target.height}`;
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
 
   useEffect(() => {
     function updateFitScale() {
@@ -45,8 +50,7 @@ export function useScreenFit(
         return;
       }
 
-      const nextScale = Math.min(rect.width / width, rect.height / height, 1);
-      setFitScale(Math.max(0.05, nextScale));
+      setFitScale(scaleToFit(rect, { width, height }, fitRef.current));
     }
 
     updateFitScale();
@@ -69,7 +73,7 @@ export function useScreenFit(
       observer.disconnect();
       window.removeEventListener('orientationchange', updateFitScale);
     };
-  }, [resolution?.height, resolution?.width]);
+  }, [fitKey, resolution?.height, resolution?.width]);
 
   useEffect(() => {
     if (!containerRef.current) return;

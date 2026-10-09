@@ -8,9 +8,26 @@
 import type { UpscaleMode } from './upscaler.ts';
 
 export type Sharpness = Exclude<UpscaleMode, 'plain'>;
-export type UpscaleSetting = { mode: 'off' | 'auto'; sharpness: Sharpness };
+export type Size = { width: number; height: number };
+/**
+ * How large the picture is shown while upscaling: as large as the window
+ * lets it (beyond its own size), or at the target's own resolution, which
+ * the operator gives (2560x1440 shows a 1920x1080 capture at 133 %).
+ */
+export type PictureSize = 'fill' | 'target';
+export type UpscaleSetting = {
+  mode: 'off' | 'auto';
+  sharpness: Sharpness;
+  size: PictureSize;
+  target: Size | null;
+};
 
-export const DEFAULT_UPSCALE: UpscaleSetting = { mode: 'off', sharpness: 'medium' };
+export const DEFAULT_UPSCALE: UpscaleSetting = {
+  mode: 'off',
+  sharpness: 'medium',
+  size: 'fill',
+  target: null
+};
 const STORAGE_KEY = 'hardened-blikvm-upscale';
 const SHARPNESSES: Sharpness[] = ['low', 'medium', 'high'];
 
@@ -21,6 +38,16 @@ export const MAX_BUFFER = { width: 3840, height: 2160 };
 
 type Storage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
 
+/** A target resolution that makes sense, or null. */
+export function targetSize(value: unknown): Size | null {
+  const size = value as Partial<Size> | null;
+  const fine = (n: unknown) =>
+    typeof n === 'number' && Number.isInteger(n) && n >= 320 && n <= 16384;
+  return size && fine(size.width) && fine(size.height)
+    ? { width: size.width as number, height: size.height as number }
+    : null;
+}
+
 /** The setting this browser keeps, or the default where it keeps none that makes sense. */
 export function readUpscale(storage: Storage): UpscaleSetting {
   try {
@@ -29,7 +56,9 @@ export function readUpscale(storage: Storage): UpscaleSetting {
       const sharpness = SHARPNESSES.includes(value.sharpness as Sharpness)
         ? (value.sharpness as Sharpness)
         : DEFAULT_UPSCALE.sharpness;
-      return { mode: value.mode, sharpness };
+      const target = targetSize(value.target);
+      const size = value.size === 'target' && target ? 'target' : 'fill';
+      return { mode: value.mode, sharpness, size, target };
     }
   } catch {
     // Not ours, or damaged: the default.
@@ -86,4 +115,25 @@ export function drawing(
     return { mode: 'plain', width: frameWidth, height: frameHeight };
   }
   return { mode: sharpness, ...bufferSize(shownWidth, shownHeight, ratio) };
+}
+
+/**
+ * How the screen fits the picture in its view: `fit` at most its own size
+ * (the plain picture, as always), `fill` as large as the view lets it, or
+ * at a target's resolution.
+ */
+export type Fit = 'fit' | 'fill' | { target: Size };
+
+/** The scale the picture is laid out at in a view of `view` CSS pixels, before the zoom. */
+export function fitScale(view: Size, picture: Size, fit: Fit): number {
+  const whole = Math.min(view.width / picture.width, view.height / picture.height);
+  const scale =
+    fit === 'fit' ? Math.min(whole, 1) : fit === 'fill' ? whole : fit.target.width / picture.width;
+  return Math.max(0.05, scale);
+}
+
+/** The fit of the picture for a setting: the plain picture's unless it is upscaled. */
+export function fitFor(setting: UpscaleSetting, upscaling: boolean): Fit {
+  if (!upscaling) return 'fit';
+  return setting.size === 'target' && setting.target ? { target: setting.target } : 'fill';
 }
