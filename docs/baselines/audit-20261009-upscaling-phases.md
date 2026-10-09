@@ -217,7 +217,7 @@ lost datagram, had no reference barrier, decided a decoder had fallen
 behind by 12 frames in its queue (which a burst of frames passed at once),
 and had nothing that fitted the bitrate to the path. The operator chose the
 barrier and a bitrate fitted to the path, and then a stream for each group
-of pictures (2026-10-09). Three commits:
+of pictures (2026-10-09). The commits:
 
 - `0fd9911`: the page's receiver holds complete frames up to 2 s for their
   key frame (120 frames, 16 MiB); its decoder falls behind by time (a frame
@@ -236,6 +236,16 @@ of pictures (2026-10-09). Three commits:
   shared H.264 encoder at the chosen bitrate times the least share of the
   sessions that watch, without storing anything, and the quality monitor
   shows it.
+- `3705af5`: the page says each frame as it arrives (`received`) instead
+  of in its pings, whose timer a hidden page's browser slows down (Chromium
+  to once a minute after five minutes): the gateway would have taken that
+  for a queue and lowered every viewer's bitrate.
+
+Besides, `350fe35` lets the board's video probe narrow its path
+(`RATE_KBPS`), and `ec4cebf` runs the video contract's phone scenario at
+10 frames a second: SwiftShader upscales the zoomed picture at 20 to 29
+frames a second, so at 30 the watchdog stopped upscaling, and the pinch's
+check failed in two runs of five.
 
 On the host, through the relay, 1280x720 from the test source, plain
 drawing, 25 s each: clean 30.0 frames a second (age 20 ms at the 95th
@@ -252,7 +262,8 @@ climbed. Before the rules on what is on its way, the same path stood the
 picture still for 11 s and the page gave the session's picture up.
 
 The QUIC contracts (transport, input, input through the stack, video,
-share) passed on the host. The board still runs slot 80 (protocol 1): the
+share) passed on the host, the video contract twice in a row after
+`ec4cebf`. The board still runs slot 80 (protocol 1): the
 next slot carries protocol 2, the page and the gateway together, and is
 installed only with the operator's agreement, then checked on the board
 and by the operator at gates 2 to 5.
