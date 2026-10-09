@@ -149,3 +149,31 @@ pinch zooms to 400 % shows the cap's other cost, the browser stretching
 the capped buffer beyond about 320 % upright and 180 to 210 % on its side;
 it is judged at gate 5, whose touches are checked at 400 % as well as at
 100 and 200 %.
+
+## Slot 80: gate 2 again, gates 3 to 5
+
+`scripts/check.sh` green on `ecdb2bc` (its first run stopped at the
+formatting check on one import's order, fixed in `ecdb2bc`). Slot 80
+(0.1.0-beta.4, source `ecdb2bc`) was installed on the test board through
+the update API with the operator's agreement. Against the state before,
+only the application slot changed (79 to 80); the video settings (1920x1080
+at 60, JPEG 100, the video engine for H.264, WebRTC 8000 kbps), the
+firewall's baseline mode, QUIC's switch and the switches are as found, and
+the update runtime's files are the board's.
+
+On the board (read-only, headless, upscaling off as a software-drawn
+browser has it): `quic_video_device_probe` 30 s with the monitor in
+Extended, 789 frames in 33.65 s by the board's clock, a frame's age 78 ms
+in the median and 92 ms at the 95th percentile, one session, no decoder
+restart, no frame given up, no key frame asked for; `gui_walk_device` in
+both layouts and `vp8_webrtc_probe` in H.264 and VP8 passed.
+
+The operator's phone (Auto, Fill): over QUIC the picture no longer stood
+still; VP8 and MJPEG were sharp and steady; a pinch to 400 % was smooth and
+touches landed where they were made at 100, 200 and 400 %. The operator
+then reported the device as very slow, the processor plainly overloaded:
+open. The board itself was idle when looked at (94.5 % idle, load 0.22,
+60 C, its four cores at their 1.512 GHz limit); while the operator watched
+H.264 its encoder made about 23 frames a second, decoding each of the
+bridge's JPEG frames in 40 to 47 ms on the processor (28 ms on slot 79's
+screenshot), about one core, as the monitor's encoder-unit row says.
