@@ -23,6 +23,12 @@ export type ToVideoWorker =
   | { type: 'view'; width: number; height: number; pixelRatio: number }
   /** Another sharpness, while upscaling. */
   | { type: 'sharpness'; sharpness: Sharpness }
+  /**
+   * Whether the page is seen: a hidden page's picture is decoded (the chain
+   * of frames goes on) but not drawn, and its newest frame is drawn when the
+   * page is seen again.
+   */
+  | { type: 'visible'; visible: boolean }
   /** A new session or subscription: nothing received before it counts. */
   | { type: 'begin' }
   | { type: 'datagram'; data: ArrayBuffer }
@@ -117,6 +123,9 @@ let sharpness: Sharpness = 'medium';
 /** While upscaling: whether frames are lost to it, and whether the page was told. */
 let watchdog: UpscaleWatchdog | null = null;
 let watchdogTold = false;
+/** Whether the page is seen, and the newest frame decoded while it was not. */
+let visible = true;
+let hiddenFrame: VideoFrame | null = null;
 /** Where the picture is shown; until the page says, the frame's own size. */
 let view: { width: number; height: number; pixelRatio: number } | null = null;
 /** The frame's size the page was last told. */
@@ -203,6 +212,15 @@ function upscaled(target: OffscreenCanvas, frame: VideoFrame, scaler: Upscaler) 
 }
 
 function draw(frame: VideoFrame) {
+  if (!visible) {
+    // Kept, the newest only, to be drawn once the page is seen; its
+    // bookkeeping is the decoder's (when it was handed over and came).
+    hiddenFrame?.close();
+    hiddenFrame = frame;
+    handedAt.delete(frame.timestamp);
+    received.delete(frame.timestamp);
+    return;
+  }
   const now = performance.now();
   if (canvas && (upscaler || context)) {
     if (frame.displayWidth !== pictureWidth || frame.displayHeight !== pictureHeight) {
@@ -299,7 +317,7 @@ function decode(frame: ReceivedFrame) {
     received.set(frame.captureMicros, frame.receivedAt);
     handedAt.set(frame.captureMicros, performance.now());
     handed += 1;
-    watchdog?.receive(performance.now());
+    if (visible) watchdog?.receive(performance.now());
     decoder.decode(
       new EncodedVideoChunk({
         type: frame.key ? 'key' : 'delta',
@@ -389,6 +407,16 @@ scope.onmessage = (event) => {
       break;
     case 'sharpness':
       sharpness = message.sharpness;
+      break;
+    case 'visible':
+      visible = message.visible;
+      if (visible) {
+        // Counted afresh: nothing was drawn while the page was not seen.
+        watchdog?.reset(now);
+        const frame = hiddenFrame;
+        hiddenFrame = null;
+        if (frame) draw(frame);
+      }
       break;
     case 'begin':
       receiver.reset();

@@ -618,6 +618,46 @@ try {
       await finish(page, context);
     }
 
+    // A hidden page (another tab, a phone's screen off): its picture is
+    // decoded and not drawn, for longer than a stall takes, H.264 stays on
+    // the session, and once the page is seen again the picture goes on,
+    // upscaled, the watchdog counting afresh.
+    {
+      const { context, page, errors } = await open({ prepare: zoomed("auto") });
+      await playing(page);
+      await until("the picture is upscaled", async () =>
+        (await drawnAs(page)).mode === "medium" ? true : null,
+      );
+      const hide = (hidden) =>
+        page.evaluate((hidden) => {
+          Object.defineProperty(document, "hidden", {
+            configurable: true,
+            get: () => hidden,
+          });
+          Object.defineProperty(document, "visibilityState", {
+            configurable: true,
+            get: () => (hidden ? "hidden" : "visible"),
+          });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await hide(true);
+      await sleep(1500);
+      const hidden = await stats(page);
+      await sleep(11000);
+      const still = await stats(page);
+      assert.equal(still.frames, hidden.frames, "drawn while hidden");
+      assert.equal(await page.locator("video#screen").count(), 0);
+      await hide(false);
+      await until("the picture goes on once the page is seen", async () =>
+        (await stats(page)).frames > still.frames + 30 ? true : null,
+      );
+      assert.equal((await drawnAs(page)).mode, "medium");
+      await sleep(6000);
+      assert.equal(await page.getByTestId("upscale-notice").count(), 0);
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
+
     // The watchdog. A path that loses datagrams loses frames to the network,
     // not to the upscaler: upscaling goes on. A draw slowed down in the
     // worker loses frames to the upscaler: within seconds upscaling stops

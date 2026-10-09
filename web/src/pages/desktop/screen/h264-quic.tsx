@@ -21,6 +21,12 @@ import { useScreenFit } from './use-screen-fit.ts';
  * still screen gives one every two seconds. H.264 then goes on over WebRTC.
  */
 const STALL_MS = 10000;
+/**
+ * The worker reports every second; a gap this long between two reports is
+ * the browser holding the page or the worker (a phone's screen off), not a
+ * picture that stalled.
+ */
+const HELD_MS = 3000;
 
 /** The bytes of `bytes` as a buffer of their own, to hand to the worker. */
 function buffer(bytes: Uint8Array): ArrayBuffer {
@@ -88,9 +94,15 @@ export const H264Quic = () => {
       worker.postMessage(message, transfer);
     post({ type: 'canvas', canvas: offscreen, upscale: upscaleRef.current }, [offscreen]);
     post({ type: 'view', ...viewRef.current });
-    // The frames drawn at the last report, and when one was last drawn.
+    // A hidden page's picture is not drawn (docs/design/screen-upscaling-v1.md).
+    const seen = () => post({ type: 'visible', visible: !document.hidden });
+    seen();
+    document.addEventListener('visibilitychange', seen);
+    // The frames drawn at the last report, when one was last drawn, and when
+    // the worker last reported.
     let frames = 0;
     let progressAt = performance.now();
+    let reportedAt = performance.now();
     worker.onmessage = (event: MessageEvent<FromVideoWorker>) => {
       const message = event.data;
       switch (message.type) {
@@ -107,12 +119,16 @@ export const H264Quic = () => {
           setResolution({ width: message.width, height: message.height });
           storage.setResolution({ width: message.width, height: message.height });
           break;
-        case 'stats':
-          if (message.frames !== frames || !quicSession.isOpen()) {
-            // A session that is lost is the session's to report.
+        case 'stats': {
+          const at = performance.now();
+          const held = at - reportedAt > HELD_MS;
+          reportedAt = at;
+          if (message.frames !== frames || !quicSession.isOpen() || document.hidden || held) {
+            // A session that is lost is the session's to report; a hidden
+            // or held page draws nothing and stalls nothing.
             frames = message.frames;
-            progressAt = performance.now();
-          } else if (performance.now() - progressAt > STALL_MS) {
+            progressAt = at;
+          } else if (at - progressAt > STALL_MS) {
             setGivenUp('stalled');
           }
           setStats({
@@ -146,6 +162,7 @@ export const H264Quic = () => {
           canvas.dataset.quicUpscale = message.upscale.mode;
           canvas.dataset.quicBuffer = `${message.canvasWidth}x${message.canvasHeight}`;
           break;
+        }
       }
     };
     quicSession.watch({
@@ -164,6 +181,7 @@ export const H264Quic = () => {
       pong: (roundTripMs, boardMicros, at) => post({ type: 'pong', roundTripMs, boardMicros, at })
     });
     return () => {
+      document.removeEventListener('visibilitychange', seen);
       quicSession.unwatch();
       worker.terminate();
       if (workerRef.current === worker) workerRef.current = null;
