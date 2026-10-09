@@ -6,13 +6,15 @@ renderer's contract, how the pointer and the enlargement are worked out,
 how each view draws through it, the settings and the safeguards. The record
 of what was measured follows the design as the work goes on.
 
-Status (2026-10-09): phase 2 built, gate 2 to be checked again. Gate 0
-chose the algorithm (`docs/baselines/audit-20261008-upscaling-gate0.md`);
-the renderer, the pointer mapping and the enlargement are built and tested
-on the host; the QUIC view draws through the renderer, the setting is in the
-Screen menu, and the watchdog stops upscaling where frames are lost to it.
-The operator's phone found the QUIC picture standing still with upscaling
-on; the causes and their fixes, and the gates' records, are in
+Status (2026-10-09): phases 2 to 5 built (phase 5 without its fourth
+item), gates 2 to 5 to be checked on the operator's devices. Gate 0 chose
+the algorithm (`docs/baselines/audit-20261008-upscaling-gate0.md`); the
+renderer, the pointer mapping and the enlargement are built and tested on
+the host; the QUIC, WebRTC and MJPEG views draw through the renderer, the
+setting is in the Screen menu with the picture's size, and the watchdog
+stops upscaling where frames are lost to it. The operator's phone found
+the QUIC picture standing still with upscaling on; the causes and their
+fixes, and the gates' records, are in
 `docs/baselines/audit-20261009-upscaling-phases.md`.
 
 ## The algorithm
@@ -96,14 +98,23 @@ picture size.
 ## How much the picture is enlarged
 
 `use-screen-fit.ts` works out, in one place, the picture's drawn size in
-CSS pixels (the fit in the view, at most 100 %, times the zoom of the menu
-or a pinch), the display's pixel ratio, and the enlargement: fit x zoom x
-pixel ratio. Above 1 the browser enlarges the picture; at a 100 % fit on a
+CSS pixels (the fit in the view times the zoom of the menu or a pinch),
+the display's pixel ratio, and the enlargement: fit x zoom x pixel ratio.
+The fit is at most 100 % for a plain picture; an upscaled one fills the
+view (Fill) or is laid out at the target's resolution (`fitScale`,
+`fitFor`; "The setting"). Above 1 the browser enlarges the picture; at a 100 % fit on a
 display of ratio 2 it already does. The fit follows resizes and
 orientation changes (a resize observer), the pixel ratio a media query on
 the current ratio (`usePixelRatio`), which a browser's zoom or a move to
 another display changes. The scroll view carries
 `data-picture-enlargement` and `data-picture-pixel-ratio` for probes.
+
+The drawn size changes with every move of a pinch's fingers (the touch
+zoom goes to 400 %, the menu's to 200 %). The hook also gives it once it
+has not changed for 150 ms (`settled`), and the views size a canvas's
+buffer by that: while the fingers move the browser stretches the canvas as
+it is, and the picture is drawn at its new size once they stop. The
+canvas's CSS size follows the fingers.
 
 ## The setting
 
@@ -122,6 +133,13 @@ sharpness into a buffer of the shown device pixels, at most 3840x2160 and
 of the picture's shape (`drawing`, `bufferSize`); otherwise at its own
 size, plainly, the browser scaling the canvas.
 
+The size of an upscaled picture: Fill (the default) lays it out as large
+as the view lets it, beyond its own size; the target's size lays it out at
+a resolution the operator types (2560x1440 shows a 1920x1080 capture at
+133 %, each of the target's pixels on one of the display's at a pixel
+ratio of 1). The fields take their keys themselves: while one has the
+focus the page sends no key to the target, as for its other fields.
+
 ## The views
 
 - QUIC (`screen/h264-quic.tsx`, `lib/quic/video.worker.ts`): the worker is
@@ -139,6 +157,32 @@ size, plainly, the browser scaling the canvas.
   answers the unwatching (`docs/design/quic-transport-v1.md`, "Messages"),
   which once came after the new subscription and sent H.264 to WebRTC.
 
+- WebRTC, H.264 and VP8 (`screen/h264-webrtc.tsx`, `screen/vp8-webrtc.tsx`,
+  `screen/upscaled-video.tsx`): plainly the video element is the screen.
+  Upscaled, the video plays out of sight (a pixel, transparent, so that
+  the browser still presents its frames) and a canvas is the screen; each
+  frame the video presents (`requestVideoFrameCallback`) is drawn through
+  the upscaler on the page's thread, and drawn again when the picture is
+  shown at another size. VP8 goes through its range table in the shader
+  instead of the SVG filter.
+- MJPEG (`screen/mjpeg.tsx`, `screen/upscaled-mjpeg.tsx`,
+  `lib/mjpeg-parts.ts`): plainly an image is the screen. Upscaled, the page
+  reads the stream with `fetch` and cuts it into its parts (by
+  `Content-Length`, or at the next boundary), decodes each off the page's
+  thread (`createImageBitmap`), keeps the newest and draws it on the next
+  animation frame; the last frame is drawn again when the picture is shown
+  at another size. A hidden page decodes nothing.
+- Input binds to the element the view mounts as the screen
+  (`screenElementAtom`, `useScreenRef`), so that a canvas replacing a video
+  or a new canvas for a new worker takes the mouse and touch at once.
+- A hidden page draws nothing. The QUIC worker is told and decodes its
+  frames without drawing them, the newest drawn as soon as the page is
+  seen; the WebRTC and MJPEG views get no frame callback or animation
+  frame. The QUIC view's rule that gives the picture up to WebRTC after
+  ten seconds without a frame drawn counts no time while the page is
+  hidden, nor a gap of more than three seconds between the worker's
+  reports (a phone's screen off).
+
 ## The safeguards
 
 - No GPU (`drawsWithGpu`), no WebGL2 where the view draws, or a lost
@@ -154,8 +198,15 @@ size, plainly, the browser scaling the canvas.
   only what it could have drawn: the QUIC worker the frames it hands to the
   decoder, so that frames the network lost (never complete, or after a
   break in the chain) do not count against the upscaler; a new session
-  starts the count over. On the host a draw slowed by 240 ms a frame in the
-  worker stops it within two seconds, and a path losing 3 % of its
+  starts the count over. The WebRTC and MJPEG views draw on the page's
+  thread, where its own clock cannot tell a frame lost from one that came
+  within a frame of the display (a draw that holds the thread up holds up
+  everything on it, and the frames then come together): WebRTC counts the
+  frames the video presented (`presentedFrames`, kept by the compositor),
+  MJPEG the frames the stream sent, at most one in 20 ms by their capture
+  time (`X-Timestamp`, as the board's streamer says it). A page seen again
+  starts the count over. On the host a draw slowed by 240 ms a frame stops
+  it within 1 to 9 s in each view, and a QUIC path losing 3 % of its
   datagrams for 8 s leaves it on.
 
 ## Tests
@@ -174,7 +225,9 @@ size, plainly, the browser scaling the canvas.
   another shape.
 - `tools/playwright/screen_enlargement_contract.mjs`: the enlargement
   reported against the view's geometry, through a pixel-ratio change, a
-  resize and the zoom.
+  resize and the zoom; upscaled, filling a view larger than the picture
+  and laid out at a 2560x1440 target, the size set in the Screen menu with
+  no key sent on to the target.
 - `tools/test_upscale_settings.mjs`: the setting as the browser keeps it,
   the buffer's size, and when a frame is enlarged.
 - `tools/test_upscale_watchdog.mjs`: the watchdog's rule: every frame drawn,
@@ -182,6 +235,18 @@ size, plainly, the browser scaling the canvas.
   five seconds, a still screen, and a new session.
 - `tools/test_quality_monitor.mjs`: the Upscaling row in each case,
   stopped included.
+- `tools/test_mjpeg_parts.mjs`: the parts of an MJPEG stream by their
+  length and by the next boundary, in chunks of any size, with their
+  capture times, and what is not a stream.
+- `tools/playwright/vp8_range_contract.mjs`: upscaled at a pixel ratio of 2,
+  VP8's greys within 1.5 levels of the JPEG and its colours within 4, H.264
+  within 1.5, the buffer of the shown device pixels, no SVG filter, the
+  mouse where it is; a slowed draw stops upscaling and the video plays.
+- `tools/playwright/mjpeg_upscale_contract.mjs`: the stream's patches
+  within 2 levels of the plain image, the squares' edges rising at least
+  15 % more narrowly than the browser's own scaling of it, the mouse where
+  it is; with a stream that goes on, a slowed draw stops upscaling and the
+  image is the screen again.
 - `tools/playwright/quic_video_contract.mjs`: the QUIC picture at 200 %,
   plain and upscaled: the upscaled canvas has the shown size, the frame's
   number reads, the dark squares stay at 16, the squares' edges rise at
@@ -190,7 +255,10 @@ size, plainly, the browser scaling the canvas.
   are on the picture. Upscaling switched off, on and off in the Screen menu
   on a live page, the picture stays on the session and moves on; a lossy
   path leaves upscaling on, and a draw slowed in the worker stops it with
-  the notice while the picture goes on plainly.
+  the notice while the picture goes on plainly. On a phone a pinch keeps
+  the buffer while the fingers move and draws at the new size once they
+  stop; a page hidden for 12 s draws nothing and keeps the picture on the
+  session.
 
 ## Measured
 

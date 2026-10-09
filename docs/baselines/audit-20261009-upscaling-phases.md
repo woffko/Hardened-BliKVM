@@ -110,3 +110,42 @@ where it loses frames. The operator also noted that a pinch zooms to
 400 % while the menu stops at 200 %: on the phone the buffer reaches
 3840x2160 at about 320 % upright and 180 to 210 % on its side, and the
 browser stretches it beyond that (phase 5, item 4).
+
+## Phases 3 and 4: WebRTC and MJPEG (host)
+
+Phase 3 (`601b047` to `e897044`) and phase 4 (`c4a848c`, `6470bb9`) were
+built while gate 2 waited for the operator, and the watchdog came to both
+views with the fixes of gate 2 (`5111093`). On the host, in Chromium
+drawing with SwiftShader and named a GPU:
+
+- WebRTC (`vp8_range_contract.mjs`), upscaled at a pixel ratio of 2: VP8's
+  greys within 0 levels of the JPEG with the same samples (gate: 1.5) and
+  its colours within 2 (gate: 4), H.264 within 1 (gate: 1.5), the buffer of
+  the shown device pixels, no SVG filter, the mouse within 2 of 32767; a
+  draw slowed by 240 ms a frame stopped upscaling after 4.4 s, and the
+  video played as the screen.
+- MJPEG (`mjpeg_upscale_contract.mjs`), at a pixel ratio of 2: the patches
+  within 0.0 levels of the plain image, the squares' edges rising in
+  0.88 px against 1.10 px of the browser's own scaling of the image (at
+  most 0.85 of it), the mouse where it is; with a stream that goes on at 20
+  frames a second a slowed draw stopped upscaling after 5 to 9 s, and the
+  image was the screen again.
+
+Gates 3 and 4 are to be checked on the operator's devices with the next
+slot.
+
+## Phase 5: larger than 100 %, and phones (host)
+
+Items 1 to 3 (`3d9fefc`, `8a2f845`, `eb6f0ac`): an upscaled picture fills
+the view or is laid out at the target's resolution, set in the Screen
+menu; a pinch keeps the canvas's buffer while the fingers move (on the
+host 1280x720 throughout, 2304x1296 once they stopped); a hidden page
+draws nothing (12 s hidden on the host: no frame drawn, H.264 kept on the
+session, the picture on again once seen, no notice from the watchdog).
+
+Item 4 (drawing the visible region only) is not built: the plan builds it
+if the capped buffer costs a phone too much. The operator's note that a
+pinch zooms to 400 % shows the cap's other cost, the browser stretching
+the capped buffer beyond about 320 % upright and 180 to 210 % on its side;
+it is judged at gate 5, whose touches are checked at 400 % as well as at
+100 and 200 %.
