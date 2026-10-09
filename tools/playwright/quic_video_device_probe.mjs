@@ -16,6 +16,11 @@
 // session, which loses LOSS of the datagrams each way and holds each back
 // for DELAY_MS. The page then has this host's address as its origin, and
 // the gateway's port in the server's answers is replaced by the relay's.
+// With RATE_KBPS the UDP relay also narrows the path to that rate each way,
+// holding a datagram up to 1 s in its queue: the receipt keeps the share of
+// the chosen bitrate that the gateway says the path carries
+// (docs/design/quic-transport-v1.md, "The bitrate"), which the board's H.264
+// encoder follows for every viewer while the probe watches.
 //
 // With QUALITY_MONITOR=basic or extended the page's quality monitor is open
 // over the span: every draw of it is read from its worker, and the receipt
@@ -64,6 +69,9 @@ assert.ok(MONITOR === null || ["basic", "extended"].includes(MONITOR));
 const LOSS = Number(lossValue ?? 0);
 const DELAY_MS = Number(delayValue ?? 0);
 assert.ok(LOSS >= 0 && LOSS <= 0.2 && DELAY_MS >= 0 && DELAY_MS <= 500);
+const RATE_KBPS = Number(process.env.RATE_KBPS ?? 0);
+assert.ok(RATE_KBPS >= 0 && RATE_KBPS <= 100_000);
+assert.ok(RATE_KBPS === 0 || relayed, "a narrow path needs the relays");
 // The pings must have enclosed frames, on the path as it is, before the
 // span begins.
 const WARM_UP_MS = 10000;
@@ -242,7 +250,9 @@ const receipt = {
   browser: browser.version(),
   seconds: SECONDS,
   warmUpSeconds: WARM_UP_MS / 1000,
-  path: relayed ? { relay: true, loss: LOSS, delayMs: DELAY_MS } : "direct",
+  path: relayed
+    ? { relay: true, loss: LOSS, delayMs: DELAY_MS, rateKbps: RATE_KBPS }
+    : "direct",
   steps: [],
   hidRequests: {},
   // The page's API requests that failed (the probe's own are not the page's).
@@ -330,6 +340,8 @@ try {
       target: { host: board.hostname, port: quic.port },
       loss: LOSS,
       delayMs: DELAY_MS,
+      rateKbps: RATE_KBPS,
+      queueMs: 1000,
       seed: 20261002,
     });
     // The page may connect to its own origin only: there the relay listens.
@@ -458,6 +470,8 @@ try {
       received:
         after.relay[direction].received - before.relay[direction].received,
       dropped: after.relay[direction].dropped - before.relay[direction].dropped,
+      overflowed:
+        after.relay[direction].overflowed - before.relay[direction].overflowed,
     });
     receipt.relay = {
       toBoard: passed("toTarget"),
@@ -537,6 +551,7 @@ try {
       framesDropped: Number(await status.getAttribute("data-frames-dropped")),
       keyFrames: Number(await status.getAttribute("data-key-frames")),
       packetsLost: Number(await status.getAttribute("data-packets-lost")),
+      bitrateShare: Number(await status.getAttribute("data-bitrate-share")),
     },
     video: await line.getAttribute("data-video"),
     videoSays: await line.innerText(),
