@@ -115,6 +115,13 @@ type Open = {
   messages: MessageReader;
   /** The input stream, opened when the first request is made. */
   input: Promise<InputChannel> | null;
+  /**
+   * Unsubscriptions whose answer has not come: the gateway answers each
+   * with "stopped", which may come after the page watches again (a view that
+   * mounts a new canvas unwatches and watches at once) and is not news of
+   * the picture.
+   */
+  stopsAwaited: number;
 };
 type Ended = 'lost' | 'session';
 
@@ -298,6 +305,7 @@ class QuicSession {
     if (!this.sink) return;
     this.sink = null;
     this.setVideo({ state: 'off' });
+    if (this.open) this.open.stopsAwaited += 1;
     this.say({ t: 'video', subscribe: false });
   }
 
@@ -510,7 +518,8 @@ class QuicSession {
           writer: stream.writable.getWriter(),
           reader: stream.readable.getReader(),
           messages: new MessageReader(),
-          input: null
+          input: null,
+          stopsAwaited: 0
         };
         await open.writer.write(
           encodeMessage({ t: 'hello', protocol: PROTOCOL, token: grant.token })
@@ -589,6 +598,10 @@ class QuicSession {
               break;
             }
             case 'video':
+              if (message.state === 'stopped' && open.stopsAwaited > 0) {
+                open.stopsAwaited -= 1;
+                break;
+              }
               if (this.open !== open || !this.sink) break;
               if (message.state === 'started') {
                 this.setVideo({

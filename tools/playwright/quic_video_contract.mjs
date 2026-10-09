@@ -354,13 +354,19 @@ try {
         },
         [GPU, upscale],
       );
+    // The QUIC view's canvas as it says it draws; `mode` is null while
+    // there is none, as when the picture is not drawn from the session.
     const drawnAs = (page) =>
       page.evaluate(() => {
-        const canvas = document.querySelector("canvas#screen");
+        const canvas = document.querySelector(
+          'canvas#screen[data-video-transport="quic"]',
+        );
         return {
-          mode: canvas.dataset.quicUpscale,
-          buffer: canvas.dataset.quicBuffer,
-          picture: `${canvas.dataset.pictureWidth}x${canvas.dataset.pictureHeight}`,
+          mode: canvas?.dataset.quicUpscale ?? null,
+          buffer: canvas?.dataset.quicBuffer ?? null,
+          picture: canvas
+            ? `${canvas.dataset.pictureWidth}x${canvas.dataset.pictureHeight}`
+            : null,
         };
       });
     /**
@@ -520,6 +526,41 @@ try {
         Math.abs((to - from) * width - 60) <= 2,
         `a finger moved 60 px, the cursor ${((to - from) * width).toFixed(1)} px`,
       );
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
+
+    // Switched in the Screen menu on a live page: the view mounts a canvas
+    // and a worker of the other kind, and the picture stays on the session.
+    // (The gateway answers the old worker's unsubscription with "stopped",
+    // which once came after the new one had subscribed and gave the picture
+    // up to WebRTC.)
+    {
+      const { context, page, errors } = await open({ prepare: zoomed("auto") });
+      await playing(page);
+      await until("the picture is upscaled", async () =>
+        (await drawnAs(page)).mode === "medium" ? true : null,
+      );
+      await page.locator("svg.lucide-monitor").first().click();
+      for (const [entry, mode] of [
+        ["off", "off"],
+        ["auto", "medium"],
+        ["off", "off"],
+      ]) {
+        await page.getByText("Upscaling", { exact: true }).hover();
+        await page.locator(`[data-upscale-entry="${entry}"]`).click();
+        await until(`the picture is drawn ${mode}`, async () =>
+          (await drawnAs(page)).mode === mode ? true : null,
+        );
+        const first = await stats(page);
+        await sleep(1000);
+        const then = await stats(page);
+        assert.ok(
+          then.frames > first.frames,
+          `drawn ${mode}, the picture stood at ${then.frames} frames`,
+        );
+      }
+      assert.equal(await page.getByTestId("transport-notice").count(), 0);
       assert.deepEqual(errors, []);
       await finish(page, context);
     }
