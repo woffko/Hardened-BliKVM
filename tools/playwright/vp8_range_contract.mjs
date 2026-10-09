@@ -521,9 +521,13 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  // Drawn in software: VP8 as before, without the filter.
+  // Drawn in software: VP8 as before, without the filter, and not
+  // upscaled although upscaling is Auto: the video is the screen.
   {
-    const { context, page, errors } = await open("vp8", "narrow", null);
+    const { context, page, errors } = await open("vp8", "narrow", null, {
+      upscale: "auto",
+      ratio: 2,
+    });
     assert.match(
       await page.evaluate(() => {
         const context = document.createElement("canvas").getContext("webgl");
@@ -542,13 +546,16 @@ try {
       "none",
     );
     assert.equal(await page.locator("#vp8-full-range").count(), 0);
+    await page.waitForTimeout(1000);
+    assert.equal(await page.locator("canvas#screen").count(), 0);
+    assert.equal(await page.locator("video#screen").count(), 1);
     const levels = await drawn(page);
     assert.ok(worst(levels, kept) > 10, "drawn otherwise than before");
     assert.deepEqual(errors, []);
     await context.close();
   }
   console.log(
-    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a slowed draw stopped by the watchdog after ${measured.watchdog} s; a browser drawing in software left as before passed`,
+    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a slowed draw stopped by the watchdog after ${measured.watchdog} s; a browser drawing in software left as before, not upscaled, passed`,
   );
 } finally {
   await browser.close();
