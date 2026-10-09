@@ -106,6 +106,8 @@ export class Upscaler {
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
   readonly gl: WebGL2RenderingContext;
   private state: State | null = null;
+  private readonly lost: (event: Event) => void;
+  private readonly restored: () => void;
   /** GPU timer queries where the browser offers them, one frame in flight. */
   private timer: TimerQuery | null = null;
   private query: WebGLQuery | null = null;
@@ -136,15 +138,17 @@ export class Upscaler {
   ) {
     this.canvas = canvas;
     this.gl = gl;
-    canvas.addEventListener('webglcontextlost', (event) => {
+    this.lost = (event: Event) => {
       event.preventDefault();
       this.state = null;
       events.onLost?.();
-    });
-    canvas.addEventListener('webglcontextrestored', () => {
+    };
+    this.restored = () => {
       this.state = this.make();
       if (this.state) events.onRestored?.();
-    });
+    };
+    canvas.addEventListener('webglcontextlost', this.lost);
+    canvas.addEventListener('webglcontextrestored', this.restored);
     this.state = this.make();
   }
 
@@ -293,11 +297,13 @@ export class Upscaler {
     return times;
   }
 
-  /** Lets go of the GPU's objects; the canvas keeps its context. */
+  /** Lets go of the GPU's objects and the canvas's events; the canvas keeps its context. */
   dispose(): void {
     const gl = this.gl;
     const state = this.state;
     this.state = null;
+    this.canvas.removeEventListener('webglcontextlost', this.lost);
+    this.canvas.removeEventListener('webglcontextrestored', this.restored);
     if (!state || gl.isContextLost()) return;
     gl.deleteTexture(state.source);
     gl.deleteTexture(state.deringed);

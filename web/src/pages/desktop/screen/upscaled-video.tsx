@@ -69,6 +69,12 @@ export const UpscaledVideo = ({
   viewRef.current = { ...drawn, pixelRatio, sharpness: upscale };
   const stoppedRef = useRef(onStopped);
   stoppedRef.current = onStopped;
+  // Draws the video's current frame again, as when the picture is shown at
+  // another size: set by the drawing loop.
+  const redrawRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    redrawRef.current?.();
+  }, [drawn.width, drawn.height, pixelRatio, upscale]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -85,8 +91,7 @@ export const UpscaledVideo = ({
     let draws: { at: number; ms: number }[] = [];
     let gpu: { at: number; ms: number }[] = [];
     const frameCallbacks = 'requestVideoFrameCallback' in video;
-    const draw = () => {
-      if (ended) return;
+    const paint = () => {
       const width = video.videoWidth;
       const height = video.videoHeight;
       const view = viewRef.current;
@@ -111,9 +116,16 @@ export const UpscaledVideo = ({
           mode = how.mode;
         }
       }
+    };
+    const draw = () => {
+      if (ended) return;
+      paint();
       handle = frameCallbacks
         ? video.requestVideoFrameCallback(draw)
         : window.requestAnimationFrame(draw);
+    };
+    redrawRef.current = () => {
+      if (!ended) window.requestAnimationFrame(() => !ended && paint());
     };
     handle = frameCallbacks
       ? video.requestVideoFrameCallback(draw)
@@ -134,6 +146,7 @@ export const UpscaledVideo = ({
     }, REPORT_MS);
     return () => {
       ended = true;
+      redrawRef.current = null;
       if (frameCallbacks) video.cancelVideoFrameCallback(handle);
       else window.cancelAnimationFrame(handle);
       window.clearInterval(reporter);
