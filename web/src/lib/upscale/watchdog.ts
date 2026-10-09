@@ -49,6 +49,17 @@ export class UpscaleWatchdog {
   }
 
   /**
+   * The frames received and drawn a second over the last five seconds (or
+   * since the count began, if that is less), for the quality monitor.
+   */
+  rates(now: number): { received: number; drawn: number } {
+    const from = now - WATCH_MS;
+    const seconds = Math.max(1, Math.min(WATCH_MS, now - this.since)) / 1000;
+    const count = (times: number[]) => times.filter((at) => at > from).length / seconds;
+    return { received: count(this.received), drawn: count(this.drawn) };
+  }
+
+  /**
    * Whether frames were lost to the upscaler: over the last five seconds,
    * all of them counted, fewer than 90 % of the frames received were drawn.
    */

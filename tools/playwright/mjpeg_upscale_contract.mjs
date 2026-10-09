@@ -341,6 +341,19 @@ try {
       () =>
         document.querySelector("canvas#screen")?.dataset.upscale === "medium",
     );
+    // The watchdog's count, as the monitor shows it: the stream's 20 frames
+    // a second drawn through the upscaler, before the draw is slowed.
+    await page.waitForTimeout(3000);
+    const [drawnFrames, cameFrames] = await page.evaluate(() =>
+      document
+        .querySelector("canvas#screen")
+        .dataset.upscaleFrames.split("/")
+        .map(Number),
+    );
+    assert.ok(
+      cameFrames >= 15 && drawnFrames >= cameFrames * 0.9,
+      `drawn ${drawnFrames} of ${cameFrames} a second`,
+    );
     await page.evaluate(() => {
       const draw = WebGL2RenderingContext.prototype.drawArrays;
       WebGL2RenderingContext.prototype.drawArrays = function (...args) {

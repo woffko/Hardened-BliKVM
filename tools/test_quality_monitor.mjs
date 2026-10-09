@@ -555,4 +555,24 @@ test("the local section says how the view draws its frames", { skip }, () => {
     "stopped: frames lost",
   );
   assert.equal(rowOf(null, "slow"), "stopped: frames lost");
+
+  // The watchdog's count beside it, while frames are drawn through the
+  // upscaler: drawn against what came, a second.
+  const framesOf = (upscale, upscaleStopped = null) =>
+    monitor
+      .extendedSections(
+        inputs({ sample: sample({ upscale, upscaleStopped }) }),
+        workerT,
+      )
+      .find((section) => section.key === "local")
+      .rows.find((row) => row.key === "upscaleFrames")?.value;
+  const drawing = {
+    mode: "medium",
+    drawMs: 0.4,
+    gpuMs: 0.27,
+    frames: { received: 30, drawn: 29.8 },
+  };
+  assert.equal(framesOf(drawing), "29.8 / 30.0");
+  assert.equal(framesOf({ ...drawing, frames: null }), undefined);
+  assert.equal(framesOf(drawing, "slow"), undefined);
 });

@@ -131,6 +131,7 @@ const en = {
       upscaleStopUnavailable: 'no WebGL2',
       upscaleStopLost: 'context lost',
       upscaleStopSlow: 'frames lost',
+      upscaleFrames: 'Upscaled, drawn/came a s',
       refresh: 'Display refresh'
     },
     screen: {

@@ -161,6 +161,10 @@ export const H264Quic = () => {
           canvas.dataset.quicResets = String(message.resets);
           canvas.dataset.quicUpscale = message.upscale.mode;
           canvas.dataset.quicBuffer = `${message.canvasWidth}x${message.canvasHeight}`;
+          const counted = message.upscale.frames;
+          canvas.dataset.quicUpscaleFrames = counted
+            ? `${counted.drawn.toFixed(1)}/${counted.received.toFixed(1)}`
+            : '';
           break;
         }
       }

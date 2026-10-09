@@ -378,7 +378,8 @@ setInterval(() => {
     upscale: {
       mode: drawnMode,
       drawMs: drawSorted.length ? percentile(drawSorted, 0.5) : null,
-      gpuMs: gpuSorted.length ? percentile(gpuSorted, 0.5) : null
+      gpuMs: gpuSorted.length ? percentile(gpuSorted, 0.5) : null,
+      frames: watchdog ? watchdog.rates(now) : null
     },
     canvasWidth: canvas?.width ?? 0,
     canvasHeight: canvas?.height ?? 0

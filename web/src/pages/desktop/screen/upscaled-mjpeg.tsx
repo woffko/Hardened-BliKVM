@@ -203,11 +203,14 @@ export const UpscaledMjpeg = ({
       }
       draws = draws.filter((entry) => now - entry.at <= WINDOW_MS);
       gpu = gpu.filter((entry) => now - entry.at <= WINDOW_MS);
+      const frames = watchdog.rates(now);
       reportVideoUpscale({
         mode,
         drawMs: median(draws.map((entry) => entry.ms)),
-        gpuMs: median(gpu.map((entry) => entry.ms))
+        gpuMs: median(gpu.map((entry) => entry.ms)),
+        frames
       });
+      canvas.dataset.upscaleFrames = `${frames.drawn.toFixed(1)}/${frames.received.toFixed(1)}`;
       // What a probe reads without opening a menu.
       canvas.dataset.upscale = mode;
       canvas.dataset.upscaleBuffer = `${canvas.width}x${canvas.height}`;

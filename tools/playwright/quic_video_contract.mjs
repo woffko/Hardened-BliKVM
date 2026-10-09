@@ -437,6 +437,18 @@ try {
       const seen = await stats(page);
       assert.equal(seen.dropped, 0);
       assert.equal(seen.resets, 0);
+      // The watchdog's count, as the monitor shows it: every frame that came
+      // drawn through the upscaler.
+      const [drawnFrames, cameFrames] = await page.evaluate(() =>
+        document
+          .querySelector("canvas#screen")
+          .dataset.quicUpscaleFrames.split("/")
+          .map(Number),
+      );
+      assert.ok(
+        cameFrames >= 20 && drawnFrames >= cameFrames * 0.9,
+        `drawn ${drawnFrames} of ${cameFrames} a second`,
+      );
 
       // The pointer: the mouse at a point of the picture. Without the
       // board's power control the page sends the report over its WebSocket

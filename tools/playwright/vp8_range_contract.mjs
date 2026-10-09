@@ -137,13 +137,16 @@ async function open(
       samples.set(luma);
       samples.set(blue, luma.length);
       samples.set(red, luma.length + chroma);
-      // A track of those frames, twenty a second, until its peer is closed.
+      // A track of those frames, ten a second, until its peer is closed:
+      // SwiftShader draws an upscaled 2556x1438 buffer on the page's thread
+      // at a cost no GPU has, and keeps up with ten; enough of them come for
+      // the watchdog to judge a slowed draw.
       const picture = () => {
         const track = new MediaStreamTrackGenerator({ kind: "video" });
         const writer = track.writable.getWriter();
         let timestamp = 0;
         const timer = setInterval(() => {
-          timestamp += 50000;
+          timestamp += 100000;
           const frame = new VideoFrame(samples, {
             format: "I420",
             codedWidth: width,
@@ -152,7 +155,7 @@ async function open(
             colorSpace,
           });
           writer.write(frame).catch(() => frame.close());
-        }, 50);
+        }, 100);
         return {
           track,
           stop() {
@@ -397,6 +400,19 @@ try {
       };
     });
     assert.equal(buffer.reported, buffer.shown);
+    // The watchdog's count, as the monitor shows it: the video's frames
+    // drawn through the upscaler, each of them.
+    await page.waitForTimeout(3000);
+    const [drawnFrames, cameFrames] = await page.evaluate(() =>
+      document
+        .querySelector("canvas#screen")
+        .dataset.upscaleFrames.split("/")
+        .map(Number),
+    );
+    assert.ok(
+      cameFrames >= 3 && drawnFrames >= cameFrames * 0.9,
+      `drawn ${drawnFrames} of ${cameFrames} a second`,
+    );
     // No SVG filter is applied to anything: the shader has the table.
     assert.equal(
       await page.evaluate(() =>

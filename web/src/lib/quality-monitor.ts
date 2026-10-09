@@ -490,6 +490,16 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
       upscaleText(sample.upscale, sample.upscaleStopped, t)
     );
   }
+  // What the watchdog counts: frames drawn through the upscaler against
+  // those that came, a second.
+  const frames = sample?.upscaleStopped ? null : sample?.upscale?.frames;
+  if (frames) {
+    put(
+      'upscaleFrames',
+      'qualityMonitor.upscaleFrames',
+      `${fixed(frames.drawn, 1)} / ${fixed(frames.received, 1)}`
+    );
+  }
   put('refresh', 'qualityMonitor.refresh', `${fixed(inputs.refreshHz)} Hz`);
 
   return [

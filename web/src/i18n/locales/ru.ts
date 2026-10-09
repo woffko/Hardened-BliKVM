@@ -135,6 +135,7 @@ const ru = {
       upscaleStopUnavailable: 'нет WebGL2',
       upscaleStopLost: 'контекст потерян',
       upscaleStopSlow: 'терялись кадры',
+      upscaleFrames: 'Увеличено, нарисовано/пришло в с',
       refresh: 'Частота экрана'
     },
     screen: {

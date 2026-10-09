@@ -109,3 +109,27 @@ test("a new session starts the count over", { skip }, () => {
   }
   assert.equal(kept.losing(5000.5), true);
 });
+
+test(
+  "the frames received and drawn a second, for the monitor",
+  { skip },
+  () => {
+    const dog = new watchdog.UpscaleWatchdog(0);
+    // 30 frames a second, every other one drawn, for ten seconds.
+    for (let index = 0; index < 300; index += 1) {
+      const at = (index * 1000) / 30;
+      dog.receive(at);
+      if (index % 2 === 0) dog.draw(at + 5);
+    }
+    const rates = dog.rates(10000);
+    assert.ok(Math.abs(rates.received - 30) < 0.5, String(rates.received));
+    assert.ok(Math.abs(rates.drawn - 15) < 0.5, String(rates.drawn));
+    // Two seconds after the count began: over those two seconds, not five.
+    const fresh = new watchdog.UpscaleWatchdog(0);
+    for (let index = 0; index < 40; index += 1) {
+      fresh.receive(index * 50);
+      fresh.draw(index * 50 + 5);
+    }
+    assert.deepEqual(fresh.rates(2000), { received: 20, drawn: 20 });
+  },
+);

@@ -32,6 +32,11 @@ export type UpscaleReport = {
   /** Medians over the last seconds: a frame's drawing on its thread, and on the GPU where the browser tells. */
   drawMs: number | null;
   gpuMs: number | null;
+  /**
+   * The frames the view received and drew a second through the upscaler,
+   * as its watchdog counts them; null where nothing is drawn through it.
+   */
+  frames: { received: number; drawn: number } | null;
 };
 
 export type DrawOptions = {
