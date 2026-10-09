@@ -177,3 +177,24 @@ open. The board itself was idle when looked at (94.5 % idle, load 0.22,
 H.264 its encoder made about 23 frames a second, decoding each of the
 bridge's JPEG frames in 40 to 47 ms on the processor (28 ms on slot 79's
 screenshot), about one core, as the monitor's encoder-unit row says.
+
+### The slow device: the board's Wi-Fi on the viewers' network
+
+Measured on the board (read-only) while the operator watched, at the
+operator's word: the video left through the board's Wi-Fi (4 to 5 Mbit/s
+out of `wlan0`, nothing out of `eth0`), the H.264 encoder took 108 to 117 %
+of a core, `ustreamer` about 29 %, the QUIC gateway about 19 %, the load
+2.3 to 2.5. The board is on two networks: Ethernet (100 Mbit/s) on the lab
+network, and its Wi-Fi (SDIO, -67 dBm, a 72 Mbit/s link) on the network of
+the operator's devices. A page opened at the board's Ethernet address
+reaches it through the router, and the board answers straight onto the
+viewers' network through its Wi-Fi: an asymmetric path, whose driver took
+more than a core under load (`RTWHALXT` 78 %, `RTW_XMIT` 38 % in an earlier
+sample) and which cannot carry MJPEG's 100 Mbit/s at all. Upscaling off
+made no difference (the operator's comparison), and slot 80 changed no
+code on the board. The same MJPEG stream pulled by the host over Ethernet
+came at 45.6 frames a second, 102 Mbit/s, the Wi-Fi idle: one viewer of
+MJPEG at 1920x1080 fills the board's 100 Mbit/s Ethernet. The board was
+rebooted at 16:22 UTC in an orderly way (`systemd-logind`: "System is
+rebooting"), not by these checks, whose commands only read. The Wi-Fi and
+the network are the operator's settings and were not changed.
