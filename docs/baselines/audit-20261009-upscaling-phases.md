@@ -196,5 +196,12 @@ code on the board. The same MJPEG stream pulled by the host over Ethernet
 came at 45.6 frames a second, 102 Mbit/s, the Wi-Fi idle: one viewer of
 MJPEG at 1920x1080 fills the board's 100 Mbit/s Ethernet. The board was
 rebooted at 16:22 UTC in an orderly way (`systemd-logind`: "System is
-rebooting"), not by these checks, whose commands only read. The Wi-Fi and
+rebooting") by the operator, while everything was slow; these checks only
+read. The Wi-Fi and
 the network are the operator's settings and were not changed.
+
+The operator took the board's Wi-Fi off the network (the board's own
+setting, by the operator). Measured again while the operator watched over
+QUIC on the phone and the desktop: the video left through Ethernet (2 to
+5 Mbit/s), the Wi-Fi was idle, the H.264 encoder took 71 to 124 % of a core
+and `ustreamer` 22 to 31 %; the operator found the slowness gone.
