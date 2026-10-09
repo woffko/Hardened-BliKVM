@@ -2,7 +2,10 @@
 
 Status: design for `docs/baselines/work-plan-20261001-quic-transport.md`,
 written in its phase Q0. Decision of Q0: **go** (the evidence is in "Phase Q0"
-below). Nothing here is implemented yet.
+below). Since 2026-10-09 the picture travels by protocol 2, a group of
+pictures on a stream of its own ("Protocol 2: groups of pictures" below):
+"Messages", "Receiver", "Gateway, sending" and "The bitrate" describe it,
+and the phases record protocol 1 as it was measured.
 
 The operator's request: a QUIC transport modelled on the RustAdmin client's,
 chosen in Settings next to today's transport ("Standard": HTTPS for the page,
@@ -23,7 +26,9 @@ Taken over:
 | From the reference | Here |
 | --- | --- |
 | Independent reliable streams for control and input | the control and the input stream |
-| Delta frames as DATAGRAMs, never retransmitted; key frames reliable | the same; each key frame on a stream of its own |
+| Delta frames as DATAGRAMs, never retransmitted; key frames reliable | protocol 1: the same, each key frame on a stream of its own; protocol 2: every frame reliable, a group of pictures on a stream of its own |
+| Its protocol v4's reference barrier: a delta frame that arrives before its key frame waits for it, within 120 frames, 16 MiB and 2 s | the receiver below |
+| Its video QoS (`video_qos.rs`): the bitrate lowered on a bad path and raised again slowly | the share of the bitrate below, by the page's lag |
 | Fixed-width headers, big-endian, validated before memory is taken; unknown types, flags and sizes refused | the frame headers below |
 | Fragments out of order and exact duplicates accepted, conflicting ones refused, pending frames bounded | the receiver below |
 | Reassembly: 120 ms without progress, 1 s hard lifetime for a delta frame; the receive time taken after the datagram is read | the same numbers |
@@ -247,7 +252,7 @@ server answers `clock` instead.
    validates the address before keeping state, refuses a foreign `Origin`
    and any other path.
 3. The page opens the control stream and sends `hello` with the protocol
-   number (1) and the token. The gateway redeems the token over the server
+   number (2; 1 before 2026-10-09) and the token. The gateway redeems the token over the server
    link and gets an opaque session reference. Without a redeemed token after
    5 s the connection is closed.
 4. The session has the web session's rights and ends with it: logout,
@@ -257,7 +262,8 @@ server answers `clock` instead.
 Limits: 8 connections, 2 per web session; 64 tokens waiting, the oldest
 giving way; idle timeout 30 s; keep-alive 5 s; the page pings every 2 s,
 and every 250 ms while it watches the picture (for the board's clock, see
-"Receiver"). A gateway that connects anew replaces the one before it, and
+"Receiver", and to say which frame it last received whole, see "Gateway,
+sending"). A gateway that connects anew replaces the one before it, and
 the sessions and tokens of that one are forgotten.
 
 A gateway that stops leaves the link before it closes its connections and
@@ -293,8 +299,8 @@ two bytes (at most 4096); unknown fields and types are refused.
 
 | From | Message |
 | --- | --- |
-| page | `hello` (protocol, token); `ping` (id, page time); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
-| gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, packets lost, frames sent and dropped, key frames sent), every 2 s; `closing` (reason) |
+| page | `hello` (protocol, token); `ping` (id, page time, and while it watches `received`: the capture time of the newest frame it received whole); `video` (subscribe or not); `keyframe` (stream, last accepted frame, frames dropped); `bye` |
+| gateway | `welcome` (protocol, largest datagram) or `refused` (reason); `pong` (id, page time, board time); `video` (started with stream and size, stopped, or unavailable with the reason); `counters` (round-trip time, packets lost, frames sent and dropped, key frames sent, the share of the chosen bitrate that the path carries in percent), every 2 s; `closing` (reason) |
 
 The gateway answers a `video` that unsubscribes with `video` stopped. A
 view that mounts a new canvas (upscaling switched on or off) unsubscribes
@@ -308,15 +314,18 @@ lease API as the page sends it to `/api/hid/lease` today (acquire, renew,
 report, release) with a sequence number, and each answer is that API's
 answer with the same number.
 
-**Frames.** Every key frame travels on a unidirectional stream of its own,
-opened by the gateway; if a newer key frame is ready before an older one is
-through, the older stream is reset. A delta frame travels as datagrams. Both
-begin with the same 32-byte header, integers big-endian:
+**Frames.** A group of pictures, a key frame and the delta frames that
+refer to it, travels on a unidirectional stream of its own, opened by the
+gateway: each frame whole, its 32-byte header and its bytes, one after
+another. The stream is finished with its group, or reset when the gateway
+gives the group up ("Gateway, sending"). Protocol 1 sent a key frame alone
+on a stream and a delta frame as datagrams; the page still reads datagrams,
+and the gateway sends none. The header, integers big-endian:
 
 | Offset | Size | Field |
 | --- | --- | --- |
 | 0 | 1 | version (1) |
-| 1 | 1 | kind: 1 key frame, 2 delta fragment |
+| 1 | 1 | kind: 1 key frame, 2 delta frame (on a group's stream whole: fragment 0 of 1) |
 | 2 | 1 | codec: 1 H.264, Annex B |
 | 3 | 1 | reserved, zero |
 | 4 | 2 | fragment index (zero for a key frame) |
@@ -327,14 +336,19 @@ begin with the same 32-byte header, integers big-endian:
 | 20 | 4 | size of the complete frame |
 | 24 | 8 | capture time, microseconds of the board's monotonic clock |
 
-A datagram is at most 1200 bytes and never more than the path's live limit.
+A datagram of protocol 1 was at most 1200 bytes and never more than the
+path's live limit.
 
 ## Receiver (the page's decoder worker)
 
 - Fragments in any order; an exact duplicate is ignored; a fragment that
   contradicts what is known of its frame discards the frame. At most 4
-  frames and 2 MiB pending.
-- A frame without a new fragment for 120 ms, or older than 1 s, is given up.
+  frames and 2 MiB being put together, and 120 frames and 16 MiB waiting in
+  all.
+- A frame being put together without a new fragment for 120 ms, or older
+  than 1 s, is given up. A complete frame waits up to 2 s for its key frame
+  and the frames before it (the reference's barrier): on a slow path the
+  frames after a key frame can be whole before it.
 - A frame is decoded only if it continues the chain: its stream is the
   current one, its reference is the last decoded key frame, and its id
   follows the last decoded frame. Otherwise it waits for its key frame or is
@@ -373,15 +387,19 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
 - `video.worker.ts` is the worker: the receiver, the decoder and the canvas
   the page handed over. The decoder is configured from the sequence
   parameter set of each key frame (`h264.ts`), so the profile and the level
-  are the encoder's own. A decoder that reports an error, or has 12 frames
-  before it, is closed and started again from a key frame that is asked for:
-  a picture that falls behind is not shown late.
-- The session (`session.ts`) reads the datagrams and the key-frame streams
-  and hands their buffers to the worker; it keeps 4096 datagrams for the
-  page to read, because a frame's fragments arrive together and the
-  browser's default would drop most of them. A key frame's stream may carry
-  4 MiB and its header. A stream that ends in a reset was overtaken by a
-  newer key frame and is not one.
+  are the encoder's own. A decoder that reports an error, or has not come
+  back with a frame handed to it 1 s ago (or has 120 before it), is closed
+  and started again from a key frame that is asked for: a picture that falls
+  behind is not shown late. Frames that come together, a group's frames
+  after a pause on the path, are not that, however many; protocol 1 counted
+  12 frames before the decoder, which a burst of them passed.
+- The session (`session.ts`) reads the groups' streams and hands their
+  frames to the worker as each is whole (`group.ts`): the first must be a
+  key frame and the rest whole delta frames, or the stream is refused. A
+  stream that ends in a reset was given up by the gateway. Four times a
+  second its pings tell the gateway the capture time of the newest frame it
+  received whole. It still reads datagrams, keeping 4096 for the page to
+  read, as protocol 1 needed.
 - The worker reports once a second: frames drawn, frames in the last
   second and frames a second over the last five (a still screen gives one
   frame every 2 s, and Settings shows the latter), the age of the frames
@@ -412,22 +430,77 @@ A datagram is at most 1200 bytes and never more than the path's live limit.
   `started`, with the stream and the picture's size, when the first key
   frame of a stream goes out, and `unavailable` with the reason when the
   server refuses or the encoder cannot be reached.
-- **A key frame** travels whole on a unidirectional stream of its own,
-  below the control and the input stream in priority. If a newer key frame
-  is ready before an older one is through, the older stream is reset.
-- **A delta frame** is cut into datagrams of at most 1200 bytes, never more
-  than the path's live limit. Its fragments are handed to the endpoint
-  together. If the endpoint's datagram buffer has no room for the whole
-  frame, nothing of it is sent, it is counted, and the session needs a key
-  frame, like after a loss.
-- **After a loss** (a frame without room, a frame that found the session's
-  queue of 8 full, or the page's `keyframe`) the session gets no delta frame
-  until the next key frame, and the encoder is asked for one. One key frame
-  answers every session that waits for one.
+- **A group of pictures** travels on a unidirectional stream of its own,
+  below the control and the input stream in priority, written by a task of
+  its own so that the encoder's frames are never held up by the path. The
+  transport sends again what the path loses: a lost packet delays the group
+  by a round trip instead of breaking the chain of delta frames until the
+  next key frame. The congestion controller is BBR, which a path that loses
+  packets at random does not slow down as it does Cubic.
+- **The page's lag.** The transport takes what it is given into a buffer of
+  its own long before the path carries it, so what is on its way is judged
+  by the page's word: the newest frame it says it received whole. How long
+  the oldest frame it has not received has been on its way is its lag.
+- **The next key frame.** When it is ready, the group before is finished,
+  and what of it is on its way goes on; but if a queue has built in front of
+  the page ("The bitrate"), it is reset with every earlier group still on
+  its way, and the page goes on from the new key frame.
+- **A slow key frame**, one the page has not received half a second after
+  it was sent, shows a path that takes long over key frames: the next key
+  frame would only wait behind it, and is left out with the frames that
+  refer to it, until the one after. Four seconds without it, its group is
+  given up.
+- **A page too far behind**, more than 1.5 s with more on its way than a
+  key frame, has every group reset, and the picture starts again from a key
+  frame that is asked for: the page shows the present instead of a picture
+  that grows older on a path that cannot carry it. With less on its way
+  than a key frame, waiting is the shorter way.
+- **A page that gives the picture up** has its groups' streams reset: what
+  the transport still holds of them is not sent for nobody.
+- **After a loss** (a frame that found the session's queue of 8 full, or
+  the page's `keyframe`) the session gets no delta frame until the next key
+  frame, and the encoder is asked for one. One key frame answers every
+  session that waits for one.
 - **Counters**, every 2 s with the path's round trip and lost packets:
-  frames sent, frames dropped, key frames sent.
+  frames sent, frames dropped, key frames sent, and the share of the
+  bitrate.
 - **The board's time** in a `pong` is the system's monotonic clock, the
   clock of a frame's capture time.
+
+## The bitrate
+
+The board has one H.264 encoder for every viewer of H.264, over WebRTC and
+over QUIC alike, and the operator chooses its bitrate in the Screen menu. A
+path narrower than that bitrate builds a queue in front of its page: the
+picture grows older until the gateway gives it up and starts again from a
+key frame, which on such a path is late in its turn. So each session asks
+for the share of the chosen bitrate that its path carries
+(`crates/bli-kvm-quic-gateway/src/share.rs`), and the server runs the
+encoder at the chosen bitrate times the least share of the sessions that
+watch, never below a quarter of it.
+
+- **The queue.** The least lag of each second stands for the path in that
+  second: the page reports four times a second, and the least lag is the
+  one just after it said. The least of those over half a minute is the path
+  without a queue, its round trip and the page's own delay in saying. A
+  second more than 300 ms above it has a queue; one no more than 100 ms
+  above it keeps up.
+- **Down** by a quarter when a second has a queue that does not drain (its
+  least lag no shorter than the second's before), and when a group is given
+  up; at most once in 2 s, in which the lower bitrate shows, and not in a
+  picture's first 3 s, whose first key frame tells little.
+- **Up** by a fifth once the page has kept up for 10 s, and again after as
+  long: from a quarter to the whole in eight steps.
+- **The server** keeps each session's share, as the gateway last said it
+  (`video_share` on the link), within a quarter and the whole, and counts
+  it while the session watches. The H.264 encoder's demand connections, a
+  WebRTC viewer's as well, are sent `kbps` with the chosen bitrate times the
+  least share, and again whenever it changes. Nothing is stored: the
+  operator's choice stays as it is, and the whole bitrate comes back when
+  the session that asked for less gives the picture up, ends, or asks for
+  more. The VP8 encoder is not touched.
+- **The page** shows the share in the quality monitor ("Bitrate this path
+  carries") and in the status line's `data-bitrate-share`.
 
 ## Encoder
 
@@ -1019,6 +1092,55 @@ Receipts: `evidence/private/quic-firewall-device-seq65-20261002.json`,
 | Safari | not checked: none at hand | | | |
 | Chrome on Android, Safari on iOS | not checked: left to the operator | | | |
 
+## Protocol 2: groups of pictures (2026-10-09)
+
+Over slot 80 the operator found the QUIC picture less smooth than before,
+the quality monitor counting decoder restarts, and asked that the transport
+work at least as the reference's `experimental` branch does. That branch
+(its protocols v2 to v4 and `video_qos.rs`) keeps delta frames as
+datagrams, sends key frames reliably with a refresh scoped to the frame
+that was lost, holds a delta frame that arrives before its key frame (v4's
+reference barrier: 120 frames, 16 MiB, 2 s), and lowers the bitrate by an
+eighth when 3 % of the packets are lost over 10 s or the datagram queue
+fills. The operator chose a stream for each group of pictures, the barrier,
+and a bitrate fitted to the path (2026-10-09).
+
+On the host, through the relay, the test source's 1280x720 (x264 makes
+about 940 kbit/s of its picture), plain drawing, 25 s each:
+
+| Path, each way | Frames a second | Age, 95th percentile | Given up | Key frames asked for |
+| --- | --- | --- | --- | --- |
+| clean | 30.0 | 20 ms | 0 | 0 |
+| 40 ms, 3 % lost | 30.0 | 151 ms | 0 | 0 |
+| 40 ms, 10 % lost | 29.8 | 197 ms | 0 | 0 |
+| 100 ms, 3 % lost | 30.3 | 564 ms | 0 | 0 |
+
+Protocol 1 with the barrier drew 7.5 frames a second on the 40 ms, 3 % path
+(the source at 800 kbit/s), gave up 455 frames and asked for 54 key frames:
+every lost datagram broke the chain until a key frame. The groups'
+streams with Cubic drew 5.9 frames a second there, the newest frame 10 s
+old: a loss-based controller carries about 0.85 Mbit/s at an 80 ms round
+trip and 3 % loss (MSS / RTT x 1.22 / sqrt(p)), less than the picture. BBR
+paces at the bandwidth it measures and does not take random loss for a
+full path.
+
+**A narrow path.** The first version finished a group when the transport
+had taken all of it, which it does into its own buffer at once: on a path
+half the picture's rate the finished groups queued behind each other, the
+page drew nothing for 11 s and gave the session's picture up. A key frame
+that was reset by the next one before it arrived starved the picture the
+same way, and BBR keeps the rate it measured for about ten round trips
+after a path narrows at once, so the relay's queue overflowed (15 to 20 %
+of the datagrams). Hence the rules in "Gateway, sending": what is on its way
+by the page's word, a slow key frame waited for, a group given up only for
+more than a key frame's worth. The test source's x264 does not go below
+about 630 kbit/s at 1280x720 whatever it is asked, so a narrow path is
+measured with a chosen 800 kbit/s, which it follows
+(`tools/playwright/quic_share_contract.mjs`): narrowed to half the
+picture's rate (326 of 652 kbit/s), the session asked for 75, 56, 42 and
+31 % within 8 s, and the page kept up after about 26 s at 29.8 frames a
+second, its oldest frame 250 to 450 ms old; wide again, the share climbed.
+
 ## Standard against QUIC
 
 What the measurements of this note say, side by side:
@@ -1030,21 +1152,21 @@ What the measurements of this note say, side by side:
 | The same, 50 ms each way and 2% loss, 99th percentile | 504.5 ms (a retransmission, modelled) | 335.2 ms (measured) |
 | A refused report on the board, median | 15.3 to 15.7 ms (TLS, nginx, the server) | 2.2 to 2.5 ms |
 | A frame from its first packet to the screen, board | 28 ms (WebRTC: 26 ms of jitter buffer) | 1.1 ms |
-| A moving picture on a path that loses 1% of its datagrams | WebRTC sends lost packets again (not measured here) | 23 of 30 frames a second (host) |
-| The same with 3% lost | | 18 of 30 frames a second (host) |
+| A moving picture on a path that loses 1% of its datagrams | WebRTC sends lost packets again (not measured here) | protocol 1: 23 of 30 frames a second (host) |
+| The same with 3% lost | | protocol 1: 18 of 30 frames a second; protocol 2, 40 ms each way: 30 of 30, 151 ms at the 95th percentile (host) |
 | What must be open | TCP 443, and for WebRTC a UDP range with ICE | UDP 443 beside TCP 443 |
 
 - Input gains most where there is delay and loss: a report no longer waits
   behind a stalled TCP connection, and on the board it saves the HTTPS
   round through nginx.
-- The picture arrives sooner by the jitter buffer, about 27 ms, and a frame
-  that is shown is never old. On a path that loses datagrams all the time
-  it shows fewer frames than a transport that sends them again would.
-- This is why the browser's default stays Standard: QUIC is the better
+- The picture arrives sooner by the jitter buffer, about 27 ms. Protocol 1
+  showed fewer frames on a path that loses datagrams all the time than a
+  transport that sends them again would; protocol 2 sends them again, a
+  round trip late.
+- This is why the browser's default stayed Standard: QUIC was the better
   choice on a clean or merely slow path, and where a single UDP port is
   easier to pass than a WebRTC negotiation. Whether it becomes the default
-  is the operator's decision; a parity fragment per frame would be the step
-  that makes it good on lossy paths as well.
+  is the operator's decision.
 
 ## Changes against the plan
 
@@ -1052,6 +1174,7 @@ What the measurements of this note say, side by side:
 | --- | --- | --- |
 | Q0.3 on a high UDP port | on UDP 443 | the page's policy admits only its own origin |
 | Key frames on one stream | one stream per key frame | a newer key frame can replace one that is still in transit |
+| Delta frames as datagrams (protocol 1) | a group of pictures on a stream of its own (protocol 2, 2026-10-09) | a lost datagram broke the chain until the next key frame; over slot 80 the operator saw the picture stand and the decoder start again |
 | 15% of a core at 8 Mbit/s | holds for frames sent as bursts | the cost is per wake-up, not per byte; measured both ways |
 | The switch as a key of the administration switch file | the gateway unit's enablement, like the SSH switch | one state that survives a reboot and is read from systemd; the switch file, which refuses unknown keys, keeps its format for older slots |
 | The frame socket open to the gateway's group | open to connect to, serving the gateway's user only | the gateway is in no group the other units share; the encoder checks who connects, as the server does on its link |

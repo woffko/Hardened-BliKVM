@@ -205,3 +205,56 @@ setting, by the operator). Measured again while the operator watched over
 QUIC on the phone and the desktop: the video left through Ethernet (2 to
 5 Mbit/s), the Wi-Fi was idle, the H.264 encoder took 71 to 124 % of a core
 and `ustreamer` 22 to 31 %; the operator found the slowness gone.
+
+## QUIC protocol 2 and the bitrate share (host)
+
+Over slot 80 the operator found the QUIC picture less smooth than on slot
+79, the quality monitor counting decoder restarts, and asked that the
+transport work at least as the reference's `experimental` branch does
+(`docs/design/quic-transport-v1.md`, "Protocol 2: groups of pictures"). The
+comparison found that protocol 1 broke the chain of delta frames at every
+lost datagram, had no reference barrier, decided a decoder had fallen
+behind by 12 frames in its queue (which a burst of frames passed at once),
+and had nothing that fitted the bitrate to the path. The operator chose the
+barrier and a bitrate fitted to the path, and then a stream for each group
+of pictures (2026-10-09). Three commits:
+
+- `0fd9911`: the page's receiver holds complete frames up to 2 s for their
+  key frame (120 frames, 16 MiB); its decoder falls behind by time (a frame
+  handed to it 1 s ago not yet back).
+- `f1a2285`: protocol 2. A group of pictures on a unidirectional stream of
+  its own, the transport sending again what the path loses; BBR instead of
+  Cubic; the page says in its pings which frame it last received whole,
+  and the gateway judges by that what is on its way (the transport takes
+  everything into its own buffer at once): a slow key frame is waited for
+  and the next one left out, a group is given up only when the page is
+  more than 1.5 s behind with more on its way than a key frame, and a page
+  that gives the picture up has its streams reset.
+- `e12f16e`: the share of the chosen bitrate. Each session asks for what
+  its path carries (down by a quarter when a queue builds, up by a fifth
+  after 10 s of keeping up, never below a quarter); the server runs the
+  shared H.264 encoder at the chosen bitrate times the least share of the
+  sessions that watch, without storing anything, and the quality monitor
+  shows it.
+
+On the host, through the relay, 1280x720 from the test source, plain
+drawing, 25 s each: clean 30.0 frames a second (age 20 ms at the 95th
+percentile); 40 ms each way and 3 % lost 30.0 (151 ms); 40 ms and 10 %
+29.8 (197 ms); 100 ms and 3 % 30.3 (564 ms); no frame given up and no key
+frame asked for in any. Protocol 1 with the barrier drew 7.5 frames a
+second on the 40 ms, 3 % path, gave up 455 frames and asked for 54 key
+frames; the groups' streams with Cubic drew 5.9. A path narrowed to half
+the picture's rate (`quic_share_contract.mjs`, the source at a chosen
+800 kbit/s): the session asked for 75, 56, 42 and 31 % (in one run 25 and
+then 30) within 8 s, and the page kept up after about 26 s at 29.8 frames
+a second, its oldest frame 250 to 450 ms old; wide again, the share
+climbed. Before the rules on what is on its way, the same path stood the
+picture still for 11 s and the page gave the session's picture up.
+
+The QUIC contracts (transport, input, input through the stack, video,
+share) passed on the host. The board still runs slot 80 (protocol 1): the
+next slot carries protocol 2, the page and the gateway together, and is
+installed only with the operator's agreement, then checked on the board
+and by the operator at gates 2 to 5.
+
+Receipts: `evidence/private/upscale-20261008/quic-protocol2/`.
