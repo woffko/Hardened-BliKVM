@@ -38,8 +38,8 @@ import { Sidebar as PicoclawSidebar } from './picoclaw';
 import { ActionOverlay } from './picoclaw/action-overlay.tsx';
 import { QualityMonitor } from './quality-monitor';
 import { QuicTransport } from './quic-transport.tsx';
-import { UpscaleNotice } from './upscale-notice.tsx';
 import { Screen } from './screen';
+import { UpscaleNotice } from './upscale-notice.tsx';
 import { VirtualKeyboard } from './virtual-keyboard';
 
 // Room the touch layout keeps above the screen while the menu bar shows:
