@@ -8,14 +8,24 @@
  */
 import { decodeHeader, HEADER_BYTES, MAX_DATAGRAM_BYTES, type FrameHeader } from './frame.ts';
 
-/** Frames that may wait at once, complete or not. */
-export const MAX_PENDING_FRAMES = 4;
-/** Bytes those frames may have together. */
-export const MAX_PENDING_BYTES = 2 * 1024 * 1024;
+/** Frames that may be put together at once, and their bytes. */
+export const MAX_ASSEMBLING_FRAMES = 4;
+export const MAX_ASSEMBLING_BYTES = 2 * 1024 * 1024;
+/**
+ * Frames that may wait at once, complete or not, and their bytes. A key
+ * frame comes whole on a stream of its own, and on a slow or lossy path
+ * after the delta frames that refer to it; those wait for it here (the
+ * reference barrier) rather than be given up and a key frame asked for
+ * again, which on such a path would come late in its turn.
+ */
+export const MAX_PENDING_FRAMES = 120;
+export const MAX_PENDING_BYTES = 16 * 1024 * 1024;
 /** A frame that gets no new fragment for this long is given up. */
 export const PROGRESS_TIMEOUT_MS = 120;
-/** A frame is given up this long after its first fragment, whatever came. */
+/** A frame is given up this long after its first fragment, whatever came, while it is incomplete. */
 export const LIFETIME_MS = 1000;
+/** A complete frame waits this long for its key frame and the frames before it. */
+export const HOLD_MS = 2000;
 /** After the first key-frame request: the waits before the next ones. */
 export const RETRY_DELAYS_MS = [1000, 2000, 4000];
 /** After the last of them: no request for this long. */
@@ -66,8 +76,9 @@ type Pending = {
   received: number;
   firstAt: number;
   progressAt: number;
-  /** The whole frame, once every fragment is there. */
+  /** The whole frame, once every fragment is there, and since when. */
   complete: Uint8Array | null;
+  completeAt: number;
 };
 
 type Chain = {
@@ -117,6 +128,13 @@ export class VideoReceiver {
   /** The bytes those frames have, or will have once complete. */
   waitingBytes(): number {
     return this.pendingBytes;
+  }
+
+  /** Frames being put together, not yet complete. */
+  assembling(): number {
+    let count = 0;
+    for (const pending of this.pending.values()) if (!pending.complete) count += 1;
+    return count;
   }
 
   /** Whether a key frame is being waited for. */
@@ -212,16 +230,30 @@ export class VideoReceiver {
         return this.contradicted(key, pending, now);
       }
     } else {
-      if (header.size > MAX_PENDING_BYTES) {
+      if (header.size > MAX_ASSEMBLING_BYTES) {
         this.counters.refused += 1;
         return this.lost(header, now);
       }
-      // Room is made by giving up what has waited longest.
+      // Room is made by giving up what has waited longest: among the frames
+      // being put together, and among all that wait.
+      for (;;) {
+        let count = 0;
+        let bytes = 0;
+        for (const pending of this.pending.values()) {
+          if (pending.complete) continue;
+          count += 1;
+          bytes += pending.header.size;
+        }
+        if (count < MAX_ASSEMBLING_FRAMES && bytes + header.size <= MAX_ASSEMBLING_BYTES) break;
+        const oldest = this.oldest(false);
+        if (!oldest) break;
+        this.giveUp(oldest[0], oldest[1], now);
+      }
       while (
         this.pending.size >= MAX_PENDING_FRAMES ||
         this.pendingBytes + header.size > MAX_PENDING_BYTES
       ) {
-        const oldest = this.oldest();
+        const oldest = this.oldest(true);
         if (!oldest) break;
         this.giveUp(oldest[0], oldest[1], now);
       }
@@ -242,7 +274,8 @@ export class VideoReceiver {
         received: 0,
         firstAt: now,
         progressAt: now,
-        complete: null
+        complete: null,
+        completeAt: 0
       };
       this.pending.set(key, pending);
       this.pendingBytes += header.size;
@@ -297,6 +330,7 @@ export class VideoReceiver {
         offset += (part as Uint8Array).length;
       }
       pending.complete = whole;
+      pending.completeAt = now;
       pending.parts = [];
     }
   }
@@ -329,8 +363,10 @@ export class VideoReceiver {
   private settle(now: number, frames: ReceivedFrame[]): ReceiverOutput {
     for (const [key, pending] of [...this.pending]) {
       if (!this.pending.has(key)) continue;
-      const stalled = !pending.complete && now - pending.progressAt >= PROGRESS_TIMEOUT_MS;
-      if (stalled || now - pending.firstAt >= LIFETIME_MS) this.giveUp(key, pending, now);
+      const expired = pending.complete
+        ? now - pending.completeAt >= HOLD_MS
+        : now - pending.progressAt >= PROGRESS_TIMEOUT_MS || now - pending.firstAt >= LIFETIME_MS;
+      if (expired) this.giveUp(key, pending, now);
     }
     let request: KeyframeRequest | null = null;
     const recovery = this.recovery;
@@ -354,9 +390,11 @@ export class VideoReceiver {
     return { frames, request };
   }
 
-  private oldest(): [string, Pending] | null {
+  /** The frame that began to arrive first: among all, or among the incomplete only. */
+  private oldest(all: boolean): [string, Pending] | null {
     let found: [string, Pending] | null = null;
     for (const entry of this.pending) {
+      if (!all && entry[1].complete) continue;
       if (!found || entry[1].firstAt < found[1].firstAt) found = entry;
     }
     return found;

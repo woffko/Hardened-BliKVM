@@ -101,10 +101,15 @@ const STATS_MS = 1000;
 /** What a report says about the frames covers this much of the past. */
 const WINDOW_MS = 5000;
 /**
- * Frames the decoder may have before it: one that falls further behind is
- * started again from a key frame rather than show a picture that grows old.
+ * A decoder that has not come to a frame handed to it this long ago has
+ * fallen behind: it is started again from a key frame rather than show a
+ * picture that grows old. Frames that come together (those that waited for
+ * their key frame, those after a pause on the path) are not that, however
+ * many.
  */
-const MAX_DECODE_QUEUE = 12;
+const DECODE_LAG_MS = 1000;
+/** Frames the decoder may have before it at most, whatever their age. */
+const MAX_DECODE_QUEUE = 120;
 /** Frames that may wait for a ping to tell their age. */
 const MAX_UNAGED = 256;
 
@@ -305,6 +310,13 @@ function configure(codec: string) {
   configured = codec;
 }
 
+/** Whether the decoder has fallen behind: a frame handed to it long ago not yet come back. */
+function fallenBehind(now: number): boolean {
+  for (const at of handedAt.values()) if (now - at > DECODE_LAG_MS) return true;
+  return false;
+}
+
+/** Hands a frame to the decoder. */
 function decode(frame: ReceivedFrame) {
   try {
     if (frame.key) {
@@ -313,7 +325,12 @@ function decode(frame: ReceivedFrame) {
       if (!decoder || decoder.state !== 'configured' || codec !== configured) configure(codec);
     }
     if (!decoder || decoder.state !== 'configured') return;
-    if (!frame.key && decoder.decodeQueueSize >= MAX_DECODE_QUEUE) return failed();
+    if (
+      !frame.key &&
+      (decoder.decodeQueueSize >= MAX_DECODE_QUEUE || fallenBehind(performance.now()))
+    ) {
+      return failed();
+    }
     received.set(frame.captureMicros, frame.receivedAt);
     handedAt.set(frame.captureMicros, performance.now());
     handed += 1;

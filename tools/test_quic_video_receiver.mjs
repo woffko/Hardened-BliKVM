@@ -8,7 +8,10 @@ import {
   decodeHeader,
 } from "../web/src/lib/quic/frame.ts";
 import {
+  HOLD_MS,
   LIFETIME_MS,
+  MAX_ASSEMBLING_BYTES,
+  MAX_ASSEMBLING_FRAMES,
   MAX_PENDING_BYTES,
   MAX_PENDING_FRAMES,
   PROGRESS_TIMEOUT_MS,
@@ -425,31 +428,92 @@ test("a decoder that fails is a broken chain", () => {
   });
 });
 
-test("what waits is bounded in frames and in bytes", () => {
+test("what waits is bounded: frames being put together, and all that wait", () => {
+  // Frames of a key frame to come, being put together (one fragment of
+  // three each): the fifth takes the place of the oldest.
   const receiver = new VideoReceiver();
   receiver.keyFrame(keyFrame(1, 1000), 0);
-  // Frames of a key frame to come: the fifth takes the place of the oldest.
   for (let frame = 11; frame <= 15; frame += 1) {
     receiver.datagram(fragments(frame, 10, 3000)[0], frame);
   }
-  assert.equal(receiver.waiting(), MAX_PENDING_FRAMES);
+  assert.equal(receiver.assembling(), MAX_ASSEMBLING_FRAMES);
+  assert.equal(receiver.waiting(), MAX_ASSEMBLING_FRAMES);
   assert.equal(receiver.counters.dropped, 1);
   assert.equal(receiver.waitingBytes(), 4 * 3000);
 
-  // Bytes: three frames of 700 KiB fit, the fourth pushes the oldest out.
+  // Complete frames of a key frame to come wait, up to 120 of them; the
+  // next pushes the oldest out, and a key frame is asked for.
+  const held = new VideoReceiver();
+  held.keyFrame(keyFrame(1, 1000), 0);
+  for (let frame = 11; frame < 11 + MAX_PENDING_FRAMES; frame += 1) {
+    for (const datagram of fragments(frame, 10, 1500)) {
+      held.datagram(datagram, frame);
+    }
+  }
+  assert.equal(held.waiting(), MAX_PENDING_FRAMES);
+  assert.equal(held.assembling(), 0);
+  assert.equal(held.counters.dropped, 0);
+  assert.equal(held.recovering(), false);
+  for (const datagram of fragments(11 + MAX_PENDING_FRAMES, 10, 1500)) {
+    held.datagram(datagram, 200);
+  }
+  assert.equal(held.waiting(), MAX_PENDING_FRAMES);
+  assert.equal(held.counters.dropped, 1);
+  assert.equal(held.recovering(), true);
+
+  // Bytes being put together: two frames of 700 KiB fit, a third pushes
+  // the oldest out.
   const large = new VideoReceiver();
   const size = 700 * 1024;
   for (let frame = 21; frame <= 24; frame += 1) {
     large.datagram(fragments(frame, 20, size)[0], frame);
-    assert.ok(large.waitingBytes() <= MAX_PENDING_BYTES);
+    assert.ok(large.waitingBytes() <= MAX_ASSEMBLING_BYTES);
   }
-  assert.equal(large.waiting(), 2);
-  // A delta frame that could never wait is refused.
+  assert.equal(large.assembling(), 2);
+  // A delta frame that could never be put together is refused.
   const huge = new VideoReceiver();
-  huge.datagram(fragments(31, 30, MAX_PENDING_BYTES + 1)[0], 0);
+  huge.datagram(fragments(31, 30, MAX_ASSEMBLING_BYTES + 1)[0], 0);
   assert.equal(huge.waiting(), 0);
   assert.equal(huge.counters.refused, 1);
   assert.equal(huge.recovering(), true);
+});
+
+test("a key frame slower than a hundred of its frames: they wait for it and follow it in order", () => {
+  const receiver = new VideoReceiver();
+  receiver.keyFrame(keyFrame(1, 1000), 0);
+  // The key frame 30 is on its way on its stream; its delta frames come
+  // complete before it, 15 ms apart, for 1.5 s (within the 2 s they wait).
+  for (let frame = 31; frame <= 130; frame += 1) {
+    for (const datagram of fragments(frame, 30, 4000)) {
+      assert.deepEqual(ids(receiver.datagram(datagram, frame * 15)), []);
+    }
+    receiver.poll(frame * 15 + 1);
+  }
+  assert.equal(receiver.waiting(), 100);
+  const released = receiver.keyFrame(keyFrame(30, 400_000), 130 * 15 + 5);
+  assert.deepEqual(
+    ids(released),
+    Array.from({ length: 101 }, (_, index) => 30 + index),
+  );
+  assert.equal(receiver.counters.dropped, 0);
+  assert.equal(receiver.counters.requests, 0);
+  assert.equal(receiver.waiting(), 0);
+});
+
+test("a key frame that does not come within 2 s: its frames are given up and it is asked for", () => {
+  const receiver = new VideoReceiver();
+  receiver.keyFrame(keyFrame(1, 1000), 0);
+  for (const frame of [31, 32]) {
+    for (const datagram of fragments(frame, 30, 2000)) {
+      receiver.datagram(datagram, 100);
+    }
+  }
+  assert.equal(receiver.poll(100 + HOLD_MS - 1).request, null);
+  assert.equal(receiver.waiting(), 2);
+  const given = receiver.poll(100 + HOLD_MS);
+  assert.equal(receiver.waiting(), 0);
+  assert.equal(receiver.counters.dropped, 2);
+  assert.notEqual(given.request, null);
 });
 
 test("old frames, old key frames and another stream", () => {
@@ -530,6 +594,7 @@ test("100000 random and damaged datagrams and streams: bounded, and never a fram
       last = { stream: delivered.stream, frame: delivered.frame };
     }
     assert.ok(receiver.waiting() <= MAX_PENDING_FRAMES);
+    assert.ok(receiver.assembling() <= MAX_ASSEMBLING_FRAMES);
     assert.ok(receiver.waitingBytes() <= MAX_PENDING_BYTES);
     assert.ok(receiver.waitingBytes() >= 0);
     cases += 1;
