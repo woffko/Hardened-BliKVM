@@ -43,6 +43,13 @@ import { freePort } from "./quic_stack_rig.mjs";
 /** The source's rate, and the least that counts as the whole picture. */
 const FPS = 30;
 const WHOLE_FPS = 24;
+/**
+ * The source's rate while a phone's zoomed picture is upscaled: Chromium
+ * here draws with SwiftShader, which upscales a picture of 1280x720 and
+ * more at 20 to 29 frames a second, and the watchdog would rightly stop it
+ * at 30.
+ */
+const PHONE_FPS = 10;
 /** Each way, while the path is bad. */
 const LOSS = 0.03;
 const LOSSY_MS = 8000;
@@ -495,6 +502,8 @@ try {
     // A finger on a phone: the cursor moves by the finger's way over the
     // picture as it is laid out, whatever the canvas holds.
     {
+      await source.stop();
+      source = await startFrameSource(frameSocket, { fps: PHONE_FPS });
       const { context, page, errors } = await open({
         mobile: true,
         prepare: zoomed("auto"),
@@ -594,8 +603,11 @@ try {
       console.log(
         `QUIC upscaled on a phone: a pinch kept the ${before} buffer while the fingers moved and drew at ${after} once they stopped`,
       );
+      assert.equal((await drawnAs(page)).mode, "medium");
       assert.deepEqual(errors, []);
       await finish(page, context);
+      await source.stop();
+      source = await startFrameSource(frameSocket, { fps: FPS });
     }
 
     // Switched in the Screen menu on a live page: the view mounts a canvas
