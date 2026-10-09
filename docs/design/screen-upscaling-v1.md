@@ -208,9 +208,11 @@ focus the page sends no key to the target, as for its other fields.
   frames the video presented (`presentedFrames`, kept by the compositor),
   MJPEG the frames the stream sent, at most one in 20 ms by their capture
   time (`X-Timestamp`, as the board's streamer says it). A page seen again
-  starts the count over. On the host a draw slowed by 240 ms a frame stops
-  it within 1 to 9 s in each view, and a QUIC path losing 3 % of its
-  datagrams for 8 s leaves it on. The quality monitor shows its count
+  starts the count over. On the host a draw slowed by 240 ms a frame (in
+  the WebRTC view, each frame's callback handed over 300 ms late, since
+  headless Chromium presents video on the page's thread and a blocked
+  thread slows the video with it) stops it within 1 to 9 s in each view,
+  and a QUIC path losing 3 % of its datagrams for 8 s leaves it on. The quality monitor shows its count
   (above), which is what the gates' "no frame lost to the upscaler" is read
   from on the operator's devices.
 

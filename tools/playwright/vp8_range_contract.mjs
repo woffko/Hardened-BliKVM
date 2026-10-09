@@ -468,8 +468,11 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  // The watchdog: a draw slowed on the page's thread lets the video present
-  // frames the canvas never draws (the video counts them itself). Within
+  // The watchdog: a drawing that falls behind lets the video present
+  // frames the canvas never draws (the video counts them itself). Each frame
+  // callback is handed over 300 ms late, as a slow draw would leave it, the
+  // page's thread itself left free: headless Chromium, which presents video
+  // with that thread, would slow the video with it and hide the loss. Within
   // seconds upscaling stops for the page load with a notice, and the video
   // is the screen again and plays.
   {
@@ -482,11 +485,11 @@ try {
         document.querySelector("canvas#screen")?.dataset.upscale === "medium",
     );
     await page.evaluate(() => {
-      const draw = WebGL2RenderingContext.prototype.drawArrays;
-      WebGL2RenderingContext.prototype.drawArrays = function (...args) {
-        const until = performance.now() + 120;
-        while (performance.now() < until);
-        return draw.apply(this, args);
+      const request = HTMLVideoElement.prototype.requestVideoFrameCallback;
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function (back) {
+        return request.call(this, (now, metadata) =>
+          setTimeout(() => back(now, metadata), 300),
+        );
       };
     });
     const slowed = Date.now();
