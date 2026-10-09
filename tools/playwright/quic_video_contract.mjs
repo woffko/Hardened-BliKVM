@@ -564,6 +564,70 @@ try {
       assert.deepEqual(errors, []);
       await finish(page, context);
     }
+
+    // The watchdog. A path that loses datagrams loses frames to the network,
+    // not to the upscaler: upscaling goes on. A draw slowed down in the
+    // worker loses frames to the upscaler: within seconds upscaling stops
+    // for the page load with a notice, and the picture goes on plainly.
+    {
+      const { context, page, errors } = await open({ prepare: zoomed("auto") });
+      await playing(page);
+      await until("the picture is upscaled", async () =>
+        (await drawnAs(page)).mode === "medium" ? true : null,
+      );
+      const before = await stats(page);
+      relay.impair({ loss: LOSS });
+      await sleep(LOSSY_MS);
+      relay.impair({ loss: 0 });
+      await sleep(1500);
+      const lossy = await stats(page);
+      assert.ok(
+        lossy.requests > before.requests,
+        "the lossy path asked for no key frame",
+      );
+      assert.equal((await drawnAs(page)).mode, "medium");
+      assert.equal(await page.getByTestId("upscale-notice").count(), 0);
+
+      const worker = page
+        .workers()
+        .find((one) => one.url().includes("video.worker"));
+      assert.ok(worker, "the picture's worker is not found");
+      await worker.evaluate(() => {
+        const draw = WebGL2RenderingContext.prototype.drawArrays;
+        WebGL2RenderingContext.prototype.drawArrays = function (...args) {
+          const until = performance.now() + 120;
+          while (performance.now() < until);
+          return draw.apply(this, args);
+        };
+      });
+      const slowed = now();
+      await page.getByTestId("upscale-notice").waitFor();
+      const stoppedAfter = now() - slowed;
+      assert.ok(stoppedAfter < 8000, `stopped after ${stoppedAfter} ms`);
+      await until("the plain picture reports itself", async () =>
+        (await drawnAs(page)).mode === "off" ? true : null,
+      );
+      const plainNumber = await frameNumber(page, 2);
+      await sleep(1000);
+      const laterNumber = await frameNumber(page, 2);
+      assert.ok(
+        plainNumber !== null && laterNumber > plainNumber,
+        `the plain picture's number went from ${plainNumber} to ${laterNumber}`,
+      );
+      assert.equal(
+        await page.evaluate(
+          () =>
+            document.querySelector('[data-testid="upscale-notice"]')
+              ?.textContent,
+        ),
+        "Upscaling stopped on this page: frames were lost to it.",
+      );
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+      console.log(
+        `QUIC upscaled: a lossy path left upscaling on (${lossy.requests - before.requests} key frames asked for); a slowed draw stopped it after ${(stoppedAfter / 1000).toFixed(1)} s`,
+      );
+    }
   }
 
   // A path that loses datagrams: the picture goes on and never steps back,

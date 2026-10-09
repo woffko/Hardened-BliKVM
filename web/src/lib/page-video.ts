@@ -43,6 +43,7 @@ const empty = (at: number): PageSample => ({
   width: null,
   height: null,
   upscale: null,
+  upscaleStopped: null,
   quic: null,
   webrtc: null
 });

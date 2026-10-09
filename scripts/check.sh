@@ -185,6 +185,8 @@ node --test tools/test_vp8_range.mjs
 node --test tools/test_pointer_map.mjs
 # The upscaling setting and when a frame is enlarged.
 node --test tools/test_upscale_settings.mjs
+# The upscaler's watchdog: when frames are lost to it.
+node --test tools/test_upscale_watchdog.mjs
 # The upscaler bench of phase 0 of the screen-upscaling plan: its measures, and its tools parse.
 node --test tools/test_upscale_bench.mjs
 node --check tools/upscale/bench.js
@@ -950,7 +952,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
-pnpm_web exec prettier --check '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs'
+pnpm_web exec prettier --check '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

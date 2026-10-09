@@ -24,7 +24,7 @@ import type { FromQualityWorker, QualityView, ToQualityWorker } from '@/lib/qual
 import QualityWorker from '@/lib/quality.worker.ts?worker';
 import { getBaseUrl } from '@/lib/service.ts';
 import { qualityMonitorAtom } from '@/jotai/quality-monitor.ts';
-import { videoModeAtom } from '@/jotai/screen.ts';
+import { upscaleStoppedAtom, videoModeAtom } from '@/jotai/screen.ts';
 import { quicStatusAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
@@ -71,7 +71,13 @@ function canDrawInWorker(): boolean {
   );
 }
 
+/** What the page counted of its picture, by the way it comes now. */
 async function samplePath(path: VideoPath): Promise<PageSample> {
+  const sample = await pathSample(path);
+  return { ...sample, upscaleStopped: getDefaultStore().get(upscaleStoppedAtom) };
+}
+
+async function pathSample(path: VideoPath): Promise<PageSample> {
   switch (path) {
     case 'quic': {
       const store = getDefaultStore();

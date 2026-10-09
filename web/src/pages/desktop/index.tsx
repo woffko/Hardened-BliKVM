@@ -38,6 +38,7 @@ import { Sidebar as PicoclawSidebar } from './picoclaw';
 import { ActionOverlay } from './picoclaw/action-overlay.tsx';
 import { QualityMonitor } from './quality-monitor';
 import { QuicTransport } from './quic-transport.tsx';
+import { UpscaleNotice } from './upscale-notice.tsx';
 import { Screen } from './screen';
 import { VirtualKeyboard } from './virtual-keyboard';
 
@@ -113,6 +114,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
 
       {isDesktopLayout && <Notification />}
       <QuicTransport />
+      <UpscaleNotice />
       <QualityMonitor />
 
       {videoMode && resolution && (

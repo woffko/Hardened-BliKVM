@@ -4,6 +4,7 @@ import { CheckIcon, ScanSearchIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { writeUpscale, type Sharpness, type UpscaleSetting } from '@/lib/upscale/settings.ts';
+import type { UpscaleStop } from '@/lib/upscale/watchdog.ts';
 import { drawsWithGpu } from '@/lib/vp8-range.ts';
 import { upscaleAtom, upscaleStoppedAtom } from '@/jotai/screen.ts';
 import { MenuSubmenu } from '@/components/menu-submenu.tsx';
@@ -17,7 +18,7 @@ const SHARPNESSES: { value: Sharpness; label: string }[] = [
   { value: 'medium', label: 'screen.upscaleMedium' },
   { value: 'high', label: 'screen.upscaleHigh' }
 ];
-const STOPPED: Record<'unavailable' | 'lost' | 'slow', string> = {
+const STOPPED: Record<UpscaleStop, string> = {
   unavailable: 'screen.upscaleUnavailable',
   lost: 'screen.upscaleLost',
   slow: 'screen.upscaleSlow'

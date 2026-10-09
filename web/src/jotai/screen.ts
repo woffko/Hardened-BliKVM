@@ -2,6 +2,7 @@ import { atom } from 'jotai';
 
 import { Resolution } from '@/types';
 import { DEFAULT_UPSCALE, readUpscale, type UpscaleSetting } from '@/lib/upscale/settings.ts';
+import type { UpscaleStop } from '@/lib/upscale/watchdog.ts';
 
 export const isHdmiEnabledAtom = atom(true);
 
@@ -34,4 +35,4 @@ export const upscaleAtom = atom<UpscaleSetting>(storedUpscale());
 
 // Why upscaling stopped for this page load, null while it may run: no
 // WebGL2 where the view draws, its context lost, or frames lost to it.
-export const upscaleStoppedAtom = atom<'unavailable' | 'lost' | 'slow' | null>(null);
+export const upscaleStoppedAtom = atom<UpscaleStop | null>(null);

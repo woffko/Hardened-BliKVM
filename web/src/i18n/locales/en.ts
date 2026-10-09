@@ -125,6 +125,10 @@ const en = {
       upscaleLow: 'low',
       upscaleMedium: 'medium',
       upscaleHigh: 'high',
+      upscaleStopped: 'stopped: {{reason}}',
+      upscaleStopUnavailable: 'no WebGL2',
+      upscaleStopLost: 'context lost',
+      upscaleStopSlow: 'frames lost',
       refresh: 'Display refresh'
     },
     screen: {
@@ -143,6 +147,7 @@ const en = {
       upscaleUnavailable: 'the browser cannot draw it here',
       upscaleLost: 'the graphics processor dropped it',
       upscaleSlow: 'frames were lost to it',
+      upscaleSwitchedOff: 'Upscaling switched off',
       title: 'Screen',
       video: 'Video Mode',
       videoDirectTips: 'Enable HTTPS in "Settings > System > Network" to use this mode',

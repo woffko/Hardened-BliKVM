@@ -33,6 +33,8 @@ const TEXTS = {
   "qualityMonitor.upscaleGpu": "{{value}} ms GPU",
   "qualityMonitor.upscaleDraw": "{{value}} ms",
   "qualityMonitor.upscaleMedium": "medium",
+  "qualityMonitor.upscaleStopped": "stopped: {{reason}}",
+  "qualityMonitor.upscaleStopSlow": "frames lost",
 };
 const t = (key, options) =>
   (TEXTS[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) =>
@@ -55,6 +57,7 @@ const sample = (over = {}) => ({
   width: null,
   height: null,
   upscale: null,
+  upscaleStopped: null,
   quic: null,
   webrtc: null,
   ...over,
@@ -515,9 +518,12 @@ test("the local section says how the view draws its frames", { skip }, () => {
   // The monitor draws in a worker, which has the monitor's own labels only.
   const workerT = (key, options) =>
     key.startsWith("qualityMonitor.") ? t(key, options) : key;
-  const rowOf = (upscale) =>
+  const rowOf = (upscale, upscaleStopped = null) =>
     monitor
-      .extendedSections(inputs({ sample: sample({ upscale }) }), workerT)
+      .extendedSections(
+        inputs({ sample: sample({ upscale, upscaleStopped }) }),
+        workerT,
+      )
       .find((section) => section.key === "local")
       .rows.find((row) => row.key === "upscaler")?.value;
   assert.equal(rowOf(null), undefined);
@@ -534,4 +540,11 @@ test("the local section says how the view draws its frames", { skip }, () => {
     rowOf({ mode: "medium", drawMs: 0.4, gpuMs: null }),
     "SGSR, medium, 0.40 ms",
   );
+  // Stopped by the watchdog: said in place of how the plain path draws, and
+  // also where the plain view says nothing of its drawing.
+  assert.equal(
+    rowOf({ mode: "off", drawMs: null, gpuMs: null }, "slow"),
+    "stopped: frames lost",
+  );
+  assert.equal(rowOf(null, "slow"), "stopped: frames lost");
 });

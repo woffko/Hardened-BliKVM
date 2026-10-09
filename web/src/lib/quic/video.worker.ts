@@ -6,6 +6,7 @@
  */
 import { drawing, type Sharpness } from '../upscale/settings.ts';
 import { Upscaler, type UpscaleReport } from '../upscale/upscaler.ts';
+import { UpscaleWatchdog, type UpscaleStop } from '../upscale/watchdog.ts';
 import { BoardClock } from './board-clock.ts';
 import { codecOf, decoderConfig } from './h264.ts';
 import { VideoReceiver, type ReceivedFrame, type ReceiverOutput } from './video-receiver.ts';
@@ -81,10 +82,11 @@ export type FromVideoWorker =
   | { type: 'request'; stream: number; lastFrame: number; dropped: number }
   | { type: 'picture'; width: number; height: number }
   /**
-   * The upscaler cannot draw: no WebGL2 here, or its context was lost. The
-   * page goes on with the plain path.
+   * The upscaler cannot draw (no WebGL2 here, or its context was lost), or
+   * frames were lost to it (the watchdog). The page goes on with the plain
+   * path.
    */
-  | { type: 'upscaler'; state: 'unavailable' | 'lost' }
+  | { type: 'upscaler'; state: UpscaleStop }
   | ({ type: 'stats' } & VideoStats);
 
 /** How often frames that wait are looked at, and a due request is made. */
@@ -112,6 +114,9 @@ let context: OffscreenCanvasRenderingContext2D | null = null;
 /** The upscaler, when the page asked for one and WebGL2 is here; its sharpness. */
 let upscaler: Upscaler | null = null;
 let sharpness: Sharpness = 'medium';
+/** While upscaling: whether frames are lost to it, and whether the page was told. */
+let watchdog: UpscaleWatchdog | null = null;
+let watchdogTold = false;
 /** Where the picture is shown; until the page says, the frame's own size. */
 let view: { width: number; height: number; pixelRatio: number } | null = null;
 /** The frame's size the page was last told. */
@@ -190,6 +195,7 @@ function upscaled(target: OffscreenCanvas, frame: VideoFrame, scaler: Upscaler) 
   const started = performance.now();
   if (scaler.draw(frame, width, height, { mode: how.mode })) {
     const ended = performance.now();
+    watchdog?.draw(ended);
     drawTimes.push({ at: ended, ms: ended - started });
     for (const ms of scaler.takeGpuTimes()) gpuTimes.push({ at: ended, ms });
     drawnMode = how.mode;
@@ -293,6 +299,7 @@ function decode(frame: ReceivedFrame) {
     received.set(frame.captureMicros, frame.receivedAt);
     handedAt.set(frame.captureMicros, performance.now());
     handed += 1;
+    watchdog?.receive(performance.now());
     decoder.decode(
       new EncodedVideoChunk({
         type: frame.key ? 'key' : 'delta',
@@ -318,6 +325,10 @@ setInterval(() => handle(receiver.poll(performance.now())), POLL_MS);
 
 setInterval(() => {
   const now = performance.now();
+  if (watchdog && !watchdogTold && watchdog.losing(now)) {
+    watchdogTold = true;
+    scope.postMessage({ type: 'upscaler', state: 'slow' });
+  }
   drawn = drawn.filter((frame) => now - frame.at <= WINDOW_MS);
   drawTimes = drawTimes.filter((frame) => now - frame.at <= WINDOW_MS);
   gpuTimes = gpuTimes.filter((frame) => now - frame.at <= WINDOW_MS);
@@ -367,7 +378,8 @@ scope.onmessage = (event) => {
         upscaler = Upscaler.on(canvas, {
           onLost: () => scope.postMessage({ type: 'upscaler', state: 'lost' })
         });
-        if (!upscaler) scope.postMessage({ type: 'upscaler', state: 'unavailable' });
+        if (upscaler) watchdog = new UpscaleWatchdog(now);
+        else scope.postMessage({ type: 'upscaler', state: 'unavailable' });
       } else {
         context = canvas.getContext('2d');
       }
@@ -383,6 +395,7 @@ scope.onmessage = (event) => {
       clock.reset();
       unaged = [];
       closeDecoder();
+      watchdog?.reset(now);
       break;
     case 'datagram':
       bytes += message.data.byteLength;

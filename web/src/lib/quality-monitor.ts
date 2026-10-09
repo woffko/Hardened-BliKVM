@@ -4,6 +4,7 @@
 // rows of its two levels made from both.
 
 import type { UpscaleReport } from './upscale/upscaler.ts';
+import type { UpscaleStop } from './upscale/watchdog.ts';
 
 const LAYOUT_KEY = 'hardened-blikvm-quality-monitor';
 
@@ -142,6 +143,8 @@ export type PageSample = {
   height: number | null;
   /** How the view draws its frames, where it says (the QUIC view). */
   upscale: UpscaleReport | null;
+  /** Why upscaling stopped on this page load, if it did. */
+  upscaleStopped: UpscaleStop | null;
   /** QUIC: the session's and the gateway's counters. */
   quic: {
     roundTripMs: number | null;
@@ -195,9 +198,20 @@ export function pageRates(previous: PageSample | null, current: PageSample): Pag
   };
 }
 
+const STOPPED: Record<UpscaleStop, string> = {
+  unavailable: 'qualityMonitor.upscaleStopUnavailable',
+  lost: 'qualityMonitor.upscaleStopLost',
+  slow: 'qualityMonitor.upscaleStopSlow'
+};
+
 /** How the frames are drawn, as the monitor's row says it. */
-function upscaleText(report: UpscaleReport, t: Translate): string {
-  if (report.mode === 'off') return t('qualityMonitor.upscaleOff');
+function upscaleText(
+  report: UpscaleReport | null,
+  stopped: UpscaleStop | null,
+  t: Translate
+): string {
+  if (stopped) return t('qualityMonitor.upscaleStopped', { reason: t(STOPPED[stopped]) });
+  if (!report || report.mode === 'off') return t('qualityMonitor.upscaleOff');
   if (report.mode === 'plain') return t('qualityMonitor.upscaleNotEnlarged');
   // The monitor draws in a worker, which has the monitor's own labels only.
   const sharpness = t(
@@ -465,7 +479,13 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
     );
     put('decodeTime', 'qualityMonitor.decodeTime', `${fixed(sample?.decodeMs, 1)} ms`);
   }
-  if (sample?.upscale) put('upscaler', 'qualityMonitor.upscaler', upscaleText(sample.upscale, t));
+  if (sample?.upscale || sample?.upscaleStopped) {
+    put(
+      'upscaler',
+      'qualityMonitor.upscaler',
+      upscaleText(sample.upscale, sample.upscaleStopped, t)
+    );
+  }
   put('refresh', 'qualityMonitor.refresh', `${fixed(inputs.refreshHz)} Hz`);
 
   return [

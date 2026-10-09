@@ -129,6 +129,10 @@ const ru = {
       upscaleLow: 'низкая',
       upscaleMedium: 'средняя',
       upscaleHigh: 'высокая',
+      upscaleStopped: 'остановлено: {{reason}}',
+      upscaleStopUnavailable: 'нет WebGL2',
+      upscaleStopLost: 'контекст потерян',
+      upscaleStopSlow: 'терялись кадры',
       refresh: 'Частота экрана'
     },
     screen: {
@@ -147,6 +151,7 @@ const ru = {
       upscaleUnavailable: 'браузер не может рисовать его здесь',
       upscaleLost: 'видеокарта его сбросила',
       upscaleSlow: 'из-за него терялись кадры',
+      upscaleSwitchedOff: 'Увеличение выключено',
       title: 'Экран',
       video: 'Видеорежим',
       videoDirectTips:
