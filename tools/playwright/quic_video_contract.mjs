@@ -748,6 +748,27 @@ try {
     await finish(page, context);
   }
 
+  // The session is lost and does not come back within its attempts (the
+  // gateway away for longer): H.264 goes on with WebRTC. With the gateway
+  // back, the page tries again by itself once it is looked at again, and
+  // the picture comes back over the new session.
+  {
+    const { context, page, errors } = await open();
+    await playing(page);
+    await board.stopGateway();
+    await onWebRtc(page);
+    board.startGateway();
+    await board.gatewayOnTheLink();
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await playing(page);
+    assert.equal(await page.locator("video#screen").count(), 0);
+    assert.equal(board.watching.size, 1);
+    assert.deepEqual(errors, []);
+    await finish(page, context);
+  }
+
   // The server has no H.264 for a QUIC session: H.264 stays on WebRTC,
   // Settings says so and offers another attempt, which succeeds once the
   // server has one.

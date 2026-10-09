@@ -320,12 +320,27 @@ try {
     await context.close();
   }
 
-  // The web session already has its QUIC sessions.
+  // The web session already has its QUIC sessions: said. A session lost on
+  // a bad path counts until the gateway lets it go, so the page tries again
+  // by itself once it is looked at again (and every 35 s while it is): the
+  // session opens once the sessions are let go, and the notice goes.
   {
     board.tooManySessions = true;
     const { context, page, errors } = await open({ choice: "quic" });
     await notice(page, "sessions", { retry: false });
+    const requests = board.sessionRequests.length;
     board.tooManySessions = false;
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await openSettings(page);
+    await connected(page);
+    assert.equal(board.sessionRequests.length, requests + 1);
+    await until(
+      "the notice goes once the session is open",
+      async () =>
+        (await page.locator('[data-testid="transport-notice"]').count()) === 0,
+    );
     assert.deepEqual(errors, []);
     await context.close();
   }
