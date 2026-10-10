@@ -338,9 +338,14 @@ try {
     return { box, means };
   }
 
-  /** An upscaled canvas not yet drawn: black where the plain picture is not. */
-  const blank = (upscaled, plain) =>
-    Math.max(...upscaled.flat()) < 2 && Math.max(...plain.flat()) > 20;
+  /**
+   * An upscaled canvas not yet drawn: black, its patches at most a few levels
+   * on average, where the plain picture is not.
+   */
+  const blank = (upscaled, plain) => {
+    const level = (patches) => mean(patches.map((patch) => Math.max(...patch)));
+    return level(upscaled) < 4 && level(plain) > 20;
+  };
 
   // The fit of the picture in the view: the zoom that shows it at each
   // enlargement.
