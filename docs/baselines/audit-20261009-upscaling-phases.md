@@ -342,3 +342,25 @@ Receipts: `evidence/private/update-to-seq82-010-beta4-202610101004.json`,
 `webrtc-*-seq82.json`, `upscale-20261008/board/` (state, facts, the
 journal of the frozen page's probe).
 
+
+### The operator's items for phase 5 (2026-10-10)
+
+Checked on slot 82, the operator found QUIC well; then asked that the
+quality monitor fit a phone and count something for gate 5's processor
+comparison (the page cannot read the browser's processor use, and the
+operator chose a count in the monitor over a remote DevTools profile), and
+reported the phone's cursor drawn off the target's own. Added to the plan
+(`f7560ce`):
+
+- `6144c48`: the phone's arrow was placed by its box's corner, and lucide's
+  arrow draws its tip 3.1 px inside the box; the tip of the arrow's outline
+  is now the point (the touch contract measured it 3.7 px off before).
+- `63d5d4e`: on a phone Extended spans the screen's width and is as tall
+  as its rows; labels and values go on another line rather than be cut
+  short (over QUIC on a phone's size in Russian: 26 rows in 374x457 px,
+  none cut, one on two lines; on its side the window scrolls). The Browser
+  section counts the share of the last second the page's own picture code
+  took on the main thread and in the QUIC picture's worker. The idle time
+  the browser gives the main thread was tried first: on the phone's
+  landscape layout in SwiftShader it said 100 % busy while a profile of the
+  thread showed it 99 % idle.
