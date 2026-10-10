@@ -192,6 +192,10 @@ Tokens, their hashes, report contents and frame data never reach a log.
   (`/lib/systemd/system/hardened-blikvm-quic.service`), disabled. The
   application slot does not carry them: its closed set of executables is part
   of the update trust path, and the slot's package refuses both by name.
+  `0.1.0~dev37` carries the gateway of protocol 2 and dev36's files. The
+  server and the gateway say the same protocol number on the link, so a slot
+  of protocol 2 and that package go onto a board together: between the two
+  the server refuses the older gateway, and pages use the standard transport.
 - The unit runs as `hardened-blikvm-quic`, a system user in no shared group.
   It has a sysusers fragment of its own
   (`packaging/sysusers.d/hardened-blikvm-quic.conf`, shipped with the

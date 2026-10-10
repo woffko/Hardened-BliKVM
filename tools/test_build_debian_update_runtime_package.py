@@ -158,7 +158,6 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
             *(f"{source}/{name}" for name in package.VE_MODULE_SOURCE_FILES),
         }
         current = package.file_map("0.1.0~dev36")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev36")
         self.assertTrue(installed <= set(current.values()))
         self.assertEqual(
             set(current.values()) - set(package.file_map("0.1.0~dev35").values()), installed
@@ -323,9 +322,14 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         for version in ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4"):
             self.assertNotIn(recovery, package.file_map(version).values())
 
+    def test_dev37_carries_the_files_of_dev36(self) -> None:
+        # The QUIC gateway of the transport's protocol 2, and nothing else new.
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev37")
+        self.assertEqual(package.file_map("0.1.0~dev37"), package.file_map("0.1.0~dev36"))
+
     def test_package_is_separate_inert_and_bound_to_dev2_runtime(self) -> None:
         self.assertEqual(package.PACKAGE_NAME, "hardened-blikvm-update-runtime")
-        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev36")
+        self.assertEqual(package.PACKAGE_VERSION, "0.1.0~dev37")
         self.assertEqual(
             package.RUNTIME_DEPENDENCY,
             "hardened-blikvm-runtime (= 0.1.0~dev2)",
@@ -378,7 +382,7 @@ class DebianUpdateRuntimePackageTests(unittest.TestCase):
         bundle = prototype.BundleInfo(Path("/bundle.tar.gz"), "a" * 64, 1024, "b" * 40)
         current = package.package_manifest(bundle, "c" * 40)
         previous = package.package_manifest(bundle, "c" * 40, version="0.1.0~dev1")
-        self.assertEqual(current["version"], "0.1.0~dev36")
+        self.assertEqual(current["version"], "0.1.0~dev37")
         self.assertEqual(previous["version"], "0.1.0~dev1")
         self.assertIs(previous["systemUpdateIncluded"], False)
         self.assertIs(previous["kernelModuleIncluded"], False)
