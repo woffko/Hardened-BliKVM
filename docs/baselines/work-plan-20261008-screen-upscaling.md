@@ -173,6 +173,18 @@ Gate 5, on the operator's Android phone: pinch zoom smooth, no frame lost,
 the browser's processor use within 10 % of the same view without upscaling,
 touches landing where tapped at 100 and 200 %. Time box: 6 hours.
 
+Added at the operator's word (2026-10-10):
+
+5. The quality monitor fits a phone: in Extended its window is as wide as
+   the screen allows and as tall as its rows, every row in view, and no
+   label or value is cut short; one that does not fit goes on a second
+   line.
+6. The monitor shows how busy the page's own threads are (the main thread
+   and the picture's worker): the page cannot read the browser's processor
+   use, and gate 5 compares this with upscaling on and off.
+7. The phone's cursor: the tip of the arrow the page draws is where the
+   target's cursor is, not the corner of the arrow's box.
+
 ## Phase 6: settings and safeguards
 
 1. Screen menu: Upscaling Off or Auto, sharpness low, medium or high, kept
