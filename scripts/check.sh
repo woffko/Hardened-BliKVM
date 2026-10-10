@@ -227,6 +227,7 @@ node --check tools/playwright/upscale_renderer_contract.mjs
 node --check tools/playwright/upscale_reference.mjs
 node --check tools/playwright/screen_enlargement_contract.mjs
 node --check tools/playwright/mjpeg_upscale_contract.mjs
+node --check tools/playwright/upscale_colour_device_probe.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
