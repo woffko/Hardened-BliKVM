@@ -424,6 +424,33 @@ try {
     await context.close();
   }
 
+  // A page frozen for 8 s, as a phone's browser freezes the page of an app
+  // that is not in front (here its thread is held in the debugger; the
+  // lifecycle's own freeze leaves a visible headless page's timers running):
+  // the time is not counted against the session, which goes on, and no new
+  // one is opened.
+  {
+    const { context, page, errors } = await open({ choice: "quic" });
+    await openSettings(page);
+    await connected(page);
+    const redeemed = board.redeemed.length;
+    const debug = await context.newCDPSession(page);
+    await debug.send("Debugger.enable");
+    const held = new Promise((resolve) =>
+      debug.once("Debugger.paused", resolve),
+    );
+    await debug.send("Debugger.pause");
+    await held;
+    await sleep(8000);
+    await debug.send("Debugger.resume");
+    await debug.send("Debugger.disable");
+    await sleep(3000);
+    assert.equal(await status(page).getAttribute("data-state"), "connected");
+    assert.equal(board.redeemed.length, redeemed, "a new session was opened");
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
   // The session is lost and comes back by itself; lost for good, the page
   // says so after three attempts and offers another.
   {

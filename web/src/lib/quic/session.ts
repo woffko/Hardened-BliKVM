@@ -586,8 +586,15 @@ class QuicSession {
           .catch(() => finish('lost'));
         return pingId;
       };
+      let lastTick = performance.now();
       const ping = () => {
-        if (performance.now() - lastPong > PONG_TIMEOUT_MS) return finish('lost');
+        const now = performance.now();
+        // A page that was frozen (a phone's browser with another app in
+        // front, a hidden tab whose timers were held back) asked nothing in
+        // that time: it does not count against the session's answers.
+        if (now - lastTick > 2 * PING_INTERVAL_MS) lastPong = now;
+        lastTick = now;
+        if (now - lastPong > PONG_TIMEOUT_MS) return finish('lost');
         send();
       };
       const pinger = setInterval(ping, PING_INTERVAL_MS);
