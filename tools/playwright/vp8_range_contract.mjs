@@ -137,16 +137,17 @@ async function open(
       samples.set(luma);
       samples.set(blue, luma.length);
       samples.set(red, luma.length + chroma);
-      // A track of those frames, ten a second, until its peer is closed:
+      // A track of those frames, five a second, until its peer is closed:
       // SwiftShader draws an upscaled 2556x1438 buffer on the page's thread
-      // at a cost no GPU has, and keeps up with ten; enough of them come for
-      // the watchdog to judge a slowed draw.
+      // at a cost no GPU has, and on a busy host kept up with ten only at
+      // times (the watchdog then stopped upscaling); enough of five come
+      // for the watchdog to judge a slowed draw.
       const picture = () => {
         const track = new MediaStreamTrackGenerator({ kind: "video" });
         const writer = track.writable.getWriter();
         let timestamp = 0;
         const timer = setInterval(() => {
-          timestamp += 100000;
+          timestamp += 200000;
           const frame = new VideoFrame(samples, {
             format: "I420",
             codedWidth: width,
@@ -155,7 +156,7 @@ async function open(
             colorSpace,
           });
           writer.write(frame).catch(() => frame.close());
-        }, 100);
+        }, 200);
         return {
           track,
           stop() {
