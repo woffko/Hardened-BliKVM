@@ -360,7 +360,7 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
     const quic = sample.quic;
     row('quicRoundTrip', 'qualityMonitor.roundTrip', `${fixed(quic.roundTripMs, 1)} ms`);
     row('quicSessions', 'qualityMonitor.sessionsOpened', fixed(quic.sessionsOpened));
-    row('quicLost', 'qualityMonitor.datagramsLost', fixed(quic.packetsLost));
+    row('quicLost', 'qualityMonitor.packetsLost', fixed(quic.packetsLost));
     row('quicFrames', 'qualityMonitor.framesReceived', fixed(sample.framesReceived));
     row('quicGivenUp', 'qualityMonitor.givenUp', fixed(quic.givenUp));
     row('quicRequests', 'qualityMonitor.keyFrameRequests', fixed(quic.keyFrameRequests));

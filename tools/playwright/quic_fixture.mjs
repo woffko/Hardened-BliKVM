@@ -691,6 +691,6 @@ export async function connected(page) {
   });
   assert.match(
     await page.locator('[data-testid="transport-status"]').innerText(),
-    /^The QUIC session is open: round trip \d+\.\d ms, lost datagrams 0, key-frame requests 0\.$/,
+    /^The QUIC session is open: round trip \d+\.\d ms, lost packets 0, key-frame requests 0\.$/,
   );
 }

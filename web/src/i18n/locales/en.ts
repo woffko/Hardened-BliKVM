@@ -87,7 +87,7 @@ const en = {
       board: 'Board',
       local: 'Local',
       roundTrip: 'Round trip',
-      datagramsLost: 'Datagrams lost',
+      packetsLost: 'Packets lost',
       framesReceived: 'Frames received',
       givenUp: 'Given up',
       keyFrameRequests: 'Key-frame requests',
@@ -710,7 +710,7 @@ const en = {
             standard: 'The standard transport is in use.',
             connecting: 'QUIC: connecting...',
             connected:
-              'The QUIC session is open: round trip {{ms}} ms, lost datagrams {{lost}}, key-frame requests {{keyFrames}}.'
+              'The QUIC session is open: round trip {{ms}} ms, lost packets {{lost}}, key-frame requests {{keyFrames}}.'
           },
           input: {
             quic: 'Keyboard and mouse are using this session.',
