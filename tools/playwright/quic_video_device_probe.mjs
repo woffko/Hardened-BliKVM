@@ -22,6 +22,12 @@
 // (docs/design/quic-transport-v1.md, "The bitrate"), which the board's H.264
 // encoder follows for every viewer while the probe watches.
 //
+// With FREEZE_MS (and QUALITY_MONITOR) the page's thread is held in the
+// debugger for that long after the warm-up, as a phone's browser freezes the
+// page of an app that is not in front: the receipt keeps the sessions the
+// page opened before and after, which must be the same, and when the hold
+// began, to be set beside the board's journal.
+//
 // With QUALITY_MONITOR=basic or extended the page's quality monitor is open
 // over the span: every draw of it is read from its worker, and the receipt
 // sets it beside what the probe counts itself (frames drawn a second, a
@@ -69,6 +75,9 @@ assert.ok(MONITOR === null || ["basic", "extended"].includes(MONITOR));
 const LOSS = Number(lossValue ?? 0);
 const DELAY_MS = Number(delayValue ?? 0);
 assert.ok(LOSS >= 0 && LOSS <= 0.2 && DELAY_MS >= 0 && DELAY_MS <= 500);
+const FREEZE_MS = Number(process.env.FREEZE_MS ?? 0);
+assert.ok(FREEZE_MS >= 0 && FREEZE_MS <= 60_000);
+assert.ok(FREEZE_MS === 0 || MONITOR, "the sessions are read from the monitor");
 const RATE_KBPS = Number(process.env.RATE_KBPS ?? 0);
 assert.ok(RATE_KBPS >= 0 && RATE_KBPS <= 100_000);
 assert.ok(RATE_KBPS === 0 || relayed, "a narrow path needs the relays");
@@ -403,6 +412,34 @@ try {
   }
 
   await sleep(WARM_UP_MS);
+  if (FREEZE_MS) {
+    const sessions = async () => (await monitorDraw(page))?.rows.quicSessions;
+    const opened = await sessions();
+    const debug = await context.newCDPSession(page);
+    await debug.send("Debugger.enable");
+    const held = new Promise((resolve) =>
+      debug.once("Debugger.paused", resolve),
+    );
+    await debug.send("Debugger.pause");
+    await held;
+    const from = new Date().toISOString();
+    await sleep(FREEZE_MS);
+    await debug.send("Debugger.resume");
+    await debug.send("Debugger.disable");
+    await sleep(3000);
+    receipt.freeze = {
+      ms: FREEZE_MS,
+      from,
+      sessionsBefore: opened,
+      sessionsAfter: await sessions(),
+    };
+    step("frozen", receipt.freeze);
+    assert.equal(
+      receipt.freeze.sessionsAfter,
+      opened,
+      "the frozen page opened another session",
+    );
+  }
   const before = {
     probe: await videoProbe(page),
     stats: await stats(page),
