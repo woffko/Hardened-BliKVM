@@ -8,6 +8,7 @@
 import { getDefaultStore } from 'jotai';
 
 import { getTransport, requestQuicSession } from '@/api/transport.ts';
+import { counted } from '@/lib/busy.ts';
 import { quicStatusAtom, quicVideoAtom } from '@/jotai/transport.ts';
 
 import { decodeHeader } from './frame.ts';
@@ -371,20 +372,22 @@ class QuicSession {
         if (done) return;
         let whole: Uint8Array[];
         try {
-          whole = records.push(value);
+          whole = counted(() => records.push(value));
         } catch {
           return reader.cancel().catch(() => undefined);
         }
-        for (const record of whole) {
-          if (this.open !== open) return reader.cancel().catch(() => undefined);
-          const key = first;
-          first = false;
-          if (!this.sink) continue;
-          const capture = decodeHeader(record)?.captureMicros ?? 0;
-          open.writer.write(encodeMessage({ t: 'received', capture })).catch(() => undefined);
-          if (key) this.sink.keyFrame(record);
-          else this.sink.groupFrame(record);
-        }
+        if (this.open !== open) return reader.cancel().catch(() => undefined);
+        counted(() => {
+          for (const record of whole) {
+            const key = first;
+            first = false;
+            if (!this.sink) continue;
+            const capture = decodeHeader(record)?.captureMicros ?? 0;
+            open.writer.write(encodeMessage({ t: 'received', capture })).catch(() => undefined);
+            if (key) this.sink.keyFrame(record);
+            else this.sink.groupFrame(record);
+          }
+        });
       }
     };
     const streams = async () => {

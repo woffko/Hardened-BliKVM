@@ -199,6 +199,8 @@ async function drawn(page) {
               labels: self.qualityMonitorLabels,
               sections: self.qualityMonitorSections,
               pixels: self.qualityMonitorPixels,
+              cut: self.qualityMonitorCut,
+              wrapped: self.qualityMonitorWrapped,
             }
           : null,
       )
@@ -470,6 +472,58 @@ try {
         (element) => getComputedStyle(element).fontSize,
       ),
       "10px",
+    );
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+  // Extended on a phone, in Russian, whose labels are the longest: the
+  // window spans the screen's width and is as tall as its rows, every row
+  // in view, none cut short (a long one goes on another line); the page's
+  // threads are counted.
+  {
+    const { context, page, errors } = await open({
+      mode: "mjpeg",
+      viewport: { width: 390, height: 844 },
+      touch: true,
+      language: "ru",
+      layout: {
+        open: true,
+        level: "extended",
+        x: 12,
+        y: 56,
+        width: 340,
+        height: 460,
+      },
+    });
+    await monitor(page).waitFor();
+    const shown = await rowsUntil(
+      page,
+      (current) =>
+        current.version !== undefined && /%/.test(current.busy ?? ""),
+      "Extended rows with the busy count",
+    );
+    assert.match(shown.busy, /^\d+ % \/ -$/);
+    const phone = await box(page);
+    assert.ok(
+      Math.abs(phone.x - 8) < 1 && Math.abs(phone.width - 374) < 1,
+      JSON.stringify(phone),
+    );
+    assert.ok(phone.y + phone.height <= 844 - 8 + 1, JSON.stringify(phone));
+    const body = await page
+      .getByTestId("quality-monitor-body")
+      .evaluate((element) => ({
+        scroll: element.scrollHeight,
+        client: element.clientHeight,
+      }));
+    assert.ok(
+      body.scroll <= body.client + 1,
+      `rows out of view: ${JSON.stringify(body)}`,
+    );
+    assert.equal(await page.getByTestId("quality-monitor-resize").count(), 0);
+    const { cut, wrapped } = await drawn(page);
+    assert.equal(cut, 0, "a label or a value was cut short");
+    console.log(
+      `Phone, Extended, Russian: ${phone.width}x${Math.round(phone.height)} px, ${wrapped} labels or values on two lines, none cut`,
     );
     assert.deepEqual(errors, []);
     await context.close();

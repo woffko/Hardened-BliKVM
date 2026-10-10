@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import clsx from 'clsx';
 
 import type { Resolution } from '@/types';
+import { counted } from '@/lib/busy.ts';
 import { reportVideoUpscale } from '@/lib/page-video.ts';
 import { pictureAttributes } from '@/lib/pointer-map.ts';
 import { drawing, type Sharpness } from '@/lib/upscale/settings.ts';
@@ -135,8 +136,12 @@ export const UpscaledVideo = ({
       }
       return false;
     };
-    const draw = (_now?: number, metadata?: VideoFrameCallbackMetadata) => {
-      if (ended) return;
+    const draw = (_now?: number, metadata?: VideoFrameCallbackMetadata) =>
+      counted(() => {
+        if (ended) return;
+        drawFrame(metadata);
+      });
+    const drawFrame = (metadata?: VideoFrameCallbackMetadata) => {
       const drew = paint();
       if (watchdog && metadata) {
         const at = performance.now();

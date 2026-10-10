@@ -161,7 +161,16 @@ two, each with the transport in brackets as today:
   Its header holds the title, the level (**Basic** or **Extended**) and a
   close button, and it is dragged by its header. In Extended it can also be
   resized at its bottom right corner, scrolls, and can be made opaque. On a
-  phone it is narrower and its text smaller.
+  phone it is narrower and its text smaller, and Extended spans the
+  screen's width less 8 px on each side and is as tall as its rows within
+  the screen, scrolling only where the screen is shorter than they are
+  (2026-10-10, at the operator's word: it barely fitted, rows out of sight
+  and labels cut short).
+- The labels take the width the longest needs and the values the rest;
+  where both do not fit on a line the values keep up to half of it, and a
+  label or a value too long for its column goes on another line at its
+  spaces and after its slashes. Nothing is cut short but a single word
+  longer than its column.
 - Open or closed, its level, place, size and opacity are this browser's
   (local storage); nothing of it goes to the board.
 - It reads once a second while it is open, and never while it is closed.
@@ -187,13 +196,14 @@ two, each with the transport in brackets as today:
     header's buttons and not the numbers, and nothing in the rows can be
     selected or copied. A text alternative is not built: text kept current in
     the document is what cost the main thread 4 to 5 ms a second.
-  - The worker keeps five values on its scope for the contracts and the
+  - The worker keeps seven values on its scope for the contracts and the
     device probes, which read them and nothing else of it:
     `qualityMonitorRows`, `qualityMonitorLabels`, `qualityMonitorSections`,
     `qualityMonitorDraws` (a probe that reads more often than the monitor
-    draws takes every draw once) and `qualityMonitorPixels` (the canvas's size
+    draws takes every draw once), `qualityMonitorPixels` (the canvas's size
     in device pixels, which shows that the rows follow the display's pixel
-    ratio).
+    ratio), and `qualityMonitorCut` and `qualityMonitorWrapped` (the labels
+    and values drawn cut short, and those drawn on more lines than one).
 
 ### Basic
 
@@ -249,6 +259,16 @@ counted over the same two minutes, every byte counted right.
   decoder where it gives one) or WebCodecs with its hardware preference.
 - Frames received, decoded, drawn and dropped a second; decode time a
   frame; the display's refresh rate (measured with animation frames).
+- The page's picture code: the share of the last second the page's own
+  code for the picture took on its main thread (reading the QUIC session's
+  streams, drawing WebRTC's and MJPEG's frames through the upscaler,
+  reading the MJPEG stream) and in the QUIC picture's worker. The page
+  cannot read the browser's processor use, nor the browser's own decoding,
+  compositing and drawing; this is what the page adds, for gate 5 of the
+  upscaling plan with upscaling on and off. The idle time the browser gives
+  the main thread was tried first and is no measure: in a software-drawing
+  browser on a phone's landscape layout its idle callbacks stopped while a
+  profile showed the thread idle.
 
 Rows that do not apply to the path are left out; a value that is not known
 shows `-`; a value older than three seconds is shown as not known.

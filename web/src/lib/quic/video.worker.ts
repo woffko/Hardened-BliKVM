@@ -4,6 +4,7 @@
  * WebCodecs and draws them on the canvas it was given. The page hands it
  * what the session delivers and sends on what it asks for.
  */
+import { Spans } from '../busy.ts';
 import { drawing, type Sharpness } from '../upscale/settings.ts';
 import { Upscaler, type UpscaleReport } from '../upscale/upscaler.ts';
 import { UpscaleWatchdog, type UpscaleStop } from '../upscale/watchdog.ts';
@@ -84,6 +85,8 @@ export type VideoStats = {
   /** The canvas's buffer: the frame's size, or the size it is shown at when upscaled. */
   canvasWidth: number;
   canvasHeight: number;
+  /** The share of the last second this worker's own handlers took, from 0 to 1. */
+  busy: number;
 };
 
 export type FromVideoWorker =
@@ -301,7 +304,7 @@ function failed() {
 function configure(codec: string) {
   closeDecoder();
   const created = new VideoDecoder({
-    output: draw,
+    output: (frame) => timed(() => draw(frame)),
     error: () => {
       // An error of a decoder that was replaced meanwhile is not this one's.
       if (decoder === created) failed();
@@ -349,6 +352,18 @@ function decode(frame: ReceivedFrame) {
   }
 }
 
+/** The time this worker's own handlers take: how busy it is. */
+const work = new Spans();
+
+function timed<T>(run: () => T): T {
+  const began = performance.now();
+  try {
+    return run();
+  } finally {
+    work.add(began, performance.now());
+  }
+}
+
 function handle(output: ReceiverOutput) {
   for (const frame of output.frames) decode(frame);
   if (output.request) scope.postMessage({ type: 'request', ...output.request });
@@ -358,7 +373,7 @@ function percentile(sorted: number[], share: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(share * sorted.length))];
 }
 
-setInterval(() => handle(receiver.poll(performance.now())), POLL_MS);
+setInterval(() => timed(() => handle(receiver.poll(performance.now()))), POLL_MS);
 
 setInterval(() => {
   const now = performance.now();
@@ -401,11 +416,14 @@ setInterval(() => {
       frames: watchdog ? watchdog.rates(now) : null
     },
     canvasWidth: canvas?.width ?? 0,
-    canvasHeight: canvas?.height ?? 0
+    canvasHeight: canvas?.height ?? 0,
+    busy: work.share(now)
   });
 }, STATS_MS);
 
-scope.onmessage = (event) => {
+scope.onmessage = (event) => timed(() => receive(event));
+
+function receive(event: MessageEvent<ToVideoWorker>) {
   const message = event.data;
   const now = performance.now();
   switch (message.type) {
@@ -470,4 +488,4 @@ scope.onmessage = (event) => {
       break;
     }
   }
-};
+}

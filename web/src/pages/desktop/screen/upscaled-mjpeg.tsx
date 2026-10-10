@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import clsx from 'clsx';
 
 import type { Resolution } from '@/types';
+import { counted } from '@/lib/busy.ts';
 import { boundaryOf, MjpegParts } from '@/lib/mjpeg-parts.ts';
 import { reportVideoUpscale } from '@/lib/page-video.ts';
 import { pictureAttributes } from '@/lib/pointer-map.ts';
@@ -144,7 +145,8 @@ export const UpscaledMjpeg = ({
 
     // The frame drawn last, kept to draw again at another size.
     let shown: ImageBitmap | null = null;
-    const frame = () => {
+    const frame = () => counted(drawReady);
+    const drawReady = () => {
       if (ended) return;
       let bitmap = ready;
       ready = null;
@@ -231,17 +233,19 @@ export const UpscaledMjpeg = ({
         for (;;) {
           const { value, done } = await reader.read();
           if (done || ended) break;
-          for (const part of parts.push(value)) {
-            counts.received += 1;
-            // A hidden page decodes nothing; the next frame is shown when it is back.
-            if (document.hidden) continue;
-            const captured = part.capturedMs;
-            if (captured === null || countedMs === null || captured - countedMs >= DUE_MS) {
-              countedMs = captured;
-              watchdog.receive(performance.now());
+          counted(() => {
+            for (const part of parts.push(value)) {
+              counts.received += 1;
+              // A hidden page decodes nothing; the next frame is shown when it is back.
+              if (document.hidden) continue;
+              const captured = part.capturedMs;
+              if (captured === null || countedMs === null || captured - countedMs >= DUE_MS) {
+                countedMs = captured;
+                watchdog.receive(performance.now());
+              }
+              void decode(part.jpeg);
             }
-            void decode(part.jpeg);
-          }
+          });
         }
         // The stream ended: its last frame is drawn before it is asked for again.
         for (let wait = 0; wait < 60 && !ended && (decoding || ready); wait += 1) {

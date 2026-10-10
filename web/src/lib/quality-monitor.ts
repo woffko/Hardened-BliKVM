@@ -145,6 +145,12 @@ export type PageSample = {
   upscale: UpscaleReport | null;
   /** Why upscaling stopped on this page load, if it did. */
   upscaleStopped: UpscaleStop | null;
+  /**
+   * How busy the page's own threads were over the last second, from 0 to 1:
+   * the main thread, and the picture's worker where it has one (QUIC). The
+   * page cannot read the browser's processor use.
+   */
+  busy: { main: number | null; picture: number | null };
   /** QUIC: the session's and the gateway's counters. */
   quic: {
     roundTripMs: number | null;
@@ -511,6 +517,13 @@ export function extendedSections(inputs: QualityInputs, t: Translate): QualitySe
     );
   }
   put('refresh', 'qualityMonitor.refresh', `${fixed(inputs.refreshHz)} Hz`);
+  const share = (busy: number | null | undefined) =>
+    busy === null || busy === undefined ? NOT_KNOWN : `${Math.round(busy * 100)} %`;
+  put(
+    'busy',
+    'qualityMonitor.busy',
+    `${share(sample?.busy.main)} / ${share(sample?.busy.picture)}`
+  );
 
   return [
     { key: 'basic', title: null, rows: basicRows(inputs, t) },

@@ -55,6 +55,7 @@ const empty = (at: number): PageSample => ({
   height: null,
   upscale: null,
   upscaleStopped: null,
+  busy: { main: null, picture: null },
   quic: null,
   webrtc: null
 });
@@ -79,6 +80,7 @@ export function sampleQuic(
     decodeMs: stats.decodeMedianMs,
     decoder: 'WebCodecs',
     upscale: stats.upscale,
+    busy: { main: null, picture: stats.busy },
     quic: {
       roundTripMs: connected?.roundTripMs ?? null,
       sessionsOpened,

@@ -56,6 +56,9 @@ const scope = self as unknown as Scope & {
   qualityMonitorDraws?: number;
   /** The canvas's size in device pixels: whether it is drawn at the display's ratio. */
   qualityMonitorPixels?: { width: number; height: number };
+  /** The labels and values drawn cut short, and those drawn on more lines than one. */
+  qualityMonitorCut?: number;
+  qualityMonitorWrapped?: number;
 };
 
 let url = '';
@@ -99,6 +102,27 @@ function fit(text: string, room: number): string {
   return `${cut}…`;
 }
 
+/**
+ * The text in lines of `room` at most, broken at its spaces and after its
+ * slashes; only a part longer than a line by itself is cut short.
+ */
+function wrap(text: string, room: number): string[] {
+  if (!context || context.measureText(text).width <= room) return [text];
+  const lines: string[] = [];
+  let line = '';
+  for (const part of text.split(/(?<=[\s/])/)) {
+    const longer = line + part;
+    if (!line || context.measureText(longer.trimEnd()).width <= room) {
+      line = longer;
+      continue;
+    }
+    lines.push(line.trimEnd());
+    line = part.trimStart();
+  }
+  if (line) lines.push(line.trimEnd());
+  return lines.map((each) => fit(each, room));
+}
+
 function draw() {
   if (!canvas || !context || !view || !inputs) return;
   const sections: QualitySection[] =
@@ -119,11 +143,39 @@ function draw() {
   const titleLine = Math.round(fontPx * 1.6);
   const padX = 6;
   const padY = 4;
+  const gap = 8;
+  // The labels take the width the longest needs, and the values the rest;
+  // where both do not fit on a line, the values keep up to half of it and a
+  // label or a value too long for its column goes on another line, rather
+  // than be cut short.
+  context.font = `${fontPx}px ${FONT}`;
+  const inner = width - padX * 2;
+  const widest = (texts: string[]) =>
+    Math.ceil(Math.max(0, ...texts.map((text) => context?.measureText(text).width ?? 0)));
+  const rows = sections.flatMap((section) => section.rows);
+  const labelNeed = widest(rows.map((row) => row.label));
+  const valueNeed = widest(rows.map((row) => row.value));
+  const labelRoom =
+    labelNeed + gap + valueNeed <= inner
+      ? labelNeed
+      : inner - gap - Math.min(valueNeed, Math.round(inner / 2));
+  const valueRoom = inner - gap - labelRoom;
+  const laid = sections.map((section) => ({
+    title: section.title,
+    rows: section.rows.map((row) => {
+      const labels = wrap(row.label, labelRoom);
+      const values = wrap(row.value, valueRoom);
+      return { labels, values, lines: Math.max(labels.length, values.length) };
+    })
+  }));
   let total = padY * 2;
-  for (const section of sections) {
+  for (const section of laid) {
     if (section.title) total += titleLine;
-    total += section.rows.length * line;
+    for (const row of section.rows) total += row.lines * line;
   }
+  const texts = laid.flatMap((section) => section.rows.flatMap((row) => [row.labels, row.values]));
+  scope.qualityMonitorCut = texts.flat().filter((text) => text.endsWith('…')).length;
+  scope.qualityMonitorWrapped = texts.filter((lines) => lines.length > 1).length;
   const pixelWidth = Math.max(1, Math.round(width * scale));
   const pixelHeight = Math.max(1, Math.round(total * scale));
   if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -134,11 +186,8 @@ function draw() {
   context.setTransform(scale, 0, 0, scale, 0, 0);
   context.clearRect(0, 0, width, total);
   context.textBaseline = 'middle';
-  const labelRoom = Math.floor((width - padX * 2) * 0.4);
-  const gap = 8;
-  const valueRoom = width - padX * 2 - labelRoom - gap;
   let y = padY;
-  for (const section of sections) {
+  for (const section of laid) {
     if (section.title) {
       context.font = `${fontPx - 2}px ${FONT}`;
       context.fillStyle = 'rgb(163, 163, 163)';
@@ -154,11 +203,15 @@ function draw() {
     for (const row of section.rows) {
       context.fillStyle = 'rgb(212, 212, 212)';
       context.textAlign = 'right';
-      context.fillText(fit(row.label, labelRoom), padX + labelRoom, y + line / 2);
+      row.labels.forEach((text, index) =>
+        context?.fillText(text, padX + labelRoom, y + index * line + line / 2)
+      );
       context.fillStyle = 'rgb(255, 255, 255)';
       context.textAlign = 'left';
-      context.fillText(fit(row.value, valueRoom), padX + labelRoom + gap, y + line / 2);
-      y += line;
+      row.values.forEach((text, index) =>
+        context?.fillText(text, padX + labelRoom + gap, y + index * line + line / 2)
+      );
+      y += row.lines * line;
     }
   }
   if (total !== height) {

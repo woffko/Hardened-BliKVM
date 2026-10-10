@@ -95,6 +95,7 @@ const en = {
       sessionsOpened: 'Sessions opened',
       gatewayFrames: 'Gateway sent/dropped/key',
       bitrateShare: 'Bitrate this path carries',
+      busy: 'Picture code: page / worker',
       candidates: 'Candidates',
       packets: 'Packets received/lost',
       jitter: 'Jitter',

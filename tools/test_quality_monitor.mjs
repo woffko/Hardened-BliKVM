@@ -58,6 +58,7 @@ const sample = (over = {}) => ({
   height: null,
   upscale: null,
   upscaleStopped: null,
+  busy: { main: null, picture: null },
   quic: null,
   webrtc: null,
   ...over,
@@ -317,6 +318,7 @@ test(
         delayMs: 46,
         decoder: "WebCodecs",
         decodeMs: 3.2,
+        busy: { main: 0.123, picture: 0.08 },
         quic: {
           roundTripMs: 3,
           sessionsOpened: 2,
@@ -378,7 +380,10 @@ test(
       "framesPerSecond",
       "decodeTime",
       "refresh",
+      "busy",
     ]);
+    // How busy the page's main thread and the picture's worker were.
+    assert.equal(valuesOf(sections[3].rows).busy, "12 % / 8 %");
     const board_ = valuesOf(sections[2].rows);
     assert.equal(board_.stages, "28.1 / 9.6 / 17.6 ms");
     assert.equal(board_.temperature, "68.3 °C");
@@ -411,7 +416,7 @@ test(
       "jpegQuality",
       "temperature",
     ]);
-    assert.deepEqual(mjpegKeys.local, ["refresh"]);
+    assert.deepEqual(mjpegKeys.local, ["refresh", "busy"]);
 
     const webrtc = monitor.extendedSections(
       inputs({

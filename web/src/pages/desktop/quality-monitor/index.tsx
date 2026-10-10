@@ -11,6 +11,7 @@ import { getDefaultStore, useAtom, useAtomValue } from 'jotai';
 import { GripVerticalIcon, SquareIcon, XIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { pageWork } from '@/lib/busy.ts';
 import { sampleDirect, sampleNothing, sampleQuic, sampleWebRtc } from '@/lib/page-video.ts';
 import {
   MIN_HEIGHT,
@@ -38,6 +39,8 @@ const SCROLL_BAR_PX = 12;
 const BASIC_WIDTH = { desktop: 264, phone: 196 };
 /** Room the window keeps inside the page when it is dragged. */
 const KEEP_IN_VIEW_PX = 48;
+/** On a phone Extended keeps this much of the screen free on its sides and below. */
+const PHONE_MARGIN_PX = 8;
 
 /** The quality monitor's window, while it is open
  * (docs/design/h264-engine-choice-and-quality-monitor-v1.md). */
@@ -72,10 +75,31 @@ function canDrawInWorker(): boolean {
   );
 }
 
-/** What the page counted of its picture, by the way it comes now. */
+/**
+ * What the page counted of its picture, by the way it comes now, and how
+ * much of the last second its own picture code took on the main thread.
+ */
 async function samplePath(path: VideoPath): Promise<PageSample> {
   const sample = await pathSample(path);
-  return { ...sample, upscaleStopped: getDefaultStore().get(upscaleStoppedAtom) };
+  return {
+    ...sample,
+    upscaleStopped: getDefaultStore().get(upscaleStoppedAtom),
+    busy: { ...sample.busy, main: pageWork.share(performance.now()) }
+  };
+}
+
+/** The page's size, followed: a phone's monitor is laid out by it. */
+function useViewport(): { width: number; height: number } {
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }));
+  useEffect(() => {
+    const follow = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', follow);
+    return () => window.removeEventListener('resize', follow);
+  }, []);
+  return viewport;
 }
 
 async function pathSample(path: VideoPath): Promise<PageSample> {
@@ -293,6 +317,11 @@ const QualityMonitorWindow = () => {
   const isDesktop = useIsDesktopLayout();
   const videoMode = useAtomValue(videoModeAtom);
   const extended = layout.level === 'extended';
+  const viewport = useViewport();
+  // On a phone Extended spans the screen's width and is as tall as its rows
+  // within the screen: no row out of sight, none cut short.
+  const phoneExtended = extended && !isDesktop;
+  const phoneWidth = Math.max(MIN_WIDTH, viewport.width - 2 * PHONE_MARGIN_PX);
 
   // Dragged by its header, resized at its corner; kept when let go.
   const [place, setPlace] = useState({ x: layout.x, y: layout.y });
@@ -379,15 +408,20 @@ const QualityMonitorWindow = () => {
         layout.opaque ? 'bg-neutral-900' : 'bg-neutral-900/70'
       )}
       style={{
-        left,
+        left: phoneExtended ? PHONE_MARGIN_PX : left,
         top,
         // Its own layer: what changes in it is laid out and painted apart
         // from the picture beneath.
         contain: 'layout paint',
         willChange: 'transform',
-        ...(extended
-          ? { width: size.width, height: size.height }
-          : { width: isDesktop ? BASIC_WIDTH.desktop : BASIC_WIDTH.phone })
+        ...(phoneExtended
+          ? {
+              width: phoneWidth,
+              maxHeight: Math.max(MIN_HEIGHT, viewport.height - top - PHONE_MARGIN_PX)
+            }
+          : extended
+            ? { width: size.width, height: size.height }
+            : { width: isDesktop ? BASIC_WIDTH.desktop : BASIC_WIDTH.phone })
       }}
       onPointerDown={keep}
       onMouseDown={keep}
@@ -446,15 +480,17 @@ const QualityMonitorWindow = () => {
         videoMode={videoMode}
         isDesktop={isDesktop}
         width={
-          extended
-            ? Math.max(MIN_WIDTH, size.width) - SCROLL_BAR_PX
-            : isDesktop
-              ? BASIC_WIDTH.desktop
-              : BASIC_WIDTH.phone
+          phoneExtended
+            ? phoneWidth - SCROLL_BAR_PX
+            : extended
+              ? Math.max(MIN_WIDTH, size.width) - SCROLL_BAR_PX
+              : isDesktop
+                ? BASIC_WIDTH.desktop
+                : BASIC_WIDTH.phone
         }
       />
 
-      {extended && (
+      {extended && !phoneExtended && (
         <div
           data-testid="quality-monitor-resize"
           className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize touch-none border-b-2 border-r-2 border-neutral-500"

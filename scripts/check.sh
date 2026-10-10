@@ -172,6 +172,7 @@ node --test tools/test_restricted_power_probe.mjs
 node --test tools/test_restricted_keyboard_probe.mjs
 node --test tools/test_hid_report_queue.mjs
 node --test tools/test_quality_monitor.mjs
+node --test tools/test_busy_spans.mjs
 node --test tools/test_command_result.mjs
 node --test tools/test_hid_text.mjs
 node --test tools/test_sticky_modifiers.mjs
