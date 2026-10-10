@@ -47,8 +47,6 @@ GATED = {
     ("vm.ts", "enableHdmi"): "not called",
     ("vm.ts", "disableHdmi"): "not called",
     ("vm.ts", "resetHdmi"): "screen menu: the reset entry is not rendered",
-    ("vm.ts", "getOLED"): "OLED settings: capability unavailable",
-    ("vm.ts", "setOLED"): "OLED settings: capability unavailable",
     ("vm.ts", "getSwap"): "swap settings: capability unavailable",
     ("vm.ts", "setSwap"): "swap settings: capability unavailable",
     ("vm.ts", "getMemoryLimit"): "memory limit: capability unavailable",

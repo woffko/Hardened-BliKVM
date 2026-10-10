@@ -250,6 +250,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
@@ -283,6 +284,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
@@ -600,6 +602,7 @@ pub(crate) async fn serve_lease(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
@@ -638,6 +641,7 @@ pub(crate) async fn serve_lease(
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }

@@ -132,6 +132,7 @@ pub(crate) async fn virtual_media(
             | ControlResponse::MdnsState { .. }
             | ControlResponse::MouseJigglerState { .. }
             | ControlResponse::HidOnlyState { .. }
+            | ControlResponse::DisplaySleepState { .. }
             | ControlResponse::AdminFeatureState { .. }
             | ControlResponse::SshState { .. }
             | ControlResponse::QuicState { .. }

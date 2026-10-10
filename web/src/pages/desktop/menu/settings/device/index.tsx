@@ -34,7 +34,9 @@ export const Device = () => {
           <HidOnly readOnly={!boardFeatureIsWritable(capabilities, 'device_hid_only')} />
         )}
         {has('device_virtual_devices') && <VirtualDevices />}
-        {has('device_oled') && <Oled />}
+        {has('device_oled') && (
+          <Oled readOnly={!boardFeatureIsWritable(capabilities, 'device_oled')} />
+        )}
         {has('device_mouse_jiggler') && (
           <MouseJiggler readOnly={!boardFeatureIsWritable(capabilities, 'device_mouse_jiggler')} />
         )}

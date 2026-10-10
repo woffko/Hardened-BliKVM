@@ -313,6 +313,12 @@ fn render_flag(enabled: bool) -> String {
 }
 
 fn write_flag(path: &Path, enabled: bool) -> Result<(), String> {
+    write_state(path, &render_flag(enabled))
+}
+
+/// Replaces a state file in the owner's state directory: written beside it,
+/// synced, then renamed over it.
+fn write_state(path: &Path, text: &str) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "the state file has no parent directory".to_string())?;
@@ -328,13 +334,98 @@ fn write_flag(path: &Path, enabled: bool) -> Result<(), String> {
         .truncate(true)
         .open(&temporary)
         .map_err(|error| format!("the temporary state file is unavailable: {error}"))?;
-    file.write_all(render_flag(enabled).as_bytes())
+    file.write_all(text.as_bytes())
         .map_err(|error| format!("the temporary state file could not be written: {error}"))?;
     file.sync_all()
         .map_err(|error| format!("the temporary state file could not be synced: {error}"))?;
     drop(file);
     std::fs::rename(&temporary, path)
         .map_err(|error| format!("the state file could not be replaced: {error}"))
+}
+
+/// How long the board's display stays lit without activity. The owner keeps
+/// the choice; the board daemon reads the file again on every sample and
+/// turns the display's backlight off once the time has passed
+/// (`docs/design/board-daemon-v1.md`, "The display's sleep").
+pub struct DisplaySleepState {
+    state_path: PathBuf,
+    seconds: u32,
+}
+
+impl DisplaySleepState {
+    pub fn open(state_path: impl Into<PathBuf>) -> Self {
+        let state_path = state_path.into();
+        let seconds = bli_kvm_core::load_display_sleep(&state_path);
+        Self {
+            state_path,
+            seconds,
+        }
+    }
+
+    pub fn seconds(&self) -> u32 {
+        self.seconds
+    }
+
+    pub fn handle(&mut self, seconds: u32) -> ControlResponse {
+        if !bli_kvm_core::display_sleep_is_choice(seconds) {
+            return reject(ControlRejectionCode::InvalidState);
+        }
+        if seconds == self.seconds && self.state_path.exists() {
+            return ControlResponse::Applied;
+        }
+        if let Err(reason) = write_state(
+            &self.state_path,
+            &bli_kvm_core::render_display_sleep(seconds),
+        ) {
+            eprintln!("device settings: display sleep write failed: {reason}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        self.seconds = seconds;
+        ControlResponse::Applied
+    }
+}
+
+#[cfg(test)]
+mod display_sleep_tests {
+    use super::*;
+
+    #[test]
+    fn the_choice_persists_and_others_are_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("display-sleep.env");
+        let mut state = DisplaySleepState::open(&path);
+        assert_eq!(state.seconds(), 0);
+        assert_eq!(state.handle(300), ControlResponse::Applied);
+        assert_eq!(state.seconds(), 300);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "sleep_seconds=300\n"
+        );
+        assert_eq!(DisplaySleepState::open(&path).seconds(), 300);
+        assert_eq!(
+            state.handle(20),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::InvalidState
+            }
+        );
+        assert_eq!(state.seconds(), 300);
+        assert_eq!(state.handle(0), ControlResponse::Applied);
+        assert_eq!(DisplaySleepState::open(&path).seconds(), 0);
+    }
+
+    #[test]
+    fn a_state_directory_that_is_missing_refuses() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("absent").join("display-sleep.env");
+        let mut state = DisplaySleepState::open(&path);
+        assert_eq!(
+            state.handle(60),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert_eq!(state.seconds(), 0);
+    }
 }
 
 #[cfg(test)]

@@ -289,6 +289,13 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the accepted jiggler state.
     MouseJigglerState {},
+    /// How long the board's display stays lit without activity, in seconds
+    /// (one of `DISPLAY_SLEEP_CHOICES`; 0 is never).
+    DisplaySleep {
+        seconds: u32,
+    },
+    /// Read back the display's sleep time.
+    DisplaySleepState {},
     /// Present HID only and refuse every virtual-media attach.
     HidOnly {
         enabled: bool,
@@ -446,6 +453,8 @@ pub enum ControlV2ValidationError {
     InvalidFirewallRulesOffset,
     #[error("WiFi network or profile is invalid")]
     InvalidWifiNetwork,
+    #[error("display sleep time is not one of the choices")]
+    InvalidDisplaySleep,
 }
 
 /// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
@@ -604,6 +613,14 @@ impl PlatformControlRequestV2 {
             Self::MdnsState {} => Ok(()),
             Self::MouseJiggler { .. } => Ok(()),
             Self::MouseJigglerState {} => Ok(()),
+            Self::DisplaySleep { seconds } => {
+                if crate::display_sleep::display_sleep_is_choice(*seconds) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidDisplaySleep)
+                }
+            }
+            Self::DisplaySleepState {} => Ok(()),
             Self::HidOnly { .. } => Ok(()),
             Self::HidOnlyState {} => Ok(()),
             Self::AdminFeature { .. } => Ok(()),

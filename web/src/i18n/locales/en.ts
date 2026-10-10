@@ -539,8 +539,8 @@ const en = {
       device: {
         title: 'Device',
         oled: {
-          title: 'OLED',
-          description: 'Turn off OLED screen after',
+          title: 'Display',
+          description: "Turn off the board's display after",
           0: 'Never',
           15: '15 sec',
           30: '30 sec',

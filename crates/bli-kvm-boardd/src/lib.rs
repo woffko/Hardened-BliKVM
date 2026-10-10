@@ -93,6 +93,7 @@ pub fn build_state(
         atx_leds,
     );
     state.configure_display_status(config.display.status_interval_ms);
+    state.configure_display_sleep(bli_kvm_core::DISPLAY_SLEEP_PATH);
     Ok(state)
 }
 
@@ -286,7 +287,7 @@ pub fn run_serve_until(
                     .ensure_fan_runtime()
                     .map_err(|_| std::io::Error::other("boardd fan runtime failed"))?;
                 state.tick_led();
-                state.tick_button();
+                state.tick_button(unix_millis());
                 state.tick_atx_leds();
                 state.tick_display(unix_millis());
             }

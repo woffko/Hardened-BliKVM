@@ -154,6 +154,11 @@ pub enum ControlResponse {
     HidOnlyState {
         enabled: bool,
     },
+    /// How long the board's display stays lit without activity, in seconds;
+    /// 0 is never.
+    DisplaySleepState {
+        seconds: u32,
+    },
     /// The connected interfaces and a pending addressing revert, if any.
     NetworkInfo {
         interfaces: Vec<NetworkInterfaceInfo>,

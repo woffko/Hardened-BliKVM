@@ -222,8 +222,9 @@ Added at the operator's word (2026-10-10), before the release's slot:
 5. The board's display goes dark after a time without activity, as in
    Hardened NanoKVM: Settings > Device offers never (the default, as now),
    15 or 30 seconds, 1, 3, 5, 10 or 30 minutes, or an hour. Dark means the
-   ST7789's backlight off and the panel asleep; the board's button, and a
-   change in what the screen shows, light it again. The display daemon
+   ST7789's backlight off and nothing drawn; the board's button and a new
+   choice light it again (not a change on the status screen, which changes
+   every few seconds). The display daemon
    (`bli-kvm-boardd`, in the application slot) keeps the time; the board's
    owner keeps the choice across restarts; the board's status that the
    update runtime reads for its health check keeps its shape. Contracts:

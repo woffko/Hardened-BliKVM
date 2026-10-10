@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 bli-kvm-activity-led-policy = { path = "../bli-kvm-activity-led-policy" }
+bli-kvm-core = { path = "../bli-kvm-core" }
 bli-kvm-display-button-policy = { path = "../bli-kvm-display-button-policy" }
 bli-kvm-fan-policy = { path = "../bli-kvm-fan-policy" }
 bli-kvm-fan-supervisor = { path = "../bli-kvm-fan-supervisor" }

@@ -64,6 +64,7 @@ pub struct ControlV2State {
     video_settings: Option<crate::video_settings::VideoSettingsState>,
     mdns: Option<crate::device_settings::MdnsState>,
     mouse_jiggler: Option<crate::mouse_jiggler::MouseJigglerState>,
+    display_sleep: Option<crate::device_settings::DisplaySleepState>,
     hid_only: Option<crate::device_settings::HidOnlyState>,
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
@@ -104,6 +105,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -260,6 +262,11 @@ impl ControlV2State {
         self.mouse_jiggler = Some(jiggler);
     }
 
+    /// Attach the display's sleep time, which the board daemon follows.
+    pub fn with_display_sleep(&mut self, display_sleep: crate::device_settings::DisplaySleepState) {
+        self.display_sleep = Some(display_sleep);
+    }
+
     /// One jiggler interval: the serve loop calls this, and it is a no-op when
     /// no jiggler is attached or the jiggler is off.
     pub fn jiggle_tick(&mut self) -> Result<(), String> {
@@ -324,6 +331,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -361,6 +369,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -398,6 +407,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -449,6 +459,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -488,6 +499,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -533,6 +545,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -730,6 +743,22 @@ impl ControlV2State {
         }
     }
 
+    fn handle_display_sleep(&mut self, seconds: u32) -> ControlResponse {
+        let Some(state) = self.display_sleep.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        state.handle(seconds)
+    }
+
+    fn handle_display_sleep_state(&self) -> ControlResponse {
+        let Some(state) = self.display_sleep.as_ref() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        ControlResponse::DisplaySleepState {
+            seconds: state.seconds(),
+        }
+    }
+
     fn handle_mdns(&mut self, enabled: bool) -> ControlResponse {
         let Some(state) = self.mdns.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
@@ -806,6 +835,7 @@ impl ControlV2State {
             video_settings: None,
             mdns: None,
             mouse_jiggler: None,
+            display_sleep: None,
             hid_only: None,
             admin_features: None,
             ssh: None,
@@ -913,6 +943,10 @@ impl ControlV2State {
             PlatformControlRequestV2::MdnsState {} => self.handle_mdns_state(),
             PlatformControlRequestV2::MouseJiggler { change } => self.handle_mouse_jiggler(change),
             PlatformControlRequestV2::MouseJigglerState {} => self.handle_mouse_jiggler_state(),
+            PlatformControlRequestV2::DisplaySleep { seconds } => {
+                self.handle_display_sleep(*seconds)
+            }
+            PlatformControlRequestV2::DisplaySleepState {} => self.handle_display_sleep_state(),
             PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled),
             PlatformControlRequestV2::HidOnlyState {} => self.handle_hid_only_state(),
             PlatformControlRequestV2::AdminFeature { feature, enabled } => {

@@ -113,6 +113,37 @@ the observation is unavailable), read through the platform RTC reader.
 Still open in the daemon: the boot-config view, then the device gates for fan,
 panel, LED and button.
 
+## The display's sleep (2026-10-10)
+
+At the operator's word, the display goes dark after a time without
+activity, with the choices of Hardened NanoKVM: never (the default, as
+before), 15 or 30 seconds, 1, 3, 5, 10 or 30 minutes, or an hour (Settings >
+Device > Display, `GET`/`POST /api/vm/oled` with the reference's `exist` and
+`sleep`).
+
+- The board owner keeps the choice (`DisplaySleep` and `DisplaySleepState`
+  on its control socket) in `/var/lib/hardened-blikvm-gadget/display-sleep.env`
+  (`sleep_seconds=N`, root, 0600). The RAW system update carries that
+  directory; the card image starts without the file, that is never.
+- The daemon reads the file on every sample, as Hardened NanoKVM reads its
+  own: a missing, oversized or malformed file, or a time that is not one of
+  the choices, is never. Its unit grants no write outside its runtime
+  directory and needs none here; as root it reads the owner's file, which
+  is root's.
+- Once the display has had no activity for the time, the daemon turns its
+  backlight off and draws nothing until it is lit again. Activity is the
+  daemon's start, the button's wake cycle, a new choice, and a request on
+  the socket to light the backlight; each lights the display, draws the
+  status at once and starts the time over. A backlight that could not be
+  turned off is tried again on the next sample. A request to turn the
+  backlight off keeps the display dark until the button or a new choice.
+  Nothing else wakes it: the status screen changes every few seconds
+  (temperature, load), which would light it as often.
+- The status the daemon answers keeps its fields: the update runtime's
+  health check reads it strictly (`board_readiness.rs`), so the display's
+  state is not in it; a dark display reports `displayBacklightOn: false`,
+  which the check allows.
+
 ## Ownership handoff and rollback
 
 The vendor C daemon and our daemon must never own a line at the same time:

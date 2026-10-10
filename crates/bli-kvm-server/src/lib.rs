@@ -372,6 +372,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
+            "device_oled",
             "network_wifi",
             "system_firewall",
         ] {
@@ -622,6 +623,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
         .route(
             "/vm/hid-only",
             get(device_settings::hid_only_state).post(device_settings::hid_only_update),
+        )
+        .route(
+            "/vm/oled",
+            get(device_settings::display_sleep_state).post(device_settings::display_sleep_update),
         )
         .route(
             "/vm/mouse-jiggler",
@@ -2866,6 +2871,87 @@ mod tests {
         assert_eq!(body["code"], 0);
         assert_eq!(body["data"]["availability"], "current_only");
         assert_eq!(body["data"]["current"]["components"]["powerLed"], "active");
+        broker.await.unwrap();
+    }
+
+    #[cfg(feature = "restricted-control-surface")]
+    #[tokio::test]
+    async fn the_display_sleep_is_forwarded_read_back_and_other_times_are_refused() {
+        let root = tempdir().unwrap();
+        let control_socket = root.path().join("control.sock");
+        let listener = UnixListener::bind(&control_socket).unwrap();
+        let broker = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut prefix = [0_u8; 4];
+                stream.read_exact(&mut prefix).await.unwrap();
+                let mut payload = vec![0_u8; u32::from_be_bytes(prefix) as usize];
+                stream.read_exact(&mut payload).await.unwrap();
+                let request = bli_kvm_control_protocol::decode_request_v2(&payload).unwrap();
+                let response = match request.request {
+                    bli_kvm_core::PlatformControlRequestV2::DisplaySleepState {} => {
+                        bli_kvm_control_protocol::ControlResponse::DisplaySleepState {
+                            seconds: 300,
+                        }
+                    }
+                    bli_kvm_core::PlatformControlRequestV2::DisplaySleep { seconds } => {
+                        assert_eq!(seconds, 60);
+                        bli_kvm_control_protocol::ControlResponse::Applied
+                    }
+                    _ => panic!("unexpected request"),
+                };
+                let envelope = bli_kvm_control_protocol::ControlResponseEnvelope {
+                    schema_version: bli_kvm_control_protocol::CONTROL_SCHEMA_VERSION_V2,
+                    request_id: request.request_id,
+                    operation_id: request.operation_id,
+                    response,
+                };
+                let payload = bli_kvm_control_protocol::encode_response_v2(&envelope).unwrap();
+                stream
+                    .write_all(&bli_kvm_control_protocol::encode_frame(&payload).unwrap())
+                    .await
+                    .unwrap();
+            }
+        });
+        let app = app_with_options(ServerOptions {
+            state_dir: root.path().join("account"),
+            control_socket: Some(control_socket),
+            restricted_controls_enabled: true,
+            ..ServerOptions::default()
+        });
+        let (cookie, csrf) = setup_and_login(&app).await;
+
+        let state_request = Request::builder()
+            .uri("/api/vm/oled")
+            .header(header::HOST, "kvm.test")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .unwrap();
+        let body = json_body(app.clone().oneshot(state_request).await.unwrap()).await;
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["exist"], true);
+        assert_eq!(body["data"]["sleep"], 300);
+
+        // A time that is not one of the choices never reaches the owner.
+        for (sleep, applied) in [(20, false), (60, true)] {
+            let mut update = json_request(
+                Method::POST,
+                "/api/vm/oled",
+                serde_json::json!({ "sleep": sleep }),
+            );
+            update
+                .headers_mut()
+                .insert(header::COOKIE, cookie.parse().unwrap());
+            update
+                .headers_mut()
+                .insert("x-csrf-token", csrf.parse().unwrap());
+            let body = json_body(app.clone().oneshot(update).await.unwrap()).await;
+            assert_eq!(body["code"], 0);
+            assert_eq!(body["data"]["applied"], applied, "{sleep}");
+            if !applied {
+                assert_eq!(body["data"]["rejection"], "unsupported_time");
+            }
+        }
         broker.await.unwrap();
     }
 
@@ -5801,6 +5887,7 @@ mod tests {
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
+            "device_oled",
             "network_wifi",
             "system_firewall",
         ] {
@@ -5839,6 +5926,7 @@ mod tests {
             "device_mdns",
             "device_hid_only",
             "device_mouse_jiggler",
+            "device_oled",
             "network_tls",
             "network_wifi",
             "system_firewall",

@@ -452,6 +452,10 @@ async fn board_state(
         crate::device_settings::HID_ONLY_STATE,
         true,
     ));
+    // The display's sleep time, which the board daemon reads from the file.
+    state.with_display_sleep(crate::device_settings::DisplaySleepState::open(
+        bli_kvm_core::DISPLAY_SLEEP_PATH,
+    ));
     // The reviewed device toggles use the same bounded restart runner.
     state.with_device_settings(crate::device_settings::MdnsState::open(
         crate::device_settings::MDNS_CONF,
@@ -1170,6 +1174,7 @@ where
         | ControlResponse::MdnsState { .. }
         | ControlResponse::MouseJigglerState { .. }
         | ControlResponse::HidOnlyState { .. }
+        | ControlResponse::DisplaySleepState { .. }
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }

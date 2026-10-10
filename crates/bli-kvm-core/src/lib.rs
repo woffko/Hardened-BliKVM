@@ -9,6 +9,7 @@ mod capabilities;
 mod control;
 mod control_v2;
 mod diagnostics;
+mod display_sleep;
 mod firewall;
 mod inventory;
 mod platform;
@@ -40,6 +41,10 @@ pub use diagnostics::{
     DiagnosticComponents, DiagnosticHistory, DiagnosticHistoryReason, DiagnosticHistoryState,
     DiagnosticMetricState, DiagnosticRtc, DiagnosticTemperature, DiagnosticsAvailability,
     DiagnosticsCurrent, DiagnosticsView, DiagnosticsViewError,
+};
+pub use display_sleep::{
+    DISPLAY_SLEEP_CHOICES, DISPLAY_SLEEP_PATH, display_sleep_is_choice, load_display_sleep,
+    parse_display_sleep, render_display_sleep,
 };
 pub use firewall::{
     FirewallChangeRequest, FirewallConfirmRequest, FirewallMode, FirewallModeStatus,

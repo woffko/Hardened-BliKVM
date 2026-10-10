@@ -156,6 +156,23 @@ pub(crate) struct HidOnlyView {
     pub enabled: bool,
 }
 
+/// The board's display: the reference's OLED setting, a time without
+/// activity after which the display goes dark (0 is never). The board has its
+/// display; `exist` is the reference's field.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DisplaySleepView {
+    pub exist: bool,
+    pub sleep: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(not(feature = "restricted-control-surface"), allow(dead_code))]
+pub(crate) struct DisplaySleepBody {
+    pub sleep: u32,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TlsView {
@@ -328,6 +345,100 @@ pub(crate) async fn hid_only_update(
             rejection: Some("unexpected_response"),
         },
     })))
+}
+
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn display_sleep_state(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<DisplaySleepView>>> {
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "device settings are not configured".into(),
+        ));
+    };
+    let response = control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::DisplaySleepState {},
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("device settings are unavailable".into()))?;
+    match response {
+        ControlResponse::DisplaySleepState { seconds } => {
+            Ok(Json(ApiResponse::ok(DisplaySleepView {
+                exist: true,
+                sleep: seconds,
+            })))
+        }
+        _ => Err(AppError::ServiceUnavailable(
+            "device settings are unavailable".into(),
+        )),
+    }
+}
+
+/// A time that is not one of the choices is refused here, before the owner.
+#[cfg(feature = "restricted-control-surface")]
+pub(crate) async fn display_sleep_update(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<DisplaySleepBody>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    if !bli_kvm_core::display_sleep_is_choice(body.sleep) {
+        return Ok(Json(ApiResponse::ok(ToggleOutcome {
+            applied: false,
+            rejection: Some("unsupported_time"),
+        })));
+    }
+    let Some(control) = state.control.as_ref() else {
+        return Err(AppError::ServiceUnavailable(
+            "device settings are not configured".into(),
+        ));
+    };
+    let response = control
+        .execute_v2(
+            operation_id(&session.token),
+            PlatformControlRequestV2::DisplaySleep {
+                seconds: body.sleep,
+            },
+        )
+        .await
+        .map_err(|_| AppError::ServiceUnavailable("device settings are unavailable".into()))?;
+    Ok(Json(ApiResponse::ok(match response {
+        ControlResponse::Applied => ToggleOutcome {
+            applied: true,
+            rejection: None,
+        },
+        ControlResponse::Rejected { code } => ToggleOutcome {
+            applied: false,
+            rejection: Some(rejection_name(code)),
+        },
+        _ => ToggleOutcome {
+            applied: false,
+            rejection: Some("unexpected_response"),
+        },
+    })))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn display_sleep_state(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+) -> AppResult<Json<ApiResponse<DisplaySleepView>>> {
+    Err(AppError::ServiceUnavailable(
+        "device settings are not configured".into(),
+    ))
+}
+
+#[cfg(not(feature = "restricted-control-surface"))]
+pub(crate) async fn display_sleep_update(
+    State(_state): State<AppState>,
+    Extension(CurrentSession(_session)): Extension<CurrentSession>,
+    Json(_body): Json<DisplaySleepBody>,
+) -> AppResult<Json<ApiResponse<ToggleOutcome>>> {
+    Err(AppError::ServiceUnavailable(
+        "device settings are not configured".into(),
+    ))
 }
 
 #[cfg(not(feature = "restricted-control-surface"))]

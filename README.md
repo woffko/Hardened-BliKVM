@@ -61,7 +61,9 @@ find.
 - **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
   system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
   of the main connection), a firewall with four modes and a confirmation that
-  rolls back by itself, time, system log, Tailscale, account, session lock.
+  rolls back by itself, time, system log, Tailscale, account, session lock,
+  and the board's display going dark after a time without activity (its
+  button lights it again).
 - **Updates**: signed application slots with a health check and automatic
   rollback, and signed RAW system updates behind their own switch, which
   keep the board's accounts, keys, network settings and switches and write
@@ -72,7 +74,7 @@ find.
   ([`docs/design/admin-features-v1.md`](docs/design/admin-features-v1.md)).
 
 Not there: audio, and updates fetched from a feed (they are uploaded). The
-time, NTP, remote system log, autostart script and OLED settings are shown
+time, NTP, remote system log and autostart script settings are shown
 read-only.
 
 ## How it is put together
