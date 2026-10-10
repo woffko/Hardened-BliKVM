@@ -106,6 +106,26 @@ const measure = (page) =>
   });
 const near = (actual, expected) => Math.abs(actual - expected) <= 1;
 
+// The arrow's tip is the cursor's point: where the target's cursor is, not
+// the corner of the arrow's box. The corner of the arrow's outline, within
+// a pixel of the point (its stroke reaches 0.6 px beyond it).
+async function tipOnThePoint(page, label) {
+  const tip = await page.evaluate(() => {
+    const cursor = document.querySelector('[data-testid="mobile-cursor"]');
+    const outline = cursor.querySelector("svg path").getBoundingClientRect();
+    return {
+      x: Number.parseFloat(cursor.style.left),
+      y: Number.parseFloat(cursor.style.top),
+      left: outline.left,
+      top: outline.top,
+    };
+  });
+  assert.ok(
+    near(tip.left, tip.x) && near(tip.top, tip.y),
+    `${label}: the arrow's tip at ${tip.left.toFixed(1)}, ${tip.top.toFixed(1)} for the point ${tip.x.toFixed(1)}, ${tip.y.toFixed(1)}`,
+  );
+}
+
 // The screen ends where `coveredBelow` pixels of the page's bottom begin.
 async function screenEndsAbove(page, coveredBelow, label) {
   await page.waitForTimeout(450); // the layout's transition
@@ -159,6 +179,7 @@ try {
     assert.equal(edge.scrollTop, 0);
     assert.ok(near(edge.imageTop, area.top), "the top edge below the bar");
     assert.ok(near(edge.cursorY, edge.imageTop), "the cursor on the top edge");
+    await tipOnThePoint(page, "menu bar");
     assert.deepEqual(errors, []);
     await context.close();
   }
