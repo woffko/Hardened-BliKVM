@@ -12,6 +12,8 @@ import { Upscaler, type UpscaleReport } from '@/lib/upscale/upscaler.ts';
 import { UpscaleWatchdog, type UpscaleStop } from '@/lib/upscale/watchdog.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
+import { SCREEN_CLASS } from './use-screen-fit.ts';
+
 type Props = {
   /** The stream's URL; none while the view waits to ask again. */
   url: string | undefined;
@@ -275,7 +277,7 @@ export const UpscaledMjpeg = ({
       id="screen"
       ref={screenRef}
       {...pictureAttributes(resolution)}
-      className={clsx('m-auto block select-none', mouseStyle)}
+      className={clsx(SCREEN_CLASS, mouseStyle)}
       style={mediaStyle}
     />
   );

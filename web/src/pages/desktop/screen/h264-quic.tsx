@@ -14,7 +14,7 @@ import { quicVideoAtom, quicVideoGivenUpAtom, quicVideoStatsAtom } from '@/jotai
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
 import { useUpscaleView } from '@/hooks/useUpscale.ts';
 
-import { useScreenFit } from './use-screen-fit.ts';
+import { SCREEN_CLASS, useScreenFit } from './use-screen-fit.ts';
 
 /**
  * A picture that shows no new frame for this long is not coming: even a
@@ -229,7 +229,7 @@ export const H264Quic = () => {
           ref={screenRef}
           data-video-transport="quic"
           {...pictureAttributes(resolution)}
-          className={clsx('m-auto block select-none', mouseStyle)}
+          className={clsx(SCREEN_CLASS, mouseStyle)}
           style={mediaStyle}
         ></canvas>
       </div>

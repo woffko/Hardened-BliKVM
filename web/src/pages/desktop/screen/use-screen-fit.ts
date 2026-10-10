@@ -25,6 +25,16 @@ type ScreenFit = {
   enlargement: number;
 };
 
+/**
+ * The screen element's classes: centred in the view while it fits, and laid
+ * out at the size it is drawn at from the start. A flex item would shrink to
+ * the view while its picture has no size of its own (an image or a video
+ * before its first frame, a canvas before its first buffer): the view's
+ * centring then finds nothing to scroll, and the picture, once it comes, is
+ * shown from its left edge.
+ */
+export const SCREEN_CLASS = 'm-auto block shrink-0 select-none';
+
 const FALLBACK_SCREEN_WIDTH = 1920;
 const FALLBACK_SCREEN_HEIGHT = 1080;
 /** How long the drawn size must stay before a buffer follows it. */

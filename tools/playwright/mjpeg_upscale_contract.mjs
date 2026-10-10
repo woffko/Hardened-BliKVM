@@ -5,7 +5,9 @@
 // through the upscaler into a canvas of the shown size. The patches come out at the plain image's levels, the
 // squares' edges rise at least 15 % more narrowly than the browser's own scaling of the image (which is better than
 // bilinear), the frames read are drawn, and the mouse lands where it is on the picture. With a stream that goes on and a
-// draw slowed on the page's thread, the watchdog stops upscaling and the image is the screen again.
+// draw slowed on the page's thread, the watchdog stops upscaling and the image is the screen again. Enlarged beyond the
+// view, the picture is shown from its middle, also when its first frame comes after the page is laid out, and the
+// watchdog's switch to the image leaves it where it was.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -106,17 +108,30 @@ const whole = Buffer.concat(
   ]),
 );
 
-async function open(upscale, sent = null, { stream = "whole" } = {}) {
+async function open(
+  upscale,
+  sent = null,
+  { stream = "whole", late = 0, zoom = null, pixelRatio = 2 } = {},
+) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
-    deviceScaleFactor: 2,
+    deviceScaleFactor: pixelRatio,
   });
   await context.addCookies([
     { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
   ]);
   await context.addInitScript(
-    ([gpu, upscale, width, height]) => {
+    ([gpu, upscale, width, height, zoom]) => {
       localStorage.setItem("hardened-blikvm-menu-auto-hide", "always");
+      if (zoom) {
+        // Enlarged, with the picture's size known from an earlier visit, as
+        // on a board: its first frame changes nothing the view lays out by.
+        localStorage.setItem("hardened-blikvm-video-scale", String(zoom));
+        localStorage.setItem(
+          "hardened-blikvm-web-resolution",
+          btoa(JSON.stringify({ width, height })),
+        );
+      }
       localStorage.setItem(
         "hardened-blikvm-upscale",
         // Upscaled at the size of a target as large as the picture: the
@@ -134,7 +149,7 @@ async function open(upscale, sent = null, { stream = "whole" } = {}) {
         return getParameter.call(this, name);
       };
     },
-    [GPU, upscale, WIDTH, HEIGHT],
+    [GPU, upscale, WIDTH, HEIGHT, zoom],
   );
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
@@ -164,22 +179,44 @@ async function open(upscale, sent = null, { stream = "whole" } = {}) {
       }),
     );
   }
-  // The whole stream at once, or the server's stream that goes on.
+  // The whole stream at once, `late` milliseconds after it is asked for, or
+  // the server's stream that goes on.
   if (stream === "whole") {
-    await page.route("**/api/stream/mjpeg**", (route) =>
-      route.fulfill({
+    await page.route("**/api/stream/mjpeg**", async (route) => {
+      if (late) await new Promise((resolve) => setTimeout(resolve, late));
+      await route.fulfill({
         status: 200,
         headers: {
           "content-type": "multipart/x-mixed-replace; boundary=frame",
         },
         body: whole,
-      }),
-    );
+      });
+    });
   }
   await page.goto(app.baseUrl, { waitUntil: "domcontentloaded" });
   await page.locator("#screen").waitFor();
   return { context, page, errors };
 }
+
+/** Where the screen is laid out, and the middle of the view it is scrolled in. */
+const placed = (page) =>
+  page.evaluate(() => {
+    const screen = document.getElementById("screen");
+    const view = screen.closest("[data-kvm-screen-scroll]");
+    const box = screen.getBoundingClientRect();
+    const frame = view.getBoundingClientRect();
+    return {
+      tag: screen.tagName,
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      middle: {
+        x: frame.x + view.clientLeft + view.clientWidth / 2,
+        y: frame.y + view.clientTop + view.clientHeight / 2,
+      },
+    };
+  });
 
 /** Grey levels of the patches' middles and the squares' edge rise, from a screenshot of the screen. */
 async function measure(page) {
@@ -377,8 +414,78 @@ try {
     await context.close();
   }
 
+  // Enlarged three times, the plain image whose first frame comes after the
+  // page has laid it out: shown from its middle once the frame has come.
+  let late;
+  {
+    const { context, page, errors } = await open("off", null, {
+      late: 800,
+      zoom: 3,
+    });
+    await page.waitForFunction(() => {
+      const image = document.querySelector("img#screen");
+      return image && image.naturalWidth > 0;
+    });
+    await page.waitForTimeout(300);
+    late = await placed(page);
+    assert.equal(late.width, WIDTH * 3);
+    assert.ok(
+      Math.abs(late.x + late.width / 2 - late.middle.x) <= 1 &&
+        Math.abs(late.y + late.height / 2 - late.middle.y) <= 1,
+      `the enlarged image at ${late.x},${late.y}, the view's middle at ${late.middle.x},${late.middle.y}`,
+    );
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
+  // Enlarged two and a half times at a pixel ratio of 1, upscaled, and the
+  // watchdog's switch to the image: the picture stays where it was.
+  let switched;
+  {
+    const { context, page, errors } = await open("auto", null, {
+      stream: "live",
+      zoom: 2.5,
+      pixelRatio: 1,
+    });
+    await page.waitForFunction(
+      () =>
+        document.querySelector("canvas#screen")?.dataset.upscale === "medium",
+    );
+    await page.waitForTimeout(300);
+    const before = await placed(page);
+    assert.equal(before.tag, "CANVAS");
+    assert.ok(
+      before.width > 1280 && before.height > 720,
+      `${before.width}x${before.height}`,
+    );
+    await page.evaluate(() => {
+      const draw = WebGL2RenderingContext.prototype.drawArrays;
+      WebGL2RenderingContext.prototype.drawArrays = function (...args) {
+        const until = performance.now() + 120;
+        while (performance.now() < until);
+        return draw.apply(this, args);
+      };
+    });
+    await page.getByTestId("upscale-notice").waitFor({ timeout: 15000 });
+    await page.waitForFunction(() => {
+      const image = document.querySelector("img#screen");
+      return image && image.naturalWidth > 0;
+    });
+    await page.waitForTimeout(300);
+    switched = await placed(page);
+    assert.equal(switched.tag, "IMG");
+    assert.ok(
+      ["x", "y", "width", "height"].every(
+        (key) => Math.abs(switched[key] - before[key]) <= 1,
+      ),
+      `the image at ${switched.x},${switched.y} ${switched.width}x${switched.height}, the canvas was at ${before.x},${before.y} ${before.width}x${before.height}`,
+    );
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+
   console.log(
-    `MJPEG upscaled: the stream read and its frames drawn (${state.frames} received/decoded/drawn) into a ${state.buffer} canvas, the patches within ${worst.toFixed(1)} of the plain image, the squares' edges rising in ${upscaled.rise.toFixed(2)} px against ${plain.rise.toFixed(2)} px stretched, the pointer where it is, a slowed draw stopped by the watchdog after ${stoppedAfter.toFixed(1)} s passed`,
+    `MJPEG upscaled: the stream read and its frames drawn (${state.frames} received/decoded/drawn) into a ${state.buffer} canvas, the patches within ${worst.toFixed(1)} of the plain image, the squares' edges rising in ${upscaled.rise.toFixed(2)} px against ${plain.rise.toFixed(2)} px stretched, the pointer where it is, a slowed draw stopped by the watchdog after ${stoppedAfter.toFixed(1)} s, an enlarged image whose frame came late shown from its middle (${late.x},${late.y}), and the switch leaving an enlarged picture where it was (${switched.x},${switched.y}) passed`,
   );
 } finally {
   await browser.close();

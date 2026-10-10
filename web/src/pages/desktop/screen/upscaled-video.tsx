@@ -11,6 +11,8 @@ import { Upscaler, type UpscaleReport } from '@/lib/upscale/upscaler.ts';
 import { UpscaleWatchdog, type UpscaleStop } from '@/lib/upscale/watchdog.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
+import { SCREEN_CLASS } from './use-screen-fit.ts';
+
 type Props = {
   videoRef: MutableRefObject<HTMLVideoElement | null>;
   /** The sharpness to enlarge with; `off` draws the video itself as the screen. */
@@ -207,7 +209,7 @@ export const UpscaledVideo = ({
         ref={upscaling ? videoRef : videoScreenRef}
         {...(upscaling ? {} : pictureAttributes(resolution))}
         data-upscale-source={upscaling ? '' : undefined}
-        className={upscaling ? undefined : clsx('m-auto block select-none', mouseStyle)}
+        className={upscaling ? undefined : clsx(SCREEN_CLASS, mouseStyle)}
         // Out of sight but drawn, so that the browser presents its frames.
         style={
           upscaling
@@ -235,7 +237,7 @@ export const UpscaledVideo = ({
           id="screen"
           ref={canvasScreenRef}
           {...pictureAttributes(resolution)}
-          className={clsx('m-auto block select-none', mouseStyle)}
+          className={clsx(SCREEN_CLASS, mouseStyle)}
           style={mediaStyle}
           onClick={stopClick}
         />

@@ -12,7 +12,7 @@ import { resolutionAtom, videoScaleAtom } from '@/jotai/screen.ts';
 import { useScreenRef } from '@/hooks/useScreenRef.ts';
 
 import DirectWorker from './direct.worker.ts?worker';
-import { useScreenFit } from './use-screen-fit.ts';
+import { SCREEN_CLASS, useScreenFit } from './use-screen-fit.ts';
 
 export const H264Direct = () => {
   const resolution = useAtomValue(resolutionAtom);
@@ -95,7 +95,7 @@ export const H264Direct = () => {
         id="screen"
         ref={screenRef}
         {...pictureAttributes(resolution)}
-        className={clsx('m-auto block select-none', mouseStyle)}
+        className={clsx(SCREEN_CLASS, mouseStyle)}
         style={mediaStyle}
       ></canvas>
     </div>
