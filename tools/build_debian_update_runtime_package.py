@@ -24,8 +24,8 @@ from tools import ve_module
 
 
 PACKAGE_NAME = "hardened-blikvm-update-runtime"
-PACKAGE_VERSION = "0.1.0~dev37"
-SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", PACKAGE_VERSION)
+PACKAGE_VERSION = "0.1.0~dev38"
+SUPPORTED_PACKAGE_VERSIONS = ("0.1.0~dev1", "0.1.0~dev2", "0.1.0~dev3", "0.1.0~dev4", "0.1.0~dev5", "0.1.0~dev6", "0.1.0~dev7", "0.1.0~dev8", "0.1.0~dev9", "0.1.0~dev10", "0.1.0~dev11", "0.1.0~dev12", "0.1.0~dev13", "0.1.0~dev14", "0.1.0~dev15", "0.1.0~dev16", "0.1.0~dev17", "0.1.0~dev18", "0.1.0~dev19", "0.1.0~dev20", "0.1.0~dev21", "0.1.0~dev22", "0.1.0~dev23", "0.1.0~dev24", "0.1.0~dev25", "0.1.0~dev26", "0.1.0~dev27", "0.1.0~dev28", "0.1.0~dev29", "0.1.0~dev33", "0.1.0~dev34", "0.1.0~dev35", "0.1.0~dev36", "0.1.0~dev37", PACKAGE_VERSION)
 PACKAGE_ARCHITECTURE = "arm64"
 PACKAGE_FILENAME = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_{PACKAGE_ARCHITECTURE}.deb"
 RUNTIME_DEPENDENCY = (
@@ -168,7 +168,8 @@ FILE_MAP.update({
     # dev35: the QUIC gateway, installed disabled; the board owner's switch
     # enables it (docs/design/quic-transport-v1.md). Its user has a sysusers
     # fragment of its own: the runtime's identities are a pinned set. dev37
-    # carries the gateway of the transport's protocol 2, and dev36's files.
+    # carries the gateway of the transport's protocol 2, and dev38 one that
+    # leaves a silent page unjudged; both have dev36's files.
     "libexec/bli-kvm-quic-gateway": (
         "usr/libexec/hardened-blikvm/bli-kvm-quic-gateway"
     ),

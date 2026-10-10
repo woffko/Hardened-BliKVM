@@ -192,10 +192,11 @@ Tokens, their hashes, report contents and frame data never reach a log.
   (`/lib/systemd/system/hardened-blikvm-quic.service`), disabled. The
   application slot does not carry them: its closed set of executables is part
   of the update trust path, and the slot's package refuses both by name.
-  `0.1.0~dev37` carries the gateway of protocol 2 and dev36's files. The
-  server and the gateway say the same protocol number on the link, so a slot
-  of protocol 2 and that package go onto a board together: between the two
-  the server refuses the older gateway, and pages use the standard transport.
+  `0.1.0~dev37` carries the gateway of protocol 2 and dev36's files, and
+  `0.1.0~dev38` one that leaves a silent page unjudged. The server and the
+  gateway say the same protocol number on the link, so a slot of protocol 2
+  and such a package go onto a board together: between the two the server
+  refuses the older gateway, and pages use the standard transport.
 - The unit runs as `hardened-blikvm-quic`, a system user in no shared group.
   It has a sysusers fragment of its own
   (`packaging/sysusers.d/hardened-blikvm-quic.conf`, shipped with the
@@ -286,7 +287,10 @@ answers.
   first: Chromium ends an unanswered handshake after 4 s (five packets,
   measured), the page after 5 s.
 - A session whose pings stay unanswered for 6 s, or whose connection closes,
-  is lost. The page tries again after 1, 2 and 4 s; attempts that find the
+  is lost. A page that was frozen (a phone's browser with another app in
+  front, a hidden tab whose timers were held back) asked nothing in that
+  time: when its ping timer fires more than two intervals late, the time
+  does not count against the session's answers (2026-10-10). The page tries again after 1, 2 and 4 s; attempts that find the
   gateway absent, time out or are turned down count as tries, any other
   answer ends them with its reason. After the third the page reports `lost`.
 - `closing` with the reason `session` ends the session for good: the page
@@ -462,6 +466,11 @@ path's live limit.
   than a key frame, waiting is the shorter way.
 - **A page that gives the picture up** has its groups' streams reset: what
   the transport still holds of them is not sent for nobody.
+- **A silent page**, one that has said nothing for a second (a ping, a
+  frame received), is frozen in the background or gone with its session
+  still open until the transport gives it up. What it has not received is
+  no evidence of its path: no group is given up or left out for it, and no
+  key frame asked for. Once it speaks again its path is judged afresh.
 - **After a loss** (a frame that found the session's queue of 8 full, or
   the page's `keyframe`) the session gets no delta frame until the next key
   frame, and the encoder is asked for one. One key frame answers every
@@ -496,6 +505,11 @@ watch, never below a quarter of it.
   picture's first 3 s, whose first key frame tells little.
 - **Up** by a fifth once the page has kept up for 10 s, and again after as
   long: from a quarter to the whole in eight steps.
+- **A silent page** holds nobody's bitrate down: its share is whole until
+  it speaks again. On slot 81 the operator's phone left two sessions
+  behind, its page frozen with another app in front, and each, still open
+  at the gateway for the transport's 30 s, took the encoder to a quarter of
+  the chosen bitrate within 9 s for every viewer (2026-10-10).
 - **The server** keeps each session's share, as the gateway last said it
   (`video_share` on the link), within a quarter and the whole, and counts
   it while the session watches. The H.264 encoder's demand connections, a
