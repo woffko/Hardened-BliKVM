@@ -217,6 +217,20 @@ Time box: 4 hours.
 4. Application release 0.1.0-beta.4 (the bundle, SHA256SUMS, notes, a pointer
    in beta.3's notes), only when the operator says to publish.
 
+Added at the operator's word (2026-10-10), before the release's slot:
+
+5. The board's display goes dark after a time without activity, as in
+   Hardened NanoKVM: Settings > Device offers never (the default, as now),
+   15 or 30 seconds, 1, 3, 5, 10 or 30 minutes, or an hour. Dark means the
+   ST7789's backlight off and the panel asleep; the board's button, and a
+   change in what the screen shows, light it again. The display daemon
+   (`bli-kvm-boardd`, in the application slot) keeps the time; the board's
+   owner keeps the choice across restarts; the board's status that the
+   update runtime reads for its health check keeps its shape. Contracts:
+   the setting's API and page in both languages, the daemon's timer, the
+   button and the redraws while dark. On the board: the operator sees it
+   go dark and the button light it.
+
 Time box: 4 hours plus the operator's checks.
 
 ## Operator steps
