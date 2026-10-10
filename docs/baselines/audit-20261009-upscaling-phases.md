@@ -322,3 +322,23 @@ Receipts: `evidence/private/update-to-seq81-010-beta4-202610100707.json`,
 `quic-video-device-seq81*.json`, `gui-walk-seq81-*.json`,
 `webrtc-*-seq81.json`, `upscale-20261008/board/` (state, facts, the
 encoder's journal on the narrowed path, the phone's sessions).
+
+### Slot 82 and update-runtime dev38 on the board (2026-10-10)
+
+The full check passed on `4b863ee`; at the operator's word slot 82 went
+onto the board through the update API and update-runtime `0.1.0~dev38`
+(only the gateway differs from dev37) through `dpkg`, the gateway
+restarted. The board's state differed afterwards only in the slots and the
+runtime. The direct probe passed (no frame given up, no key frame asked
+for, no decoder restart, the share whole, "lost packets 0"). With the
+page's thread held for 12 s after the warm-up (`FREEZE_MS`, `73ffd78`), the
+page kept its one session, and the encoder's journal shows
+no change of the bitrate in that time: the silent page held nobody back.
+`gui_walk_device` in both layouts and `vp8_webrtc_probe` in H.264 and VP8
+passed.
+
+Receipts: `evidence/private/update-to-seq82-010-beta4-202610101004.json`,
+`quic-video-device-seq82*.json`, `gui-walk-seq82-*.json`,
+`webrtc-*-seq82.json`, `upscale-20261008/board/` (state, facts, the
+journal of the frozen page's probe).
+
