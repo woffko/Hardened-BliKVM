@@ -263,9 +263,20 @@ picture still for 11 s and the page gave the session's picture up.
 
 The QUIC contracts (transport, input, input through the stack, video,
 share) passed on the host, the video contract twice in a row after
-`ec4cebf`. The board still runs slot 80 (protocol 1): the
-next slot carries protocol 2, the page and the gateway together, and is
-installed only with the operator's agreement, then checked on the board
-and by the operator at gates 2 to 5.
+`ec4cebf`. The full check then failed once in the MJPEG upscaling
+contract (17.9 of the live stream's 20 frames a second drawn in
+SwiftShader on a busy host, against 90 %); `e508d76` draws that stream at
+10, and the full check passed on it.
+
+The gateway is no part of the application slot: the update-runtime
+package installs it, and the plan keeps the board's system as it is. The
+built package differed from the board's `0.1.0~dev36` only in the gateway
+and its manifest. Asked, the operator chose to update the gateway on the
+board (2026-10-10): `1900dae` makes it `0.1.0~dev37`, installed with the
+next slot through `dpkg`, `0.1.0~dev36` as built for slot 80 (the board's
+gateway, `7e3683e8`) kept to go back to. The server and the gateway say the
+same protocol number on the link, so the two go on together. The operator
+also allowed a probe on a narrowed path, which lowers the H.264 bitrate of
+every viewer for a while.
 
 Receipts: `evidence/private/upscale-20261008/quic-protocol2/`.
