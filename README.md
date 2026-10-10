@@ -38,15 +38,25 @@ find.
   the engine cannot be had, x264 encodes and the menu says why
   ([`docs/design/h616-ve-h264-encoder.md`](docs/design/h616-ve-h264-encoder.md)).
   The encoders work only while someone watches.
+- **Upscaling**, in the Screen menu (Auto by default, or Off, and a
+  sharpness): where the browser draws with a GPU, a picture shown larger
+  than its size is drawn sharply (a deringing pass for the capture's JPEG
+  and SGSR 1) in every view, filling the window or at the target's
+  resolution, a pinch on a phone kept smooth; a watchdog turns it off where
+  frames are lost to it, and a browser that draws in software draws as
+  before ([`docs/design/screen-upscaling-v1.md`](docs/design/screen-upscaling-v1.md)).
 - **Quality monitor**: QM on the toolbar opens a window over the picture
   with what arrives (speed, delay, frames a second, codec, bitrate), and in
   its Extended level the transport's, the board's encoder's and the
-  browser's decoder's numbers
+  browser's decoder's numbers, the upscaler's and how much of a second the
+  page's own picture code takes; on a phone it spans the screen
   ([`docs/design/h264-engine-choice-and-quality-monitor-v1.md`](docs/design/h264-engine-choice-and-quality-monitor-v1.md)).
 - **Transport**: the standard one (HTTPS, WebSocket, WebRTC), or QUIC
   (WebTransport on UDP 443) for the keyboard, the mouse and the H.264
-  picture. QUIC has a switch on the board, off by default, and a choice in
-  each browser (Settings > System > Network > Transport,
+  picture: a group of pictures on a stream of its own, what the path loses
+  sent again, and the H.264 bitrate fitted to the narrowest path of the
+  sessions that watch. QUIC has a switch on the board, off by default, and a
+  choice in each browser (Settings > System > Network > Transport,
   [`docs/design/quic-transport-v1.md`](docs/design/quic-transport-v1.md)).
 - **Settings** as in Hardened NanoKVM: device, appearance (light, dark and
   system theme, accent colours), network (IPv4, IPv6, DNS, Wi-Fi with a choice
@@ -99,11 +109,13 @@ nginx --> bli-kvm-server ---------> Janus <-- RTP --+              |
 Design notes are under [`docs/design`](docs/design): the QUIC transport, the
 firewall contract, the administration features, the video encoders (software,
 and H.264 on the video engine with its driver), the engine choice and the
-quality monitor, the RAW system update. Plans, audits and what was shown on the
-test board are under [`docs/baselines`](docs/baselines); the most recent are
-[`audit-20261004-review.md`](docs/baselines/audit-20261004-review.md),
-[`audit-20261004-h264-choice-quality-monitor.md`](docs/baselines/audit-20261004-h264-choice-quality-monitor.md)
-and [`audit-20261003-hardware-h264.md`](docs/baselines/audit-20261003-hardware-h264.md).
+quality monitor, the RAW system update, the screen's upscaling. Plans, audits
+and what was shown on the test board are under
+[`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261009-upscaling-phases.md`](docs/baselines/audit-20261009-upscaling-phases.md),
+[`audit-20261008-upscaling-gate0.md`](docs/baselines/audit-20261008-upscaling-gate0.md),
+[`audit-20261004-review.md`](docs/baselines/audit-20261004-review.md)
+and [`audit-20261004-h264-choice-quality-monitor.md`](docs/baselines/audit-20261004-h264-choice-quality-monitor.md).
 [`docs/security-boundaries.md`](docs/security-boundaries.md) and
 [`docs/licensing.md`](docs/licensing.md) hold the security model and the
 licences. [`docs/architecture.md`](docs/architecture.md),

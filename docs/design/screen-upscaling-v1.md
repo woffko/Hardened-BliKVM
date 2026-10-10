@@ -93,7 +93,9 @@ publishes (`web/src/lib/pointer-map.ts`, `pictureAttributes`), and the
 absolute mouse maps the pointer by that size before the video's, the
 image's or the canvas's own (`pictureSize`, `pointInPicture`). Touch moves
 the cursor by the finger's movement over the element's extent and needs no
-picture size.
+picture size. The phone's cursor is an arrow drawn by the page with its
+tip, not the corner of its box, on the point, where the target's own
+cursor is (2026-10-10: the operator saw it 3.1 px off).
 
 ## How much the picture is enlarged
 
@@ -120,7 +122,8 @@ canvas's CSS size follows the fingers.
 
 `web/src/lib/upscale/settings.ts`: Off or Auto and a sharpness (low, medium
 or high), kept by the browser (`hardened-blikvm-upscale` in its local
-storage), Off by default. The Screen menu's Upscaling entry sets it
+storage), Auto by default: the plan made it Off for this release and left
+the default to the operator at gate 6, who chose Auto (2026-10-10). The Screen menu's Upscaling entry sets it
 (`menu/screen/upscale.tsx`), and says when the browser draws without a GPU
 and why upscaling stopped on the page. Upscaling runs where the setting is
 Auto, the browser draws with a GPU (`drawsWithGpu`, the renderer WebGL
@@ -278,3 +281,13 @@ On the real capture, deringing 16 + SGSR: SSIM 0.938 against bilinear's
 0.906, the edges' rise 1.78 against 2.34 px, the halo 1 level above
 bilinear's; 0.27 ms per 2560x1440 frame on an RTX 3080 Ti, 1.09 ms on an
 Adreno 830, no frame lost over 30 s at 30 frames a second on either.
+
+Gates 1 to 6 (`audit-20261009-upscaling-phases.md`): the renderer within
+one level of its CPU reference; on the operator's desktop and Android
+phone the QUIC, WebRTC (H.264 and VP8) and MJPEG views upscaled without
+freezes (gate 2 needed slot 80's fixes and the transport's protocol 2),
+the pinch smooth and touches where they were made at 100, 200 and 400 %;
+on the phone the page's own picture code took 1 % of the main thread and
+1 % of the QUIC worker with upscaling (SGSR, high, 0.80 ms a frame, every
+frame drawn) against 1 % and 2 % without; the operator chose Auto as the
+default.

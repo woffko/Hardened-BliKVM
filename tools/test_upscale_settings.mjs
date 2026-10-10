@@ -38,7 +38,7 @@ test(
     const storage = memory();
     assert.deepEqual(settings.readUpscale(storage), settings.DEFAULT_UPSCALE);
     assert.deepEqual(settings.DEFAULT_UPSCALE, {
-      mode: "off",
+      mode: "auto",
       sharpness: "medium",
       size: "fill",
       target: null,

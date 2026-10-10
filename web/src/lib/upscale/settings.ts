@@ -22,8 +22,13 @@ export type UpscaleSetting = {
   target: Size | null;
 };
 
+/**
+ * Auto by default: the operator's choice at the plan's gate 6 (2026-10-10).
+ * It upscales only with a GPU and an enlargement, and the watchdog stops it
+ * where frames are lost to it.
+ */
 export const DEFAULT_UPSCALE: UpscaleSetting = {
-  mode: 'off',
+  mode: 'auto',
   sharpness: 'medium',
   size: 'fill',
   target: null

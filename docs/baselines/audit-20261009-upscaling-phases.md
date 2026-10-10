@@ -364,3 +364,38 @@ reported the phone's cursor drawn off the target's own. Added to the plan
   the browser gives the main thread was tried first: on the phone's
   landscape layout in SwiftShader it said 100 % busy while a profile of the
   thread showed it 99 % idle.
+
+## Gate 5 on the operator's phone (slot 83, 2026-10-10)
+
+The operator's Android phone over QUIC, H.264 from the video engine at
+1920x1080, the same zoom, Extended open:
+
+| | Upscaling | Frames a second | Upscaled, drawn / came | Picture code, page / worker | Given up, key frames asked, decoder restarts |
+| --- | --- | --- | --- | --- | --- |
+| Off | none | 10.0 | - | 1 % / 2 % | 0, 0, 0 |
+| Auto | SGSR, high, 0.80 ms a frame | 5.0 | 11.4 / 11.4 | 1 % / 1 % | 0, 0, 0 |
+
+The page's own picture code costs no more with upscaling than without, at
+the scale of one percent of a core; the browser's own decoding, drawing
+and its GPU process are not in that count, which the page cannot read
+(the target's screen changed at different rates in the two minutes, 5 and
+10 frames a second). With the pinch smooth and the touches where they were
+made at 100, 200 and 400 % (slot 80), the monitor fitting the phone and the
+cursor's tip on the target's cursor (slot 83, the operator's word), gate 5
+passed. The 244 and 199 packets lost on the phone's Wi-Fi were sent again.
+
+## Phase 6 and gate 6
+
+The phase's items were built before its gate, in the phases that needed
+them: the Screen menu's Upscaling entry with Off or Auto and the sharpness,
+kept by the browser, Auto only with a GPU and an enlargement above 1.1
+(phase 2); the watchdog in every view with its notice and the monitor's
+rows (`8cb812c`, `5111093`); the plain path where the browser draws in
+software, without WebGL2 or with a lost context (`58abf48` and phase 1);
+English and Russian texts; the contracts of the menu and its memory, of
+Auto's conditions, of the watchdog with a slowed draw and of a browser that
+draws in software (`quic_video_contract`, `mjpeg_upscale_contract`,
+`vp8_range_contract`, `screen_enlargement_contract`). At gate 6 the operator
+chose Auto as the default (2026-10-10, "6 авто"), and said to release
+everything: the application, the image and the RAW system bundle, whose
+update-runtime carries the QUIC gateway of protocol 2.
