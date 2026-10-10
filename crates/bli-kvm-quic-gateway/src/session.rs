@@ -329,6 +329,9 @@ async fn run(
     loop {
         tokio::select! {
             message = control.read() => {
+                if message.is_some() {
+                    video_control.page_heard.store(monotonic_micros(), Ordering::Release);
+                }
                 let reply = match message {
                     // The board's time is the system's monotonic clock, the
                     // one a frame's capture time is given in.

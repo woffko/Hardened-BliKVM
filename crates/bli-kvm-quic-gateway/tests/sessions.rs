@@ -1306,6 +1306,25 @@ impl Page {
             .unwrap_or_else(|_| panic!("the counters never said {expected:?}"));
     }
 
+    /// Pings four times a second for `span`, as a page that is there does,
+    /// and is not silent, whatever it receives; each answer is read.
+    async fn keep_saying(&mut self, span: Duration) {
+        let until = tokio::time::Instant::now() + span;
+        let mut id = 1000;
+        while tokio::time::Instant::now() < until {
+            id += 1;
+            self.say(&PageControl::Ping { id, page_time: 0.0 }).await;
+            loop {
+                match self.hear().await {
+                    Some(GatewayControl::Pong { id: answered, .. }) if answered == id => break,
+                    Some(GatewayControl::Counters { .. }) => {}
+                    other => panic!("not the ping's answer: {other:?}"),
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
     /// Reads the counters until they give this share of the bitrate.
     async fn bitrate_share_becomes(&mut self, expected: u8) {
         let found = async {
@@ -1512,7 +1531,7 @@ async fn a_page_too_far_behind_starts_again_from_a_key_frame() {
     // so: 1.6 s later, the next frame finds it too far behind.
     encoder.send(Kind::Delta, 3, 1, 2000);
     assert_eq!(page.delta_frame().await.0.frame, 3);
-    tokio::time::sleep(Duration::from_millis(1600)).await;
+    page.keep_saying(Duration::from_millis(1600)).await;
     encoder.send(Kind::Delta, 4, 1, 400);
     encoder.asked(2).await;
     assert!(page.group_end().await.is_err(), "the group was not reset");
@@ -1556,7 +1575,7 @@ async fn less_on_its_way_than_a_key_frame_is_waited_for() {
     ));
     encoder.send(Kind::Delta, 2, 1, 400);
     assert_eq!(page.delta_frame().await.0.frame, 2);
-    tokio::time::sleep(Duration::from_millis(1600)).await;
+    page.keep_saying(Duration::from_millis(1600)).await;
     encoder.send(Kind::Delta, 3, 1, 400);
     assert_eq!(page.delta_frame().await.0.frame, 3);
     page.counters_become((3, 0, 1)).await;
@@ -1579,7 +1598,7 @@ async fn the_next_key_frame_waits_for_a_slow_one() {
     page.key_frame().await.unwrap();
     encoder.send(Kind::Delta, 2, 1, 400);
     assert_eq!(page.delta_frame().await.0.frame, 2);
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    page.keep_saying(Duration::from_millis(600)).await;
     encoder.send(Kind::Key, 3, 3, 1000);
     encoder.send(Kind::Delta, 4, 3, 400);
     assert!(page.group_end().await.is_ok(), "the first group was reset");
@@ -1646,17 +1665,68 @@ async fn a_key_frame_on_a_slow_path_is_waited_for() {
     encoder.send(Kind::Key, 1, 1, 1000);
     assert_eq!(page.video().await, started());
     page.key_frame().await.unwrap();
-    // The page says nothing of the key frame for 1.6 s: the group goes on.
-    tokio::time::sleep(Duration::from_millis(1600)).await;
+    // The page says nothing of the key frame for 1.6 s, though it pings:
+    // the group goes on.
+    page.keep_saying(Duration::from_millis(1600)).await;
     encoder.send(Kind::Delta, 2, 1, 400);
     assert_eq!(page.delta_frame().await.0.frame, 2);
     page.counters_become((2, 0, 1)).await;
     // Past four seconds it is given up.
-    tokio::time::sleep(Duration::from_millis(2600)).await;
+    page.keep_saying(Duration::from_millis(2600)).await;
     encoder.send(Kind::Delta, 3, 1, 400);
     encoder.asked(2).await;
     assert!(page.group_end().await.is_err(), "the group was not reset");
     page.counters_become((2, 1, 1)).await;
+}
+
+/// A page that says nothing for a second is silent: frozen in the
+/// background, or gone with its session still open. It holds nobody's
+/// bitrate down, and nothing is given up or asked for on its account; once
+/// it speaks again its path is judged afresh.
+#[tokio::test]
+async fn a_silent_page_holds_nobody_back() {
+    let (board, encoder) = Board::with_encoder().await;
+    let mut page = board.welcomed(&board.server.token("73")).await;
+    page.say(&PageControl::Video { subscribe: true }).await;
+    encoder.asked(1).await;
+    encoder.send(Kind::Key, 1, 1, 1000);
+    assert_eq!(page.video().await, started());
+    page.key_frame().await.unwrap();
+    page.say(&PageControl::Received { capture: 1000 }).await;
+    // Frame 2, larger than the key frame, is never said to have arrived:
+    // 1.6 s later the page, which pings, is too far behind.
+    encoder.send(Kind::Delta, 2, 1, 2000);
+    assert_eq!(page.delta_frame().await.0.frame, 2);
+    page.keep_saying(Duration::from_millis(1600)).await;
+    encoder.send(Kind::Delta, 3, 1, 400);
+    encoder.asked(2).await;
+    page.bitrate_share_becomes(75).await;
+
+    // The page falls silent with the next group's key frame not said to
+    // have arrived: past a second its share is whole again, and past four
+    // nothing is given up or asked for.
+    encoder.send(Kind::Key, 4, 4, 1000);
+    assert_eq!(page.key_frame().await.unwrap().0.frame, 4);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    encoder.send(Kind::Delta, 5, 4, 400);
+    assert_eq!(page.delta_frame().await.0.frame, 5);
+    page.bitrate_share_becomes(100).await;
+    tokio::time::sleep(Duration::from_millis(3200)).await;
+    encoder.send(Kind::Delta, 6, 4, 400);
+    assert_eq!(page.delta_frame().await.0.frame, 6);
+    assert_eq!(encoder.asked.load(Ordering::SeqCst), 2);
+    let shares = eventually(|| {
+        let seen = board.server.seen.lock().unwrap();
+        (seen.shares.len() >= 2).then(|| seen.shares.clone())
+    })
+    .await;
+    assert_eq!(
+        shares,
+        [
+            ("session-1".to_string(), 75),
+            ("session-1".to_string(), 100)
+        ]
+    );
 }
 
 /// Why there is no picture: the server refuses, there is no encoder, or the

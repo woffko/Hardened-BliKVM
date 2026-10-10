@@ -27,6 +27,12 @@
 //!   key frame, has every group reset, and the picture starts again from a
 //!   key frame that is asked for: the page then shows the present instead of
 //!   a picture that grows older on a path that cannot carry it.
+//! - A page that has said nothing for a second is silent: frozen in the
+//!   background, as a phone's browser does with a page whose app is not in
+//!   front, or gone with its session still open until the transport gives
+//!   it up. What it has not received is no evidence of its path: no group is
+//!   given up or left out for it, and it holds nobody's bitrate down. Once
+//!   it speaks again its path is judged afresh.
 
 use std::{
     collections::VecDeque,
@@ -45,6 +51,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use wtransport::{Connection, VarInt};
 
 use crate::{
+    clock::monotonic_micros,
     frames::Subscription,
     share::{FULL, PathShare},
 };
@@ -67,6 +74,9 @@ pub struct VideoControl {
     /// The capture time of the newest frame the page has said it received
     /// whole; zero until it says.
     pub page_received: AtomicU64,
+    /// When the page last said anything, on the board's monotonic clock in
+    /// microseconds.
+    pub page_heard: AtomicU64,
     /// The share of the chosen bitrate, in percent, that the session's path
     /// carries: the picture sets it, the session tells the server.
     pub share: watch::Sender<u8>,
@@ -77,6 +87,7 @@ impl Default for VideoControl {
         Self {
             page_needs_key: AtomicBool::new(false),
             page_received: AtomicU64::new(0),
+            page_heard: AtomicU64::new(monotonic_micros()),
             share: watch::Sender::new(FULL),
         }
     }
@@ -90,6 +101,8 @@ const MAX_PAGE_LAG: Duration = Duration::from_millis(1500);
 const SLOW_KEY: Duration = Duration::from_millis(500);
 /// ... and waited for this long before its group is given up.
 const MAX_KEY_WAIT: Duration = Duration::from_secs(4);
+/// A page that has said nothing this long is silent.
+const SILENT_MICROS: u64 = 1_000_000;
 /// The frames sent that are remembered until the page says it received them.
 const MAX_UNRECEIVED: usize = 1024;
 
@@ -359,6 +372,7 @@ pub async fn serve(
     let mut groups = Groups::default();
     let mut unreceived = Unreceived::default();
     let mut share = PathShare::new(*control.share.borrow(), Instant::now());
+    let mut silent = false;
     let tell = |percent: Option<u8>| {
         if let Some(percent) = percent {
             control.share.send_replace(percent);
@@ -379,8 +393,30 @@ pub async fn serve(
         let now = Instant::now();
         let received = control.page_received.load(Ordering::Acquire);
         let lag = unreceived.lag(received, now);
-        tell(share.lag(now, lag));
-        let key_waited = groups.key_waited(received, now);
+        let heard = control.page_heard.load(Ordering::Acquire);
+        match (
+            silent,
+            monotonic_micros().saturating_sub(heard) > SILENT_MICROS,
+        ) {
+            (false, true) => {
+                // A silent page holds nobody's bitrate down.
+                silent = true;
+                control
+                    .share
+                    .send_if_modified(|percent| std::mem::replace(percent, FULL) != FULL);
+            }
+            (true, false) => {
+                // It speaks again: its path is judged afresh.
+                silent = false;
+                share = PathShare::new(FULL, now);
+            }
+            _ => {}
+        }
+        if !silent {
+            tell(share.lag(now, lag));
+        }
+        // What a silent page has not received is no evidence of its path.
+        let key_waited = groups.key_waited(received, now).filter(|_| !silent);
         match header.kind {
             Kind::Key => {
                 let Ok(head) = FrameHeader::key(
@@ -420,9 +456,10 @@ pub async fn serve(
                 let next = Group::open(&connection, bytes, header.capture_micros);
                 // The group before is finished, or reset with every earlier
                 // one if a queue has built in front of the page.
-                let behind = share.queued()
-                    || lag > MAX_PAGE_LAG
-                    || key_waited.is_some_and(|waited| waited > MAX_KEY_WAIT);
+                let behind = !silent
+                    && (share.queued()
+                        || lag > MAX_PAGE_LAG
+                        || key_waited.is_some_and(|waited| waited > MAX_KEY_WAIT));
                 if groups.start(next, behind, now) {
                     unreceived.forget();
                 }
@@ -436,12 +473,13 @@ pub async fn serve(
                     counters.frames_dropped.fetch_add(1, Ordering::Relaxed);
                     continue;
                 };
-                let given_up = match key_waited {
-                    // A key frame on its way too long.
-                    Some(waited) => waited > MAX_KEY_WAIT,
-                    // More on its way than a key frame, for too long.
-                    None => lag > MAX_PAGE_LAG && unreceived.bytes > current.key_bytes,
-                };
+                let given_up = !silent
+                    && match key_waited {
+                        // A key frame on its way too long.
+                        Some(waited) => waited > MAX_KEY_WAIT,
+                        // More on its way than a key frame, for too long.
+                        None => lag > MAX_PAGE_LAG && unreceived.bytes > current.key_bytes,
+                    };
                 if given_up {
                     // The path does not carry the picture: what is queued is
                     // dropped and the picture starts again from a key frame.
