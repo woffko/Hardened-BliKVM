@@ -280,3 +280,45 @@ also allowed a probe on a narrowed path, which lowers the H.264 bitrate of
 every viewer for a while.
 
 Receipts: `evidence/private/upscale-20261008/quic-protocol2/`.
+
+### Slot 81 and update-runtime dev37 on the board (2026-10-10)
+
+The full check passed on `ee84786`, from which slot 81 was built. At the
+operator's word it went onto the board through the update API, and
+update-runtime `0.1.0~dev37` through `dpkg` right after it (between the
+two, 18 s, the board's old gateway refused the server's link protocol 2);
+the gateway was restarted, as its unit had been active. The board's state
+after it differed from before only in the confirmed slot (80 to 81), the
+previous one (79 to 80) and the runtime (dev36 to dev37): switches,
+firewall mode, video settings and the H.264 engine as found.
+
+| Path, board | Frames a second | Age, median / 95th percentile | Given up / key frames asked / decoder restarts |
+| --- | --- | --- | --- |
+| direct, 30 s (the target's screen nearly still) | 8.3 | 54 / 124 ms | 0 / 0 / 0 |
+| 3 % lost and 40 ms each way, 60 s | 13.5 (the encoder's 11.7) | 147 / 273 ms | 0 / 0 / 0 |
+| narrowed to 3 Mbit/s, 1 s queue, 120 s | 8.6 | 241 / 778 ms | 0 / 0 / 0 |
+
+On the narrowed path the encoder's journal shows the share at work on the
+operator's 8000 kbit/s: 6000, 7200, 8000, 6000, 7200, 8000, 6000, 4480,
+5360, 6400 and 4800 kbit/s, and 8000 again as soon as the next viewer of
+H.264 came. `gui_walk_device` in both layouts and `vp8_webrtc_probe` in
+H.264 and VP8 passed.
+
+The operator, the pages reloaded: QUIC smooth without freezes on the phone
+and the desktop; VP8, MJPEG and the pinch as on slot 80. The phone's
+monitor: no frame given up, no key frame asked for, no decoder restart,
+737 packets lost on its Wi-Fi and sent again, the share at 100 %, two
+sessions opened. The board's journal explained the second session: twice
+the phone's page was frozen with another app in front, gave its session
+up when it ran again, and opened another, while the gateway kept the old
+one open for the transport's 30 s; that session said nothing, looked
+further behind every second, and within 9 s took the encoder to a quarter
+of the chosen bitrate for every viewer. `1256462` leaves a silent page
+unjudged, `28e3c01` no longer counts a frozen page's time against its
+session, `8b0758e` calls the lost packets packets, and `b76e555` makes the
+gateway update-runtime `0.1.0~dev38`.
+
+Receipts: `evidence/private/update-to-seq81-010-beta4-202610100707.json`,
+`quic-video-device-seq81*.json`, `gui-walk-seq81-*.json`,
+`webrtc-*-seq81.json`, `upscale-20261008/board/` (state, facts, the
+encoder's journal on the narrowed path, the phone's sessions).
