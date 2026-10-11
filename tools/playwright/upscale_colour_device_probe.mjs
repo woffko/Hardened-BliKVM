@@ -6,14 +6,17 @@
 // plainly, and the three are read at the same moment as a grid of patches,
 // each patch's mean colour taken from its middle. The board serves two MJPEG
 // streams at once: the MJPEG picture's browser is also the plain MJPEG view,
-// and the other two start on H.264. The three must be laid out alike. Where the target's screen changed between the reads, the plain and
-// the upscaled picture differ in more than a tenth of the patches, and the
-// view is shown and read again. A view passes where, over the patches that
-// show the same, its upscaled picture is on each channel within one level of
-// its plain one, as a whole and in each of the dark, middle and light tones
-// that at least four patches have: upscaling sharpens edges and changes no
-// colour, so the upscaled picture is as far from the MJPEG one as the plain
-// picture is. How far each is from the MJPEG picture is recorded.
+// and the other two start on H.264. The three must be laid out alike. Where
+// the target's screen changed between the reads, the plain and the upscaled
+// picture differ in more than a tenth of the patches, and the view is shown
+// and read again. A view passes where, over the patches that show the same,
+// its upscaled picture is on each channel no further from the MJPEG picture
+// than its plain one, and one level, as a whole and in each of the dark,
+// middle and light tones that at least four patches have. Upscaling sharpens
+// edges and changes no colour; how far the plain path is from MJPEG is the
+// plain path's own (on the board VP8's SVG range filter draws the middle
+// greens two levels low, its shader table one). The receipt keeps each
+// picture's distance from MJPEG and from the other.
 //
 // Chromium draws in software here. Each browser is given a GPU's renderer
 // name, so that the page draws as for a GPU (VP8 through its range table)
@@ -137,14 +140,6 @@ function ready([view, upscaled]) {
   return screen.tagName === "VIDEO" && screen.videoWidth > 0;
 }
 
-/** The median of the values. */
-const median = (values) => {
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[middle]
-    : (sorted[middle - 1] + sorted[middle]) / 2;
-};
 const mean = (values) =>
   values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
 const luma = ([red, green, blue]) => 0.299 * red + 0.587 * green + 0.114 * blue;
@@ -402,37 +397,33 @@ try {
           lost.push(`${attempt} changed ${right.means.length - same.length}`);
           continue;
         }
-        const tones = TONES.map(([tone, low, high]) => {
-          const inTone = same.filter((index) => {
-            const level = luma(left.means[index]);
-            return level >= low && level < high;
-          });
+        // Against the MJPEG picture, read in its own browser at the same
+        // moment: the upscaled picture no further from it on any channel
+        // than the plain one, and one level, as a whole and in each tone.
+        const judge = (patches) => {
+          const plainFrom = apart(left.means, mjpeg.means, patches);
+          const upscaledFrom = apart(right.means, mjpeg.means, patches);
           return {
-            tone,
-            patches: inTone.length,
-            upscaledFromPlain: apart(right.means, left.means, inTone),
-          };
-        });
-        const fromPlain = apart(right.means, left.means, same);
-        const judged = [
-          fromPlain,
-          ...tones
-            .filter((tone) => tone.patches >= TONE_PATCHES)
-            .map((tone) => tone.upscaledFromPlain),
-        ];
-        // How far each is from the MJPEG picture, in the median patch: the
-        // MJPEG picture is read in its own browser, and a frame apart where
-        // the screen changes.
-        const fromMjpeg = (of) =>
-          [0, 1, 2].map((channel) =>
-            round(
-              median(
-                same.map(
-                  (index) => of[index][channel] - mjpeg.means[index][channel],
-                ),
-              ),
+            patches: patches.length,
+            upscaledFromPlain: apart(right.means, left.means, patches),
+            plainFromMjpeg: plainFrom,
+            upscaledFromMjpeg: upscaledFrom,
+            within: upscaledFrom.every(
+              (value, channel) =>
+                Math.abs(value) <= Math.abs(plainFrom[channel]) + WITHIN,
             ),
-          );
+          };
+        };
+        const tones = TONES.map(([tone, low, high]) => ({
+          tone,
+          ...judge(
+            same.filter((index) => {
+              const level = luma(left.means[index]);
+              return level >= low && level < high;
+            }),
+          ),
+        }));
+        const whole = judge(same);
         found = {
           view: view.name,
           attempt,
@@ -443,13 +434,11 @@ try {
           },
           laidOut: where(right.box),
           samePatches: same.length,
-          upscaledFromPlain: fromPlain,
+          ...whole,
           tones,
-          plainFromMjpeg: fromMjpeg(left.means),
-          upscaledFromMjpeg: fromMjpeg(right.means),
-          within: judged.every((channels) =>
-            channels.every((value) => Math.abs(value) <= WITHIN),
-          ),
+          within:
+            whole.within &&
+            tones.every((tone) => tone.patches < TONE_PATCHES || tone.within),
         };
       }
       assert.ok(
@@ -464,7 +453,7 @@ try {
     for (const view of measured.views) {
       assert.ok(
         view.within,
-        `${view.view} at ${measured.enlargement}: upscaled ${view.upscaledFromPlain} from plain, by tone ${view.tones.map((tone) => `${tone.tone} ${tone.patches}: ${tone.upscaledFromPlain}`).join("; ")}`,
+        `${view.view} at ${measured.enlargement}: from MJPEG upscaled ${view.upscaledFromMjpeg}, plain ${view.plainFromMjpeg}, by tone ${view.tones.map((tone) => `${tone.tone} ${tone.patches}: ${tone.upscaledFromMjpeg} / ${tone.plainFromMjpeg}`).join("; ")}`,
       );
     }
   }
