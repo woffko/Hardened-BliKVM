@@ -399,3 +399,106 @@ draws in software (`quic_video_contract`, `mjpeg_upscale_contract`,
 chose Auto as the default (2026-10-10, "6 авто"), and said to release
 everything: the application, the image and the RAW system bundle, whose
 update-runtime carries the QUIC gateway of protocol 2.
+
+## Phase 7: release (2026-10-10 and 11)
+
+### The picture against MJPEG on the board
+
+The release check reads the picture of each mode against the MJPEG frame
+with upscaling on at 133 and 200 %
+(`tools/playwright/upscale_colour_device_probe.mjs`). Its first versions
+compared a plain and an upscaled browser read at the same moment: QUIC came
+out within a tenth of a level, MJPEG and both WebRTC views about two levels
+darker in the median patch with single patches 55 to 143 levels apart, also
+with the target's screen kept still by the operator. The boxes the probe
+read told why: at 133 % the plain image and video lay at the view's left
+edge (x = 1), the upscaled canvas and the QUIC canvas at its middle
+(x = -560), so the probe compared different parts of the screen. An image
+or a video has no size of its own before its first frame, and the screen,
+a flex item, was shrunk to the view's width; the view's centring, which
+runs when the zoom, the fit or the resolution changes, found nothing to
+scroll sideways, and the picture, once its frame came, was shown from its
+left edge. A trace of the view's scroll writes on the board showed the
+plain VP8 view set to 0 three times while the video was 1438 px wide, and
+never after it grew to 2560. The watchdog's switch from an upscaled canvas
+to the plain image did the same. The plain path did so in beta.3 too.
+`29c6eb0` lays every view's screen out at the size it is drawn at from the
+start; the MJPEG contract checks an enlarged image whose first frame comes
+late and the watchdog's switch on an enlarged picture, and both fail
+without the change ("the enlarged image at 1,-180, the view's middle at
+640,360"; "the image at 1,-90 1600x900, the canvas was at -160,-90").
+
+The probe (`0484e81`, `69dd743`, `5175211`) shows the plain view and the
+upscaled one in browsers of their own beside the plain MJPEG picture, all
+three given a GPU's renderer name so that the page draws as for a GPU, and
+fails when they are not laid out alike (on slot 83: "the plain picture
+laid out at 1,-220 2560x1440, the upscaled one at -560,-220"). The board's
+video proxy serves two MJPEG streams at once (`max_connections`): a third
+waited until the probe gave up, so the MJPEG browser is also the plain
+MJPEG view. A reading counts where at least 90 % of the patches show the
+same in the plain and the upscaled picture (each channel within 6 levels);
+an upscaled canvas not yet drawn by SwiftShader is read again.
+
+On slot 84, with the target's screen still for five minutes at the
+operator's word, every view was read at the first attempt with all 96
+patches the same. The upscaled picture against the plain one, red, green
+and blue, as a whole:
+
+| View | 133 % | 200 % |
+| --- | --- | --- |
+| MJPEG | -0.01, -0.09, -0.01 | +0.12, +0.09, +0.10 |
+| VP8 over WebRTC | +0.01, -0.22, +0.15 | +0.11, -0.08, +0.12 |
+| H.264 over WebRTC | -0.02, -0.09, -0.04 | +0.18, +0.04, +0.04 |
+| H.264 over QUIC | +0.01, -0.10, +0.02 | +0.14, +0.08, +0.06 |
+
+The first criterion, the upscaled picture within one level of the plain
+one in each tone, failed by 0.12 in one place: VP8's middle tones at 133 %
+(12 patches), green +1.12. Read against MJPEG the reason shows: there
+VP8's plain path, its SVG range filter, draws green two levels below MJPEG
+(127 for 129), the upscaler's shader table one (128); the upscaled picture
+is the nearer (middle tones from MJPEG: plain +0.74, -1.87, +0.50,
+upscaled +0.44, -0.96, +0.19). The probe now judges as the goal states it:
+the upscaled picture no further from MJPEG than the plain one, and one
+level, on each channel, as a whole and in each tone with four patches or
+more. It passed in every view at both sizes
+(`evidence/private/upscale-colour-seq84d.json`).
+
+### The board's display (operator's item)
+
+At the operator's word (2026-10-10, "добавь в план отключение LCD дисплея
+как это в харденед наноквм сделано"; chosen: in beta.4, before slot 84,
+with Hardened NanoKVM's choices), the board's ST7789 goes dark after a time
+without activity (`d5f5dd2`; `docs/design/board-daemon-v1.md`, "The
+display's sleep"). On slot 84 the operator set 15 seconds: the display
+went dark; the button lit it once held for about three seconds (the
+daemon samples the button once a second; `buttonWakeups` 1 after it), and
+the operator kept three minutes.
+
+### Slot 84 on the board
+
+`scripts/check.sh` green on `d5f5dd2`. Slot 84 (`0.1.0-beta.4`, app tar
+`073e622bf0e656f05bc67f42430544d4650652796afcc3a36cedfedc8f798ea8`),
+installed through the update API at the operator's word and confirmed;
+the board's state changed only in its slots and in the new `device_oled`
+feature. Probes, all passed: the GUI at a desktop's and a phone's size
+with the quality monitor open (12 and 11 API calls, none failed); H.264
+and VP8 over WebRTC; the phone's reach; the engine chosen in the Screen
+menu each way over QUIC (the encoder 472 ms, the monitor 814 ms) and over
+WebRTC (404 and 822 ms), ending on the hardware engine; the QUIC picture
+for 30 s with the monitor (744 frames, 1049 sent by the gateway, none
+dropped, no packet lost, the share 100 %).
+
+That first QUIC reading, right after the install, found every frame 4.05 s
+old when drawn (95th percentile 4.06 s), the page's own delay 4 ms, where
+slots 81 to 83 read 54 to 68 ms. After the engine probe, which starts the
+encoder again, the same probe read 54 ms (95th percentile 61 ms; the
+board idle). The capture times and the gateway's clock are both the
+board's CLOCK_MONOTONIC (the encoder's `Instant`, the gateway's
+`clock_gettime`), and the encoder's frame hub hands its queue out as fast
+as the gateway reads, so neither explains a standing four seconds; the
+board's journal of that hour is in a file it skips as truncated. Slot 84
+changed nothing on the picture's way (the layout, the display, the owner's
+setting). It is recorded as an observation to watch after the next
+application update: if the QUIC monitor says frames are seconds old,
+switching the engine in the Screen menu and back starts the encoder
+again.

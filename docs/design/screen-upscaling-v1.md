@@ -181,6 +181,16 @@ focus the page sends no key to the target, as for its other fields.
 - Input binds to the element the view mounts as the screen
   (`screenElementAtom`, `useScreenRef`), so that a canvas replacing a video
   or a new canvas for a new worker takes the mouse and touch at once.
+- Every view lays its screen out at the size it is drawn at from the start
+  (`SCREEN_CLASS` in `screen/use-screen-fit.ts`). An image or a video before
+  its first frame, or a canvas before its first buffer, has no size of its
+  own, and as a flex item it was shrunk to the view: the view's centring,
+  run when the zoom, the fit or the resolution changes, then found nothing
+  to scroll sideways, and an enlarged picture opened at its left edge when
+  its first frame came after the layout, or moved there when the watchdog
+  switched to the plain path. The board's colour probe found it (phase 7):
+  it compared an upscaled canvas at the view's middle with a plain image at
+  its left edge.
 - A hidden page draws nothing. The QUIC worker is told and decodes its
   frames without drawing them, the newest drawn as soon as the page is
   seen; the WebRTC and MJPEG views get no frame callback or animation
@@ -260,7 +270,15 @@ focus the page sends no key to the target, as for its other fields.
   within 2 levels of the plain image, the squares' edges rising at least
   15 % more narrowly than the browser's own scaling of it, the mouse where
   it is; with a stream that goes on, a slowed draw stops upscaling and the
-  image is the screen again.
+  image is the screen again. Enlarged three times, an image whose first
+  frame comes after the layout is shown from its middle, and the watchdog's
+  switch leaves an enlarged picture where it was.
+- `tools/playwright/upscale_colour_device_probe.mjs` (a board): at 133 and
+  200 % each view shown plainly and upscaled in browsers of their own beside
+  the plain MJPEG picture, read at the same moment as a grid of patches; the
+  three laid out alike, a changed screen read again, and the upscaled
+  picture no further from MJPEG than the plain one, and one level, on each
+  channel, as a whole and in each tone.
 - `tools/playwright/quic_video_contract.mjs`: the QUIC picture at 200 %,
   plain and upscaled: the upscaled canvas has the shown size, the frame's
   number reads, the dark squares stay at 16, the squares' edges rise at
@@ -291,3 +309,10 @@ on the phone the page's own picture code took 1 % of the main thread and
 1 % of the QUIC worker with upscaling (SGSR, high, 0.80 ms a frame, every
 frame drawn) against 1 % and 2 % without; the operator chose Auto as the
 default.
+
+Phase 7 on the board (slot 84, the target's screen still): the picture of
+every view at 133 and 200 % upscaled came within 0.22 levels of its plain
+picture on each channel as a whole, and against MJPEG no further than the
+plain path anywhere; VP8's plain path, its SVG range filter, draws the
+middle greens two levels below MJPEG, the shader table one
+(`audit-20261009-upscaling-phases.md`, "Phase 7").

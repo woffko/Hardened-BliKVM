@@ -138,7 +138,11 @@ Device > Display, `GET`/`POST /api/vm/oled` with the reference's `exist` and
   turned off is tried again on the next sample. A request to turn the
   backlight off keeps the display dark until the button or a new choice.
   Nothing else wakes it: the status screen changes every few seconds
-  (temperature, load), which would light it as often.
+  (temperature, load), which would light it as often. The daemon samples
+  the button once a sample (a second on the board), and the policy wants a
+  debounced press held for its hold time: the button is held for two to
+  three seconds before the display lights (the operator's check on slot 84,
+  2026-10-11).
 - The status the daemon answers keeps its fields: the update runtime's
   health check reads it strictly (`board_readiness.rs`), so the display's
   state is not in it; a dark display reports `displayBacklightOn: false`,
