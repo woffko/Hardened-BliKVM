@@ -258,3 +258,15 @@ one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
 `bli-kvm-quic-gateway`, where its fault is not reachable (above). The card
 image and the RAW system bundle of this release carry the board's update
 runtime `0.1.0~dev36`, whose gateway was built from that lock.
+
+## RustSec scan for 0.1.0-beta.4 (2026-10-11)
+
+The lock has beta.3's 315 packages; since then only the board daemon gained
+a dependency on the workspace's own `bli-kvm-core`. `cargo audit --deny
+warnings`, run without fetching (the database as fetched on 2026-10-09, its
+last advisory commit of that morning, 1,296 advisories), reports the same
+one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
+`bli-kvm-quic-gateway`, where its fault is not reachable (above). The card
+image and the RAW system bundle of this release carry the board's update
+runtime `0.1.0~dev38`, whose gateway (QUIC protocol 2) was built from that
+lock.
