@@ -577,3 +577,18 @@ slot 85 as an application release 0.1.0-beta.5, the operator chose not
 to: the change corrects a number in the monitor on machines whose wall
 clock is stepped, and goes with the next release. The board ends as
 found, on slot 85 over the beta.4 system.
+
+### The release 0.1.0-beta.5 (2026-10-11)
+
+The goal's check asked that the published release carry the final slot;
+asked again, the operator chose to publish slot 85 ("Публикуем beta.5").
+Published as an application release (as beta.2 was):
+https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.5, the
+annotated tag `v0.1.0-beta.5` on `5e9f576` (slot 85's source `04745b0` and
+documents). Assets, SHA-256 as GitHub reports them and as computed here:
+`hardened-blikvm-application-0.1.0-beta.5-seq85.tar`
+`07682967c938bfc867ad04ed47b894070e22c9169c1b151e04fcbc08414bde34`,
+`SHA256SUMS` `80f55301b0fe3b5d77655fffbba8f6685954bb3ea033001bd0db90c502dc1247`.
+The card image and the RAW system update stay beta.4's; beta.4's notes
+start with a pointer to beta.5's application. The board runs slot 85 over
+beta.4's system, as found otherwise.
