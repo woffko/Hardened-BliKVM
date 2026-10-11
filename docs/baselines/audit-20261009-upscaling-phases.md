@@ -567,5 +567,13 @@ when drawn, 95th percentile 107 ms, the monitor's delay 53 ms, none
 dropped, no packet lost, the share 100 %, from the same development host
 whose clocks misread slot 84's), the GUI at a desktop's and a phone's size
 with the monitor open, H.264 and VP8 over WebRTC, and the phone's reach.
-The board ends as found, on slot 85 over the beta.4 system; it is not
-published.
+`scripts/check.sh` was green on `ccdada5`, which records it. The
+operator looked at slot 85 on the Android phone (Chrome) and the desktop:
+QUIC, VP8 and MJPEG upscaled with Auto smooth and without freezes, the
+pinch and the touches where they were made, the quality monitor fitting
+the phone with QUIC's delay in tens of milliseconds, the cursor's tip on
+the target's ("Всё так же хорошо", 2026-10-11). Asked whether to publish
+slot 85 as an application release 0.1.0-beta.5, the operator chose not
+to: the change corrects a number in the monitor on machines whose wall
+clock is stepped, and goes with the next release. The board ends as
+found, on slot 85 over the beta.4 system.
