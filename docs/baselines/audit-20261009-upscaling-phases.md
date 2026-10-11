@@ -502,3 +502,45 @@ setting). It is recorded as an observation to watch after the next
 application update: if the QUIC monitor says frames are seconds old,
 switching the engine in the Screen menu and back starts the encoder
 again.
+
+### The release 0.1.0-beta.4 (2026-10-11)
+
+At the operator's word ("выпускать всё", and "Публикуем" before the
+upload), published as a GitHub pre-release:
+https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.4, the
+annotated tag `v0.1.0-beta.4` on `2fc3d5c` (slot 84's source `d5f5dd2`, the
+colour probe's last changes, `5175211`, from which the image and the RAW
+bundle were built, and documents). Assets, SHA-256 as GitHub reports them
+and as computed here:
+
+| File | SHA-256 |
+| --- | --- |
+| `hardened-blikvm-h616-sd.img.zst` | `3be98a87fefba0799c0af49f9653ced4145f527180792c95f004597ec3d4315c` |
+| `hardened-blikvm-system-0.1.0-beta.4-seq6.tar` | `4408ec5253b85c97f2358701e8c2d8c10b07d44adc542ec20bb72f4f4f808739` |
+| `hardened-blikvm-application-0.1.0-beta.4-seq84.tar` | `073e622bf0e656f05bc67f42430544d4650652796afcc3a36cedfedc8f798ea8` |
+| `IMAGE-INFO.txt` | `5f114387d442e338c76b6b8c1623c8fc1b49e002cc3c953be0648cc45fe0b48b` |
+| `SHA256SUMS` | `810619fc59ad2b6c03b47d5b26d14a41fd8167ea22db2c26df93061aa45a741c` |
+
+The unpacked image (`5f1c7bae…`) is the `.zst`'s content, and its first
+partition the root file system the RAW bundle was made from (`fd11d51a…`):
+update runtime `0.1.0~dev38` (gateway `3d2e6c8c`), beta.3's encoder
+(`a09d9750`), slots 81 to 84, and none of the board owner's state files.
+The bundle's manifest (sequence 6) verified with the system key. The image
+was read from the board with no page or QUIC session open on it, at the
+operator's word.
+
+The RAW update from that bundle was installed on the test board onto
+beta.3's system with slot 84 (`evidence/private/raw-install-beta4-seq6.json`):
+upload and verification 6.7 minutes, write and start 36.3 minutes; the
+certificate, host keys, account, slot, host name, session lock, SSH, the
+switches and the display's sleep time came back, root's home as saved
+before and put back after, and the new system was confirmed (the board's
+floor is now 7). After it the QUIC picture was 56 ms old when drawn (95th
+percentile 81 ms) and the GUI walk passed. beta.3's notes start with a
+pointer to this release.
+
+The board ends as found: the slot, the RAW system and its floor are the
+release's; QUIC on, the firewall in Baseline, SSH and mDNS on, the RAW
+switch on, the H.264 engine hardware, WebRTC at 8000 kbit/s, quality 100,
+1920x1080 at 60; the display's sleep at the three minutes the operator
+chose.
