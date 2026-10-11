@@ -247,7 +247,10 @@ focus the page sends no key to the target, as for its other fields.
   reported against the view's geometry, through a pixel-ratio change, a
   resize and the zoom; upscaled, filling a view larger than the picture
   and laid out at a 2560x1440 target, the size set in the Screen menu with
-  no key sent on to the target.
+  no key sent on to the target. At 100, 150 and 200 % with pixel ratios 1
+  and 2, plainly and upscaled, the mouse's report is the point it is over
+  on the picture, and a finger's way on a phone moves the cursor as far
+  over the picture (24 cases).
 - `tools/test_upscale_settings.mjs`: the setting as the browser keeps it,
   the buffer's size, and when a frame is enlarged.
 - `tools/test_upscale_watchdog.mjs`: the watchdog's rule: every frame drawn,

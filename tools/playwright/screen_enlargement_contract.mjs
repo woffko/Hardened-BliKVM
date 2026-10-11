@@ -2,7 +2,9 @@
 // docs/design/screen-upscaling-v1.md): the fit in the view, times the zoom, times the display's pixel ratio,
 // computed in one place and kept current when the window is resized, the zoom is set and the pixel ratio changes
 // (the browser's zoom, another display). The page reports it on its scroll view, where probes read it. Upscaled, the
-// picture may be laid out larger than its own size: as large as the view, or at the target's resolution.
+// picture may be laid out larger than its own size: as large as the view, or at the target's resolution. At 100, 150
+// and 200 % with pixel ratios 1 and 2, plainly and upscaled, the mouse lands where it is on the picture and a finger's
+// way on a phone moves the cursor as far over the picture.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -13,6 +15,35 @@ const app = await startApp();
 const GPU =
   "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)";
 
+/** An MJPEG stream of one grey 1920x1080 frame, made by the browser's encoder. */
+const STREAM = await (async () => {
+  const page = await browser.newPage();
+  const base64 = await page.evaluate(async () => {
+    const canvas = new OffscreenCanvas(1920, 1080);
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#808080";
+    context.fillRect(0, 0, 1920, 1080);
+    const blob = await canvas.convertToBlob({
+      type: "image/jpeg",
+      quality: 0.7,
+    });
+    let text = "";
+    for (const byte of new Uint8Array(await blob.arrayBuffer())) {
+      text += String.fromCharCode(byte);
+    }
+    return btoa(text);
+  });
+  await page.close();
+  const jpeg = Buffer.from(base64, "base64");
+  return Buffer.concat([
+    Buffer.from(
+      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`,
+    ),
+    jpeg,
+    Buffer.from("\r\n"),
+  ]);
+})();
+
 async function open({
   width,
   height,
@@ -20,10 +51,13 @@ async function open({
   zoom = null,
   upscale = null,
   sent = null,
+  mobile = false,
+  stream = false,
 }) {
   const context = await browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: ratio,
+    ...(mobile ? { isMobile: true, hasTouch: true } : {}),
   });
   await context.addCookies([
     { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
@@ -100,6 +134,17 @@ async function open({
     await page.routeWebSocket("**/api/ws", (socket) =>
       socket.onMessage((message) => {
         if (typeof message !== "string") sent.push([...message]);
+      }),
+    );
+  }
+  if (stream) {
+    await page.route("**/api/stream/mjpeg**", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "multipart/x-mixed-replace; boundary=frame",
+        },
+        body: STREAM,
       }),
     );
   }
@@ -313,8 +358,140 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  // The mouse at 100, 150 and 200 % with pixel ratios 1 and 2, plainly and
+  // upscaled: its report is the point it is over on the picture as laid out.
+  const FILL = {
+    mode: "auto",
+    sharpness: "medium",
+    size: "fill",
+    target: null,
+  };
+  const landed = [];
+  for (const zoom of [1, 1.5, 2]) {
+    for (const ratio of [1, 2]) {
+      for (const upscale of [null, FILL]) {
+        const sent = [];
+        const { context, page, errors } = await open({
+          width: 1280,
+          height: 720,
+          ratio,
+          zoom,
+          upscale,
+          sent,
+          stream: true,
+        });
+        await settled(page, zoom, upscale ? "fill" : "fit");
+        if (upscale) await page.locator("canvas#screen").waitFor();
+        else
+          await page.waitForFunction(
+            () => document.querySelector("img#screen")?.naturalWidth > 0,
+          );
+        const box = await page.locator("#screen").boundingBox();
+        const view = await page
+          .locator("[data-kvm-screen-scroll]")
+          .boundingBox();
+        const left = Math.max(box.x, view.x);
+        const top = Math.max(box.y, view.y);
+        const right = Math.min(box.x + box.width, view.x + view.width);
+        const bottom = Math.min(box.y + box.height, view.y + view.height);
+        const x = Math.round(left + (right - left) * 0.37);
+        const y = Math.round(top + (bottom - top) * 0.61);
+        await page.mouse.move(x, y);
+        let report = null;
+        for (let attempt = 0; attempt < 40 && !report; attempt += 1) {
+          report = sent.filter((data) => data[0] === 2).at(-1) ?? null;
+          if (!report) await page.waitForTimeout(50);
+        }
+        assert.ok(report, "no mouse report sent");
+        const at = (low, high) => report[low] | (report[high] << 8);
+        const label = `${zoom * 100} %, ratio ${ratio}, ${upscale ? "upscaled" : "plain"}`;
+        for (const [got, want] of [
+          [at(2, 3), Math.round((0x7fff * (x - box.x)) / box.width)],
+          [at(4, 5), Math.round((0x7fff * (y - box.y)) / box.height)],
+        ]) {
+          assert.ok(Math.abs(got - want) <= 2, `${label}: ${got} for ${want}`);
+        }
+        landed.push(label);
+        assert.deepEqual(errors, []);
+        await context.close();
+      }
+    }
+  }
+
+  // A finger on a phone at the same sizes and ratios: the cursor moves by
+  // the finger's way over the picture as it is laid out.
+  for (const zoom of [1, 1.5, 2]) {
+    for (const ratio of [1, 2]) {
+      for (const upscale of [null, FILL]) {
+        const { context, page, errors } = await open({
+          width: 390,
+          height: 844,
+          ratio,
+          zoom,
+          upscale,
+          mobile: true,
+          stream: true,
+        });
+        await settled(page, zoom, upscale ? "fill" : "fit");
+        if (upscale) await page.locator("canvas#screen").waitFor();
+        else
+          await page.waitForFunction(
+            () => document.querySelector("img#screen")?.naturalWidth > 0,
+          );
+        const touch = await context.newCDPSession(page);
+        const drag = async (distance) => {
+          const view = await page
+            .locator("[data-kvm-screen-scroll]")
+            .boundingBox();
+          const x = view.x + view.width / 2 - distance / 2;
+          const y = view.y + view.height / 2;
+          await touch.send("Input.dispatchTouchEvent", {
+            type: "touchStart",
+            touchPoints: [{ x, y }],
+          });
+          for (let step = 1; step <= 10; step += 1) {
+            await touch.send("Input.dispatchTouchEvent", {
+              type: "touchMove",
+              touchPoints: [{ x: x + (distance * step) / 10, y }],
+            });
+          }
+          await touch.send("Input.dispatchTouchEvent", {
+            type: "touchEnd",
+            touchPoints: [],
+          });
+        };
+        // Where the cursor is on the picture, in CSS pixels from its left.
+        const cursor = () =>
+          page.evaluate(() => {
+            const screen = document
+              .getElementById("screen")
+              .getBoundingClientRect();
+            const mark = document.querySelector(
+              '[data-testid="mobile-cursor"]',
+            );
+            return Number.parseFloat(mark.style.left) - screen.left;
+          });
+        await drag(-40);
+        await page.waitForTimeout(200);
+        const from = await cursor();
+        await drag(60);
+        await page.waitForTimeout(200);
+        const to = await cursor();
+        const label = `${zoom * 100} %, ratio ${ratio}, ${upscale ? "upscaled" : "plain"}, a finger`;
+        assert.ok(
+          Math.abs(to - from - 60) <= 2,
+          `${label}: moved 60 px, the cursor ${(to - from).toFixed(1)} px`,
+        );
+        landed.push(label);
+        assert.deepEqual(errors, []);
+        await context.close();
+      }
+    }
+  }
+  assert.equal(landed.length, 24);
+
   console.log(
-    "Screen enlargement: fit x zoom x pixel ratio reported, and kept current through a pixel-ratio change, a resize and the zoom; upscaled, filling the view and at the target's resolution, set in the Screen menu with no key sent on",
+    "Screen enlargement: fit x zoom x pixel ratio reported, and kept current through a pixel-ratio change, a resize and the zoom; upscaled, filling the view and at the target's resolution, set in the Screen menu with no key sent on; the mouse and a finger where they are at 100, 150 and 200 % with pixel ratios 1 and 2, plainly and upscaled",
   );
 } finally {
   await browser.close();
