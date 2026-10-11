@@ -554,3 +554,18 @@ release's; QUIC on, the firewall in Baseline, SSH and mDNS on, the RAW
 switch on, the H.264 engine hardware, WebRTC at 8000 kbit/s, quality 100,
 1920x1080 at 60; the display's sleep at the three minutes the operator
 chose.
+
+### Slot 85 after the release (2026-10-11)
+
+At the operator's word ("Ставь"), slot 85 (`0.1.0-beta.5`, from `04745b0`,
+the QUIC worker's clock; app tar
+`07682967c938bfc867ad04ed47b894070e22c9169c1b151e04fcbc08414bde34`), with
+`scripts/check.sh` green on that commit, was installed through the update
+API and confirmed; the board's state changed only in its slots. Probes,
+all passed: the QUIC picture for 30 s with the monitor (frames 57 ms old
+when drawn, 95th percentile 107 ms, the monitor's delay 53 ms, none
+dropped, no packet lost, the share 100 %, from the same development host
+whose clocks misread slot 84's), the GUI at a desktop's and a phone's size
+with the monitor open, H.264 and VP8 over WebRTC, and the phone's reach.
+The board ends as found, on slot 85 over the beta.4 system; it is not
+published.
