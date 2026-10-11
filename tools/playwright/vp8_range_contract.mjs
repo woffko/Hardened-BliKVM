@@ -7,7 +7,9 @@
 // says what its samples mean, it must draw them unchanged. A browser that
 // draws in software is left drawing VP8 as before (a filter costs it a core):
 // headless Chromium here is one (SwiftShader), and stands in for a browser
-// with a GPU by the renderer name its WebGL is made to give.
+// with a GPU by the renderer name its WebGL is made to give. A browser that
+// names a GPU but has no WebGL2 draws VP8 through the table as before,
+// without upscaling or a notice.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -61,9 +63,9 @@ async function open(
   mode,
   marked,
   renderer,
-  { upscale = "off", ratio = 1, sent = null } = {},
+  { upscale = "off", ratio = 1, sent = null, from = browser } = {},
 ) {
-  const context = await browser.newContext({
+  const context = await from.newContext({
     viewport: { width: WIDTH, height: HEIGHT },
     deviceScaleFactor: ratio,
   });
@@ -558,8 +560,47 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  // A browser that names a GPU but has no WebGL2 (Chromium told so): VP8
+  // through the table on the video as before, and with Auto nothing to
+  // upscale with: no canvas and no notice.
+  {
+    const withoutWebgl2 = await launchChromium({ args: ["--disable-webgl2"] });
+    try {
+      const { context, page, errors } = await open("vp8", "narrow", GPU, {
+        upscale: "auto",
+        ratio: 2,
+        from: withoutWebgl2,
+      });
+      assert.equal(
+        await page.evaluate(
+          () => document.createElement("canvas").getContext("webgl2") !== null,
+        ),
+        false,
+      );
+      await page.waitForTimeout(1000);
+      assert.equal(await page.locator("canvas#screen").count(), 0);
+      assert.equal(await page.locator("video#screen").count(), 1);
+      assert.equal(
+        await page.evaluate(
+          () => getComputedStyle(document.getElementById("screen")).filter,
+        ),
+        'url("#vp8-full-range")',
+      );
+      assert.equal(await page.getByTestId("upscale-notice").count(), 0);
+      const levels = await drawn(page);
+      measured.withoutWebgl2 = round(worst(levels, kept));
+      assert.ok(
+        measured.withoutWebgl2 <= 1.5,
+        `greys ${measured.withoutWebgl2}`,
+      );
+      assert.deepEqual(errors, []);
+      await context.close();
+    } finally {
+      await withoutWebgl2.close();
+    }
+  }
   console.log(
-    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a slowed draw stopped by the watchdog after ${measured.watchdog} s; a browser drawing in software left as before, not upscaled, passed`,
+    `VP8 range: the board's full-range samples drawn as the JPEG in VP8 (greys within ${measured.vp8Greys}, colours within ${measured.vp8Colours} levels, black and white kept; ${measured.stretched} without the table), and H.264 over the same view drawn unchanged (within ${measured.h264}); upscaled, VP8's greys within ${measured.upscaledVp8Greys} and colours within ${measured.upscaledVp8Colours}, H.264 within ${measured.upscaledH264}; a slowed draw stopped by the watchdog after ${measured.watchdog} s; a browser drawing in software left as before, not upscaled, and one without WebGL2 drawing through the table as before (greys within ${measured.withoutWebgl2}), not upscaled, passed`,
   );
 } finally {
   await browser.close();

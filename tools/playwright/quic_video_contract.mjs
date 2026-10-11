@@ -14,7 +14,8 @@
 // had over the session and nothing else is. With upscaling on, the picture
 // is drawn through the page's upscaler and stays readable, of the same
 // levels, sharper than the browser's stretch, and the pointer lands where it
-// is on the picture.
+// is on the picture. A worker without WebGL2 draws the picture plainly, without
+// a notice.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
@@ -412,6 +413,38 @@ try {
       );
       assert.equal((await drawnAs(page)).buffer, "640x360");
       plainRise = (await squares(page)).rise;
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
+
+    // A worker without WebGL2 in a browser that names a GPU: Auto finds
+    // nothing to draw with, the view mounts a plain canvas again, and the
+    // picture goes on from the session, without the notice.
+    {
+      const withoutWebgl2 = async (context) => {
+        await zoomed("auto")(context);
+        await context.route("**/assets/video.worker-*.js", async (route) => {
+          const response = await route.fetch();
+          const body = await response.text();
+          await route.fulfill({
+            response,
+            body: `OffscreenCanvas.prototype.getContext = ((get) => function (kind, ...rest) { return kind === "webgl2" ? null : get.call(this, kind, ...rest); })(OffscreenCanvas.prototype.getContext);\n${body}`,
+          });
+        });
+      };
+      const { context, page, errors } = await open({ prepare: withoutWebgl2 });
+      await playing(page);
+      await until("the plain picture reports itself", async () =>
+        (await drawnAs(page)).mode === "off" ? true : null,
+      );
+      const before = await frameNumber(page, 2);
+      await sleep(1000);
+      const after = await frameNumber(page, 2);
+      assert.ok(
+        before !== null && after !== null && after > before,
+        `the plain picture's number went from ${before} to ${after}`,
+      );
+      assert.equal(await page.getByTestId("upscale-notice").count(), 0);
       assert.deepEqual(errors, []);
       await finish(page, context);
     }

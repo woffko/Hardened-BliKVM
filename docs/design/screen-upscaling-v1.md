@@ -263,7 +263,9 @@ focus the page sends no key to the target, as for its other fields.
   within 1.5, the buffer of the shown device pixels, every frame that came
   drawn, no SVG filter, the mouse where it is; a slowed draw stops
   upscaling and the video plays; a browser drawing in software keeps the
-  video as the screen with upscaling Auto. Its track plays ten frames a
+  video as the screen with upscaling Auto; one that names a GPU but has no
+  WebGL2 draws VP8 through the table on the video as before, not upscaled
+  and without a notice. Its track plays ten frames a
   second: SwiftShader draws the 2556x1438 buffer on the page's thread at a
   cost no GPU has.
 - `tools/playwright/mjpeg_upscale_contract.mjs`: the stream's patches
@@ -272,7 +274,9 @@ focus the page sends no key to the target, as for its other fields.
   it is; with a stream that goes on, a slowed draw stops upscaling and the
   image is the screen again. Enlarged three times, an image whose first
   frame comes after the layout is shown from its middle, and the watchdog's
-  switch leaves an enlarged picture where it was.
+  switch leaves an enlarged picture where it was. A browser that names a GPU
+  but has no WebGL2 (Chromium told `--disable-webgl2`) shows the image as
+  before, without a notice, the Screen menu saying why.
 - `tools/playwright/upscale_colour_device_probe.mjs` (a board): at 133 and
   200 % each view shown plainly and upscaled in browsers of their own beside
   the plain MJPEG picture, read at the same moment as a grid of patches; the
@@ -290,7 +294,9 @@ focus the page sends no key to the target, as for its other fields.
   the notice while the picture goes on plainly. On a phone a pinch keeps
   the buffer while the fingers move and draws at the new size once they
   stop; a page hidden for 12 s draws nothing and keeps the picture on the
-  session.
+  session. A worker without WebGL2 (its `getContext` refusing it) in a
+  browser that names a GPU: Auto mounts a plain canvas again and the
+  picture goes on, without a notice.
 
 ## Measured
 

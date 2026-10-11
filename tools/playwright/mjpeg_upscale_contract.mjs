@@ -7,7 +7,8 @@
 // bilinear), the frames read are drawn, and the mouse lands where it is on the picture. With a stream that goes on and a
 // draw slowed on the page's thread, the watchdog stops upscaling and the image is the screen again. Enlarged beyond the
 // view, the picture is shown from its middle, also when its first frame comes after the page is laid out, and the
-// watchdog's switch to the image leaves it where it was.
+// watchdog's switch to the image leaves it where it was. A browser that names a GPU but has no WebGL2 shows the image
+// as before, without a notice, and the Screen menu says why.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -111,9 +112,15 @@ const whole = Buffer.concat(
 async function open(
   upscale,
   sent = null,
-  { stream = "whole", late = 0, zoom = null, pixelRatio = 2 } = {},
+  {
+    stream = "whole",
+    late = 0,
+    zoom = null,
+    pixelRatio = 2,
+    from = browser,
+  } = {},
 ) {
-  const context = await browser.newContext({
+  const context = await from.newContext({
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: pixelRatio,
   });
@@ -484,8 +491,47 @@ try {
     await context.close();
   }
 
+  // A browser that names a GPU but has no WebGL2 (Chromium told so): Auto
+  // finds nothing to draw with, the image is the screen as before, there is
+  // no notice, and the Screen menu says why.
+  {
+    const withoutWebgl2 = await launchChromium({ args: ["--disable-webgl2"] });
+    try {
+      const { context, page, errors } = await open("auto", null, {
+        from: withoutWebgl2,
+      });
+      assert.deepEqual(
+        await page.evaluate(() => ({
+          webgl: document.createElement("canvas").getContext("webgl") !== null,
+          webgl2:
+            document.createElement("canvas").getContext("webgl2") !== null,
+        })),
+        { webgl: true, webgl2: false },
+      );
+      await page.waitForFunction(() => {
+        const image = document.querySelector("img#screen");
+        return image && image.naturalWidth > 0;
+      });
+      await page.waitForTimeout(500);
+      assert.equal(await page.locator("canvas#screen").count(), 0);
+      assert.equal(await page.getByTestId("upscale-notice").count(), 0);
+      await page.locator("svg.lucide-monitor").first().click();
+      await page.getByText("Upscaling", { exact: true }).hover();
+      await page
+        .getByText(
+          "Upscaling stopped on this page: the browser cannot draw it here.",
+          { exact: true },
+        )
+        .waitFor();
+      assert.deepEqual(errors, []);
+      await context.close();
+    } finally {
+      await withoutWebgl2.close();
+    }
+  }
+
   console.log(
-    `MJPEG upscaled: the stream read and its frames drawn (${state.frames} received/decoded/drawn) into a ${state.buffer} canvas, the patches within ${worst.toFixed(1)} of the plain image, the squares' edges rising in ${upscaled.rise.toFixed(2)} px against ${plain.rise.toFixed(2)} px stretched, the pointer where it is, a slowed draw stopped by the watchdog after ${stoppedAfter.toFixed(1)} s, an enlarged image whose frame came late shown from its middle (${late.x},${late.y}), and the switch leaving an enlarged picture where it was (${switched.x},${switched.y}) passed`,
+    `MJPEG upscaled: the stream read and its frames drawn (${state.frames} received/decoded/drawn) into a ${state.buffer} canvas, the patches within ${worst.toFixed(1)} of the plain image, the squares' edges rising in ${upscaled.rise.toFixed(2)} px against ${plain.rise.toFixed(2)} px stretched, the pointer where it is, a slowed draw stopped by the watchdog after ${stoppedAfter.toFixed(1)} s, an enlarged image whose frame came late shown from its middle (${late.x},${late.y}), the switch leaving an enlarged picture where it was (${switched.x},${switched.y}), and a browser without WebGL2 showing the image as before with the menu saying why passed`,
   );
 } finally {
   await browser.close();
