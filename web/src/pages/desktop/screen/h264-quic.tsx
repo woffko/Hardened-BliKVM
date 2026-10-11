@@ -187,7 +187,8 @@ export const H264Quic = () => {
         const data = buffer(bytes);
         post({ type: 'groupframe', data }, [data]);
       },
-      pong: (roundTripMs, boardMicros, at) => post({ type: 'pong', roundTripMs, boardMicros, at })
+      pong: (roundTripMs, boardMicros, at) =>
+        post({ type: 'pong', roundTripMs, boardMicros, at, sent: performance.now() })
     });
     return () => {
       document.removeEventListener('visibilitychange', seen);

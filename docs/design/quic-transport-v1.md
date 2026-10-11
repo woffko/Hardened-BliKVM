@@ -386,6 +386,22 @@ path's live limit.
   off by tens of milliseconds. Between two pings 250 ms apart the same clock
   is off by less than 1 ms (`tools/test_quic_board_clock.mjs` plays it).
 
+  The pings are answered on the page's thread, and the frames drawn in its
+  worker: the page hands each answer over with the time it arrived and the
+  time it is sent, both by the page's `performance.now()`, and the worker
+  places them on its own clock by the quickest of those messages
+  (`PageClock`). The two count from their own origins on one monotonic
+  clock; the origins themselves are the wall clock when each context
+  began, and the first version placed the page's times by them. On slot 84
+  the first board probe after the install read every frame 4.05 s old,
+  slots 81 to 83 54 to 68 ms: the development host's wall clock is kept by
+  steps of about a second against its slow monotonic clock, and a worker
+  begun a few steps after its page put every time the page handed over
+  that far off (workers begun one by one in a page read 3, 929 and then
+  1858 ms apart from it within 80 s). The picture was not late. The video
+  contract now gives the worker an origin 4 s off: 6 ms with the change,
+  4006 ms without it (2026-10-11).
+
 **In the page** (`web/src/lib/quic`):
 
 - `video-receiver.ts` holds the rules above and nothing else: no clock, no

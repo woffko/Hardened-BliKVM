@@ -8,7 +8,7 @@ import { Spans } from '../busy.ts';
 import { drawing, type Sharpness } from '../upscale/settings.ts';
 import { Upscaler, type UpscaleReport } from '../upscale/upscaler.ts';
 import { UpscaleWatchdog, type UpscaleStop } from '../upscale/watchdog.ts';
-import { BoardClock } from './board-clock.ts';
+import { BoardClock, PageClock } from './board-clock.ts';
 import { codecOf, decoderConfig } from './h264.ts';
 import { VideoReceiver, type ReceivedFrame, type ReceiverOutput } from './video-receiver.ts';
 
@@ -37,11 +37,11 @@ export type ToVideoWorker =
   /** A whole delta frame of a group's stream (protocol 2). */
   | { type: 'groupframe'; data: ArrayBuffer }
   /**
-   * A ping answered: its round trip, the board's clock in the answer, and
-   * when the answer arrived, as `performance.timeOrigin + performance.now()`
-   * of the page (a time the worker can place on its own clock).
+   * A ping answered: its round trip, the board's clock in the answer, when
+   * the answer arrived and when this message was sent, both the page's
+   * `performance.now()` (`PageClock` places them on the worker's).
    */
-  | { type: 'pong'; roundTripMs: number; boardMicros: number; at: number };
+  | { type: 'pong'; roundTripMs: number; boardMicros: number; at: number; sent: number };
 
 export type VideoStats = {
   /** Frames drawn since the picture began, and in the last second. */
@@ -125,6 +125,8 @@ const scope = self as unknown as {
 
 const receiver = new VideoReceiver();
 const clock = new BoardClock();
+/** The page's clock on this worker's, for the times the page hands over. */
+const pageClock = new PageClock();
 let canvas: OffscreenCanvas | null = null;
 let context: OffscreenCanvasRenderingContext2D | null = null;
 /** The upscaler, when the page asked for one and WebGL2 is here; its sharpness. */
@@ -478,7 +480,9 @@ function receive(event: MessageEvent<ToVideoWorker>) {
     case 'pong': {
       // When the answer arrived, on this worker's clock; the middle of its
       // round trip was half of it before.
-      const arrived = message.at - performance.timeOrigin;
+      pageClock.sample(message.sent, now);
+      const arrived = pageClock.toWorker(message.at);
+      if (arrived === null) break;
       clock.sample(
         arrived - message.roundTripMs / 2,
         message.boardMicros / 1000,

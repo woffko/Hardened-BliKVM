@@ -98,3 +98,29 @@ export class BoardClock {
     this.points = [];
   }
 }
+
+/**
+ * The page's `performance.now()` on a worker's: the two count from their
+ * own origins on one monotonic clock, so they are a constant apart. Each
+ * message the page sends with its clock at the sending says that much and
+ * the time the message took; the shortest says best. The origins are not
+ * used: each is the wall clock when its context began, and a wall clock
+ * that is stepped between the two (a virtual machine's host keeps its own
+ * by steps of a second or more) would put every time the page hands over
+ * that far off, and the picture's age with it (2026-10-11: four seconds on
+ * the development host, for a picture 60 ms old).
+ */
+export class PageClock {
+  private offset = Number.POSITIVE_INFINITY;
+
+  /** A message the page sent at `pageSent` arrived at `workerNow`. */
+  sample(pageSent: number, workerNow: number): void {
+    if (!Number.isFinite(pageSent) || !Number.isFinite(workerNow)) return;
+    this.offset = Math.min(this.offset, workerNow - pageSent);
+  }
+
+  /** The page's time `page` on the worker's clock; `null` before a message. */
+  toWorker(page: number): number | null {
+    return Number.isFinite(this.offset) ? page + this.offset : null;
+  }
+}

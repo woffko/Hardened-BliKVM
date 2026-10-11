@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BoardClock, MAX_POINTS } from "../web/src/lib/quic/board-clock.ts";
+import {
+  BoardClock,
+  MAX_POINTS,
+  PageClock,
+} from "../web/src/lib/quic/board-clock.ts";
 import { generator } from "./net/udp_impair_proxy.mjs";
 
 test("before a ping there is no board time; one gives the offset, two enclose a span", () => {
@@ -168,4 +172,23 @@ test("old points leave, a rate that cannot be is not believed, and reset forgets
   wild.reset();
   assert.equal(wild.at(0), null);
   assert.equal(wild.span(), null);
+});
+
+test("the page's clock is placed on the worker's by the quickest message, whatever the origins", () => {
+  const clock = new PageClock();
+  assert.equal(clock.toWorker(1000), null);
+  // The worker's clock reads 4000 ms more than the page's at one moment
+  // (their origins apart); messages take 0.3 to 5 ms.
+  for (const [sent, took] of [
+    [1000, 5],
+    [2000, 0.3],
+    [3000, 2],
+  ]) {
+    clock.sample(sent, sent + 4000 + took);
+  }
+  assert.equal(clock.toWorker(5000), 9000.3);
+  // What is not a time is not taken.
+  clock.sample(Number.NaN, 1);
+  clock.sample(1, Number.POSITIVE_INFINITY);
+  assert.equal(clock.toWorker(5000), 9000.3);
 });

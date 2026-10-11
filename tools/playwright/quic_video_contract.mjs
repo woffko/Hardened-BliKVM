@@ -449,6 +449,51 @@ try {
       await finish(page, context);
     }
 
+    // The worker's clock origin four seconds off the page's, as a wall clock
+    // stepped between the two contexts leaves it (a virtual machine's host
+    // keeps its own so): the picture's age is still its own, since the page
+    // hands its times over by its monotonic clock.
+    {
+      const skewed = async (context) => {
+        await zoomed("off")(context);
+        await context.route("**/assets/video.worker-*.js", async (route) => {
+          const response = await route.fetch();
+          const body = await response.text();
+          await route.fulfill({
+            response,
+            body: `{ const origin = performance.timeOrigin + 4000; Object.defineProperty(Performance.prototype, "timeOrigin", { get: () => origin }); }\n${body}`,
+          });
+        });
+      };
+      const { context, page, errors } = await open({ prepare: skewed });
+      await playing(page);
+      await sleep(2000);
+      const before = await videoProbe(page);
+      await sleep(3000);
+      const after = await videoProbe(page);
+      const counts = after.ages.map(
+        (count, index) => count - before.ages[index],
+      );
+      const total = counts.reduce((sum, count) => sum + count, 0);
+      let median = null;
+      for (let index = 0, seen = 0; index < counts.length; index += 1) {
+        seen += counts[index];
+        if (seen >= total / 2) {
+          median = index;
+          break;
+        }
+      }
+      assert.ok(
+        total >= 20 && median !== null && median < 1000,
+        `the picture ${median} ms old with the worker's origin 4 s off (${total} frames)`,
+      );
+      console.log(
+        `QUIC with the worker's clock origin 4 s off the page's: frames ${median} ms old`,
+      );
+      assert.deepEqual(errors, []);
+      await finish(page, context);
+    }
+
     {
       const { context, page, errors } = await open({ prepare: zoomed("auto") });
       await playing(page);

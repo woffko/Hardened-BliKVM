@@ -490,18 +490,28 @@ dropped, no packet lost, the share 100 %).
 
 That first QUIC reading, right after the install, found every frame 4.05 s
 old when drawn (95th percentile 4.06 s), the page's own delay 4 ms, where
-slots 81 to 83 read 54 to 68 ms. After the engine probe, which starts the
-encoder again, the same probe read 54 ms (95th percentile 61 ms; the
-board idle). The capture times and the gateway's clock are both the
-board's CLOCK_MONOTONIC (the encoder's `Instant`, the gateway's
-`clock_gettime`), and the encoder's frame hub hands its queue out as fast
-as the gateway reads, so neither explains a standing four seconds; the
-board's journal of that hour is in a file it skips as truncated. Slot 84
-changed nothing on the picture's way (the layout, the display, the owner's
-setting). It is recorded as an observation to watch after the next
-application update: if the QUIC monitor says frames are seconds old,
-switching the engine in the Screen menu and back starts the encoder
-again.
+slots 81 to 83 read 54 to 68 ms; after the engine probe the same probe read
+54 ms. The picture was not late: the age was misread on the development
+host. The page answers pings on its thread and draws in its worker, and
+handed the arrival of each answer to the worker as `timeOrigin + now`,
+which the worker turned into its own clock by its own `timeOrigin`. Each
+origin is the wall clock when its context began, and this host's wall
+clock is kept by steps of about a second against its slow monotonic clock:
+workers begun one by one in a page read 3, 929 and 1858 ms apart from it
+within 80 s. A worker begun four steps after its page put every frame four
+seconds older than it was, for the page's life; the quality monitor, which
+shows the worker's numbers, said the same. The capture times and the
+board's clock were right (both the board's CLOCK_MONOTONIC), the encoder
+holds only its newest frame at each stage, and the gateway saw nothing
+behind (no group given up, no key frame asked for); freezing the gateway
+for 3 s on the host left the age at 35 ms once it went on.
+`tools/playwright/quic_video_contract.mjs` now gives the worker an origin
+4 s off the page's: without the change the picture reads 4006 ms old, with
+it 6 ms. The change (the page hands its times over by its monotonic clock,
+`PageClock`) came after the release; a browser whose wall clock is stepped
+between a page's start and its picture's (a virtual machine, a clock
+corrected at once) shows a wrong age in beta.4's monitor, and nothing
+else.
 
 ### The release 0.1.0-beta.4 (2026-10-11)
 

@@ -67,7 +67,7 @@ export type VideoSink = {
   groupFrame(bytes: Uint8Array): void;
   /**
    * A ping answered: its round trip, the board's clock in the answer, and
-   * when the answer arrived (`performance.timeOrigin + performance.now()`).
+   * when the answer arrived (this page's `performance.now()`).
    */
   pong(roundTripMs: number, boardMicros: number, at: number): void;
 };
@@ -620,7 +620,7 @@ class QuicSession {
               lastPong = performance.now();
               const trip = lastPong - message.pageTime;
               if (this.open === open) {
-                this.sink?.pong(trip, message.boardTime, performance.timeOrigin + lastPong);
+                this.sink?.pong(trip, message.boardTime, lastPong);
               }
               if (clockPings.delete(message.id)) break;
               roundTripMs = trip;
