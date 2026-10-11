@@ -270,3 +270,11 @@ one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked only into
 image and the RAW system bundle of this release carry the board's update
 runtime `0.1.0~dev38`, whose gateway (QUIC protocol 2) was built from that
 lock.
+
+## RustSec scan for 0.1.0-beta.5 (2026-10-11)
+
+An application release; the lock is beta.4's (315 packages, unchanged).
+`cargo audit --deny warnings`, run without fetching (the same database,
+1,296 advisories), reports the same one advisory, RUSTSEC-2026-0009 in
+`time` 0.3.45, linked only into `bli-kvm-quic-gateway`, which is part of
+the system (beta.4's update runtime `0.1.0~dev38`), not of this bundle.
