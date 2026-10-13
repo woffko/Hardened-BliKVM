@@ -27,7 +27,10 @@ find.
 
 ## What it does
 
-- **Remote desktop**: keyboard and mouse (absolute and relative), a touch
+- **Remote desktop**: keyboard and mouse (absolute and relative; on a target
+  whose desktop spans several monitors, the absolute mouse kept on the
+  captured one by a layout set in the Mouse menu,
+  [`docs/design/screen-area-v1.md`](docs/design/screen-area-v1.md)), a touch
   layout for phones with an on-screen keyboard and a row of extra keys, the
   ATX power buttons, and virtual media (an ISO as CD-ROM, disk images as mass
   storage).
