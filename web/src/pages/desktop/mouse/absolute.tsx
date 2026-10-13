@@ -5,7 +5,7 @@ import * as storage from '@/lib/localstorage.ts';
 import { MouseReportAbsolute } from '@/lib/mouse.ts';
 import { pictureSize, pointInPicture } from '@/lib/pointer-map.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
-import { scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
+import { screenAreaAtom, scrollDirectionAtom, scrollIntervalAtom } from '@/jotai/mouse.ts';
 import { resolutionAtom, screenElementAtom, videoScaleAtom } from '@/jotai/screen.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 import { useIsTouchLayout } from '@/hooks/useResponsiveLayout.ts';
@@ -39,7 +39,11 @@ export const Absolute = () => {
   const scrollInterval = useAtomValue(scrollIntervalAtom);
   const { restricted, reportHid } = useHidLease();
 
-  const mouseRef = useRef(new MouseReportAbsolute());
+  // The report maps the picture's positions into the target's desktop.
+  const screenArea = useAtomValue(screenAreaAtom);
+  const screenAreaRef = useRef(screenArea);
+  screenAreaRef.current = screenArea;
+  const mouseRef = useRef(new MouseReportAbsolute(() => screenAreaRef.current));
   const lastPosRef = useRef({ x: HID_ABSOLUTE_CENTER, y: HID_ABSOLUTE_CENTER });
   const lastResolutionKeyRef = useRef<string | null>(null);
   const lastScrollTimeRef = useRef(0);

@@ -184,6 +184,7 @@ node --test tools/test_quic_video_receiver.mjs tools/test_quic_board_clock.mjs t
 node --test tools/test_vp8_range.mjs
 # Where the pointer falls in the picture, whatever the screen element holds.
 node --test tools/test_pointer_map.mjs
+node --test tools/test_screen_area.mjs
 # The upscaling setting and when a frame is enlarged.
 node --test tools/test_upscale_settings.mjs
 # The upscaler's watchdog: when frames are lost to it.
@@ -961,7 +962,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
-pnpm_web exec prettier --check '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
+pnpm_web exec prettier --check '../tools/test_screen_area.mjs' '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

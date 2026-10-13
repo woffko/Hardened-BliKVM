@@ -1,5 +1,7 @@
 import { atom } from 'jotai';
 
+import type { ScreenArea } from '@/lib/screen-area.ts';
+
 export type MobilePointerMode = 'touchsync';
 
 // mouse cursor style
@@ -19,3 +21,8 @@ export const scrollDirectionAtom = atom(-1);
 
 // mouse scroll interval (unit: ms)
 export const scrollIntervalAtom = atom(0);
+
+// Where the captured screen lies in the target's desktop, as the board
+// keeps it; null while the screen is the whole desktop
+// (docs/design/screen-area-v1.md).
+export const screenAreaAtom = atom<ScreenArea | null>(null);

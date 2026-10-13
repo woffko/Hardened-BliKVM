@@ -1,3 +1,5 @@
+import { mapToDesktop, type ScreenArea } from './screen-area.ts';
+
 // Button bit positions
 const MouseButtons = {
   Left: 1 << 0,
@@ -86,8 +88,22 @@ export class MouseReportRelative {
  * Byte 3-4: Y position (0 to 32767, Little Endian)
  * Byte 5: Wheel
  */
+/** The largest absolute position the report carries on each axis. */
+export const ABSOLUTE_MAX = 0x7fff;
+
 export class MouseReportAbsolute {
   private buttons: number = 0;
+
+  /**
+   * `area`: where the captured screen lies in the target's desktop, asked
+   * for every report (docs/design/screen-area-v1.md); positions are the
+   * picture's, and the report carries them for the desktop.
+   */
+  private readonly area: () => ScreenArea | null;
+
+  constructor(area: () => ScreenArea | null = () => null) {
+    this.area = area;
+  }
 
   buttonDown(button: number): void {
     this.buttons |= getMouseButtonBit(button);
@@ -99,11 +115,12 @@ export class MouseReportAbsolute {
 
   /**
    * Build absolute mouse report
-   * @param x X position (0.0 to 1.0, normalized)
-   * @param y Y position (0.0 to 1.0, normalized)
+   * @param pictureX X position on the picture (0 to ABSOLUTE_MAX)
+   * @param pictureY Y position on the picture (0 to ABSOLUTE_MAX)
    * @param wheel Scroll wheel (-127 to 127)
    */
-  buildReport(x: number, y: number, wheel: number = 0): Uint8Array {
+  buildReport(pictureX: number, pictureY: number, wheel: number = 0): Uint8Array {
+    const { x, y } = mapToDesktop(this.area(), pictureX, pictureY, ABSOLUTE_MAX);
     const report = new Uint8Array(6);
 
     report[0] = this.buttons;
