@@ -2,17 +2,19 @@ import { useEffect, useState } from 'react';
 import type { CapabilityManifest } from '@/types/capabilities.ts';
 import type { RuntimeInventory } from '@/types/inventory.ts';
 import { Button, Splitter } from 'antd';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
 import * as authApi from '@/api/auth.ts';
+import { getScreenArea } from '@/api/hid.ts';
 import { getRuntimeInventory } from '@/api/inventory.ts';
-import { isAvailable, normalizeVideoMode } from '@/lib/capabilities.ts';
+import { isAvailable, normalizeVideoMode, supportsBoardFeature } from '@/lib/capabilities.ts';
 import { removeToken } from '@/lib/cookie.ts';
 import { HARDENED_NAME } from '@/lib/hardened.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { formatRtcOffsetSeconds, formatRtcUnixSeconds } from '@/lib/rtc.ts';
+import { isScreenArea } from '@/lib/screen-area.ts';
 import { formatTemperatureMillidegrees } from '@/lib/thermal.ts';
 import { browserSupportsWebRtc } from '@/lib/video-transport.ts';
 import { client } from '@/lib/websocket.ts';
@@ -22,6 +24,7 @@ import {
   capabilitiesLoadingAtom
 } from '@/jotai/capabilities.ts';
 import { keyHelperHeightAtom, virtualKeyboardHeightAtom } from '@/jotai/keyboard.ts';
+import { screenAreaAtom } from '@/jotai/mouse.ts';
 import { picoclawChatOpenAtom } from '@/jotai/picoclaw.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
 import { menuBarOccupiesTopAtom } from '@/jotai/settings.ts';
@@ -79,6 +82,23 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
   const [videoMode, setVideoMode] = useAtom(videoModeAtom);
   const [resolution, setResolution] = useAtom(resolutionAtom);
   const isPicoclawChatOpen = useAtomValue(picoclawChatOpenAtom);
+  const setScreenArea = useSetAtom(screenAreaAtom);
+
+  // Where the captured screen lies in the target's desktop, as the board
+  // keeps it: the absolute mouse maps into it (docs/design/screen-area-v1.md).
+  useEffect(() => {
+    if (!supportsBoardFeature(capabilities, 'hid_screen_area')) return;
+    let gone = false;
+    getScreenArea()
+      .then((rsp) => {
+        if (gone || rsp.code !== 0) return;
+        setScreenArea(isScreenArea(rsp.data?.area) ? rsp.data.area : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+    };
+  }, [capabilities, setScreenArea]);
 
   useEffect(() => {
     setActiveVideoMode(getVideoMode(capabilities));

@@ -1,4 +1,5 @@
 import { http } from '@/lib/http.ts';
+import type { ScreenArea } from '@/lib/screen-area.ts';
 
 // paste
 export function paste(content: string, langue: string) {
@@ -60,4 +61,14 @@ export function getLeaderKey() {
 // set shortcut leader key
 export function setLeaderKey(key: string) {
   return http.post('/api/hid/shortcut/leader-key', { key });
+}
+
+// where the captured screen lies in the target's desktop; null: the whole
+// desktop (docs/design/screen-area-v1.md)
+export function getScreenArea() {
+  return http.get('/api/hid/screen-area');
+}
+
+export function setScreenArea(area: ScreenArea | null) {
+  return http.post('/api/hid/screen-area', { area });
 }
