@@ -50,6 +50,7 @@ mod picoclaw;
 mod quality;
 mod quic;
 mod remote_download;
+mod screen_area;
 mod scripts;
 mod session_lock;
 mod shortcuts;
@@ -747,6 +748,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             get(hid::issue_focus_challenge).post(hid::confirm_focus),
         )
         .route("/hid/lease", post(hid::hid_lease))
+        .route(
+            "/hid/screen-area",
+            get(screen_area::get_screen_area).post(screen_area::set_screen_area),
+        )
         .route("/hid/shortcuts", get(shortcuts::list))
         .route(
             "/hid/shortcut",
@@ -2580,6 +2585,91 @@ mod tests {
             body["data"]["duration"], 300,
             "a rejected write must not change the policy"
         );
+    }
+
+    async fn screen_area_call(
+        app: &Router,
+        cookie: &str,
+        csrf: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::builder()
+            .method(if body.is_some() {
+                Method::POST
+            } else {
+                Method::GET
+            })
+            .uri("/api/hid/screen-area")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::HOST, "kvm.test")
+            .header(header::ORIGIN, "https://kvm.test")
+            .header(header::COOKIE, cookie);
+        if let Some(csrf) = csrf {
+            request = request.header("x-csrf-token", csrf);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, json_body(response).await)
+    }
+
+    #[tokio::test]
+    async fn the_screen_area_round_trips_and_a_screen_outside_its_desktop_is_refused() {
+        let app = isolated_app();
+        let (cookie, csrf) = setup_and_login(&app).await;
+        let (status, body) = screen_area_call(&app, &cookie, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["data"]["area"].is_null(),
+            "the whole desktop by default"
+        );
+
+        let left = serde_json::json!({
+            "desktop": {"width": 5120, "height": 1440},
+            "screen": {"x": 0, "y": 0, "width": 2560, "height": 1440}
+        });
+        let (status, body) = screen_area_call(
+            &app,
+            &cookie,
+            Some(&csrf),
+            Some(serde_json::json!({"area": left})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["area"], left);
+
+        // Without the CSRF token, or a screen beyond its desktop: refused,
+        // and the layout stays.
+        let (status, _) =
+            screen_area_call(&app, &cookie, None, Some(serde_json::json!({"area": null}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let outside = serde_json::json!({"area": {
+            "desktop": {"width": 5120, "height": 1440},
+            "screen": {"x": 2600, "y": 0, "width": 2560, "height": 1440}
+        }});
+        // The reference's API answers a refusal with its own code.
+        let (_, body) = screen_area_call(&app, &cookie, Some(&csrf), Some(outside)).await;
+        assert_ne!(body["code"], 0);
+        let (_, body) = screen_area_call(&app, &cookie, None, None).await;
+        assert_eq!(body["data"]["area"], left);
+
+        // The whole desktop again.
+        let (status, body) = screen_area_call(
+            &app,
+            &cookie,
+            Some(&csrf),
+            Some(serde_json::json!({"area": null})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["data"]["area"].is_null());
     }
 
     #[tokio::test]

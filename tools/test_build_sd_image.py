@@ -96,6 +96,9 @@ class BuildSdImageTests(unittest.TestCase):
         ):
             self.assertIn(f'"$gadget_state/{name}"', self.script, name)
             self.assertIn(f"-name {name}", self.script, name)
+        # The source target's monitors are not the new card's.
+        self.assertIn('"$staging/var/lib/hardened-blikvm/screen-area.json"', self.script)
+        self.assertIn('leftover="$leftover screen-area.json"', self.script)
         for leftover in ("kvmd-backup-*", "unit-owner-*", "update-trust-*.json", "web-pre-*"):
             self.assertIn(f'"$gadget_state"/{leftover}', self.script, leftover)
         self.assertIn('"$staging"/etc/hardened-blikvm/update-supervisor-*.json', self.script)

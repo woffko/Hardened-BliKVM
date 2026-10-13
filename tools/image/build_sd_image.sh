@@ -132,7 +132,9 @@ assemble() {
     # not belong to a new board. Each service starts clean without its file:
     # every administration switch off, the firewall in Baseline, HID-only
     # off, the display never going dark, empty media, ATX and HID journals,
-    # and the video settings at the defaults of the capture unit. The record the board owner keeps of the
+    # the video settings at the defaults of the capture unit, and the mouse
+    # over the whole desktop of the target (the monitors of the source
+    # target are not those of a new one). The record the board owner keeps of the
     # switches in system files (SSH, QUIC, Tailscale, mDNS) is the source
     # board'"'"'s: a new card makes its own at its first start, from the units
     # of the image.
@@ -142,7 +144,8 @@ assemble() {
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
       "$gadget_state/hid-only.env" "$gadget_state/display-sleep.env" \
       "$gadget_state/system-switches.json" \
-      "$staging/var/lib/hardened-blikvm-video/ustreamer.env"
+      "$staging/var/lib/hardened-blikvm-video/ustreamer.env" \
+      "$staging/var/lib/hardened-blikvm/screen-area.json"
     # The system-action journal is the source board'"'"'s reboots under its boot
     # identities, one perhaps not yet accepted, and it has room for sixteen:
     # a new card'"'"'s owner starts an empty one.
@@ -169,6 +172,7 @@ assemble() {
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)
     [ ! -e "$staging/var/lib/hardened-blikvm-video/ustreamer.env" ] || leftover="$leftover ustreamer.env"
+    [ ! -e "$staging/var/lib/hardened-blikvm/screen-area.json" ] || leftover="$leftover screen-area.json"
     if [ -n "$leftover" ]; then
       echo "source board state remains: $leftover" >&2
       exit 1
