@@ -254,6 +254,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -288,6 +290,8 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -606,6 +610,8 @@ pub(crate) async fn serve_lease(
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -645,6 +651,8 @@ pub(crate) async fn serve_lease(
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }

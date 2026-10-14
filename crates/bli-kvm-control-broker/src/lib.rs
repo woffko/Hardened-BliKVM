@@ -37,6 +37,7 @@ pub mod system_action;
 pub mod system_log_settings;
 mod system_switches;
 pub mod tailscale;
+pub mod target_agent;
 pub mod tls_settings;
 mod video_settings;
 pub use device_settings::{

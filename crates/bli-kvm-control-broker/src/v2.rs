@@ -69,6 +69,8 @@ pub struct ControlV2State {
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
     quic: Option<crate::quic_settings::QuicSettings>,
+    /// The target agent's channel on the absolute mouse's device.
+    target_agent: Option<crate::target_agent::AgentChannel>,
     /// The record of the switches kept in system files, across a RAW update.
     system_switches: Option<crate::system_switches::SystemSwitches>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
@@ -110,6 +112,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -235,6 +238,20 @@ impl ControlV2State {
         self.quic = Some(quic);
     }
 
+    /// Attach the target agent's channel to the board state.
+    pub fn with_target_agent(&mut self, channel: crate::target_agent::AgentChannel) {
+        self.target_agent = Some(channel);
+    }
+
+    /// The target agent's channel, for a call that waits outside the shared
+    /// state's lock, while enabled.
+    pub fn target_agent_shared(&self) -> Option<crate::target_agent::AgentChannel> {
+        if !self.enabled {
+            return None;
+        }
+        self.target_agent.clone()
+    }
+
     /// Keeps the record of the switches held in system files, and sets them
     /// as recorded when the system image is a new one (after a RAW update).
     /// Called once the SSH, QUIC and mDNS surfaces are attached.
@@ -336,6 +353,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -374,6 +392,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -412,6 +431,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -464,6 +484,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -504,6 +525,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -550,6 +572,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -840,6 +863,7 @@ impl ControlV2State {
             admin_features: None,
             ssh: None,
             quic: None,
+            target_agent: None,
             system_switches: None,
             ipv4: None,
             hostname: None,
@@ -997,6 +1021,16 @@ impl ControlV2State {
                 Some(quic) => quic.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
+            PlatformControlRequestV2::TargetAgentState {} => match self.target_agent.as_ref() {
+                Some(channel) => target_agent_state(channel.snapshot()),
+                None => reject(ControlRejectionCode::CapabilityDisabled),
+            },
+            PlatformControlRequestV2::TargetAgentCall { call, timeout_ms } => {
+                match self.target_agent.clone() {
+                    Some(channel) => run_target_agent_call(channel, *call, *timeout_ms).await,
+                    None => reject(ControlRejectionCode::CapabilityDisabled),
+                }
+            }
             PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {
                 Some(features) => features.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
@@ -1399,6 +1433,9 @@ impl ControlV2State {
         if self.hid_only.as_ref().is_some_and(|state| state.enabled()) && !detaching {
             return reject(ControlRejectionCode::CapabilityDisabled);
         }
+        // Every media operation may unbind and bind the gadget, which takes
+        // the agent's device away and back: the channel closes it first.
+        let agent = self.target_agent.clone();
         let Some(engine) = self.media.as_mut() else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
@@ -1418,15 +1455,21 @@ impl ControlV2State {
         let Ok(observed) = engine.observe().await else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
-        match engine
+        if let Some(agent) = agent.as_ref() {
+            agent.pause().await;
+        }
+        let executed = engine
             .execute(
                 operation,
                 MediaEligibility::verified_for_test_profile(),
                 observed,
                 now_ms,
             )
-            .await
-        {
+            .await;
+        if let Some(agent) = agent.as_ref() {
+            agent.resume().await;
+        }
+        match executed {
             Ok(
                 MediaTransitionOutcome::Applied
                 | MediaTransitionOutcome::Noop
@@ -1449,6 +1492,47 @@ impl ControlV2State {
             Ok(MediaTransitionOutcome::Rejected(rejection)) => reject(media_code(rejection)),
             Err(_) => reject(ControlRejectionCode::Internal),
         }
+    }
+}
+
+/// The channel's snapshot as the control protocol says it.
+fn target_agent_state(snapshot: crate::target_agent::AgentSnapshot) -> ControlResponse {
+    ControlResponse::TargetAgentState {
+        wanted: snapshot.wanted,
+        open: snapshot.open,
+        problem: snapshot.problem,
+        agent: snapshot.agent,
+        refused: snapshot.refused,
+        messages_in: snapshot.messages_in,
+        messages_out: snapshot.messages_out,
+        dropped: snapshot.dropped,
+    }
+}
+
+/// One call to the connected agent, waited for without the shared state's
+/// lock when the server's dispatch runs it.
+pub(crate) async fn run_target_agent_call(
+    channel: crate::target_agent::AgentChannel,
+    call: bli_kvm_agent_protocol::Call,
+    timeout_ms: u32,
+) -> ControlResponse {
+    use crate::target_agent::CallError;
+    let started = std::time::Instant::now();
+    match channel
+        .call(
+            call,
+            std::time::Duration::from_millis(u64::from(timeout_ms)),
+        )
+        .await
+    {
+        Ok(answer) => ControlResponse::TargetAgentAnswer {
+            answer,
+            round_trip_us: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+        },
+        Err(CallError::NotConnected) => reject(ControlRejectionCode::InvalidState),
+        Err(CallError::TimedOut) => reject(ControlRejectionCode::BackendUnavailable),
+        Err(CallError::Failed(_)) => reject(ControlRejectionCode::BackendRejected),
+        Err(CallError::Closed) => reject(ControlRejectionCode::Internal),
     }
 }
 
@@ -1811,6 +1895,48 @@ mod tests {
             ControlResponse::Applied
         );
         assert!(!state.attestations.authorize(9, &TARGET, now));
+    }
+
+    #[tokio::test]
+    async fn the_target_agent_is_read_and_called_only_with_its_channel() {
+        let now = Instant::now();
+        let mut state = ControlV2State::enabled_for_test();
+        let call = PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Ping,
+            timeout_ms: 100,
+        };
+        for request in [PlatformControlRequestV2::TargetAgentState {}, call.clone()] {
+            assert_eq!(
+                state.handle(&request, now).await,
+                ControlResponse::Rejected {
+                    code: ControlRejectionCode::CapabilityDisabled
+                }
+            );
+        }
+        let directory = tempfile::tempdir().unwrap();
+        state.with_target_agent(crate::target_agent::AgentChannel::start(
+            directory.path().join("hidg1"),
+            crate::target_agent::board_hello(),
+        ));
+        assert!(matches!(
+            state
+                .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+                .await,
+            ControlResponse::TargetAgentState {
+                wanted: false,
+                open: false,
+                agent: None,
+                ..
+            }
+        ));
+        // No agent has said hello: the call is refused at once.
+        assert_eq!(
+            state.handle(&call, now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::InvalidState
+            }
+        );
+        assert!(state.target_agent_shared().is_some());
     }
 
     #[tokio::test]

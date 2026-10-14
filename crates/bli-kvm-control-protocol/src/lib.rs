@@ -174,6 +174,25 @@ pub enum ControlResponse {
         enabled: bool,
         active: bool,
     },
+    /// The target agent's channel: whether it should be open (the switch is
+    /// on and the gadget carries the agent's collection), whether its device
+    /// is open or why not, the connected agent's hello, why the last hello
+    /// was refused, and the messages each way.
+    TargetAgentState {
+        wanted: bool,
+        open: bool,
+        problem: Option<String>,
+        agent: Option<bli_kvm_agent_protocol::Hello>,
+        refused: Option<String>,
+        messages_in: u64,
+        messages_out: u64,
+        dropped: u64,
+    },
+    /// The connected agent's answer to a call, and the round trip.
+    TargetAgentAnswer {
+        answer: bli_kvm_agent_protocol::Answer,
+        round_trip_us: u64,
+    },
     /// The persisted administration feature switches.
     AdminFeatureState {
         terminal: bool,
@@ -531,6 +550,20 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
                 .flatten()
                 .chain(dns)
                 .any(|value| value.is_empty() || value.len() > 64))
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::TargetAgentState {
+        problem,
+        agent,
+        refused,
+        ..
+    } = response
+        && ([problem, refused].into_iter().flatten().any(|text| {
+            text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
+        }) || agent
+            .as_ref()
+            .is_some_and(|hello| hello.refusal().is_some()))
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
@@ -900,6 +933,52 @@ mod tests {
         let json = encode_response_v2(&response).unwrap();
         assert_eq!(decode_response_v2(&json).unwrap(), response);
         assert!(!String::from_utf8_lossy(&json).contains("message"));
+    }
+
+    #[test]
+    fn target_agent_responses_round_trip_and_odd_text_is_refused() {
+        let hello = bli_kvm_agent_protocol::Hello::new("hardened-blikvm-agent", "0.1.0", "abc");
+        let envelope = |response| ControlResponseEnvelope {
+            schema_version: CONTROL_SCHEMA_VERSION_V2,
+            request_id: 26,
+            operation_id: OPERATION_ID.into(),
+            response,
+        };
+        let state = |problem: Option<&str>, agent: Option<bli_kvm_agent_protocol::Hello>| {
+            ControlResponse::TargetAgentState {
+                wanted: true,
+                open: problem.is_none(),
+                problem: problem.map(str::to_owned),
+                agent,
+                refused: None,
+                messages_in: 3,
+                messages_out: 3,
+                dropped: 1,
+            }
+        };
+        for response in [
+            state(None, Some(hello.clone())),
+            state(Some("/dev/hidg1 could not be opened"), None),
+            ControlResponse::TargetAgentAnswer {
+                answer: bli_kvm_agent_protocol::Answer::Pong,
+                round_trip_us: 2_100,
+            },
+        ] {
+            let response = envelope(response);
+            let json = encode_response_v2(&response).unwrap();
+            assert_eq!(decode_response_v2(&json).unwrap(), response);
+        }
+        let mut newer = hello.clone();
+        newer.protocol = 2;
+        let long = "x".repeat(161);
+        for invalid in [
+            state(Some(""), None),
+            state(Some(&long), None),
+            state(Some("line\nbreak"), None),
+            state(None, Some(newer)),
+        ] {
+            assert!(encode_response_v2(&envelope(invalid)).is_err());
+        }
     }
 
     #[test]

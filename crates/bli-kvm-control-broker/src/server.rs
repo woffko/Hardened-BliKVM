@@ -283,13 +283,18 @@ async fn board_state(
     .map_err(|_| ControlBrokerError::TransitionUnavailable)?
     .with_catalog_path(catalog_path);
     ensure_gadget_hid(&media);
+    let hidg_dir: std::path::PathBuf = hidg_dir.into();
+    let agent_device = hidg_dir.join(
+        bli_kvm_usb_gadget::hid_device_name(bli_kvm_usb_gadget::HID_ABSOLUTE_MOUSE_NAME)
+            .ok_or(ControlBrokerError::TransitionUnavailable)?,
+    );
     let ledger = bli_kvm_hid_transition::HidReleaseLedger::new(hid_ledger)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
     let hid = bli_kvm_hid_transition::HidTransitionEngine::new_with_executor(
         bli_kvm_hid_transition::HidExecutor::Gadget(
             bli_kvm_hid_transition::GadgetHidExecutor::new(
                 bli_kvm_hid_transition::GadgetHidConfig {
-                    hidg_dir: hidg_dir.into(),
+                    hidg_dir,
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
@@ -320,6 +325,12 @@ async fn board_state(
         bli_kvm_hid_policy::HidControlPolicy::new(hid),
         atx,
     );
+    // The target agent's channel opens its device only while the agent's
+    // switch is on and the gadget carries the agent's collection.
+    state.with_target_agent(crate::target_agent::AgentChannel::start(
+        agent_device,
+        crate::target_agent::board_hello(),
+    ));
     // Every board-profile entry point serves the read-only board status when
     // the operator configured the daemon socket.
     if let Some(client) = crate::board_status::board_status_client_from_environment() {
@@ -1183,6 +1194,8 @@ where
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -1288,6 +1301,22 @@ async fn respond(
             } else {
                 None
             };
+            // A call to the target agent waits for its answer up to seconds:
+            // it runs with the channel's handle, not the shared state's lock.
+            let agent_response = match &request.request {
+                bli_kvm_core::PlatformControlRequestV2::TargetAgentCall { call, timeout_ms } => {
+                    let channel = v2.lock().await.target_agent_shared();
+                    Some(match channel {
+                        Some(channel) => {
+                            crate::v2::run_target_agent_call(channel, *call, *timeout_ms).await
+                        }
+                        None => ControlResponse::Rejected {
+                            code: ControlRejectionCode::CapabilityDisabled,
+                        },
+                    })
+                }
+                _ => None,
+            };
             // An ATX pulse holds the line for seconds: it runs under the ATX
             // engine's own lock, not the shared state's.
             #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
@@ -1314,7 +1343,7 @@ async fn respond(
             };
             #[cfg(not(any(feature = "atx-transition-profile", feature = "gpio-atx-profile")))]
             let atx_response: Option<ControlResponse> = None;
-            let response = if let Some(response) = atx_response {
+            let response = if let Some(response) = agent_response.or(atx_response) {
                 response
             } else if let Some(network) = network {
                 let payload = request.request.clone();

@@ -292,6 +292,7 @@ dependencies = [
 name = "bli-kvm-control-broker"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-agent-protocol",
  "bli-kvm-atx-gpio-executor",
  "bli-kvm-atx-policy",
  "bli-kvm-atx-transition",
@@ -346,6 +347,7 @@ dependencies = [
 name = "bli-kvm-control-protocol"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-agent-protocol",
  "bli-kvm-core",
  "serde",
  "serde_json",
@@ -356,6 +358,7 @@ dependencies = [
 name = "bli-kvm-core"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-agent-protocol",
  "serde",
  "serde_json",
  "tempfile",

@@ -321,6 +321,14 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the QUIC gateway's state.
     QuicState {},
+    /// The target agent's channel and the agent connected to it.
+    TargetAgentState {},
+    /// One call to the connected target agent, answered within
+    /// `timeout_ms` (1 to `MAX_TARGET_AGENT_CALL_MS`).
+    TargetAgentCall {
+        call: bli_kvm_agent_protocol::Call,
+        timeout_ms: u32,
+    },
     /// The connected interfaces' IPv4 addressing and DNS.
     NetworkInfo {},
     /// Set one interface to DHCP, or to manual DNS with an optional static
@@ -455,7 +463,12 @@ pub enum ControlV2ValidationError {
     InvalidWifiNetwork,
     #[error("display sleep time is not one of the choices")]
     InvalidDisplaySleep,
+    #[error("target agent call timeout is out of range")]
+    InvalidTargetAgentCall,
 }
+
+/// The longest a target agent call may wait for its answer.
+pub const MAX_TARGET_AGENT_CALL_MS: u32 = 10_000;
 
 /// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
 /// address, prefix and optional router.
@@ -629,6 +642,14 @@ impl PlatformControlRequestV2 {
             Self::SshState {} => Ok(()),
             Self::Quic { .. } => Ok(()),
             Self::QuicState {} => Ok(()),
+            Self::TargetAgentState {} => Ok(()),
+            Self::TargetAgentCall { timeout_ms, .. } => {
+                if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms) {
+                    Ok(())
+                } else {
+                    Err(ControlV2ValidationError::InvalidTargetAgentCall)
+                }
+            }
             Self::NetworkInfo {} => Ok(()),
             Self::Ipv4Set { change } => change.validate(),
             Self::Ipv4Confirm {} => Ok(()),
@@ -823,6 +844,31 @@ fn validate_lease_ttl(ttl_seconds: u16) -> Result<(), ControlV2ValidationError> 
         Ok(())
     } else {
         Err(ControlV2ValidationError::InvalidLeaseTtl)
+    }
+}
+
+#[cfg(test)]
+mod target_agent_tests {
+    use super::*;
+
+    #[test]
+    fn a_target_agent_call_waits_a_bounded_time() {
+        let call = |timeout_ms| PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Ping,
+            timeout_ms,
+        };
+        assert_eq!(call(1).validate(), Ok(()));
+        assert_eq!(call(MAX_TARGET_AGENT_CALL_MS).validate(), Ok(()));
+        for timeout_ms in [0, MAX_TARGET_AGENT_CALL_MS + 1] {
+            assert_eq!(
+                call(timeout_ms).validate(),
+                Err(ControlV2ValidationError::InvalidTargetAgentCall)
+            );
+        }
+        assert_eq!(
+            serde_json::to_string(&call(500)).unwrap(),
+            r#"{"type":"target_agent_call","call":"ping","timeout_ms":500}"#
+        );
     }
 }
 

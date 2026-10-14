@@ -109,6 +109,8 @@ pub(crate) async fn application_power(
         | ControlResponse::AdminFeatureState { .. }
         | ControlResponse::SshState { .. }
         | ControlResponse::QuicState { .. }
+        | ControlResponse::TargetAgentState { .. }
+        | ControlResponse::TargetAgentAnswer { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
