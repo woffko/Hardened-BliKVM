@@ -98,6 +98,16 @@ install -m 0755 "$system_update_binary" "$stage/libexec/bli-kvm-system-update"
 install -m 0755 "$quic_gateway_binary" "$stage/libexec/bli-kvm-quic-gateway"
 cp -a web/dist/. "$stage/share/web/"
 rm -f -- "$stage/share/web/mockServiceWorker.js"
+# The target agent for Windows and its drive: a signed slot carries its
+# programs and its web tree only, so they live there
+# (docs/design/target-agent-v1.md).
+sh scripts/build-agent-drive.sh "$temp_root/agent" >/dev/null
+install -d -m 0755 "$stage/share/web/agent"
+install -m 0644 \
+  "$temp_root/agent/hardened-blikvm-agent.exe" \
+  "$temp_root/agent/SHA256SUMS" \
+  "$temp_root/agent/agent-drive.img" \
+  "$stage/share/web/agent/"
 find "$stage/share/web" -type d -exec chmod 0755 {} +
 find "$stage/share/web" -type f -exec chmod 0644 {} +
 install -m 0644 \
