@@ -67,11 +67,25 @@ pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)]) {
     }
 }
 
+/// The value the agent's sign-in start has in the user's Run key.
+pub const AUTOSTART_VALUE: &str = "HardenedBliKVMAgent";
+/// The folder, under the user's local application data, that keeps the
+/// program for the sign-in start, and the program's name there.
+pub const AUTOSTART_FOLDER: &str = "HardenedBliKVM";
+pub const AUTOSTART_PROGRAM: &str = "hardened-blikvm-agent.exe";
+
+/// The Run key's command for the program at `path`: the path in quotes,
+/// which a path cannot contain.
+pub fn run_command(path: &str) -> String {
+    format!("\"{}\"", path.replace('"', ""))
+}
+
 /// The words of the icon's menu and status, in Russian where the user's
 /// Windows speaks it and in English otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Words {
     pub show: &'static str,
+    pub autostart: &'static str,
     pub stop: &'static str,
     pub start: &'static str,
     pub exit: &'static str,
@@ -83,6 +97,7 @@ pub struct Words {
 
 const ENGLISH: Words = Words {
     show: "Show what the agent reads",
+    autostart: "Start at sign-in",
     stop: "Stop",
     start: "Start",
     exit: "Exit",
@@ -94,6 +109,7 @@ const ENGLISH: Words = Words {
 
 const RUSSIAN: Words = Words {
     show: "Показать, что читает агент",
+    autostart: "Запускать при входе",
     stop: "Остановить",
     start: "Запустить",
     exit: "Выйти",
@@ -225,6 +241,17 @@ mod tests {
         let mut none = vec![monitor("DEL", 1, 0)];
         mark_board_monitor(&mut none, BOARD_CAPTURE_EDIDS);
         assert!(!none[0].board);
+    }
+
+    #[test]
+    fn the_run_keys_command_quotes_the_path() {
+        assert_eq!(
+            run_command(
+                r"C:\Users\Op Erator\AppData\Local\HardenedBliKVM\hardened-blikvm-agent.exe"
+            ),
+            r#""C:\Users\Op Erator\AppData\Local\HardenedBliKVM\hardened-blikvm-agent.exe""#
+        );
+        assert_eq!(run_command(r#"C:\a"b.exe"#), r#""C:\ab.exe""#);
     }
 
     #[test]

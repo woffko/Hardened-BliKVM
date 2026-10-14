@@ -6,6 +6,8 @@
 #[cfg(windows)]
 mod actions;
 #[cfg(windows)]
+mod autostart;
+#[cfg(windows)]
 mod channel;
 #[cfg(windows)]
 mod hid;

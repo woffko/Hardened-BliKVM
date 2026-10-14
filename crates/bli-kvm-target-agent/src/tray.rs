@@ -25,11 +25,11 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetCursorPos, GetMessageW, GetSystemMetrics, HICON, IDI_APPLICATION,
-    IMAGE_ICON, LR_DEFAULTCOLOR, LoadIconW, LoadImageW, MB_ICONINFORMATION, MB_OK, MF_GRAYED,
-    MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassW,
-    RegisterWindowMessageW, SM_CXSMICON, SM_CYSMICON, SetForegroundWindow, TPM_RIGHTBUTTON,
-    TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP,
-    WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    IMAGE_ICON, LR_DEFAULTCOLOR, LoadIconW, LoadImageW, MB_ICONINFORMATION, MB_OK, MF_CHECKED,
+    MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, MessageBoxW, PostMessageW,
+    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON, SM_CYSMICON,
+    SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND,
+    WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
 /// What the icon sends its window when it is clicked.
@@ -40,6 +40,8 @@ const EXIT: usize = 1;
 const SHOW: usize = 2;
 /// The menu's Stop or Start.
 const STOP_OR_START: usize = 3;
+/// The menu's "Start at sign-in", checked while it is on.
+const AUTOSTART: usize = 4;
 /// The agent's icon in its resources (build.rs).
 const ICON_RESOURCE: u16 = 1;
 
@@ -229,11 +231,23 @@ unsafe fn show_menu(window: HWND) {
             32,
         );
         let exit = wide(words.exit, 32);
+        let autostart = wide(words.autostart, 64);
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, caption.as_ptr());
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status.as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         AppendMenuW(menu, MF_STRING, SHOW, show.as_ptr());
         AppendMenuW(menu, MF_STRING, STOP_OR_START, stop_or_start.as_ptr());
+        AppendMenuW(
+            menu,
+            MF_STRING
+                | if crate::autostart::enabled() {
+                    MF_CHECKED
+                } else {
+                    MF_UNCHECKED
+                },
+            AUTOSTART,
+            autostart.as_ptr(),
+        );
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         AppendMenuW(menu, MF_STRING, EXIT, exit.as_ptr());
         let mut point: POINT = zeroed();
@@ -269,6 +283,18 @@ unsafe extern "system" fn window_procedure(
                     }
                     SHOW => show_reads(window),
                     STOP_OR_START => crate::channel::set_stopped(!crate::channel::stopped()),
+                    AUTOSTART => {
+                        let result = if crate::autostart::enabled() {
+                            crate::autostart::disable()
+                        } else {
+                            crate::autostart::enable()
+                        };
+                        if let Err(reason) = result {
+                            let text = wide(&reason, 512);
+                            let caption = wide(&title(), 128);
+                            MessageBoxW(window, text.as_ptr(), caption.as_ptr(), MB_OK);
+                        }
+                    }
                     _ => {}
                 }
                 0
