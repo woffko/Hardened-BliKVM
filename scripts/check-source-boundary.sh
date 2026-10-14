@@ -66,6 +66,14 @@ while IFS= read -r path; do
           ;;
       esac
       ;;
+    image/vnd.microsoft.icon)
+      # The target agent's icon, made from the logo above by
+      # tools/build_agent_icon.mjs.
+      if [ "$path" != "crates/bli-kvm-target-agent/assets/agent.ico" ]; then
+        echo "unexpected icon source asset: $path" >&2
+        exit 1
+      fi
+      ;;
     image/svg+xml)
       case "$path" in
         *.svg) ;;
