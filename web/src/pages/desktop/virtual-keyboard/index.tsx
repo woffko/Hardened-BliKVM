@@ -17,6 +17,7 @@ import { getKeycode, getModifierBit } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardOpenAtom, virtualKeyboardHeightAtom } from '@/jotai/keyboard.ts';
+import { useAgentLayoutSync } from '@/hooks/useAgentLayoutSync.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 import { useReportHeight } from '@/hooks/useKeyboardInsets.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
@@ -61,6 +62,8 @@ export const VirtualKeyboard = () => {
   const [keyboardLanguage, setKeyboardLanguage] = useState('en');
   const [activeModifierKeys, setActiveModifierKeys] = useState<string[]>([]);
   const { restricted, reportHid } = useHidLease();
+  // The target's layout follows the keyboard's language when asked to.
+  useAgentLayoutSync(keyboardLanguage);
 
   const keyboardRef = useRef<any>(null);
   // On the touch layout the keyboard covers the bottom of the page; its

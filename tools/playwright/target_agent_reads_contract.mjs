@@ -3,7 +3,9 @@
 // mouse's lease; then it reads the monitors and the keyboard layouts. With the board's monitor on the right of two,
 // and no layout kept on the board, the absolute mouse lands on the right monitor by itself: the picture's right edge on
 // its last columns, its middle on its middle. Settings show the target's Windows and its monitors, the board's marked;
-// the Keyboard menu shows the target's layout.
+// the Keyboard menu shows the target's layout. The actions go to the agent as the operator makes them: a layout
+// switched, the clipboard read and written, the session locked after a confirmation, and a monitors' change kept in
+// the dialog that counts down to its undoing.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -75,6 +77,11 @@ const monitor = (x, board) => ({
   scale: 100,
   board,
 });
+const ENGLISH = {
+  id: "04090409",
+  language: "en-US",
+  name: "English (United States) - US",
+};
 const LAYOUT = {
   id: "04190419",
   language: "ru-RU",
@@ -151,8 +158,14 @@ try {
       call === "monitors"
         ? { monitors: [monitor(0, false), monitor(2560, true)] }
         : call === "keyboard"
-          ? { keyboard: { current: LAYOUT, installed: [LAYOUT] } }
-          : "pong";
+          ? { keyboard: { current: LAYOUT, installed: [LAYOUT, ENGLISH] } }
+          : call === "read_clipboard"
+            ? { clipboard: "from the target" }
+            : call?.set_displays
+              ? { displays_changed: { revert_in_seconds: 15 } }
+              : call === "ping"
+                ? "pong"
+                : "done";
     return route.fulfill({
       json: { code: 0, data: { answer, roundTripUs: 3000 } },
     });
@@ -219,6 +232,44 @@ try {
     .getByTestId("target-layout")
     .getByText("Target's layout: Russian (Russia) - Russian")
     .waitFor();
+  // The actions: a layout switched, the clipboard both ways, the session
+  // locked after a confirmation.
+  const called = (call) =>
+    eventually(() =>
+      calls.some((made) => JSON.stringify(made) === JSON.stringify(call)),
+    );
+  const actions = page.getByTestId("agent-keyboard");
+  await actions.getByRole("button", { name: "en-US", exact: true }).click();
+  assert.ok(
+    await called({ set_layout: { id: "04090409" } }),
+    JSON.stringify(calls),
+  );
+  await actions.getByRole("button", { name: "Target's clipboard" }).click();
+  const clipboard = page.getByRole("dialog", { name: "Target's clipboard" });
+  await clipboard.getByRole("button", { name: "Read the target's" }).click();
+  const text = clipboard.getByTestId("agent-clipboard-text");
+  await eventually(async () => (await text.inputValue()) === "from the target");
+  assert.equal(await text.inputValue(), "from the target");
+  await text.fill("to the target, ünïcode");
+  await clipboard.getByRole("button", { name: "Put on the target" }).click();
+  assert.ok(
+    await called({ write_clipboard: { text: "to the target, ünïcode" } }),
+  );
+  await clipboard.getByText("The text is on the target's clipboard").waitFor();
+  await clipboard.getByRole("button", { name: "Close" }).click();
+  await clipboard.waitFor({ state: "hidden" });
+  // The menu may have closed with the dialog: it is opened again if so.
+  const lockButton = actions.getByRole("button", { name: "Lock the target" });
+  await page.waitForTimeout(300);
+  if (!(await lockButton.isVisible()))
+    await page.locator("svg.lucide-keyboard").first().click();
+  await lockButton.click();
+  const lockDialog = page
+    .getByRole("dialog")
+    .filter({ hasText: "Lock the target's Windows session?" });
+  assert.equal(calls.includes("lock"), false);
+  await lockDialog.getByRole("button", { name: "Lock the target" }).click();
+  assert.ok(await called("lock"));
   await page.keyboard.press("Escape");
 
   // Settings show the target's Windows and its monitors, the board's marked.
@@ -237,6 +288,16 @@ try {
       exact: true,
     })
     .waitFor();
+  // A monitors' change waits to be kept, and is kept.
+  await page
+    .getByTestId("target-agent-displays")
+    .getByRole("button", { name: "Only the board's monitor" })
+    .click();
+  assert.ok(await called({ set_displays: { mode: "board_only" } }));
+  const keep = page.getByRole("dialog", { name: "Keep these monitors?" });
+  await keep.getByText(/in 1[45] s unless you keep them/).waitFor();
+  await keep.getByRole("button", { name: "Keep", exact: true }).click();
+  assert.ok(await called("keep_displays"));
   assert.deepEqual(errors, []);
   await context.close();
   console.log(

@@ -2,6 +2,7 @@ import { atom } from 'jotai';
 
 import type { AgentKeyboard, TargetAgentState } from '@/api/target-agent.ts';
 import { areaFromMonitors, type AgentMonitor } from '@/lib/agent-layout.ts';
+import { getAgentLayoutSync, setAgentLayoutSync } from '@/lib/localstorage.ts';
 
 // The target agent's switch, channel and connected agent, as the board says
 // them; null until read, or on a board without the agent.
@@ -12,6 +13,17 @@ export const targetAgentAtom = atom<TargetAgentState | null>(null);
 // goes.
 export const agentMonitorsAtom = atom<AgentMonitor[] | null>(null);
 export const agentKeyboardAtom = atom<AgentKeyboard | null>(null);
+
+// Keep the target's layout in step with the on-screen keyboard's language
+// (this browser's choice).
+const layoutSyncAtom = atom(getAgentLayoutSync());
+export const agentLayoutSyncAtom = atom(
+  (get) => get(layoutSyncAtom),
+  (_get, set, sync: boolean) => {
+    set(layoutSyncAtom, sync);
+    setAgentLayoutSync(sync);
+  }
+);
 
 // The absolute mouse's layout from the agent's monitors while it is
 // connected and one of them is the board's (docs/design/target-agent-v1.md).

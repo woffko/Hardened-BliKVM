@@ -636,6 +636,27 @@ const en = {
           boards: "the board's",
           monitorsUnderControl: 'The monitors are read while you control the target',
           targetLayout: "Target's layout: {{name}}",
+          layoutSync: "Keep the target's layout in step with the on-screen keyboard",
+          clipboard: "Target's clipboard",
+          clipboardRead: "Read the target's",
+          clipboardWrite: 'Put on the target',
+          clipboardCopyHere: 'Copy here',
+          clipboardSent: "The text is on the target's clipboard",
+          clipboardTooLong: 'The text is longer than 6000 bytes',
+          lock: 'Lock the target',
+          lockConfirm: "Lock the target's Windows session?",
+          displays: {
+            extend: 'Extend',
+            duplicate: 'Duplicate',
+            board_only: "Only the board's monitor",
+            others_only: 'Only the others',
+            board_primary: "The board's monitor primary",
+            keepTitle: 'Keep these monitors?',
+            keep: 'Keep',
+            putBack: "Don't keep",
+            keepLeft:
+              'The monitors are put back as they were in {{seconds}} s unless you keep them. Without a picture, wait.'
+          },
           readFailed: "Failed to read the agent's state",
           switchFailed: 'Failed to switch the agent'
         },

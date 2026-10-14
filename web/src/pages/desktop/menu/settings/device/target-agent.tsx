@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Modal, Switch } from 'antd';
+import { Button, Modal, Switch } from 'antd';
 import { useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
@@ -19,6 +19,42 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   const [confirming, setConfirming] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const monitors = useAtomValue(agentMonitorsAtom);
+  // A monitors' change waiting to be kept: the seconds left.
+  const [keepLeft, setKeepLeft] = useState<number | null>(null);
+  const [displaysBusy, setDisplaysBusy] = useState(false);
+
+  useEffect(() => {
+    if (keepLeft === null) return;
+    if (keepLeft <= 0) {
+      setKeepLeft(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setKeepLeft(keepLeft - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [keepLeft]);
+
+  async function setDisplays(mode: api.DisplayMode) {
+    setDisplaysBusy(true);
+    setError('');
+    try {
+      const answer = await api.askTargetAgent({ set_displays: { mode } });
+      if (typeof answer === 'object' && 'displays_changed' in answer)
+        setKeepLeft(answer.displays_changed.revert_in_seconds);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDisplaysBusy(false);
+    }
+  }
+
+  async function keepDisplays() {
+    setKeepLeft(null);
+    try {
+      await api.askTargetAgent('keep_displays');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   const read = useCallback(async () => {
     const rsp = await api.getTargetAgent();
@@ -118,6 +154,22 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
             {t('settings.device.targetAgent.monitorsUnderControl')}
           </span>
         )}
+        {state?.agent && monitors && (
+          <div className="flex flex-wrap gap-1" data-testid="target-agent-displays">
+            {(['extend', 'duplicate', 'board_only', 'others_only', 'board_primary'] as const).map(
+              (mode) => (
+                <Button
+                  key={mode}
+                  size="small"
+                  disabled={readOnly || displaysBusy || keepLeft !== null}
+                  onClick={() => void setDisplays(mode)}
+                >
+                  {t(`settings.device.targetAgent.displays.${mode}`)}
+                </Button>
+              )
+            )}
+          </div>
+        )}
         {error && (
           <span role="alert" className="text-xs text-red-400">
             {error}
@@ -132,6 +184,17 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
         disabled={readOnly || !state?.available}
         onChange={(next) => setConfirming(next)}
       />
+
+      <Modal
+        open={keepLeft !== null}
+        title={t('settings.device.targetAgent.displays.keepTitle')}
+        okText={t('settings.device.targetAgent.displays.keep')}
+        cancelText={t('settings.device.targetAgent.displays.putBack')}
+        onOk={() => void keepDisplays()}
+        onCancel={() => setKeepLeft(null)}
+      >
+        <p>{t('settings.device.targetAgent.displays.keepLeft', { seconds: keepLeft ?? 0 })}</p>
+      </Modal>
 
       <Modal
         open={confirming !== null}

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { agentKeyboardAtom } from '@/jotai/target-agent.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
+import { AgentKeyboard } from './agent.tsx';
 import { LeaderKey } from './leader-key.tsx';
 import { LocalKeyboard } from './local-keyboard.tsx';
 import { Paste } from './paste.tsx';
@@ -22,6 +23,7 @@ export const Keyboard = () => {
           {t('settings.device.targetAgent.targetLayout', { name: layout.name })}
         </div>
       )}
+      <AgentKeyboard />
       <Paste />
       <LocalKeyboard />
       <VirtualKeyboard />

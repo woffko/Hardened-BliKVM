@@ -16,12 +16,34 @@ export type AgentLayout = { id: string; language: string; name: string };
 /** The layout of the window in front, and those installed. */
 export type AgentKeyboard = { current: AgentLayout | null; installed: AgentLayout[] };
 
-/** What the agent answers: `"pong"`, or one read. */
+/** What the agent answers: `"pong"`, `"done"`, or one read. */
 export type AgentAnswer =
   | 'pong'
+  | 'done'
   | { system: AgentSystem }
   | { monitors: AgentMonitor[] }
-  | { keyboard: AgentKeyboard };
+  | { keyboard: AgentKeyboard }
+  | { displays_changed: { revert_in_seconds: number } }
+  | { clipboard: string };
+
+/** The monitors' modes the agent sets. */
+export type DisplayMode = 'extend' | 'duplicate' | 'board_only' | 'others_only' | 'board_primary';
+
+/** What the page may ask the agent. */
+export type AgentCall =
+  | 'ping'
+  | 'system'
+  | 'monitors'
+  | 'keyboard'
+  | 'keep_displays'
+  | 'read_clipboard'
+  | 'lock'
+  | { set_layout: { id: string } }
+  | { set_displays: { mode: DisplayMode } }
+  | { write_clipboard: { text: string } };
+
+/** The most clipboard text either way, in UTF-8 bytes. */
+export const MAX_CLIPBOARD_BYTES = 6000;
 
 /** The agent on the target, as the board says it. */
 export type TargetAgentState = {
@@ -55,8 +77,16 @@ export function getTargetAgent() {
  * One call to the connected agent. A read is made only under the keyboard's
  * and mouse's lease this session holds; without it the board refuses it.
  */
-export function callTargetAgent(call: 'ping' | 'system' | 'monitors' | 'keyboard') {
+export function callTargetAgent(call: AgentCall) {
   return http.post('/api/target-agent/call', { call });
+}
+
+/** The agent's answer to `call`, or the reason there is none. */
+export async function askTargetAgent(call: AgentCall): Promise<AgentAnswer> {
+  const rsp = await callTargetAgent(call);
+  if (rsp.code !== 0 || rsp.data?.answer === undefined)
+    throw new Error(rsp.msg || 'the agent did not answer');
+  return rsp.data.answer as AgentAnswer;
 }
 
 /** Switching makes the board's USB device leave the target and come back. */
