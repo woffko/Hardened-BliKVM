@@ -360,6 +360,7 @@ pub fn gadget_hid_config(profile: &GadgetHidProfile) -> bli_kvm_hid_transition::
         keyboard_function: "hid.usb0".to_string(),
         absolute_mouse_function: "hid.usb1".to_string(),
         relative_mouse_function: "hid.usb2".to_string(),
+        configfs_root: None,
     }
 }
 

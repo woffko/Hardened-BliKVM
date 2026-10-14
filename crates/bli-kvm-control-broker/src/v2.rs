@@ -1612,6 +1612,7 @@ mod tests {
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: None,
                 })),
                 ledger,
             )

@@ -40,12 +40,22 @@ the agent's builder never sends input to the target unasked.
 
 ## Decisions taken
 
-- The channel is a vendor-defined HID interface of the board's own (raw
+- The channel is a vendor-defined HID collection of the board's own (raw
   HID, usage page 0xFF00, 64-byte reports each way): Windows, Linux and
   macOS read it without a driver and without administrator rights, it
   needs no network, and nothing else on the target listens to it. A serial
   port (CDC-ACM) was the other candidate: drivers everywhere too, but other
   programs open COM ports, and it reads as a modem to a security product.
+- (Found in phase 1, 2026-10-14.) The collection is not a function of its
+  own: the board's USB controller (the H616's MUSB in its H3 configuration,
+  `drivers/usb/musb/sunxi.c`) has four IN and four OUT endpoints, and the
+  keyboard, both mice and the virtual media take all of them. While the
+  switch is on, the absolute mouse's interface (`hid.usb1`) carries the
+  mouse as report 1 and the agent as report 2; the absolute mouse is the
+  one interface no firmware drives (it is not a boot device), and its OUT
+  endpoint, unused by the mouse, carries the agent's reports to the board.
+  Its device, `/dev/hidg1`, is one the owner's unit already allows, so the
+  channel needs no system part.
 - The agent is one Rust program for Windows (`x86_64`), with the user's
   rights: no service, no administrator, no network, no listening socket.
   It shows itself in the notification area while it runs.
@@ -84,10 +94,13 @@ same SHA-256. Time box: 4 hours.
    to them, a hello with both sides' versions, ping. Tests: round trips,
    fragments out of order or lost, a frame that is not one, a message too
    long, two messages interleaved.
-2. The gadget: a fourth function `hid.usb3` with the vendor descriptor,
-   pinned in tests, present only while the agent switch is on (the device
-   the target sees changes only when the operator turns it on).
-3. The owner: a task that reads and writes `/dev/hidg3`, keeps the agent's
+2. The gadget: the absolute mouse's descriptor with the agent's collection
+   (report 1 the mouse, report 2 the agent, 63 bytes each way), pinned in
+   tests, present only while the agent switch is on (the device the target
+   sees changes only when the operator turns it on); every absolute mouse
+   report follows the descriptor present, and none is written for one that
+   is not known.
+3. The owner: a task that reads and writes `/dev/hidg1`, keeps the agent's
    session (connected, its hello, the last messages), finds it again after
    a re-enumeration (virtual media swaps), and gives the server two
    requests on its control socket: the agent's state, and a call (a request
@@ -95,9 +108,8 @@ same SHA-256. Time box: 4 hours.
    from it need the operator's HID lease, as typing does.
 4. The switch "Target agent" in the administration features, off by
    default, kept and enforced as the others (server, owner).
-5. The system part: the owner's unit allows `/dev/hidg3` (update runtime
-   `0.1.0~dev39`); a slot on an older system says the agent is unavailable
-   and why.
+5. The system part: none for the channel (see the decision above); the
+   owner's unit already allows `/dev/hidg1`.
 6. A small Windows test tool from phase 0's crate: finds the interface,
    sends hello and ping, prints the answers and their round trips.
 
@@ -182,8 +194,8 @@ back after the target restarts. Time box: 2 days.
 
 ## Phase 6: release
 
-`scripts/check.sh`, a signed slot, update runtime `0.1.0~dev39`, the card
-image and the RAW bundle, installed on the test board and verified there;
+`scripts/check.sh`, a signed slot, and the card image and the RAW bundle
+when a system part changed, installed on the test board and verified there;
 the agent's program with its SHA-256 (signed if so decided);
 `docs/design/target-agent-v1.md`, the audit note, the README; a release
 when the operator says to publish. Time box: 1 day plus the operator's
@@ -211,7 +223,7 @@ checks.
 - Approve the agent's crates' download, once (phase 0).
 - Run the agent's builds on the target at gates 0, 2, 4 and 5, and the
   test tool at gate 1.
-- Agree to the slot and system installs (the update runtime with
-  `/dev/hidg3`, phase 1; the release, phase 6).
+- Agree to the slot and system installs (the slots of phases 1 to 5; the
+  release, phase 6).
 - Decide signing before phase 5, the actions in phase 4 and sign-in start.
 - Say when to publish.

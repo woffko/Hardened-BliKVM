@@ -85,6 +85,12 @@ pub struct GadgetHidConfig {
     pub keyboard_function: String,
     pub absolute_mouse_function: String,
     pub relative_mouse_function: String,
+    /// The configfs root of a gadget this owner builds. With it, every
+    /// absolute mouse report follows `hid.usb1`'s present descriptor: report
+    /// ID 1 while it carries the target agent's collection, none without, and
+    /// nothing written for a descriptor that is neither. Without it the
+    /// reports are the pinned descriptor's.
+    pub configfs_root: Option<PathBuf>,
 }
 
 /// Which pinned pointer interface currently owns the pointer reports.
@@ -187,10 +193,19 @@ impl GadgetHidExecutor {
     }
 
     fn write_absolute(&self, report: &[u8; 7]) -> Result<(), HidExecutorError> {
+        let report_id = match &self.config.configfs_root {
+            Some(root) => bli_kvm_usb_gadget::absolute_mouse_report_id(root).map_err(|_| {
+                gadget_error("gadget HID absolute pointer descriptor is not a known one")
+            })?,
+            None => None,
+        };
+        let mut bytes = Vec::with_capacity(8);
+        bytes.extend(report_id);
+        bytes.extend_from_slice(report);
         bli_kvm_usb_gadget::write_report(
             &self.config.hidg_dir,
             &self.config.absolute_mouse_function,
-            report,
+            &bytes,
         )
         .map_err(|_| gadget_error("gadget HID absolute pointer write failed"))
     }
@@ -825,6 +840,7 @@ mod tests {
                 keyboard_function: "hid.usb0".into(),
                 absolute_mouse_function: "hid.usb1".into(),
                 relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
             })),
             ledger,
         )
@@ -867,6 +883,7 @@ mod tests {
                 keyboard_function: "hid.usb0".into(),
                 absolute_mouse_function: "hid.usb1".into(),
                 relative_mouse_function: "hid.usb2".into(),
+                configfs_root: None,
             })),
             ledger,
         )
@@ -907,5 +924,74 @@ mod tests {
             last_report(directory.path(), "hidg2", 5),
             vec![0, 5, 0, 0, 0]
         );
+    }
+
+    /// One absolute move with `hid.usb1`'s descriptor as given (none: the
+    /// file is missing): whether it was taken, and what reached the device.
+    #[cfg(feature = "gadget-hid-profile")]
+    async fn absolute_move_with(descriptor: Option<Vec<u8>>) -> (bool, Vec<u8>) {
+        let directory = tempfile::tempdir().unwrap();
+        let hidg = directory.path().join("dev");
+        let function = directory
+            .path()
+            .join("configfs/hardened/functions/hid.usb1");
+        std::fs::create_dir_all(&hidg).unwrap();
+        std::fs::create_dir_all(&function).unwrap();
+        std::fs::write(hidg.join("hidg1"), b"").unwrap();
+        if let Some(descriptor) = descriptor {
+            std::fs::write(function.join("report_desc"), descriptor).unwrap();
+        }
+        let ledger = HidReleaseLedger::new(directory.path().join("ledger.json")).unwrap();
+        let mut engine = HidTransitionEngine::new_with_executor(
+            HidExecutor::Gadget(GadgetHidExecutor::new(GadgetHidConfig {
+                hidg_dir: hidg.clone(),
+                keyboard_function: "hid.usb0".into(),
+                absolute_mouse_function: "hid.usb1".into(),
+                relative_mouse_function: "hid.usb2".into(),
+                configfs_root: Some(directory.path().join("configfs")),
+            })),
+            ledger,
+        )
+        .unwrap();
+        let owner = identity(1);
+        let now = Instant::now();
+        engine
+            .acquire(owner, now, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let taken = engine
+            .report(
+                owner,
+                now,
+                &HidReport::AbsoluteMouse {
+                    data: [1, 0x00, 0x40, 0x00, 0x20, 0],
+                },
+            )
+            .await
+            .is_ok();
+        (taken, std::fs::read(hidg.join("hidg1")).unwrap())
+    }
+
+    #[cfg(feature = "gadget-hid-profile")]
+    #[tokio::test]
+    async fn absolute_reports_follow_the_present_descriptor_of_the_mouse() {
+        let descriptor =
+            |agent: bool| bli_kvm_usb_gadget::absolute_mouse_function(agent).report_descriptor;
+        // The pinned descriptor: the 7 bytes as without a gadget of our own.
+        let (taken, plain) = absolute_move_with(Some(descriptor(false))).await;
+        assert!(taken);
+        assert_eq!(plain.len(), 7);
+        assert_eq!(plain[0], 1, "the left button");
+        // With the agent's collection: the same report after its ID 1.
+        let (taken, with_id) = absolute_move_with(Some(descriptor(true))).await;
+        assert!(taken);
+        assert_eq!(with_id[0], 1);
+        assert_eq!(&with_id[1..], &plain[..]);
+        // A descriptor that is neither, or none: nothing is written.
+        assert_eq!(
+            absolute_move_with(Some(vec![0x05, 0x01])).await,
+            (false, vec![])
+        );
+        assert_eq!(absolute_move_with(None).await, (false, vec![]));
     }
 }

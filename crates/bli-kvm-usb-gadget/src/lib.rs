@@ -15,7 +15,9 @@
 mod hid_descriptors;
 
 pub use hid_descriptors::{
-    HID_ABSOLUTE_MOUSE_NAME, HID_KEYBOARD_NAME, HID_RELATIVE_MOUSE_NAME, pinned_hid_functions,
+    ABSOLUTE_MOUSE_REPORT_ID, AGENT_REPORT_ID, HID_ABSOLUTE_MOUSE_NAME, HID_AGENT_REPORT_LENGTH,
+    HID_KEYBOARD_NAME, HID_RELATIVE_MOUSE_NAME, absolute_mouse_function, hid_functions,
+    pinned_hid_functions,
 };
 
 use std::collections::BTreeSet;
@@ -30,6 +32,10 @@ pub const GADGET_NAME: &str = "hardened";
 pub const MSD_FUNCTION: &str = "mass_storage.usb0";
 /// Reviewed HID function names.
 pub const HID_FUNCTIONS: [&str; 3] = ["hid.usb0", "hid.usb1", "hid.usb2"];
+/// The order in which [`replace_hid_function`] links the functions back into
+/// the configuration, which numbers their interfaces: the HID functions as a
+/// boot binds them, then the virtual media as an attach adds it.
+const LINK_ORDER: [&str; 4] = ["hid.usb0", "hid.usb1", "hid.usb2", MSD_FUNCTION];
 /// Device string language id.
 pub const LANG: &str = "0x409";
 
@@ -582,6 +588,100 @@ pub fn remove_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetE
         value: spec.udc.clone(),
     });
     execute(root, &steps)
+}
+
+/// Rewrite one HID function of a present gadget (its subclass, protocol,
+/// report length and descriptor), keeping every other function as it is.
+///
+/// This is the target agent's switch: `hid.usb1` with or without the agent's
+/// collection. The kernel refuses a function's attributes while the function
+/// is linked into the configuration, and a link added again goes to the
+/// end, which renumbers the interfaces. So the gadget is unbound, every link
+/// is taken out, the attributes are written, and the links are put back in
+/// [`LINK_ORDER`] before the controller is bound again; if the attributes
+/// cannot be written, the links and the binding are restored all the same.
+/// A link this code does not know stops the change before anything is
+/// touched.
+///
+/// The function's character device goes away with the unbinding and comes
+/// back with the binding; whoever keeps it open must close it first.
+pub fn replace_hid_function(root: &Path, udc: &str, hid: &HidConfig) -> Result<(), GadgetError> {
+    validate_udc(udc)?;
+    validate_function(&Function::Hid(hid.clone()))?;
+    let config = config_path();
+    if !root.join(function_path(&hid.name)).is_dir() {
+        return Err(GadgetError::InvalidSpec);
+    }
+    let mut linked = Vec::new();
+    let entries = std::fs::read_dir(root.join(&config)).map_err(io_error)?;
+    for entry in entries {
+        let entry = entry.map_err(io_error)?;
+        if !entry.file_type().map_err(io_error)?.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !LINK_ORDER.contains(&name.as_str()) {
+            return Err(GadgetError::InvalidSpec);
+        }
+        linked.push(name);
+    }
+    if !linked.contains(&hid.name) {
+        return Err(GadgetError::InvalidSpec);
+    }
+    unbind(root)?;
+    let unlink: Vec<Step> = linked
+        .iter()
+        .map(|name| Step::RemoveFile {
+            path: config.join(name),
+        })
+        .collect();
+    let base = function_path(&hid.name);
+    let attributes = [
+        Step::WriteFile {
+            path: base.join("protocol"),
+            value: hid.protocol.to_string(),
+        },
+        Step::WriteFile {
+            path: base.join("subclass"),
+            value: hid.subclass.to_string(),
+        },
+        Step::WriteFile {
+            path: base.join("report_length"),
+            value: hid.report_length.to_string(),
+        },
+        Step::WriteBytes {
+            path: base.join("report_desc"),
+            value: hid.report_descriptor.clone(),
+        },
+    ];
+    let mut relink: Vec<Step> = LINK_ORDER
+        .iter()
+        .filter(|name| linked.iter().any(|linked| linked == *name))
+        .map(|name| Step::Symlink {
+            link: config.join(name),
+            target: PathBuf::from("functions").join(name),
+        })
+        .collect();
+    relink.push(Step::WriteFile {
+        path: gadget_path().join("UDC"),
+        value: udc.to_string(),
+    });
+    let written = execute(root, &unlink).and_then(|()| execute(root, &attributes));
+    let restored = execute(root, &relink);
+    written.and(restored)
+}
+
+/// The report ID the absolute mouse's reports need on the present gadget,
+/// read from `hid.usb1`'s descriptor; an error when the gadget or the
+/// function is missing or the descriptor is not one of the two known ones.
+pub fn absolute_mouse_report_id(root: &Path) -> Result<Option<u8>, GadgetError> {
+    let descriptor = std::fs::read(
+        root.join(function_path(HID_ABSOLUTE_MOUSE_NAME))
+            .join("report_desc"),
+    )
+    .map_err(io_error)?;
+    hid_descriptors::absolute_mouse_report_id(&descriptor)
+        .ok_or(GadgetError::InvalidReportDescriptor)
 }
 
 /// Write the selected image to the mass-storage LUN. Requires the function to
@@ -1277,6 +1377,135 @@ mod tests {
         assert_eq!(
             remove_mass_storage(directory.path(), &composite),
             Err(GadgetError::InvalidSpec)
+        );
+    }
+
+    fn linked(root: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(root.join("hardened/configs/c.1"))
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_type().unwrap().is_symlink())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn hid_gadget(root: &Path, image: Option<&Path>) -> GadgetSpec {
+        let mut spec = spec(root.join(IMAGE_NAME).as_path());
+        spec.functions = pinned_hid_functions();
+        if let Some(image) = image {
+            spec.functions.insert(0, msd(image));
+        }
+        spec
+    }
+
+    #[test]
+    fn replace_hid_function_switches_the_agents_collection_and_keeps_the_rest() {
+        let directory = root_with_image();
+        let root = directory.path();
+        let image = root.join(IMAGE_NAME);
+        assert_eq!(apply(root, &hid_gadget(root, Some(&image))), Ok(()));
+        assert_eq!(absolute_mouse_report_id(root), Ok(None));
+
+        let agent = absolute_mouse_function(true);
+        assert_eq!(
+            replace_hid_function(root, "musb-hdrc.2.auto", &agent),
+            Ok(())
+        );
+        assert_eq!(
+            absolute_mouse_report_id(root),
+            Ok(Some(ABSOLUTE_MOUSE_REPORT_ID))
+        );
+        assert_eq!(
+            read(root, "hardened/functions/hid.usb1/report_length"),
+            "64"
+        );
+        assert_eq!(read(root, "hardened/UDC"), "musb-hdrc.2.auto");
+        assert_eq!(
+            linked(root),
+            ["hid.usb0", "hid.usb1", "hid.usb2", "mass_storage.usb0"]
+        );
+        // The virtual media and the other functions are untouched.
+        assert_eq!(
+            read(root, "hardened/functions/mass_storage.usb0/lun.0/file"),
+            image.to_string_lossy()
+        );
+        assert_eq!(read(root, "hardened/functions/hid.usb0/report_length"), "8");
+
+        let plain = absolute_mouse_function(false);
+        assert_eq!(
+            replace_hid_function(root, "musb-hdrc.2.auto", &plain),
+            Ok(())
+        );
+        assert_eq!(absolute_mouse_report_id(root), Ok(None));
+        assert_eq!(read(root, "hardened/functions/hid.usb1/report_length"), "7");
+    }
+
+    #[test]
+    fn replace_hid_function_refuses_what_it_does_not_know_before_touching_it() {
+        let directory = root_with_image();
+        let root = directory.path();
+        // No gadget at all.
+        assert_eq!(
+            replace_hid_function(root, "musb-hdrc.2.auto", &absolute_mouse_function(true)),
+            Err(GadgetError::InvalidSpec)
+        );
+        assert_eq!(apply(root, &hid_gadget(root, None)), Ok(()));
+        // A function outside the reviewed names, and a bad controller.
+        let mut other = absolute_mouse_function(true);
+        other.name = "hid.usb7".into();
+        assert_eq!(
+            replace_hid_function(root, "musb-hdrc.2.auto", &other),
+            Err(GadgetError::InvalidFunction)
+        );
+        assert_eq!(
+            replace_hid_function(root, "../udc", &absolute_mouse_function(true)),
+            Err(GadgetError::InvalidUdc)
+        );
+        // A link nobody reviewed.
+        std::os::unix::fs::symlink(
+            root.join("hardened/functions/hid.usb0"),
+            root.join("hardened/configs/c.1/acm.usb0"),
+        )
+        .unwrap();
+        assert_eq!(
+            replace_hid_function(root, "musb-hdrc.2.auto", &absolute_mouse_function(true)),
+            Err(GadgetError::InvalidSpec)
+        );
+        assert_eq!(read(root, "hardened/UDC"), "musb-hdrc.2.auto");
+        assert_eq!(absolute_mouse_report_id(root), Ok(None));
+    }
+
+    #[test]
+    fn a_failed_attribute_write_leaves_the_gadget_linked_and_bound() {
+        let directory = root_with_image();
+        let root = directory.path();
+        assert_eq!(apply(root, &hid_gadget(root, None)), Ok(()));
+        // The descriptor cannot be written: the links and the binding come
+        // back all the same.
+        let descriptor = root.join("hardened/functions/hid.usb1/report_desc");
+        std::fs::remove_file(&descriptor).unwrap();
+        std::fs::create_dir(&descriptor).unwrap();
+        assert!(matches!(
+            replace_hid_function(root, "musb-hdrc.2.auto", &absolute_mouse_function(true)),
+            Err(GadgetError::Io(_))
+        ));
+        assert_eq!(linked(root), ["hid.usb0", "hid.usb1", "hid.usb2"]);
+        assert_eq!(read(root, "hardened/UDC"), "musb-hdrc.2.auto");
+    }
+
+    #[test]
+    fn an_unknown_absolute_mouse_descriptor_has_no_report_id() {
+        let directory = root_with_image();
+        let root = directory.path();
+        assert!(absolute_mouse_report_id(root).is_err());
+        let mut spec = hid_gadget(root, None);
+        spec.functions[1] = hid("hid.usb1", 7);
+        assert_eq!(apply(root, &spec), Ok(()));
+        assert_eq!(
+            absolute_mouse_report_id(root),
+            Err(GadgetError::InvalidReportDescriptor)
         );
     }
 

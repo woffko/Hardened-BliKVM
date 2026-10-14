@@ -133,6 +133,7 @@ pub async fn run_with_gadget_hid_profile(
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: None,
                 },
             ),
         ),
@@ -202,6 +203,7 @@ pub async fn run_with_gadget_profile(
     let catalog_path = catalog_path.into();
     let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let configfs_root = gadget.configfs_root.clone();
     let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
         media_journal,
         catalog,
@@ -222,6 +224,7 @@ pub async fn run_with_gadget_profile(
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: Some(configfs_root),
                 },
             ),
         ),
@@ -269,6 +272,7 @@ async fn board_state(
     let catalog_path = catalog_path.into();
     let catalog = bli_kvm_media_catalog::MediaCatalog::open(&catalog_path)
         .map_err(|_| ControlBrokerError::TransitionUnavailable)?;
+    let configfs_root = gadget.configfs_root.clone();
     let media = bli_kvm_media_transition::MediaTransitionEngine::open_with_executor(
         media_journal,
         catalog,
@@ -289,6 +293,7 @@ async fn board_state(
                     keyboard_function: "hid.usb0".into(),
                     absolute_mouse_function: "hid.usb1".into(),
                     relative_mouse_function: "hid.usb2".into(),
+                    configfs_root: Some(configfs_root),
                 },
             ),
         ),
@@ -2033,6 +2038,7 @@ mod tests {
                         keyboard_function: "hid.usb0".into(),
                         absolute_mouse_function: "hid.usb1".into(),
                         relative_mouse_function: "hid.usb2".into(),
+                        configfs_root: None,
                     },
                 ),
             ),
