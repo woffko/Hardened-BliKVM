@@ -313,13 +313,43 @@ impl ControlV2State {
     pub async fn begin_quiescence(&mut self) -> Result<(), ControlRejectionCode> {
         self.enabled = false;
         #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-        if let Some(policy) = self.hid.as_mut() {
-            return match policy.disconnect().await {
+        let released = match self.hid.as_mut() {
+            Some(policy) => match policy.disconnect().await {
                 HidDecision::Applied => Ok(()),
                 HidDecision::Reject(rejection) => Err(rejection.rejection_code()),
-            };
+            },
+            None => Ok(()),
+        };
+        #[cfg(not(any(feature = "hid-transition-profile", feature = "gadget-hid-profile")))]
+        let released = Ok(());
+        self.leave_the_absolute_mouse_plain().await;
+        released
+    }
+
+    /// A stopping owner takes the agent's collection away from the absolute
+    /// mouse; the switch stays as it is, and the next owner puts the
+    /// collection back. An update may roll back to a slot from before the
+    /// agent, which writes the mouse's reports without an ID: the target
+    /// would read them against a descriptor with IDs, buttons among them.
+    async fn leave_the_absolute_mouse_plain(&mut self) {
+        let Some((channel, _)) = self.target_agent.as_ref() else {
+            return;
+        };
+        channel.pause().await;
+        #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+        if let Some(media) = self.media.as_ref() {
+            match media.set_agent(false) {
+                Ok(true) => {
+                    eprintln!(
+                        "target agent: the absolute mouse is left without the agent's collection"
+                    )
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!(
+                    "target agent: the agent's collection could not be taken away: {error:?}"
+                ),
+            }
         }
-        Ok(())
     }
 
     /// Release held HID state when an idle lease reaches its deadline. The
@@ -2097,6 +2127,32 @@ mod tests {
         );
         assert_eq!(report_id(), None);
         assert!(!crate::target_agent::switch_enabled(&switch_path));
+
+        // A stopping owner leaves the mouse plain for whoever owns the
+        // gadget next, and the switch as it is.
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: true },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(report_id(), Some(1));
+        assert_eq!(state.begin_quiescence().await, Ok(()));
+        assert_eq!(report_id(), None);
+        assert!(crate::target_agent::switch_enabled(&switch_path));
+        state.enabled = true;
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: false },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
 
         // A gadget that cannot be changed leaves the switch as it was.
         std::fs::remove_file(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
