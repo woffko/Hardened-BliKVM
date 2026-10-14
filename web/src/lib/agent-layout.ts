@@ -1,0 +1,43 @@
+/**
+ * The absolute mouse's layout from the target agent's monitors
+ * (docs/design/target-agent-v1.md): the desktop the target spreads the
+ * range over is the box around every active monitor, and the captured
+ * screen is the monitor the agent marks as the board's, from the box's top
+ * left corner. Without a monitor marked, or with one that does not make a
+ * layout, there is none: the manual layout, if any, stays.
+ */
+import { isScreenArea, type ScreenArea } from './screen-area.ts';
+
+/** A monitor as the agent reads it: its place and size in the desktop. */
+export type AgentMonitor = {
+  name: string;
+  maker: string;
+  product: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  refresh_millihertz: number;
+  primary: boolean;
+  scale: number;
+  board: boolean;
+};
+
+export function areaFromMonitors(monitors: AgentMonitor[]): ScreenArea | null {
+  const board = monitors.filter((monitor) => monitor.board);
+  if (board.length !== 1 || monitors.length === 0) return null;
+  const left = Math.min(...monitors.map((monitor) => monitor.x));
+  const top = Math.min(...monitors.map((monitor) => monitor.y));
+  const right = Math.max(...monitors.map((monitor) => monitor.x + monitor.width));
+  const bottom = Math.max(...monitors.map((monitor) => monitor.y + monitor.height));
+  const area = {
+    desktop: { width: right - left, height: bottom - top },
+    screen: {
+      x: board[0].x - left,
+      y: board[0].y - top,
+      width: board[0].width,
+      height: board[0].height
+    }
+  };
+  return isScreenArea(area) ? area : null;
+}
