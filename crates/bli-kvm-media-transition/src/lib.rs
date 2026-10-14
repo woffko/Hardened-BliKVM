@@ -152,7 +152,9 @@ impl MediaExecutor {
     /// Sets whether gadgets built from here on carry the agent's collection,
     /// without touching a present one.
     pub fn want_agent(&self, enabled: bool) {
+        // The gadget may be the only backend built.
         #[cfg(feature = "gadget-media-profile")]
+        #[allow(irrefutable_let_patterns)]
         if let MediaExecutor::Gadget(executor) = self {
             executor.want_agent(enabled);
         }
