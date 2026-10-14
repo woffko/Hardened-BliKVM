@@ -67,6 +67,52 @@ pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)]) {
     }
 }
 
+/// The words of the icon's menu and status, in Russian where the user's
+/// Windows speaks it and in English otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Words {
+    pub show: &'static str,
+    pub stop: &'static str,
+    pub start: &'static str,
+    pub exit: &'static str,
+    pub stopped: &'static str,
+    pub not_connected: &'static str,
+    pub connected: &'static str,
+    pub channel_off: &'static str,
+}
+
+const ENGLISH: Words = Words {
+    show: "Show what the agent reads",
+    stop: "Stop",
+    start: "Start",
+    exit: "Exit",
+    stopped: "Stopped",
+    not_connected: "Not connected",
+    connected: "Connected to",
+    channel_off: "the board's channel is off",
+};
+
+const RUSSIAN: Words = Words {
+    show: "Показать, что читает агент",
+    stop: "Остановить",
+    start: "Запустить",
+    exit: "Выйти",
+    stopped: "Остановлен",
+    not_connected: "Не подключён",
+    connected: "Подключён к",
+    channel_off: "канал платы выключен",
+};
+
+/// The words for the user's interface language (a Windows language id).
+pub fn words(language: u16) -> Words {
+    // The primary language is the id's low ten bits; 0x19 is Russian.
+    if language & 0x3ff == 0x19 {
+        RUSSIAN
+    } else {
+        ENGLISH
+    }
+}
+
 /// What the agent read, as lines for its user.
 pub fn describe(system: &System, monitors: &[Monitor], keyboard: &Keyboard) -> String {
     let mut lines = vec![format!(
@@ -179,6 +225,15 @@ mod tests {
         let mut none = vec![monitor("DEL", 1, 0)];
         mark_board_monitor(&mut none, BOARD_CAPTURE_EDIDS);
         assert!(!none[0].board);
+    }
+
+    #[test]
+    fn the_menu_speaks_russian_on_a_russian_windows() {
+        // ru-RU and ru-UA are Russian; en-US and uk-UA are not.
+        assert_eq!(words(0x0419).exit, "Выйти");
+        assert_eq!(words(0x0819).stop, "Остановить");
+        assert_eq!(words(0x0409).exit, "Exit");
+        assert_eq!(words(0x0422).exit, "Exit");
     }
 
     #[test]

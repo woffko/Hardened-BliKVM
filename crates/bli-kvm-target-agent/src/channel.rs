@@ -2,15 +2,17 @@
 //! board's collection, says hello with the system, answers the board's
 //! calls with what it reads, pings every few seconds so the board knows it
 //! is there, and finds the collection again whenever it goes (a virtual
-//! media change, the switch, the board's restart). What it is connected to
-//! is said to the icon's window.
+//! media change, the switch, the board's restart). The user can stop it
+//! from the icon's menu, which closes the collection, and start it again.
+//! What it is connected to is said to the icon's window.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicIsize, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::time::{Duration, Instant};
 
 use bli_kvm_agent_protocol::{Answer, Call, Hello};
 use bli_kvm_target_agent::client::Client;
+use bli_kvm_target_agent::names::Words;
 use bli_kvm_target_agent::{VERSION, source_commit};
 use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
@@ -21,6 +23,8 @@ use crate::reads;
 const PROGRAM: &str = "hardened-blikvm-agent";
 /// How often the agent pings: well within the board's silence of 10 s.
 const PING_EVERY: Duration = Duration::from_secs(3);
+/// How long the channel listens between looks at the stop switch.
+const LISTEN: Duration = Duration::from_millis(500);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
 const PING_TIMEOUT: Duration = Duration::from_secs(2);
 /// How soon a collection that is not there is looked for again.
@@ -30,17 +34,24 @@ const LOOK_AGAIN: Duration = Duration::from_secs(2);
 static STATUS: Mutex<String> = Mutex::new(String::new());
 /// The icon's window, told when the status changes.
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
+/// The user stopped the channel from the icon's menu.
+static STOPPED: AtomicBool = AtomicBool::new(false);
 
 pub fn status() -> String {
-    let status = STATUS
+    STATUS
         .lock()
         .map(|status| status.clone())
-        .unwrap_or_default();
-    if status.is_empty() {
-        "Not connected".into()
-    } else {
-        status
-    }
+        .unwrap_or_default()
+}
+
+pub fn stopped() -> bool {
+    STOPPED.load(Ordering::Relaxed)
+}
+
+/// Stops the channel (it closes the collection within half a second) or
+/// starts it again.
+pub fn set_stopped(stop: bool) {
+    STOPPED.store(stop, Ordering::Relaxed);
 }
 
 fn set_status(status: String, message: u32) {
@@ -71,30 +82,47 @@ fn answer(call: Call) -> Result<Answer, String> {
     }
 }
 
+/// Waits `duration`, or less if the user stops the channel meanwhile.
+fn pause(duration: Duration) {
+    let until = Instant::now() + duration;
+    while !stopped() && Instant::now() < until {
+        std::thread::sleep(LISTEN.min(until.saturating_duration_since(Instant::now())));
+    }
+}
+
 /// Starts the channel's thread; `message` is posted to `window` whenever
-/// the status changes.
-pub fn start(window: isize, message: u32) {
+/// the status changes, which is said in `words`.
+pub fn start(window: isize, message: u32, words: Words) {
     WINDOW.store(window, Ordering::Relaxed);
+    set_status(words.not_connected.into(), message);
     std::thread::spawn(move || {
+        let not_connected = |reason: &dyn std::fmt::Display| {
+            set_status(format!("{}: {reason}", words.not_connected), message);
+        };
         loop {
+            if stopped() {
+                set_status(words.stopped.into(), message);
+                std::thread::sleep(LISTEN);
+                continue;
+            }
             let path = match hid::find() {
                 Ok(Some(path)) => path,
                 Ok(None) => {
-                    set_status("Not connected: the board's channel is off".into(), message);
-                    std::thread::sleep(LOOK_AGAIN);
+                    not_connected(&words.channel_off);
+                    pause(LOOK_AGAIN);
                     continue;
                 }
                 Err(error) => {
-                    set_status(format!("Not connected: {error}"), message);
-                    std::thread::sleep(LOOK_AGAIN);
+                    not_connected(&error);
+                    pause(LOOK_AGAIN);
                     continue;
                 }
             };
             let link = match HidLink::open(&path) {
                 Ok(link) => link,
                 Err(error) => {
-                    set_status(format!("Not connected: {error}"), message);
-                    std::thread::sleep(LOOK_AGAIN);
+                    not_connected(&error);
+                    pause(LOOK_AGAIN);
                     continue;
                 }
             };
@@ -102,25 +130,33 @@ pub fn start(window: isize, message: u32) {
             let mut client = Client::new(link, hello).with_answerer(Box::new(answer));
             match client.hello(HELLO_TIMEOUT) {
                 Ok(board) => set_status(
-                    format!("Connected to {} {}", board.program, board.version),
+                    format!("{} {} {}", words.connected, board.program, board.version),
                     message,
                 ),
                 Err(error) => {
-                    set_status(format!("Not connected: {error}"), message);
-                    std::thread::sleep(LOOK_AGAIN);
+                    not_connected(&error);
+                    pause(LOOK_AGAIN);
                     continue;
                 }
             }
-            loop {
-                if let Err(error) = client
-                    .serve(PING_EVERY)
-                    .and_then(|()| client.ping(PING_TIMEOUT).map(|_| ()))
-                {
-                    set_status(format!("Not connected: {error}"), message);
+            let mut pinged = Instant::now();
+            while !stopped() {
+                let served = client.serve(LISTEN).and_then(|()| {
+                    if pinged.elapsed() >= PING_EVERY {
+                        pinged = Instant::now();
+                        client.ping(PING_TIMEOUT).map(|_| ())
+                    } else {
+                        Ok(())
+                    }
+                });
+                if let Err(error) = served {
+                    not_connected(&error);
                     break;
                 }
             }
-            std::thread::sleep(Duration::from_millis(500));
+            // Dropping the client closes the collection.
+            drop(client);
+            pause(Duration::from_millis(500));
         }
     });
 }
