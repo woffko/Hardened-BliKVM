@@ -302,7 +302,7 @@ impl HidOnlyState {
     }
 }
 
-fn parse_flag(text: &str) -> bool {
+pub(crate) fn parse_flag(text: &str) -> bool {
     text.lines()
         .find_map(|line| line.trim().strip_prefix("enabled="))
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("yes"))
@@ -312,7 +312,7 @@ fn render_flag(enabled: bool) -> String {
     format!("enabled={}\n", if enabled { "yes" } else { "no" })
 }
 
-fn write_flag(path: &Path, enabled: bool) -> Result<(), String> {
+pub(crate) fn write_flag(path: &Path, enabled: bool) -> Result<(), String> {
     write_state(path, &render_flag(enabled))
 }
 

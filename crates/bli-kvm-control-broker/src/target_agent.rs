@@ -30,6 +30,44 @@ use bli_kvm_agent_protocol::{
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, oneshot};
 
+/// The operator's "Target agent" switch, kept by the owner in its state
+/// directory: off unless the file says `enabled=yes`. The HID bind before
+/// the owner starts reads it too, so a boot builds the gadget as it says.
+pub const TARGET_AGENT_STATE: &str = "/var/lib/hardened-blikvm-gadget/target-agent.env";
+
+/// Whether the switch file says the agent is on.
+pub fn switch_enabled(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|text| crate::device_settings::parse_flag(&text))
+        .unwrap_or(false)
+}
+
+/// The switch as the owner keeps it.
+pub struct AgentSwitch {
+    path: PathBuf,
+    enabled: bool,
+}
+
+impl AgentSwitch {
+    pub fn open(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let enabled = switch_enabled(&path);
+        Self { path, enabled }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Writes the switch; it stays as it was when the file cannot be
+    /// written.
+    pub fn set(&mut self, enabled: bool) -> Result<(), String> {
+        crate::device_settings::write_flag(&self.path, enabled)?;
+        self.enabled = enabled;
+        Ok(())
+    }
+}
+
 /// The program the board's hello names.
 pub const BOARD_PROGRAM: &str = "hardened-blikvm-board";
 /// How long the agent may be silent and still count as connected; the agent
@@ -212,8 +250,9 @@ impl Session {
 }
 
 enum Command {
-    /// Whether the channel should be open (the switch and the gadget).
-    Want(bool),
+    /// Whether the channel should be open (the switch and the gadget); says
+    /// when the channel has acted on it.
+    Want(bool, oneshot::Sender<()>),
     /// Close the device until resumed, and say when it is closed.
     Pause(oneshot::Sender<()>),
     Resume,
@@ -254,9 +293,18 @@ impl AgentChannel {
             .unwrap_or_default()
     }
 
-    /// Whether the channel should be open.
+    /// Whether the channel should be open; returns once the channel has
+    /// opened or closed its device as wanted (or the task is gone).
     pub async fn want(&self, wanted: bool) {
-        let _ = self.commands.send(Command::Want(wanted)).await;
+        let (done, acted) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::Want(wanted, done))
+            .await
+            .is_ok()
+        {
+            let _ = acted.await;
+        }
     }
 
     /// Closes the device before the gadget changes; returns once it is
@@ -381,12 +429,15 @@ async fn run(
 impl Channel {
     fn command(&mut self, command: Command) {
         match command {
-            Command::Want(wanted) => {
+            Command::Want(wanted, done) => {
                 self.wanted = wanted;
                 self.retry_at = None;
                 if !wanted {
                     self.problem = None;
                 }
+                self.settle();
+                self.publish();
+                let _ = done.send(());
             }
             Command::Pause(done) => {
                 self.paused += 1;
@@ -756,6 +807,24 @@ mod tests {
             channel.snapshot().problem.as_deref(),
             Some("the device is gone")
         );
+    }
+
+    #[test]
+    fn the_switch_is_off_unless_its_file_says_on_and_keeps_what_it_is_set_to() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("target-agent.env");
+        assert!(!switch_enabled(&path));
+        let mut switch = AgentSwitch::open(&path);
+        assert!(!switch.enabled());
+        switch.set(true).unwrap();
+        assert!(switch_enabled(&path));
+        assert!(AgentSwitch::open(&path).enabled());
+        std::fs::write(&path, "enabled=maybe\n").unwrap();
+        assert!(!AgentSwitch::open(&path).enabled());
+        // A switch that cannot be written stays as it was.
+        let mut broken = AgentSwitch::open(directory.path().join("missing/target-agent.env"));
+        assert!(broken.set(true).is_err());
+        assert!(!broken.enabled());
     }
 
     #[tokio::test]

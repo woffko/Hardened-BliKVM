@@ -73,6 +73,11 @@ impl CapabilityProvider for BliH616PikvmPlatform {
             "hid_screen_area".into(),
             FeatureStatus::read_write(source_verified),
         );
+        // The agent on the target, behind the operator's switch.
+        board_features.insert(
+            "target_agent".into(),
+            FeatureStatus::read_write(source_verified),
+        );
         board_features.insert(
             "system_settings".into(),
             FeatureStatus::read_only(runtime_verified),

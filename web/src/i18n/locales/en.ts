@@ -617,6 +617,22 @@ const en = {
         },
         hidOnly: 'HID-Only Mode',
         hidOnlyDesc: 'Stop emulating virtual devices, retaining only basic HID control',
+        targetAgent: {
+          title: 'Target agent',
+          description:
+            'Run the agent on supported systems: the absolute mouse also carries a channel to a program on the target',
+          connected: 'Connected: {{agent}}',
+          waiting: 'No agent connected',
+          problem: 'The channel is not open: {{problem}}',
+          refused: 'The agent was refused: {{reason}}',
+          confirm: 'Switch',
+          confirmOn:
+            "The board's USB device leaves the target and comes back with the agent's channel: keyboard, mouse and virtual media disconnect for a moment.",
+          confirmOff:
+            "The board's USB device leaves the target and comes back without the agent's channel: keyboard, mouse and virtual media disconnect for a moment.",
+          readFailed: "Failed to read the agent's state",
+          switchFailed: 'Failed to switch the agent'
+        },
         disk: 'Virtual Disk',
         diskDesc: 'Mount SD card on the remote host',
         network: 'Virtual Network',

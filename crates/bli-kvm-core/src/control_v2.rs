@@ -321,7 +321,12 @@ pub enum PlatformControlRequestV2 {
     },
     /// Read back the QUIC gateway's state.
     QuicState {},
-    /// The target agent's channel and the agent connected to it.
+    /// Switch the target agent on (the absolute mouse's interface gets the
+    /// agent's collection) or off.
+    TargetAgent {
+        enabled: bool,
+    },
+    /// The target agent's switch, its channel and the agent connected to it.
     TargetAgentState {},
     /// One call to the connected target agent, answered within
     /// `timeout_ms` (1 to `MAX_TARGET_AGENT_CALL_MS`).
@@ -642,6 +647,7 @@ impl PlatformControlRequestV2 {
             Self::SshState {} => Ok(()),
             Self::Quic { .. } => Ok(()),
             Self::QuicState {} => Ok(()),
+            Self::TargetAgent { .. } => Ok(()),
             Self::TargetAgentState {} => Ok(()),
             Self::TargetAgentCall { timeout_ms, .. } => {
                 if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms) {

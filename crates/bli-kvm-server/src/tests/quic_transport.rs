@@ -451,7 +451,7 @@ async fn another_user_and_another_protocol_are_not_served() {
 
 /// The board owner's control socket: answers each request with what
 /// `answer` makes of it, and records the requests.
-fn owner(
+pub(super) fn owner(
     socket: &std::path::Path,
     mut answer: impl FnMut(
         &bli_kvm_core::PlatformControlRequestV2,

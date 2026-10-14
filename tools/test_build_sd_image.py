@@ -90,6 +90,8 @@ class BuildSdImageTests(unittest.TestCase):
             "hid-ledger.json",
             "hid-only.env",
             "display-sleep.env",
+            # The target agent is off on a new card.
+            "target-agent.env",
             # The owner's record of the switches kept in system files: a new
             # card records its own at its first start.
             "system-switches.json",

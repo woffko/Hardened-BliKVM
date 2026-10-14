@@ -131,8 +131,9 @@ assemble() {
     # The source board'"'"'s switches, confirmed firewall mode and journals do
     # not belong to a new board. Each service starts clean without its file:
     # every administration switch off, the firewall in Baseline, HID-only
-    # off, the display never going dark, empty media, ATX and HID journals,
-    # the video settings at the defaults of the capture unit, and the mouse
+    # and the target agent off, the display never going dark, empty media,
+    # ATX and HID journals, the video settings at the defaults of the
+    # capture unit, and the mouse
     # over the whole desktop of the target (the monitors of the source
     # target are not those of a new one). The record the board owner keeps of the
     # switches in system files (SSH, QUIC, Tailscale, mDNS) is the source
@@ -143,7 +144,7 @@ assemble() {
       "$gadget_state/journal.json" "$gadget_state/media-journal.json" \
       "$gadget_state/atx-journal.json" "$gadget_state/hid-ledger.json" \
       "$gadget_state/hid-only.env" "$gadget_state/display-sleep.env" \
-      "$gadget_state/system-switches.json" \
+      "$gadget_state/target-agent.env" "$gadget_state/system-switches.json" \
       "$staging/var/lib/hardened-blikvm-video/ustreamer.env" \
       "$staging/var/lib/hardened-blikvm/screen-area.json"
     # The system-action journal is the source board'"'"'s reboots under its boot
@@ -167,7 +168,8 @@ assemble() {
     leftover=$(find "$gadget_state" "$staging/etc/hardened-blikvm" -maxdepth 1 \
       \( -name admin-features.json -o -name firewall-mode.json -o -name journal.json \
       -o -name media-journal.json -o -name atx-journal.json -o -name hid-ledger.json \
-      -o -name hid-only.env -o -name display-sleep.env -o -name system-switches.json \
+      -o -name hid-only.env -o -name display-sleep.env -o -name target-agent.env \
+      -o -name system-switches.json \
       -o -name "kvmd-backup-*" -o -name "unit-owner-*" \
       -o -name "update-trust-*.json" -o -name "web-pre-*" -o -name "update-supervisor-*.json" \) \
       -not -path "$staging/etc/hardened-blikvm/firewall-mode.json" -print)

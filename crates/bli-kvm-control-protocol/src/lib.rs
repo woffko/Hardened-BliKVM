@@ -174,11 +174,13 @@ pub enum ControlResponse {
         enabled: bool,
         active: bool,
     },
-    /// The target agent's channel: whether it should be open (the switch is
-    /// on and the gadget carries the agent's collection), whether its device
-    /// is open or why not, the connected agent's hello, why the last hello
-    /// was refused, and the messages each way.
+    /// The target agent's switch and channel: the switch, whether the
+    /// channel should be open (the switch is on and the gadget carries the
+    /// agent's collection), whether its device is open or why not, the
+    /// connected agent's hello, why the last hello was refused, and the
+    /// messages each way.
     TargetAgentState {
+        enabled: bool,
         wanted: bool,
         open: bool,
         problem: Option<String>,
@@ -946,6 +948,7 @@ mod tests {
         };
         let state = |problem: Option<&str>, agent: Option<bli_kvm_agent_protocol::Hello>| {
             ControlResponse::TargetAgentState {
+                enabled: true,
                 wanted: true,
                 open: problem.is_none(),
                 problem: problem.map(str::to_owned),

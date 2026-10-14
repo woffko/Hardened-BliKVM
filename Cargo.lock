@@ -822,6 +822,7 @@ dependencies = [
  "axum",
  "base64",
  "bli-kvm-admin-helper",
+ "bli-kvm-agent-protocol",
  "bli-kvm-broker-client",
  "bli-kvm-broker-protocol",
  "bli-kvm-control-client",

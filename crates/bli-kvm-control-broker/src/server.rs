@@ -282,7 +282,24 @@ async fn board_state(
     )
     .map_err(|_| ControlBrokerError::TransitionUnavailable)?
     .with_catalog_path(catalog_path);
+    // The agent's switch decides the absolute mouse's interface of every
+    // gadget the owner builds, and of the one present when it starts.
+    let agent_switch =
+        crate::target_agent::AgentSwitch::open(crate::target_agent::TARGET_AGENT_STATE);
+    media.want_agent(agent_switch.enabled());
     ensure_gadget_hid(&media);
+    let agent_ready = match media.set_agent(agent_switch.enabled()) {
+        Ok(changed) => {
+            if changed {
+                eprintln!("target agent: the gadget now follows the switch");
+            }
+            true
+        }
+        Err(error) => {
+            eprintln!("target agent: the gadget could not follow the switch: {error:?}");
+            false
+        }
+    };
     let hidg_dir: std::path::PathBuf = hidg_dir.into();
     let agent_device = hidg_dir.join(
         bli_kvm_usb_gadget::hid_device_name(bli_kvm_usb_gadget::HID_ABSOLUTE_MOUSE_NAME)
@@ -327,10 +344,10 @@ async fn board_state(
     );
     // The target agent's channel opens its device only while the agent's
     // switch is on and the gadget carries the agent's collection.
-    state.with_target_agent(crate::target_agent::AgentChannel::start(
-        agent_device,
-        crate::target_agent::board_hello(),
-    ));
+    let channel =
+        crate::target_agent::AgentChannel::start(agent_device, crate::target_agent::board_hello());
+    channel.want(agent_switch.enabled() && agent_ready).await;
+    state.with_target_agent(channel, agent_switch);
     // Every board-profile entry point serves the read-only board status when
     // the operator configured the daemon socket.
     if let Some(client) = crate::board_status::board_status_client_from_environment() {

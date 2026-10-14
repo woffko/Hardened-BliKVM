@@ -69,8 +69,12 @@ pub struct ControlV2State {
     admin_features: Option<crate::admin_features::AdminFeaturesState>,
     ssh: Option<crate::ssh_settings::SshSettings>,
     quic: Option<crate::quic_settings::QuicSettings>,
-    /// The target agent's channel on the absolute mouse's device.
-    target_agent: Option<crate::target_agent::AgentChannel>,
+    /// The target agent's channel on the absolute mouse's device, and the
+    /// operator's switch for it.
+    target_agent: Option<(
+        crate::target_agent::AgentChannel,
+        crate::target_agent::AgentSwitch,
+    )>,
     /// The record of the switches kept in system files, across a RAW update.
     system_switches: Option<crate::system_switches::SystemSwitches>,
     ipv4: Option<crate::ipv4_settings::SharedIpv4>,
@@ -238,9 +242,13 @@ impl ControlV2State {
         self.quic = Some(quic);
     }
 
-    /// Attach the target agent's channel to the board state.
-    pub fn with_target_agent(&mut self, channel: crate::target_agent::AgentChannel) {
-        self.target_agent = Some(channel);
+    /// Attach the target agent's channel and switch to the board state.
+    pub fn with_target_agent(
+        &mut self,
+        channel: crate::target_agent::AgentChannel,
+        switch: crate::target_agent::AgentSwitch,
+    ) {
+        self.target_agent = Some((channel, switch));
     }
 
     /// The target agent's channel, for a call that waits outside the shared
@@ -249,7 +257,9 @@ impl ControlV2State {
         if !self.enabled {
             return None;
         }
-        self.target_agent.clone()
+        self.target_agent
+            .as_ref()
+            .map(|(channel, _)| channel.clone())
     }
 
     /// Keeps the record of the switches held in system files, and sets them
@@ -737,6 +747,59 @@ impl ControlV2State {
         state.handle(enabled)
     }
 
+    /// The operator's "Target agent" switch: the absolute mouse's interface
+    /// gets the agent's collection, or loses it, and the channel follows.
+    /// The switch is written first and put back when the gadget cannot be
+    /// changed, so it never says what the gadget is not.
+    async fn handle_target_agent(&mut self, enabled: bool) -> ControlResponse {
+        let Some((channel, switch)) = self.target_agent.as_mut() else {
+            return reject(ControlRejectionCode::CapabilityDisabled);
+        };
+        let channel = channel.clone();
+        let was = switch.enabled();
+        if let Err(reason) = switch.set(enabled) {
+            eprintln!("target agent: the switch could not be written: {reason}");
+            return reject(ControlRejectionCode::BackendRejected);
+        }
+        if !enabled {
+            channel.want(false).await;
+        }
+        #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+        let applied = match self.media.as_ref() {
+            Some(media) => {
+                channel.pause().await;
+                let result = media.set_agent(enabled);
+                channel.resume().await;
+                result.map_err(|error| format!("{error:?}"))
+            }
+            None => Err("the owner keeps no gadget".to_string()),
+        };
+        #[cfg(not(any(feature = "media-transition-profile", feature = "gadget-media-profile")))]
+        let applied: Result<bool, String> = Err("the owner keeps no gadget".to_string());
+        let Some((_, switch)) = self.target_agent.as_mut() else {
+            return reject(ControlRejectionCode::Internal);
+        };
+        match applied {
+            Ok(changed) => {
+                channel.want(enabled).await;
+                if changed {
+                    eprintln!(
+                        "target agent: switched {}",
+                        if enabled { "on" } else { "off" }
+                    );
+                }
+                ControlResponse::Applied
+            }
+            Err(reason) => {
+                eprintln!("target agent: the gadget could not be changed: {reason}");
+                if let Err(reason) = switch.set(was) {
+                    eprintln!("target agent: the switch could not be put back: {reason}");
+                }
+                reject(ControlRejectionCode::BackendRejected)
+            }
+        }
+    }
+
     fn handle_hid_only_state(&self) -> ControlResponse {
         let Some(state) = self.hid_only.as_ref() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
@@ -1021,12 +1084,15 @@ impl ControlV2State {
                 Some(quic) => quic.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
+            PlatformControlRequestV2::TargetAgent { enabled } => {
+                self.handle_target_agent(*enabled).await
+            }
             PlatformControlRequestV2::TargetAgentState {} => match self.target_agent.as_ref() {
-                Some(channel) => target_agent_state(channel.snapshot()),
+                Some((channel, switch)) => target_agent_state(switch.enabled(), channel.snapshot()),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
             PlatformControlRequestV2::TargetAgentCall { call, timeout_ms } => {
-                match self.target_agent.clone() {
+                match self.target_agent_shared() {
                     Some(channel) => run_target_agent_call(channel, *call, *timeout_ms).await,
                     None => reject(ControlRejectionCode::CapabilityDisabled),
                 }
@@ -1435,7 +1501,7 @@ impl ControlV2State {
         }
         // Every media operation may unbind and bind the gadget, which takes
         // the agent's device away and back: the channel closes it first.
-        let agent = self.target_agent.clone();
+        let agent = self.target_agent_shared();
         let Some(engine) = self.media.as_mut() else {
             return reject(ControlRejectionCode::BackendUnavailable);
         };
@@ -1495,9 +1561,13 @@ impl ControlV2State {
     }
 }
 
-/// The channel's snapshot as the control protocol says it.
-fn target_agent_state(snapshot: crate::target_agent::AgentSnapshot) -> ControlResponse {
+/// The switch and the channel's snapshot as the control protocol says them.
+fn target_agent_state(
+    enabled: bool,
+    snapshot: crate::target_agent::AgentSnapshot,
+) -> ControlResponse {
     ControlResponse::TargetAgentState {
+        enabled,
         wanted: snapshot.wanted,
         open: snapshot.open,
         problem: snapshot.problem,
@@ -1914,15 +1984,19 @@ mod tests {
             );
         }
         let directory = tempfile::tempdir().unwrap();
-        state.with_target_agent(crate::target_agent::AgentChannel::start(
-            directory.path().join("hidg1"),
-            crate::target_agent::board_hello(),
-        ));
+        state.with_target_agent(
+            crate::target_agent::AgentChannel::start(
+                directory.path().join("hidg1"),
+                crate::target_agent::board_hello(),
+            ),
+            crate::target_agent::AgentSwitch::open(directory.path().join("target-agent.env")),
+        );
         assert!(matches!(
             state
                 .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
                 .await,
             ControlResponse::TargetAgentState {
+                enabled: false,
                 wanted: false,
                 open: false,
                 agent: None,
@@ -1937,6 +2011,108 @@ mod tests {
             }
         );
         assert!(state.target_agent_shared().is_some());
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn the_target_agents_switch_changes_the_gadget_and_is_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let images = directory.path().join("images");
+        std::fs::create_dir_all(&configfs).unwrap();
+        std::fs::create_dir_all(&images).unwrap();
+        let catalog = images.join("catalog.json");
+        std::fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        let engine = MediaTransitionEngine::open_with_executor(
+            directory.path().join("journal.json"),
+            bli_kvm_media_catalog::MediaCatalog::open(&catalog).unwrap(),
+            bli_kvm_media_transition::MediaExecutor::Gadget(
+                bli_kvm_media_transition::GadgetMediaExecutor::new(
+                    bli_kvm_media_transition::GadgetMediaConfig {
+                        configfs_root: configfs.clone(),
+                        udc: "musb-hdrc.2.auto".into(),
+                        image_directory: images,
+                        strings: bli_kvm_usb_gadget::GadgetStrings {
+                            manufacturer: "Hardened BLi-KVM".into(),
+                            product: "BLi-KVM Composite Device".into(),
+                            serial: "BLK-agent-switch".into(),
+                            configuration: "BLi-KVM configuration".into(),
+                        },
+                        id_vendor: 0x1d6b,
+                        id_product: 0x0104,
+                        bcd_usb: 0x0200,
+                        bcd_device: 0x0100,
+                    },
+                ),
+            ),
+        )
+        .unwrap();
+        assert!(engine.ensure_hid_gadget().unwrap());
+        let mut state = ControlV2State::disabled().with_media_engine(engine);
+        let switch_path = directory.path().join("target-agent.env");
+        state.with_target_agent(
+            crate::target_agent::AgentChannel::start(
+                directory.path().join("hidg1"),
+                crate::target_agent::board_hello(),
+            ),
+            crate::target_agent::AgentSwitch::open(&switch_path),
+        );
+        let now = Instant::now();
+        let report_id = || bli_kvm_usb_gadget::absolute_mouse_report_id(&configfs).unwrap();
+        let enabled = |state: &ControlResponse| {
+            matches!(
+                state,
+                ControlResponse::TargetAgentState {
+                    enabled: true,
+                    wanted: true,
+                    ..
+                }
+            )
+        };
+
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: true },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(report_id(), Some(1));
+        assert!(crate::target_agent::switch_enabled(&switch_path));
+        let read = state
+            .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+            .await;
+        assert!(enabled(&read), "{read:?}");
+
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: false },
+                    now
+                )
+                .await,
+            ControlResponse::Applied
+        );
+        assert_eq!(report_id(), None);
+        assert!(!crate::target_agent::switch_enabled(&switch_path));
+
+        // A gadget that cannot be changed leaves the switch as it was.
+        std::fs::remove_file(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        std::fs::create_dir(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        assert_eq!(
+            state
+                .handle(
+                    &PlatformControlRequestV2::TargetAgent { enabled: true },
+                    now
+                )
+                .await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert!(!crate::target_agent::switch_enabled(&switch_path));
     }
 
     #[tokio::test]

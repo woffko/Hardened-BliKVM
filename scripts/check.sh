@@ -238,6 +238,7 @@ node --check tools/playwright/upscale_reference.mjs
 node --check tools/playwright/screen_enlargement_contract.mjs
 node --check tools/playwright/mjpeg_upscale_contract.mjs
 node --check tools/playwright/screen_area_contract.mjs
+node --check tools/playwright/target_agent_contract.mjs
 node --check tools/playwright/upscale_colour_device_probe.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
@@ -928,6 +929,7 @@ node tools/playwright/upscale_renderer_contract.mjs
 node tools/playwright/screen_enlargement_contract.mjs
 node tools/playwright/mjpeg_upscale_contract.mjs
 node tools/playwright/screen_area_contract.mjs
+node tools/playwright/target_agent_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs

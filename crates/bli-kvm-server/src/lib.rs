@@ -61,6 +61,7 @@ mod system_log;
 mod system_time;
 mod system_update;
 mod tailscale;
+mod target_agent;
 mod terminal;
 mod update;
 mod video;
@@ -752,6 +753,10 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/hid/screen-area",
             get(screen_area::get_screen_area).post(screen_area::set_screen_area),
         )
+        .route(
+            "/target-agent",
+            get(target_agent::state).post(target_agent::set),
+        )
         .route("/hid/shortcuts", get(shortcuts::list))
         .route(
             "/hid/shortcut",
@@ -1057,6 +1062,7 @@ async fn security_headers(request: Request, next: Next) -> Response {
 mod tests {
     mod http_transport;
     mod quic_transport;
+    mod target_agent;
     use std::{fs, net::SocketAddr};
 
     use axum::{
