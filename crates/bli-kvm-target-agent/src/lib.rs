@@ -7,6 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod client;
+
 /// The agent's version: the workspace's.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

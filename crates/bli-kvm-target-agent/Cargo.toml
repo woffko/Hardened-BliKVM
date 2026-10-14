@@ -11,11 +11,23 @@ repository.workspace = true
 name = "bli-kvm-target-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "bli-kvm-target-agent-test"
+path = "src/test_tool.rs"
+
+[dependencies]
+bli-kvm-agent-protocol = { path = "../bli-kvm-agent-protocol" }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
+  "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Devices_HumanInterfaceDevice",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_IO",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   "Win32_UI_Shell",

@@ -941,6 +941,7 @@ dependencies = [
 name = "bli-kvm-target-agent"
 version = "0.1.0"
 dependencies = [
+ "bli-kvm-agent-protocol",
  "windows-sys 0.61.2",
 ]
 
