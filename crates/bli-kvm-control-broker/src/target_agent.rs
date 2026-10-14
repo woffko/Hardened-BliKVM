@@ -35,6 +35,33 @@ use tokio::sync::{mpsc, oneshot};
 /// the owner starts reads it too, so a boot builds the gadget as it says.
 pub const TARGET_AGENT_STATE: &str = "/var/lib/hardened-blikvm-gadget/target-agent.env";
 
+/// The target agent's drive in the slot this owner runs from: the slot's
+/// web tree carries it (`scripts/build-agent-drive.sh`), as a signed slot
+/// carries nothing else beside its programs. None when this slot has none.
+pub fn agent_drive_in_slot() -> Option<PathBuf> {
+    let program = std::env::current_exe().ok()?;
+    let drive = program
+        .parent()?
+        .parent()?
+        .join("share/web/agent/agent-drive.img");
+    drive.is_file().then_some(drive)
+}
+
+/// The drive to present: while the agent's switch is on and the gadget is
+/// not in HID-only mode, which presents no storage.
+pub fn wanted_drive(switch: bool, hid_only: bool, drive: Option<PathBuf>) -> Option<PathBuf> {
+    (switch && !hid_only).then_some(drive).flatten()
+}
+
+/// The drive to present when the owner starts, or the HID bind before it:
+/// the switch's and HID-only mode's files as they are.
+pub fn drive_at_start(switch: bool) -> Option<PathBuf> {
+    let hid_only = std::fs::read_to_string(crate::device_settings::HID_ONLY_STATE)
+        .map(|text| crate::device_settings::parse_flag(&text))
+        .unwrap_or(false);
+    wanted_drive(switch, hid_only, agent_drive_in_slot())
+}
+
 /// Whether the switch file says the agent is on.
 pub fn switch_enabled(path: &std::path::Path) -> bool {
     std::fs::read_to_string(path)
@@ -892,6 +919,15 @@ mod tests {
         let mut broken = AgentSwitch::open(directory.path().join("missing/target-agent.env"));
         assert!(broken.set(true).is_err());
         assert!(!broken.enabled());
+    }
+
+    #[test]
+    fn the_drive_is_presented_only_with_the_switch_on_and_storage_allowed() {
+        let drive = Some(PathBuf::from("/slot/share/web/agent/agent-drive.img"));
+        assert_eq!(wanted_drive(true, false, drive.clone()), drive);
+        assert_eq!(wanted_drive(false, false, drive.clone()), None);
+        assert_eq!(wanted_drive(true, true, drive.clone()), None);
+        assert_eq!(wanted_drive(true, false, None), None);
     }
 
     #[tokio::test]

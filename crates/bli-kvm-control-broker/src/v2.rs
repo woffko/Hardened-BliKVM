@@ -358,8 +358,8 @@ impl ControlV2State {
     }
 
     /// A stopping owner takes the agent's collection away from the absolute
-    /// mouse; the switch stays as it is, and the next owner puts the
-    /// collection back. An update may roll back to a slot from before the
+    /// mouse, and the agent's drive; the switch stays as it is, and the next
+    /// owner puts them back. An update may roll back to a slot from before the
     /// agent, which writes the mouse's reports without an ID: the target
     /// would read them against a descriptor with IDs, buttons among them.
     async fn leave_the_absolute_mouse_plain(&mut self) {
@@ -369,6 +369,11 @@ impl ControlV2State {
         channel.pause().await;
         #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
         if let Some(media) = self.media.as_ref() {
+            // The agent's drive too: a slot from before the agent knows no
+            // second LUN and would take the drive alone for an image.
+            if let Err(error) = media.set_agent_drive(None) {
+                eprintln!("target agent: the drive could not be taken away: {error:?}");
+            }
             match media.set_agent(false) {
                 Ok(true) => {
                     eprintln!(
@@ -801,11 +806,48 @@ impl ControlV2State {
         }
     }
 
-    fn handle_hid_only(&mut self, enabled: bool) -> ControlResponse {
+    async fn handle_hid_only(&mut self, enabled: bool) -> ControlResponse {
         let Some(state) = self.hid_only.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
         };
-        state.handle(enabled)
+        let response = state.handle(enabled);
+        if matches!(response, ControlResponse::Applied) {
+            // HID-only mode presents no storage: the agent's drive follows,
+            // the agent's channel closed while the gadget changes.
+            let channel = self.target_agent_shared();
+            if let Some(channel) = channel.as_ref() {
+                channel.pause().await;
+            }
+            self.present_agent_drive();
+            if let Some(channel) = channel.as_ref() {
+                channel.resume().await;
+            }
+        }
+        response
+    }
+
+    /// Presents the target agent's drive as the switch and HID-only mode
+    /// say. A gadget that cannot be changed is logged; the drive is a
+    /// convenience, not the channel. The caller pauses the channel.
+    fn present_agent_drive(&mut self) {
+        #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
+        {
+            let switch = self
+                .target_agent
+                .as_ref()
+                .is_some_and(|(_, switch)| switch.enabled());
+            let hid_only = self.hid_only.as_ref().is_some_and(|state| state.enabled());
+            let drive = crate::target_agent::wanted_drive(
+                switch,
+                hid_only,
+                crate::target_agent::agent_drive_in_slot(),
+            );
+            if let Some(media) = self.media.as_ref()
+                && let Err(error) = media.set_agent_drive(drive)
+            {
+                eprintln!("target agent: the drive could not be presented: {error:?}");
+            }
+        }
     }
 
     /// The operator's "Target agent" switch: the absolute mouse's interface
@@ -842,6 +884,9 @@ impl ControlV2State {
         };
         match applied {
             Ok(changed) => {
+                channel.pause().await;
+                self.present_agent_drive();
+                channel.resume().await;
                 channel.want(enabled).await;
                 if changed {
                     eprintln!(
@@ -1095,7 +1140,7 @@ impl ControlV2State {
                 self.handle_display_sleep(*seconds)
             }
             PlatformControlRequestV2::DisplaySleepState {} => self.handle_display_sleep_state(),
-            PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled),
+            PlatformControlRequestV2::HidOnly { enabled } => self.handle_hid_only(*enabled).await,
             PlatformControlRequestV2::HidOnlyState {} => self.handle_hid_only_state(),
             PlatformControlRequestV2::AdminFeature { feature, enabled } => {
                 match self.admin_features.as_mut() {

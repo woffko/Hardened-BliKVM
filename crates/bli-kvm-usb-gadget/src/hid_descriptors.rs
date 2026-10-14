@@ -320,6 +320,7 @@ mod tests {
                 read_only: true,
                 cdrom: false,
                 removable: true,
+                second_lun: None,
             })],
         };
         spec.functions.extend(pinned_hid_functions());

@@ -30,6 +30,8 @@ use thiserror::Error;
 pub const GADGET_NAME: &str = "hardened";
 /// Function name of the mass-storage function.
 pub const MSD_FUNCTION: &str = "mass_storage.usb0";
+/// The mass-storage function's second LUN: the target agent's drive.
+const SECOND_LUN: &str = "lun.1";
 /// Reviewed HID function names.
 pub const HID_FUNCTIONS: [&str; 3] = ["hid.usb0", "hid.usb1", "hid.usb2"];
 /// The order in which [`replace_hid_function`] links the functions back into
@@ -89,6 +91,9 @@ pub struct MassStorageConfig {
     pub read_only: bool,
     pub cdrom: bool,
     pub removable: bool,
+    /// A second LUN, read-only and not removable: the target agent's drive
+    /// beside the virtual media, which keep LUN 0.
+    pub second_lun: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,6 +238,9 @@ pub const MIN_CDROM_IMAGE_BYTES: u64 = 300 * 2048;
 
 fn validate_mass_storage(config: &MassStorageConfig) -> Result<(), GadgetError> {
     validate_image_path(&config.file)?;
+    if let Some(second) = &config.second_lun {
+        validate_image_path(second)?;
+    }
     if config.cdrom {
         let size = std::fs::metadata(&config.file)
             .map(|metadata| metadata.len())
@@ -313,6 +321,28 @@ fn function_steps(function: &Function) -> Vec<Step> {
                 path: lun.join("file"),
                 value: storage.file.to_string_lossy().into_owned(),
             });
+            // The kernel makes a LUN only while the function is not linked:
+            // the second is made here, before the link, read-only and not
+            // removable, its file last.
+            if let Some(second) = &storage.second_lun {
+                let lun = base.join(SECOND_LUN);
+                steps.push(Step::WriteFile {
+                    path: lun.join("ro"),
+                    value: bool_value(true),
+                });
+                steps.push(Step::WriteFile {
+                    path: lun.join("cdrom"),
+                    value: bool_value(false),
+                });
+                steps.push(Step::WriteFile {
+                    path: lun.join("removable"),
+                    value: bool_value(false),
+                });
+                steps.push(Step::WriteFile {
+                    path: lun.join("file"),
+                    value: second.to_string_lossy().into_owned(),
+                });
+            }
         }
         Function::Hid(hid) => {
             steps.push(Step::WriteFile {
@@ -542,6 +572,7 @@ pub fn replace_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), Gadget
     if root.join(&lun_file).exists() {
         steps.push(Step::ClearAttribute { path: lun_file });
     }
+    steps.extend(second_lun_removal(root));
     steps.push(Step::RemoveEmptyDir {
         path: function_path(MSD_FUNCTION),
     });
@@ -580,6 +611,7 @@ pub fn remove_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetE
     if root.join(&lun_file).exists() {
         steps.push(Step::ClearAttribute { path: lun_file });
     }
+    steps.extend(second_lun_removal(root));
     steps.push(Step::RemoveEmptyDir {
         path: function_path(MSD_FUNCTION),
     });
@@ -684,6 +716,21 @@ pub fn absolute_mouse_report_id(root: &Path) -> Result<Option<u8>, GadgetError> 
         .ok_or(GadgetError::InvalidReportDescriptor)
 }
 
+/// Releases and removes the second LUN, if there is one: configfs drops a
+/// function only once the LUNs made in it are gone.
+fn second_lun_removal(root: &Path) -> Vec<Step> {
+    let lun = function_path(MSD_FUNCTION).join(SECOND_LUN);
+    if !root.join(&lun).is_dir() {
+        return Vec::new();
+    }
+    vec![
+        Step::ClearAttribute {
+            path: lun.join("file"),
+        },
+        Step::RemoveEmptyDir { path: lun },
+    ]
+}
+
 /// Write the selected image to the mass-storage LUN. Requires the function to
 /// exist; it does not bind the gadget.
 pub fn set_lun_file(root: &Path, file: &Path) -> Result<(), GadgetError> {
@@ -782,6 +829,8 @@ pub struct MassStorageState {
     pub read_only: bool,
     pub cdrom: bool,
     pub removable: bool,
+    /// The second LUN's file, when there is a second LUN.
+    pub second_lun: Option<PathBuf>,
 }
 
 /// Read-only snapshot of an existing gadget, used for media eligibility and
@@ -828,6 +877,17 @@ pub fn observe(root: &Path) -> Result<GadgetState, GadgetError> {
             read_only: read_bool(root, &lun.join("ro"))?,
             cdrom: read_bool(root, &lun.join("cdrom"))?,
             removable: read_bool(root, &lun.join("removable"))?,
+            second_lun: {
+                let second = function_path(MSD_FUNCTION).join(SECOND_LUN);
+                if root.join(&second).is_dir() {
+                    Some(PathBuf::from(read_required_string(
+                        root,
+                        &second.join("file"),
+                    )?))
+                } else {
+                    None
+                }
+            },
         })
     } else {
         None
@@ -885,6 +945,7 @@ mod tests {
             read_only: true,
             cdrom: false,
             removable: true,
+            second_lun: None,
         })
     }
 
@@ -1229,6 +1290,7 @@ mod tests {
                 read_only: true,
                 cdrom: true,
                 removable: true,
+                second_lun: None,
             })
         };
         let mut invalid = spec(&image);
@@ -1253,6 +1315,7 @@ mod tests {
             read_only: true,
             cdrom: false,
             removable: true,
+            second_lun: None,
         })];
         assert_eq!(
             apply(directory.path(), &invalid),
@@ -1507,6 +1570,80 @@ mod tests {
             absolute_mouse_report_id(root),
             Err(GadgetError::InvalidReportDescriptor)
         );
+    }
+
+    #[test]
+    fn a_second_lun_is_made_before_the_link_and_goes_before_the_function() {
+        let directory = root_with_image();
+        let root = directory.path();
+        let image = root.join(IMAGE_NAME);
+        let drive = root.join("agent-drive.img");
+        std::fs::write(&drive, b"drive").unwrap();
+        let with_drive = |file: &Path, removable: bool| {
+            let mut spec = hid_gadget(root, None);
+            spec.functions
+                .push(Function::MassStorage(MassStorageConfig {
+                    file: file.to_path_buf(),
+                    read_only: true,
+                    cdrom: false,
+                    removable,
+                    second_lun: (file != drive).then(|| drive.clone()),
+                }));
+            spec
+        };
+        // The image on LUN 0, the drive on LUN 1: read-only, not removable,
+        // its attributes before its file and all before the link.
+        let spec = with_drive(&image, true);
+        let steps = bind_steps(&spec);
+        let position = |wanted: &str| {
+            steps
+                .iter()
+                .position(|step| match step {
+                    Step::WriteFile { path, .. } | Step::Symlink { link: path, .. } => {
+                        path.ends_with(wanted)
+                    }
+                    _ => false,
+                })
+                .unwrap()
+        };
+        assert!(position("lun.1/ro") < position("lun.1/file"));
+        assert!(position("lun.1/file") < position("configs/c.1/mass_storage.usb0"));
+        assert_eq!(apply(root, &spec), Ok(()));
+        let lun = "hardened/functions/mass_storage.usb0/lun.1";
+        assert_eq!(read(root, &format!("{lun}/ro")), "1");
+        assert_eq!(read(root, &format!("{lun}/removable")), "0");
+        let state = observe(root).unwrap().mass_storage.unwrap();
+        assert!(state.removable);
+        assert_eq!(state.second_lun, Some(drive.clone()));
+
+        // A swap keeps the drive when asked to, and drops it when not.
+        assert_eq!(replace_mass_storage(root, &spec), Ok(()));
+        assert_eq!(
+            observe(root).unwrap().mass_storage.unwrap().second_lun,
+            Some(drive.clone())
+        );
+        let mut without = spec.clone();
+        if let Function::MassStorage(storage) = without.functions.last_mut().unwrap() {
+            storage.second_lun = None;
+        }
+        assert_eq!(replace_mass_storage(root, &without), Ok(()));
+        assert!(!root.join(lun).exists());
+        assert_eq!(
+            observe(root).unwrap().mass_storage.unwrap().second_lun,
+            None
+        );
+
+        // The drive alone on LUN 0, not removable; an eject removes it all.
+        assert_eq!(
+            replace_mass_storage(root, &with_drive(&drive, false)),
+            Ok(())
+        );
+        let state = observe(root).unwrap().mass_storage.unwrap();
+        assert!(!state.removable && state.file == drive && state.second_lun.is_none());
+        assert_eq!(replace_mass_storage(root, &spec), Ok(()));
+        assert_eq!(remove_mass_storage(root, &hid_gadget(root, None)), Ok(()));
+        assert!(observe(root).unwrap().mass_storage.is_none());
+        assert_eq!(read(root, "hardened/UDC"), "musb-hdrc.2.auto");
     }
 
     #[test]

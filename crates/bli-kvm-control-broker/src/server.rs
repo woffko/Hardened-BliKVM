@@ -287,6 +287,8 @@ async fn board_state(
     let agent_switch =
         crate::target_agent::AgentSwitch::open(crate::target_agent::TARGET_AGENT_STATE);
     media.want_agent(agent_switch.enabled());
+    let agent_drive = crate::target_agent::drive_at_start(agent_switch.enabled());
+    media.want_agent_drive(agent_drive.clone());
     ensure_gadget_hid(&media);
     let agent_ready = match media.set_agent(agent_switch.enabled()) {
         Ok(changed) => {
@@ -300,6 +302,9 @@ async fn board_state(
             false
         }
     };
+    if let Err(error) = media.set_agent_drive(agent_drive) {
+        eprintln!("target agent: the drive could not follow the switch: {error:?}");
+    }
     let hidg_dir: std::path::PathBuf = hidg_dir.into();
     let agent_device = hidg_dir.join(
         bli_kvm_usb_gadget::hid_device_name(bli_kvm_usb_gadget::HID_ABSOLUTE_MOUSE_NAME)
