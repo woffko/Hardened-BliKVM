@@ -637,6 +637,13 @@ const en = {
           monitorsUnderControl: 'The monitors are read while you control the target',
           targetLayout: "Target's layout: {{name}}",
           layoutSync: "Keep the target's layout in step with the on-screen keyboard",
+          start: 'Start the agent on the target',
+          startConfirm: 'Type it',
+          startExplain:
+            "The keyboard opens Windows' Run box (Win+R) and types a PowerShell line that starts the agent from the board's drive BLIKVMAGENT. The target must be signed in, with an English (US) keyboard layout in front.",
+          startHint: 'Types Win+R and a line that starts the agent from the board’s drive',
+          startNeedsControl: 'Enable remote control to start the agent from here',
+          startWaiting: 'Typed; waiting for the agent to connect',
           clipboard: "Target's clipboard",
           clipboardRead: "Read the target's",
           clipboardWrite: 'Put on the target',
