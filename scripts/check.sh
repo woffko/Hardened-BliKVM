@@ -105,6 +105,15 @@ cargo test -p bli-kvm-server --all-targets --locked --features restricted-contro
 cargo build -p bli-kvm-control-broker --locked --example firewall_health_gate
 python3 tools/check_firewall_https.py --gate "${CARGO_TARGET_DIR:-target}/debug/examples/firewall_health_gate"
 cargo clippy --workspace --all-targets --locked -- -D warnings
+# The target agent's Windows code is compiled only for Windows: linted and
+# built there too, reproducibly (docs/baselines/work-plan-20261014-target-agent.md).
+cargo xwin clippy --release --locked --offline --target x86_64-pc-windows-msvc \
+  -p bli-kvm-target-agent -- -D warnings
+agent_out=$(mktemp -d)
+sh scripts/build-target-agent.sh "$agent_out/first" >/dev/null
+CARGO_TARGET_DIR="$agent_out/target" sh scripts/build-target-agent.sh "$agent_out/second" >/dev/null
+cmp "$agent_out/first/hardened-blikvm-agent.exe" "$agent_out/second/hardened-blikvm-agent.exe"
+rm -rf "$agent_out"
 cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264 -- -D warnings
 cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264,turbojpeg -- -D warnings
 cargo clippy -p bli-kvm-broker-protocol --all-targets --locked --features diagnostic-export -- -D warnings

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/bli-kvm-core",
+  "crates/bli-kvm-target-agent",
   "crates/bli-kvm-control-protocol",
   "crates/bli-kvm-control-client",
   "crates/bli-kvm-control-broker",
