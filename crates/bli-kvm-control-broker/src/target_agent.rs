@@ -190,8 +190,8 @@ impl Session {
                     id,
                     answer: Answer::Pong,
                 }],
-                // The board reads nothing of its own for the agent.
-                Call::System | Call::Monitors | Call::Keyboard => vec![Message::Failed {
+                // The board reads and does nothing of its own for the agent.
+                _ => vec![Message::Failed {
                     id,
                     reason: "the board answers pings only".into(),
                 }],
@@ -204,7 +204,7 @@ impl Session {
                 if let Some((call, reply)) = self.pending.remove(&id) {
                     // An answer to another call, or out of its bounds, is
                     // not carried further.
-                    let _ = reply.send(if answer.answers(call) {
+                    let _ = reply.send(if answer.answers(&call) {
                         Ok(answer)
                     } else {
                         Err(CallError::Failed(
@@ -249,7 +249,7 @@ impl Session {
         }
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
-        self.pending.insert(id, (call, reply));
+        self.pending.insert(id, (call.clone(), reply));
         Some(Message::Request { id, call })
     }
 

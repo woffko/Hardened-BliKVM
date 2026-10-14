@@ -50,8 +50,9 @@ pub enum Message {
 }
 
 /// What one side may ask the other. Either side answers a ping; the
-/// others are the board's to the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// others are the board's to the agent: reads, and the actions the operator
+/// chose (`docs/baselines/work-plan-20261014-target-agent.md`, phase 4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Call {
     /// Answered at once with a pong: the round trip.
@@ -62,6 +63,71 @@ pub enum Call {
     Monitors,
     /// The keyboard layouts.
     Keyboard,
+    /// Switch the window in front to one of the installed layouts, by its
+    /// id.
+    SetLayout { id: String },
+    /// Change the monitors' mode; the change is undone by itself unless
+    /// kept in time.
+    SetDisplays { mode: DisplayMode },
+    /// Keep the monitors' change.
+    KeepDisplays,
+    /// The target's clipboard text.
+    ReadClipboard,
+    /// Put text on the target's clipboard.
+    WriteClipboard { text: String },
+    /// Lock the session.
+    Lock,
+}
+
+/// The monitors' modes the agent sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayMode {
+    /// One desktop over every monitor.
+    Extend,
+    /// The same picture on every monitor.
+    Duplicate,
+    /// Only the board's monitor.
+    BoardOnly,
+    /// Only the monitors other than the board's.
+    OthersOnly,
+    /// The board's monitor the primary one, the others where they are
+    /// beside it.
+    BoardPrimary,
+}
+
+/// How long a monitors' change waits to be kept before it is undone.
+pub const DISPLAYS_REVERT_SECONDS: u32 = 15;
+/// The most clipboard text either way, in UTF-8 bytes; tabs and line ends
+/// are its only control characters, so its JSON is at most twice as long
+/// and a message stays within 16 KiB.
+pub const MAX_CLIPBOARD_BYTES: usize = 6000;
+
+/// Whether `text` may cross as clipboard text.
+pub fn clipboard_text_is_valid(text: &str) -> bool {
+    text.len() <= MAX_CLIPBOARD_BYTES
+        && !text
+            .chars()
+            .any(|letter| letter.is_control() && !matches!(letter, '\t' | '\n' | '\r'))
+}
+
+impl Call {
+    /// Whether the call is within its bounds.
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Call::SetLayout { id } => {
+                id.len() == 8 && id.chars().all(|digit| digit.is_ascii_hexdigit())
+            }
+            Call::WriteClipboard { text } => clipboard_text_is_valid(text),
+            _ => true,
+        }
+    }
+
+    /// Whether the call reads from the target or acts on it (anything but
+    /// a ping): the board makes it only under the operator's HID lease.
+    pub fn needs_lease(&self) -> bool {
+        *self != Call::Ping
+    }
 }
 
 /// The answer to a call.
@@ -72,6 +138,14 @@ pub enum Answer {
     System(System),
     Monitors(Vec<Monitor>),
     Keyboard(Keyboard),
+    /// The action is done.
+    Done,
+    /// The monitors changed, and are put back after this many seconds
+    /// unless kept.
+    DisplaysChanged {
+        revert_in_seconds: u32,
+    },
+    Clipboard(String),
 }
 
 impl Answer {
@@ -82,17 +156,31 @@ impl Answer {
             Answer::System(system) => system.is_valid(),
             Answer::Monitors(monitors) => reads::monitors_are_valid(monitors),
             Answer::Keyboard(keyboard) => keyboard.is_valid(),
+            Answer::Done => true,
+            Answer::DisplaysChanged { revert_in_seconds } => {
+                (1..=DISPLAYS_REVERT_SECONDS).contains(revert_in_seconds)
+            }
+            Answer::Clipboard(text) => clipboard_text_is_valid(text),
         }
     }
 
     /// Whether the answer answers `call` and is within its bounds.
-    pub fn answers(&self, call: Call) -> bool {
+    pub fn answers(&self, call: &Call) -> bool {
         let fits = matches!(
             (call, self),
             (Call::Ping, Answer::Pong)
                 | (Call::System, Answer::System(_))
                 | (Call::Monitors, Answer::Monitors(_))
                 | (Call::Keyboard, Answer::Keyboard(_))
+                | (Call::SetDisplays { .. }, Answer::DisplaysChanged { .. })
+                | (Call::ReadClipboard, Answer::Clipboard(_))
+                | (
+                    Call::SetLayout { .. }
+                        | Call::KeepDisplays
+                        | Call::WriteClipboard { .. }
+                        | Call::Lock,
+                    Answer::Done
+                )
         );
         fits && self.is_valid()
     }
@@ -367,14 +455,14 @@ mod tests {
             (Call::Monitors, Answer::Monitors(monitors.clone())),
             (Call::Keyboard, Answer::Keyboard(keyboard)),
         ] {
-            assert!(answer.answers(call), "{call:?}");
-            assert!(!answer.answers(Call::Ping));
+            assert!(answer.answers(&call), "{call:?}");
+            assert!(!answer.answers(&Call::Ping));
             let message = Message::Answer { id: 9, answer };
             assert_eq!(round_trip(&message), message);
         }
         let mut odd = monitors;
         odd[0].scale = 50;
-        assert!(!Answer::Monitors(odd).answers(Call::Monitors));
+        assert!(!Answer::Monitors(odd).answers(&Call::Monitors));
         assert_eq!(
             serde_json::to_string(&Message::Request {
                 id: 2,
@@ -415,6 +503,87 @@ mod tests {
         assert_eq!(
             other.refusal().as_deref(),
             Some("the hello's system is out of its bounds")
+        );
+    }
+
+    #[test]
+    fn the_actions_are_bounded_and_answered_as_their_calls() {
+        assert_eq!(
+            serde_json::to_string(&Message::Request {
+                id: 3,
+                call: Call::SetLayout {
+                    id: "04190419".into()
+                }
+            })
+            .unwrap(),
+            r#"{"type":"request","id":3,"call":{"set_layout":{"id":"04190419"}}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Call::SetDisplays {
+                mode: DisplayMode::BoardOnly
+            })
+            .unwrap(),
+            r#"{"set_displays":{"mode":"board_only"}}"#
+        );
+        assert_eq!(serde_json::to_string(&Call::Lock).unwrap(), r#""lock""#);
+        assert!(!Call::SetLayout { id: "0419".into() }.is_valid());
+        assert!(
+            Call::WriteClipboard {
+                text: "one\ttwo\r\n".into()
+            }
+            .is_valid()
+        );
+        assert!(
+            !Call::WriteClipboard {
+                text: "bell\u{7}".into()
+            }
+            .is_valid()
+        );
+        assert!(
+            !Call::WriteClipboard {
+                text: "x".repeat(MAX_CLIPBOARD_BYTES + 1)
+            }
+            .is_valid()
+        );
+        assert!(!Call::Ping.needs_lease() && Call::Lock.needs_lease());
+        for (call, answer) in [
+            (Call::Lock, Answer::Done),
+            (Call::KeepDisplays, Answer::Done),
+            (
+                Call::SetDisplays {
+                    mode: DisplayMode::Extend,
+                },
+                Answer::DisplaysChanged {
+                    revert_in_seconds: DISPLAYS_REVERT_SECONDS,
+                },
+            ),
+            (Call::ReadClipboard, Answer::Clipboard("text".into())),
+        ] {
+            assert!(answer.answers(&call), "{call:?}");
+            assert!(!answer.answers(&Call::Monitors));
+            assert_eq!(
+                round_trip(&Message::Answer {
+                    id: 1,
+                    answer: answer.clone()
+                }),
+                Message::Answer { id: 1, answer }
+            );
+        }
+        assert!(
+            !Answer::DisplaysChanged {
+                revert_in_seconds: 60
+            }
+            .is_valid()
+        );
+        // The largest clipboard of line ends fits a message.
+        let mut writer = Writer::new();
+        assert!(
+            writer
+                .reports(&Message::Answer {
+                    id: u32::MAX,
+                    answer: Answer::Clipboard("\n".repeat(MAX_CLIPBOARD_BYTES)),
+                })
+                .is_ok()
         );
     }
 

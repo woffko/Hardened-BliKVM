@@ -12,7 +12,9 @@
 #[cfg(windows)]
 #[path = "hid.rs"]
 mod hid;
+// The tool reads; what the agent's actions need of the module is unused here.
 #[cfg(windows)]
+#[allow(dead_code)]
 #[path = "reads.rs"]
 mod reads;
 
@@ -91,6 +93,7 @@ mod windows {
             Call::System => Ok(Answer::System(reads::system())),
             Call::Monitors => Ok(Answer::Monitors(reads::monitors())),
             Call::Keyboard => Ok(Answer::Keyboard(reads::keyboard())),
+            _ => Err("the test tool reads only".into()),
         }
     }
 

@@ -673,7 +673,8 @@ impl PlatformControlRequestV2 {
                         && lease.target_binding.iter().any(|byte| *byte != 0)
                 });
                 if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms)
-                    && (leased || (lease.is_none() && *call == bli_kvm_agent_protocol::Call::Ping))
+                    && call.is_valid()
+                    && (leased || (lease.is_none() && !call.needs_lease()))
                 {
                     Ok(())
                 } else {

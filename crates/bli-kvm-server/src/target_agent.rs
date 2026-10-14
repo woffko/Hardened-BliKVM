@@ -197,7 +197,10 @@ pub(crate) async fn call(
     Json(body): Json<CallBody>,
 ) -> AppResult<Json<ApiResponse<AnswerView>>> {
     use bli_kvm_control_protocol::ControlResponse;
-    let lease = if body.call == bli_kvm_agent_protocol::Call::Ping {
+    if !body.call.is_valid() {
+        return Err(AppError::BadRequest("the call is out of its bounds".into()));
+    }
+    let lease = if !body.call.needs_lease() {
         None
     } else {
         let live = state

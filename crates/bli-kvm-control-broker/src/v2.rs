@@ -256,14 +256,14 @@ impl ControlV2State {
     /// holds now.
     pub fn target_agent_for(
         &self,
-        call: bli_kvm_agent_protocol::Call,
+        call: &bli_kvm_agent_protocol::Call,
         lease: Option<bli_kvm_core::TargetAgentLease>,
         now: Instant,
     ) -> Result<crate::target_agent::AgentChannel, ControlRejectionCode> {
         let channel = self
             .target_agent_shared()
             .ok_or(ControlRejectionCode::CapabilityDisabled)?;
-        if call == bli_kvm_agent_protocol::Call::Ping {
+        if !call.needs_lease() {
             return Ok(channel);
         }
         let lease = lease.ok_or(ControlRejectionCode::LeaseExpired)?;
@@ -1156,8 +1156,8 @@ impl ControlV2State {
                 call,
                 timeout_ms,
                 lease,
-            } => match self.target_agent_for(*call, *lease, now) {
-                Ok(channel) => run_target_agent_call(channel, *call, *timeout_ms).await,
+            } => match self.target_agent_for(call, *lease, now) {
+                Ok(channel) => run_target_agent_call(channel, call.clone(), *timeout_ms).await,
                 Err(code) => reject(code),
             },
             PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {

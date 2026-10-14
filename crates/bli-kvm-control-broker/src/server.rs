@@ -1329,10 +1329,11 @@ async fn respond(
                     let channel = v2
                         .lock()
                         .await
-                        .target_agent_for(*call, *lease, Instant::now());
+                        .target_agent_for(call, *lease, Instant::now());
                     Some(match channel {
                         Ok(channel) => {
-                            crate::v2::run_target_agent_call(channel, *call, *timeout_ms).await
+                            crate::v2::run_target_agent_call(channel, call.clone(), *timeout_ms)
+                                .await
                         }
                         Err(code) => ControlResponse::Rejected { code },
                     })
