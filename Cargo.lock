@@ -179,6 +179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bli-kvm-agent-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "bli-kvm-atx-gpio-bench-gate"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,13 @@
+[package]
+name = "bli-kvm-agent-protocol"
+description = "The messages between the Hardened BliKVM board and its agent on the target, in frames of 64-byte HID reports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
