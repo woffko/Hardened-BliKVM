@@ -4,10 +4,17 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod channel;
+#[cfg(windows)]
+mod hid;
+#[cfg(windows)]
+mod reads;
+#[cfg(windows)]
 mod tray;
 
 #[cfg(windows)]
 fn main() {
+    reads::aware_of_each_monitors_scale();
     std::process::exit(tray::run());
 }
 
