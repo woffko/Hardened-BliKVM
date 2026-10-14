@@ -196,6 +196,7 @@ node --test tools/test_vp8_range.mjs
 # Where the pointer falls in the picture, whatever the screen element holds.
 node --test tools/test_pointer_map.mjs
 node --test tools/test_screen_area.mjs
+node --test tools/test_agent_layout.mjs
 # The upscaling setting and when a frame is enlarged.
 node --test tools/test_upscale_settings.mjs
 # The upscaler's watchdog: when frames are lost to it.
@@ -241,6 +242,7 @@ node --check tools/playwright/screen_enlargement_contract.mjs
 node --check tools/playwright/mjpeg_upscale_contract.mjs
 node --check tools/playwright/screen_area_contract.mjs
 node --check tools/playwright/target_agent_contract.mjs
+node --check tools/playwright/target_agent_reads_contract.mjs
 node --check tools/playwright/upscale_colour_device_probe.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
@@ -932,6 +934,7 @@ node tools/playwright/screen_enlargement_contract.mjs
 node tools/playwright/mjpeg_upscale_contract.mjs
 node tools/playwright/screen_area_contract.mjs
 node tools/playwright/target_agent_contract.mjs
+node tools/playwright/target_agent_reads_contract.mjs
 node tools/playwright/h264_engine_menu_contract.mjs
 node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs

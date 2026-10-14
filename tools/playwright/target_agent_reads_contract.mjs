@@ -1,0 +1,248 @@
+// The target agent's reads on the page (web/src/hooks/useTargetAgent.ts, docs/design/target-agent-v1.md), through the
+// built page with a played board. The page asks the agent for nothing until remote control holds the keyboard's and
+// mouse's lease; then it reads the monitors and the keyboard layouts. With the board's monitor on the right of two,
+// and no layout kept on the board, the absolute mouse lands on the right monitor by itself: the picture's right edge on
+// its last columns, its middle on its middle. Settings show the target's Windows and its monitors, the board's marked;
+// the Keyboard menu shows the target's layout.
+import assert from "node:assert/strict";
+import { defaultManifest, startApp } from "./app_harness.mjs";
+import { launchChromium } from "./quality_fixture.mjs";
+
+const browser = await launchChromium();
+const feature = (availability) => ({
+  availability,
+  evidence: "source_verified",
+});
+const manifest = defaultManifest({
+  board: {
+    features: {
+      device_settings: feature("read_only"),
+      hid_screen_area: feature("read_write"),
+      target_agent: feature("read_write"),
+    },
+  },
+});
+const app = await startApp({ manifest });
+const MAX = 0x7fff;
+const pixelOf = (value, total) => Math.floor((value * total) / (MAX + 1));
+
+/** An MJPEG stream of one grey 2560x1440 frame. */
+const STREAM = await (async () => {
+  const page = await browser.newPage();
+  const base64 = await page.evaluate(async () => {
+    const canvas = new OffscreenCanvas(2560, 1440);
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#606060";
+    context.fillRect(0, 0, 2560, 1440);
+    const blob = await canvas.convertToBlob({
+      type: "image/jpeg",
+      quality: 0.7,
+    });
+    let text = "";
+    for (const byte of new Uint8Array(await blob.arrayBuffer()))
+      text += String.fromCharCode(byte);
+    return btoa(text);
+  });
+  await page.close();
+  const jpeg = Buffer.from(base64, "base64");
+  return Buffer.concat([
+    Buffer.from(
+      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`,
+    ),
+    jpeg,
+    Buffer.from("\r\n"),
+  ]);
+})();
+
+const SYSTEM = {
+  product: "Windows 11 Pro",
+  release: "24H2",
+  build: 26100,
+  revision: 2033,
+  architecture: "x86_64",
+  locked: false,
+};
+const monitor = (x, board) => ({
+  name: board ? "USB Capture" : "DELL U2719D",
+  maker: board ? "MSI" : "DEL",
+  product: board ? 0x2131 : 0xd0a5,
+  x,
+  y: 0,
+  width: 2560,
+  height: 1440,
+  refresh_millihertz: 59951,
+  primary: x === 0,
+  scale: 100,
+  board,
+});
+const LAYOUT = {
+  id: "04190419",
+  language: "ru-RU",
+  name: "Russian (Russia) - Russian",
+};
+
+const calls = [];
+const absoluteReports = () =>
+  app.requestDetails
+    .filter(
+      (request) =>
+        request.route === "/api/hid/lease" &&
+        request.body?.action === "report" &&
+        request.body.report?.mode === "absolute_mouse",
+    )
+    .map((request) => request.body.report.data);
+
+async function eventually(condition, timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return condition();
+}
+
+try {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+  });
+  await context.addCookies([
+    { name: "hardened-blikvm-csrf", value: "fixture-csrf", url: app.baseUrl },
+  ]);
+  await context.addInitScript(() =>
+    localStorage.setItem("hardened-blikvm-menu-auto-hide", "never"),
+  );
+  const page = await context.newPage();
+  page.setDefaultTimeout(8000);
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/api/hid/screen-area", (route) =>
+    route.fulfill({ json: { code: 0, data: { area: null } } }),
+  );
+  await page.route("**/api/hid/mode", (route) =>
+    route.fulfill({ json: { code: 0, data: { mode: "normal" } } }),
+  );
+  await page.route("**/api/target-agent", (route) =>
+    route.fulfill({
+      json: {
+        code: 0,
+        data: {
+          available: true,
+          enabled: true,
+          open: true,
+          problem: null,
+          agent: {
+            program: "hardened-blikvm-agent",
+            version: "0.1.0",
+            commit: "3073fd2d1a2b3c4d",
+            system: SYSTEM,
+          },
+          refused: null,
+          messagesIn: 4,
+          messagesOut: 4,
+          dropped: 0,
+        },
+      },
+    }),
+  );
+  await page.route("**/api/target-agent/call", (route) => {
+    const { call } = route.request().postDataJSON();
+    calls.push(call);
+    const answer =
+      call === "monitors"
+        ? { monitors: [monitor(0, false), monitor(2560, true)] }
+        : call === "keyboard"
+          ? { keyboard: { current: LAYOUT, installed: [LAYOUT] } }
+          : "pong";
+    return route.fulfill({
+      json: { code: 0, data: { answer, roundTripUs: 3000 } },
+    });
+  });
+  await page.route("**/api/stream/mjpeg**", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "content-type": "multipart/x-mixed-replace; boundary=frame" },
+      body: STREAM,
+    }),
+  );
+  await page.goto(app.baseUrl, { waitUntil: "networkidle" });
+  await page.waitForFunction(
+    () => document.querySelector("img#screen")?.naturalWidth > 0,
+  );
+
+  // Without remote control the page asks the agent for nothing.
+  await page.waitForTimeout(1500);
+  assert.deepEqual(calls, []);
+
+  await page.getByRole("button", { name: "Enable remote control" }).click();
+  const confirm = page.getByRole("button", { name: "Confirm and control" });
+  await confirm.click();
+  // A click while the confirmation still opens can be lost.
+  await page.waitForTimeout(300);
+  if (await confirm.isVisible()) await confirm.click();
+  await confirm.waitFor({ state: "hidden" });
+  const screen = page.locator("#screen");
+  const box = await screen.boundingBox();
+  // The first move takes the lease; the reads follow.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  assert.ok(
+    await eventually(
+      () => calls.includes("monitors") && calls.includes("keyboard"),
+    ),
+    `${calls}`,
+  );
+
+  // The board's monitor is the right of two: the picture maps onto it.
+  const pointAt = async (shareX, shareY) => {
+    const area = await screen.boundingBox();
+    const before = absoluteReports().length;
+    // Three pixels in from the right edge: the side panel's divider lies
+    // over the screen's last two.
+    await page.mouse.move(
+      area.x + Math.min(area.width - 3, shareX * area.width),
+      area.y + Math.min(area.height - 3, shareY * area.height),
+    );
+    assert.ok(await eventually(() => absoluteReports().length > before));
+    const data = absoluteReports().at(-1);
+    return pixelOf(data[1] | (data[2] << 8), 5120);
+  };
+  await pointAt(0.25, 0.25);
+  const middle = await pointAt(0.5, 0.5);
+  assert.ok(Math.abs(middle - 3840) <= 2, `middle on ${middle}`);
+  const right = await pointAt(1, 0.5);
+  assert.ok(right >= 5110 && right <= 5119, `right edge on ${right}`);
+  const left = await pointAt(0, 0.5);
+  assert.equal(left, 2560, `left edge on ${left}`);
+
+  // The Keyboard menu shows the target's layout.
+  await page.locator("svg.lucide-keyboard").first().click();
+  await page
+    .getByTestId("target-layout")
+    .getByText("Target's layout: Russian (Russia) - Russian")
+    .waitFor();
+  await page.keyboard.press("Escape");
+
+  // Settings show the target's Windows and its monitors, the board's marked.
+  await page.locator("svg.lucide-settings").click();
+  await page.locator('[data-settings-tab="device"]').click();
+  await page
+    .getByTestId("target-agent-system")
+    .getByText("Windows 11 Pro 24H2 (build 26100.2033)")
+    .waitFor();
+  const monitors = page.getByTestId("target-agent-monitors");
+  await monitors
+    .getByText("DELL U2719D: 2560x1440 at 0,0", { exact: true })
+    .waitFor();
+  await monitors
+    .getByText("USB Capture: 2560x1440 at 2560,0 — the board's", {
+      exact: true,
+    })
+    .waitFor();
+  assert.deepEqual(errors, []);
+  await context.close();
+  console.log(
+    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left})`,
+  );
+} finally {
+  await browser.close();
+  await new Promise((resolve) => app.server.close(resolve));
+}

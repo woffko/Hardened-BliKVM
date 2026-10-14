@@ -29,6 +29,7 @@ import { picoclawChatOpenAtom } from '@/jotai/picoclaw.ts';
 import { resolutionAtom, videoModeAtom } from '@/jotai/screen.ts';
 import { menuBarOccupiesTopAtom } from '@/jotai/settings.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
+import { useTargetAgent } from '@/hooks/useTargetAgent.ts';
 import { Head } from '@/components/head.tsx';
 
 import { CaptureStatusOverlay, useCaptureStatus } from './capture-status';
@@ -83,6 +84,8 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
   const [resolution, setResolution] = useAtom(resolutionAtom);
   const isPicoclawChatOpen = useAtomValue(picoclawChatOpenAtom);
   const setScreenArea = useSetAtom(screenAreaAtom);
+  // The agent on the target, while the board offers it.
+  useTargetAgent(supportsBoardFeature(capabilities, 'target_agent'));
 
   // Where the captured screen lies in the target's desktop, as the board
   // keeps it: the absolute mouse maps into it (docs/design/screen-area-v1.md).

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Modal, Switch } from 'antd';
+import { useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
+import { agentMonitorsAtom } from '@/jotai/target-agent.ts';
 
 /** The agent's name, version and the first twelve characters of its commit. */
 function agentTitle(agent: NonNullable<api.TargetAgentState['agent']>) {
@@ -16,6 +18,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [confirming, setConfirming] = useState<boolean | null>(null);
   const [error, setError] = useState('');
+  const monitors = useAtomValue(agentMonitorsAtom);
 
   const read = useCallback(async () => {
     const rsp = await api.getTargetAgent();
@@ -60,6 +63,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   }
 
   const enabled = state?.enabled ?? false;
+  const system = state?.agent?.system ?? null;
   let status = '';
   if (state?.agent) {
     status = t('settings.device.targetAgent.connected', { agent: agentTitle(state.agent) });
@@ -81,6 +85,37 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
         {status && (
           <span className="text-xs text-neutral-400" data-testid="target-agent-status">
             {status}
+          </span>
+        )}
+        {system && (
+          <span className="text-xs text-neutral-400" data-testid="target-agent-system">
+            {t('settings.device.targetAgent.system', {
+              product: system.product,
+              release: system.release,
+              build: `${system.build}.${system.revision}`
+            })}
+            {system.locked ? ` — ${t('settings.device.targetAgent.locked')}` : ''}
+          </span>
+        )}
+        {state?.agent && monitors && (
+          <ul className="text-xs text-neutral-400" data-testid="target-agent-monitors">
+            {monitors.map((monitor) => (
+              <li key={`${monitor.x},${monitor.y}`}>
+                {t('settings.device.targetAgent.monitor', {
+                  name: monitor.name || monitor.maker,
+                  width: monitor.width,
+                  height: monitor.height,
+                  x: monitor.x,
+                  y: monitor.y
+                })}
+                {monitor.board ? ` — ${t('settings.device.targetAgent.boards')}` : ''}
+              </li>
+            ))}
+          </ul>
+        )}
+        {state?.agent && !monitors && (
+          <span className="text-xs text-neutral-500">
+            {t('settings.device.targetAgent.monitorsUnderControl')}
           </span>
         )}
         {error && (

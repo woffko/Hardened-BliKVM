@@ -630,6 +630,12 @@ const en = {
             "The board's USB device leaves the target and comes back with the agent's channel: keyboard, mouse and virtual media disconnect for a moment.",
           confirmOff:
             "The board's USB device leaves the target and comes back without the agent's channel: keyboard, mouse and virtual media disconnect for a moment.",
+          system: '{{product}} {{release}} (build {{build}})',
+          locked: 'locked',
+          monitor: '{{name}}: {{width}}x{{height}} at {{x}},{{y}}',
+          boards: "the board's",
+          monitorsUnderControl: 'The monitors are read while you control the target',
+          targetLayout: "Target's layout: {{name}}",
           readFailed: "Failed to read the agent's state",
           switchFailed: 'Failed to switch the agent'
         },

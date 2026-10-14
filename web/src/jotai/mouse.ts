@@ -1,6 +1,7 @@
 import { atom } from 'jotai';
 
 import type { ScreenArea } from '@/lib/screen-area.ts';
+import { agentScreenAreaAtom } from '@/jotai/target-agent.ts';
 
 export type MobilePointerMode = 'touchsync';
 
@@ -26,3 +27,9 @@ export const scrollIntervalAtom = atom(0);
 // keeps it; null while the screen is the whole desktop
 // (docs/design/screen-area-v1.md).
 export const screenAreaAtom = atom<ScreenArea | null>(null);
+
+// The layout the absolute mouse uses: the target agent's while it is
+// connected and knows the board's monitor, the board's kept one otherwise.
+export const effectiveScreenAreaAtom = atom(
+  (get) => get(agentScreenAreaAtom) ?? get(screenAreaAtom)
+);
