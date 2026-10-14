@@ -147,16 +147,22 @@ pub fn system() -> System {
     }
 }
 
-pub fn monitors() -> Vec<Monitor> {
+/// The active display configuration: its paths and their modes.
+pub struct DisplayConfig {
+    pub paths: Vec<DISPLAYCONFIG_PATH_INFO>,
+    pub modes: Vec<DISPLAYCONFIG_MODE_INFO>,
+}
+
+/// The active paths and modes, as `QueryDisplayConfig` gives them.
+pub fn active_config() -> Option<DisplayConfig> {
     // SAFETY: the arrays have the sizes the first call gave, and the second
-    // says how many it filled; each name request has its header filled from
-    // the path it names.
-    let mut monitors = unsafe {
+    // says how many it filled.
+    unsafe {
         let (mut path_count, mut mode_count) = (0_u32, 0_u32);
         if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count)
             != ERROR_SUCCESS
         {
-            return Vec::new();
+            return None;
         }
         let mut paths: Vec<DISPLAYCONFIG_PATH_INFO> = vec![zeroed(); path_count as usize];
         let mut modes: Vec<DISPLAYCONFIG_MODE_INFO> = vec![zeroed(); mode_count as usize];
@@ -169,71 +175,113 @@ pub fn monitors() -> Vec<Monitor> {
             null_mut(),
         ) != ERROR_SUCCESS
         {
-            return Vec::new();
+            return None;
         }
         paths.truncate(path_count as usize);
         modes.truncate(mode_count as usize);
-        let mut monitors = Vec::new();
-        for path in &paths {
-            let index = path.sourceInfo.Anonymous.modeInfoIdx as usize;
-            let Some(mode) = modes.get(index) else {
-                continue;
-            };
-            if mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE {
-                continue;
-            }
-            let source = mode.Anonymous.sourceMode;
-            let mut name: DISPLAYCONFIG_TARGET_DEVICE_NAME = zeroed();
-            name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-            name.header.size = size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
-            name.header.adapterId = path.targetInfo.adapterId;
-            name.header.id = path.targetInfo.id;
-            let named = DisplayConfigGetDeviceInfo(&mut name.header) == 0;
-            let edid = named && name.flags.Anonymous.value & 0b100 != 0;
-            let rate = path.targetInfo.refreshRate;
-            let refresh = if rate.Denominator == 0 {
-                0
+        Some(DisplayConfig { paths, modes })
+    }
+}
+
+/// A path's monitor as its EDID names it: its name, maker and product, when
+/// Windows has them.
+pub struct TargetName {
+    pub name: String,
+    pub maker: String,
+    pub product: u16,
+}
+
+pub fn target_name(path: &DISPLAYCONFIG_PATH_INFO) -> TargetName {
+    // SAFETY: the request's header is filled from the path it names, with
+    // the request's own type and size.
+    unsafe {
+        let mut name: DISPLAYCONFIG_TARGET_DEVICE_NAME = zeroed();
+        name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+        name.header.size = size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
+        name.header.adapterId = path.targetInfo.adapterId;
+        name.header.id = path.targetInfo.id;
+        let named = DisplayConfigGetDeviceInfo(&mut name.header) == 0;
+        let edid = named && name.flags.Anonymous.value & 0b100 != 0;
+        TargetName {
+            name: if named {
+                text(&name.monitorFriendlyDeviceName)
+                    .chars()
+                    .filter(|letter| !letter.is_control())
+                    .take(bli_kvm_agent_protocol::reads::MAX_TEXT)
+                    .collect()
             } else {
-                (u64::from(rate.Numerator) * 1000 / u64::from(rate.Denominator)) as u32
-            };
-            let (x, y) = (source.position.x, source.position.y);
-            let centre = POINT {
-                x: x + (source.width / 2) as i32,
-                y: y + (source.height / 2) as i32,
-            };
+                String::new()
+            },
+            maker: if edid {
+                bli_kvm_agent_protocol::reads::edid_maker(name.edidManufactureId.to_le_bytes())
+            } else {
+                String::new()
+            },
+            product: if edid { name.edidProductCodeId } else { 0 },
+        }
+    }
+}
+
+/// Whether a path's monitor is the board's capture, by its EDID.
+pub fn is_board(path: &DISPLAYCONFIG_PATH_INFO) -> bool {
+    let target = target_name(path);
+    names::BOARD_CAPTURE_EDIDS
+        .iter()
+        .any(|(maker, product)| target.maker == *maker && target.product == *product)
+}
+
+pub fn monitors() -> Vec<Monitor> {
+    let Some(config) = active_config() else {
+        return Vec::new();
+    };
+    let mut monitors = Vec::new();
+    for path in &config.paths {
+        // SAFETY: the union is the index while the configuration is not
+        // queried as virtual-mode aware; the mode is read only when it is a
+        // source's.
+        let source = unsafe {
+            let index = path.sourceInfo.Anonymous.modeInfoIdx as usize;
+            match config.modes.get(index) {
+                Some(mode) if mode.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE => {
+                    mode.Anonymous.sourceMode
+                }
+                _ => continue,
+            }
+        };
+        let target = target_name(path);
+        let rate = path.targetInfo.refreshRate;
+        let refresh = if rate.Denominator == 0 {
+            0
+        } else {
+            (u64::from(rate.Numerator) * 1000 / u64::from(rate.Denominator)) as u32
+        };
+        let (x, y) = (source.position.x, source.position.y);
+        let centre = POINT {
+            x: x + (source.width / 2) as i32,
+            y: y + (source.height / 2) as i32,
+        };
+        let (mut dpi_x, mut dpi_y) = (96_u32, 96_u32);
+        // SAFETY: a point and the out values of the monitor's DPI.
+        unsafe {
             let monitor = MonitorFromPoint(centre, MONITOR_DEFAULTTONEAREST);
-            let (mut dpi_x, mut dpi_y) = (96_u32, 96_u32);
             if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) != 0 {
                 dpi_x = 96;
             }
-            monitors.push(Monitor {
-                name: if named {
-                    text(&name.monitorFriendlyDeviceName)
-                        .chars()
-                        .filter(|letter| !letter.is_control())
-                        .take(bli_kvm_agent_protocol::reads::MAX_TEXT)
-                        .collect()
-                } else {
-                    String::new()
-                },
-                maker: if edid {
-                    bli_kvm_agent_protocol::reads::edid_maker(name.edidManufactureId.to_le_bytes())
-                } else {
-                    String::new()
-                },
-                product: if edid { name.edidProductCodeId } else { 0 },
-                x,
-                y,
-                width: source.width,
-                height: source.height,
-                refresh_millihertz: refresh.min(1_000_000),
-                primary: x == 0 && y == 0,
-                scale: (dpi_x * 100 / 96).clamp(100, 500),
-                board: false,
-            });
         }
-        monitors
-    };
+        monitors.push(Monitor {
+            name: target.name,
+            maker: target.maker,
+            product: target.product,
+            x,
+            y,
+            width: source.width,
+            height: source.height,
+            refresh_millihertz: refresh.min(1_000_000),
+            primary: x == 0 && y == 0,
+            scale: (dpi_x * 100 / 96).clamp(100, 500),
+            board: false,
+        });
+    }
     names::mark_board_monitor(&mut monitors, names::BOARD_CAPTURE_EDIDS);
     monitors.truncate(bli_kvm_agent_protocol::reads::MAX_MONITORS);
     monitors

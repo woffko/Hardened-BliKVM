@@ -4,6 +4,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod actions;
+#[cfg(windows)]
 mod channel;
 #[cfg(windows)]
 mod hid;

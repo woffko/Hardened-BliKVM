@@ -16,6 +16,7 @@ use bli_kvm_target_agent::names::Words;
 use bli_kvm_target_agent::{VERSION, source_commit};
 use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
+use crate::actions;
 use crate::hid::{self, HidLink};
 use crate::reads;
 
@@ -72,13 +73,23 @@ fn set_status(status: String, message: u32) {
     }
 }
 
-/// The agent's reads, for the board's calls.
+/// The agent's reads and actions, for the board's calls.
 fn answer(call: Call) -> Result<Answer, String> {
     match call {
         Call::Ping => Ok(Answer::Pong),
         Call::System => Ok(Answer::System(reads::system())),
         Call::Monitors => Ok(Answer::Monitors(reads::monitors())),
         Call::Keyboard => Ok(Answer::Keyboard(reads::keyboard())),
+        Call::SetLayout { id } => actions::set_layout(&id).map(|()| Answer::Done),
+        Call::SetDisplays { mode } => actions::set_displays(mode)
+            .map(|revert_in_seconds| Answer::DisplaysChanged { revert_in_seconds }),
+        Call::KeepDisplays => actions::keep_displays().map(|()| Answer::Done),
+        Call::ReadClipboard => actions::read_clipboard().map(Answer::Clipboard),
+        Call::WriteClipboard { text } => {
+            actions::write_clipboard(WINDOW.load(Ordering::Relaxed) as _, &text)
+                .map(|()| Answer::Done)
+        }
+        Call::Lock => actions::lock().map(|()| Answer::Done),
     }
 }
 
