@@ -44,11 +44,29 @@ refused; a lost, reordered or interleaved frame drops its message, and the
 next first frame begins a new one.
 
 The agent begins with a hello: the protocol's version, its program, version
-and commit. The board answers with its own, or refuses one of another
-protocol or with odd text, with the reason; unknown fields are ignored so
-that a side of another version is read and refused, not misread. Then
-either side calls the other: a numbered request, answered or failed. The
-one call so far is ping; a ping and its pong fit in one report each.
+and commit, and its system (the product as Windows' settings name it, the
+release, build and revision, the architecture, whether the session is
+locked). The board answers with its own, or refuses one of another
+protocol, with odd text or a system out of its bounds, with the reason;
+unknown fields are ignored so that a side of another version is read and
+refused, not misread. Then either side calls the other: a numbered
+request, answered or failed. Either side answers a ping (a ping and its
+pong fit in one report each); the board answers nothing else. The board
+calls the agent for:
+
+- reads: the system; the active monitors (name, EDID maker and product,
+  place and size in the desktop's pixels, refresh, primary, scale, whether
+  it is the board's capture); the keyboard layouts (the window in front's
+  and those installed, with their language and name);
+- the operator's actions (chosen 2026-10-14): switch the window in front
+  to an installed layout; set the monitors' mode (extend, duplicate, only
+  the board's, only the others, the board's the primary), undone after
+  15 s unless kept, and keep it; read and write the clipboard's text (at
+  most 6000 UTF-8 bytes, tabs and line ends its only control characters);
+  lock the session.
+
+Every value is bounded in the crate and checked on both ends (`reads.rs`);
+an answer must fit its call.
 
 ## The board
 
@@ -84,12 +102,56 @@ The owner (`crates/bli-kvm-control-broker/src/target_agent.rs`) keeps:
   first, which closes the device, and resume it after; the agent sees the
   device go and come back and says hello again.
 
+- The agent's drive: a second LUN of the mass-storage function, read-only
+  and not removable, a 2 MiB FAT12 image labelled `BLIKVMAGENT` (a FAT
+  label has at most 11 characters, so not `BLIKVM-AGENT` as the plan said)
+  with the agent, a README and its SHA-256 (`scripts/build-agent-drive.sh`,
+  reproducible with mkfs.fat's invariant values and fixed times). A signed
+  slot carries only its programs and its web tree, so the slot carries the
+  agent and the image under `share/web/agent/`, and the owner takes the
+  image from the slot it runs from. The drive is presented while the switch
+  is on and the gadget is not in HID-only mode: beside an image (LUN 1; the
+  virtual media keep LUN 0) or alone (LUN 0, not removable). Only a
+  removable LUN 0 is an image of the operator's, so the drive alone is no
+  attached media; a swap or an eject keeps the drive. The kernel makes a
+  LUN only while the function is not linked: the LUN is made with the
+  function, and removed before it. A stopping owner takes the drive away
+  too, as a slot from before the agent would take it for an image.
+
 The control socket has `target_agent` (the switch), `target_agent_state`
 (the switch, the channel, why its device is not open, the agent's hello,
 the last refusal, the messages each way) and `target_agent_call` (waited
 for on the channel's handle, not the shared state's lock, so HID and media
-never wait for it). The server serves `GET` and `POST /api/target-agent`
-through the owner; the platform names the feature `target_agent`.
+never wait for it; a call other than a ping carries the HID lease's
+identity, and the owner makes it only while that lease is the live one).
+The control socket's messages may be 24 KiB, room for the agent's answers.
+The server serves `GET` and `POST /api/target-agent` and
+`POST /api/target-agent/call` (a read or an action only under the HID
+lease the session holds now) through the owner; the platform names the
+feature `target_agent`.
+
+## The page
+
+- Settings > Device: the switch, with a confirmation that says the USB
+  device leaves the target and comes back; the connected agent, the
+  target's Windows and its monitors with the board's marked; the
+  monitors' modes, with a dialog that counts down to the change's undoing
+  and keeps it; "Start the agent on the target" while no agent is
+  connected and remote control is on: after a confirmation, Win+R, a pause
+  for the Run box, and a PowerShell line typed at the US layout's
+  positions (the target's layout in front must be English) that finds the
+  drive by its label and starts the agent from it, its window hidden.
+- The page keeps the agent's state, and while an agent is connected and
+  remote control holds the lease, reads its monitors and layouts (at once
+  and every 15 s); nothing is asked of the agent without the lease.
+- The absolute mouse uses the agent's layout while it knows the board's
+  monitor: the desktop is the box around the active monitors, the screen
+  the board's monitor in it (`web/src/lib/agent-layout.ts`); the layout
+  kept on the board otherwise (`docs/design/screen-area-v1.md`).
+- The Keyboard menu shows the target's layout, switches it among those
+  installed, keeps it in step with the on-screen keyboard's language when
+  asked (a choice of this browser), carries the clipboard's text both ways
+  and locks the session after a confirmation.
 
 ## The target
 
@@ -98,8 +160,21 @@ with `cargo-xwin` for `x86_64-pc-windows-msvc`, the C runtime linked in,
 reproducibly (two builds in different directories give the same bytes,
 which `scripts/check.sh` checks).
 
-- `hardened-blikvm-agent.exe`: the agent, an icon in the notification area
-  with its name, version and commit, and Quit.
+- `hardened-blikvm-agent.exe`: the agent. Its icon is the project's mark
+  (the bracket with its copper edge and the "b" from the logo, on a white
+  rounded tile, `assets/agent.ico` made by `tools/build_agent_icon.mjs`),
+  compiled into both programs' resources with their version and commit by
+  `build.rs`. The icon's menu says its name, version, commit and whether
+  it is connected, and offers "Show what the agent reads", Stop (the
+  channel closes the collection) or Start, "Start at sign-in" (the program
+  copied to the user's local application folder and named in the user's
+  Run key; again to take it away) and Exit; in Russian on a Russian
+  Windows. A thread keeps the channel: it finds the collection again
+  whenever it goes, says hello with the system, answers the board's calls
+  with its reads and actions (`reads.rs`, `actions.rs`), and pings every
+  3 s. The board's monitor is recognised by the capture's EDID
+  (`names::BOARD_CAPTURE_EDIDS`, found at gate 2); until then the modes
+  that need it say so.
 - `hardened-blikvm-agent-test.exe`: the channel's test tool. It finds the
   board's collection (the board's vendor 0x1d6b and product 0x0104, usage
   page 0xff00, usage 1, 64-byte reports each way), opens it for overlapped
@@ -108,14 +183,23 @@ which `scripts/check.sh` checks).
   channel went and how soon it came back. It appends what it says to
   `hardened-blikvm-agent-test.txt` beside itself.
 
-The agent's side of the protocol (`client.rs`) is portable and tested on
-Linux against a played board; Windows' calls are in `hid.rs` and `tray.rs`.
+The agent's side of the protocol (`client.rs`) and the names it gives
+(`names.rs`) are portable and tested on Linux; Windows' calls are in
+`hid.rs`, `reads.rs`, `actions.rs`, `autostart.rs`, `channel.rs` and
+`tray.rs`.
 
 ## Security
 
 - Off by default; switching changes the USB device the target sees and is
   logged by the owner.
-- The agent does only what the protocol names; the board answers only its
-  hello and pings, and refuses a request before a hello.
+- The agent does only what the protocol names: no command runs, no file
+  outside its own is read, no network; it runs with the user's rights.
+- The board answers only the agent's hello and pings, and refuses a
+  request before a hello. Every read and action is the operator's, from
+  the page, under the HID lease the operator holds, checked by the server
+  and again by the owner.
 - The board keeps nothing it reads from the agent beyond its hello and the
-  counts of messages.
+  counts of messages; the clipboard's text passes through and is not
+  stored or logged.
+- "Start the agent" types into the target, as the operator's keyboard
+  would, only after a confirmation and under the lease.
