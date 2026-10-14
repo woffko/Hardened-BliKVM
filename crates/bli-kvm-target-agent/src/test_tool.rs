@@ -7,10 +7,14 @@
 //!
 //! usage: hardened-blikvm-agent-test.exe [PINGS]          (1000 by default)
 //!        hardened-blikvm-agent-test.exe watch [SECONDS]  (300 by default)
+//!        hardened-blikvm-agent-test.exe show             (what the agent reads)
 
 #[cfg(windows)]
 #[path = "hid.rs"]
 mod hid;
+#[cfg(windows)]
+#[path = "reads.rs"]
+mod reads;
 
 #[cfg(windows)]
 fn main() {
@@ -28,11 +32,13 @@ mod windows {
     use std::io::Write;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    use bli_kvm_agent_protocol::Hello;
+    use bli_kvm_agent_protocol::{Answer, Call, Hello};
     use bli_kvm_target_agent::client::{Client, ClientError, summary};
+    use bli_kvm_target_agent::names::describe;
     use bli_kvm_target_agent::{VERSION, source_commit, title};
 
     use crate::hid::{self, HidLink};
+    use crate::reads;
 
     const PROGRAM: &str = "hardened-blikvm-agent-test";
     const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -75,7 +81,24 @@ mod windows {
     }
 
     fn hello() -> Hello {
-        Hello::new(PROGRAM, VERSION, source_commit())
+        Hello::new(PROGRAM, VERSION, source_commit()).with_system(reads::system())
+    }
+
+    /// The agent's reads, for the board's calls.
+    fn answer(call: Call) -> Result<Answer, String> {
+        match call {
+            Call::Ping => Ok(Answer::Pong),
+            Call::System => Ok(Answer::System(reads::system())),
+            Call::Monitors => Ok(Answer::Monitors(reads::monitors())),
+            Call::Keyboard => Ok(Answer::Keyboard(reads::keyboard())),
+        }
+    }
+
+    fn show(log: &mut Log) -> i32 {
+        for line in describe(&reads::system(), &reads::monitors(), &reads::keyboard()).lines() {
+            log.line(line);
+        }
+        0
     }
 
     /// Finds, opens and greets the board.
@@ -110,7 +133,7 @@ mod windows {
                 return None;
             }
         };
-        let mut client = Client::new(link, hello());
+        let mut client = Client::new(link, hello()).with_answerer(Box::new(answer));
         match client.hello(HELLO_TIMEOUT) {
             Ok(board) => {
                 log.line(&format!(
@@ -230,6 +253,7 @@ mod windows {
     }
 
     pub fn run() -> i32 {
+        reads::aware_of_each_monitors_scale();
         let arguments: Vec<String> = std::env::args().skip(1).collect();
         let mut log = Log::open();
         let started = SystemTime::now()
@@ -242,6 +266,7 @@ mod windows {
         ));
         let code = match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
             [] => pings(&mut log, 1000),
+            ["show"] => show(&mut log),
             ["watch"] => watch(&mut log, 300),
             ["watch", seconds] => match seconds.parse() {
                 Ok(seconds) => watch(&mut log, seconds),
@@ -261,7 +286,7 @@ mod windows {
     }
 
     fn usage(log: &mut Log) -> i32 {
-        log.line("usage: hardened-blikvm-agent-test.exe [PINGS] | watch [SECONDS]");
+        log.line("usage: hardened-blikvm-agent-test.exe [PINGS] | watch [SECONDS] | show");
         2
     }
 }

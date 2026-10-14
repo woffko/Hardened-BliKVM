@@ -46,6 +46,9 @@ impl From<io::Error> for ClientError {
     }
 }
 
+/// Answers the board's calls other than ping: the agent's reads.
+pub type Answerer = Box<dyn FnMut(Call) -> Result<Answer, String> + Send>;
+
 /// The agent's session with the board.
 pub struct Client<L: Link> {
     link: L,
@@ -53,6 +56,7 @@ pub struct Client<L: Link> {
     writer: Writer,
     reader: Reader,
     next_id: u32,
+    answerer: Answerer,
     /// Reports that were not frames of a message, or messages that were not
     /// the protocol's.
     pub dropped: u64,
@@ -66,8 +70,15 @@ impl<L: Link> Client<L> {
             writer: Writer::new(),
             reader: Reader::new(),
             next_id: 1,
+            answerer: Box::new(|_| Err("this program answers pings only".into())),
             dropped: 0,
         }
+    }
+
+    /// Answers the board's calls with `answerer`.
+    pub fn with_answerer(mut self, answerer: Answerer) -> Self {
+        self.answerer = answerer;
+        self
     }
 
     fn send(&mut self, message: &Message) -> Result<(), ClientError> {
@@ -104,20 +115,28 @@ impl<L: Link> Client<L> {
                     continue;
                 }
             };
-            if let Message::Request {
-                id,
-                call: Call::Ping,
-            } = message
-            {
-                self.send(&Message::Answer {
-                    id,
-                    answer: Answer::Pong,
+            if let Message::Request { id, call } = message {
+                let reply = match call {
+                    Call::Ping => Ok(Answer::Pong),
+                    other => (self.answerer)(other),
+                };
+                self.send(&match reply {
+                    Ok(answer) => Message::Answer { id, answer },
+                    Err(reason) => Message::Failed { id, reason },
                 })?;
                 continue;
             }
             if let Some(result) = wanted(message) {
                 return result;
             }
+        }
+    }
+
+    /// Answers the board's calls for `duration`.
+    pub fn serve(&mut self, duration: Duration) -> Result<(), ClientError> {
+        match self.wait_for::<()>(Instant::now() + duration, |_| None) {
+            Err(ClientError::TimedOut) => Ok(()),
+            other => other,
         }
     }
 
@@ -219,6 +238,11 @@ mod tests {
             }
         }
 
+        /// The board calls the agent once it said hello.
+        fn call(&mut self, id: u32, call: Call) {
+            self.say(&Message::Request { id, call });
+        }
+
         fn say(&mut self, message: &Message) {
             let reports = self.writer.reports(message).unwrap();
             self.incoming.extend(reports);
@@ -259,7 +283,9 @@ mod tests {
                     id,
                     answer: Answer::Pong,
                 }),
-                Message::Answer { id, .. } => self.answered_calls.push(id),
+                Message::Answer { id, .. } | Message::Failed { id, .. } => {
+                    self.answered_calls.push(id)
+                }
                 _ => {}
             }
             Ok(())
@@ -293,6 +319,24 @@ mod tests {
             .collect();
         assert_eq!(summary(&round_trips).unwrap().count, 20);
         assert_eq!(client.into_link().answered_calls, vec![77]);
+    }
+
+    #[test]
+    fn the_boards_calls_are_answered_by_the_answerer_while_serving() {
+        let mut client = Client::new(PlayedBoard::new(), agent_hello()).with_answerer(Box::new(
+            |call| match call {
+                Call::Keyboard => Ok(Answer::Keyboard(bli_kvm_agent_protocol::Keyboard {
+                    current: None,
+                    installed: Vec::new(),
+                })),
+                _ => Err("not here".into()),
+            },
+        ));
+        client.hello(Duration::from_secs(1)).unwrap();
+        client.link.call(5, Call::Keyboard);
+        client.link.call(6, Call::Monitors);
+        client.serve(Duration::from_millis(30)).unwrap();
+        assert_eq!(client.into_link().answered_calls, vec![5, 6]);
     }
 
     #[test]
