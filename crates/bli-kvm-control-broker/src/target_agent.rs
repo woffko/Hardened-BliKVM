@@ -138,7 +138,7 @@ pub struct Session {
     refused: Option<String>,
     last_heard: Option<Instant>,
     next_id: u32,
-    pending: HashMap<u32, oneshot::Sender<Result<Answer, CallError>>>,
+    pending: HashMap<u32, (Call, oneshot::Sender<Result<Answer, CallError>>)>,
 }
 
 impl Session {
@@ -190,19 +190,37 @@ impl Session {
                     id,
                     answer: Answer::Pong,
                 }],
+                // The board reads nothing of its own for the agent.
+                Call::System | Call::Monitors | Call::Keyboard => vec![Message::Failed {
+                    id,
+                    reason: "the board answers pings only".into(),
+                }],
             },
             Message::Request { id, .. } => vec![Message::Failed {
                 id,
                 reason: "hello first".into(),
             }],
             Message::Answer { id, answer } => {
-                if let Some(reply) = self.pending.remove(&id) {
-                    let _ = reply.send(Ok(answer));
+                if let Some((call, reply)) = self.pending.remove(&id) {
+                    // An answer to another call, or out of its bounds, is
+                    // not carried further.
+                    let _ = reply.send(if answer.answers(call) {
+                        Ok(answer)
+                    } else {
+                        Err(CallError::Failed(
+                            "the agent's answer is not the call's or is out of its bounds".into(),
+                        ))
+                    });
                 }
                 Vec::new()
             }
             Message::Failed { id, reason } => {
-                if let Some(reply) = self.pending.remove(&id) {
+                if let Some((_, reply)) = self.pending.remove(&id) {
+                    let reason: String = reason
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .take(160)
+                        .collect();
                     let _ = reply.send(Err(CallError::Failed(reason)));
                 }
                 Vec::new()
@@ -224,14 +242,14 @@ impl Session {
         reply: oneshot::Sender<Result<Answer, CallError>>,
         now: Instant,
     ) -> Option<Message> {
-        self.pending.retain(|_, waiting| !waiting.is_closed());
+        self.pending.retain(|_, (_, waiting)| !waiting.is_closed());
         if self.agent(now).is_none() {
             let _ = reply.send(Err(CallError::NotConnected));
             return None;
         }
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
-        self.pending.insert(id, reply);
+        self.pending.insert(id, (call, reply));
         Some(Message::Request { id, call })
     }
 
@@ -243,7 +261,7 @@ impl Session {
     }
 
     fn fail_pending(&mut self, error: CallError) {
-        for (_, reply) in self.pending.drain() {
+        for (_, (_, reply)) in self.pending.drain() {
             let _ = reply.send(Err(error.clone()));
         }
     }
@@ -629,6 +647,55 @@ mod tests {
         );
         // Silent for longer than allowed: not connected any more.
         assert_eq!(session.agent(now + SILENCE + Duration::from_secs(1)), None);
+    }
+
+    #[tokio::test]
+    async fn the_board_answers_only_pings_and_takes_only_answers_that_fit_the_call() {
+        let mut session = Session::new(board_hello());
+        let now = Instant::now();
+        session.receive(Message::Hello(agent_hello()), now);
+        assert_eq!(
+            session.receive(
+                Message::Request {
+                    id: 4,
+                    call: Call::Monitors
+                },
+                now
+            ),
+            vec![Message::Failed {
+                id: 4,
+                reason: "the board answers pings only".into()
+            }]
+        );
+        let (reply, answer) = oneshot::channel();
+        let Some(Message::Request { id, .. }) = session.call(Call::Keyboard, reply, now) else {
+            panic!("no request");
+        };
+        // A pong to a keyboard call is not the call's answer.
+        session.receive(
+            Message::Answer {
+                id,
+                answer: Answer::Pong,
+            },
+            now,
+        );
+        assert!(matches!(answer.await.unwrap(), Err(CallError::Failed(_))));
+        let (reply, answer) = oneshot::channel();
+        let Some(Message::Request { id, .. }) = session.call(Call::Keyboard, reply, now) else {
+            panic!("no request");
+        };
+        let keyboard = bli_kvm_agent_protocol::Keyboard {
+            current: None,
+            installed: Vec::new(),
+        };
+        session.receive(
+            Message::Answer {
+                id,
+                answer: Answer::Keyboard(keyboard.clone()),
+            },
+            now,
+        );
+        assert_eq!(answer.await.unwrap(), Ok(Answer::Keyboard(keyboard)));
     }
 
     #[test]

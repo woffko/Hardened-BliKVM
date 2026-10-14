@@ -569,6 +569,11 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
+    if let ControlResponse::TargetAgentAnswer { answer, .. } = response
+        && !answer.is_valid()
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
     if let ControlResponse::LeaseGranted { lease_id } = response
         && lease_id.iter().all(|byte| *byte == 0)
     {
@@ -971,6 +976,35 @@ mod tests {
             let json = encode_response_v2(&response).unwrap();
             assert_eq!(decode_response_v2(&json).unwrap(), response);
         }
+        let mut monitors = vec![bli_kvm_agent_protocol::Monitor {
+            name: "DELL U2719D".into(),
+            maker: "DEL".into(),
+            product: 1,
+            x: 0,
+            y: 0,
+            width: 2560,
+            height: 1440,
+            refresh_millihertz: 60_000,
+            primary: true,
+            scale: 100,
+            board: false,
+        }];
+        let answer = envelope(ControlResponse::TargetAgentAnswer {
+            answer: bli_kvm_agent_protocol::Answer::Monitors(monitors.clone()),
+            round_trip_us: 5_000,
+        });
+        assert_eq!(
+            decode_response_v2(&encode_response_v2(&answer).unwrap()).unwrap(),
+            answer
+        );
+        monitors[0].width = 0;
+        assert!(
+            encode_response_v2(&envelope(ControlResponse::TargetAgentAnswer {
+                answer: bli_kvm_agent_protocol::Answer::Monitors(monitors),
+                round_trip_us: 5_000,
+            }))
+            .is_err()
+        );
         let mut newer = hello.clone();
         newer.protocol = 2;
         let long = "x".repeat(161);

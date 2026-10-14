@@ -12,11 +12,13 @@
 #![forbid(unsafe_code)]
 
 pub mod frame;
+pub mod reads;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use frame::{Dropped, FRAME_BYTES, FrameError, MAX_MESSAGE_BYTES};
+pub use reads::{Keyboard, Layout, Monitor, System};
 
 /// The agent's report ID in the absolute mouse's interface (the mouse's own
 /// reports are 1 while the agent's collection is there).
@@ -47,19 +49,53 @@ pub enum Message {
     Failed { id: u32, reason: String },
 }
 
-/// What one side may ask the other.
+/// What one side may ask the other. Either side answers a ping; the
+/// others are the board's to the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Call {
     /// Answered at once with a pong: the round trip.
     Ping,
+    /// The target's system and session, as the hello says them, now.
+    System,
+    /// The active monitors.
+    Monitors,
+    /// The keyboard layouts.
+    Keyboard,
 }
 
 /// The answer to a call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Answer {
     Pong,
+    System(System),
+    Monitors(Vec<Monitor>),
+    Keyboard(Keyboard),
+}
+
+impl Answer {
+    /// Whether the answer is within its bounds.
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Answer::Pong => true,
+            Answer::System(system) => system.is_valid(),
+            Answer::Monitors(monitors) => reads::monitors_are_valid(monitors),
+            Answer::Keyboard(keyboard) => keyboard.is_valid(),
+        }
+    }
+
+    /// Whether the answer answers `call` and is within its bounds.
+    pub fn answers(&self, call: Call) -> bool {
+        let fits = matches!(
+            (call, self),
+            (Call::Ping, Answer::Pong)
+                | (Call::System, Answer::System(_))
+                | (Call::Monitors, Answer::Monitors(_))
+                | (Call::Keyboard, Answer::Keyboard(_))
+        );
+        fits && self.is_valid()
+    }
 }
 
 /// Who is speaking. Unknown fields are ignored, so that a side of another
@@ -71,6 +107,32 @@ pub struct Hello {
     pub program: String,
     pub version: String,
     pub commit: String,
+    /// The agent's system, which the board's hello leaves out. One of
+    /// another shape is read as one out of bounds, so that the hello is
+    /// still read and refused with a reason.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "system_or_unreadable"
+    )]
+    pub system: Option<System>,
+}
+
+fn system_or_unreadable<'de, D>(deserializer: D) -> Result<Option<System>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.map(|value| {
+        serde_json::from_value(value).unwrap_or_else(|_| System {
+            product: String::new(),
+            release: String::new(),
+            build: 0,
+            revision: 0,
+            architecture: "unknown".into(),
+            locked: false,
+        })
+    }))
 }
 
 impl Hello {
@@ -81,7 +143,14 @@ impl Hello {
             program: program.to_owned(),
             version: version.to_owned(),
             commit: commit.to_owned(),
+            system: None,
         }
+    }
+
+    /// This side's hello with its system.
+    pub fn with_system(mut self, system: System) -> Self {
+        self.system = Some(system);
+        self
     }
 
     /// Why the other side's hello is not taken, if it is not.
@@ -105,6 +174,13 @@ impl Hello {
                     "the hello's {name} is empty, longer than {MAX_HELLO_TEXT} characters or has a control character"
                 ));
             }
+        }
+        if self
+            .system
+            .as_ref()
+            .is_some_and(|system| !system.is_valid())
+        {
+            return Some("the hello's system is out of its bounds".into());
         }
         None
     }
@@ -253,6 +329,93 @@ mod tests {
         ] {
             assert_eq!(writer.reports(&message).unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    fn the_reads_go_both_ways_and_answer_only_their_calls() {
+        let system = System {
+            product: "Windows 11 Pro".into(),
+            release: "24H2".into(),
+            build: 26100,
+            revision: 2033,
+            architecture: "x86_64".into(),
+            locked: false,
+        };
+        let monitors = vec![Monitor {
+            name: "DELL U2719D".into(),
+            maker: "DEL".into(),
+            product: 0xd0a5,
+            x: -2560,
+            y: 0,
+            width: 2560,
+            height: 1440,
+            refresh_millihertz: 59_951,
+            primary: false,
+            scale: 100,
+            board: true,
+        }];
+        let keyboard = Keyboard {
+            current: None,
+            installed: vec![Layout {
+                id: "04090409".into(),
+                language: "en-US".into(),
+                name: "English (United States) - US".into(),
+            }],
+        };
+        for (call, answer) in [
+            (Call::System, Answer::System(system.clone())),
+            (Call::Monitors, Answer::Monitors(monitors.clone())),
+            (Call::Keyboard, Answer::Keyboard(keyboard)),
+        ] {
+            assert!(answer.answers(call), "{call:?}");
+            assert!(!answer.answers(Call::Ping));
+            let message = Message::Answer { id: 9, answer };
+            assert_eq!(round_trip(&message), message);
+        }
+        let mut odd = monitors;
+        odd[0].scale = 50;
+        assert!(!Answer::Monitors(odd).answers(Call::Monitors));
+        assert_eq!(
+            serde_json::to_string(&Message::Request {
+                id: 2,
+                call: Call::Monitors
+            })
+            .unwrap(),
+            r#"{"type":"request","id":2,"call":"monitors"}"#
+        );
+
+        // The agent's hello carries its system; the board's leaves it out.
+        let hello = Hello::new("hardened-blikvm-agent", "0.1.0", "abc").with_system(system.clone());
+        assert_eq!(
+            round_trip(&Message::Hello(hello.clone())),
+            Message::Hello(hello.clone())
+        );
+        assert_eq!(hello.refusal(), None);
+        assert!(
+            !serde_json::to_string(&Hello::new("board", "0.1.0", "abc"))
+                .unwrap()
+                .contains("system")
+        );
+        let mut odd = system;
+        odd.product = "\u{1b}[2J".into();
+        assert!(
+            Hello::new("agent", "0.1.0", "abc")
+                .with_system(odd)
+                .refusal()
+                .is_some()
+        );
+        // A system of another shape in a hello of this protocol is refused.
+        let other: Message = serde_json::from_str(
+            r#"{"type":"hello","protocol":1,"program":"a","version":"1","commit":"c","system":{"windows":"11"}}"#,
+        )
+        .unwrap();
+        let Message::Hello(other) = other else {
+            panic!("{other:?}");
+        };
+        assert_eq!(
+            other.refusal().as_deref(),
+            Some("the hello's system is out of its bounds")
+        );
     }
 
     #[test]
