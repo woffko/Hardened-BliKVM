@@ -27,3 +27,15 @@ icon as "Hardened BliKVM agent 0.1.0 (3c940a7e681c)" with Quit (2026-10-14,
 "Запустился без предупреждений"). A program copied from a local or USB
 drive carries no mark of the web, which is what SmartScreen judges; one
 downloaded from a release page would. Gate 0 passed.
+
+## The operator's decisions (2026-10-14)
+
+- The actions of phase 4: all four the plan offers (the keyboard layout,
+  switched from the page and optionally kept in step with its keyboard
+  language; the monitors' mode, undone by itself after 15 s unless
+  confirmed; the clipboard's text both ways, each time at the operator's
+  action; locking the session).
+- "Start at sign-in": yes, as an item of the agent's menu (the user's Run
+  key), with its removal.
+- Signing: none; a release gives the program's SHA-256, and the program
+  is built reproducibly.
