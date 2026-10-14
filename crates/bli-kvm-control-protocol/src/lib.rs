@@ -9,7 +9,9 @@ use thiserror::Error;
 
 pub const CONTROL_SCHEMA_VERSION: u16 = 1;
 pub const CONTROL_SCHEMA_VERSION_V2: u16 = 2;
-pub const MAX_CONTROL_MESSAGE_BYTES: usize = 4 * 1024;
+/// The largest message either way: room for the target agent's answers (a
+/// message of the agent's protocol is at most 16 KiB) in their envelope.
+pub const MAX_CONTROL_MESSAGE_BYTES: usize = 24 * 1024;
 const OPERATION_ID_LENGTH: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

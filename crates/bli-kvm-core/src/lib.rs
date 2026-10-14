@@ -33,8 +33,8 @@ pub use control_v2::{
     MAX_TARGET_AGENT_CALL_MS, MAX_WIFI_NETWORKS, MAX_WIFI_PROFILES, MediaObserveRequest,
     MediaRequest, NetworkWriteRequest, NetworkWriteTarget, PlatformControlRequestV2,
     SystemActionKind, SystemActionWireRequest, TARGET_ATTESTATION_MAX_TTL_SECONDS,
-    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAttestation, TargetRelease, WifiProfileAction,
-    valid_hostname, valid_wifi_password, valid_wifi_profile_id, valid_wifi_ssid,
+    TARGET_ATTESTATION_MIN_TTL_SECONDS, TargetAgentLease, TargetAttestation, TargetRelease,
+    WifiProfileAction, valid_hostname, valid_wifi_password, valid_wifi_profile_id, valid_wifi_ssid,
 };
 pub use diagnostics::{
     DIAGNOSTICS_VIEW_SCHEMA_VERSION, DiagnosticBooleanState, DiagnosticComponentHealth,

@@ -340,6 +340,11 @@ impl HidTransitionEngine {
         }
     }
 
+    /// Whether `identity` holds the lease now (see `HidLeaseManager::holds`).
+    pub fn holds(&self, identity: HidLeaseIdentity, now: Instant) -> bool {
+        self.manager.holds(identity, now)
+    }
+
     pub async fn report(
         &mut self,
         identity: HidLeaseIdentity,

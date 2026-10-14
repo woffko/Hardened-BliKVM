@@ -1321,15 +1321,20 @@ async fn respond(
             // A call to the target agent waits for its answer up to seconds:
             // it runs with the channel's handle, not the shared state's lock.
             let agent_response = match &request.request {
-                bli_kvm_core::PlatformControlRequestV2::TargetAgentCall { call, timeout_ms } => {
-                    let channel = v2.lock().await.target_agent_shared();
+                bli_kvm_core::PlatformControlRequestV2::TargetAgentCall {
+                    call,
+                    timeout_ms,
+                    lease,
+                } => {
+                    let channel = v2
+                        .lock()
+                        .await
+                        .target_agent_for(*call, *lease, Instant::now());
                     Some(match channel {
-                        Some(channel) => {
+                        Ok(channel) => {
                             crate::v2::run_target_agent_call(channel, *call, *timeout_ms).await
                         }
-                        None => ControlResponse::Rejected {
-                            code: ControlRejectionCode::CapabilityDisabled,
-                        },
+                        Err(code) => ControlResponse::Rejected { code },
                     })
                 }
                 _ => None,

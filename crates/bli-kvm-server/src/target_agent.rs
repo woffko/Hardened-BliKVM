@@ -26,6 +26,8 @@ pub(crate) struct AgentView {
     program: String,
     version: String,
     commit: String,
+    /// The target's system, as the agent's hello said it.
+    system: Option<bli_kvm_agent_protocol::System>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -69,6 +71,22 @@ impl TargetAgentView {
 pub(crate) struct SwitchBody {
     enabled: bool,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CallBody {
+    call: bli_kvm_agent_protocol::Call,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AnswerView {
+    answer: bli_kvm_agent_protocol::Answer,
+    round_trip_us: u64,
+}
+
+/// How long a call from the page waits for the agent.
+const CALL_TIMEOUT_MS: u32 = 3_000;
 
 /// Asks the owner about, or for, the agent.
 #[cfg(feature = "restricted-control-surface")]
@@ -150,6 +168,7 @@ async fn view(state: &AppState, session_token: &str) -> TargetAgentView {
                 program: hello.program,
                 version: hello.version,
                 commit: hello.commit,
+                system: hello.system,
             }),
             refused,
             messages_in,
@@ -166,6 +185,64 @@ pub(crate) async fn state(
     Extension(CurrentSession(session)): Extension<CurrentSession>,
 ) -> Json<ApiResponse<TargetAgentView>> {
     Json(ApiResponse::ok(view(&state, &session.token).await))
+}
+
+/// `POST /api/target-agent/call`: `{"call": "ping" | "system" | "monitors"
+/// | "keyboard"}`, answered by the connected agent. A call other than a ping
+/// reads from the target and is made only under the HID lease this session
+/// holds now, which the owner checks again.
+pub(crate) async fn call(
+    State(state): State<AppState>,
+    Extension(CurrentSession(session)): Extension<CurrentSession>,
+    Json(body): Json<CallBody>,
+) -> AppResult<Json<ApiResponse<AnswerView>>> {
+    use bli_kvm_control_protocol::ControlResponse;
+    let lease = if body.call == bli_kvm_agent_protocol::Call::Ping {
+        None
+    } else {
+        let live = state
+            .hid_ws_leases
+            .lock()
+            .await
+            .live(&session.token, std::time::Instant::now());
+        let Some((lease_id, bindings)) = live else {
+            return Err(AppError::Conflict(
+                "the agent is read under the keyboard's and mouse's lease: take control first"
+                    .into(),
+            ));
+        };
+        Some(bli_kvm_core::TargetAgentLease {
+            lease_id,
+            session_binding: bindings.session_binding,
+            target_binding: bindings.target_binding,
+        })
+    };
+    match owner(
+        &state,
+        &session.token,
+        bli_kvm_core::PlatformControlRequestV2::TargetAgentCall {
+            call: body.call,
+            timeout_ms: CALL_TIMEOUT_MS,
+            lease,
+        },
+    )
+    .await?
+    {
+        ControlResponse::TargetAgentAnswer {
+            answer,
+            round_trip_us,
+        } => Ok(Json(ApiResponse::ok(AnswerView {
+            answer,
+            round_trip_us,
+        }))),
+        ControlResponse::Rejected { code } => Err(AppError::Conflict(format!(
+            "the agent did not answer: {}",
+            crate::hid::rejection_name(code)
+        ))),
+        _ => Err(AppError::ServiceUnavailable(
+            "the target agent is unavailable".into(),
+        )),
+    }
 }
 
 /// `POST /api/target-agent`: `{"enabled": bool}`. Switching changes the USB

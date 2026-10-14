@@ -251,6 +251,37 @@ impl ControlV2State {
         self.target_agent = Some((channel, switch));
     }
 
+    /// The target agent's channel for `call`, once the call may be made: a
+    /// ping by any client, a read only under the HID lease the operator
+    /// holds now.
+    pub fn target_agent_for(
+        &self,
+        call: bli_kvm_agent_protocol::Call,
+        lease: Option<bli_kvm_core::TargetAgentLease>,
+        now: Instant,
+    ) -> Result<crate::target_agent::AgentChannel, ControlRejectionCode> {
+        let channel = self
+            .target_agent_shared()
+            .ok_or(ControlRejectionCode::CapabilityDisabled)?;
+        if call == bli_kvm_agent_protocol::Call::Ping {
+            return Ok(channel);
+        }
+        let lease = lease.ok_or(ControlRejectionCode::LeaseExpired)?;
+        #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
+        if let Some(policy) = self.hid.as_ref() {
+            let identity =
+                HidLeaseIdentity::new(lease.lease_id, lease.session_binding, lease.target_binding)
+                    .map_err(|_| ControlRejectionCode::InvalidState)?;
+            return if policy.holds(identity, now) {
+                Ok(channel)
+            } else {
+                Err(ControlRejectionCode::LeaseExpired)
+            };
+        }
+        let _ = (lease, now);
+        Err(ControlRejectionCode::CapabilityDisabled)
+    }
+
     /// The target agent's channel, for a call that waits outside the shared
     /// state's lock, while enabled.
     pub fn target_agent_shared(&self) -> Option<crate::target_agent::AgentChannel> {
@@ -1121,12 +1152,14 @@ impl ControlV2State {
                 Some((channel, switch)) => target_agent_state(switch.enabled(), channel.snapshot()),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
             },
-            PlatformControlRequestV2::TargetAgentCall { call, timeout_ms } => {
-                match self.target_agent_shared() {
-                    Some(channel) => run_target_agent_call(channel, *call, *timeout_ms).await,
-                    None => reject(ControlRejectionCode::CapabilityDisabled),
-                }
-            }
+            PlatformControlRequestV2::TargetAgentCall {
+                call,
+                timeout_ms,
+                lease,
+            } => match self.target_agent_for(*call, *lease, now) {
+                Ok(channel) => run_target_agent_call(channel, *call, *timeout_ms).await,
+                Err(code) => reject(code),
+            },
             PlatformControlRequestV2::AdminFeatureState {} => match self.admin_features.as_ref() {
                 Some(features) => features.state(),
                 None => reject(ControlRejectionCode::CapabilityDisabled),
@@ -2004,6 +2037,7 @@ mod tests {
         let call = PlatformControlRequestV2::TargetAgentCall {
             call: bli_kvm_agent_protocol::Call::Ping,
             timeout_ms: 100,
+            lease: None,
         };
         for request in [PlatformControlRequestV2::TargetAgentState {}, call.clone()] {
             assert_eq!(
@@ -2038,6 +2072,30 @@ mod tests {
             state.handle(&call, now).await,
             ControlResponse::Rejected {
                 code: ControlRejectionCode::InvalidState
+            }
+        );
+        // A read without the operator's lease never reaches the agent; with
+        // a lease and no HID here, it is not offered at all.
+        let read = |lease| PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Monitors,
+            timeout_ms: 100,
+            lease,
+        };
+        assert_eq!(
+            state.handle(&read(None), now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::LeaseExpired
+            }
+        );
+        let lease = bli_kvm_core::TargetAgentLease {
+            lease_id: [1; 16],
+            session_binding: 7,
+            target_binding: [2; 32],
+        };
+        assert_eq!(
+            state.handle(&read(Some(lease)), now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::CapabilityDisabled
             }
         );
         assert!(state.target_agent_shared().is_some());

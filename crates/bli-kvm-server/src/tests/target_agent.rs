@@ -142,6 +142,72 @@ async fn the_switch_is_the_owners_and_its_state_comes_back() {
 }
 
 #[tokio::test]
+async fn a_ping_goes_to_the_agent_and_a_read_needs_the_sessions_lease() {
+    use bli_kvm_control_protocol::ControlResponse;
+    use bli_kvm_core::PlatformControlRequestV2 as Request;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    let seen = super::quic_transport::owner(&control, |request| match request {
+        Request::TargetAgentCall { .. } => ControlResponse::TargetAgentAnswer {
+            answer: bli_kvm_agent_protocol::Answer::Pong,
+            round_trip_us: 2_500,
+        },
+        _ => panic!("unexpected request {request:?}"),
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let call = |body: Value| {
+        let mut request = json_request(Method::POST, "/api/target-agent/call", body);
+        request
+            .headers_mut()
+            .insert(header::COOKIE, cookie.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+        request
+    };
+    let answered = json_body(
+        app.clone()
+            .oneshot(call(serde_json::json!({"call": "ping"})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(answered["code"], 0, "{answered}");
+    assert_eq!(answered["data"]["answer"], "pong");
+    assert_eq!(answered["data"]["roundTripUs"], 2500);
+    // Without the keyboard's and mouse's lease the read never reaches the
+    // owner; an unknown call is refused as a body.
+    let refused = json_body(
+        app.clone()
+            .oneshot(call(serde_json::json!({"call": "monitors"})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_ne!(refused["code"], 0);
+    let unknown = app
+        .clone()
+        .oneshot(call(serde_json::json!({"call": "format_disk"})))
+        .await
+        .unwrap();
+    assert!(!unknown.status().is_success());
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Request::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Ping,
+            timeout_ms: 3_000,
+            lease: None,
+        }]
+    );
+}
+
+#[tokio::test]
 async fn a_refused_switch_is_reported_and_no_owner_means_unavailable() {
     use bli_kvm_control_protocol::{ControlRejectionCode, ControlResponse};
     let root = tempdir().unwrap();

@@ -757,6 +757,7 @@ pub fn app_with_options(options: ServerOptions) -> Router {
             "/target-agent",
             get(target_agent::state).post(target_agent::set),
         )
+        .route("/target-agent/call", post(target_agent::call))
         .route("/hid/shortcuts", get(shortcuts::list))
         .route(
             "/hid/shortcut",

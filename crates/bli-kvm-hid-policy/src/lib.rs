@@ -166,6 +166,11 @@ impl HidControlPolicy {
             .map_or_else(map_error, |()| HidDecision::Applied)
     }
 
+    /// Whether `identity` holds the lease now.
+    pub fn holds(&self, identity: HidLeaseIdentity, now: Instant) -> bool {
+        self.engine.holds(identity, now)
+    }
+
     pub async fn release(&mut self, identity: HidLeaseIdentity) -> HidDecision {
         match self.engine.release(identity).await {
             Ok(()) => HidDecision::Applied,

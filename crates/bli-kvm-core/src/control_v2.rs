@@ -329,10 +329,13 @@ pub enum PlatformControlRequestV2 {
     /// The target agent's switch, its channel and the agent connected to it.
     TargetAgentState {},
     /// One call to the connected target agent, answered within
-    /// `timeout_ms` (1 to `MAX_TARGET_AGENT_CALL_MS`).
+    /// `timeout_ms` (1 to `MAX_TARGET_AGENT_CALL_MS`). A call other than a
+    /// ping reads from the target (or acts on it), and is made only under
+    /// the operator's current HID lease, as typing is.
     TargetAgentCall {
         call: bli_kvm_agent_protocol::Call,
         timeout_ms: u32,
+        lease: Option<TargetAgentLease>,
     },
     /// The connected interfaces' IPv4 addressing and DNS.
     NetworkInfo {},
@@ -474,6 +477,16 @@ pub enum ControlV2ValidationError {
 
 /// The longest a target agent call may wait for its answer.
 pub const MAX_TARGET_AGENT_CALL_MS: u32 = 10_000;
+
+/// The HID lease a target agent call that reads or acts is made under: the
+/// identity the lease was granted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetAgentLease {
+    pub lease_id: [u8; 16],
+    pub session_binding: u64,
+    pub target_binding: [u8; 32],
+}
 
 /// One IPv6 change: `disabled`, `slaac`, `dhcpv6`, or `manual` with an
 /// address, prefix and optional router.
@@ -649,8 +662,19 @@ impl PlatformControlRequestV2 {
             Self::QuicState {} => Ok(()),
             Self::TargetAgent { .. } => Ok(()),
             Self::TargetAgentState {} => Ok(()),
-            Self::TargetAgentCall { timeout_ms, .. } => {
-                if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms) {
+            Self::TargetAgentCall {
+                call,
+                timeout_ms,
+                lease,
+            } => {
+                let leased = lease.is_some_and(|lease| {
+                    lease.lease_id.iter().any(|byte| *byte != 0)
+                        && lease.session_binding != 0
+                        && lease.target_binding.iter().any(|byte| *byte != 0)
+                });
+                if (1..=MAX_TARGET_AGENT_CALL_MS).contains(timeout_ms)
+                    && (leased || (lease.is_none() && *call == bli_kvm_agent_protocol::Call::Ping))
+                {
                     Ok(())
                 } else {
                     Err(ControlV2ValidationError::InvalidTargetAgentCall)
@@ -862,6 +886,7 @@ mod target_agent_tests {
         let call = |timeout_ms| PlatformControlRequestV2::TargetAgentCall {
             call: bli_kvm_agent_protocol::Call::Ping,
             timeout_ms,
+            lease: None,
         };
         assert_eq!(call(1).validate(), Ok(()));
         assert_eq!(call(MAX_TARGET_AGENT_CALL_MS).validate(), Ok(()));
@@ -873,7 +898,31 @@ mod target_agent_tests {
         }
         assert_eq!(
             serde_json::to_string(&call(500)).unwrap(),
-            r#"{"type":"target_agent_call","call":"ping","timeout_ms":500}"#
+            r#"{"type":"target_agent_call","call":"ping","timeout_ms":500,"lease":null}"#
+        );
+        // A read only under a lease, and a lease of zeros is none.
+        let read = |lease| PlatformControlRequestV2::TargetAgentCall {
+            call: bli_kvm_agent_protocol::Call::Monitors,
+            timeout_ms: 500,
+            lease,
+        };
+        let lease = TargetAgentLease {
+            lease_id: [1; 16],
+            session_binding: 7,
+            target_binding: [2; 32],
+        };
+        assert_eq!(read(Some(lease)).validate(), Ok(()));
+        assert_eq!(
+            read(None).validate(),
+            Err(ControlV2ValidationError::InvalidTargetAgentCall)
+        );
+        assert_eq!(
+            read(Some(TargetAgentLease {
+                lease_id: [0; 16],
+                ..lease
+            }))
+            .validate(),
+            Err(ControlV2ValidationError::InvalidTargetAgentCall)
         );
     }
 }
