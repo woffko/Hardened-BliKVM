@@ -71,6 +71,18 @@ find.
   rollback, and signed RAW system updates behind their own switch, which
   keep the board's accounts, keys, network settings and switches and write
   the old system back if the new one does not start.
+- **Target agent** (Windows, off by default; Settings > Device): with its
+  switch on, the board's mouse device carries a vendor collection that a
+  small agent on the target talks to, and a read-only drive carries the
+  agent. The page then knows the target's Windows, its monitors (the
+  absolute mouse kept on the captured one without a layout set by hand) and
+  its keyboard layouts, and at the operator's action under remote control
+  switches the layout (also to the letters typed on a phone), changes the
+  monitors' mode (undone after 15 s unless kept), passes clipboard text both
+  ways and locks the session. "Start the agent" types its start line on the
+  target, and the agent's own menu can start it at sign-in; the quality
+  monitor's Agent row says its state
+  ([`docs/design/target-agent-v1.md`](docs/design/target-agent-v1.md)).
 - **Administration features** that stay off until they are switched on: web
   terminal, scripts, remote ISO download, PicoClaw, RAW system updates. Each
   switch is enforced below the web server
@@ -89,7 +101,7 @@ processes instead, each as its own systemd unit with a sandbox:
 | --- | --- | --- |
 | nginx | root, workers as `www-data` | TLS on TCP 443 in front of the web server |
 | `bli-kvm-server` | `hardened-blikvm-server`, from the active signed slot | login, sessions, the API and its policy, the web interface, WebRTC signalling, the QUIC gateway's link; no device access of its own |
-| board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
+| board owner (`bli-kvm-control-broker`) | root | the USB gadget (keyboard, mouse, mass storage), the target agent's channel and drive, the ATX lines, network and firewall changes, the feature switches; it takes only fixed, typed requests over a Unix socket |
 | `bli-kvm-boardd` | root | the fan and the board's peripherals |
 | uStreamer and the MJPEG proxy | `hardened-blikvm-video` | the capture, and its MJPEG stream for the server |
 | video encoders (VP8, H.264) | dynamic users | encode for Janus and for the QUIC gateway while someone watches; H.264 with the video engine or with x264 |
@@ -111,12 +123,20 @@ nginx --> bli-kvm-server ---------> Janus <-- RTP --+              |
    (USB gadget, ATX, network, firewall)        uStreamer (capture)
 ```
 
+On the target, the optional agent (`hardened-blikvm-agent.exe`, built
+reproducibly from `crates/bli-kvm-target-agent` by
+`scripts/build-target-agent.sh`) runs as the signed-in user, finds the
+board's collection and answers only the calls the protocol names
+(`crates/bli-kvm-agent-protocol`); it opens no network connection and runs
+no command.
+
 Design notes are under [`docs/design`](docs/design): the QUIC transport, the
 firewall contract, the administration features, the video encoders (software,
 and H.264 on the video engine with its driver), the engine choice and the
-quality monitor, the RAW system update, the screen's upscaling. Plans, audits
-and what was shown on the test board are under
+quality monitor, the RAW system update, the screen's upscaling, the target
+agent. Plans, audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261014-target-agent.md`](docs/baselines/audit-20261014-target-agent.md),
 [`audit-20261009-upscaling-phases.md`](docs/baselines/audit-20261009-upscaling-phases.md),
 [`audit-20261008-upscaling-gate0.md`](docs/baselines/audit-20261008-upscaling-gate0.md),
 [`audit-20261004-review.md`](docs/baselines/audit-20261004-review.md)
