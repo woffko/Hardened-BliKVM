@@ -238,6 +238,9 @@ pub(crate) async fn call(
             answer,
             round_trip_us,
         }))),
+        ControlResponse::TargetAgentRefused { reason } => Err(AppError::Conflict(format!(
+            "the agent did not do it: {reason}"
+        ))),
         ControlResponse::Rejected { code } => Err(AppError::Conflict(format!(
             "the agent did not answer: {}",
             crate::hid::rejection_name(code)

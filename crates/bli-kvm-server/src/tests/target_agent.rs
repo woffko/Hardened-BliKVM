@@ -244,3 +244,37 @@ async fn a_refused_switch_is_reported_and_no_owner_means_unavailable() {
     assert_eq!(state["data"]["available"], false);
     assert_eq!(state["data"]["enabled"], false);
 }
+
+#[tokio::test]
+async fn an_agents_refusal_is_said_with_its_reason() {
+    use bli_kvm_control_protocol::ControlResponse;
+    let root = tempdir().unwrap();
+    let control = root.path().join("control.sock");
+    super::quic_transport::owner(&control, |_| ControlResponse::TargetAgentRefused {
+        reason: "Windows refused the monitors' configuration (87)".into(),
+    });
+    let app = app_with_options(ServerOptions {
+        state_dir: root.path().join("account"),
+        control_socket: Some(control),
+        restricted_controls_enabled: true,
+        ..ServerOptions::default()
+    });
+    let (cookie, csrf) = setup_and_login(&app).await;
+    let mut request = json_request(
+        Method::POST,
+        "/api/target-agent/call",
+        serde_json::json!({"call": "ping"}),
+    );
+    request
+        .headers_mut()
+        .insert(header::COOKIE, cookie.parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-csrf-token", csrf.parse().unwrap());
+    let refused = json_body(app.clone().oneshot(request).await.unwrap()).await;
+    assert_ne!(refused["code"], 0);
+    assert_eq!(
+        refused["msg"], "the agent did not do it: Windows refused the monitors' configuration (87)",
+        "{refused}"
+    );
+}

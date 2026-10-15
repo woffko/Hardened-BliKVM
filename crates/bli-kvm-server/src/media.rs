@@ -138,6 +138,7 @@ pub(crate) async fn virtual_media(
             | ControlResponse::QuicState { .. }
             | ControlResponse::TargetAgentState { .. }
             | ControlResponse::TargetAgentAnswer { .. }
+            | ControlResponse::TargetAgentRefused { .. }
             | ControlResponse::NetworkInfo { .. }
             | ControlResponse::WifiState { .. }
             | ControlResponse::WifiNetworks { .. }

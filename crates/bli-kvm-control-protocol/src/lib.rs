@@ -197,6 +197,11 @@ pub enum ControlResponse {
         answer: bli_kvm_agent_protocol::Answer,
         round_trip_us: u64,
     },
+    /// The connected agent did not do the call, and said why (at most
+    /// `MAX_AGENT_REASON` characters, none a control character).
+    TargetAgentRefused {
+        reason: String,
+    },
     /// The persisted administration feature switches.
     AdminFeatureState {
         terminal: bool,
@@ -472,6 +477,17 @@ pub fn decode_response_v2(bytes: &[u8]) -> Result<ControlResponseEnvelope, Contr
     Ok(response)
 }
 
+/// The longest reason the agent's refusal carries to the server.
+pub const MAX_AGENT_REASON: usize = 160;
+
+/// Whether the agent's reason may cross: some text, within its bound, with
+/// no control character.
+pub fn agent_reason_is_valid(reason: &str) -> bool {
+    !reason.is_empty()
+        && reason.chars().count() <= MAX_AGENT_REASON
+        && !reason.chars().any(char::is_control)
+}
+
 pub fn encode_response_v2(
     response: &ControlResponseEnvelope,
 ) -> Result<Vec<u8>, ControlProtocolError> {
@@ -573,6 +589,11 @@ fn validate_response(response: &ControlResponse) -> Result<(), ControlProtocolEr
     }
     if let ControlResponse::TargetAgentAnswer { answer, .. } = response
         && !answer.is_valid()
+    {
+        return Err(ControlProtocolError::InvalidControlResponse);
+    }
+    if let ControlResponse::TargetAgentRefused { reason } = response
+        && !agent_reason_is_valid(reason)
     {
         return Err(ControlProtocolError::InvalidControlResponse);
     }
@@ -973,11 +994,26 @@ mod tests {
                 answer: bli_kvm_agent_protocol::Answer::Pong,
                 round_trip_us: 2_100,
             },
+            ControlResponse::TargetAgentRefused {
+                reason: "Windows refused the monitors' configuration (87)".into(),
+            },
         ] {
             let response = envelope(response);
             let json = encode_response_v2(&response).unwrap();
             assert_eq!(decode_response_v2(&json).unwrap(), response);
         }
+        // A refusal's reason is some text within its bound, on one line.
+        for reason in [
+            String::new(),
+            "bell\u{7}".into(),
+            "x".repeat(MAX_AGENT_REASON + 1),
+        ] {
+            assert!(
+                encode_response_v2(&envelope(ControlResponse::TargetAgentRefused { reason }))
+                    .is_err()
+            );
+        }
+        assert!(agent_reason_is_valid(&"ü".repeat(MAX_AGENT_REASON)));
         let mut monitors = vec![bli_kvm_agent_protocol::Monitor {
             id: "0123456789abcdef".into(),
             name: "DELL U2719D".into(),

@@ -1694,22 +1694,38 @@ pub(crate) async fn run_target_agent_call(
     call: bli_kvm_agent_protocol::Call,
     timeout_ms: u32,
 ) -> ControlResponse {
-    use crate::target_agent::CallError;
     let started = std::time::Instant::now();
-    match channel
+    let result = channel
         .call(
             call,
             std::time::Duration::from_millis(u64::from(timeout_ms)),
         )
-        .await
-    {
+        .await;
+    call_response(result, started.elapsed())
+}
+
+/// The owner's response at a call's end: the answer and its round trip, the
+/// agent's refusal with its reason (which the channel keeps within the
+/// protocol's bound), or why there was none.
+pub(crate) fn call_response(
+    result: Result<bli_kvm_agent_protocol::Answer, crate::target_agent::CallError>,
+    elapsed: std::time::Duration,
+) -> ControlResponse {
+    use crate::target_agent::CallError;
+    match result {
         Ok(answer) => ControlResponse::TargetAgentAnswer {
             answer,
-            round_trip_us: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            round_trip_us: u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX),
         },
         Err(CallError::NotConnected) => reject(ControlRejectionCode::InvalidState),
         Err(CallError::TimedOut) => reject(ControlRejectionCode::BackendUnavailable),
-        Err(CallError::Failed(_)) => reject(ControlRejectionCode::BackendRejected),
+        Err(CallError::Failed(reason)) => {
+            if bli_kvm_control_protocol::agent_reason_is_valid(&reason) {
+                ControlResponse::TargetAgentRefused { reason }
+            } else {
+                reject(ControlRejectionCode::BackendRejected)
+            }
+        }
         Err(CallError::Closed) => reject(ControlRejectionCode::Internal),
     }
 }
@@ -2073,6 +2089,43 @@ mod tests {
             ControlResponse::Applied
         );
         assert!(!state.attestations.authorize(9, &TARGET, now));
+    }
+
+    #[test]
+    fn an_agents_refusal_reaches_the_server_with_its_reason() {
+        use crate::target_agent::CallError;
+        let elapsed = std::time::Duration::from_millis(3);
+        assert_eq!(
+            call_response(
+                Err(CallError::Failed(
+                    "Windows refused the monitors' configuration (87)".into()
+                )),
+                elapsed
+            ),
+            ControlResponse::TargetAgentRefused {
+                reason: "Windows refused the monitors' configuration (87)".into()
+            }
+        );
+        // No reason to carry: the code alone.
+        assert_eq!(
+            call_response(Err(CallError::Failed(String::new())), elapsed),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert_eq!(
+            call_response(Err(CallError::TimedOut), elapsed),
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendUnavailable
+            }
+        );
+        assert_eq!(
+            call_response(Ok(bli_kvm_agent_protocol::Answer::Pong), elapsed),
+            ControlResponse::TargetAgentAnswer {
+                answer: bli_kvm_agent_protocol::Answer::Pong,
+                round_trip_us: 3_000
+            }
+        );
     }
 
     #[tokio::test]

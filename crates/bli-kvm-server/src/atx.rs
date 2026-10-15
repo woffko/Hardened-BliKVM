@@ -111,6 +111,7 @@ pub(crate) async fn application_power(
         | ControlResponse::QuicState { .. }
         | ControlResponse::TargetAgentState { .. }
         | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }

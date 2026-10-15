@@ -256,6 +256,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::QuicState { .. }
         | ControlResponse::TargetAgentState { .. }
         | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -292,6 +293,7 @@ pub(crate) async fn confirm_focus(
         | ControlResponse::QuicState { .. }
         | ControlResponse::TargetAgentState { .. }
         | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -612,6 +614,7 @@ pub(crate) async fn serve_lease(
         | ControlResponse::QuicState { .. }
         | ControlResponse::TargetAgentState { .. }
         | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
@@ -653,6 +656,7 @@ pub(crate) async fn serve_lease(
         | ControlResponse::QuicState { .. }
         | ControlResponse::TargetAgentState { .. }
         | ControlResponse::TargetAgentAnswer { .. }
+        | ControlResponse::TargetAgentRefused { .. }
         | ControlResponse::NetworkInfo { .. }
         | ControlResponse::WifiState { .. }
         | ControlResponse::WifiNetworks { .. }
