@@ -184,12 +184,18 @@ feature `target_agent`.
   session after a confirmation. What is typed: the on-screen keyboard's
   language, and the letters of the phone's own keyboard, which hands the
   page text, not keys, and so cannot say its language switch. The page
-  types Latin letters at the US layout's keys and Cyrillic ones at the
-  Russian layout's, so it cuts the text into runs of one script and,
-  before a run whose layout is not the target's, waits until the keys
-  before it are typed, asks the agent for an installed layout of that
-  script (English for Latin, Russian for Cyrillic) and gives the window
-  100 ms to take it (`web/src/lib/agent-typing.ts`). The layouts are read
+  types Latin letters at the US layout's keys, Cyrillic ones at the
+  Russian layout's and õ ä ö ü š ž at the Estonian layout's (its keys read
+  from Windows' own Estonian layout on the operator's target, AltGr as the
+  right Alt, a dead key followed by a space), so it cuts the text into
+  runs of one script and, before a run whose layout is not the target's,
+  waits until the keys before it are typed, asks the agent for an
+  installed layout of that script (English for Latin, Russian for
+  Cyrillic, Estonian for a run with Estonian letters) and gives the window
+  100 ms to take it (`web/src/lib/agent-typing.ts`). The Estonian layout
+  has the Latin letters where the US layout has them: Latin letters join
+  an Estonian run, and Latin text keeps an Estonian layout in front, its
+  punctuation typed at that layout's keys. The layouts are read
   again as the phone's keyboard opens; a shortcut (a modifier held)
   switches nothing.
 

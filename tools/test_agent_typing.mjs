@@ -52,3 +52,38 @@ test("each script is typed for its installed layout", { skip }, () => {
   );
   assert.equal(typing.layoutForScript([], "cyrillic"), null);
 });
+
+test(
+  "Estonian letters make an Estonian run, Latin letters join it",
+  { skip },
+  () => {
+    assert.deepEqual(typing.scriptRuns("Tänan, hello! Привет"), [
+      { script: "estonian", text: "Tänan, hello! " },
+      { script: "cyrillic", text: "Привет" },
+    ]);
+    assert.deepEqual(typing.scriptRuns("ok ÕUN"), [
+      { script: "estonian", text: "ok ÕUN" },
+    ]);
+  },
+);
+
+test(
+  "Latin text keeps an English or Estonian layout in front",
+  { skip },
+  () => {
+    const layout = (id, language) => ({ id, language, name: language });
+    const english = layout("04090409", "en-US");
+    const russian = layout("04190419", "ru-RU");
+    const estonian = layout("04250425", "et-EE");
+    const installed = [english, russian, estonian];
+    assert.equal(typing.layoutToType(installed, estonian, "latin"), estonian);
+    assert.equal(typing.layoutToType(installed, english, "latin"), english);
+    assert.equal(typing.layoutToType(installed, russian, "latin"), english);
+    assert.equal(typing.layoutToType(installed, english, "estonian"), estonian);
+    assert.equal(typing.layoutToType(installed, null, "cyrillic"), russian);
+    assert.equal(typing.layoutToType([english], english, "estonian"), null);
+    assert.equal(typing.scriptOfLayout(estonian), "estonian");
+    assert.equal(typing.scriptOfLayout(russian), "cyrillic");
+    assert.equal(typing.scriptOfLayout(english), "latin");
+  },
+);

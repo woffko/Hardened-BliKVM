@@ -3,7 +3,8 @@
 // phone keyboard's "Привет, world" switches the target to its Russian layout before the Cyrillic run and to its
 // English one before the Latin run, each once the keys before it are typed: the Cyrillic letters and the comma at the
 // Russian layout's keys, the Latin ones at the US layout's. Latin text while the target is already English switches
-// nothing, and with the option off nothing is switched at all.
+// nothing, and with the option off nothing is switched at all. "Tänan, ok?" switches to the Estonian layout, its
+// letters and its question mark at that layout's keys, and Latin text after it keeps that layout.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -34,6 +35,11 @@ const RUSSIAN = {
   language: "ru-RU",
   name: "Russian (Russia) - Russian",
 };
+const ESTONIAN = {
+  id: "04250425",
+  language: "et-EE",
+  name: "Estonian (Estonia) - Estonian",
+};
 // A key pressed, then all keys up.
 const typed = (modifier, usage) => [
   [modifier, 0, usage, 0, 0, 0, 0, 0],
@@ -53,7 +59,7 @@ async function eventually(condition, timeoutMs = 6000) {
  * A phone's page with remote control and the phone keyboard open, and what it
  * sends in order: the agent's calls and the keyboard's reports.
  */
-async function open({ follow }) {
+async function open({ follow, installed = [ENGLISH, RUSSIAN] }) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
     isMobile: true,
@@ -103,10 +109,10 @@ async function open({ follow }) {
     const { call } = route.request().postDataJSON();
     sent.push({ call, at: performance.now() });
     if (call?.set_layout)
-      current = call.set_layout.id === RUSSIAN.id ? RUSSIAN : ENGLISH;
+      current = installed.find((layout) => layout.id === call.set_layout.id);
     const answer =
       call === "keyboard"
-        ? { keyboard: { current, installed: [ENGLISH, RUSSIAN] } }
+        ? { keyboard: { current, installed } }
         : call === "monitors"
           ? { monitors: [] }
           : "done";
@@ -248,8 +254,52 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
+  {
+    // Estonian: the layout for the letters only it has, then kept for
+    // Latin letters, which it has where the US layout has them.
+    const { context, page, errors, sent } = await open({
+      follow: true,
+      installed: [ENGLISH, RUSSIAN, ESTONIAN],
+    });
+    assert.ok(
+      await eventually(() => sent.some((entry) => entry.call === "keyboard")),
+    );
+    const start = sent.length;
+    await page.keyboard.insertText("Tänan, ok?");
+    assert.ok(
+      await eventually(() => reports(sent.slice(start)).length >= 20),
+      JSON.stringify(sent.slice(start)),
+    );
+    const typing = sent.slice(start);
+    const toEstonian = typing.findIndex(
+      (entry) => entry.call?.set_layout?.id === ESTONIAN.id,
+    );
+    assert.ok(toEstonian >= 0, JSON.stringify(typing));
+    assert.deepEqual(reports(typing.slice(0, toEstonian)), []);
+    // T, ä on the US quote key, n a n, the comma, a space, o k, and the
+    // question mark Shift on the US '-' key.
+    assert.deepEqual(reports(typing.slice(toEstonian)), [
+      ...typed(SHIFT, 0x17),
+      ...typed(0, 0x34),
+      ...typed(0, 0x11),
+      ...typed(0, 0x04),
+      ...typed(0, 0x11),
+      ...typed(0, 0x36),
+      ...typed(0, 0x2c),
+      ...typed(0, 0x12),
+      ...typed(0, 0x0e),
+      ...typed(SHIFT, 0x2d),
+    ]);
+    const more = sent.length;
+    await page.keyboard.insertText("hi");
+    assert.ok(await eventually(() => reports(sent.slice(more)).length >= 4));
+    await page.waitForTimeout(300);
+    assert.deepEqual(layoutCalls(sent), [{ set_layout: { id: ESTONIAN.id } }]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
   console.log(
-    'agent typing contract: ok (the target switched to Russian before "Привет, " and to English before "world", each after the keys before it; nothing switched for Latin text on English, by the closed on-screen keyboard or with the option off; the on-screen keyboard\'s language as it opens and as it is chosen)',
+    'agent typing contract: ok (the target switched to Russian before "Привет, " and to English before "world", each after the keys before it; nothing switched for Latin text on English, by the closed on-screen keyboard or with the option off; the on-screen keyboard\'s language as it opens and as it is chosen; "Tänan, ok?" in the Estonian layout, kept for Latin text)',
   );
 } finally {
   await browser.close();

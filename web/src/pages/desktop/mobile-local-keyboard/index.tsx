@@ -11,7 +11,7 @@ import { getDefaultStore, useAtom, useAtomValue, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
 import * as targetAgent from '@/api/target-agent.ts';
-import { layoutForScript, scriptRuns } from '@/lib/agent-typing.ts';
+import { layoutToType, scriptOfLayout, scriptRuns } from '@/lib/agent-typing.ts';
 import { textToKeyReports, type TextLayoutState } from '@/lib/hid-text.ts';
 import { getKeycode } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
@@ -160,10 +160,10 @@ export const MobileLocalKeyboard = () => {
   }
 
   // The target's layout follows the letters typed, when the operator asked
-  // for it and the agent is connected (lib/agent-typing): a run of Latin or
-  // Cyrillic letters is typed in an installed layout of its script, switched
-  // to once the keys before it are typed. A shortcut (a modifier held) is
-  // not text and switches nothing.
+  // for it and the agent is connected (lib/agent-typing): a run of Latin,
+  // Cyrillic or Estonian letters is typed in a layout for its letters,
+  // switched to once the keys before it are typed. A shortcut (a modifier
+  // held) is not text and switches nothing.
   function following() {
     const store = getDefaultStore();
     return store.get(agentLayoutSyncAtom) && Boolean(store.get(targetAgentAtom)?.agent);
@@ -198,13 +198,15 @@ export const MobileLocalKeyboard = () => {
   // when its turn comes, with the layouts read by then.
   async function typeFollowing(text: string) {
     for (const run of scriptRuns(text)) {
-      const installed = getDefaultStore().get(agentKeyboardAtom)?.installed ?? [];
-      const layout = run.script ? layoutForScript(installed, run.script) : null;
+      const keyboard = getDefaultStore().get(agentKeyboardAtom);
+      const layout = run.script
+        ? layoutToType(keyboard?.installed ?? [], keyboard?.current ?? null, run.script)
+        : null;
       if (run.script && layout) {
         await switchLayout(layout).catch(() => undefined);
-        // The run's punctuation before its first letter is typed for its
-        // layout too.
-        layoutRef.current.script = run.script;
+        // The run's punctuation, before its first letter too, is typed for
+        // the layout it is typed in.
+        layoutRef.current.script = scriptOfLayout(layout);
       }
       for (const step of textToKeyReports(run.text, layoutRef.current)) {
         sendReport(keyReport(step.modifier, step.usage));
