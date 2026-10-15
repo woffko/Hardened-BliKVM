@@ -289,11 +289,13 @@ export const VirtualKeyboard = () => {
   if (!isDesktopLayout) {
     if (!isKeyboardOpen) return null;
 
+    // The keyboard is always light, and so are its buttons' and list's own
+    // colours: the page's dark scheme would make their text white.
     return (
       <div
         ref={touchKeyboardRef}
         data-testid="touch-virtual-keyboard"
-        className="theme-fixed fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl"
+        className="theme-fixed fixed inset-x-0 bottom-0 z-[1200] max-h-[68dvh] overflow-hidden rounded-t bg-white text-neutral-900 shadow-2xl [color-scheme:light]"
       >
         <div className="keyboard-header flex items-center justify-between gap-3 px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -375,7 +377,7 @@ export const VirtualKeyboard = () => {
       <Drawer.Portal>
         <Drawer.Content
           className={clsx(
-            'theme-fixed max-w-screen fixed bottom-0 left-0 right-0 z-[999] mx-auto overflow-hidden bg-white outline-none',
+            'theme-fixed max-w-screen fixed bottom-0 left-0 right-0 z-[999] mx-auto overflow-hidden bg-white outline-none [color-scheme:light]',
             isDesktopLayout ? 'w-[820px] rounded' : 'w-screen rounded-t'
           )}
         >

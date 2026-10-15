@@ -246,6 +246,39 @@ try {
     await page.getByText("On-screen keyboard", { exact: true }).tap();
     const keyboard = page.getByTestId("touch-virtual-keyboard");
     await keyboard.waitFor();
+    // The keyboard is always light, on the dark page too: its keys' and its
+    // language list's text is dark on their white, not the dark scheme's
+    // white of a button's own text.
+    const unreadable = await keyboard.evaluate((element) => {
+      const channels = (colour) => colour.match(/[\d.]+/g).map(Number);
+      const luminance = ([r, g, b]) => {
+        const linear = (value) => {
+          const share = value / 255;
+          return share <= 0.04045
+            ? share / 12.92
+            : ((share + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+      };
+      const found = [];
+      for (const control of element.querySelectorAll("button, select")) {
+        const style = getComputedStyle(control);
+        const background = channels(style.backgroundColor);
+        // A control without a background of its own (the close button).
+        if (background.length > 3 && background[3] === 0) continue;
+        const [lighter, darker] = [
+          luminance(channels(style.color)),
+          luminance(background),
+        ].sort((a, b) => b - a);
+        const contrast = (lighter + 0.05) / (darker + 0.05);
+        if (contrast < 4.5)
+          found.push(
+            `${control.textContent || control.tagName}: ${style.color} on ${style.backgroundColor}`,
+          );
+      }
+      return found;
+    });
+    assert.deepEqual(unreadable, [], "the keyboard's unreadable controls");
     const height = await keyboard.evaluate((element) =>
       Math.round(element.getBoundingClientRect().height),
     );
