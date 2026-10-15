@@ -141,6 +141,11 @@ feature `target_agent`.
   for the Run box, and a PowerShell line typed at the US layout's
   positions (the target's layout in front must be English) that finds the
   drive by its label and starts the agent from it, its window hidden.
+- The quality monitor's last row, Agent, says the state at a glance where
+  the board offers the agent: off, the channel closed, waiting for an
+  agent, or connected with its version (and locked while the target's
+  session is); it is the plan's short status, opened from the menu bar's
+  QM, and fits without scrolling in Basic.
 - The page keeps the agent's state, and while an agent is connected and
   remote control holds the lease, reads its monitors and layouts (at once
   and every 15 s); nothing is asked of the agent without the lease.
