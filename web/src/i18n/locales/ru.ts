@@ -667,6 +667,9 @@ const ru = {
           lock: 'Заблокировать цель',
           lockConfirm: 'Заблокировать сеанс Windows на цели?',
           displays: {
+            title: 'Мониторы цели',
+            now: 'Сейчас: {{mode}}',
+            unknown: 'неизвестно',
             extend: 'Расширить',
             duplicate: 'Дублировать',
             board_only: 'Только монитор платы',

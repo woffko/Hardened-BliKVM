@@ -43,3 +43,25 @@ export function areaFromMonitors(monitors: AgentMonitor[]): ScreenArea | null {
   };
   return isScreenArea(area) ? area : null;
 }
+
+/**
+ * The monitors' mode the agent's active monitors show, as Windows names its
+ * choices: one desktop over them (extend), one picture on all (duplicate:
+ * every monitor at the same place and size), or a single monitor, the
+ * board's or another.
+ */
+export type DisplaysNow = 'extend' | 'duplicate' | 'board_only' | 'others_only' | 'unknown';
+
+export function displaysNow(monitors: AgentMonitor[]): DisplaysNow {
+  if (monitors.length === 0) return 'unknown';
+  if (monitors.length === 1) return monitors[0].board ? 'board_only' : 'others_only';
+  const [first] = monitors;
+  const together = monitors.every(
+    (monitor) =>
+      monitor.x === first.x &&
+      monitor.y === first.y &&
+      monitor.width === first.width &&
+      monitor.height === first.height
+  );
+  return together ? 'duplicate' : 'extend';
+}

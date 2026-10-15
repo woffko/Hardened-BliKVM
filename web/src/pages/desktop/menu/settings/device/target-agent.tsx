@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Modal, Switch } from 'antd';
-import { useAtom } from 'jotai';
+import { useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
-import type { AgentMonitor } from '@/lib/agent-layout.ts';
 import { commandSteps, runBoxSteps } from '@/lib/agent-start.ts';
 import { agentMonitorsAtom } from '@/jotai/target-agent.ts';
+import { useAgentDisplays } from '@/hooks/useAgentDisplays.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
@@ -27,8 +27,8 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [confirming, setConfirming] = useState<boolean | null>(null);
   const [error, setError] = useState('');
-  const [monitors, setMonitors] = useAtom(agentMonitorsAtom);
-  const [boardBusy, setBoardBusy] = useState(false);
+  const monitors = useAtomValue(agentMonitorsAtom);
+  const displays = useAgentDisplays();
   const { confirmed: controlling } = useFocusConfirmation();
   const { reportHid } = useHidLease();
   const [starting, setStarting] = useState<'confirm' | 'typing' | 'waiting' | null>(null);
@@ -63,60 +63,6 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
     }, START_WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [agentConnected, starting, t]);
-  // A monitors' change waiting to be kept: the seconds left.
-  const [keepLeft, setKeepLeft] = useState<number | null>(null);
-  const [displaysBusy, setDisplaysBusy] = useState(false);
-
-  useEffect(() => {
-    if (keepLeft === null) return;
-    if (keepLeft <= 0) {
-      setKeepLeft(null);
-      return;
-    }
-    const timer = window.setTimeout(() => setKeepLeft(keepLeft - 1), 1000);
-    return () => window.clearTimeout(timer);
-  }, [keepLeft]);
-
-  async function setDisplays(mode: api.DisplayMode) {
-    setDisplaysBusy(true);
-    setError('');
-    try {
-      const answer = await api.askTargetAgent({ set_displays: { mode } });
-      if (typeof answer === 'object' && 'displays_changed' in answer)
-        setKeepLeft(answer.displays_changed.revert_in_seconds);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDisplaysBusy(false);
-    }
-  }
-
-  async function keepDisplays() {
-    setKeepLeft(null);
-    try {
-      await api.askTargetAgent('keep_displays');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  // The operator's word on which monitor is the board's, kept by the agent
-  // on the target; the monitors are read again with it.
-  async function chooseBoard(id: string) {
-    setBoardBusy(true);
-    setError('');
-    try {
-      await api.askTargetAgent({ set_board_monitor: { id } });
-      const answer = await api.askTargetAgent('monitors');
-      if (typeof answer === 'object' && 'monitors' in answer)
-        setMonitors(answer.monitors as AgentMonitor[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBoardBusy(false);
-    }
-  }
-
   const read = useCallback(async () => {
     const rsp = await api.getTargetAgent();
     if (rsp.code !== 0 || typeof rsp.data?.enabled !== 'boolean')
@@ -216,8 +162,8 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
                     size="small"
                     type="link"
                     className="px-0"
-                    disabled={readOnly || boardBusy}
-                    onClick={() => void chooseBoard(monitor.id!)}
+                    disabled={readOnly || displays.busy}
+                    onClick={() => void displays.chooseBoard(monitor.id!)}
                   >
                     {t('settings.device.targetAgent.chooseBoard')}
                   </Button>
@@ -262,8 +208,8 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
                 <Button
                   key={mode}
                   size="small"
-                  disabled={readOnly || displaysBusy || keepLeft !== null}
-                  onClick={() => void setDisplays(mode)}
+                  disabled={readOnly || displays.busy || displays.keeping}
+                  onClick={() => void displays.changeDisplays(mode)}
                 >
                   {t(`settings.device.targetAgent.displays.${mode}`)}
                 </Button>
@@ -271,9 +217,9 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
             )}
           </div>
         )}
-        {error && (
+        {(error || displays.error) && (
           <span role="alert" className="text-xs text-red-400">
-            {error}
+            {error || displays.error}
           </span>
         )}
       </div>
@@ -295,17 +241,6 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
         onCancel={() => setStarting(null)}
       >
         <p>{t('settings.device.targetAgent.startExplain')}</p>
-      </Modal>
-
-      <Modal
-        open={keepLeft !== null}
-        title={t('settings.device.targetAgent.displays.keepTitle')}
-        okText={t('settings.device.targetAgent.displays.keep')}
-        cancelText={t('settings.device.targetAgent.displays.putBack')}
-        onOk={() => void keepDisplays()}
-        onCancel={() => setKeepLeft(null)}
-      >
-        <p>{t('settings.device.targetAgent.displays.keepLeft', { seconds: keepLeft ?? 0 })}</p>
       </Modal>
 
       <Modal

@@ -288,6 +288,26 @@ fn board_primary(mut config: DisplayConfig) -> Result<DisplayConfig, String> {
     Ok(config)
 }
 
+/// Leaves active only the monitors `keep` takes: the board's or the
+/// others. When none of them is active (only the board's shows and the
+/// others are wanted, or the reverse), every monitor is first made active
+/// as Windows extends them, so that the one wanted can be kept; if keeping
+/// it then fails, `before` is put back at once.
+fn only_after_extending(before: &DisplayConfig, keep: impl Fn(bool) -> bool) -> Result<(), String> {
+    let read = || reads::active_config().ok_or("the monitors' configuration was not read");
+    let mut current = read()?;
+    let extended = !current.paths.iter().any(|path| keep(reads::is_board(path)));
+    if extended {
+        topology(SDC_TOPOLOGY_EXTEND)?;
+        current = read()?;
+    }
+    let kept = only(current, keep).and_then(|config| apply(&config, 0));
+    if kept.is_err() && extended {
+        let _ = apply(before, 0);
+    }
+    kept
+}
+
 /// Changes the monitors' mode and puts the configuration before it back
 /// after `DISPLAYS_REVERT_SECONDS` unless `keep_displays` comes first. A
 /// second change before the first is kept puts back the configuration
@@ -297,12 +317,8 @@ pub fn set_displays(mode: DisplayMode) -> Result<u32, String> {
     match mode {
         DisplayMode::Extend => topology(SDC_TOPOLOGY_EXTEND)?,
         DisplayMode::Duplicate => topology(SDC_TOPOLOGY_CLONE)?,
-        DisplayMode::BoardOnly | DisplayMode::OthersOnly => {
-            let current =
-                reads::active_config().ok_or("the monitors' configuration was not read")?;
-            let board_only = mode == DisplayMode::BoardOnly;
-            apply(&only(current, |board| board == board_only)?, 0)?;
-        }
+        DisplayMode::BoardOnly => only_after_extending(&before, |board| board)?,
+        DisplayMode::OthersOnly => only_after_extending(&before, |board| !board)?,
         DisplayMode::BoardPrimary => {
             let current =
                 reads::active_config().ok_or("the monitors' configuration was not read")?;

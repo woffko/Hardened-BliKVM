@@ -24,6 +24,7 @@ import { Fullscreen } from './fullscreen';
 import { Image } from './image';
 import { Keyboard } from './keyboard';
 import { LocalKeyboardButton } from './local-keyboard-button';
+import { Monitors } from './monitors';
 import { Mouse } from './mouse';
 import { Collapse, Expand } from './operations';
 import { Picoclaw } from './picoclaw';
@@ -163,6 +164,7 @@ export const Menu = () => {
             {hidAvailable && <LocalKeyboardButton />}
             {hidAvailable && <Keyboard />}
             {hidAvailable && <Mouse />}
+            {hidAvailable && <Monitors />}
             <Divider type="vertical" />
 
             {isEnabled('image') && <Image />}

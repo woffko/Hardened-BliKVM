@@ -6,7 +6,8 @@
 // the Keyboard menu shows the target's layout. The actions go to the agent as the operator makes them: a layout
 // switched, the clipboard read and written, the session locked after a confirmation, and a monitors' change kept in
 // the dialog that counts down to its undoing. The operator's word on which monitor is the board's goes to the agent,
-// and the mouse follows it.
+// and the mouse follows it. The toolbar's Monitors menu says the mode the monitors are in, changes it as Windows
+// does, and the mouse follows the new mode.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -68,8 +69,9 @@ const SYSTEM = {
 const LEFT = "00000000000000a1";
 const RIGHT = "00000000000000b2";
 // The monitor the agent marks as the board's: the right one, until the
-// operator chooses.
+// operator chooses; and the monitors' mode.
 let boardId = RIGHT;
+let displays = "extend";
 const monitor = (x) => ({
   id: x === 0 ? LEFT : RIGHT,
   name: x === 0 ? "DELL U2719D" : "USB Capture",
@@ -162,9 +164,19 @@ try {
     const { call } = route.request().postDataJSON();
     calls.push(call);
     if (call?.set_board_monitor) boardId = call.set_board_monitor.id;
+    if (call?.set_displays) displays = call.set_displays.mode;
+    const both = [monitor(0), monitor(2560)];
+    const shown =
+      displays === "board_only"
+        ? both.filter((one) => one.board)
+        : displays === "others_only"
+          ? both.filter((one) => !one.board)
+          : displays === "duplicate"
+            ? both.map((one) => ({ ...one, x: 0 }))
+            : both;
     const answer =
       call === "monitors"
-        ? { monitors: [monitor(0), monitor(2560)] }
+        ? { monitors: shown }
         : call === "keyboard"
           ? { keyboard: { current: LAYOUT, installed: [LAYOUT, ENGLISH] } }
           : call === "read_clipboard"
@@ -320,6 +332,8 @@ try {
     .getByRole("button", { name: "Only the board's monitor" })
     .click();
   assert.ok(await called({ set_displays: { mode: "board_only" } }));
+  // The played agent shows both monitors again for what follows.
+  displays = "extend";
   const keep = page.getByRole("dialog", { name: "Keep these monitors?" });
   await keep.getByText(/in 1[45] s unless you keep them/).waitFor();
   await keep.getByRole("button", { name: "Keep", exact: true }).click();
@@ -345,10 +359,39 @@ try {
     chosenRight >= 2550 && chosenRight <= 2559,
     `right edge on ${chosenRight}`,
   );
+
+  // The toolbar's Monitors menu: the mode now, and Windows' choices.
+  await page.locator("svg.lucide-monitor-cog").first().click();
+  const menu = page.getByTestId("agent-monitors");
+  await menu
+    .getByTestId("agent-monitors-now")
+    .getByText("Now: Extend")
+    .waitFor();
+  await menu.getByRole("button", { name: "Only the board's monitor" }).click();
+  assert.ok(await called({ set_displays: { mode: "board_only" } }));
+  const keepAgain = page.getByRole("dialog", { name: "Keep these monitors?" });
+  await keepAgain.getByRole("button", { name: "Keep", exact: true }).click();
+  assert.ok(
+    await eventually(
+      () => calls.filter((made) => made === "keep_displays").length >= 2,
+    ),
+  );
+  // The monitors are read again: only the board's, the whole picture on it.
+  await menu
+    .getByTestId("agent-monitors-now")
+    .getByText("Now: Only the board's monitor")
+    .waitFor({ timeout: 8000 });
+  await page.locator("svg.lucide-monitor-cog").first().click();
+  await menu.waitFor({ state: "hidden" });
+  // The same point of the picture is now the middle of the whole desktop,
+  // which is the board's monitor alone.
+  await pointAt(0.25, 0.25);
+  const onlyMiddle = (await pointAt(0.5, 0.5)) / 2;
+  assert.ok(Math.abs(onlyMiddle - 1280) <= 2, `middle on ${onlyMiddle}`);
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left}; with the left monitor chosen as the board's, middle ${chosenMiddle}, right edge ${chosenRight})`,
+    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left}; with the left monitor chosen as the board's, middle ${chosenMiddle}, right edge ${chosenRight}; only the board's monitor from the Monitors menu, kept, middle ${onlyMiddle} of 2560)`,
   );
 } finally {
   await browser.close();

@@ -106,3 +106,26 @@ test(
     );
   },
 );
+
+test("the monitors' mode as the agent's monitors show it", { skip }, () => {
+  const left = monitor(0, 0, 2560, 1440);
+  const right = monitor(2560, 0, 2560, 1440, true);
+  assert.equal(layout.displaysNow([left, right]), "extend");
+  // Duplicated: both at the desktop's origin with one size.
+  assert.equal(
+    layout.displaysNow([left, monitor(0, 0, 2560, 1440, true)]),
+    "duplicate",
+  );
+  assert.equal(layout.displaysNow([right]), "board_only");
+  assert.equal(layout.displaysNow([left]), "others_only");
+  assert.equal(layout.displaysNow([]), "unknown");
+  // A duplicated pair beside a third monitor is still one desktop over them.
+  assert.equal(
+    layout.displaysNow([
+      left,
+      monitor(0, 0, 2560, 1440, true),
+      monitor(2560, 0, 2560, 1440),
+    ]),
+    "extend",
+  );
+});

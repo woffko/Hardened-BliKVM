@@ -32,6 +32,7 @@ import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 import { useTargetAgent } from '@/hooks/useTargetAgent.ts';
 import { Head } from '@/components/head.tsx';
 
+import { AgentDisplaysKeep } from './agent-displays-keep.tsx';
 import { CaptureStatusOverlay, useCaptureStatus } from './capture-status';
 import { Keyboard } from './keyboard';
 import { Menu } from './menu';
@@ -139,6 +140,7 @@ const DesktopReady = ({ capabilities }: { capabilities: CapabilityManifest }) =>
       <QuicTransport />
       <UpscaleNotice />
       <QualityMonitor />
+      <AgentDisplaysKeep />
 
       {videoMode && resolution && (
         <div className="relative flex h-full min-h-0 w-full min-w-0">

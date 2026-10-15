@@ -61,7 +61,9 @@ calls the agent for:
 - the operator's actions (chosen 2026-10-14): switch the window in front
   to an installed layout; set the monitors' mode (extend, duplicate, only
   the board's, only the others, the board's the primary), undone after
-  15 s unless kept, and keep it; read and write the clipboard's text (at
+  15 s unless kept, and keep it (only the board's or only the others from
+  a mode that shows none of them first extends over every monitor, and a
+  change that fails half way is put back at once); read and write the clipboard's text (at
   most 6000 UTF-8 bytes, tabs and line ends its only control characters);
   lock the session; and keep the operator's word on which monitor is the
   board's (`set_board_monitor`, by the monitor's id, or none).
@@ -160,7 +162,20 @@ feature `target_agent`.
 - The absolute mouse uses the agent's layout while it knows the board's
   monitor: the desktop is the box around the active monitors, the screen
   the board's monitor in it (`web/src/lib/agent-layout.ts`); the layout
-  kept on the board otherwise (`docs/design/screen-area-v1.md`).
+  kept on the board otherwise (`docs/design/screen-area-v1.md`). So with
+  the monitors extended the mouse keeps to the board's monitor, and
+  duplicated or with the board's monitor alone it spans the picture.
+- The toolbar's Monitors menu, while an agent is connected (asked for by
+  the operator at gate 3, so as not to open the settings each time): the
+  mode the monitors are in as the agent's monitors show it (one desktop
+  over them, one picture on all, or a single monitor), Windows' choices
+  to change it (duplicate, extend, only the board's monitor, only the
+  others; the last two once the board's monitor is known), and the
+  monitors with "This is the board's" beside the others. A change from
+  the menu or the settings waits in the page's one dialog, which counts
+  down to the agent's putting it back and keeps it when asked; the
+  monitors are read again after a change, once it is kept or put back, so
+  that the mouse follows the mode.
 - The Keyboard menu shows the target's layout, switches it among those
   installed, switches it to what the operator types when asked (a choice
   of this browser), carries the clipboard's text both ways and locks the

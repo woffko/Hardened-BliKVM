@@ -14,6 +14,10 @@ export const targetAgentAtom = atom<TargetAgentState | null>(null);
 export const agentMonitorsAtom = atom<AgentMonitor[] | null>(null);
 export const agentKeyboardAtom = atom<AgentKeyboard | null>(null);
 
+// A monitors' change the agent puts back unless it is kept: when, on this
+// page's monotonic clock (performance.now()); null while none waits.
+export const displaysRevertAtAtom = atom<number | null>(null);
+
 // Keep the target's layout in step with the on-screen keyboard's language
 // (this browser's choice).
 const layoutSyncAtom = atom(getAgentLayoutSync());

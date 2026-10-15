@@ -665,6 +665,9 @@ const en = {
           lock: 'Lock the target',
           lockConfirm: "Lock the target's Windows session?",
           displays: {
+            title: "Target's monitors",
+            now: 'Now: {{mode}}',
+            unknown: 'not known',
             extend: 'Extend',
             duplicate: 'Duplicate',
             board_only: "Only the board's monitor",
