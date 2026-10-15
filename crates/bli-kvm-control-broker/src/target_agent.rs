@@ -486,7 +486,9 @@ impl Channel {
             }
             Command::Pause(done) => {
                 self.paused += 1;
-                self.close();
+                // The gadget's change may leave the device where it was:
+                // the agent is kept, and a new hello replaces it if not.
+                self.close(false);
                 let _ = done.send(());
             }
             Command::Resume => {
@@ -505,7 +507,7 @@ impl Channel {
     fn settle(&mut self) {
         let open = self.wanted && self.paused == 0;
         if !open {
-            self.close();
+            self.close(!self.wanted);
             return;
         }
         if self.device.is_some() || self.retry_at.is_some() {
@@ -526,8 +528,11 @@ impl Channel {
         }
     }
 
-    fn close(&mut self) {
-        if self.device.take().is_some() || self.session.agent.is_some() {
+    /// Closes the device; `forget` ends the agent's session too (the
+    /// switch is off, or the device failed).
+    fn close(&mut self, forget: bool) {
+        self.device.take();
+        if forget {
             self.session.reset();
         }
         self.reader = Reader::new();
@@ -535,7 +540,7 @@ impl Channel {
     }
 
     fn fail(&mut self, problem: String) {
-        self.close();
+        self.close(true);
         self.problem = Some(problem.chars().take(MAX_PROBLEM).collect());
         self.retry_at = Some(tokio::time::Instant::now() + REOPEN_AFTER);
     }
@@ -889,12 +894,13 @@ mod tests {
             Err(CallError::TimedOut)
         );
 
-        // A pause closes the device: the agent is gone with it, and the
-        // device that cannot be opened again is reported.
+        // A pause closes the device and keeps the agent: a gadget's change
+        // may leave the device where it was. The device that cannot be
+        // opened again is reported.
         channel.pause().await;
         let snapshot = channel.snapshot();
         assert!(!snapshot.open);
-        assert_eq!(snapshot.agent, None);
+        assert_eq!(snapshot.agent, Some(agent_hello()));
         channel.resume().await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
