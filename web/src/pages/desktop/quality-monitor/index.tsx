@@ -12,6 +12,7 @@ import { GripVerticalIcon, SquareIcon, XIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { pageWork } from '@/lib/busy.ts';
+import { supportsBoardFeature } from '@/lib/capabilities.ts';
 import { sampleDirect, sampleNothing, sampleQuic, sampleWebRtc } from '@/lib/page-video.ts';
 import {
   MIN_HEIGHT,
@@ -25,8 +26,10 @@ import type { FromQualityWorker, QualityView, ToQualityWorker } from '@/lib/qual
 import QualityWorker from '@/lib/quality.worker.ts?worker';
 import { quicSession } from '@/lib/quic/session.ts';
 import { getBaseUrl } from '@/lib/service.ts';
+import { capabilitiesAtom } from '@/jotai/capabilities.ts';
 import { qualityMonitorAtom } from '@/jotai/quality-monitor.ts';
 import { upscaleStoppedAtom, videoModeAtom } from '@/jotai/screen.ts';
+import { targetAgentAtom } from '@/jotai/target-agent.ts';
 import { quicStatusAtom, quicVideoStatsAtom } from '@/jotai/transport.ts';
 import { useIsDesktopLayout } from '@/hooks/useResponsiveLayout.ts';
 
@@ -207,6 +210,26 @@ const MonitorBody = memo(
     const handedOver = useRef<HTMLCanvasElement | null>(null);
     const [height, setHeight] = useState(0);
 
+    // The target agent's state in a few words, sent with every sample: off,
+    // the channel closed, waiting for an agent, or the agent connected.
+    const capabilities = useAtomValue(capabilitiesAtom);
+    const agentState = useAtomValue(targetAgentAtom);
+    const agent =
+      !supportsBoardFeature(capabilities, 'target_agent') || !agentState
+        ? null
+        : !agentState.enabled
+          ? t('qualityMonitor.agentOff')
+          : agentState.agent
+            ? t('qualityMonitor.agentConnected', {
+                version: agentState.agent.version,
+                locked: agentState.agent.system?.locked ? t('qualityMonitor.agentLocked') : ''
+              }).trim()
+            : agentState.open
+              ? t('qualityMonitor.agentWaiting')
+              : t('qualityMonitor.agentClosed');
+    const agentRef = useRef(agent);
+    agentRef.current = agent;
+
     const view = useMemo<QualityView>(
       () => ({
         level: extended ? 'extended' : 'basic',
@@ -264,7 +287,12 @@ const MonitorBody = memo(
         const path = currentPath(videoMode);
         const sample = await samplePath(path);
         if (stopped) return;
-        const message: ToQualityWorker = { type: 'sample', path, sample };
+        const message: ToQualityWorker = {
+          type: 'sample',
+          path,
+          sample,
+          agent: agentRef.current
+        };
         started.postMessage(message);
       };
       void tick();

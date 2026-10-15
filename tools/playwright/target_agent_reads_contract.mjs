@@ -182,6 +182,24 @@ try {
     () => document.querySelector("img#screen")?.naturalWidth > 0,
   );
 
+  // The quality monitor says the agent's state in a row of its own.
+  await page.getByTestId("quality-monitor-toggle").click();
+  await page.getByTestId("quality-monitor").waitFor();
+  const agentRow = async () => {
+    for (const worker of page.workers()) {
+      const row = await worker
+        .evaluate(() => self.qualityMonitorRows?.agent ?? null)
+        .catch(() => null);
+      if (row) return row;
+    }
+    return null;
+  };
+  assert.ok(
+    await eventually(async () => (await agentRow()) === "connected, 0.1.0"),
+    `the monitor's agent row: ${await agentRow()}`,
+  );
+  await page.getByTestId("quality-monitor-toggle").click();
+
   // Without remote control the page asks the agent for nothing.
   await page.waitForTimeout(1500);
   assert.deepEqual(calls, []);

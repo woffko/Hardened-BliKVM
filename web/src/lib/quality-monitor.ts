@@ -268,6 +268,9 @@ export type QualityInputs = {
   rates: PageRates | null;
   /** Measured with animation frames, Hz. */
   refreshHz: number | null;
+  /** The target agent's state in a few words, or none on a board without
+   * the agent. */
+  agent: string | null;
 };
 
 /**
@@ -350,7 +353,10 @@ export function basicRows(inputs: QualityInputs, t: Translate): QualityRow[] {
       key: 'chroma',
       label: t('qualityMonitor.chroma'),
       value: inputs.codec === 'mjpeg' ? '4:2:2' : '4:2:0'
-    }
+    },
+    ...(inputs.agent === null
+      ? []
+      : [{ key: 'agent', label: t('qualityMonitor.agent'), value: inputs.agent }])
   ];
 }
 

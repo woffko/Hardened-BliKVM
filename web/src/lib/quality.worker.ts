@@ -38,7 +38,7 @@ export type QualityView = {
 export type ToQualityWorker =
   | { type: 'start'; url: string; canvas: OffscreenCanvas; view: QualityView }
   | { type: 'view'; view: QualityView }
-  | { type: 'sample'; path: VideoPath; sample: PageSample };
+  | { type: 'sample'; path: VideoPath; sample: PageSample; agent: string | null };
 
 /** The rows' height in CSS pixels, when it changes. */
 export type FromQualityWorker = { type: 'height'; height: number };
@@ -234,7 +234,8 @@ scope.onmessage = async (event) => {
         board: null,
         sample: null,
         rates: null,
-        refreshHz: view.refreshHz
+        refreshHz: view.refreshHz,
+        agent: null
       };
       draw();
       break;
@@ -258,7 +259,8 @@ scope.onmessage = async (event) => {
         board: fresh,
         sample,
         rates,
-        refreshHz: view?.refreshHz ?? null
+        refreshHz: view?.refreshHz ?? null,
+        agent: message.agent
       };
       draw();
       break;

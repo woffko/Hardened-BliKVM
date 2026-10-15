@@ -118,6 +118,7 @@ const inputs = (over = {}) => ({
   sample: sample({ delayMs: 46, width: 1920, height: 1080 }),
   rates: rates(),
   refreshHz: 60,
+  agent: null,
   ...over,
 });
 
@@ -188,6 +189,23 @@ test(
       sample({ at: 1000, bytes: 5 }),
     );
     assert.equal(rate.megabitsPerSecond, null);
+  },
+);
+
+test(
+  "the target agent's state is a row of its own, where the board has the agent",
+  { skip },
+  () => {
+    const rows = monitor.basicRows(inputs({ agent: "connected, 0.1.0" }), t);
+    assert.deepEqual(rows.at(-1), {
+      key: "agent",
+      label: t("qualityMonitor.agent"),
+      value: "connected, 0.1.0",
+    });
+    assert.equal(
+      monitor.basicRows(inputs(), t).some((row) => row.key === "agent"),
+      false,
+    );
   },
 );
 
