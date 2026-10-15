@@ -14,6 +14,8 @@ pub const MAX_LAYOUTS: usize = 32;
 /// The farthest a monitor lies from the desktop's origin, and its largest
 /// side, in pixels (the absolute mouse's range).
 pub const MAX_COORDINATE: i32 = 32767;
+/// The digits of a monitor's id.
+pub const MONITOR_ID_DIGITS: usize = 16;
 
 /// The target's operating system and session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +36,12 @@ pub struct System {
 /// One active monitor, in the desktop's pixels.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Monitor {
+    /// The monitor as the target connects it, the same while it stays on
+    /// its connector: lowercase hex digits the agent makes from Windows'
+    /// name for the monitor's device, by which the operator says which one
+    /// is the board's. Empty from an agent that does not say it.
+    #[serde(default)]
+    pub id: String,
     /// The monitor's name, as its EDID gives it.
     pub name: String,
     /// The EDID's maker (three letters) and product code.
@@ -50,7 +58,8 @@ pub struct Monitor {
     pub primary: bool,
     /// The scale, in percent.
     pub scale: u32,
-    /// This is the board's capture, as the agent recognises its EDID.
+    /// This is the board's capture: the monitor the operator chose, or the
+    /// one whose EDID the agent recognises.
     pub board: bool,
 }
 
@@ -80,6 +89,14 @@ fn named(value: &str) -> bool {
     !value.is_empty() && text(value)
 }
 
+/// Whether `id` is a monitor's id.
+pub fn monitor_id_is_valid(id: &str) -> bool {
+    id.len() == MONITOR_ID_DIGITS
+        && id
+            .bytes()
+            .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(&digit))
+}
+
 impl System {
     pub fn is_valid(&self) -> bool {
         named(&self.product)
@@ -99,7 +116,8 @@ impl Monitor {
                 && size <= MAX_COORDINATE as u32
                 && i64::from(place) + i64::from(size) <= i64::from(MAX_COORDINATE) + 1
         };
-        text(&self.name)
+        (self.id.is_empty() || monitor_id_is_valid(&self.id))
+            && text(&self.name)
             && self.maker.len() <= 3
             && self.maker.chars().all(|letter| letter.is_ascii_uppercase())
             && inside(self.x, self.width)
@@ -131,12 +149,21 @@ impl Keyboard {
 }
 
 /// Whether a desktop's monitors are a desktop: few enough, each valid, at
-/// most one primary and at most one the board's.
+/// most one primary and at most one the board's, and no id twice.
 pub fn monitors_are_valid(monitors: &[Monitor]) -> bool {
+    let mut ids: Vec<&str> = monitors
+        .iter()
+        .map(|monitor| monitor.id.as_str())
+        .filter(|id| !id.is_empty())
+        .collect();
+    let named = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
     monitors.len() <= MAX_MONITORS
         && monitors.iter().all(Monitor::is_valid)
         && monitors.iter().filter(|monitor| monitor.primary).count() <= 1
         && monitors.iter().filter(|monitor| monitor.board).count() <= 1
+        && ids.len() == named
 }
 
 /// The three letters of an EDID's maker, from the two bytes it is stored in
@@ -157,6 +184,7 @@ mod tests {
 
     pub(crate) fn monitor(x: i32, primary: bool) -> Monitor {
         Monitor {
+            id: format!("{:016x}", x.unsigned_abs() + 1),
             name: "DELL U2719D".into(),
             maker: "DEL".into(),
             product: 0xd0a5,
@@ -207,10 +235,36 @@ mod tests {
         boards[0].board = true;
         boards[1].board = true;
         assert!(!monitors_are_valid(&boards));
-        assert!(!monitors_are_valid(&vec![
-            monitor(0, false);
-            MAX_MONITORS + 1
-        ]));
+        let many: Vec<Monitor> = (0..=MAX_MONITORS as i32)
+            .map(|place| monitor(place * 10, false))
+            .collect();
+        assert!(!monitors_are_valid(&many));
+        assert!(monitors_are_valid(&many[..MAX_MONITORS]));
+    }
+
+    #[test]
+    fn a_monitors_id_is_sixteen_hex_digits_once_in_a_desktop() {
+        let mut one = monitor(0, true);
+        assert!(one.is_valid());
+        one.id = String::new();
+        assert!(one.is_valid());
+        one.id = "0123456789ABCDEF".into();
+        assert!(!one.is_valid());
+        one.id = "0123456789abcde".into();
+        assert!(!one.is_valid());
+        let mut twins = vec![monitor(0, true), monitor(2560, false)];
+        twins[1].id = twins[0].id.clone();
+        assert!(!monitors_are_valid(&twins));
+        twins[0].id = String::new();
+        twins[1].id = String::new();
+        assert!(monitors_are_valid(&twins));
+        // From an agent that does not say the id.
+        let unsaid: Monitor = serde_json::from_str(
+            r#"{"name":"BenQ LCD","maker":"BNQ","product":32804,"x":0,"y":0,"width":2560,"height":1440,"refresh_millihertz":59951,"primary":true,"scale":100,"board":false}"#,
+        )
+        .unwrap();
+        assert_eq!(unsaid.id, "");
+        assert!(unsaid.is_valid());
     }
 
     #[test]

@@ -77,6 +77,11 @@ pub enum Call {
     WriteClipboard { text: String },
     /// Lock the session.
     Lock,
+    /// The operator's word on which monitor is the board's, by its id, or
+    /// none: the agent keeps it for the user and marks that monitor in its
+    /// reads. A capture that gives the target a copy of another monitor's
+    /// EDID cannot be told from that monitor otherwise.
+    SetBoardMonitor { id: Option<String> },
 }
 
 /// The monitors' modes the agent sets.
@@ -119,6 +124,7 @@ impl Call {
                 id.len() == 8 && id.chars().all(|digit| digit.is_ascii_hexdigit())
             }
             Call::WriteClipboard { text } => clipboard_text_is_valid(text),
+            Call::SetBoardMonitor { id } => id.as_deref().is_none_or(reads::monitor_id_is_valid),
             _ => true,
         }
     }
@@ -178,7 +184,8 @@ impl Answer {
                     Call::SetLayout { .. }
                         | Call::KeepDisplays
                         | Call::WriteClipboard { .. }
-                        | Call::Lock,
+                        | Call::Lock
+                        | Call::SetBoardMonitor { .. },
                     Answer::Done
                 )
         );
@@ -430,6 +437,7 @@ mod tests {
             locked: false,
         };
         let monitors = vec![Monitor {
+            id: "0123456789abcdef".into(),
             name: "DELL U2719D".into(),
             maker: "DEL".into(),
             product: 0xd0a5,
@@ -546,8 +554,31 @@ mod tests {
             .is_valid()
         );
         assert!(!Call::Ping.needs_lease() && Call::Lock.needs_lease());
+        // The board's monitor, chosen by its id or chosen no more.
+        let chosen = Call::SetBoardMonitor {
+            id: Some("0123456789abcdef".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&chosen).unwrap(),
+            r#"{"set_board_monitor":{"id":"0123456789abcdef"}}"#
+        );
+        assert!(chosen.is_valid() && chosen.needs_lease());
+        assert!(Call::SetBoardMonitor { id: None }.is_valid());
+        assert!(
+            !Call::SetBoardMonitor {
+                id: Some("0123456789ABCDEF".into())
+            }
+            .is_valid()
+        );
+        assert!(
+            !Call::SetBoardMonitor {
+                id: Some("../board".into())
+            }
+            .is_valid()
+        );
         for (call, answer) in [
             (Call::Lock, Answer::Done),
+            (chosen.clone(), Answer::Done),
             (Call::KeepDisplays, Answer::Done),
             (
                 Call::SetDisplays {

@@ -642,6 +642,9 @@ const ru = {
           locked: 'заблокирован',
           monitor: '{{name}}: {{width}}x{{height}} в {{x}},{{y}}',
           boards: 'платы',
+          chooseBoard: 'Это монитор платы',
+          chooseBoardHint:
+            'Монитор платы не определён: выберите тот, чью картинку показывает плата, и мышь будет попадать на него',
           monitorsUnderControl: 'Мониторы читаются, пока вы управляете целью',
           targetLayout: 'Раскладка цели: {{name}}',
           layoutSync:

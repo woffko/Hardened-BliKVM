@@ -20,7 +20,7 @@ use windows_sys::Win32::Globalization::{
 };
 use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromPoint};
 use windows_sys::Win32::System::Registry::{
-    HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{
     CloseDesktop, DESKTOP_READOBJECTS, GetUserObjectInformationW, OpenInputDesktop, UOI_NAME,
@@ -53,6 +53,10 @@ pub fn aware_of_each_monitors_scale() {
 }
 
 fn registry_text(key: &str, value: &str) -> Option<String> {
+    hive_text(HKEY_LOCAL_MACHINE, key, value)
+}
+
+fn hive_text(hive: HKEY, key: &str, value: &str) -> Option<String> {
     let key = wide(key, 512);
     let value = wide(value, 128);
     let mut buffer = [0_u16; 256];
@@ -60,7 +64,7 @@ fn registry_text(key: &str, value: &str) -> Option<String> {
     // SAFETY: zero-ended names, and the buffer's size in bytes with it.
     let status = unsafe {
         RegGetValueW(
-            HKEY_LOCAL_MACHINE,
+            hive,
             key.as_ptr(),
             value.as_ptr(),
             RRF_RT_REG_SZ,
@@ -184,8 +188,9 @@ pub fn active_config() -> Option<DisplayConfig> {
 }
 
 /// A path's monitor as its EDID names it: its name, maker and product, when
-/// Windows has them.
+/// Windows has them, and its id from Windows' name for its device.
 pub struct TargetName {
+    pub id: String,
     pub name: String,
     pub maker: String,
     pub product: u16,
@@ -203,6 +208,11 @@ pub fn target_name(path: &DISPLAYCONFIG_PATH_INFO) -> TargetName {
         let named = DisplayConfigGetDeviceInfo(&mut name.header) == 0;
         let edid = named && name.flags.Anonymous.value & 0b100 != 0;
         TargetName {
+            id: if named {
+                names::monitor_id(&text(&name.monitorDevicePath))
+            } else {
+                String::new()
+            },
             name: if named {
                 text(&name.monitorFriendlyDeviceName)
                     .chars()
@@ -222,12 +232,24 @@ pub fn target_name(path: &DISPLAYCONFIG_PATH_INFO) -> TargetName {
     }
 }
 
-/// Whether a path's monitor is the board's capture, by its EDID.
+/// The monitor the operator chose as the board's, as the agent keeps it.
+pub fn chosen_board_monitor() -> Option<String> {
+    hive_text(
+        HKEY_CURRENT_USER,
+        names::SETTINGS_KEY,
+        names::BOARD_MONITOR_VALUE,
+    )
+    .filter(|id| bli_kvm_agent_protocol::reads::monitor_id_is_valid(id))
+}
+
+/// Whether a path's monitor is the board's capture: the one the operator
+/// chose, or, without a choice among the active monitors, by its EDID, as
+/// `monitors` marks it.
 pub fn is_board(path: &DISPLAYCONFIG_PATH_INFO) -> bool {
     let target = target_name(path);
-    names::BOARD_CAPTURE_EDIDS
-        .iter()
-        .any(|(maker, product)| target.maker == *maker && target.product == *product)
+    monitors()
+        .into_iter()
+        .any(|monitor| monitor.board && !target.id.is_empty() && monitor.id == target.id)
 }
 
 pub fn monitors() -> Vec<Monitor> {
@@ -269,6 +291,7 @@ pub fn monitors() -> Vec<Monitor> {
             }
         }
         monitors.push(Monitor {
+            id: target.id,
             name: target.name,
             maker: target.maker,
             product: target.product,
@@ -282,7 +305,11 @@ pub fn monitors() -> Vec<Monitor> {
             board: false,
         });
     }
-    names::mark_board_monitor(&mut monitors, names::BOARD_CAPTURE_EDIDS);
+    names::mark_board_monitor(
+        &mut monitors,
+        names::BOARD_CAPTURE_EDIDS,
+        chosen_board_monitor().as_deref(),
+    );
     monitors.truncate(bli_kvm_agent_protocol::reads::MAX_MONITORS);
     monitors
 }

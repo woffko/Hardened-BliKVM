@@ -640,6 +640,9 @@ const en = {
           locked: 'locked',
           monitor: '{{name}}: {{width}}x{{height}} at {{x}},{{y}}',
           boards: "the board's",
+          chooseBoard: "This is the board's",
+          chooseBoardHint:
+            "No monitor is known as the board's: choose the one whose picture the board shows, and the mouse is kept on it",
           monitorsUnderControl: 'The monitors are read while you control the target',
           targetLayout: "Target's layout: {{name}}",
           layoutSync:

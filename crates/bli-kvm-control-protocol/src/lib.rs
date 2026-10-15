@@ -979,6 +979,7 @@ mod tests {
             assert_eq!(decode_response_v2(&json).unwrap(), response);
         }
         let mut monitors = vec![bli_kvm_agent_protocol::Monitor {
+            id: "0123456789abcdef".into(),
             name: "DELL U2719D".into(),
             maker: "DEL".into(),
             product: 1,

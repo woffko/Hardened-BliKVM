@@ -54,16 +54,17 @@ request, answered or failed. Either side answers a ping (a ping and its
 pong fit in one report each); the board answers nothing else. The board
 calls the agent for:
 
-- reads: the system; the active monitors (name, EDID maker and product,
-  place and size in the desktop's pixels, refresh, primary, scale, whether
-  it is the board's capture); the keyboard layouts (the window in front's
-  and those installed, with their language and name);
+- reads: the system; the active monitors (an id, name, EDID maker and
+  product, place and size in the desktop's pixels, refresh, primary,
+  scale, whether it is the board's capture); the keyboard layouts (the
+  window in front's and those installed, with their language and name);
 - the operator's actions (chosen 2026-10-14): switch the window in front
   to an installed layout; set the monitors' mode (extend, duplicate, only
   the board's, only the others, the board's the primary), undone after
   15 s unless kept, and keep it; read and write the clipboard's text (at
   most 6000 UTF-8 bytes, tabs and line ends its only control characters);
-  lock the session.
+  lock the session; and keep the operator's word on which monitor is the
+  board's (`set_board_monitor`, by the monitor's id, or none).
 
 Every value is bounded in the crate and checked on both ends (`reads.rs`);
 an answer must fit its call.
@@ -134,7 +135,9 @@ feature `target_agent`.
 
 - Settings > Device: the switch, with a confirmation that says the USB
   device leaves the target and comes back; the connected agent, the
-  target's Windows and its monitors with the board's marked; the
+  target's Windows and its monitors with the board's marked, and beside
+  each other monitor "This is the board's", which tells the agent (with a
+  line asking for it while none is); the
   monitors' modes, with a dialog that counts down to the change's undoing
   and keeps it; "Start the agent on the target" while no agent is
   connected and remote control is on: after a confirmation, Win+R, a pause
@@ -187,9 +190,17 @@ which `scripts/check.sh` checks).
   Windows. A thread keeps the channel: it finds the collection again
   whenever it goes, says hello with the system, answers the board's calls
   with its reads and actions (`reads.rs`, `actions.rs`), and pings every
-  3 s. The board's monitor is recognised by the capture's EDID
-  (`names::BOARD_CAPTURE_EDIDS`, found at gate 2); until then the modes
-  that need it say so.
+  3 s. A monitor's id is the 64-bit FNV-1a hash of Windows' name for its
+  device (`\\?\DISPLAY#...`, which names its connector too), its letters
+  in one case, as 16 hex digits: the same while the monitor stays on its
+  connector. The board's monitor is the one the operator chose, kept for
+  the user in `HKCU\Software\HardenedBliKVM`, value `BoardMonitor`; or,
+  without a choice among the active monitors, one with a known capture's
+  EDID (`names::BOARD_CAPTURE_EDIDS`). That list is empty: gate 2 found
+  that the operator's capture gives the target a copy of the operator's
+  own monitor's EDID (both read `BNQ 8024`), as KVM captures often do, so
+  an EDID cannot tell them apart. Until a monitor is the board's, the
+  modes that need it say so, and the page asks which one it is.
 - `hardened-blikvm-agent-test.exe`: the channel's test tool. It finds the
   board's collection (the board's vendor 0x1d6b and product 0x0104, usage
   page 0xff00, usage 1, 64-byte reports each way), opens it for overlapped

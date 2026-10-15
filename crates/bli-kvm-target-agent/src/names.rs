@@ -8,9 +8,31 @@ const WINDOWS_11_BUILD: u32 = 22000;
 
 /// The capture devices the agent recognises by their EDID's maker and
 /// product, as the target reads them: the board's monitor among the
-/// target's. Filled from what the operator's target reads (gate 2 of the
-/// plan); empty, no monitor is the board's.
+/// target's. Empty: the operator's capture gives the target a copy of the
+/// operator's own monitor's EDID (gate 2 of the plan), as KVM captures often
+/// do, so the board's monitor is the one the operator chose.
 pub const BOARD_CAPTURE_EDIDS: &[(&str, u16)] = &[];
+
+/// Where the agent keeps the operator's choice of the board's monitor, under
+/// the user's registry: the monitor's id.
+pub const SETTINGS_KEY: &str = r"Software\HardenedBliKVM";
+pub const BOARD_MONITOR_VALUE: &str = "BoardMonitor";
+
+/// A monitor's id from Windows' name for its device (`\\?\DISPLAY#...`,
+/// which names its connector too): the name's 64-bit FNV-1a hash, its
+/// letters taken in one case, as sixteen hex digits; none without a name.
+pub fn monitor_id(device_path: &str) -> String {
+    if device_path.is_empty() {
+        return String::new();
+    }
+    let hash = device_path
+        .bytes()
+        .map(|byte| byte.to_ascii_lowercase())
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    format!("{hash:016x}")
+}
 
 /// The product as Windows' settings name it, from the registry's product
 /// name and the build.
@@ -55,15 +77,21 @@ pub fn layout_language(handle: usize) -> u16 {
     handle as u32 as u16
 }
 
-/// The board's monitor among the target's, by the capture's EDID; the
-/// first that matches.
-pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)]) {
-    if let Some(board) = monitors.iter_mut().find(|monitor| {
-        known
-            .iter()
-            .any(|(maker, product)| monitor.maker == *maker && monitor.product == *product)
-    }) {
-        board.board = true;
+/// The board's monitor among the target's: the one the operator chose, or
+/// else the first with a known capture's EDID.
+pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)], chosen: Option<&str>) {
+    let index = chosen
+        .filter(|id| !id.is_empty())
+        .and_then(|id| monitors.iter().position(|monitor| monitor.id == id))
+        .or_else(|| {
+            monitors.iter().position(|monitor| {
+                known
+                    .iter()
+                    .any(|(maker, product)| monitor.maker == *maker && monitor.product == *product)
+            })
+        });
+    if let Some(index) = index {
+        monitors[index].board = true;
     }
 }
 
@@ -189,6 +217,7 @@ mod tests {
 
     fn monitor(maker: &str, product: u16, x: i32) -> Monitor {
         Monitor {
+            id: monitor_id(&format!(r"\\?\DISPLAY#{maker}{product:04X}#UID{x}")),
             name: "DELL U2719D".into(),
             maker: maker.into(),
             product,
@@ -233,14 +262,47 @@ mod tests {
     #[test]
     fn the_boards_monitor_is_the_one_with_the_captures_edid() {
         let mut monitors = vec![monitor("DEL", 1, 0), monitor("MSI", 0x2131, 2560)];
-        mark_board_monitor(&mut monitors, &[("MSI", 0x2131)]);
+        mark_board_monitor(&mut monitors, &[("MSI", 0x2131)], None);
         assert_eq!(
             monitors.iter().map(|m| m.board).collect::<Vec<_>>(),
             [false, true]
         );
         let mut none = vec![monitor("DEL", 1, 0)];
-        mark_board_monitor(&mut none, BOARD_CAPTURE_EDIDS);
+        mark_board_monitor(&mut none, BOARD_CAPTURE_EDIDS, None);
         assert!(!none[0].board);
+    }
+
+    #[test]
+    fn the_operators_choice_tells_monitors_with_one_edid_apart() {
+        // The capture with a copy of the operator's monitor's EDID.
+        let mut twins = vec![monitor("BNQ", 0x8024, 0), monitor("BNQ", 0x8024, 2560)];
+        assert_ne!(twins[0].id, twins[1].id);
+        let right = twins[1].id.clone();
+        mark_board_monitor(&mut twins, &[("BNQ", 0x8024)], Some(&right));
+        assert_eq!(
+            twins.iter().map(|m| m.board).collect::<Vec<_>>(),
+            [false, true]
+        );
+        // A choice of a monitor that is not there leaves the EDID's word.
+        let mut twins = vec![monitor("BNQ", 0x8024, 0), monitor("BNQ", 0x8024, 2560)];
+        mark_board_monitor(&mut twins, &[], Some("0123456789abcdef"));
+        assert!(twins.iter().all(|m| !m.board));
+    }
+
+    #[test]
+    fn a_monitors_id_is_its_device_names_hash() {
+        let path =
+            r"\\?\DISPLAY#BNQ8024#5&2c0ad5a8&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+        assert_eq!(monitor_id(path), "9abc42403551965b");
+        assert_eq!(monitor_id(&path.to_uppercase()), "9abc42403551965b");
+        assert_eq!(
+            monitor_id(&path.replace("4352", "4353")),
+            "2c671894401b98c6"
+        );
+        assert_eq!(monitor_id(""), "");
+        assert!(bli_kvm_agent_protocol::reads::monitor_id_is_valid(
+            &monitor_id(path)
+        ));
     }
 
     #[test]

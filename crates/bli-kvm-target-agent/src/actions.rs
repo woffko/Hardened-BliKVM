@@ -2,8 +2,9 @@
 //! the operator's action from the page and under the operator's HID lease:
 //! the keyboard layout of the window in front, the monitors' mode (undone by
 //! itself after 15 s unless kept, as Windows' own "Keep changes" is), the
-//! clipboard's text both ways, and locking the session. Windows' calls are
-//! this module's unsafe code.
+//! clipboard's text both ways, locking the session, and keeping the
+//! operator's choice of the board's monitor. Windows' calls are this
+//! module's unsafe code.
 
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
@@ -11,12 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bli_kvm_agent_protocol::{DISPLAYS_REVERT_SECONDS, DisplayMode, MAX_CLIPBOARD_BYTES};
-use bli_kvm_target_agent::names;
+use bli_kvm_target_agent::{names, wide};
 use windows_sys::Win32::Devices::Display::{
     SDC_ALLOW_CHANGES, SDC_APPLY, SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_CLONE, SDC_TOPOLOGY_EXTEND,
     SDC_USE_SUPPLIED_DISPLAY_CONFIG, SetDisplayConfig,
 };
-use windows_sys::Win32::Foundation::{GlobalFree, HWND};
+use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, GlobalFree, HWND};
 use windows_sys::Win32::Graphics::Gdi::{
     DISPLAYCONFIG_PATH_ACTIVE, DISPLAYCONFIG_PATH_MODE_IDX_INVALID,
 };
@@ -24,6 +25,9 @@ use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows_sys::Win32::System::Registry::{
+    HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
+};
 use windows_sys::Win32::System::Shutdown::LockWorkStation;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayoutList;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -57,6 +61,44 @@ pub fn set_layout(id: &str) -> Result<(), String> {
             return Err("the window in front was not asked".into());
         }
         Ok(())
+    }
+}
+
+/// Keeps the operator's choice of the board's monitor for the user, or
+/// forgets it; the reads mark that monitor from then on.
+pub fn set_board_monitor(id: Option<&str>) -> Result<(), String> {
+    let key = wide(names::SETTINGS_KEY, 128);
+    let value = wide(names::BOARD_MONITOR_VALUE, 64);
+    let status = match id {
+        Some(id) => {
+            if !bli_kvm_agent_protocol::reads::monitor_id_is_valid(id) {
+                return Err("the monitor's id is out of its bounds".into());
+            }
+            let data = wide(id, 32);
+            // SAFETY: zero-ended names and the id's bytes with its zero.
+            unsafe {
+                RegSetKeyValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    value.as_ptr(),
+                    REG_SZ,
+                    data.as_ptr().cast(),
+                    (data.len() * 2) as u32,
+                )
+            }
+        }
+        // SAFETY: zero-ended names.
+        None => {
+            match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) } {
+                ERROR_FILE_NOT_FOUND => ERROR_SUCCESS,
+                status => status,
+            }
+        }
+    };
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(format!("the choice was not kept ({status})"))
     }
 }
 

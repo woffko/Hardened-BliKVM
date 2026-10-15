@@ -40,7 +40,8 @@ export type AgentCall =
   | 'lock'
   | { set_layout: { id: string } }
   | { set_displays: { mode: DisplayMode } }
-  | { write_clipboard: { text: string } };
+  | { write_clipboard: { text: string } }
+  | { set_board_monitor: { id: string | null } };
 
 /** The most clipboard text either way, in UTF-8 bytes. */
 export const MAX_CLIPBOARD_BYTES = 6000;

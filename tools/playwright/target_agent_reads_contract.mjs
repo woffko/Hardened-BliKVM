@@ -5,7 +5,8 @@
 // its last columns, its middle on its middle. Settings show the target's Windows and its monitors, the board's marked;
 // the Keyboard menu shows the target's layout. The actions go to the agent as the operator makes them: a layout
 // switched, the clipboard read and written, the session locked after a confirmation, and a monitors' change kept in
-// the dialog that counts down to its undoing.
+// the dialog that counts down to its undoing. The operator's word on which monitor is the board's goes to the agent,
+// and the mouse follows it.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -64,10 +65,16 @@ const SYSTEM = {
   architecture: "x86_64",
   locked: false,
 };
-const monitor = (x, board) => ({
-  name: board ? "USB Capture" : "DELL U2719D",
-  maker: board ? "MSI" : "DEL",
-  product: board ? 0x2131 : 0xd0a5,
+const LEFT = "00000000000000a1";
+const RIGHT = "00000000000000b2";
+// The monitor the agent marks as the board's: the right one, until the
+// operator chooses.
+let boardId = RIGHT;
+const monitor = (x) => ({
+  id: x === 0 ? LEFT : RIGHT,
+  name: x === 0 ? "DELL U2719D" : "USB Capture",
+  maker: x === 0 ? "DEL" : "MSI",
+  product: x === 0 ? 0xd0a5 : 0x2131,
   x,
   y: 0,
   width: 2560,
@@ -75,7 +82,7 @@ const monitor = (x, board) => ({
   refresh_millihertz: 59951,
   primary: x === 0,
   scale: 100,
-  board,
+  board: (x === 0 ? LEFT : RIGHT) === boardId,
 });
 const ENGLISH = {
   id: "04090409",
@@ -154,9 +161,10 @@ try {
   await page.route("**/api/target-agent/call", (route) => {
     const { call } = route.request().postDataJSON();
     calls.push(call);
+    if (call?.set_board_monitor) boardId = call.set_board_monitor.id;
     const answer =
       call === "monitors"
-        ? { monitors: [monitor(0, false), monitor(2560, true)] }
+        ? { monitors: [monitor(0), monitor(2560)] }
         : call === "keyboard"
           ? { keyboard: { current: LAYOUT, installed: [LAYOUT, ENGLISH] } }
           : call === "read_clipboard"
@@ -316,10 +324,31 @@ try {
   await keep.getByText(/in 1[45] s unless you keep them/).waitFor();
   await keep.getByRole("button", { name: "Keep", exact: true }).click();
   assert.ok(await called("keep_displays"));
+
+  // The operator says the left monitor is the board's: the agent is told,
+  // the list marks it, and the picture maps onto it.
+  assert.equal(
+    await monitors.getByRole("button", { name: "This is the board's" }).count(),
+    1,
+  );
+  await monitors.getByRole("button", { name: "This is the board's" }).click();
+  assert.ok(await called({ set_board_monitor: { id: LEFT } }));
+  await monitors
+    .getByText("DELL U2719D: 2560x1440 at 0,0 — the board's", { exact: true })
+    .waitFor();
+  await page.locator(".ant-modal-close:visible").click();
+  await page.locator(".ant-modal-wrap:visible").waitFor({ state: "detached" });
+  const chosenMiddle = await pointAt(0.5, 0.5);
+  assert.ok(Math.abs(chosenMiddle - 1280) <= 2, `middle on ${chosenMiddle}`);
+  const chosenRight = await pointAt(1, 0.5);
+  assert.ok(
+    chosenRight >= 2550 && chosenRight <= 2559,
+    `right edge on ${chosenRight}`,
+  );
   assert.deepEqual(errors, []);
   await context.close();
   console.log(
-    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left})`,
+    `target agent reads contract: ok (the picture's middle on column ${middle} of 5120, right edge ${right}, left edge ${left}; with the left monitor chosen as the board's, middle ${chosenMiddle}, right edge ${chosenRight})`,
   );
 } finally {
   await browser.close();

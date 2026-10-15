@@ -10,6 +10,8 @@ import { isScreenArea, type ScreenArea } from './screen-area.ts';
 
 /** A monitor as the agent reads it: its place and size in the desktop. */
 export type AgentMonitor = {
+  /** The monitor as the target connects it; empty from an older agent. */
+  id?: string;
   name: string;
   maker: string;
   product: number;

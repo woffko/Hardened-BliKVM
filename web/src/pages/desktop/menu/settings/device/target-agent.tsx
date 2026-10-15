@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Modal, Switch } from 'antd';
-import { useAtomValue } from 'jotai';
+import { useAtom } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
+import type { AgentMonitor } from '@/lib/agent-layout.ts';
 import { commandSteps, runBoxSteps } from '@/lib/agent-start.ts';
 import { agentMonitorsAtom } from '@/jotai/target-agent.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
@@ -24,7 +25,8 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [confirming, setConfirming] = useState<boolean | null>(null);
   const [error, setError] = useState('');
-  const monitors = useAtomValue(agentMonitorsAtom);
+  const [monitors, setMonitors] = useAtom(agentMonitorsAtom);
+  const [boardBusy, setBoardBusy] = useState(false);
   const { confirmed: controlling } = useFocusConfirmation();
   const { reportHid } = useHidLease();
   const [starting, setStarting] = useState<'confirm' | 'typing' | 'waiting' | null>(null);
@@ -80,6 +82,23 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
       await api.askTargetAgent('keep_displays');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // The operator's word on which monitor is the board's, kept by the agent
+  // on the target; the monitors are read again with it.
+  async function chooseBoard(id: string) {
+    setBoardBusy(true);
+    setError('');
+    try {
+      await api.askTargetAgent({ set_board_monitor: { id } });
+      const answer = await api.askTargetAgent('monitors');
+      if (typeof answer === 'object' && 'monitors' in answer)
+        setMonitors(answer.monitors as AgentMonitor[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBoardBusy(false);
     }
   }
 
@@ -163,18 +182,39 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
         {state?.agent && monitors && (
           <ul className="text-xs text-neutral-400" data-testid="target-agent-monitors">
             {monitors.map((monitor) => (
-              <li key={`${monitor.x},${monitor.y}`}>
-                {t('settings.device.targetAgent.monitor', {
-                  name: monitor.name || monitor.maker,
-                  width: monitor.width,
-                  height: monitor.height,
-                  x: monitor.x,
-                  y: monitor.y
-                })}
-                {monitor.board ? ` — ${t('settings.device.targetAgent.boards')}` : ''}
+              <li
+                key={monitor.id || `${monitor.x},${monitor.y}`}
+                className="flex flex-wrap items-center gap-x-2"
+              >
+                <span>
+                  {t('settings.device.targetAgent.monitor', {
+                    name: monitor.name || monitor.maker,
+                    width: monitor.width,
+                    height: monitor.height,
+                    x: monitor.x,
+                    y: monitor.y
+                  })}
+                  {monitor.board ? ` — ${t('settings.device.targetAgent.boards')}` : ''}
+                </span>
+                {!monitor.board && monitor.id && (
+                  <Button
+                    size="small"
+                    type="link"
+                    className="px-0"
+                    disabled={readOnly || boardBusy}
+                    onClick={() => void chooseBoard(monitor.id!)}
+                  >
+                    {t('settings.device.targetAgent.chooseBoard')}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
+        )}
+        {state?.agent && monitors && !monitors.some((monitor) => monitor.board) && (
+          <span className="text-xs text-neutral-500" data-testid="target-agent-choose-board">
+            {t('settings.device.targetAgent.chooseBoardHint')}
+          </span>
         )}
         {state?.agent && !monitors && (
           <span className="text-xs text-neutral-500">

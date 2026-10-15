@@ -90,6 +90,9 @@ fn answer(call: Call) -> Result<Answer, String> {
                 .map(|()| Answer::Done)
         }
         Call::Lock => actions::lock().map(|()| Answer::Done),
+        Call::SetBoardMonitor { id } => {
+            actions::set_board_monitor(id.as_deref()).map(|()| Answer::Done)
+        }
     }
 }
 
