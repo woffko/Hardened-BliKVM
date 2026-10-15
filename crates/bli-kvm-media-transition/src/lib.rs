@@ -546,7 +546,11 @@ impl GadgetMediaExecutor {
     }
 
     /// The recorded selection, or the one the gadget currently exposes after
-    /// a restart of the owner process.
+    /// a restart of the owner process. The kernel names the backing file as
+    /// the reading process reaches it: to an owner started again, an image
+    /// store mounted in the former owner's namespace is named from the
+    /// store's own root (`/disk.iso`). Every selection is an image of the
+    /// store by its name, so it is that name in the store.
     fn current_selection(&self) -> Option<SelectedImage> {
         if let Ok(guard) = self.selected.lock()
             && let Some(selected) = guard.clone()
@@ -556,7 +560,7 @@ impl GadgetMediaExecutor {
         let state = bli_kvm_usb_gadget::observe(&self.config.configfs_root).ok()?;
         let storage = state.mass_storage.filter(|storage| storage.removable)?;
         Some(SelectedImage {
-            path: storage.file,
+            path: self.config.image_directory.join(storage.file.file_name()?),
             read_only: storage.read_only,
             cdrom: storage.cdrom,
         })
@@ -1631,6 +1635,67 @@ mod tests {
                 .udc
                 .is_some()
         );
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn an_owner_started_again_finds_the_attached_image_in_the_store() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = gadget_config_for_test(directory.path(), "BLK-agent-restart");
+        let image_dir = config.image_directory.clone();
+        let configfs = config.configfs_root.clone();
+        std::fs::create_dir_all(&configfs).unwrap();
+        std::fs::write(image_dir.join("kubuntu.img"), b"image").unwrap();
+        let drive = directory.path().join("agent-drive.img");
+        std::fs::write(&drive, b"drive").unwrap();
+        let catalog_path = image_dir.join("catalog.json");
+        std::fs::write(
+            &catalog_path,
+            format!(
+                r#"{{"schemaVersion":1,"entries":[{{"imageId":7,"imageName":"kubuntu.img","size":1,"sha256":"{}","cdromAllowed":true,"removableAllowed":true,"writableAllowed":false}}]}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+        let catalog = MediaCatalog::open(&catalog_path).unwrap();
+        let storage = || bli_kvm_usb_gadget::observe(&configfs).unwrap().mass_storage;
+        let mount = VirtualMediaCommand::Mount {
+            image_id: 7,
+            mode: VirtualMediaControlMode::RemovableDisk,
+            writable: false,
+        };
+        assert!(
+            GadgetMediaExecutor::new(config.clone())
+                .execute(&mount, &catalog)
+                .is_ok()
+        );
+        // The image as the kernel names it to the next owner: from the root
+        // of the store the former owner's namespace mounted.
+        let lun = configfs.join("hardened/functions/mass_storage.usb0/lun.0/file");
+        std::fs::write(&lun, "/kubuntu.img\n").unwrap();
+
+        // The next owner, with the agent's drive wanted: the drive goes
+        // beside the image, which stays the store's.
+        let executor = GadgetMediaExecutor::new(config.clone());
+        executor.want_agent_drive(Some(drive.clone()));
+        assert!(executor.set_agent_drive(Some(drive.clone())).unwrap());
+        let both = storage().unwrap();
+        assert_eq!(both.file, image_dir.join("kubuntu.img"));
+        assert!(both.removable);
+        assert_eq!(both.second_lun, Some(drive.clone()));
+
+        // And an image reconnected by an owner started again is the store's.
+        std::fs::write(&lun, "/kubuntu.img\n").unwrap();
+        let executor = GadgetMediaExecutor::new(config);
+        assert!(
+            executor
+                .execute(
+                    &VirtualMediaCommand::SetConnected { connected: true },
+                    &catalog
+                )
+                .is_ok()
+        );
+        assert_eq!(storage().unwrap().file, image_dir.join("kubuntu.img"));
     }
 
     #[tokio::test]
