@@ -62,8 +62,10 @@ calls the agent for:
   to an installed layout; set the monitors' mode (extend, duplicate, only
   the board's, only the others, the board's the primary), undone after
   15 s unless kept, and keep it (only the board's or only the others from
-  a mode that shows none of them first extends over every monitor, and a
-  change that fails half way is put back at once); read and write the clipboard's text (at
+  a mode that shows none of them first extends over every monitor, the
+  monitors left are moved so that the top left one is at the desktop's
+  origin, as Windows' own "show only on" does, and a change that fails
+  half way is put back at once); read and write the clipboard's text (at
   most 6000 UTF-8 bytes, tabs and line ends its only control characters);
   lock the session; and keep the operator's word on which monitor is the
   board's (`set_board_monitor`, by the monitor's id, or none).

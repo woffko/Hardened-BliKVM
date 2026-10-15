@@ -253,6 +253,40 @@ fn only(mut config: DisplayConfig, keep: impl Fn(bool) -> bool) -> Result<Displa
             path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
         }
     }
+    // The desktop begins at its primary monitor: the monitors left are moved
+    // so that the top left one is at the origin, as Windows' own "show only
+    // on" does. Windows may refuse a desktop with no monitor there.
+    let mut sources: Vec<usize> = config
+        .paths
+        .iter()
+        .filter(|path| path.flags & DISPLAYCONFIG_PATH_ACTIVE != 0)
+        // SAFETY: the union is the index of a source mode in this
+        // configuration.
+        .map(|path| unsafe { path.sourceInfo.Anonymous.modeInfoIdx } as usize)
+        .filter(|index| {
+            config.modes.get(*index).is_some_and(|mode| {
+                mode.infoType
+                    == windows_sys::Win32::Devices::Display::DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE
+            })
+        })
+        .collect();
+    // Duplicated monitors share one source, moved once.
+    sources.sort_unstable();
+    sources.dedup();
+    let origin = names::least_corner(sources.iter().map(|index| {
+        // SAFETY: each index is a source mode's, as filtered above.
+        let place = unsafe { config.modes[*index].Anonymous.sourceMode.position };
+        (place.x, place.y)
+    }));
+    if let Some((x, y)) = origin {
+        for index in sources {
+            // SAFETY: as above.
+            unsafe {
+                config.modes[index].Anonymous.sourceMode.position.x -= x;
+                config.modes[index].Anonymous.sourceMode.position.y -= y;
+            }
+        }
+    }
     Ok(config)
 }
 

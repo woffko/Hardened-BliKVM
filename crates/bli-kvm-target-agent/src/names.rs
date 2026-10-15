@@ -95,6 +95,15 @@ pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)], chose
     }
 }
 
+/// The top left corner of the box around monitors at `places` (each
+/// monitor's top left corner): the desktop's origin once only those are
+/// left. None without a monitor.
+pub fn least_corner(places: impl IntoIterator<Item = (i32, i32)>) -> Option<(i32, i32)> {
+    places
+        .into_iter()
+        .reduce(|(x, y), (other_x, other_y)| (x.min(other_x), y.min(other_y)))
+}
+
 /// The value the agent's sign-in start has in the user's Run key.
 pub const AUTOSTART_VALUE: &str = "HardenedBliKVMAgent";
 /// The folder, under the user's local application data, that keeps the
@@ -287,6 +296,16 @@ mod tests {
         let mut twins = vec![monitor("BNQ", 0x8024, 0), monitor("BNQ", 0x8024, 2560)];
         mark_board_monitor(&mut twins, &[], Some("0123456789abcdef"));
         assert!(twins.iter().all(|m| !m.board));
+    }
+
+    #[test]
+    fn the_monitors_left_begin_at_the_origin() {
+        // Only the right one of two left: it moves to the origin.
+        assert_eq!(least_corner([(2560, 0)]), Some((2560, 0)));
+        // Two left of three, one above the other's line.
+        assert_eq!(least_corner([(2560, -200), (5120, 0)]), Some((2560, -200)));
+        assert_eq!(least_corner([(-1920, 120), (0, 0)]), Some((-1920, 0)));
+        assert_eq!(least_corner([]), None);
     }
 
     #[test]
