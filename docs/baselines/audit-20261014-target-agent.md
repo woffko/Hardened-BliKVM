@@ -73,6 +73,35 @@ operator's word ("Ставь") and confirmed
 the services running, the agent's files in the protected copy, the gadget
 as before, the switch off.
 
+## Gate 1: the channel (2026-10-15, slot 88)
+
+The operator turned the switch on from the page; the owner logged it, and
+the board then had `hid.usb1` with the agent's collection (report length
+64) and the agent's drive alone on LUN 0. On the target (Windows 11 Pro
+for Workstations 26H2, build 26340):
+
+- The collection is listed without a driver asked for:
+  `HID\VID_1D6B&PID_0104&MI_01&COL02`, "HID-compliant vendor-defined
+  device", status OK (the operator's PowerShell).
+- Keyboard and mouse work as before, by the operator's word.
+- The test tool: hello, then 1000 pings answered of 1000 with none lost,
+  round trip median 2.000 ms, 95th percentile 2.017 ms, maximum
+  7.004 ms; a second run 2.000, 2.016 and 3.011 ms.
+- With `watch` for 120 s while the operator detached and attached an
+  image: the channel went four times and came back by itself, at most
+  0.85 s later. Twice the device left with the gadget's rebinding (back
+  in 0.85 s); twice the board answered "hello first", as the owner closes
+  the channel and forgets the agent around every media operation even
+  when the device stays (back in 0.01 s).
+- With an image attached, the image was on LUN 0 and the agent's drive
+  on LUN 1.
+- With the switch turned off again: `hid.usb1` with its pinned
+  descriptor and report length 7, the operator's image alone on LUN 0,
+  the agent's drive gone, keyboard and mouse working, by the operator's
+  word.
+
+Gate 1 passed. Evidence: `evidence/private/agent-20261014/gate1-*.txt`.
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
