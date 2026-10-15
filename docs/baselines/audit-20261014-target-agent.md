@@ -154,6 +154,22 @@ word on which one is the board's, which Settings > Device asks for
 agent `0610b2c0694586026aa0eeb269805d58bea110c34627686ae1a04befa3b73bfe`)
 carries it and the drive's fix.
 
+By the operator's word ("да и да"): the reads are what Windows' settings
+show, and the board's monitor is the right one (at 2560,0, 125 %). Gate 2
+passed, with the finding that the board's monitor is the operator's
+choice.
+
+## Slot 90: the board's monitor chosen, the drive after a restart (2026-10-15)
+
+Slot 90 was installed in place of slot 89 at the operator's word ("да")
+and confirmed (`evidence/private/update-to-seq90-agent.json`): no unit
+failed. The owner, started again with the operator's image attached, now
+presented the image on LUN 0 (removable, read-only) and the agent's drive
+on LUN 1 (not removable, read-only), the absolute mouse with the agent's
+collection (report length 64); the switch on, and the agent connected
+again by itself
+(`evidence/private/agent-20261014/state-{before,after}-90.json`).
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
