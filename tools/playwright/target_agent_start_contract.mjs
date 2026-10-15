@@ -1,7 +1,8 @@
 // "Start the agent" (web/src/lib/agent-start.ts, Settings > Device), through the built page with a played board whose
 // agent's switch is on and no agent connected. Without remote control the button only says to enable it; with it,
 // a confirmation comes first, then the keyboard's reports: Win+R, a pause for the Run box, the line at the US layout's
-// positions key by key, Enter. When the agent says hello, the page shows it connected.
+// positions key by key, Enter. An agent that does not come in 20 s leaves the start offered again with what to look
+// at; when the agent says hello, the page shows it connected.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -149,7 +150,26 @@ try {
   );
   await page.getByText("Typed; waiting for the agent to connect").waitFor();
 
-  // The agent says hello: connected.
+  // No agent comes: after 20 s the start is offered again, with what to
+  // look at on the target.
+  await page
+    .getByRole("alert")
+    .getByText("The agent did not connect within 20 s", { exact: false })
+    .waitFor({ timeout: 30000 });
+  assert.equal(await button.isDisabled(), false);
+
+  // Again, and this time the agent says hello: connected.
+  const again = keyboardReports().length;
+  await button.click();
+  await dialog.getByRole("button", { name: "Type it" }).click();
+  assert.ok(
+    await eventually(
+      () => keyboardReports().length >= again + expected.length,
+      20000,
+    ),
+  );
+  await page.getByText("Typed; waiting for the agent to connect").waitFor();
+  assert.equal(await page.getByRole("alert").count(), 0);
   connected = true;
   await page
     .getByTestId("target-agent-status")

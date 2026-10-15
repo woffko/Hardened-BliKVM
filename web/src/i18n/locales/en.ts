@@ -654,6 +654,8 @@ const en = {
           startHint: 'Types Win+R and a line that starts the agent from the board’s drive',
           startNeedsControl: 'Enable remote control to start the agent from here',
           startWaiting: 'Typed; waiting for the agent to connect',
+          startTimeout:
+            'The agent did not connect within 20 s: check that the target is signed in with the English (US) layout in front, and start it again',
           clipboard: "Target's clipboard",
           clipboardRead: "Read the target's",
           clipboardWrite: 'Put on the target',

@@ -12,6 +12,8 @@ import { useHidLease } from '@/hooks/useHidLease.ts';
 
 /** How long Windows' Run box is given to open before the line is typed. */
 const RUN_BOX_MS = 1000;
+/** How long the started agent is waited for before the start is offered again. */
+const START_WAIT_MS = 20000;
 
 /** The agent's name, version and the first twelve characters of its commit. */
 function agentTitle(agent: NonNullable<api.TargetAgentState['agent']>) {
@@ -35,6 +37,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   // the agent is then waited for.
   async function startAgent() {
     setStarting('typing');
+    setError('');
     const press = (modifier: number, usage: number) => {
       reportHid({ mode: 'keyboard', data: [modifier, 0, usage, 0, 0, 0, 0, 0] });
       reportHid({ mode: 'keyboard', data: [0, 0, 0, 0, 0, 0, 0, 0] });
@@ -45,9 +48,21 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
     setStarting('waiting');
   }
 
+  // The agent connects, or after a while the start is offered again with
+  // what to look at on the target.
+  const agentConnected = Boolean(state?.agent);
   useEffect(() => {
-    if (starting === 'waiting' && state?.agent) setStarting(null);
-  }, [starting, state?.agent]);
+    if (starting !== 'waiting') return;
+    if (agentConnected) {
+      setStarting(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setStarting(null);
+      setError(t('settings.device.targetAgent.startTimeout'));
+    }, START_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [agentConnected, starting, t]);
   // A monitors' change waiting to be kept: the seconds left.
   const [keepLeft, setKeepLeft] = useState<number | null>(null);
   const [displaysBusy, setDisplaysBusy] = useState(false);
