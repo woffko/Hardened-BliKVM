@@ -115,15 +115,17 @@ CARGO_TARGET_DIR="$agent_out/target" sh scripts/build-target-agent.sh "$agent_ou
 for program in hardened-blikvm-agent.exe hardened-blikvm-agent-test.exe; do
   cmp "$agent_out/first/$program" "$agent_out/second/$program"
 done
-# The agent's drive: the same bytes twice, labelled BLIKVMAGENT, with the
-# agent, its README and its sums.
+# The agent's drive: the same bytes twice, a fixed disk's one FAT12
+# partition from 1 MiB labelled BLIKVMAGENT, with the agent, its README and
+# its sums.
 sh scripts/build-agent-drive.sh "$agent_out/drive-first" >/dev/null
 sh scripts/build-agent-drive.sh "$agent_out/drive-second" >/dev/null
 cmp "$agent_out/drive-first/agent-drive.img" "$agent_out/drive-second/agent-drive.img"
 cmp "$agent_out/drive-first/hardened-blikvm-agent.exe" "$agent_out/first/hardened-blikvm-agent.exe"
-MTOOLS_SKIP_CHECK=1 mdir -i "$agent_out/drive-first/agent-drive.img" :: | grep -q "is BLIKVMAGENT"
+sfdisk -d "$agent_out/drive-first/agent-drive.img" | grep -q "start= *2048, size= *4096, type=1$"
+MTOOLS_SKIP_CHECK=1 mdir -i "$agent_out/drive-first/agent-drive.img@@1M" :: | grep -q "is BLIKVMAGENT"
 for name in README.TXT SHA256SUMS.TXT hardened-blikvm-agent.exe; do
-  MTOOLS_SKIP_CHECK=1 mdir -b -i "$agent_out/drive-first/agent-drive.img" "::$name" >/dev/null
+  MTOOLS_SKIP_CHECK=1 mdir -b -i "$agent_out/drive-first/agent-drive.img@@1M" "::$name" >/dev/null
 done
 rm -rf "$agent_out"
 cargo clippy -p bli-kvm-video-encoder --all-targets --locked --features h264 -- -D warnings

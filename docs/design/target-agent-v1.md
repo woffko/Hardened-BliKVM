@@ -104,10 +104,15 @@ The owner (`crates/bli-kvm-control-broker/src/target_agent.rs`) keeps:
   device go and come back and says hello again.
 
 - The agent's drive: a second LUN of the mass-storage function, read-only
-  and not removable, a 2 MiB FAT12 image labelled `BLIKVMAGENT` (a FAT
-  label has at most 11 characters, so not `BLIKVM-AGENT` as the plan said)
-  with the agent, a README and its SHA-256 (`scripts/build-agent-drive.sh`,
-  reproducible with mkfs.fat's invariant values and fixed times). A signed
+  and not removable, a 3 MiB disk with a DOS partition table and one 2 MiB
+  FAT12 partition from 1 MiB, labelled `BLIKVMAGENT` (a FAT label has at
+  most 11 characters, so not `BLIKVM-AGENT` as the plan said), with the
+  agent, a README and its SHA-256 (`scripts/build-agent-drive.sh`,
+  reproducible with sfdisk's fixed id, mkfs.fat's invariant values and
+  fixed times). Windows finds no volume on a fixed disk without a
+  partition table: the first image, a file system alone, was listed on
+  the operator's target as a 2 MiB "external hard disk" with no partition
+  and no drive letter (gate 5). A signed
   slot carries only its programs and its web tree, so the slot carries the
   agent and the image under `share/web/agent/`, and the owner takes the
   image from the slot it runs from. The drive is presented while the switch
