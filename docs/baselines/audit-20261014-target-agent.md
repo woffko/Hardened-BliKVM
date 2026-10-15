@@ -102,6 +102,58 @@ for Workstations 26H2, build 26340):
 
 Gate 1 passed. Evidence: `evidence/private/agent-20261014/gate1-*.txt`.
 
+## Slot 89: typing, the quality monitor's row (2026-10-15)
+
+`scripts/check.sh` passed on `85f0242`
+(`evidence/private/agent-20261014/check-85f0242.log`). Slot 89
+(`0.1.0-beta.7`, `85f0242`, bundle
+`c65960b2f7a01e98e4babb242e75bc57029b31c936d5cf86084c87aa7b29aa2c`, the
+agent `cb3b1d89e3762db0a57502b471145133d02a6616cc8397329730f15dc91f81f2`)
+adds the quality monitor's Agent row, the agent's session kept across the
+channel's pauses, the on-screen keyboard readable on the dark page (the
+operator's phone showed its keys white on white) and the target's layout
+following the letters typed on a phone (the operator: the phone's
+keyboard did not switch the target's languages). It was installed in
+place of slot 88 at the operator's word ("ставить") and confirmed
+(`evidence/private/update-to-seq89-agent.json`): the services running,
+none failed, the agent's files in both copies of the slot; the switch on,
+as the operator had left it, and the agent connected again by itself
+after the owner's restart
+(`evidence/private/agent-20261014/state-{before,after}-89.json`).
+
+Finding: the owner, started again with the operator's image attached,
+logged "the agent's drive could not be changed: ImageMissing". It read the
+image back from the kernel, which names a LUN's file from the image
+store's own root to a process outside the former owner's namespace
+(`/<image>.iso`); the drive stayed away beside
+the image, and reconnecting the image would have failed the same way,
+until the image was chosen again. Fixed in `e02e459` (the selection read
+back is the image of that name in the store).
+
+## Gate 2: the agent's reads (2026-10-15)
+
+The operator's screenshot of "Show what the agent reads" (the agent
+`878428d`, on slot 88):
+
+- Windows 11 Pro for Workstations 26H2 (build 26340.9616), x86_64;
+- two monitors, both "BenQ LCD" with the EDID's maker and product
+  `BNQ 8024`, 2560x1440 at 59.951 Hz: at 0,0, 100 %, primary; at 2560,0,
+  125 %;
+- the layout in front English (United States) - US (en-US, `04090409`);
+  three installed: en-US `04090409`, ru-RU `04190419`, et-EE `04250425`.
+
+Finding: the board's capture gives the target a copy of the operator's
+own monitor's EDID, so no EDID tells the board's monitor from the other,
+and `names::BOARD_CAPTURE_EDIDS` stays empty. The agent now gives each
+monitor an id from Windows' name for its device and keeps the operator's
+word on which one is the board's, which Settings > Device asks for
+(`7db8038`); `scripts/check.sh` passed on it
+(`evidence/private/agent-20261014/check-7db8038.log`). Slot 90
+(`7db8038`, bundle
+`96f021a46df9081d7701ad8fd3d957558f6d7f47975e236c2a3768f28d3f662f`, the
+agent `0610b2c0694586026aa0eeb269805d58bea110c34627686ae1a04befa3b73bfe`)
+carries it and the drive's fix.
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
