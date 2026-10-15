@@ -63,7 +63,7 @@ export const VirtualKeyboard = () => {
   const [activeModifierKeys, setActiveModifierKeys] = useState<string[]>([]);
   const { restricted, reportHid } = useHidLease();
   // The target's layout follows the keyboard's language when asked to.
-  useAgentLayoutSync(keyboardLanguage);
+  useAgentLayoutSync(keyboardLanguage, isKeyboardOpen);
 
   const keyboardRef = useRef<any>(null);
   // On the touch layout the keyboard covers the bottom of the page; its

@@ -186,5 +186,8 @@ export function useHidLease() {
     schedule((generation) => ensureSession(generation));
   }, [ensureSession, schedule]);
 
-  return { restricted, reportHid, release, hold };
+  /** Resolves once the reports queued so far are sent, or dropped. */
+  const drained = useCallback(() => sharedQueue.then(() => undefined), []);
+
+  return { restricted, reportHid, release, hold, drained };
 }

@@ -642,7 +642,8 @@ const en = {
           boards: "the board's",
           monitorsUnderControl: 'The monitors are read while you control the target',
           targetLayout: "Target's layout: {{name}}",
-          layoutSync: "Keep the target's layout in step with the on-screen keyboard",
+          layoutSync:
+            "Switch the target's layout to what I type: the on-screen keyboard's language, the phone keyboard's letters",
           start: 'Start the agent on the target',
           startConfirm: 'Type it',
           startExplain:

@@ -7,9 +7,11 @@ import {
   useRef,
   useState
 } from 'react';
-import { useAtom, useAtomValue, useSetAtom } from 'jotai';
+import { getDefaultStore, useAtom, useAtomValue, useSetAtom } from 'jotai';
 
 import { paste } from '@/api/hid.ts';
+import * as targetAgent from '@/api/target-agent.ts';
+import { layoutForScript, scriptRuns } from '@/lib/agent-typing.ts';
 import { textToKeyReports, type TextLayoutState } from '@/lib/hid-text.ts';
 import { getKeycode } from '@/lib/keymap.ts';
 import * as storage from '@/lib/localstorage.ts';
@@ -23,12 +25,16 @@ import {
 import { client, MessageEvent } from '@/lib/websocket.ts';
 import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.ts';
 import { focusConfirmedAtom } from '@/jotai/restricted-control.ts';
+import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
 
 import { MOBILE_LOCAL_KEYBOARD_INPUT_ID } from './controls.ts';
 import { KeyHelper } from './key-helper.tsx';
 
 const VALID_PASTE_LANGUAGES = new Set(['en', 'de', 'fr', 'ru', 'ko', 'ja']);
+// How long the window in front is given to take the layout the agent asked it
+// for before the keys after it are typed.
+const LAYOUT_SWITCH_MS = 100;
 
 function getPasteLanguage() {
   const language = storage.getKeyboardLanguage() || 'en';
@@ -51,7 +57,7 @@ export const MobileLocalKeyboard = () => {
   const [modifierModes, setModifierModes] = useState<ModifierModes>({});
   // Releases waiting for a possible second tap, by modifier.
   const releaseTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const { restricted, reportHid } = useHidLease();
+  const { restricted, reportHid, hold, drained } = useHidLease();
   const controlConfirmed = useAtomValue(focusConfirmedAtom);
 
   useEffect(() => {
@@ -153,6 +159,60 @@ export const MobileLocalKeyboard = () => {
     sendReports(reports);
   }
 
+  // The target's layout follows the letters typed, when the operator asked
+  // for it and the agent is connected (lib/agent-typing): a run of Latin or
+  // Cyrillic letters is typed in an installed layout of its script, switched
+  // to once the keys before it are typed. A shortcut (a modifier held) is
+  // not text and switches nothing.
+  function following() {
+    const store = getDefaultStore();
+    return store.get(agentLayoutSyncAtom) && Boolean(store.get(targetAgentAtom)?.agent);
+  }
+
+  async function switchLayout(layout: targetAgent.AgentLayout) {
+    const store = getDefaultStore();
+    if (store.get(agentKeyboardAtom)?.current?.id === layout.id) return;
+    // The agent's call is made under the lease the keys are typed under.
+    hold();
+    await drained();
+    await targetAgent.askTargetAgent({ set_layout: { id: layout.id } });
+    const keyboard = store.get(agentKeyboardAtom);
+    if (keyboard) store.set(agentKeyboardAtom, { ...keyboard, current: layout });
+    await new Promise((resolve) => setTimeout(resolve, LAYOUT_SWITCH_MS));
+  }
+
+  // The target's layouts as they are now, when the keyboard opens: the
+  // operator may have switched it since the last read.
+  function readLayouts() {
+    if (!following()) return;
+    enqueue(async () => {
+      hold();
+      await drained();
+      const answer = await targetAgent.askTargetAgent('keyboard');
+      if (typeof answer === 'object' && 'keyboard' in answer)
+        getDefaultStore().set(agentKeyboardAtom, answer.keyboard);
+    });
+  }
+
+  // The text run by run, each typed once the target has its layout; decided
+  // when its turn comes, with the layouts read by then.
+  async function typeFollowing(text: string) {
+    for (const run of scriptRuns(text)) {
+      const installed = getDefaultStore().get(agentKeyboardAtom)?.installed ?? [];
+      const layout = run.script ? layoutForScript(installed, run.script) : null;
+      if (run.script && layout) {
+        await switchLayout(layout).catch(() => undefined);
+        // The run's punctuation before its first letter is typed for its
+        // layout too.
+        layoutRef.current.script = run.script;
+      }
+      for (const step of textToKeyReports(run.text, layoutRef.current)) {
+        sendReport(keyReport(step.modifier, step.usage));
+        sendReport(keyReport(0));
+      }
+    }
+  }
+
   function sendText(text: string) {
     if (!text) return;
     const modifiers = modifiersRef.current;
@@ -162,6 +222,15 @@ export const MobileLocalKeyboard = () => {
       });
       return;
     }
+    if (modifiers.bits() === 0 && following()) {
+      enqueue(() => typeFollowing(text));
+      return;
+    }
+    typeKeys(text);
+  }
+
+  function typeKeys(text: string) {
+    const modifiers = modifiersRef.current;
     // Typed as key presses at the key positions of the text, with the pressed
     // modifiers: Ctrl, then "c" on the system keyboard, is Ctrl+C.
     const reports: number[][] = [];
@@ -273,6 +342,7 @@ export const MobileLocalKeyboard = () => {
   function handleFocus() {
     setIsLocalKeyboardOpen(true);
     setIsKeyboardEnable(false);
+    if (restricted) readLayouts();
   }
 
   function handleBlur() {
