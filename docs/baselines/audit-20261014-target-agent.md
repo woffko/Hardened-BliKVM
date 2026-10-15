@@ -53,6 +53,26 @@ running; the gadget as before (`hid.usb1`'s pinned descriptor, report
 length 7, no image attached); the platform offering `target_agent`; the
 switch off, its file absent. Gate 1 waits for the operator's checks.
 
+## Slot 88: phases 1 to 5 (2026-10-15)
+
+Phases 2 to 5 were built before the operator's checks of gates 1 and 2,
+which they are checked against together: the reads and the page, the
+actions, the agent's drive, "Start the agent", the sign-in start, and the
+agent's icon and menu (`docs/design/target-agent-v1.md`).
+`scripts/check.sh` passed on `878428d`
+(`evidence/private/agent-20261014/check-878428d.log`; the run on
+`9996a33` stopped at a test that still named the control socket's former
+limit, and the one on `e38981d` at the source boundary, which now allows
+the agent's icon). Slot 88 (`0.1.0-beta.7`, `878428d`, bundle
+`dd6bba36d935695c537fa6c73438650d7db82929ac3722b054654977238dad01`,
+carrying `share/web/agent/` with the agent
+`007fd9ef9d08494aa2327978b98af2e7604ab264fda42c8c5b3086a5a9c0d792`, its
+sums and the drive's image) was installed in place of slot 87 at the
+operator's word ("Ставь") and confirmed
+(`evidence/private/update-to-seq88-agent.json`). On the board after it:
+the services running, the agent's files in the protected copy, the gadget
+as before, the switch off.
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
