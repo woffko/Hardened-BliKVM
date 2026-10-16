@@ -292,6 +292,12 @@ try {
       area.y + Math.min(area.height - 3, shareY * area.height),
     );
     assert.ok(await eventually(() => absoluteReports().length > before));
+    // A report of the point before may still arrive: the last one is this
+    // point's once no more come for a while.
+    for (let seen = -1; seen !== absoluteReports().length; ) {
+      seen = absoluteReports().length;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
     const data = absoluteReports().at(-1);
     return pixelOf(data[1] | (data[2] << 8), 5120);
   };
