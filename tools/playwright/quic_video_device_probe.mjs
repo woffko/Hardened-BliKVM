@@ -40,7 +40,9 @@
 // the span's ends that the receipt keeps.
 //
 // The probe logs in once and watches. It asks for no lease and no
-// confirmation of the target: any /api/hid request fails it. The board's
+// confirmation of the target: any /api/hid request fails it but the page's
+// read of the desktop layout kept on the board (GET /api/hid/screen-area),
+// which sends nothing to the target. The board's
 // QUIC switch is turned on through the API if it is off, and is left as it
 // was found, whatever happens. The Screen menu's mode and the browser's
 // choice are set in this browser's own storage. The GUI password is read
@@ -370,7 +372,8 @@ try {
   );
   page.on("request", (request) => {
     const route = new URL(request.url()).pathname;
-    if (route.startsWith("/api/hid")) {
+    const read = request.method() === "GET" && route === "/api/hid/screen-area";
+    if (route.startsWith("/api/hid") && !read) {
       const key = `${request.method()} ${route}`;
       receipt.hidRequests[key] = (receipt.hidRequests[key] ?? 0) + 1;
     }

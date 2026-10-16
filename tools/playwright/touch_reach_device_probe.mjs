@@ -3,7 +3,9 @@
 // the extra keys), and a zoomed image's bottom edge comes into view under
 // the cursor. Remote control is never enabled, so the page drops the mouse
 // and key reports and no HID lease is taken; the probe fails if any /api/hid
-// request is made. The zoom and the menu mode are set in this browser only.
+// request is made but the page's read of the desktop layout kept on the
+// board (GET /api/hid/screen-area), which sends nothing to the target. The
+// zoom and the menu mode are set in this browser only.
 // The GUI password is read from stdin; a receipt is written under
 // evidence/private. No screenshot is taken.
 //
@@ -63,7 +65,8 @@ page.on("pageerror", (error) =>
 );
 page.on("request", (request) => {
   const route = new URL(request.url()).pathname;
-  if (route.startsWith("/api/hid"))
+  const read = request.method() === "GET" && route === "/api/hid/screen-area";
+  if (route.startsWith("/api/hid") && !read)
     receipt.hidRequests.push(`${request.method()} ${route}`);
 });
 
