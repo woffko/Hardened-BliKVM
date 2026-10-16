@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button } from 'antd';
 import clsx from 'clsx';
 import { useAtomValue } from 'jotai';
@@ -7,7 +8,9 @@ import { useTranslation } from 'react-i18next';
 import type { DisplayMode } from '@/api/target-agent.ts';
 import { displaysNow } from '@/lib/agent-layout.ts';
 import { agentMonitorsAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
-import { useAgentDisplays } from '@/hooks/useAgentDisplays.ts';
+import { readAgentMonitors, useAgentDisplays } from '@/hooks/useAgentDisplays.ts';
+import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
+import { useHidLease } from '@/hooks/useHidLease.ts';
 import { MenuItem } from '@/components/menu-item.tsx';
 
 /** Windows' own choices, in its order, with the board's monitor for "show only on". */
@@ -25,8 +28,23 @@ export const Monitors = () => {
   const connected = Boolean(useAtomValue(targetAgentAtom)?.agent);
   const monitors = useAtomValue(agentMonitorsAtom);
   const displays = useAgentDisplays();
+  const { confirmed } = useFocusConfirmation();
+  const { hold, drained } = useHidLease();
+  const [readError, setReadError] = useState('');
 
   if (!connected) return null;
+
+  // Opened under remote control: the monitors are read again, under the
+  // keyboard's and mouse's lease, taken without input if no input took it
+  // yet; a read that fails says why.
+  function opened(open: boolean) {
+    if (!open || !confirmed) return;
+    setReadError('');
+    hold();
+    void drained()
+      .then(() => readAgentMonitors())
+      .catch((err: unknown) => setReadError(err instanceof Error ? err.message : String(err)));
+  }
 
   const now = monitors ? displaysNow(monitors) : 'unknown';
   const boardKnown = Boolean(monitors?.some((monitor) => monitor.board));
@@ -37,8 +55,10 @@ export const Monitors = () => {
       data-testid="agent-monitors"
     >
       {!monitors && (
-        <span className="text-xs text-neutral-500">
-          {t('settings.device.targetAgent.monitorsUnderControl')}
+        <span className="text-xs text-neutral-500" data-testid="agent-monitors-unread">
+          {confirmed
+            ? t('settings.device.targetAgent.monitorsReading')
+            : t('settings.device.targetAgent.monitorsNeedControl')}
         </span>
       )}
       {monitors && (
@@ -106,9 +126,9 @@ export const Monitors = () => {
           </div>
         </>
       )}
-      {displays.error && (
+      {(readError || displays.error) && (
         <span role="alert" className="text-xs text-red-400">
-          {displays.error}
+          {readError || displays.error}
         </span>
       )}
     </div>
@@ -119,6 +139,7 @@ export const Monitors = () => {
       title={t('settings.device.targetAgent.displays.title')}
       icon={<MonitorCogIcon size={18} />}
       content={content}
+      onOpenChange={opened}
     />
   );
 };

@@ -72,6 +72,9 @@ const RIGHT = "00000000000000b2";
 // operator chooses; and the monitors' mode.
 let boardId = RIGHT;
 let displays = "extend";
+// The agent's monitors refused once, as the board refuses an answer out of
+// its bounds.
+let failMonitors = false;
 const monitor = (x) => ({
   id: x === 0 ? LEFT : RIGHT,
   name: x === 0 ? "DELL U2719D" : "USB Capture",
@@ -163,6 +166,13 @@ try {
   await page.route("**/api/target-agent/call", (route) => {
     const { call } = route.request().postDataJSON();
     calls.push(call);
+    if (call === "monitors" && failMonitors)
+      return route.fulfill({
+        json: {
+          code: -409,
+          msg: "the agent did not do it: the agent's answer is not the call's or is out of its bounds",
+        },
+      });
     if (call?.set_board_monitor) boardId = call.set_board_monitor.id;
     if (call?.set_displays) displays = call.set_displays.mode;
     const both = [monitor(0), monitor(2560)];
@@ -220,7 +230,15 @@ try {
   );
   await page.getByTestId("quality-monitor-toggle").click();
 
-  // Without remote control the page asks the agent for nothing.
+  // Without remote control the page asks the agent for nothing, and the
+  // Monitors menu says to enable it.
+  const monitorsMenu = page.locator("svg.lucide-monitor-cog").first();
+  await monitorsMenu.click();
+  await page
+    .getByTestId("agent-monitors-unread")
+    .getByText("Enable remote control to read the target's monitors")
+    .waitFor();
+  await monitorsMenu.click();
   await page.waitForTimeout(1500);
   assert.deepEqual(calls, []);
 
@@ -231,6 +249,27 @@ try {
   await page.waitForTimeout(300);
   if (await confirm.isVisible()) await confirm.click();
   await confirm.waitFor({ state: "hidden" });
+
+  // Under remote control and before any input, the Monitors menu takes the
+  // lease and reads the monitors; a read the board refuses says why, and
+  // the next opening reads them.
+  failMonitors = true;
+  await monitorsMenu.click();
+  await page
+    .getByTestId("agent-monitors")
+    .getByRole("alert")
+    .getByText("the agent's answer is not the call's or is out of its bounds", {
+      exact: false,
+    })
+    .waitFor();
+  await monitorsMenu.click();
+  failMonitors = false;
+  await monitorsMenu.click();
+  await page
+    .getByTestId("agent-monitors-now")
+    .getByText("Now: Extend")
+    .waitFor();
+  await monitorsMenu.click();
   const screen = page.locator("#screen");
   const box = await screen.boundingBox();
   // The first move takes the lease; the reads follow.

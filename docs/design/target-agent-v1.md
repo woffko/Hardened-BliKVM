@@ -173,7 +173,10 @@ feature `target_agent`.
   over them, one picture on all, or a single monitor), Windows' choices
   to change it (duplicate, extend, only the board's monitor, only the
   others; the last two once the board's monitor is known), and the
-  monitors with "This is the board's" beside the others. A change from
+  monitors with "This is the board's" beside the others. Opened under
+  remote control it reads the monitors again, taking the keyboard's and
+  mouse's lease without input if no input took it yet, and says why a
+  read failed; without remote control it says to enable it. A change from
   the menu or the settings waits in the page's one dialog, which counts
   down to the agent's putting it back and keeps it when asked; the
   monitors are read again after a change, once it is kept or put back, so

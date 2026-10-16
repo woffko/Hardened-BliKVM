@@ -644,6 +644,8 @@ const en = {
           chooseBoardHint:
             "No monitor is known as the board's: choose the one whose picture the board shows, and the mouse is kept on it",
           monitorsUnderControl: 'The monitors are read while you control the target',
+          monitorsNeedControl: "Enable remote control to read the target's monitors",
+          monitorsReading: "Reading the target's monitors…",
           targetLayout: "Target's layout: {{name}}",
           layoutSync:
             "Switch the target's layout to what I type: the on-screen keyboard's language, the phone keyboard's letters",
