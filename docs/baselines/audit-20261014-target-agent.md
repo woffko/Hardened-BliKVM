@@ -170,6 +170,81 @@ collection (report length 64); the switch on, and the agent connected
 again by itself
 (`evidence/private/agent-20261014/state-{before,after}-90.json`).
 
+## Slots 91 to 94: the drive mounted, the Monitors menu (2026-10-15/16)
+
+- Gate 5's first try on slot 90: "Start the agent" typed its line and no
+  agent came. Read on the target at the operator's word ("А ты сам типа
+  проверить это всё не можешь? это всё на хосте же"), read only: Windows
+  listed the agent's drive as a 2 MiB "external hard disk" with no
+  partition, no volume and no drive letter. The drive is now a disk with
+  a DOS partition table and one FAT12 partition (`0908887`); slot 91 was
+  built with it and not installed, as slot 92 came before the operator's
+  next check.
+- The operator, at gate 3: the KVM's mouse landed on the left monitor;
+  the mouse menu's layout was not wanted; the monitors should change as
+  in Windows' own choice, from a toolbar menu. The toolbar's Monitors menu
+  (`6e50a26`) says the mode and changes it, and offers the board's
+  monitor's choice; the mouse follows the agent's monitors in every mode.
+- Slot 92 (`6e50a26`, bundle
+  `a4fdeb1c9ad4f142ea93135970db6a3c6d76bfd82df1da424d809b520ae45cb7`, the
+  agent `465934e296fb6208bd6f67250f96e2698a40efd3496c15f21f5f237d785b07aa`)
+  was installed at the operator's word ("ставь") and confirmed
+  (`evidence/private/update-to-seq92-agent.json`); on the target the
+  drive was then `H:\`, labelled `BLIKVMAGENT`, with the agent of the
+  slot's digest.
+- The operator: switching the monitors' mode sometimes said
+  "backend_rejected"; Estonian typed on the phone was skipped. The
+  monitors kept by "only" now begin at the desktop's origin (`32d4845`),
+  the agent's refusals reach the page with their reason (`1b83bc2`), and
+  Estonian is typed in the target's Estonian layout, its keys read from
+  Windows' own layout on the target (`802ccd6`). Slot 93 (`802ccd6`,
+  bundle `2c56a6688527a3a8df8b1268b1976825cd938b349225dc154d302b4401ccfe58`)
+  was installed at the operator's word ("ставь слот 93") and confirmed.
+- The operator: the Monitors menu stayed empty. Read on the target: the
+  monitors were duplicated, and the agent said both were the primary
+  monitor, which the board refuses (`fb1d847`); the menu now reads the
+  monitors as it opens and says why a read fails (`ae03f6e`). The full
+  check on `ae03f6e` failed a measurement of the reads contract (a mouse
+  report arriving late, fixed in `f3b1c78`), and the first run on
+  `f3b1c78` failed the QUIC video contract's frame rate (24.3 of 30.3 a
+  second; it passed alone, and the next full run passed). Slot 94
+  (`f3b1c78`, bundle
+  `5b5822566e6a50e4379e24d8451e9299d8a5ce4441e5c9fed887a8e36290b950`, the
+  agent `e2822af5a310daffc1b95ab2db7f32f02d27243c61b9c3c94810aa6bdf39c6a1`)
+  was installed at the operator's word ("ставь") and confirmed
+  (`evidence/private/update-to-seq94-agent.json`): no unit failed, the
+  image on LUN 0 and the agent's drive on LUN 1, the switch on, the agent
+  connected again by itself.
+
+## Gates 3 and 4 (2026-10-16, slot 94, the agent `f3b1c78` from its drive)
+
+By the operator's word: "всё из 3 и 4 работает" — with two monitors and
+no manual layout, the absolute mouse lands on the board's monitor at its
+four corners and its middle, on the desktop and on the phone, and the
+Keyboard menu shows the target's layout (gate 3); the layout switched
+("раскладка перключается"), the phone's typing in its layouts ("андроид
+работает"), the monitors' modes with a change that leaves the KVM without
+a picture undone by itself, the clipboard both ways and locking the
+session (gate 4). Gates 3 and 4 passed.
+
+Found at the same check and fixed after it: the page's on-screen keyboard
+sent a tapped modifier as a key with no code, which the board refused
+(Ctrl+V did not reach the target and remote control turned off), showed a
+pressed modifier white on white, and did not send the Russian layout's
+letters (`911001d`); the Monitors menu's choice of the board's monitor
+wrapped under its line on a phone (`d9cd653`).
+
+## Gate 5 so far (2026-10-16)
+
+- The read-only agent's drive appears with the switch on: `H:\`,
+  `BLIKVMAGENT`, FAT, with the agent, its README and its sums, the agent
+  of the slot's digest (read on the target).
+- "Start the agent" connects within 10 s: by the operator's word ("да"),
+  the agent started from the drive (`H:\hardened-blikvm-agent.exe`) and
+  connected (`evidence/private/agent-20261014/gate5-watch-93.txt`).
+- The sign-in start surviving a restart of the target: to be checked
+  last, as the restart also ends this session on the target.
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
