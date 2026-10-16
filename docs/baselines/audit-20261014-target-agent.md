@@ -234,7 +234,7 @@ pressed modifier white on white, and did not send the Russian layout's
 letters (`911001d`); the Monitors menu's choice of the board's monitor
 wrapped under its line on a phone (`d9cd653`).
 
-## Gate 5 so far (2026-10-16)
+## Gate 5 (2026-10-16)
 
 - The read-only agent's drive appears with the switch on: `H:\`,
   `BLIKVMAGENT`, FAT, with the agent, its README and its sums, the agent
@@ -242,8 +242,16 @@ wrapped under its line on a phone (`d9cd653`).
 - "Start the agent" connects within 10 s: by the operator's word ("да"),
   the agent started from the drive (`H:\hardened-blikvm-agent.exe`) and
   connected (`evidence/private/agent-20261014/gate5-watch-93.txt`).
-- The sign-in start surviving a restart of the target: to be checked
-  last, as the restart also ends this session on the target.
+- The sign-in start: chosen by the operator; read on the target, the
+  user's Run key names the program kept in the user's local application
+  folder (`HardenedBliKVM\hardened-blikvm-agent.exe`, the agent of
+  slot 92, `465934e2…`, kept when the operator turned the item on). Its
+  surviving a restart of the target was not checked: Windows had last
+  started before the item was turned on, and the operator skipped the
+  restart ("пропустим верификацию перезагрузки", 2026-10-16).
+
+Gate 5 passed for the drive and "Start the agent"; the sign-in start's
+restart is recorded as skipped at the operator's word, not as shown.
 
 ## Slot 95, and the board as found (2026-10-16)
 

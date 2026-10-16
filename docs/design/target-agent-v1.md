@@ -274,5 +274,6 @@ operator's choice (gate 2); the absolute mouse on the board's monitor at
 its corners and middle from a desktop and a phone, with no layout set by
 hand (gate 3); the actions, a monitors' change without a picture undone
 by itself among them (gate 4); and the drive and "Start the agent"
-(gate 5). The final slot is 95; no system part changed, so no card image
+(gate 5; the sign-in start's surviving a restart was skipped at the
+operator's word). The final slot is 95; no system part changed, so no card image
 or RAW bundle goes with it.
