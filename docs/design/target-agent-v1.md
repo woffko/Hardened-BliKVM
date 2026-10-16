@@ -260,3 +260,19 @@ The agent's side of the protocol (`client.rs`) and the names it gives
   stored or logged.
 - "Start the agent" types into the target, as the operator's keyboard
   would, only after a confirmation and under the lease.
+
+## What was shown on the test board
+
+The gates of `docs/baselines/work-plan-20261014-target-agent.md` were
+checked on the operator's target, Windows 11 Pro for Workstations 26H2
+with two monitors of one EDID, and are recorded with their evidence in
+`docs/baselines/audit-20261014-target-agent.md`: the reproducible build
+(gate 0); the channel, its round trip of 2 ms and its return within a
+second after a media change (gate 1); the reads, matching Windows'
+settings, and the finding that the board's monitor must be the
+operator's choice (gate 2); the absolute mouse on the board's monitor at
+its corners and middle from a desktop and a phone, with no layout set by
+hand (gate 3); the actions, a monitors' change without a picture undone
+by itself among them (gate 4); and the drive and "Start the agent"
+(gate 5). The final slot is 95; no system part changed, so no card image
+or RAW bundle goes with it.

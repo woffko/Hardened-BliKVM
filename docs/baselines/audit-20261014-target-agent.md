@@ -245,6 +245,31 @@ wrapped under its line on a phone (`d9cd653`).
 - The sign-in start surviving a restart of the target: to be checked
   last, as the restart also ends this session on the target.
 
+## Slot 95, and the board as found (2026-10-16)
+
+`scripts/check.sh` passed on `8dfb152`
+(`evidence/private/agent-20261014/check-8dfb152.log`). Slot 95
+(`8dfb152`, bundle
+`3e42665f8248af12d3d387ac77044d8fe39083b023d2508cf4024e28a6657aec`, the
+agent `b399fbcc14a7ef2ac481c847dbd95725a0b3a435d82b46a48fefdd880c54ecad`)
+carries the on-screen keyboard's and the Monitors menu's fixes; it was
+installed at the operator's word ("как проверишь так и ставь") and
+confirmed (`evidence/private/update-to-seq95-agent.json`): no unit
+failed, the image on LUN 0, the agent's drive on LUN 1, the switch on and
+the agent connected again by itself.
+
+The board's state as its API reports it, against the state before the
+work (`evidence/private/agent-20261014/state-before-87.json`,
+`state-now-95.json`): the account, the administration features (RAW
+updates on, as found), the autostart, the image catalog, DNS, the
+firewall (baseline), the hostname, the jiggler, mDNS, RAW, the screen
+and video settings, the session lock, SSH, Tailscale, the transport,
+Wi-Fi and Wake-on-LAN are as found. What differs: the application slot
+(95 in place of 86), the new `target_agent` feature with its switch on as
+the operator left it, the operator's image attached by the operator, and
+the board's temporary IPv6 addresses and clock, which change by
+themselves.
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
