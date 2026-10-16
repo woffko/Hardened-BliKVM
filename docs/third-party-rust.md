@@ -278,3 +278,16 @@ An application release; the lock is beta.4's (315 packages, unchanged).
 1,296 advisories), reports the same one advisory, RUSTSEC-2026-0009 in
 `time` 0.3.45, linked only into `bli-kvm-quic-gateway`, which is part of
 the system (beta.4's update runtime `0.1.0~dev38`), not of this bundle.
+
+## RustSec scan for 0.1.0-beta.7 (2026-10-16)
+
+An application release, with the target agent's Windows program beside it;
+0.1.0-beta.6 was a development slot of the test board and was not
+published. The lock has 317 packages: since beta.5 the workspace gained the
+agent's protocol (`bli-kvm-agent-protocol`) and the agent
+(`bli-kvm-target-agent`); no external package was added (the agent's
+`windows-sys` was already locked). `cargo audit --deny warnings`, run
+without fetching (the database as fetched on 2026-10-09, 1,296 advisories),
+reports the same one advisory, RUSTSEC-2026-0009 in `time` 0.3.45, linked
+only into `bli-kvm-quic-gateway`, which is part of the system (beta.4's
+update runtime `0.1.0~dev38`), not of this bundle nor of the agent.
