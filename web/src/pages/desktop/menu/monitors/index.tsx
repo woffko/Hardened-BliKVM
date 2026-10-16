@@ -71,13 +71,13 @@ export const Monitors = () => {
                   : t(`settings.device.targetAgent.displays.${now}`)
             })}
           </span>
-          <ul className="flex flex-col space-y-1 text-xs text-neutral-300">
+          <ul className="m-0 flex list-none flex-col space-y-1 p-0 text-xs text-neutral-300">
             {monitors.map((monitor) => (
               <li
                 key={monitor.id || `${monitor.x},${monitor.y}`}
-                className="flex flex-wrap items-center gap-x-2"
+                className="flex items-center justify-between gap-2"
               >
-                <span>
+                <span className="min-w-0 flex-1">
                   {t('settings.device.targetAgent.monitor', {
                     name: monitor.name || monitor.maker,
                     width: monitor.width,
@@ -91,7 +91,7 @@ export const Monitors = () => {
                   <Button
                     size="small"
                     type="link"
-                    className="px-0"
+                    className="h-auto shrink-0 px-0 text-xs"
                     disabled={displays.busy}
                     onClick={() => void displays.chooseBoard(monitor.id!)}
                   >

@@ -40,6 +40,22 @@ const ESTONIAN = {
   language: "et-EE",
   name: "Estonian (Estonia) - Estonian",
 };
+// Two monitors with one EDID, as the operator's are: the right one the
+// board's.
+const monitor = (x, board) => ({
+  id: x === 0 ? "00000000000000a1" : "00000000000000b2",
+  name: "BenQ LCD",
+  maker: "BNQ",
+  product: 0x8024,
+  x,
+  y: 0,
+  width: 2560,
+  height: 1440,
+  refresh_millihertz: 59951,
+  primary: x === 0,
+  scale: 100,
+  board,
+});
 // A key pressed, then all keys up.
 const typed = (modifier, usage) => [
   [modifier, 0, usage, 0, 0, 0, 0, 0],
@@ -114,7 +130,7 @@ async function open({ follow, installed = [ENGLISH, RUSSIAN] }) {
       call === "keyboard"
         ? { keyboard: { current, installed } }
         : call === "monitors"
-          ? { monitors: [] }
+          ? { monitors: [monitor(0, false), monitor(2560, true)] }
           : "done";
     return route.fulfill({
       json: { code: 0, data: { answer, roundTripUs: 3000 } },
@@ -295,6 +311,29 @@ try {
     assert.ok(await eventually(() => reports(sent.slice(more)).length >= 4));
     await page.waitForTimeout(300);
     assert.deepEqual(layoutCalls(sent), [{ set_layout: { id: ESTONIAN.id } }]);
+
+    // The Monitors menu on a phone: "This is the board's" on the line of
+    // the monitor it names, right of its text.
+    await page.locator("svg.lucide-monitor-cog").first().tap();
+    const row = page
+      .getByTestId("agent-monitors")
+      .locator("li")
+      .filter({ hasText: "BenQ LCD: 2560x1440 at 0,0" });
+    // Measured once the menu has opened to its size.
+    const button = row.getByRole("button", { name: "This is the board's" });
+    await button.waitFor();
+    let text = null;
+    await eventually(async () => {
+      text = await row.locator("span").first().boundingBox();
+      return text?.width > 0;
+    });
+    const choose = await button.boundingBox();
+    assert.ok(
+      choose.x >= text.x + text.width - 1 &&
+        choose.y + choose.height / 2 > text.y &&
+        choose.y + choose.height / 2 < text.y + text.height,
+      `the choice at ${JSON.stringify(choose)}, the line at ${JSON.stringify(text)}`,
+    );
     assert.deepEqual(errors, []);
     await context.close();
   }

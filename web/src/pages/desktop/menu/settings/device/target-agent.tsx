@@ -141,13 +141,16 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
           </span>
         )}
         {state?.agent && monitors && (
-          <ul className="text-xs text-neutral-400" data-testid="target-agent-monitors">
+          <ul
+            className="m-0 list-none p-0 text-xs text-neutral-400"
+            data-testid="target-agent-monitors"
+          >
             {monitors.map((monitor) => (
               <li
                 key={monitor.id || `${monitor.x},${monitor.y}`}
-                className="flex flex-wrap items-center gap-x-2"
+                className="flex items-center justify-between gap-2"
               >
-                <span>
+                <span className="min-w-0 flex-1">
                   {t('settings.device.targetAgent.monitor', {
                     name: monitor.name || monitor.maker,
                     width: monitor.width,
@@ -161,7 +164,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
                   <Button
                     size="small"
                     type="link"
-                    className="px-0"
+                    className="h-auto shrink-0 px-0 text-xs"
                     disabled={readOnly || displays.busy}
                     onClick={() => void displays.chooseBoard(monitor.id!)}
                   >
