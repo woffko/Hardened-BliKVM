@@ -305,6 +305,7 @@ pub fn monitors() -> Vec<Monitor> {
             board: false,
         });
     }
+    names::one_primary(&mut monitors);
     names::mark_board_monitor(
         &mut monitors,
         names::BOARD_CAPTURE_EDIDS,

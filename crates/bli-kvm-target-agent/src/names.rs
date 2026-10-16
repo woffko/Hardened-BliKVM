@@ -95,6 +95,19 @@ pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)], chose
     }
 }
 
+/// One primary monitor: duplicated monitors share the primary desktop's
+/// place, and only the first of them is said to be the primary one (the
+/// protocol has at most one).
+pub fn one_primary(monitors: &mut [Monitor]) {
+    let mut seen = false;
+    for monitor in monitors {
+        if monitor.primary {
+            monitor.primary = !seen;
+            seen = true;
+        }
+    }
+}
+
 /// The top left corner of the box around monitors at `places` (each
 /// monitor's top left corner): the desktop's origin once only those are
 /// left. None without a monitor.
@@ -296,6 +309,27 @@ mod tests {
         let mut twins = vec![monitor("BNQ", 0x8024, 0), monitor("BNQ", 0x8024, 2560)];
         mark_board_monitor(&mut twins, &[], Some("0123456789abcdef"));
         assert!(twins.iter().all(|m| !m.board));
+    }
+
+    #[test]
+    fn duplicated_monitors_have_one_primary() {
+        // Duplicated: both at the origin, as Windows gives them.
+        let mut twins = vec![monitor("BNQ", 0x8024, 0), monitor("BNQ", 0x8024, 0)];
+        assert!(twins.iter().all(|m| m.primary));
+        one_primary(&mut twins);
+        assert_eq!(
+            twins.iter().map(|m| m.primary).collect::<Vec<_>>(),
+            [true, false]
+        );
+        // Their ids differ, so the desktop is valid once one is primary.
+        twins[1].id = monitor_id(r"\\?\DISPLAY#BNQ8024#UID4353");
+        assert!(bli_kvm_agent_protocol::reads::monitors_are_valid(&twins));
+        let mut extended = vec![monitor("DEL", 1, 0), monitor("DEL", 1, 2560)];
+        one_primary(&mut extended);
+        assert_eq!(
+            extended.iter().map(|m| m.primary).collect::<Vec<_>>(),
+            [true, false]
+        );
     }
 
     #[test]
