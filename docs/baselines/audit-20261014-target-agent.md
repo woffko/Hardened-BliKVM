@@ -278,6 +278,35 @@ the operator left it, the operator's image attached by the operator, and
 the board's temporary IPv6 addresses and clock, which change by
 themselves.
 
+## The release 0.1.0-beta.7 (2026-10-16)
+
+At the operator's word ("делай выпуск"): the GitHub pre-release
+[0.1.0-beta.7](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.7),
+an application release for boards on beta.4's system, with the annotated
+tag `v0.1.0-beta.7` on `3b66c1d` (the RustSec record; the commits after
+slot 95's source `8dfb152` add only documents and device probes). Its
+files, as published and as built here:
+
+- `hardened-blikvm-application-0.1.0-beta.7-seq95.tar`:
+  `3e42665f8248af12d3d387ac77044d8fe39083b023d2508cf4024e28a6657aec`;
+- `hardened-blikvm-agent.exe` (from the slot, the same bytes as on the
+  board's drive, not signed as the operator decided):
+  `b399fbcc14a7ef2ac481c847dbd95725a0b3a435d82b46a48fefdd880c54ecad`;
+- `SHA256SUMS`:
+  `419a9bade9bd64e667f51d9e8272ae528ac18176d10e774b5023ea9d0b139477`.
+
+No system part changed, so there is no card image or RAW bundle. Checked
+on the test board with slot 95, read only and without the HID lease:
+the GUI walked at a desktop's and a phone's size without an API error
+(`evidence/private/rel-beta7-walk-*.json`), H.264 and VP8 over WebRTC
+(`rel-beta7-webrtc-*.json`), the H.264 picture over QUIC and the phone's
+screen layout (`rel-beta7-quic-video-2.json`, `rel-beta7-touch-reach-2.json`;
+their first runs failed only on the page's read of the desktop layout,
+which the probes now allow, `cc68e2e`). `scripts/check.sh` passed on
+`63d956d`; `cargo audit` as recorded in `docs/third-party-rust.md`. The
+notes of beta.5 now begin with "Superseded by 0.1.0-beta.7". The board is
+on slot 95, as found otherwise (above).
+
 ## The operator's decisions (2026-10-14)
 
 - The actions of phase 4: all four the plan offers (the keyboard layout,
