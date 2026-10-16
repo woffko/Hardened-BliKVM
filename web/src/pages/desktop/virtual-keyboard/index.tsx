@@ -66,6 +66,8 @@ export const VirtualKeyboard = () => {
   useAgentLayoutSync(keyboardLanguage, isKeyboardOpen);
 
   const keyboardRef = useRef<any>(null);
+  // A key is down: a finger's up, leave and cancel each let it go, once.
+  const keyDownRef = useRef(false);
   // On the touch layout the keyboard covers the bottom of the page; its
   // height lets the screen be laid out above it.
   const touchKeyboardRef = useRef<HTMLDivElement | null>(null);
@@ -112,12 +114,15 @@ export const VirtualKeyboard = () => {
     setKeyboardLayout('default');
   }, [keyboardSystem, keyboardLanguage]);
 
-  // Press key
+  // A modifier tapped stays pressed for the next key; tapped again, the
+  // modifiers pressed are pressed and let go alone (the Windows key opens
+  // Start).
   function onKeyPress(key: string) {
     if (modifierKeys.includes(key)) {
       if (activeModifierKeys.includes(key)) {
-        sendModifierKeyDown();
-        sendModifierKeyUp();
+        send(modifierBits(activeModifierKeys), 0);
+        send(0, 0);
+        setActiveModifierKeys([]);
       } else {
         setActiveModifierKeys([...activeModifierKeys, key]);
       }
@@ -136,7 +141,13 @@ export const VirtualKeyboard = () => {
     sendKeyup();
   }
 
-  // Send all keys
+  // The modifiers as the report's first byte: a modifier is never a key in
+  // its key array, which the board refuses.
+  function modifierBits(keys: string[]) {
+    return keys.reduce((bits, key) => bits | getModifierBit(specialKeyMap.get(key) ?? ''), 0);
+  }
+
+  // The modifiers pressed go down before the key, as on a keyboard.
   function sendKeydown(key: string) {
     const code = getKeyboardCode(key);
     if (!code) {
@@ -144,9 +155,10 @@ export const VirtualKeyboard = () => {
       return;
     }
 
-    const modifier = sendModifierKeyDown();
-
+    const modifier = modifierBits(activeModifierKeys);
+    if (modifier) send(modifier, 0);
     send(modifier, code);
+    keyDownRef.current = true;
   }
 
   function getKeyboardCode(key: string) {
@@ -180,6 +192,13 @@ export const VirtualKeyboard = () => {
       return getKeycode(base);
     }
 
+    // Russian keys are the US keys at their places: RusQ is KeyQ, and
+    // RusBracketLeft is BracketLeft.
+    if (key.startsWith('Rus')) {
+      const base = key.slice('Rus'.length);
+      return getKeycode(base.length === 1 ? `Key${base}` : base);
+    }
+
     const specialKey = specialKeyMap.get(key);
     if (specialKey) {
       return getKeycode(specialKey);
@@ -188,37 +207,15 @@ export const VirtualKeyboard = () => {
     return getKeycode(key);
   }
 
-  // Release all keys
+  // The key up, then the modifiers it was pressed with, which are then
+  // let go.
   function sendKeyup() {
-    sendModifierKeyUp();
+    if (!keyDownRef.current) return;
+    keyDownRef.current = false;
+    const modifier = modifierBits(activeModifierKeys);
+    if (modifier) send(modifier, 0);
     send(0, 0);
-  }
-
-  // Send modifier keys
-  function sendModifierKeyDown() {
-    let modifier = 0;
-
-    activeModifierKeys.forEach((modifierKey) => {
-      const key = specialKeyMap.get(modifierKey)!;
-
-      modifier |= getModifierBit(key)!;
-      const code = getKeycode(key)!;
-
-      send(modifier, code);
-    });
-
-    return modifier;
-  }
-
-  // Release modifier keys
-  function sendModifierKeyUp() {
-    if (activeModifierKeys.length === 0) return;
-
-    activeModifierKeys.forEach(() => {
-      send(0, 0);
-    });
-
-    setActiveModifierKeys([]);
+    if (activeModifierKeys.length > 0) setActiveModifierKeys([]);
   }
 
   function send(modifier: number, code: number) {
@@ -350,9 +347,13 @@ export const VirtualKeyboard = () => {
                     key={`${row}-${key}`}
                     type="button"
                     className={clsx(
-                      'flex h-10 select-none items-center justify-center rounded bg-white px-2 text-center text-sm shadow-sm active:bg-blue-100',
+                      'flex h-10 select-none items-center justify-center rounded px-2 text-center text-sm shadow-sm',
                       getMobileButtonClass(key),
-                      activeModifierKeys.includes(key) && 'bg-blue-600 text-white'
+                      // One background each: a pressed modifier is white on
+                      // blue, not on the white it would also have.
+                      activeModifierKeys.includes(key)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white active:bg-blue-100'
                     )}
                     onPointerDown={(event) => {
                       event.preventDefault();

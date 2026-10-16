@@ -264,6 +264,7 @@ node --check tools/playwright/upscale_colour_device_probe.mjs
 node --check tools/playwright/theme_contract.mjs
 node --check tools/playwright/mobile_keys_contract.mjs
 node --check tools/playwright/touch_screen_reach_contract.mjs
+node --check tools/playwright/on_screen_keyboard_contract.mjs
 node --check tools/playwright/quic_fixture.mjs
 node --check tools/playwright/quic_transport_contract.mjs
 node --check tools/playwright/quic_transport_device_probe.mjs
@@ -959,6 +960,7 @@ node tools/playwright/quality_monitor_contract.mjs
 node tools/playwright/theme_contract.mjs
 node tools/playwright/mobile_keys_contract.mjs
 node tools/playwright/touch_screen_reach_contract.mjs
+node tools/playwright/on_screen_keyboard_contract.mjs
 # The page against the host's build of the gateway, and input through the
 # host's builds of the gateway and the server.
 cargo build --locked -p bli-kvm-quic-gateway -p bli-kvm-server
