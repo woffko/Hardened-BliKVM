@@ -289,4 +289,33 @@ commits say how) and passes after; the work's log is
   values) read again after F3 differs from the one read before slot 96
   only in the slot (96 confirmed, 95 the previous) and the clock; the
   agent's switch is on as the operator left it, and the agent connected.
-  No release was asked for.
+  The release was asked for afterwards (below).
+
+## The release 0.1.0-beta.8 (2026-10-17)
+
+At the operator's word ("выпуск конечно"): the GitHub pre-release
+[0.1.0-beta.8](https://github.com/woffko/Hardened-BliKVM/releases/tag/v0.1.0-beta.8),
+an application release for boards on beta.4's system, with the annotated
+tag `v0.1.0-beta.8` on `2e406ac` (the RustSec record; the commits after
+slot 96's source `cc60094` add only documents). Its files, as published
+and as built here:
+
+- `hardened-blikvm-application-0.1.0-beta.8-seq96.tar`:
+  `6152cc8dc874b689ea570b2a89e2f93d812968ed08c4679a55901a1b08b8ff70`;
+- `hardened-blikvm-agent.exe` (from the slot, the same bytes as on the
+  board's drive and in the target's sign-in copy, not signed):
+  `5387551047879ddf4d2d3dac19f65f86ceaa01cb20bdc2fe6d7fe5e4f1eeb929`;
+- `SHA256SUMS`:
+  `0fe835a86496538455d364a665736aa310e42b81f819e343437b89950fdec715`.
+
+No system part changed, so there is no card image or RAW bundle; the
+board's and the target's checks are gate F's (above). `scripts/check.sh`
+passed on the source `cc60094` and on `682850e`, the plan's last record:
+there every step passed up to the QUIC video contract, which failed in the
+full run and on its first try again ("frames drawn over the lossy path",
+a flake known under load, at a load of 20 to 30 from other sessions' jobs)
+and passed on its second, and every step after it passed. `cargo audit`
+as recorded in `docs/third-party-rust.md`: beta.4's advisory in `time` and
+four newer ones in `rustls`, all in the QUIC gateway of beta.4's system
+and none reachable there. The notes of beta.7 now begin with "Superseded
+by 0.1.0-beta.8". The board is on slot 96, as found otherwise (above).
