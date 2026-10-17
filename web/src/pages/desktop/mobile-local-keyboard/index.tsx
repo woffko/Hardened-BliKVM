@@ -27,7 +27,7 @@ import { isKeyboardEnableAtom, isLocalKeyboardOpenAtom } from '@/jotai/keyboard.
 import { focusConfirmedAtom } from '@/jotai/restricted-control.ts';
 import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
-import { layoutSwitched, readAgentKeyboard } from '@/hooks/useTargetAgent.ts';
+import { readAgentKeyboard, switchTargetLayout } from '@/hooks/useTargetAgent.ts';
 
 import { MOBILE_LOCAL_KEYBOARD_INPUT_ID } from './controls.ts';
 import { KeyHelper } from './key-helper.tsx';
@@ -174,10 +174,7 @@ export const MobileLocalKeyboard = () => {
     const store = getDefaultStore();
     if (store.get(agentKeyboardAtom)?.current?.id === layout.id) return;
     // The agent's call is made under the lease the keys are typed under.
-    hold();
-    await drained();
-    await targetAgent.askTargetAgent({ set_layout: { id: layout.id } });
-    layoutSwitched(layout);
+    await switchTargetLayout(layout, hold, drained);
     await new Promise((resolve) => setTimeout(resolve, LAYOUT_SWITCH_MS));
   }
 

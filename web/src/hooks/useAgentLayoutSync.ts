@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { getDefaultStore, useAtomValue } from 'jotai';
 
-import * as api from '@/api/target-agent.ts';
 import { agentKeyboardAtom, agentLayoutSyncAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
-import { layoutSwitched } from '@/hooks/useTargetAgent.ts';
+import { switchTargetLayout } from '@/hooks/useTargetAgent.ts';
 
 /** Whether a layout's language tag is `language` ("ru" for "ru-RU"). */
 export function speaks(tag: string, language: string): boolean {
@@ -25,10 +24,7 @@ async function switchTo(language: string, hold: () => void, drained: () => Promi
   if (!wanted) return;
   // Under the keyboard's and mouse's lease, as every call to the agent is:
   // taken without input if no key took it yet.
-  hold();
-  await drained();
-  await api.askTargetAgent({ set_layout: { id: wanted.id } });
-  layoutSwitched(wanted);
+  await switchTargetLayout(wanted, hold, drained);
 }
 
 /**

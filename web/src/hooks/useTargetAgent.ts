@@ -23,6 +23,22 @@ export function layoutSwitched(layout: api.AgentLayout) {
 }
 
 /**
+ * Switches the target's layout to `layout` under the keyboard's and
+ * mouse's lease (`hold`, then what is queued `drained`), as the typing
+ * paths do, and says so in the page's state.
+ */
+export async function switchTargetLayout(
+  layout: api.AgentLayout,
+  hold: () => void,
+  drained: () => Promise<void>
+) {
+  hold();
+  await drained();
+  await api.askTargetAgent({ set_layout: { id: layout.id } });
+  layoutSwitched(layout);
+}
+
+/**
  * The target's layouts read now, and kept unless `keep` says otherwise or
  * the page switched the layout while the read was on its way: the agent may
  * have read them before the switch.
