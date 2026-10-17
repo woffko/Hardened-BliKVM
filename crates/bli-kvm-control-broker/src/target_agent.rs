@@ -303,6 +303,13 @@ impl Session {
         self.fail_pending(CallError::NotConnected);
     }
 
+    /// A request that did not reach the agent: its call ends now.
+    fn fail(&mut self, id: u32, error: CallError) {
+        if let Some((_, reply)) = self.pending.remove(&id) {
+            let _ = reply.send(Err(error));
+        }
+    }
+
     fn fail_pending(&mut self, error: CallError) {
         for (_, (_, reply)) in self.pending.drain() {
             let _ = reply.send(Err(error.clone()));
@@ -408,8 +415,9 @@ struct Channel {
     session: Session,
     reader: Reader,
     writer: Writer,
-    /// Reports waiting for the target, and when the first of them was due.
-    queue: VecDeque<[u8; REPORT_BYTES]>,
+    /// Reports waiting for the target, each with the call whose request it
+    /// carries, and when the first of them was due.
+    queue: VecDeque<([u8; REPORT_BYTES], Option<u32>)>,
     queued_since: Option<Instant>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
     counters: (u64, u64, u64),
@@ -422,21 +430,7 @@ async fn run(
     mut commands: mpsc::Receiver<Command>,
     snapshot: Arc<Mutex<AgentSnapshot>>,
 ) {
-    let mut channel = Channel {
-        opener,
-        device: None,
-        wanted: false,
-        paused: 0,
-        retry_at: None,
-        session: Session::new(board),
-        reader: Reader::new(),
-        writer: Writer::new(),
-        queue: VecDeque::new(),
-        queued_since: None,
-        snapshot,
-        counters: (0, 0, 0),
-        problem: None,
-    };
+    let mut channel = Channel::new(opener, board, snapshot);
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -469,7 +463,7 @@ async fn run(
             ready = async { writing.unwrap().writable().await }, if writing.is_some() => {
                 match ready {
                     Ok(mut guard) => {
-                        let report = channel.queue[0];
+                        let report = channel.queue[0].0;
                         match guard.try_io(|device| device.get_ref().write(&report)) {
                             Ok(Ok(_)) => channel.written(),
                             Ok(Err(error)) => channel.fail(format!("the agent's device could not be written: {error}")),
@@ -488,6 +482,24 @@ async fn run(
 }
 
 impl Channel {
+    fn new(opener: Opener, board: Hello, snapshot: Arc<Mutex<AgentSnapshot>>) -> Self {
+        Self {
+            opener,
+            device: None,
+            wanted: false,
+            paused: 0,
+            retry_at: None,
+            session: Session::new(board),
+            reader: Reader::new(),
+            writer: Writer::new(),
+            queue: VecDeque::new(),
+            queued_since: None,
+            snapshot,
+            counters: (0, 0, 0),
+            problem: None,
+        }
+    }
+
     fn command(&mut self, command: Command) {
         match command {
             Command::Want(wanted, done) => {
@@ -545,14 +557,16 @@ impl Channel {
     }
 
     /// Closes the device; `forget` ends the agent's session too (the
-    /// switch is off, or the device failed).
+    /// switch is off, or the device failed). A call whose request has gone
+    /// to the target waits for its answer: a gadget's change may leave the
+    /// device where it was.
     fn close(&mut self, forget: bool) {
         self.device.take();
         if forget {
             self.session.reset();
         }
         self.reader = Reader::new();
-        self.drop_queue();
+        self.drop_queue(CallError::NotConnected);
     }
 
     fn fail(&mut self, problem: String) {
@@ -574,20 +588,40 @@ impl Channel {
         }
     }
 
+    /// Queues a message for the target. A request that cannot go ends its
+    /// call now rather than at the call's deadline.
     fn send(&mut self, message: &Message) {
-        if self.device.is_none() || self.queue.len() >= MAX_QUEUED_MESSAGES * 4 {
-            self.counters.2 += 1;
-            return;
-        }
-        match self.writer.reports(message) {
-            Ok(reports) => {
-                if self.queue.is_empty() {
-                    self.queued_since = Some(Instant::now());
+        let call = match message {
+            Message::Request { id, .. } => Some(*id),
+            _ => None,
+        };
+        let unsent = if self.device.is_none() {
+            // Closed for a gadget's change: no agent can be reached.
+            Some(CallError::NotConnected)
+        } else if self.queue.len() >= MAX_QUEUED_MESSAGES * 4 {
+            Some(CallError::TimedOut)
+        } else {
+            match self.writer.reports(message) {
+                Ok(reports) => {
+                    if self.queue.is_empty() {
+                        self.queued_since = Some(Instant::now());
+                    }
+                    self.queue
+                        .extend(reports.into_iter().map(|report| (report, call)));
+                    self.counters.1 += 1;
+                    None
                 }
-                self.queue.extend(reports);
-                self.counters.1 += 1;
+                Err(error) => Some(CallError::Failed(agent_reason(
+                    &format!("the board could not write the call: {error}"),
+                    "the board could not write the call",
+                ))),
             }
-            Err(_) => self.counters.2 += 1,
+        };
+        if let Some(error) = unsent {
+            self.counters.2 += 1;
+            if let Some(id) = call {
+                self.session.fail(id, error);
+            }
         }
     }
 
@@ -602,15 +636,21 @@ impl Channel {
             .queued_since
             .is_some_and(|since| since.elapsed() > WRITE_TIMEOUT)
         {
-            self.drop_queue();
+            self.drop_queue(CallError::TimedOut);
         }
     }
 
-    fn drop_queue(&mut self) {
+    /// Drops what waits for the target; the calls whose requests go with it
+    /// end with `error`.
+    fn drop_queue(&mut self, error: CallError) {
         if !self.queue.is_empty() {
             self.counters.2 += 1;
         }
-        self.queue.clear();
+        for (_, call) in self.queue.drain(..) {
+            if let Some(id) = call {
+                self.session.fail(id, error.clone());
+            }
+        }
         self.queued_since = None;
     }
 
@@ -942,6 +982,87 @@ mod tests {
             channel.snapshot().problem.as_deref(),
             Some("the device is gone")
         );
+    }
+
+    /// A channel with its device open and an agent connected; nothing
+    /// writes its queue here, so what it sends waits there.
+    fn connected_channel() -> (Channel, tokio::net::UnixDatagram) {
+        let (opener, target) = device();
+        let mut channel = Channel::new(opener, board_hello(), Arc::default());
+        channel.command(Command::Want(true, oneshot::channel().0));
+        for report in Writer::new()
+            .reports(&Message::Hello(agent_hello()))
+            .unwrap()
+        {
+            channel.report(&report);
+        }
+        assert!(channel.device.is_some() && channel.session.agent.is_some());
+        (channel, target)
+    }
+
+    fn call(channel: &mut Channel) -> oneshot::Receiver<Result<Answer, CallError>> {
+        let (reply, answer) = oneshot::channel();
+        channel.command(Command::Call {
+            call: Call::Ping,
+            reply,
+        });
+        answer
+    }
+
+    #[tokio::test]
+    async fn a_call_whose_request_cannot_go_ends_at_once() {
+        // Sent while the device is closed for a gadget's change: the agent
+        // is kept, and nothing can reach it until the device is back.
+        let (opener, target) = device();
+        let channel = AgentChannel::start_with(opener, board_hello());
+        channel.want(true).await;
+        let (mut writer, mut reader) = (Writer::new(), Reader::new());
+        send(&target, &mut writer, &Message::Hello(agent_hello())).await;
+        assert_eq!(
+            receive(&target, &mut reader).await,
+            Message::Hello(board_hello())
+        );
+        channel.pause().await;
+        assert_eq!(channel.snapshot().agent, Some(agent_hello()));
+        let started = Instant::now();
+        assert_eq!(
+            channel.call(Call::Ping, Duration::from_secs(5)).await,
+            Err(CallError::NotConnected)
+        );
+        assert!(started.elapsed() < Duration::from_millis(100));
+
+        // Queued when a pause comes: the pause drops it.
+        let (mut channel, _target) = connected_channel();
+        let mut answer = call(&mut channel);
+        assert_eq!(answer.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+        channel.command(Command::Pause(oneshot::channel().0));
+        assert_eq!(answer.try_recv(), Ok(Err(CallError::NotConnected)));
+
+        // Queued for a target that takes nothing in time, or behind a full
+        // queue: the call has timed out already.
+        let (mut channel, _target) = connected_channel();
+        let mut answer = call(&mut channel);
+        channel.queued_since = Instant::now().checked_sub(WRITE_TIMEOUT * 2);
+        channel.expire();
+        assert_eq!(answer.try_recv(), Ok(Err(CallError::TimedOut)));
+        let (mut channel, _target) = connected_channel();
+        for id in 0..MAX_QUEUED_MESSAGES * 4 {
+            channel.send(&Message::Answer {
+                id: u32::try_from(id).unwrap(),
+                answer: Answer::Pong,
+            });
+        }
+        let mut answer = call(&mut channel);
+        assert_eq!(answer.try_recv(), Ok(Err(CallError::TimedOut)));
+
+        // A request already with the target waits for its answer.
+        let (mut channel, _target) = connected_channel();
+        let mut answer = call(&mut channel);
+        while !channel.queue.is_empty() {
+            channel.written();
+        }
+        channel.command(Command::Pause(oneshot::channel().0));
+        assert_eq!(answer.try_recv(), Err(oneshot::error::TryRecvError::Empty));
     }
 
     #[test]
