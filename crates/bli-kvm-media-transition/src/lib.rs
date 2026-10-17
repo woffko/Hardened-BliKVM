@@ -333,9 +333,21 @@ impl GadgetMediaExecutor {
     /// keeps gadgets built later so. A present gadget is changed in place
     /// (`bli_kvm_usb_gadget::replace_hid_function`): the target sees the
     /// whole device leave and come back, and an attached image stays
-    /// attached. Returns whether anything changed.
+    /// attached. Returns whether anything changed. A change that fails
+    /// leaves gadgets built later as they were: the owner puts its switch
+    /// back too, and the collection is never offered against it.
     pub fn set_agent(&self, enabled: bool) -> Result<bool, MediaTransitionError> {
-        self.want_agent(enabled);
+        let was = self
+            .agent
+            .swap(enabled, std::sync::atomic::Ordering::SeqCst);
+        let result = self.change_agent(enabled);
+        if result.is_err() {
+            self.want_agent(was);
+        }
+        result
+    }
+
+    fn change_agent(&self, enabled: bool) -> Result<bool, MediaTransitionError> {
         if !self.config.configfs_root.is_dir() {
             return Err(MediaTransitionError::Backend);
         }
@@ -1079,6 +1091,37 @@ mod tests {
         assert!(executor.set_agent(false).unwrap());
         assert_eq!(absolute_mouse_report_id(&configfs), None);
         assert!(!executor.set_agent(false).unwrap());
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[test]
+    fn a_refused_agent_change_leaves_later_gadgets_as_before() {
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        std::fs::create_dir_all(&configfs).unwrap();
+        let config = gadget_config_for_test(directory.path(), "BLK-agent-refused");
+        let executor = GadgetMediaExecutor::new(config);
+
+        // No gadget yet, and one cannot be built: turning the agent on
+        // fails, and the gadget built afterwards (the lazy recovery of a
+        // HID request) has no agent's collection, as the switch says.
+        std::fs::write(configfs.join("hardened"), b"not a directory").unwrap();
+        assert!(executor.set_agent(true).is_err());
+        std::fs::remove_file(configfs.join("hardened")).unwrap();
+        assert!(executor.ensure_hid_gadget().unwrap());
+        assert_eq!(absolute_mouse_report_id(&configfs), None);
+
+        // The agent on, then a turn-off the gadget refuses: a gadget built
+        // from scratch afterwards still carries the collection.
+        assert!(executor.set_agent(true).unwrap());
+        assert_eq!(absolute_mouse_report_id(&configfs), Some(1));
+        let descriptor = configfs.join("hardened/functions/hid.usb1/report_desc");
+        std::fs::remove_file(&descriptor).unwrap();
+        std::fs::create_dir(&descriptor).unwrap();
+        assert!(executor.set_agent(false).is_err());
+        std::fs::remove_dir_all(configfs.join("hardened")).unwrap();
+        assert!(executor.ensure_hid_gadget().unwrap());
+        assert_eq!(absolute_mouse_report_id(&configfs), Some(1));
     }
 
     #[cfg(feature = "gadget-media-profile")]
