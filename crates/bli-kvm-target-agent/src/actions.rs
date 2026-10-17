@@ -224,16 +224,20 @@ fn topology(flag: u32) -> Result<(), String> {
     }
 }
 
-/// The active configuration with only the paths `keep` takes left active.
-fn only(mut config: DisplayConfig, keep: impl Fn(bool) -> bool) -> Result<DisplayConfig, String> {
-    let boards: Vec<bool> = config.paths.iter().map(reads::is_board).collect();
+/// The configuration with only the paths `keep` takes left active, `boards`
+/// saying which of its paths is the board's.
+fn only(
+    mut config: DisplayConfig,
+    boards: &[bool],
+    keep: impl Fn(bool) -> bool,
+) -> Result<DisplayConfig, String> {
     if !boards.contains(&true) {
         return Err("the board's monitor is not known among the target's".into());
     }
     if !boards.iter().any(|board| keep(*board)) {
         return Err("no monitor would be left".into());
     }
-    for (path, board) in config.paths.iter_mut().zip(boards) {
+    for (path, board) in config.paths.iter_mut().zip(boards.iter().copied()) {
         if !keep(board) {
             path.flags &= !DISPLAYCONFIG_PATH_ACTIVE;
             path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
@@ -277,10 +281,10 @@ fn only(mut config: DisplayConfig, keep: impl Fn(bool) -> bool) -> Result<Displa
     Ok(config)
 }
 
-/// The active configuration moved so that the board's monitor is at the
-/// desktop's origin, the primary one.
-fn board_primary(mut config: DisplayConfig) -> Result<DisplayConfig, String> {
-    let Some(path) = config.paths.iter().find(|path| reads::is_board(path)) else {
+/// The configuration moved so that the board's monitor is at the desktop's
+/// origin, the primary one; `boards` says which of its paths is the board's.
+fn board_primary(mut config: DisplayConfig, boards: &[bool]) -> Result<DisplayConfig, String> {
+    let Some((path, _)) = config.paths.iter().zip(boards).find(|(_, board)| **board) else {
         return Err("the board's monitor is not known among the target's".into());
     };
     // SAFETY: the union is the index of a source mode in this configuration.
@@ -310,19 +314,26 @@ fn board_primary(mut config: DisplayConfig) -> Result<DisplayConfig, String> {
 }
 
 /// Leaves active only the monitors `keep` takes: the board's or the
-/// others. When none of them is active (only the board's shows and the
-/// others are wanted, or the reverse), every monitor is first made active
-/// as Windows extends them, so that the one wanted can be kept; if keeping
-/// it then fails, `before` is put back at once.
-fn only_after_extending(before: &DisplayConfig, keep: impl Fn(bool) -> bool) -> Result<(), String> {
-    let read = || reads::active_config().ok_or("the monitors' configuration was not read");
-    let mut current = read()?;
-    let extended = !current.paths.iter().any(|path| keep(reads::is_board(path)));
-    if extended {
+/// others, from `before` as it was read (`boards` its board's paths). When
+/// none of them is active (only the board's shows and the others are
+/// wanted, or the reverse), every monitor is first made active as Windows
+/// extends them and the configuration read again, so that the one wanted
+/// can be kept; if keeping it then fails, `before` is put back at once.
+fn only_after_extending(
+    before: &DisplayConfig,
+    boards: &[bool],
+    keep: impl Fn(bool) -> bool,
+) -> Result<(), String> {
+    let extended = !boards.iter().any(|board| keep(*board));
+    let kept = if extended {
         topology(SDC_TOPOLOGY_EXTEND)?;
-        current = read()?;
+        let current = reads::active_config().ok_or("the monitors' configuration was not read")?;
+        let boards = reads::board_paths(&current);
+        only(current, &boards, keep)
+    } else {
+        only(before.clone(), boards, keep)
     }
-    let kept = only(current, keep).and_then(|config| apply(&config, 0));
+    .and_then(|config| apply(&config, 0));
     if kept.is_err() && extended {
         let _ = apply(before, 0);
     }
@@ -335,17 +346,16 @@ fn only_after_extending(before: &DisplayConfig, keep: impl Fn(bool) -> bool) -> 
 /// before the first (`Revert`, whose lock the change and its timer hold).
 pub fn set_displays(mode: DisplayMode) -> Result<u32, String> {
     let change = DISPLAYS.change(|| {
+        // Read once: the change is made from a copy of it, and the board's
+        // monitor resolved once for it.
         let before = reads::active_config().ok_or("the monitors' configuration was not read")?;
+        let boards = || reads::board_paths(&before);
         match mode {
             DisplayMode::Extend => topology(SDC_TOPOLOGY_EXTEND)?,
             DisplayMode::Duplicate => topology(SDC_TOPOLOGY_CLONE)?,
-            DisplayMode::BoardOnly => only_after_extending(&before, |board| board)?,
-            DisplayMode::OthersOnly => only_after_extending(&before, |board| !board)?,
-            DisplayMode::BoardPrimary => {
-                let current =
-                    reads::active_config().ok_or("the monitors' configuration was not read")?;
-                apply(&board_primary(current)?, 0)?;
-            }
+            DisplayMode::BoardOnly => only_after_extending(&before, &boards(), |board| board)?,
+            DisplayMode::OthersOnly => only_after_extending(&before, &boards(), |board| !board)?,
+            DisplayMode::BoardPrimary => apply(&board_primary(before.clone(), &boards())?, 0)?,
         }
         Ok(before)
     })?;

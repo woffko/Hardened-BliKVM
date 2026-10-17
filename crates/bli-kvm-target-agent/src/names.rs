@@ -77,27 +77,44 @@ pub fn layout_language(handle: usize) -> u16 {
     handle as u32 as u16
 }
 
-/// The board's monitor among the target's: the one the operator chose, and
-/// none while the chosen one is not active (the EDID does not stand in for
-/// the choice); without a choice, the one monitor with a known capture's
-/// EDID, and none when more than one has it, as they cannot be told apart.
-pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)], chosen: Option<&str>) {
-    let index = match chosen.filter(|id| !id.is_empty()) {
-        Some(id) => monitors.iter().position(|monitor| monitor.id == id),
+/// Which of the monitors named `targets` (each its id, EDID maker and
+/// product) is the board's: the one the operator chose, and none while the
+/// chosen one is not active (the EDID does not stand in for the choice);
+/// without a choice, the one monitor with a known capture's EDID, and none
+/// when more than one has it, as they cannot be told apart.
+pub fn board_among(
+    targets: &[(&str, &str, u16)],
+    known: &[(&str, u16)],
+    chosen: Option<&str>,
+) -> Option<usize> {
+    match chosen.filter(|id| !id.is_empty()) {
+        Some(id) => targets.iter().position(|(target, ..)| *target == id),
         None => {
-            let mut captures = monitors.iter().enumerate().filter_map(|(index, monitor)| {
-                known
+            let mut captures =
+                targets
                     .iter()
-                    .any(|(maker, product)| monitor.maker == *maker && monitor.product == *product)
-                    .then_some(index)
-            });
+                    .enumerate()
+                    .filter_map(|(index, (_, maker, product))| {
+                        known
+                            .iter()
+                            .any(|known| known == &(*maker, *product))
+                            .then_some(index)
+                    });
             match (captures.next(), captures.next()) {
                 (Some(index), None) => Some(index),
                 _ => None,
             }
         }
-    };
-    if let Some(index) = index {
+    }
+}
+
+/// The board's monitor among the target's (`board_among`).
+pub fn mark_board_monitor(monitors: &mut [Monitor], known: &[(&str, u16)], chosen: Option<&str>) {
+    let targets: Vec<(&str, &str, u16)> = monitors
+        .iter()
+        .map(|monitor| (monitor.id.as_str(), monitor.maker.as_str(), monitor.product))
+        .collect();
+    if let Some(index) = board_among(&targets, known, chosen) {
         monitors[index].board = true;
     }
 }
@@ -426,6 +443,29 @@ mod tests {
         let mut others = vec![monitor("DEL", 1, 0), monitor("MSI", 0x2131, 2560)];
         mark_board_monitor(&mut others, &[("MSI", 0x2131)], Some("0123456789abcdef"));
         assert!(others.iter().all(|m| !m.board));
+    }
+
+    #[test]
+    fn the_boards_path_is_found_among_a_configurations_names() {
+        // A configuration's paths, as the agent reads their names once for
+        // it: the chosen one, a known capture's, and one without a name.
+        let targets = [
+            ("9abc42403551965b", "BNQ", 0x8024),
+            ("2c671894401b98c6", "BNQ", 0x8024),
+            ("", "MSI", 0x2131),
+        ];
+        let known = [("MSI", 0x2131)];
+        assert_eq!(
+            board_among(&targets, &known, Some("2c671894401b98c6")),
+            Some(1)
+        );
+        assert_eq!(
+            board_among(&targets, &known, Some("0123456789abcdef")),
+            None
+        );
+        assert_eq!(board_among(&targets, &known, None), Some(2));
+        assert_eq!(board_among(&targets, &[("BNQ", 0x8024)], None), None);
+        assert_eq!(board_among(&[], &known, None), None);
     }
 
     #[test]

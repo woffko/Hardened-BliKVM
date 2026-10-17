@@ -152,6 +152,7 @@ pub fn system() -> System {
 }
 
 /// The active display configuration: its paths and their modes.
+#[derive(Clone)]
 pub struct DisplayConfig {
     pub paths: Vec<DISPLAYCONFIG_PATH_INFO>,
     pub modes: Vec<DISPLAYCONFIG_MODE_INFO>,
@@ -242,14 +243,27 @@ pub fn chosen_board_monitor() -> Option<String> {
     .filter(|id| bli_kvm_agent_protocol::reads::monitor_id_is_valid(id))
 }
 
-/// Whether a path's monitor is the board's capture: the one the operator
-/// chose, or, without a choice, the one with a known capture's EDID, as
-/// `monitors` marks it (`names::mark_board_monitor`).
-pub fn is_board(path: &DISPLAYCONFIG_PATH_INFO) -> bool {
-    let target = target_name(path);
-    monitors()
-        .into_iter()
-        .any(|monitor| monitor.board && !target.id.is_empty() && monitor.id == target.id)
+/// Which of a configuration's paths is the board's capture, resolved once
+/// for the configuration from its paths' names: the one the operator chose,
+/// or, without a choice, the one with a known capture's EDID
+/// (`names::board_among`, as `monitors` marks it). A path whose monitor
+/// Windows does not name is never the board's.
+pub fn board_paths(config: &DisplayConfig) -> Vec<bool> {
+    let targets: Vec<TargetName> = config.paths.iter().map(target_name).collect();
+    let named: Vec<(&str, &str, u16)> = targets
+        .iter()
+        .map(|target| (target.id.as_str(), target.maker.as_str(), target.product))
+        .collect();
+    let board = names::board_among(
+        &named,
+        names::BOARD_CAPTURE_EDIDS,
+        chosen_board_monitor().as_deref(),
+    );
+    targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| board == Some(index) && !target.id.is_empty())
+        .collect()
 }
 
 pub fn monitors() -> Vec<Monitor> {
