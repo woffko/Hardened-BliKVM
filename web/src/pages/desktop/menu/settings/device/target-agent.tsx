@@ -30,7 +30,7 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   const monitors = useAtomValue(agentMonitorsAtom);
   const displays = useAgentDisplays();
   const { confirmed: controlling } = useFocusConfirmation();
-  const { reportHid } = useHidLease();
+  const { reportHid, drained } = useHidLease();
   const [starting, setStarting] = useState<'confirm' | 'typing' | 'waiting' | null>(null);
 
   // Win+R, then the line that starts the agent from its drive, then Enter;
@@ -43,6 +43,10 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
       reportHid({ mode: 'keyboard', data: [0, 0, 0, 0, 0, 0, 0, 0] });
     };
     for (const step of runBoxSteps()) press(step.modifier, step.usage);
+    // The Run box's second counts from when Win+R has been sent, not from
+    // when it was queued: a lease slow to come would let the line run into
+    // another window.
+    await drained();
     await new Promise((resolve) => window.setTimeout(resolve, RUN_BOX_MS));
     for (const step of commandSteps()) press(step.modifier, step.usage);
     setStarting('waiting');

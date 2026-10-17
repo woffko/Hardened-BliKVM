@@ -1,7 +1,8 @@
 // "Start the agent" (web/src/lib/agent-start.ts, Settings > Device), through the built page with a played board whose
 // agent's switch is on and no agent connected. Without remote control the button only says to enable it; with it,
 // a confirmation comes first, then the keyboard's reports: Win+R, a pause for the Run box, the line at the US layout's
-// positions key by key, Enter. An agent that does not come in 20 s leaves the start offered again with what to look
+// positions key by key, Enter, the line a second after Win+R was sent however late the lease sent it. An agent
+// that does not come in 20 s leaves the start offered again with what to look
 // at; when the agent says hello, the page shows it connected. An agent of another commit than the board's is said to
 // be so and offered an update, typed the same way and waited for until the board's agent is the connected one; an
 // agent of the board's commit is offered nothing.
@@ -67,6 +68,22 @@ try {
   page.setDefaultTimeout(8000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  // The keyboard's reports as they leave for the board; the next one may be
+  // held back, as a slow lease would.
+  let holdNextReport = 0;
+  const leaving = [];
+  await page.route("**/api/hid/lease", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body?.action === "report" && body.report?.mode === "keyboard") {
+      if (holdNextReport > 0) {
+        const held = holdNextReport;
+        holdNextReport = 0;
+        await new Promise((resolve) => setTimeout(resolve, held));
+      }
+      leaving.push({ data: body.report.data, at: performance.now() });
+    }
+    return route.continue();
+  });
   await page.route("**/api/target-agent", (route) =>
     route.fulfill({
       json: {
@@ -130,6 +147,9 @@ try {
   const before = keyboardReports().length;
   await page.waitForTimeout(300);
   assert.equal(keyboardReports().length, before);
+  // Win+R is held back 800 ms on its way.
+  const leftBefore = leaving.length;
+  holdNextReport = 800;
   await dialog.getByRole("button", { name: "Type it" }).click();
 
   // Win+R, released, then the line and Enter, each key pressed and released.
@@ -153,6 +173,19 @@ try {
       .map((report) => report.data),
     expected,
   );
+  // The line's first key left at least a second after Win+R did.
+  const typedNow = leaving.slice(leftBefore);
+  const runBox = typedNow.findIndex(
+    (report) => JSON.stringify(report.data) === JSON.stringify(expected[0]),
+  );
+  const line = typedNow.findIndex(
+    (report, index) =>
+      index > runBox + 1 &&
+      JSON.stringify(report.data) === JSON.stringify(expected[2]),
+  );
+  assert.ok(runBox >= 0 && line > runBox, JSON.stringify(typedNow.slice(0, 4)));
+  const waited = typedNow[line].at - typedNow[runBox].at;
+  assert.ok(waited >= 990, `the line ${Math.round(waited)} ms after Win+R`);
   await page.getByText("Typed; waiting for the agent to connect").waitFor();
 
   // No agent comes: after 20 s the start is offered again, with what to
