@@ -596,7 +596,7 @@ pub fn replace_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), Gadget
         path: gadget.join("UDC"),
         value: spec.udc.clone(),
     });
-    execute(root, &steps)
+    execute_then_bind(root, &spec.udc, &steps)
 }
 
 /// Remove the mass-storage function from a live gadget without touching the
@@ -634,7 +634,28 @@ pub fn remove_mass_storage(root: &Path, spec: &GadgetSpec) -> Result<(), GadgetE
         path: gadget.join("UDC"),
         value: spec.udc.clone(),
     });
-    execute(root, &steps)
+    execute_then_bind(root, &spec.udc, &steps)
+}
+
+/// Runs the steps of a change made with the controller unbound, and binds
+/// it again when a step fails: the functions left, the keyboard and mice
+/// among them, keep working rather than wait for a rebuild that may not
+/// come. The step's error is the answer.
+fn execute_then_bind(root: &Path, udc: &str, steps: &[Step]) -> Result<(), GadgetError> {
+    let result = execute(root, steps);
+    if result.is_err() && !udc_bound(root) {
+        let rebound = execute(
+            root,
+            &[Step::WriteFile {
+                path: gadget_path().join("UDC"),
+                value: udc.to_string(),
+            }],
+        );
+        if let Err(error) = rebound {
+            eprintln!("usb gadget: the controller could not be bound again: {error:?}");
+        }
+    }
+    result
 }
 
 /// Rewrite one HID function of a present gadget (its subclass, protocol,
@@ -1023,6 +1044,30 @@ mod tests {
 
     fn read(root: &Path, path: &str) -> String {
         std::fs::read_to_string(root.join(path)).unwrap()
+    }
+
+    #[test]
+    fn a_storage_change_that_fails_binds_the_gadget_again() {
+        let directory = root_with_image();
+        let image = directory.path().join(IMAGE_NAME);
+        let mut with_hid = spec(&image);
+        with_hid.functions.push(hid(HID_KEYBOARD_NAME, 8));
+        assert_eq!(apply(directory.path(), &with_hid), Ok(()));
+        // A step after the unbinding fails (the LUN's file refuses the
+        // release); the keyboard must not be left without its controller.
+        let file = directory
+            .path()
+            .join("hardened/functions/mass_storage.usb0/lun.0/file");
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert!(replace_mass_storage(directory.path(), &with_hid).is_err());
+        assert!(udc_bound(directory.path()));
+        let mut without_storage = with_hid.clone();
+        without_storage
+            .functions
+            .retain(|function| !matches!(function, Function::MassStorage(_)));
+        assert!(remove_mass_storage(directory.path(), &without_storage).is_err());
+        assert!(udc_bound(directory.path()));
     }
 
     #[test]
