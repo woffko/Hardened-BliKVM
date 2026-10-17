@@ -852,8 +852,9 @@ impl ControlV2State {
 
     /// The operator's "Target agent" switch: the absolute mouse's interface
     /// gets the agent's collection, or loses it, and the channel follows.
-    /// The switch is written first and put back when the gadget cannot be
-    /// changed, so it never says what the gadget is not.
+    /// The switch is written first and put back, with the channel's wish,
+    /// when the gadget cannot be changed, so it never says what the gadget
+    /// is not.
     async fn handle_target_agent(&mut self, enabled: bool) -> ControlResponse {
         let Some((channel, switch)) = self.target_agent.as_mut() else {
             return reject(ControlRejectionCode::CapabilityDisabled);
@@ -901,6 +902,9 @@ impl ControlV2State {
                 if let Err(reason) = switch.set(was) {
                     eprintln!("target agent: the switch could not be put back: {reason}");
                 }
+                // The channel follows the switch put back: a switch-off told
+                // it it was not wanted before the gadget refused.
+                channel.want(was).await;
                 reject(ControlRejectionCode::BackendRejected)
             }
         }
@@ -2197,6 +2201,84 @@ mod tests {
             }
         );
         assert!(state.target_agent_shared().is_some());
+    }
+
+    #[cfg(feature = "gadget-media-profile")]
+    #[tokio::test]
+    async fn a_failed_switch_off_leaves_the_channel_as_the_switch() {
+        let directory = tempfile::tempdir().unwrap();
+        let configfs = directory.path().join("configfs");
+        let images = directory.path().join("images");
+        std::fs::create_dir_all(&configfs).unwrap();
+        std::fs::create_dir_all(&images).unwrap();
+        let catalog = images.join("catalog.json");
+        std::fs::write(&catalog, r#"{"schemaVersion":1,"entries":[]}"#).unwrap();
+        let engine = MediaTransitionEngine::open_with_executor(
+            directory.path().join("journal.json"),
+            bli_kvm_media_catalog::MediaCatalog::open(&catalog).unwrap(),
+            bli_kvm_media_transition::MediaExecutor::Gadget(
+                bli_kvm_media_transition::GadgetMediaExecutor::new(
+                    bli_kvm_media_transition::GadgetMediaConfig {
+                        configfs_root: configfs.clone(),
+                        udc: "musb-hdrc.2.auto".into(),
+                        image_directory: images,
+                        strings: bli_kvm_usb_gadget::GadgetStrings {
+                            manufacturer: "Hardened BLi-KVM".into(),
+                            product: "BLi-KVM Composite Device".into(),
+                            serial: "BLK-agent-switch-off".into(),
+                            configuration: "BLi-KVM configuration".into(),
+                        },
+                        id_vendor: 0x1d6b,
+                        id_product: 0x0104,
+                        bcd_usb: 0x0200,
+                        bcd_device: 0x0100,
+                    },
+                ),
+            ),
+        )
+        .unwrap();
+        assert!(engine.ensure_hid_gadget().unwrap());
+        let mut state = ControlV2State::disabled().with_media_engine(engine);
+        let switch_path = directory.path().join("target-agent.env");
+        state.with_target_agent(
+            crate::target_agent::AgentChannel::start(
+                directory.path().join("hidg1"),
+                crate::target_agent::board_hello(),
+            ),
+            crate::target_agent::AgentSwitch::open(&switch_path),
+        );
+        let now = Instant::now();
+        let switch = |enabled| PlatformControlRequestV2::TargetAgent { enabled };
+        assert_eq!(
+            state.handle(&switch(true), now).await,
+            ControlResponse::Applied
+        );
+
+        // The gadget cannot be changed back: the switch stays on, and so
+        // does the channel's wish, so that an agent may still connect.
+        std::fs::remove_file(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        std::fs::create_dir(configfs.join("hardened/functions/hid.usb1/report_desc")).unwrap();
+        assert_eq!(
+            state.handle(&switch(false), now).await,
+            ControlResponse::Rejected {
+                code: ControlRejectionCode::BackendRejected
+            }
+        );
+        assert!(crate::target_agent::switch_enabled(&switch_path));
+        let read = state
+            .handle(&PlatformControlRequestV2::TargetAgentState {}, now)
+            .await;
+        assert!(
+            matches!(
+                read,
+                ControlResponse::TargetAgentState {
+                    enabled: true,
+                    wanted: true,
+                    ..
+                }
+            ),
+            "{read:?}"
+        );
     }
 
     #[cfg(feature = "gadget-media-profile")]
