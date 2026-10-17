@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Modal, Switch } from 'antd';
-import { useAtomValue } from 'jotai';
+import { useAtom, useAtomValue } from 'jotai';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/target-agent.ts';
 import { commandSteps, runBoxSteps } from '@/lib/agent-start.ts';
-import { agentMonitorsAtom } from '@/jotai/target-agent.ts';
+import { agentMonitorsAtom, targetAgentAtom } from '@/jotai/target-agent.ts';
 import { useAgentDisplays } from '@/hooks/useAgentDisplays.ts';
 import { useFocusConfirmation } from '@/hooks/useFocusConfirmation.ts';
 import { useHidLease } from '@/hooks/useHidLease.ts';
@@ -23,8 +23,10 @@ function agentTitle(agent: NonNullable<api.TargetAgentState['agent']>) {
 export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
   const { t } = useTranslation();
 
-  const [state, setState] = useState<api.TargetAgentState | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // The page's one state of the agent, which the page reads every 5 s
+  // (useTargetAgent); a switch made here puts the board's answer in it.
+  const [state, setState] = useAtom(targetAgentAtom);
+  const [isLoading, setIsLoading] = useState(false);
   const [confirming, setConfirming] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const monitors = useAtomValue(agentMonitorsAtom);
@@ -69,32 +71,6 @@ export const TargetAgent = ({ readOnly = false }: { readOnly?: boolean }) => {
     }, START_WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [agentConnected, starting, t]);
-  const read = useCallback(async () => {
-    const rsp = await api.getTargetAgent();
-    if (rsp.code !== 0 || typeof rsp.data?.enabled !== 'boolean')
-      throw new Error(rsp.msg || t('settings.device.targetAgent.readFailed'));
-    setState(rsp.data as api.TargetAgentState);
-  }, [t]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () =>
-      read()
-        .catch((err: unknown) => {
-          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-        })
-        .finally(() => {
-          if (!cancelled) setIsLoading(false);
-        });
-    refresh();
-    // The agent connects and goes on its own: the state is read again.
-    const timer = window.setInterval(refresh, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [read]);
-
   async function update(enabled: boolean) {
     setConfirming(null);
     setIsLoading(true);

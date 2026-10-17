@@ -689,7 +689,6 @@ const en = {
             keepFailed: 'The change was not kept: {{reason}}',
             took: 'The change took {{seconds}} s.'
           },
-          readFailed: "Failed to read the agent's state",
           switchFailed: 'Failed to switch the agent'
         },
         disk: 'Virtual Disk',

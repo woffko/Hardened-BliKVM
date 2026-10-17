@@ -3,7 +3,8 @@
 // the board's state and reaches the board only after a confirmation that says the USB device leaves the target and
 // comes back; a cancelled confirmation sends nothing. Switched on, the page shows the connected agent; a channel the
 // board cannot open shows why. A board without the feature has no switch, one that offers it read-only a disabled
-// one, and the switch speaks Russian.
+// one, and the switch speaks Russian. The settings show the page's one state of the agent: opened, they add no read of
+// their own.
 import assert from "node:assert/strict";
 import { defaultManifest, startApp } from "./app_harness.mjs";
 import { launchChromium } from "./quality_fixture.mjs";
@@ -22,7 +23,7 @@ const AGENT = {
 
 /** The played board: its switch, whether an agent says hello, and the page's writes. */
 function playedBoard({ problem = null } = {}) {
-  const board = { enabled: false, writes: [] };
+  const board = { enabled: false, writes: [], reads: [] };
   board.state = () => ({
     available: true,
     enabled: board.enabled,
@@ -63,7 +64,7 @@ async function open(board, { access = "read_write", language = null } = {}) {
       const { enabled } = route.request().postDataJSON();
       board.writes.push(enabled);
       board.enabled = enabled;
-    }
+    } else board.reads.push(performance.now());
     await route.fulfill({ json: { code: 0, data: board.state() } });
   });
   await page.goto(app.baseUrl, { waitUntil: "networkidle" });
@@ -84,6 +85,12 @@ try {
     assert.equal(await toggle.isChecked(), false);
     assert.equal(await toggle.isDisabled(), false);
     assert.equal(await page.getByTestId("target-agent-status").count(), 0);
+    // Open for 11 s, the settings add no read of the state to the page's
+    // own one every 5 s.
+    const opened = performance.now();
+    await page.waitForTimeout(11000);
+    const reads = board.reads.filter((at) => at >= opened).length;
+    assert.ok(reads <= 3, `${reads} reads of the agent's state in 11 s`);
 
     // A cancelled confirmation sends nothing.
     await toggle.click();
