@@ -93,6 +93,8 @@ pub struct ControlV2State {
 }
 
 impl ControlV2State {
+    /// No surface attached and the state off: the one literal of the
+    /// state's fields, which every other constructor starts from.
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -410,38 +412,7 @@ impl ControlV2State {
     fn enabled_base() -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
-            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-            hid: None,
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            display_sleep: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            quic: None,
-            target_agent: None,
-            system_switches: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -449,38 +420,8 @@ impl ControlV2State {
     pub fn with_hid_policy(policy: HidControlPolicy) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
             hid: Some(policy),
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            display_sleep: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            quic: None,
-            target_agent: None,
-            system_switches: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -488,38 +429,8 @@ impl ControlV2State {
     pub fn with_atx_engine(engine: AtxTransitionEngine) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(share_atx(engine)),
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
-            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-            hid: None,
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            display_sleep: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            quic: None,
-            target_agent: None,
-            system_switches: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -542,37 +453,9 @@ impl ControlV2State {
     pub fn with_hid_and_atx(hid: HidControlPolicy, atx: AtxTransitionEngine) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
             atx: Some(share_atx(atx)),
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
             hid: Some(hid),
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            display_sleep: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            quic: None,
-            target_agent: None,
-            system_switches: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -583,37 +466,9 @@ impl ControlV2State {
     pub fn with_media_and_hid(media: MediaTransitionEngine, hid: HidControlPolicy) -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
             media: Some(media),
             hid: Some(hid),
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            display_sleep: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            quic: None,
-            target_agent: None,
-            system_switches: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
@@ -1016,39 +871,7 @@ impl ControlV2State {
     fn enabled_for_test() -> Self {
         Self {
             enabled: true,
-            attestations: TargetAttestationRegistry::new(DEFAULT_MAX_ATTESTATIONS),
-            #[cfg(any(feature = "atx-transition-profile", feature = "gpio-atx-profile"))]
-            atx: None,
-            #[cfg(any(feature = "media-transition-profile", feature = "gadget-media-profile"))]
-            media: None,
-            #[cfg(any(feature = "hid-transition-profile", feature = "gadget-hid-profile"))]
-            hid: None,
-            #[cfg(feature = "system-action-profile")]
-            system_action: None,
-            #[cfg(feature = "network-write-profile")]
-            #[cfg(feature = "network-write-profile")]
-            network_write: None,
-            video_settings: None,
-            mdns: None,
-            mouse_jiggler: None,
-            display_sleep: None,
-            hid_only: None,
-            admin_features: None,
-            ssh: None,
-            quic: None,
-            target_agent: None,
-            system_switches: None,
-            ipv4: None,
-            hostname: None,
-            wifi: None,
-            tls: None,
-            firewall: None,
-            firewall_modes: None,
-            system_log: None,
-            tailscale: None,
-            board_status: None,
-            #[cfg(feature = "network-write-profile")]
-            wol: None,
+            ..Self::disabled()
         }
     }
 
