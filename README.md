@@ -80,8 +80,11 @@ find.
   switches the layout (also to the letters typed on a phone), changes the
   monitors' mode (undone after 15 s unless kept), passes clipboard text both
   ways and locks the session. "Start the agent" types its start line on the
-  target, and the agent's own menu can start it at sign-in; the quality
-  monitor's Agent row says its state
+  target, also as "Update the agent" over an agent that is not the board's
+  version, which then leaves; the agent's own menu can start it at
+  sign-in, from a copy that follows the agent started last. Only the agent
+  of the session at the console serves the board. The quality monitor's
+  Agent row says its state
   ([`docs/design/target-agent-v1.md`](docs/design/target-agent-v1.md)).
 - **Administration features** that stay off until they are switched on: web
   terminal, scripts, remote ISO download, PicoClaw, RAW system updates. Each
@@ -136,6 +139,7 @@ and H.264 on the video engine with its driver), the engine choice and the
 quality monitor, the RAW system update, the screen's upscaling, the target
 agent. Plans, audits and what was shown on the test board are under
 [`docs/baselines`](docs/baselines); the most recent are
+[`audit-20261017-review.md`](docs/baselines/audit-20261017-review.md),
 [`audit-20261014-target-agent.md`](docs/baselines/audit-20261014-target-agent.md),
 [`audit-20261009-upscaling-phases.md`](docs/baselines/audit-20261009-upscaling-phases.md),
 [`audit-20261008-upscaling-gate0.md`](docs/baselines/audit-20261008-upscaling-gate0.md),

@@ -1,7 +1,10 @@
 # The target agent, Windows (2026-10-14)
 
 Plan: `docs/baselines/work-plan-20261014-target-agent.md`. Gates and
-slots: `docs/baselines/audit-20261014-target-agent.md`.
+slots: `docs/baselines/audit-20261014-target-agent.md`. The review of
+0.1.0-beta.7 and its fixes: `docs/baselines/audit-20261017-review.md`
+(their plan, `docs/baselines/work-plan-20261017-review-fixes.md`, gives the
+decisions this note follows since).
 
 The board sees its target as a USB host and one picture. The agent is a
 program on the target, with the user's rights, that tells the board what it
@@ -27,11 +30,12 @@ never used, carries the agent's reports to the board. Its device,
 `/dev/hidg1`, is one the owner's unit already allows: the channel needs no
 system part.
 
-Every absolute mouse report follows the descriptor `hid.usb1` has at that
-moment, read from configfs: report ID 1 with the agent's collection, none
-without, and nothing is written for a descriptor that is neither. A report
-of the wrong form would be read by the target as another one, a button
-among them.
+Every absolute mouse report follows the descriptor `hid.usb1` has, read
+from configfs once after each change the owner makes to the gadget (the
+gadget crate counts them, `bli_kvm_usb_gadget::changes`): report ID 1 with
+the agent's collection, none without, and nothing is written for a
+descriptor that is neither. A report of the wrong form would be read by the
+target as another one, a button among them.
 
 ## The protocol
 
@@ -85,7 +89,8 @@ The owner (`crates/bli-kvm-control-broker/src/target_agent.rs`) keeps:
   back in the order a boot and an attach give them, and the gadget bound;
   the target sees the whole device leave and come back, an attached image
   stays attached) and opens the channel again. A gadget that cannot be
-  changed puts the switch back. The HID bind before the owner starts reads
+  changed puts the switch back, and the channel's wish with it; the flag
+  that gadgets built from scratch follow is put back too. The HID bind before the owner starts reads
   the switch, so a boot builds the gadget as it says; the owner makes the
   present gadget follow it when it starts. A stopping owner takes the
   collection away and leaves the switch as it is: an update may roll back
@@ -100,12 +105,19 @@ The owner (`crates/bli-kvm-control-broker/src/target_agent.rs`) keeps:
   stops taking them, and the agent's writes would hang), answers the
   agent's hello and pings, and carries the owner's calls with a deadline
   (1 ms to 10 s). An agent heard within 10 s is connected; reports the
-  target does not take within a second are dropped with what waits.
+  target does not take within a second are dropped with what waits. A
+  request that cannot reach the target ends its call at once: not
+  connected while the device is closed, timed out when the target takes
+  nothing in time or the queue is full; one already with the target waits
+  for its answer. A refusal from the target is kept within the state's
+  bounds (control characters out, at most 160 characters).
 - Linux 5.19's HID function removes its device when the gadget is unbound,
   makes it again when it is bound, and resets the device's wait queues as
-  it does. Every media operation and the switch therefore pause the channel
-  first, which closes the device, and resume it after; the agent sees the
-  device go and come back and says hello again.
+  it does. Every media operation, the switch, and a HID request that finds
+  the gadget gone and builds it therefore pause the channel first, which
+  closes the device, and resume it after; the agent sees the device go and
+  come back and says hello again. A storage change that fails part way
+  binds the gadget again before it answers.
 
 - The agent's drive: a second LUN of the mass-storage function, read-only
   and not removable, a 3 MiB disk with a DOS partition table and one 2 MiB
@@ -125,20 +137,28 @@ The owner (`crates/bli-kvm-control-broker/src/target_agent.rs`) keeps:
   removable LUN 0 is an image of the operator's, so the drive alone is no
   attached media; a swap or an eject keeps the drive. The kernel makes a
   LUN only while the function is not linked: the LUN is made with the
-  function, and removed before it. A stopping owner takes the drive away
-  too, as a slot from before the agent would take it for an image.
+  function, and removed before it. LUN 0 is rebuilt as the gadget has it:
+  the operator's image, or empty where the target ejected it (a removable
+  LUN may be built empty), never the owner's record of a selection. A
+  stopping owner takes the drive away too, as a slot from before the agent
+  would take it for an image; when the storage cannot be built again, LUN 1
+  is taken out alone.
 
 The control socket has `target_agent` (the switch), `target_agent_state`
 (the switch, the channel, why its device is not open, the agent's hello,
-the last refusal, the messages each way) and `target_agent_call` (waited
+the last refusal, the messages each way, and the board's commit, which its
+hello names: the board's build sets it as the agent's build does) and
+`target_agent_call` (waited
 for on the channel's handle, not the shared state's lock, so HID and media
 never wait for it; a call other than a ping carries the HID lease's
-identity, and the owner makes it only while that lease is the live one).
+identity, checked as every lease is, and the owner makes it only while
+that lease is the live one).
 The control socket's messages may be 24 KiB, room for the agent's answers.
 The server serves `GET` and `POST /api/target-agent` and
 `POST /api/target-agent/call` (a read or an action only under the HID
-lease the session holds now) through the owner; the platform names the
-feature `target_agent`.
+lease the session holds now; a change of the monitors and its keep wait up
+to 10 s, as Windows sets a mode or two before it answers, a read 3 s)
+through the owner; the platform names the feature `target_agent`.
 
 ## The page
 
@@ -150,9 +170,14 @@ feature `target_agent`.
   monitors' modes, with a dialog that counts down to the change's undoing
   and keeps it; "Start the agent on the target" while no agent is
   connected and remote control is on: after a confirmation, Win+R, a pause
-  for the Run box, and a PowerShell line typed at the US layout's
-  positions (the target's layout in front must be English) that finds the
-  drive by its label and starts the agent from it, its window hidden.
+  of a second for the Run box from when Win+R has been sent, and a
+  PowerShell line typed at the US layout's positions (the target's layout
+  in front must be English) that finds the drive by its label and starts
+  the agent from it, its window hidden. An agent whose commit is not the
+  board's is said not to be the board's version, and the same start is
+  offered as "Update the agent on the target", waited for until the
+  board's agent is the connected one (decision 1 of the plan of
+  2026-10-17). The section shows the page's one state of the agent.
 - The quality monitor's last row, Agent, says the state at a glance where
   the board offers the agent: off, the channel closed, waiting for an
   agent, or connected with its version (and locked while the target's
@@ -178,9 +203,12 @@ feature `target_agent`.
   mouse's lease without input if no input took it yet, and says why a
   read failed; without remote control it says to enable it. A change from
   the menu or the settings waits in the page's one dialog, which counts
-  down to the agent's putting it back and keeps it when asked; the
-  monitors are read again after a change, once it is kept or put back, so
-  that the mouse follows the mode.
+  down to the agent's putting it back and says how long the change took
+  (decision 3). Keep takes the lease first, as every call does, and the
+  dialog stays until the agent has kept the change: a Keep that failed is
+  said, the countdown goes on, and Keep may be pressed again (decision 4).
+  The monitors are read again after a change, once it is kept or put back,
+  so that the mouse follows the mode.
 - The Keyboard menu shows the target's layout, switches it among those
   installed, switches it to what the operator types when asked (a choice
   of this browser), carries the clipboard's text both ways and locks the
@@ -200,7 +228,12 @@ feature `target_agent`.
   an Estonian run, and Latin text keeps an Estonian layout in front, its
   punctuation typed at that layout's keys. The layouts are read
   again as the phone's keyboard opens; a shortcut (a modifier held)
-  switches nothing.
+  switches nothing. The on-screen keyboard's switch runs while remote
+  control is on, under the lease taken first; a refused switch is said in
+  the keyboard's header and asked again as control is taken again. The
+  page counts its layout switches, and a read of the layouts that began
+  before the last of them is not kept, as the agent may have read them
+  before the switch.
 
 ## The target
 
@@ -218,20 +251,38 @@ which `scripts/check.sh` checks).
   channel closes the collection) or Start, "Start at sign-in" (the program
   copied to the user's local application folder and named in the user's
   Run key; again to take it away) and Exit; in Russian on a Russian
-  Windows. A thread keeps the channel: it finds the collection again
-  whenever it goes, says hello with the system, answers the board's calls
+  Windows. One agent runs in a session (its mutex): a second start of the
+  same commit leaves the first; one of another commit asks the running
+  agent to leave by its menu's Exit, which every agent since the first
+  answers, takes its place within 5 s, and, while the sign-in start is on,
+  refreshes its copy, which then follows the agent started last (decision
+  1). While connected, the menu and tip say when the board names another
+  commit ("not the board's version"). The agent serves the board only
+  while its session is the console's: in another (switched away from, or
+  remote) it closes the collection and says why, and opens it again when
+  its session is the console's (decision 2). A thread keeps the channel:
+  it finds the collection again whenever it goes, says hello with the
+  system, answers the board's calls
   with its reads and actions (`reads.rs`, `actions.rs`), and pings every
   3 s. A monitor's id is the 64-bit FNV-1a hash of Windows' name for its
   device (`\\?\DISPLAY#...`, which names its connector too), its letters
   in one case, as 16 hex digits: the same while the monitor stays on its
   connector. The board's monitor is the one the operator chose, kept for
-  the user in `HKCU\Software\HardenedBliKVM`, value `BoardMonitor`; or,
-  without a choice among the active monitors, one with a known capture's
-  EDID (`names::BOARD_CAPTURE_EDIDS`). That list is empty: gate 2 found
+  the user in `HKCU\Software\HardenedBliKVM`, value `BoardMonitor`, and
+  none while the chosen one is not active; or, without a choice, the one
+  monitor with a known capture's EDID, and none when more than one has it
+  (`names::BOARD_CAPTURE_EDIDS`); it is resolved once for each
+  configuration the agent reads. That list is empty: gate 2 found
   that the operator's capture gives the target a copy of the operator's
   own monitor's EDID (both read `BNQ 8024`), as KVM captures often do, so
   an EDID cannot tell them apart. Until a monitor is the board's, the
-  modes that need it say so, and the page asks which one it is.
+  modes that need it say so, and the page asks which one it is. A
+  monitors' change is made from a copy of the configuration it read, and
+  one lock covers a change from that read to its claim of the undo, the
+  15 s timer from its check to its putting back, and a keep (decision 6,
+  `revert.rs`); a Keep with nothing waiting is refused, and only a saved
+  change stops waiting. The clipboard's text is read within the size
+  Windows gives for its block (another program may give it no zero).
 - `hardened-blikvm-agent-test.exe`: the channel's test tool. It finds the
   board's collection (the board's vendor 0x1d6b and product 0x0104, usage
   page 0xff00, usage 1, 64-byte reports each way), opens it for overlapped
@@ -240,8 +291,11 @@ which `scripts/check.sh` checks).
   channel went and how soon it came back. It appends what it says to
   `hardened-blikvm-agent-test.txt` beside itself.
 
-The agent's side of the protocol (`client.rs`) and the names it gives
-(`names.rs`) are portable and tested on Linux; Windows' calls are in
+The agent's side of the protocol (`client.rs`), the names it gives and its
+decisions (`names.rs`: the clipboard's text, the start beside another
+agent, the console's session, the board's monitor) and the undoing of a
+monitors' change (`revert.rs`) are portable and tested on Linux; Windows'
+calls are in
 `hid.rs`, `reads.rs`, `actions.rs`, `autostart.rs`, `channel.rs` and
 `tray.rs`.
 
@@ -255,6 +309,10 @@ The agent's side of the protocol (`client.rs`) and the names it gives
   request before a hello. Every read and action is the operator's, from
   the page, under the HID lease the operator holds, checked by the server
   and again by the owner.
+- Only the agent of the console's session serves the board: an agent left
+  in a session switched away from, or in a remote one, neither reads nor
+  acts on a session the operator does not see, and two sessions' agents
+  never both answer.
 - The board keeps nothing it reads from the agent beyond its hello and the
   counts of messages; the clipboard's text passes through and is not
   stored or logged.
