@@ -16,6 +16,16 @@ const CONTENT_TYPES = {
   ".woff2": "font/woff2",
 };
 
+/**
+ * Whether a request under /api/hid is one a page that only watches may make:
+ * the read of the desktop layout the board keeps (GET /api/hid/screen-area,
+ * docs/design/screen-area-v1.md), which sends nothing to the target. Every
+ * probe that fails on a HID request asks this.
+ */
+export function watchingMayAsk(method, route) {
+  return method === "GET" && route === "/api/hid/screen-area";
+}
+
 export function defaultManifest(overrides = {}) {
   const status = (availability) => ({
     availability,

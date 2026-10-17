@@ -61,6 +61,7 @@ import { pathToFileURL } from "node:url";
 import { startTcpProxy } from "../net/tcp_impair_proxy.mjs";
 import { startUdpProxy } from "../net/udp_impair_proxy.mjs";
 import { freePort } from "./quic_stack_rig.mjs";
+import { watchingMayAsk } from "./app_harness.mjs";
 
 const [baseUrl, username, outputValue, secondsValue, lossValue, delayValue] =
   process.argv.slice(2);
@@ -372,8 +373,10 @@ try {
   );
   page.on("request", (request) => {
     const route = new URL(request.url()).pathname;
-    const read = request.method() === "GET" && route === "/api/hid/screen-area";
-    if (route.startsWith("/api/hid") && !read) {
+    if (
+      route.startsWith("/api/hid") &&
+      !watchingMayAsk(request.method(), route)
+    ) {
       const key = `${request.method()} ${route}`;
       receipt.hidRequests[key] = (receipt.hidRequests[key] ?? 0) + 1;
     }

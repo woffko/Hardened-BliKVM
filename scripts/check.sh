@@ -199,6 +199,7 @@ node --test tools/test_busy_spans.mjs
 node --test tools/test_command_result.mjs
 node --test tools/test_hid_text.mjs
 node --test tools/test_sticky_modifiers.mjs
+node --test tools/test_watching_probes.mjs
 node --test tools/test_quic_messages.mjs
 # The picture's receiver: reassembly, the chain, recovery, and 100000 random
 # and damaged datagrams and streams; the board's clock; the codec string.
@@ -1001,7 +1002,7 @@ pnpm_web exec prettier --check '../tools/test_virtual_media_acceptance.mjs'
 pnpm_web exec prettier --check '../tools/test_video_frame_timing_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/test_restricted_keyboard_probe.mjs'
-pnpm_web exec prettier --check '../tools/test_screen_area.mjs' '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
+pnpm_web exec prettier --check '../tools/test_watching_probes.mjs' '../tools/test_screen_area.mjs' '../tools/test_pointer_map.mjs' '../tools/test_upscale_bench.mjs' '../tools/test_upscale_settings.mjs' '../tools/test_upscale_watchdog.mjs' '../tools/test_mjpeg_parts.mjs'
 pnpm_web exec prettier --check '../tools/test_virtual_media_probe_app.mjs'
 pnpm_web exec prettier --check '../tools/playwright/restricted_power_probe.mjs'
 pnpm_web exec prettier --check '../tools/playwright/app_harness.mjs'

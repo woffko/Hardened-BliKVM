@@ -21,6 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { watchingMayAsk } from "./app_harness.mjs";
 
 const [baseUrl, username, outputValue, secondsValue] = process.argv.slice(2);
 assert.equal(new URL(baseUrl).protocol, "https:");
@@ -137,7 +138,10 @@ async function login(viewport) {
   );
   page.on("request", (request) => {
     const route = new URL(request.url()).pathname;
-    if (route.startsWith("/api/hid"))
+    if (
+      route.startsWith("/api/hid") &&
+      !watchingMayAsk(request.method(), route)
+    )
       receipt.hidRequests.push(`${request.method()} ${route}`);
   });
   return { context, page, csrf };

@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { screenArea } from "./app_harness.mjs";
+import { screenArea, watchingMayAsk } from "./app_harness.mjs";
 
 const [baseUrl, username, outputValue] = process.argv.slice(2);
 assert.equal(new URL(baseUrl).protocol, "https:");
@@ -65,8 +65,7 @@ page.on("pageerror", (error) =>
 );
 page.on("request", (request) => {
   const route = new URL(request.url()).pathname;
-  const read = request.method() === "GET" && route === "/api/hid/screen-area";
-  if (route.startsWith("/api/hid") && !read)
+  if (route.startsWith("/api/hid") && !watchingMayAsk(request.method(), route))
     receipt.hidRequests.push(`${request.method()} ${route}`);
 });
 
